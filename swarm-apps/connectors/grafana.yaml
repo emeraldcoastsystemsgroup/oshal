@@ -1,0 +1,59 @@
+provider: grafana
+displayName: Grafana
+version: 1.0.0
+baseUrl: ${env:GRAFANA_BASE_URL:-https://your-org.grafana.net}/api
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: dashboards-search
+    tool: grafana-dashboards-search
+    method: GET
+    path: /search
+    query:
+      - query
+      - type
+      - tag
+      - limit
+      - page
+  - name: datasources
+    tool: grafana-datasources
+    method: GET
+    path: /datasources
+  - name: alert-rules
+    tool: grafana-alert-rules
+    method: GET
+    path: /v1/provisioning/alert-rules
+  - name: folders
+    tool: grafana-folders
+    method: GET
+    path: /folders
+    query:
+      - limit
+      - page
+  - name: org
+    tool: grafana-org
+    method: GET
+    path: /org
+  - name: annotations
+    tool: grafana-annotations
+    method: GET
+    path: /annotations
+    query:
+      - from
+      - to
+      - limit
+      - type
+      - tags
+metadata:
+  description: "Read Grafana dashboards and folders, data sources, provisioned alert rules, and annotations."
+  category: "Operations"
+  icon: grafana
+  iconTitle: Grafana
+  iconSource: simple-icons
+  iconVerified: true

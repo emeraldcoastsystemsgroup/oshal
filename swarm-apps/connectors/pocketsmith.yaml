@@ -1,0 +1,31 @@
+# PocketSmith — personal finance profile, accounts, and transactions via X-Developer-Key header.
+provider: pocketsmith
+displayName: PocketSmith
+version: 1.0.0
+baseUrl: https://api.pocketsmith.com/v2
+auth:
+  type: apiKeyHeader
+  header: X-Developer-Key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: pocketsmith-me
+    method: GET
+    path: /me
+  - name: accounts
+    tool: pocketsmith-accounts
+    method: GET
+    path: /users/{id}/accounts
+  - name: transactions
+    tool: pocketsmith-transactions
+    method: GET
+    path: /users/{id}/transactions
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/pocketsmith.com.ico

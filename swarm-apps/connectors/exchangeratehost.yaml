@@ -1,0 +1,30 @@
+provider: exchangeratehost
+displayName: exchangerate.host
+version: 1.0.0
+baseUrl: https://api.exchangerate.host
+auth:
+  type: apiKeyQuery
+  param: access_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: live
+    tool: exchangeratehost-live
+    method: GET
+    path: /live
+  - name: convert
+    tool: exchangeratehost-convert
+    method: GET
+    path: /convert
+    query:
+      from: '{from}'
+      to: '{to}'
+      amount: '{amount}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/exchangerate.host.ico

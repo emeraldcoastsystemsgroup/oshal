@@ -1,0 +1,40 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added neutral gray cockpit theme for standalone chat and embedded API configuration
+ */
+
+/* ═══ Gray — Neutral Steel Glass ═══ */
+[data-theme="gray"] {
+  --bg-primary: #121417;
+  --bg-secondary: rgba(24, 28, 34, 0.86);
+  --bg-tertiary: rgba(38, 44, 52, 0.72);
+  --bg-card: rgba(34, 39, 46, 0.56);
+  --bg-card-hover: rgba(48, 55, 64, 0.66);
+  --border-color: rgba(203, 213, 225, 0.08);
+  --border-color-hover: rgba(203, 213, 225, 0.18);
+  --text-primary: #f3f4f6;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --accent-primary: #94a3b8;
+  --accent-primary-hover: #cbd5e1;
+  --accent-gradient: linear-gradient(135deg, #64748b 0%, #94a3b8 50%, #e2e8f0 100%);
+  --accent-glow: rgba(148, 163, 184, 0.24);
+  --status-success: #34d399;
+  --status-active: #93c5fd;
+  --status-warning: #fbbf24;
+  --status-error: #f87171;
+  --glass-bg: rgba(226, 232, 240, 0.05);
+  --glass-bg-heavy: rgba(226, 232, 240, 0.09);
+  --glass-border: rgba(226, 232, 240, 0.1);
+  --glass-highlight: linear-gradient(135deg, rgba(226,232,240,0.12) 0%, rgba(226,232,240,0) 50%);
+  --glass-blur: 20px;
+  --glass-blur-light: 12px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(226, 232, 240, 0.16);
+  --panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(226,232,240,0.06);
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(226,232,240,0.05);
+  --depth-shadow: 0 20px 60px rgba(0, 0, 0, 0.52);
+}

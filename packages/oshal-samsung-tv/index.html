@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1920,height=1080" />
+<title>OSHAL Home</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- Launcher shell: confirms/edits the OSHAL host, then navigates the TOP window to a surface
+       (so the Google OIDC login works as a top-level page, not an iframe). Primary = Jarvis. -->
+  <main class="launcher">
+    <div class="logo">OSHAL <span>· Jarvis</span></div>
+    <p class="tag">Talk to your assistant — and your whole home — on the big screen.</p>
+
+    <div id="hostRow" class="hostRow">
+      <span class="hostLabel">Host</span>
+      <span id="hostText" class="hostText"></span>
+      <span class="hostLabel" style="margin-left:18px">Room</span>
+      <span id="roomText" class="hostText"></span>
+    </div>
+
+    <div id="actions" class="actions">
+      <button id="jarvis" class="btn primary">Open Jarvis</button>
+      <button id="home" class="btn">Smart Home</button>
+      <button id="change" class="btn">Settings</button>
+    </div>
+
+    <!-- Host + room editor (hidden until "Settings"). The room is how the phone targets THIS TV. -->
+    <div id="editor" class="editor" hidden>
+      <label for="hostInput">OSHAL host URL</label>
+      <input id="hostInput" type="text" placeholder="https://oshal.agenticfederal.us" />
+      <label for="roomInput" style="margin-top:18px">Room name (e.g. Living Room)</label>
+      <input id="roomInput" type="text" placeholder="Living Room" />
+      <div class="actions">
+        <button id="save" class="btn primary">Save &amp; open</button>
+        <button id="cancel" class="btn">Cancel</button>
+      </div>
+    </div>
+
+    <p class="hint">Use the remote D-pad to move, OK to select, RETURN to go back.</p>
+  </main>
+  <script src="js/main.js"></script>
+</body>
+</html>

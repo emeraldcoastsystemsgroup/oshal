@@ -1,0 +1,32 @@
+provider: balldontlie
+displayName: balldontlie
+version: 1.0.0
+baseUrl: https://api.balldontlie.io/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: players
+    tool: balldontlie-players
+    method: GET
+    path: /players
+    query:
+      search: '{q}'
+  - name: teams
+    tool: balldontlie-teams
+    method: GET
+    path: /teams
+  - name: games
+    tool: balldontlie-games
+    method: GET
+    path: /games
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/balldontlie.io.ico

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OSHAL Home</string>
+    <string name="settings_title">OSHAL Home — Setup</string>
+    <string name="settings_hint">Enter the OSHAL host URL. The dashboard at /api/home/ui will load. Press MENU on the remote anytime to return here.</string>
+    <string name="url_placeholder">https://oshal.example.com  or  http://192.168.1.20:5000</string>
+    <string name="save">Save</string>
+    <string name="saved">Saved</string>
+    <string name="invalid_url">Enter a URL starting with http:// or https://</string>
+    <string name="load_error">Couldn\'t reach the OSHAL host.\nPress MENU to check the URL.</string>
+
+    <!-- Device pairing -->
+    <string name="pairing_title">Connect this TV to OSHAL</string>
+    <string name="pairing_requesting">Getting a code…</string>
+    <string name="pairing_instructions">On your phone or computer, go to:\n\n%1$s\n\nand enter this code:</string>
+    <string name="pairing_waiting">Waiting for you to approve it in your browser…</string>
+    <string name="pairing_connected">Connected! Loading your dashboard…</string>
+    <string name="pairing_expired">That code expired. Press Retry for a new one.</string>
+    <string name="pairing_network_error">Couldn\'t reach OSHAL. Check the connection and retry.</string>
+    <string name="pairing_retry">Retry</string>
+</resources>

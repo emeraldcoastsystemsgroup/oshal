@@ -1,0 +1,70 @@
+provider: amplitude
+displayName: Amplitude
+version: 1.0.0
+baseUrl: https://amplitude.com/api/2
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: events-segmentation
+    tool: amplitude-events-segmentation
+    method: GET
+    path: /events/segmentation
+    query:
+      - e
+      - start
+      - end
+      - m
+      - i
+      - s
+      - g
+  - name: events-list
+    tool: amplitude-events-list
+    method: GET
+    path: /events/list
+  - name: active-users
+    tool: amplitude-active-users
+    method: GET
+    path: /users
+    query:
+      - start
+      - end
+      - m
+      - i
+  - name: retention
+    tool: amplitude-retention
+    method: GET
+    path: /retention
+    query:
+      - se
+      - rm
+      - rb
+      - start
+      - end
+      - i
+  - name: funnels
+    tool: amplitude-funnels
+    method: GET
+    path: /funnels
+    query:
+      - e
+      - start
+      - end
+      - mode
+      - 'n'
+      - s
+  - name: user-search
+    tool: amplitude-user-search
+    method: GET
+    path: /usersearch
+    query:
+      - user
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/amplitude.com.ico

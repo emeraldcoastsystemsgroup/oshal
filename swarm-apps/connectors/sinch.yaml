@@ -1,0 +1,35 @@
+provider: sinch
+displayName: Sinch
+version: 1.0.0
+baseUrl: https://us.sms.api.sinch.com/xms/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: batches
+    tool: sinch-batches
+    method: GET
+    path: /{servicePlanId}/batches
+    query:
+      page: '{page}'
+      page_size: '{pageSize}'
+  - name: batch
+    tool: sinch-batch
+    method: GET
+    path: /{servicePlanId}/batches/{batchId}
+  - name: groups
+    tool: sinch-groups
+    method: GET
+    path: /{servicePlanId}/groups
+    query:
+      page: '{page}'
+      page_size: '{pageSize}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/us.sms.api.sinch.com.ico

@@ -1,0 +1,34 @@
+provider: toggl
+displayName: Toggl Track
+version: 1.0.0
+baseUrl: https://api.track.toggl.com/api/v9
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: toggl-me
+    method: GET
+    path: /me
+  - name: workspaces
+    tool: toggl-workspaces
+    method: GET
+    path: /workspaces
+  - name: projects
+    tool: toggl-projects
+    method: GET
+    path: /me/projects
+  - name: time-entries
+    tool: toggl-time-entries
+    method: GET
+    path: /me/time_entries
+metadata:
+  icon: toggltrack
+  iconTitle: Toggl Track
+  iconSource: simple-icons
+  iconVerified: true

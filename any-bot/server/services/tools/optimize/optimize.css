@@ -1,0 +1,34 @@
+/*
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Model Optimize surface styling (Phase 1 configs picker). Dark, dependency-free, matches the cockpit surfaces.
+ */
+:root {
+  --bg: #0f1117; --panel: #171a23; --panel2: #1e222e; --line: #2a2f3c;
+  --txt: #e6e9ef; --muted: #9aa3b2; --accent: #6ea8fe; --ok: #3fb950; --no: #6e7681; --danger: #f85149;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--txt); font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; }
+.wrap { max-width: 920px; margin: 0 auto; padding: 24px 20px 60px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.lede { color: var(--muted); margin: 0 0 20px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 12px; }
+label.fld { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.grid { display: grid; grid-template-columns: 1.2fr 1.4fr 1fr 1fr auto; gap: 10px; align-items: end; }
+select, input[type=text] { width: 100%; background: var(--panel2); color: var(--txt); border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; font: inherit; }
+.btn { background: var(--panel2); color: var(--txt); border: 1px solid var(--line); border-radius: 7px; padding: 8px 14px; cursor: pointer; font: inherit; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: #06101f; border-color: var(--accent); font-weight: 600; }
+.btn.ghost { background: transparent; }
+.btn.danger { color: var(--danger); }
+table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+td .pill { font-size: 11px; padding: 2px 7px; border-radius: 20px; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); }
+.empty { color: var(--muted); padding: 18px 4px; }
+.bar { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
+.bar .spacer { flex: 1; }
+.toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--panel2); border: 1px solid var(--line); color: var(--txt); padding: 10px 16px; border-radius: 8px; opacity: 0; transition: .2s; pointer-events: none; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.note { color: var(--muted); font-size: 12px; margin-top: 10px; }

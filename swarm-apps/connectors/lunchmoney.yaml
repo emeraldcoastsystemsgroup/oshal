@@ -1,0 +1,30 @@
+# Lunch Money — personal finance categories, transactions, and assets via Bearer token.
+provider: lunchmoney
+displayName: Lunch Money
+version: 1.0.0
+baseUrl: https://dev.lunchmoney.app/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: categories
+    tool: lunchmoney-categories
+    method: GET
+    path: /categories
+  - name: transactions
+    tool: lunchmoney-transactions
+    method: GET
+    path: /transactions
+  - name: assets
+    tool: lunchmoney-assets
+    method: GET
+    path: /assets
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/dev.lunchmoney.app.ico

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No action bar, full-screen, dark — the WebView owns the whole screen. -->
+    <style name="Theme.Oshal" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/oshal_bg</item>
+        <item name="colorAccent">@color/oshal_accent</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
+</resources>

@@ -1,0 +1,30 @@
+id: pod-crashloop
+name: Pod CrashLoopBackOff Recovery
+description: Detects and remediates pods stuck in CrashLoopBackOff state
+trigger:
+  type: health_check
+  pattern: "CrashLoopBackOff|crash.*loop|BackOff"
+  severity: high
+diagnosis:
+  commands:
+    - "kubectl get pods -n ${namespace} -l app=${service} --no-headers"
+    - "kubectl logs -n ${namespace} -l app=${service} --tail=50 --previous"
+    - "kubectl describe pod -n ${namespace} -l app=${service} | tail -30"
+  expectedPatterns:
+    - "CrashLoopBackOff"
+    - "Error"
+    - "OOMKilled"
+remediation:
+  commands:
+    - "kubectl rollout restart deployment/${service} -n ${namespace}"
+  requiresApproval: false
+  maxAutoRetries: 2
+verification:
+  commands:
+    - "kubectl get pods -n ${namespace} -l app=${service} --no-headers"
+  successPatterns:
+    - "Running"
+    - "1/1"
+  delayMs: 30000
+  retries: 3
+  retryDelayMs: 15000

@@ -1,0 +1,44 @@
+provider: dropbox
+displayName: Dropbox
+version: 1.0.0
+baseUrl: https://api.dropboxapi.com/2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-folder
+    tool: dropbox-list-folder
+    method: POST
+    path: /files/list_folder
+    body:
+      path: '{path}'
+      limit: 100
+    retry:
+      maxRetries: 0
+  - name: search
+    tool: dropbox-search
+    method: POST
+    path: /files/search_v2
+    body: '{search}'
+    retry:
+      maxRetries: 0
+  - name: get-metadata
+    tool: dropbox-get-metadata
+    method: POST
+    path: /files/get_metadata
+    body:
+      path: '{path}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List folders, search files, and read file metadata in the connected Dropbox."
+  category: "Files"
+  icon: dropbox
+  iconTitle: Dropbox
+  iconSource: simple-icons
+  iconVerified: true

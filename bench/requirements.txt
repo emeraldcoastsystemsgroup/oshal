@@ -1,0 +1,3 @@
+# Cost/determinism benchmark deps. Install: pip install -r bench/requirements.txt
+requests>=2.31
+langgraph>=1.0

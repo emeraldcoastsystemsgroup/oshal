@@ -1,0 +1,46 @@
+provider: render
+displayName: Render
+version: 1.0.0
+baseUrl: https://api.render.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: cursor
+  pageSize: 20
+resources:
+  - name: services
+    tool: render-services
+    method: GET
+    path: /services
+    paginate: true
+  - name: service
+    tool: render-service
+    method: GET
+    path: /services/{serviceId}
+  - name: deploys
+    tool: render-deploys
+    method: GET
+    path: /services/{serviceId}/deploys
+    paginate: true
+  - name: owners
+    tool: render-owners
+    method: GET
+    path: /owners
+    paginate: true
+  - name: postgres
+    tool: render-postgres
+    method: GET
+    path: /postgres
+    paginate: true
+metadata:
+  icon: render
+  iconTitle: Render
+  iconSource: simple-icons
+  iconVerified: true

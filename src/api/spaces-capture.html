@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!--
+  Spaces — LIVE guided capture v1 (ADR-111). The phone-facing HUD: rear camera
+  full-screen with TWO distinct guidance channels overlaid — a PAN ring (rotate
+  the camera; driven by the compass vs the step's sweep target) and WALK chevrons
+  (move your feet; driven by devicemotion step detection) — plus a too-fast pan
+  warning (motion blur is the #1 reconstruction killer). v1 is sensor-driven
+  against the deterministic capture plan; it does NOT stream video or estimate
+  pose (that's the ladder: v2 stream, v3 live pose/coverage feedback). The same
+  {walk, pan} guidance contract is what a drone consumes later as velocity+yaw.
+  Sensors need a user gesture (iOS permission prompts) and HTTPS (or localhost).
+-->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Guided capture — OSHAL Spaces</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: #000; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
+  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .hud { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; }
+  .card {
+    pointer-events: auto; margin: max(10px, env(safe-area-inset-top)) 10px 0;
+    background: rgba(10, 14, 20, .78); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 12px; padding: 10px 12px; backdrop-filter: blur(6px);
+  }
+  .card .meta { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; opacity: .7; margin-bottom: 4px; }
+  .card strong { font-size: 15px; }
+  .card p { font-size: 13px; opacity: .9; margin-top: 4px; }
+  .warn {
+    position: fixed; top: 38%; left: 50%; transform: translateX(-50%);
+    background: rgba(190, 40, 40, .92); padding: 8px 16px; border-radius: 10px;
+    font-weight: 700; font-size: 15px; display: none;
+  }
+  /* PAN channel: a ring mid-screen with a rotating arrow — "turn the camera". */
+  .panwrap { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+  .ring {
+    width: 120px; height: 120px; border-radius: 50%;
+    border: 3px dashed rgba(120, 200, 255, .8); position: relative; margin: 0 auto;
+  }
+  .ring .dot {
+    position: absolute; top: 50%; left: 50%; width: 104px; height: 104px; margin: -52px 0 0 -52px;
+    transform: rotate(0deg); transition: transform .18s linear;
+  }
+  .ring .dot::before {
+    content: ""; position: absolute; top: -4px; left: 50%; margin-left: -9px;
+    border: 9px solid transparent; border-bottom: 16px solid #6ec7ff;
+  }
+  .chlabel { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-top: 6px; color: #6ec7ff; text-shadow: 0 1px 3px #000; }
+  .sweep { font-size: 12px; opacity: .85; text-shadow: 0 1px 3px #000; }
+  /* WALK channel: chevrons at the bottom — "move your feet". Distinct color + shape. */
+  .walkwrap { position: fixed; bottom: 120px; left: 0; right: 0; text-align: center; }
+  .chev { display: inline-block; width: 26px; height: 26px; border: 5px solid #7dff9e; border-left: 0; border-top: 0; transform: rotate(45deg); margin: 0 7px; opacity: .25; animation: pulse 1.2s infinite; }
+  .chev:nth-child(2) { animation-delay: .2s; }
+  .chev:nth-child(3) { animation-delay: .4s; }
+  @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+  .walklabel { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: #7dff9e; margin-top: 6px; text-shadow: 0 1px 3px #000; }
+  .bottom {
+    pointer-events: auto; position: fixed; left: 0; right: 0;
+    bottom: max(10px, env(safe-area-inset-bottom)); display: flex; gap: 10px; padding: 0 12px;
+  }
+  .bottom button {
+    flex: 1; padding: 12px; border: 1px solid rgba(255,255,255,.25); border-radius: 10px;
+    background: rgba(10, 14, 20, .78); color: #fff; font-size: 14px; font-weight: 600;
+  }
+  .bottom button.primary { background: #2563eb; border-color: #2563eb; }
+  .gate {
+    position: fixed; inset: 0; background: #0a0e14; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; z-index: 10;
+  }
+  .gate button { padding: 14px 26px; font-size: 16px; font-weight: 700; border: 0; border-radius: 12px; background: #2563eb; color: #fff; }
+  .gate p { font-size: 13px; opacity: .75; max-width: 340px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="gate" id="gate">
+    <h2>Live guided capture</h2>
+    <p>Blue ring = <b>PAN</b> (turn the camera). Green chevrons = <b>WALK</b> (move your feet). Two different commands — the HUD keeps them separate.</p>
+    <p>Needs camera + motion/compass permission (and HTTPS). Sensor data (heading, steps, optional GPS) is sent to your OSHAL only.</p>
+    <button id="start">Start camera &amp; sensors</button>
+    <p id="gate-err" style="color:#ff9b9b"></p>
+  </div>
+
+  <video id="cam" autoplay playsinline muted></video>
+  <div class="hud">
+    <div class="card">
+      <div class="meta" id="meta">Step — of —</div>
+      <strong id="title">Loading plan…</strong>
+      <p id="instruction"></p>
+    </div>
+  </div>
+  <div class="warn" id="warn">TOO FAST — slow your pan</div>
+  <div class="panwrap" id="panwrap">
+    <div class="ring"><div class="dot" id="pandot"></div></div>
+    <div class="chlabel">Pan this way</div>
+    <div class="sweep" id="sweep"></div>
+  </div>
+  <div class="walkwrap" id="walkwrap">
+    <span class="chev"></span><span class="chev"></span><span class="chev"></span>
+    <div class="walklabel" id="walklabel">Walk forward — slowly</div>
+  </div>
+  <div class="bottom">
+    <button id="prev">Back</button>
+    <button id="next" class="primary">Next step</button>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+  const API = "/api/spaces";
+  const qs = new URLSearchParams(location.search);
+  const target = qs.get("target") || "room";
+  const sessionId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+  const $ = (id) => document.getElementById(id);
+
+  let plan = null;
+  let idx = 0;
+  let heading = null;        // latest compass heading (deg)
+  let lastHeading = null;
+  let lastHeadingTs = 0;
+  let sweep = 0;             // cumulative pan sweep this step (deg)
+  let steps = 0;             // detected steps this step
+  let lastAccMag = 0;
+  let lastStepTs = 0;
+  let gpsFix = null;
+
+  // A capture step is a PAN step when it sweeps the space, a WALK step when it
+  // translates; perimeter laps are BOTH (walk the loop while panning across).
+  function channels(step) {
+    const t = (step.title + " " + step.instruction).toLowerCase();
+    const walk = step.kind === "capture" && /walk|lap|circle|pass|diagonal|arc|wrap/.test(t);
+    const pan = step.kind === "capture" || step.kind === "closure";
+    return { walk, pan };
+  }
+
+  function renderStep() {
+    const st = plan.steps[idx];
+    $("meta").textContent = "Step " + (idx + 1) + " of " + plan.steps.length + " · ~" + st.seconds + "s · " + st.kind;
+    $("title").textContent = st.title;
+    $("instruction").textContent = st.instruction;
+    const ch = channels(st);
+    $("panwrap").classList.toggle("hidden", !ch.pan);
+    $("walkwrap").classList.toggle("hidden", !ch.walk);
+    $("next").textContent = idx === plan.steps.length - 1 ? "Done — upload clip" : "Next step";
+    sweep = 0; steps = 0;
+  }
+
+  function advance(dir) {
+    if (dir > 0 && idx >= plan.steps.length - 1) {
+      location.href = "/cockpit/?app=spaces";
+      return;
+    }
+    idx = Math.max(0, Math.min(plan.steps.length - 1, idx + dir));
+    renderStep();
+  }
+
+  // ── PAN channel: compass drives the ring arrow + sweep progress + rate guard ──
+  function onOrientation(ev) {
+    let h = null;
+    if (typeof ev.webkitCompassHeading === "number") h = ev.webkitCompassHeading; // iOS: true heading
+    else if (typeof ev.alpha === "number") h = (360 - ev.alpha) % 360;            // spec alpha is CCW
+    if (h == null) return;
+    const now = performance.now();
+    if (lastHeading != null) {
+      let d = h - lastHeading;
+      if (d > 180) d -= 360;
+      if (d < -180) d += 360;
+      const dt = (now - lastHeadingTs) / 1000;
+      if (dt > 0.02) {
+        const rate = Math.abs(d) / dt;                    // deg/s
+        $("warn").style.display = rate > 45 ? "block" : "none";
+        sweep += Math.abs(d);
+      }
+    }
+    lastHeading = h; lastHeadingTs = now; heading = h;
+    // Arrow leads the user onward around the sweep (clockwise by convention).
+    $("pandot").style.transform = "rotate(" + Math.round((sweep % 360) + 20) + "deg)";
+    const goal = 360;
+    $("sweep").textContent = Math.min(100, Math.round((sweep / goal) * 100)) + "% swept";
+    const st = plan && plan.steps[idx];
+    if (st && channels(st).pan && st.kind === "capture" && sweep >= 350) advance(1);
+  }
+
+  // ── WALK channel: crude step detection from accel magnitude peaks ──
+  function onMotion(ev) {
+    const a = ev.accelerationIncludingGravity;
+    if (!a) return;
+    const mag = Math.sqrt((a.x || 0) ** 2 + (a.y || 0) ** 2 + (a.z || 0) ** 2);
+    const now = performance.now();
+    if (mag > 11.2 && lastAccMag <= 11.2 && now - lastStepTs > 350) {
+      steps += 1; lastStepTs = now;
+      const st = plan && plan.steps[idx];
+      if (st && channels(st).walk) {
+        $("walklabel").textContent = "Walk forward — slowly (" + steps + " steps)";
+      }
+    }
+    lastAccMag = mag;
+  }
+
+  // ── Telemetry: the phone-sensor data path (heading/sweep/steps/GPS) ──
+  setInterval(() => {
+    if (!plan) return;
+    fetch(API + "/capture-telemetry", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId, step: idx, ts: Date.now(),
+        headingDeg: heading, sweepDeg: Math.round(sweep), steps,
+        gps: gpsFix,
+      }),
+    }).catch(() => {});
+  }, 2000);
+
+  async function start() {
+    const err = (m) => { $("gate-err").textContent = m; };
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" }, audio: false,
+      });
+      $("cam").srcObject = stream;
+    } catch (e) { err("Camera unavailable: " + e.message + " (HTTPS required)"); return; }
+    try {
+      if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function") {
+        await DeviceOrientationEvent.requestPermission();
+      }
+      if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === "function") {
+        await DeviceMotionEvent.requestPermission();
+      }
+    } catch (_) { /* denied -> arrows fall back to manual Next */ }
+    window.addEventListener("deviceorientationabsolute", onOrientation, true);
+    window.addEventListener("deviceorientation", onOrientation, true);
+    window.addEventListener("devicemotion", onMotion, true);
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(
+        (p) => { gpsFix = { lat: p.coords.latitude, lon: p.coords.longitude, accuracyM: p.coords.accuracy }; },
+        () => {}, { enableHighAccuracy: false, maximumAge: 15000 },
+      );
+    }
+    try {
+      const r = await fetch(API + "/capture-plan?target=" + encodeURIComponent(target), { credentials: "same-origin" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      plan = (await r.json()).plan;
+    } catch (e) { err("Could not load the capture plan: " + e.message); return; }
+    $("gate").classList.add("hidden");
+    renderStep();
+  }
+
+  $("start").addEventListener("click", start);
+  $("prev").addEventListener("click", () => advance(-1));
+  $("next").addEventListener("click", () => advance(1));
+})();
+</script>
+</body>
+</html>

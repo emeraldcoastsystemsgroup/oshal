@@ -1,0 +1,6 @@
+# Cloudflare Pages headers for oswarm.ai / oshal.ai
+# The Windows installer must DOWNLOAD, not render — Pages would otherwise serve
+# a .bat as text and the browser displays it.
+/Install-OSHAL.bat
+  Content-Disposition: attachment; filename="Install-OSHAL.bat"
+  Content-Type: application/octet-stream

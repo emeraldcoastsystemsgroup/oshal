@@ -1,0 +1,576 @@
+/*
+ * Jarvis ambient-listening controls.
+ * Uses Jarvis/cockpit theme tokens when available and remains readable standalone.
+ */
+
+.ambient-mount {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.jarvis-ambient {
+  --ja-bg: var(--panel, rgba(18, 18, 30, .96));
+  --ja-card: var(--card, rgba(30, 30, 52, .78));
+  --ja-line: var(--line, rgba(255, 255, 255, .12));
+  --ja-text: var(--text, #eeeef5);
+  --ja-muted: var(--muted, #a0a0be);
+  --ja-faint: var(--faint, #6f6f8e);
+  --ja-accent: var(--accent, #7c7cff);
+  --ja-danger: var(--danger, #f87171);
+  --ja-warn: var(--warn, #fbbf24);
+  --ja-ok: var(--ok, #34d399);
+  position: absolute;
+  inset: 0;
+  display: block;
+  margin: 0;
+  color: var(--ja-text);
+  font-family: var(--font, Inter, system-ui, sans-serif);
+  pointer-events: none;
+}
+
+.jarvis-ambient *,
+.jarvis-ambient *::before,
+.jarvis-ambient *::after { box-sizing: border-box; }
+
+.jarvis-ambient__sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.jarvis-ambient__bar {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: visible;
+  color: var(--ja-text);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.jarvis-ambient__bar::before,
+.jarvis-ambient__bar::after {
+  position: absolute;
+  inset: -15%;
+  content: '';
+  border: 1px solid color-mix(in srgb, var(--ja-faint) 34%, transparent);
+  border-radius: 50%;
+  opacity: .55;
+  pointer-events: none;
+  transition: border-color .25s ease, box-shadow .25s ease, opacity .25s ease, transform .25s ease;
+}
+
+.jarvis-ambient__bar::after {
+  inset: -23%;
+  opacity: .18;
+}
+
+.jarvis-ambient__state,
+.jarvis-ambient__settings-button,
+.jarvis-ambient__close,
+.jarvis-ambient__actions button,
+.jarvis-ambient__history-controls button {
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.jarvis-ambient__state {
+  position: absolute;
+  left: 50%;
+  bottom: -51px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: max-content;
+  min-height: 44px;
+  padding: 7px 10px;
+  text-align: left;
+  background: transparent;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.jarvis-ambient__state > span:last-child {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.jarvis-ambient__state strong {
+  overflow: hidden;
+  color: var(--ja-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jarvis-ambient__state small {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.jarvis-ambient__dot {
+  position: relative;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  background: var(--ja-faint);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ja-faint) 15%, transparent);
+}
+
+.jarvis-ambient[data-state="listening"] .jarvis-ambient__dot,
+.jarvis-ambient[data-state="armed"] .jarvis-ambient__dot {
+  background: var(--ja-ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ja-ok) 18%, transparent), 0 0 15px var(--ja-ok);
+}
+
+.jarvis-ambient[data-state="listening"] .jarvis-ambient__bar::before {
+  border-color: color-mix(in srgb, var(--ja-ok) 72%, transparent);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--ja-ok) 20%, transparent);
+  opacity: .92;
+  animation: jarvis-ambient-halo-breathe 3.2s ease-in-out infinite;
+}
+
+.jarvis-ambient[data-state="listening"] .jarvis-ambient__bar::after {
+  border-color: color-mix(in srgb, var(--ja-ok) 44%, transparent);
+  opacity: .42;
+}
+
+.jarvis-ambient[data-state="listening"] .jarvis-ambient__state strong {
+  color: var(--ja-ok);
+}
+
+.jarvis-ambient[data-state="armed"] .jarvis-ambient__bar::before,
+.jarvis-ambient[data-state="armed"] .jarvis-ambient__bar::after {
+  border-color: color-mix(in srgb, var(--ja-accent) 78%, transparent);
+  box-shadow: 0 0 34px color-mix(in srgb, var(--ja-accent) 28%, transparent);
+  opacity: 1;
+  animation: jarvis-ambient-halo-awake 1.1s ease-out infinite;
+}
+
+.jarvis-ambient[data-state="armed"] .jarvis-ambient__state strong { color: var(--ja-accent); }
+
+.jarvis-ambient[data-state="listening"] .jarvis-ambient__dot::after,
+.jarvis-ambient[data-state="armed"] .jarvis-ambient__dot::after {
+  position: absolute;
+  inset: -5px;
+  content: '';
+  border: 1px solid var(--ja-ok);
+  border-radius: 50%;
+  animation: jarvis-ambient-pulse 1.8s ease-out infinite;
+}
+
+.jarvis-ambient[data-state="armed"] .jarvis-ambient__dot,
+.jarvis-ambient[data-state="starting"] .jarvis-ambient__dot,
+.jarvis-ambient[data-state="reconnecting"] .jarvis-ambient__dot { background: var(--ja-warn); }
+
+.jarvis-ambient[data-state="starting"] .jarvis-ambient__bar::before,
+.jarvis-ambient[data-state="reconnecting"] .jarvis-ambient__bar::before {
+  border-color: color-mix(in srgb, var(--ja-warn) 72%, transparent);
+  border-left-color: transparent;
+  opacity: .9;
+  animation: jarvis-ambient-halo-spin 1.25s linear infinite;
+}
+
+.jarvis-ambient[data-state="blocked"] .jarvis-ambient__dot,
+.jarvis-ambient[data-state="error"] .jarvis-ambient__dot { background: var(--ja-danger); }
+
+.jarvis-ambient[data-state="blocked"] .jarvis-ambient__bar::before,
+.jarvis-ambient[data-state="error"] .jarvis-ambient__bar::before {
+  border-color: color-mix(in srgb, var(--ja-danger) 78%, transparent);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--ja-danger) 20%, transparent);
+  opacity: .9;
+}
+
+.jarvis-ambient__settings-button {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  color: var(--ja-muted);
+  background: color-mix(in srgb, var(--ja-bg) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ja-line) 75%, transparent);
+  border-radius: 50%;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: auto;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.jarvis-ambient__state:hover { background: color-mix(in srgb, var(--ja-accent) 7%, transparent); }
+.jarvis-ambient__settings-button:hover { color: var(--ja-text); border-color: var(--ja-accent); }
+
+.jarvis-ambient__state:focus-visible,
+.jarvis-ambient__settings-button:focus-visible,
+.jarvis-ambient button:focus-visible,
+.jarvis-ambient input:focus-visible,
+.jarvis-ambient select:focus-visible,
+.jarvis-ambient textarea:focus-visible {
+  outline: 2px solid var(--ja-accent);
+  outline-offset: 2px;
+}
+
+.jarvis-ambient__backdrop {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 3, 10, .72);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+
+.jarvis-ambient__backdrop[hidden] { display: none; }
+
+body.jarvis-ambient-open { overflow: hidden; }
+body.jarvis-ambient-open .scroll { z-index: 20; }
+
+.jarvis-ambient__panel {
+  width: min(720px, 100%);
+  max-height: min(860px, calc(100dvh - 48px));
+  overflow: auto;
+  color: var(--ja-text);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--ja-bg) 96%, var(--ja-accent) 4%), var(--ja-bg));
+  border: 1px solid color-mix(in srgb, var(--ja-line) 80%, var(--ja-accent) 20%);
+  border-radius: 24px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .58), inset 0 1px rgba(255, 255, 255, .08);
+}
+
+.jarvis-ambient__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 26px 16px;
+}
+
+.jarvis-ambient__eyebrow {
+  margin: 0 0 5px;
+  color: var(--ja-accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.jarvis-ambient__header h2 {
+  margin: 0;
+  color: var(--ja-text);
+  font-family: var(--font-d, Inter, system-ui, sans-serif);
+  font-size: clamp(20px, 4vw, 27px);
+  letter-spacing: -.02em;
+}
+
+.jarvis-ambient__close {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  color: var(--ja-muted);
+  background: var(--ja-card);
+  border: 1px solid var(--ja-line);
+  border-radius: 50%;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.jarvis-ambient__privacy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 26px 18px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--ja-ok) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ja-ok) 30%, transparent);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.jarvis-ambient__privacy strong { color: var(--ja-ok); }
+.jarvis-ambient__privacy span { color: var(--ja-muted); }
+
+.jarvis-ambient form { padding: 0 26px 22px; }
+
+.jarvis-ambient__switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 13px 14px;
+  background: var(--ja-card);
+  border: 1px solid var(--ja-line);
+  border-radius: 14px;
+}
+
+.jarvis-ambient__switch-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.jarvis-ambient__switch-row strong { font-size: 13px; }
+.jarvis-ambient__switch-row small { color: var(--ja-muted); font-size: 11px; line-height: 1.35; }
+.jarvis-ambient__switch-row input { position: absolute; opacity: 0; pointer-events: none; }
+
+.jarvis-ambient__switch-row i {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 24px;
+  background: var(--ja-faint);
+  border-radius: 999px;
+  transition: .2s ease;
+}
+
+.jarvis-ambient__switch-row i::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  content: '';
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .35);
+  transition: .2s ease;
+}
+
+.jarvis-ambient__switch-row input:checked + i { background: var(--ja-ok); }
+.jarvis-ambient__switch-row input:checked + i::after { transform: translateX(20px); }
+.jarvis-ambient__switch-row input:focus-visible + i { outline: 2px solid var(--ja-accent); outline-offset: 2px; }
+.jarvis-ambient__switch-row input:disabled + i { cursor: not-allowed; opacity: .45; }
+
+.jarvis-ambient__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.jarvis-ambient__grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ja-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.jarvis-ambient__grid label > span small { color: var(--ja-faint); font-weight: 500; }
+.jarvis-ambient__wide { grid-column: 1 / -1; }
+
+.jarvis-ambient input,
+.jarvis-ambient select,
+.jarvis-ambient textarea {
+  width: 100%;
+  color: var(--ja-text);
+  background: color-mix(in srgb, var(--ja-card) 75%, black 8%);
+  border: 1px solid var(--ja-line);
+  border-radius: 10px;
+  padding: 10px 11px;
+  font: 500 13px/1.35 var(--font, Inter, system-ui, sans-serif);
+}
+
+.jarvis-ambient textarea { resize: vertical; }
+.jarvis-ambient option { color: #171722; background: #f5f5fb; }
+
+.jarvis-ambient__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 13px;
+  color: var(--ja-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.jarvis-ambient__check input { flex: none; width: 15px; height: 15px; margin-top: 1px; accent-color: var(--ja-accent); }
+
+.jarvis-ambient__limitation,
+.jarvis-ambient__notice {
+  min-height: 1.4em;
+  margin: 13px 0 0;
+  color: var(--ja-faint);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.jarvis-ambient__notice { color: var(--ja-warn); }
+
+.jarvis-ambient__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 17px;
+}
+
+.jarvis-ambient__actions button,
+.jarvis-ambient__history-controls button {
+  padding: 9px 14px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.jarvis-ambient__primary { color: #fff !important; background: var(--ja-accent); }
+.jarvis-ambient__secondary,
+.jarvis-ambient__history-controls button { color: var(--ja-muted) !important; background: var(--ja-card); border: 1px solid var(--ja-line) !important; }
+
+.jarvis-ambient__speaker-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 26px;
+  background: color-mix(in srgb, var(--ja-accent) 6%, transparent);
+  border-top: 1px solid var(--ja-line);
+}
+
+.jarvis-ambient__speaker-tools > div { display: grid; gap: 3px; }
+.jarvis-ambient__speaker-tools strong { font-size: 12px; }
+.jarvis-ambient__speaker-tools small { color: var(--ja-muted); font-size: 10.5px; line-height: 1.4; }
+.jarvis-ambient__speaker-tools button {
+  flex: none;
+  padding: 9px 13px;
+  color: var(--ja-text);
+  background: var(--ja-card);
+  border: 1px solid var(--ja-line);
+  border-radius: 9px;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.jarvis-ambient__history {
+  display: grid;
+  gap: 12px;
+  padding: 18px 26px;
+  background: color-mix(in srgb, var(--ja-card) 70%, transparent);
+  border-top: 1px solid var(--ja-line);
+  border-bottom: 1px solid var(--ja-line);
+}
+
+.jarvis-ambient__history > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.jarvis-ambient__history strong { font-size: 12px; }
+.jarvis-ambient__history small { color: var(--ja-muted); font-size: 10.5px; }
+
+.jarvis-ambient__history-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.jarvis-ambient__history-controls input { width: auto; min-width: 145px; padding: 8px 10px; }
+
+.jarvis-ambient__transcript {
+  max-height: 230px;
+  overflow: auto;
+  padding: 5px 12px;
+  background: rgba(0, 0, 0, .15);
+  border: 1px solid var(--ja-line);
+  border-radius: 10px;
+  scrollbar-width: thin;
+}
+
+.jarvis-ambient__transcript article {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--ja-line);
+}
+
+.jarvis-ambient__transcript article:last-child { border-bottom: 0; }
+.jarvis-ambient__transcript article > strong { color: var(--ja-faint); font-size: 10px; }
+.jarvis-ambient__transcript p { margin: 0; color: var(--ja-muted); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; }
+
+.jarvis-ambient__transcript .jarvis-ambient__summary {
+  display: block;
+  margin: 7px 0;
+  padding: 11px 12px;
+  background: color-mix(in srgb, var(--ja-accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ja-accent) 25%, transparent);
+  border-radius: 9px;
+}
+
+.jarvis-ambient__summary strong { display: block; margin-bottom: 5px; color: var(--ja-accent) !important; }
+
+.jarvis-ambient footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 26px 17px;
+  color: var(--ja-faint);
+  font-size: 9.5px;
+}
+
+@keyframes jarvis-ambient-pulse {
+  0% { opacity: .8; transform: scale(.7); }
+  75%, 100% { opacity: 0; transform: scale(1.55); }
+}
+
+@keyframes jarvis-ambient-halo-breathe {
+  0%, 100% { opacity: .58; transform: scale(.975); }
+  50% { opacity: 1; transform: scale(1.025); }
+}
+
+@keyframes jarvis-ambient-halo-awake {
+  0% { opacity: .95; transform: scale(.88); }
+  78%, 100% { opacity: 0; transform: scale(1.14); }
+}
+
+@keyframes jarvis-ambient-halo-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 620px) {
+  .jarvis-ambient__state { bottom: -48px; }
+  .jarvis-ambient__state strong { max-width: 180px; }
+  .jarvis-ambient__settings-button { right: -9px; bottom: -9px; }
+  .jarvis-ambient__backdrop { align-items: end; padding: 0; }
+  .jarvis-ambient__panel { max-height: 94dvh; border-radius: 22px 22px 0 0; }
+  .jarvis-ambient__header { padding: 20px 18px 14px; }
+  .jarvis-ambient__privacy { margin: 0 18px 16px; }
+  .jarvis-ambient form { padding: 0 18px 18px; }
+  .jarvis-ambient__grid { grid-template-columns: 1fr; }
+  .jarvis-ambient__wide { grid-column: auto; }
+  .jarvis-ambient__history { padding: 16px 18px; }
+  .jarvis-ambient__speaker-tools { align-items: flex-start; padding: 15px 18px; }
+  .jarvis-ambient footer { flex-direction: column; padding: 12px 18px 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jarvis-ambient *,
+  .jarvis-ambient *::before,
+  .jarvis-ambient *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}

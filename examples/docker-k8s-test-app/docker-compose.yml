@@ -1,0 +1,18 @@
+services:
+  test-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: oshal-test-app:local
+    container_name: oshal-test-app
+    environment:
+      PORT: 8080
+      APP_NAME: oshal-test-app
+      NODE_ENV: production
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8080/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 3

@@ -1,0 +1,47 @@
+provider: tmdb
+displayName: Movies & TV (TMDB)
+version: 1.0.0
+baseUrl: https://api.themoviedb.org/3
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 20
+  perSecond: 20
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: page
+  pageSize: 1
+  nextField: next_page
+  itemsField: results
+resources:
+  - name: search-movies
+    tool: tmdb-search
+    method: GET
+    path: /search/movie
+    query:
+      query: '{query}'
+      include_adult: 'false'
+      page: '{page}'
+  - name: where-to-watch
+    tool: tmdb-watch-providers
+    method: GET
+    path: /movie/{movieId}/watch/providers
+  - name: recommendations
+    tool: tmdb-recommendations
+    method: GET
+    path: /movie/{movieId}/recommendations
+    query:
+      page: '{page}'
+  - name: trending
+    tool: tmdb-trending
+    method: GET
+    path: /trending/movie/{window}
+metadata:
+  icon: themoviedatabase
+  iconTitle: The Movie Database
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,200 @@
+<!doctype html>
+<!--
+  Compliance & Posture — read-only governance surface. Fetches /api/governance/posture and renders
+  the posture grid: owned-vs-unowned row counts per owner-bearing table, the security control
+  toggles (RBAC enforce, CSP, crypto-at-rest, rate limit, legacy-unowned, operator allowlist), and
+  the recent eval pass-rate when available. There is also a one-click CSV/JSON export of the
+  per-resource access_audit_log (both gated to admins when OSHAL_RBAC_ENFORCE is on).
+
+  Framework surface conventions: local CSS vars are overridden from the cockpit's active theme by
+  the theme-sync script at the bottom (light/dark aware, reacts to data-theme + cockpit-theme), so
+  this page does NOT hardcode a palette beyond its standalone defaults. Vanilla fetch, no build.
+-->
+<html lang="en"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Compliance & Posture</title>
+<style>
+  /* Standalone defaults; the theme-sync script overrides surfaces/text/borders from the cockpit. */
+  :root {
+    --bg:#0e0e16; --panel:#15151f; --panel2:#1b1b27; --line:#272735;
+    --text:#e6e6f0; --muted:#8b8ba3; --accent:#7c6cff; --accent2:#00d3a7;
+    --scrollbar-thumb:rgba(255,255,255,.14);
+    --good:#00d3a7; --warn:#ffb454; --bad:#ff6b6b;
+    --radius:14px; --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { font-family:var(--font); color:var(--text); background:var(--bg); min-height:100%; }
+  .wrap { max-width:1100px; margin:0 auto; padding:22px 22px 70px; }
+  header.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:6px; }
+  .logo { width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
+    background:var(--accent); color:#fff; font-weight:800; font-size:16px; }
+  h1 { font-size:20px; margin:0; }
+  .sub { color:var(--muted); font-size:12.5px; line-height:1.5; margin:4px 0 18px; }
+  .spacer { flex:1; }
+  button.btn { font-family:var(--font); cursor:pointer; border:1px solid var(--line); background:var(--panel2);
+    color:var(--text); padding:8px 14px; border-radius:9px; font-size:12.5px; font-weight:600; }
+  button.btn:hover { border-color:var(--accent); }
+  button.btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:15px 16px; }
+  .card h2 { font-size:13px; margin:0 0 10px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .ctl { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .ctl:last-child { border-bottom:0; }
+  .tag { font-size:11px; font-weight:700; padding:3px 10px; border-radius:999px; border:1px solid var(--line); }
+  .tag.on { background:color-mix(in srgb,var(--good) 16%,transparent); color:var(--good); border-color:var(--good); }
+  .tag.off { background:color-mix(in srgb,var(--muted) 14%,transparent); color:var(--muted); }
+  .tag.warn { background:color-mix(in srgb,var(--warn) 16%,transparent); color:var(--warn); border-color:var(--warn); }
+  .tag.bad { background:color-mix(in srgb,var(--bad) 16%,transparent); color:var(--bad); border-color:var(--bad); }
+
+  .own { display:flex; flex-direction:column; gap:8px; }
+  .own .row { font-size:13px; }
+  .own .name { font-weight:700; }
+  .bar { height:8px; border-radius:999px; background:var(--panel2); overflow:hidden; margin-top:6px; display:flex; }
+  .bar .owned { background:var(--good); height:100%; }
+  .bar .unowned { background:var(--warn); height:100%; }
+  .own .meta { font-size:11.5px; color:var(--muted); margin-top:4px; }
+  .na { color:var(--muted); font-size:12px; font-style:italic; }
+
+  .section-title { font-size:14px; margin:22px 0 10px; }
+  .err { color:var(--bad); font-size:12.5px; background:color-mix(in srgb,var(--bad) 12%,transparent);
+    border:1px solid var(--bad); padding:10px 13px; border-radius:11px; margin-top:13px; }
+  .stamp { color:var(--muted); font-size:11.5px; margin-top:14px; }
+  .skeleton { height:120px; border-radius:var(--radius); background:var(--panel2); opacity:.5; }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo">G</div>
+    <div>
+      <h1>Compliance &amp; Posture</h1>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="refreshBtn">Refresh</button>
+    <button class="btn" id="jsonBtn">Export JSON</button>
+    <button class="btn primary" id="csvBtn">Export CSV</button>
+  </header>
+  <div class="sub">Read-only governance snapshot of the swarm: data ownership coverage, the active
+    security controls, and recent evaluation health. Audit export pulls the per-resource access log.</div>
+
+  <div id="body"><div class="skeleton"></div></div>
+  <div class="stamp" id="stamp"></div>
+</div>
+
+<script>
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function api(path){
+  const r = await fetch('/api/governance'+path, { headers:{ 'Accept':'application/json' } });
+  if(!r.ok){ let m; try{ m=(await r.json()).error; }catch(e){} throw new Error(m||('HTTP '+r.status)); }
+  return r.json();
+}
+
+function ctlTag(val){
+  // val: true => on (green), false => off (neutral). Caller may pass {state, label}.
+  if (typeof val === 'object' && val){ return '<span class="tag '+esc(val.state)+'">'+esc(val.label)+'</span>'; }
+  return val ? '<span class="tag on">on</span>' : '<span class="tag off">off</span>';
+}
+
+function ownershipCard(name, c){
+  if(!c || !c.available){
+    return '<div class="row"><span class="name">'+esc(name)+'</span> <span class="na">table not present</span></div>';
+  }
+  const total = c.total||0, owned = c.owned||0, unowned = c.unowned||0;
+  const op = total ? Math.round(owned/total*100) : 0;
+  const up = total ? 100-op : 0;
+  return '<div class="row">'
+    + '<span class="name">'+esc(name)+'</span>'
+    + '<div class="bar"><div class="owned" style="width:'+op+'%"></div><div class="unowned" style="width:'+up+'%"></div></div>'
+    + '<div class="meta">'+owned+' owned / '+unowned+' unowned / '+total+' total ('+op+'% owned)</div>'
+    + '</div>';
+}
+
+function rlsCard(rls){
+  if(!rls || !rls.available){
+    const msg = rls && rls.error ? rls.error : 'RLS posture unavailable';
+    return '<div class="ctl"><span>RLS posture</span><span class="tag bad">unavailable</span></div>'
+      + '<div class="meta">'+esc(msg)+'</div>';
+  }
+  const stageState = rls.stage === 'enforce' ? 'on' : (rls.stage === 'permissive' ? 'warn' : 'bad');
+  const ready = rls.releaseReady ? {state:'on',label:'ready'} : {state:'bad',label:'blocked'};
+  const conn = rls.connection || {};
+  const controls = rls.controls || {};
+  const tableRows = (rls.tables || []).map(t => {
+    const state = t.stage === 'enforce' ? 'on' : (t.stage === 'permissive' ? 'warn' : 'bad');
+    return '<div class="ctl"><span>'+esc(t.table)+'</span><span class="tag '+state+'">'+esc(t.stage)+'</span></div>';
+  }).join('');
+  const blockers = (rls.blockers || []).slice(0, 4).map(b => '<div class="meta">- '+esc(b)+'</div>').join('');
+  return '<div class="ctl"><span>Release gate</span>'+ctlTag(ready)+'</div>'
+    + '<div class="ctl"><span>Stage</span><span class="tag '+stageState+'">'+esc(rls.stage)+'</span></div>'
+    + '<div class="ctl"><span>DB role</span><span class="tag '+(conn.validProofRole?'on':'bad')+'">'+esc(conn.role || 'unknown')+'</span></div>'
+    + '<div class="ctl"><span>GUC wrapper</span>'+ctlTag(!!controls.dbGuc)+'</div>'
+    + '<div class="ctl"><span>Schema bootstrap</span><span class="tag '+(controls.schemaBootstrap === 'validate-only' ? 'on' : 'warn')+'">'+esc(controls.schemaBootstrap || 'unknown')+'</span></div>'
+    + tableRows
+    + (blockers ? '<div class="section-title">Blockers</div>'+blockers : '');
+}
+
+function render(p){
+  const ctrls = p.controls || {};
+  // RBAC enforcement: off is the safe backward-compatible default, shown as a neutral note.
+  const rbacTag = ctrls.rbacEnforce ? {state:'on',label:'enforcing'} : {state:'warn',label:'permissive (default)'};
+  const legacyTag = ctrls.legacyUnownedAllowed ? {state:'warn',label:'allowed'} : {state:'on',label:'closed'};
+  const mockTag = ctrls.mockOidc ? {state:'bad',label:'mock OIDC'} : {state:'on',label:'real IdP'};
+  const tlsTag = ctrls.tlsRejectUnauthorized ? {state:'on',label:'verifying'} : {state:'bad',label:'disabled'};
+
+  const controlRows = [
+    ['RBAC enforcement', rbacTag],
+    ['Legacy unowned access', legacyTag],
+    ['Content-Security-Policy', ctrls.cspEnabled],
+    ['Crypto at rest (ENCRYPTION_KEY)', ctrls.cryptoAtRest],
+    ['Rate limiting', ctrls.rateLimitEnabled],
+    ['Operator allowlist configured', ctrls.operatorAllowlistConfigured],
+    ['OIDC mode', mockTag],
+    ['TLS cert verification', tlsTag],
+  ].map(([label,v]) => '<div class="ctl"><span>'+esc(label)+'</span>'+ctlTag(v)+'</div>').join('');
+
+  const own = p.ownership || {};
+  const ownRows = [
+    ['tickets', own.tickets],
+    ['workspaces', own.workspaces],
+    ['access_audit_log', own.accessAuditLog],
+    ['chat_tasks', own.chatTasks],
+  ].map(([n,c]) => ownershipCard(n,c)).join('');
+
+  const rate = (p.eval && p.eval.last7dPassRate != null)
+    ? (Math.round(p.eval.last7dPassRate*1000)/10)+'%'
+    : '<span class="na">no recent eval runs</span>';
+
+  document.getElementById('body').innerHTML =
+    '<div class="grid">'
+    + '<div class="card"><h2>Security controls</h2>'+controlRows+'</div>'
+    + '<div class="card"><h2>Data ownership coverage</h2><div class="own">'+ownRows+'</div></div>'
+    + '<div class="card"><h2>Tenant isolation</h2>'+rlsCard(p.rls)+'</div>'
+    + '<div class="card"><h2>Evaluation health (7d)</h2><div class="ctl"><span>Pass rate</span><strong>'+rate+'</strong></div></div>'
+    + '</div>';
+
+  document.getElementById('stamp').textContent = 'Snapshot generated '+(p.generatedAt||'');
+}
+
+async function load(){
+  document.getElementById('body').innerHTML = '<div class="skeleton"></div>';
+  try { render(await api('/posture')); }
+  catch(e){ document.getElementById('body').innerHTML = '<div class="err">Could not load posture: '+esc(e.message)+'</div>'; }
+}
+
+function download(href){ const a=document.createElement('a'); a.href=href; document.body.appendChild(a); a.click(); a.remove(); }
+
+document.getElementById('refreshBtn').onclick = load;
+document.getElementById('csvBtn').onclick = () => download('/api/governance/audit/export?format=csv');
+document.getElementById('jsonBtn').onclick = () => download('/api/governance/audit/export?format=json');
+load();
+</script>
+
+<!-- Framework theme-sync: copy the cockpit's active theme tokens onto our locals (light/dark
+     aware, reacts to data-theme + cockpit-theme). Same script every in-cockpit surface uses. -->
+<script>(function(){const M={'--bg':'--bg-primary','--panel':'--bg-secondary','--panel2':'--bg-tertiary','--line':'--border-color','--text':'--text-primary','--muted':'--text-secondary','--accent':'--accent-primary','--accent2':'--status-success','--scrollbar-thumb':'--scrollbar-thumb'};function m(){try{const p=(window.parent&&window.parent!==window)?window.parent:null;if(!p)return;const cs=p.getComputedStyle(p.document.documentElement);for(const k in M){const v=cs.getPropertyValue(M[k]).trim();if(v)document.documentElement.style.setProperty(k,v);}}catch(e){}}m();window.addEventListener('storage',e=>{if(e.key==='cockpit-theme')setTimeout(m,30);});try{const p=window.parent;if(p&&p!==window)new MutationObserver(m).observe(p.document.documentElement,{attributes:true,attributeFilter:['data-theme']});}catch(e){}document.addEventListener('DOMContentLoaded',m);})();</script>
+</body>
+</html>

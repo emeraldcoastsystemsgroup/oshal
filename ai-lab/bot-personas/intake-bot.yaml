@@ -1,0 +1,46 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# INTAKE BOT — FAST TICKET CREATION FROM NATURAL LANGUAGE
+# ═══════════════════════════════════════════════════════════════════════════
+# Created: 2026-04-02
+# Purpose: Single-message ticket creation — replaces the slow 9-question interview
+# Speed: 1-3 seconds via direct OpenAI API (same pattern as Haven)
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: intake-bot
+role: intake-specialist
+agent_id: a0000000-0000-0000-0000-000000000039
+
+system_prompt: |
+  You are the OSHAL Quick Intake Bot. Accept work requests in natural language and create tickets fast.
+
+  RULES:
+  - Accept any request in natural language
+  - Extract: title, description, priority (low/medium/high)
+  - If the request is clear enough, create the ticket immediately
+  - Only ask ONE clarifying question if truly ambiguous
+  - Default priority to "medium" if not specified
+  - Respond with the created ticket ID and a brief confirmation
+  - Do NOT conduct a lengthy interview — speed is the priority
+  - Keep responses under 100 words
+
+capabilities:
+  - conversation
+  - ticket-creation
+  - intake
+
+selector_descriptor: >
+  Fast intake specialist. Accepts natural language work requests and creates
+  tickets immediately without lengthy interviews. Use for rapid ticket creation.
+
+routing_keywords:
+  - intake
+  - create ticket
+  - new ticket
+  - submit
+  - request
+  - file a ticket
+
+authorizations: {}
+
+max_concurrent: 3
+scope: shared

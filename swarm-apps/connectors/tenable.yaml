@@ -1,0 +1,43 @@
+provider: tenable
+displayName: Tenable
+version: 1.0.0
+baseUrl: https://cloud.tenable.com
+auth:
+  type: apiKeyHeader
+  header: X-ApiKeys
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: scans
+    tool: tenable-scans
+    method: GET
+    path: /scans
+  - name: scan
+    tool: tenable-scan
+    method: GET
+    path: /scans/{scanId}
+  - name: assets
+    tool: tenable-assets
+    method: GET
+    path: /assets
+  - name: vulnerabilities
+    tool: tenable-vulnerabilities
+    method: GET
+    path: /workbenches/vulnerabilities
+    query:
+      date_range: '{dateRange}'
+      filter.0.filter: '{filterField}'
+      filter.0.quality: '{filterOp}'
+      filter.0.value: '{filterValue}'
+  - name: asset-vulnerabilities
+    tool: tenable-asset-vulnerabilities
+    method: GET
+    path: /workbenches/assets/{assetId}/vulnerabilities
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/tenable.com.ico

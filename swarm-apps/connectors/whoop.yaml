@@ -1,0 +1,40 @@
+provider: whoop
+displayName: WHOOP
+version: 1.0.0
+baseUrl: https://api.prod.whoop.com/developer
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: nextToken
+  nextField: next_token
+  itemsField: records
+resources:
+  - name: me
+    tool: whoop-me
+    method: GET
+    path: /v1/user/profile/basic
+  - name: recovery
+    tool: whoop-recovery
+    method: GET
+    path: /v1/recovery
+    query:
+      limit: '25'
+    paginate: true
+  - name: cycles
+    tool: whoop-cycles
+    method: GET
+    path: /v1/cycle
+    query:
+      limit: '25'
+    paginate: true
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/prod.whoop.com.ico

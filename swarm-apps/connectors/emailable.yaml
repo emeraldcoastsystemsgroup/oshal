@@ -1,0 +1,28 @@
+provider: emailable
+displayName: Emailable
+version: 1.0.0
+baseUrl: https://api.emailable.com/v1
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: verify
+    tool: emailable-verify
+    method: GET
+    path: /verify
+    query:
+      email: '{email}'
+  - name: account
+    tool: emailable-account
+    method: GET
+    path: /account
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/emailable.com.ico

@@ -1,0 +1,26 @@
+provider: faire
+displayName: Faire
+version: 1.0.0
+baseUrl: https://www.faire.com/external-api/v2
+auth:
+  type: apiKeyHeader
+  header: X-FAIRE-ACCESS-TOKEN
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: orders
+    tool: faire-orders
+    method: GET
+    path: /orders
+  - name: products
+    tool: faire-products
+    method: GET
+    path: /products
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/faire.com.ico

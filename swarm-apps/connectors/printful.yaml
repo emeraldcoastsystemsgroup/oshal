@@ -1,0 +1,29 @@
+provider: printful
+displayName: Printful
+version: 1.0.0
+baseUrl: https://api.printful.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: store-products
+    tool: printful-store-products
+    method: GET
+    path: /store/products
+  - name: orders
+    tool: printful-orders
+    method: GET
+    path: /orders
+  - name: products
+    tool: printful-products
+    method: GET
+    path: /products
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/printful.com.ico

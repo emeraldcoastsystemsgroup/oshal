@@ -1,0 +1,42 @@
+provider: hetzner
+displayName: Hetzner Cloud
+version: 1.0.0
+baseUrl: https://api.hetzner.cloud/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: servers
+    tool: hetzner-servers
+    method: GET
+    path: /servers
+  - name: server
+    tool: hetzner-server
+    method: GET
+    path: /servers/{serverId}
+  - name: volumes
+    tool: hetzner-volumes
+    method: GET
+    path: /volumes
+  - name: networks
+    tool: hetzner-networks
+    method: GET
+    path: /networks
+  - name: images
+    tool: hetzner-images
+    method: GET
+    path: /images
+  - name: datacenters
+    tool: hetzner-datacenters
+    method: GET
+    path: /datacenters
+metadata:
+  icon: hetzner
+  iconTitle: Hetzner
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,24 @@
+provider: mailboxlayer
+displayName: mailboxlayer
+version: 1.0.0
+baseUrl: https://apilayer.net/api
+auth:
+  type: apiKeyQuery
+  param: access_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: check
+    tool: mailboxlayer-check
+    method: GET
+    path: /check
+    query:
+      email: '{email}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/apilayer.net.ico

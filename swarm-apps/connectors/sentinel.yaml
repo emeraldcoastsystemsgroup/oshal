@@ -1,0 +1,40 @@
+provider: sentinel
+displayName: Microsoft Sentinel
+version: 1.0.0
+baseUrl: https://management.azure.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: incidents
+    tool: sentinel-incidents
+    method: GET
+    path: >-
+      /subscriptions/${env:AZURE_SUBSCRIPTION_ID}/resourceGroups/${env:SENTINEL_RESOURCE_GROUP}/providers/Microsoft.OperationalInsights/workspaces/${env:SENTINEL_WORKSPACE}/providers/Microsoft.SecurityInsights/incidents
+    query:
+      api-version: '2023-11-01'
+      $top: '{top}'
+      $filter: '{filter}'
+  - name: incident
+    tool: sentinel-incident
+    method: GET
+    path: >-
+      /subscriptions/${env:AZURE_SUBSCRIPTION_ID}/resourceGroups/${env:SENTINEL_RESOURCE_GROUP}/providers/Microsoft.OperationalInsights/workspaces/${env:SENTINEL_WORKSPACE}/providers/Microsoft.SecurityInsights/incidents/{incidentId}
+    query:
+      api-version: '2023-11-01'
+  - name: bookmarks
+    tool: sentinel-bookmarks
+    method: GET
+    path: >-
+      /subscriptions/${env:AZURE_SUBSCRIPTION_ID}/resourceGroups/${env:SENTINEL_RESOURCE_GROUP}/providers/Microsoft.OperationalInsights/workspaces/${env:SENTINEL_WORKSPACE}/providers/Microsoft.SecurityInsights/bookmarks
+    query:
+      api-version: '2023-11-01'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/management.azure.com.ico

@@ -1,0 +1,31 @@
+provider: openai
+displayName: OpenAI
+version: 1.0.0
+baseUrl: https://api.openai.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-models
+    tool: openai-list-models
+    method: GET
+    path: /models
+  - name: create-completion
+    tool: openai-create-completion
+    method: POST
+    path: /chat/completions
+    body: '{request}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List the OpenAI models available to the connected account, with a chat-completions resource for direct model calls."
+  category: "AI"
+  icon: openai
+  iconTitle: OpenAI
+  iconSource: simple-icons
+  iconVerified: true

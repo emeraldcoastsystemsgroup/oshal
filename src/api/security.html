@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<!--
+  Security Center surface — the swarm's self-security app (ADR-055). Self-contained iframe page
+  (served by createSecurityRoutes at /api/security/). Top: run an active scan across the four
+  scopes (posture / runtime / ledger / audit) and a severity rollup. Below: the findings list,
+  worst-first, each expandable to its detail + redacted evidence, with one-click "Assess"
+  (the security-analyst bot triages it), "Ticket" (escalate into the ticketing spine), and
+  Resolve/Ignore. Theme syncs to the cockpit.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Security Center</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+<style>
+  /* Keep the surface's own short alias names, but DERIVE each from a framework token instead of a
+     literal hex — so all eleven themes work, not just midnight (whose hex these used to match).
+     Semantic severity colors come from the theme's status tokens where one maps cleanly, with the
+     old hex as a fallback so a theme that omits one stays legible. */
+  :root {
+    --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color);
+    --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary); --accent2:var(--accent-primary-hover);
+    --critical:var(--status-error,#ff5d6c); --high:#ff9152; --medium:var(--status-warning,#ffd24a); --low:var(--status-success,#5fd0a8); --info:#7f8db0;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+  .page { max-width:960px; margin:0 auto; padding:26px 22px 70px; }
+  .head { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  h1 { font-size:23px; margin:0; }
+  .badge { font-size:22px; }
+  .sub { color:var(--muted); font-size:13px; line-height:1.5; margin-bottom:14px; }
+  .actions { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  .btn { border:none; border-radius:8px; padding:9px 15px; cursor:pointer; font-size:13px; font-weight:600; color:#06101f; background:var(--accent); }
+  .btn.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--text); }
+  .btn.sm { padding:5px 10px; font-size:12px; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:16px; }
+  .panel h2 { font-size:15px; margin:0 0 12px; }
+  .scopes { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+  .scopes label { font-size:13px; color:var(--muted); display:flex; gap:6px; align-items:center; cursor:pointer; }
+  .stats { display:flex; gap:10px; flex-wrap:wrap; }
+  .stat { background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:10px 14px; min-width:96px; cursor:pointer; }
+  .stat .n { font-size:22px; font-weight:700; }
+  .stat .l { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .stat.sel { outline:2px solid var(--accent); }
+  .n.critical{color:var(--critical)} .n.high{color:var(--high)} .n.medium{color:var(--medium)} .n.low{color:var(--low)} .n.info{color:var(--info)}
+  .filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .chip { background:var(--panel2); border:1px solid var(--line); border-radius:20px; padding:5px 12px; font-size:12px; cursor:pointer; color:var(--muted); }
+  .chip.sel { background:var(--accent); color:#06101f; border-color:var(--accent); font-weight:600; }
+  .find { border:1px solid var(--line); border-left-width:4px; border-radius:10px; padding:12px 14px; margin-bottom:10px; background:var(--panel2); }
+  .find.critical{border-left-color:var(--critical)} .find.high{border-left-color:var(--high)} .find.medium{border-left-color:var(--medium)} .find.low{border-left-color:var(--low)} .find.info{border-left-color:var(--info)}
+  .find .top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:20px; background:var(--panel); border:1px solid var(--line); color:var(--muted); }
+  .pill.sev { font-weight:700; color:#06101f; }
+  .pill.sev.critical{background:var(--critical)} .pill.sev.high{background:var(--high)} .pill.sev.medium{background:var(--medium);color:#3a2c00} .pill.sev.low{background:var(--low);color:#06281c} .pill.sev.info{background:var(--info)}
+  .find .ttl { font-weight:600; font-size:14px; }
+  .find .det { color:var(--muted); font-size:13px; line-height:1.5; margin:8px 0; }
+  .find .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  .ev { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; color:var(--accent2); white-space:pre-wrap; word-break:break-word; margin-top:8px; }
+  .assess { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:8px; font-size:13px; line-height:1.5; }
+  .assess .lbl { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  .foot { color:var(--muted); font-size:12px; }
+  .empty { color:var(--muted); text-align:center; padding:30px; }
+  a { color:var(--accent2); }
+
+  @media (max-width: 640px) {
+    .page { padding: 16px 14px 50px; }
+    .head { flex-wrap: wrap; gap: 8px; }
+    .actions { margin-left: 0; width: 100%; }
+    .actions .btn { width: 100%; text-align: center; }
+    .stat { min-width: 72px; padding: 8px 10px; }
+    .stat .n { font-size: 18px; }
+    .btn { font-size: 14px; padding: 10px 14px; }
+    .btn.sm { font-size: 13px; padding: 7px 11px; }
+    .scopes label { font-size: 14px; }
+    .find .ttl { font-size: 14px; }
+    .find { padding: 10px 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <span class="badge">🛡️</span>
+    <div>
+      <h1>Security Center</h1>
+    </div>
+    <div class="actions">
+      <button class="btn" id="scanBtn">Run scan</button>
+    </div>
+  </div>
+  <div class="sub">Active scanning + threat detection for the swarm itself — committed secrets, unauthenticated routes, vulnerable dependencies, anomalous bot activity, money-ledger anomalies, and dispatch-trail audit. Findings are triaged by the security-analyst bot and can be escalated to tickets.</div>
+
+  <div class="panel">
+    <h2>Scan scopes</h2>
+    <div class="scopes" id="scopes">
+      <label><input type="checkbox" value="posture" checked> Posture (secrets · routes · deps)</label>
+      <label><input type="checkbox" value="runtime" checked> Runtime threats</label>
+      <label><input type="checkbox" value="ledger" checked> Ledger anomalies</label>
+      <label><input type="checkbox" value="audit" checked> Access / audit</label>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="foot" id="lastScan" style="margin-top:10px"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Findings</h2>
+    <div class="filters" id="statusFilters"></div>
+    <div class="filters" id="catFilters"></div>
+    <div id="findings"><div class="empty">Run a scan to populate findings.</div></div>
+  </div>
+</div>
+
+<script>
+const SEVS = ['critical','high','medium','low','info'];
+const CATS = ['secret','route_auth','dependency','threat','ledger','audit'];
+const CATLABEL = { secret:'Secrets', route_auth:'Routes', dependency:'Dependencies', threat:'Threats', ledger:'Ledger', audit:'Audit' };
+let state = { sevFilter:null, catFilter:null, status:'open' };
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function api(path, opts){ const r = await fetch('/api/security'+path, Object.assign({headers:{'Content-Type':'application/json'}}, opts)); if(!r.ok){ let m; try{ m=(await r.json()).error; }catch{} throw new Error(m||('HTTP '+r.status)); } return r.json(); }
+function fmtDate(s){ if(!s) return ''; try{ return new Date(s).toLocaleString(); }catch{ return s; } }
+
+async function loadStatus(){
+  const s = await api('/status');
+  const sev = s.severity || {};
+  const el = document.getElementById('stats');
+  const total = SEVS.reduce((a,k)=>a+(sev[k]||0),0);
+  el.innerHTML =
+    '<div class="stat'+(state.sevFilter===null?' sel':'')+'" data-sev=""><div class="n">'+total+'</div><div class="l">open</div></div>' +
+    SEVS.map(k => '<div class="stat'+(state.sevFilter===k?' sel':'')+'" data-sev="'+k+'"><div class="n '+k+'">'+(sev[k]||0)+'</div><div class="l">'+k+'</div></div>').join('');
+  el.querySelectorAll('.stat').forEach(n => n.onclick = () => { state.sevFilter = n.dataset.sev || null; render(); });
+  const ls = s.lastScan;
+  document.getElementById('lastScan').textContent = ls
+    ? ('Last scan: '+fmtDate(ls.started_at)+' · '+(ls.kinds||[]).join(', ')+' · '+ls.finding_count+' findings ('+ls.new_count+' new) · '+ls.status)
+    : 'No scan run yet.';
+  // category filter chips
+  const cf = document.getElementById('catFilters');
+  const cat = s.category || {};
+  cf.innerHTML = '<span class="chip'+(state.catFilter===null?' sel':'')+'" data-cat="">All</span>' +
+    CATS.map(c => '<span class="chip'+(state.catFilter===c?' sel':'')+'" data-cat="'+c+'">'+CATLABEL[c]+' '+(cat[c]?('('+cat[c]+')'):'')+'</span>').join('');
+  cf.querySelectorAll('.chip').forEach(n => n.onclick = () => { state.catFilter = n.dataset.cat || null; render(); });
+  // status filter chips (review resolved/ignored, not just open)
+  const sf = document.getElementById('statusFilters');
+  const st = s.status || {};
+  const STATUSES = ['open','triaged','resolved','ignored'];
+  sf.innerHTML = STATUSES.map(s2 => '<span class="chip'+(state.status===s2?' sel':'')+'" data-st="'+s2+'">'+s2+' '+(st[s2]?('('+st[s2]+')'):'')+'</span>').join('');
+  sf.querySelectorAll('.chip').forEach(n => n.onclick = () => { state.status = n.dataset.st; render(); });
+}
+
+async function render(){
+  await loadStatus();
+  const q = new URLSearchParams({ status: state.status });
+  if(state.sevFilter) q.set('severity', state.sevFilter);
+  if(state.catFilter) q.set('category', state.catFilter);
+  const { findings } = await api('/findings?'+q.toString());
+  const box = document.getElementById('findings');
+  if(!findings.length){ box.innerHTML = '<div class="empty">No '+state.status+' findings'+(state.sevFilter?' at '+state.sevFilter+' severity':'')+'.</div>'; return; }
+  box.innerHTML = findings.map(renderFinding).join('');
+  box.querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id, b));
+}
+
+function renderFinding(f){
+  const a = f.assessment;
+  const ev = f.evidence ? '<div class="ev">'+esc(JSON.stringify(f.evidence, null, 2))+'</div>' : '';
+  const assessBlock = a ? (
+    '<div class="assess">'+
+      '<div class="lbl">analyst verdict'+(a.falsePositive?' · likely false positive':(a.isRealThreat?' · confirmed':''))+'</div>'+
+      '<div>'+esc(a.summary||'')+'</div>'+
+      (a.attackScenario?'<div style="margin-top:6px"><span class="lbl">attack</span><br>'+esc(a.attackScenario)+'</div>':'')+
+      (a.recommendation?'<div style="margin-top:6px"><span class="lbl">fix</span><br>'+esc(a.recommendation)+(a.needsHistoryScrub?' <strong>(rotate AND scrub git history)</strong>':'')+'</div>':'')+
+    '</div>') : '';
+  return '<div class="find '+esc(f.severity)+'">'+
+    '<div class="top">'+
+      '<span class="pill sev '+esc(f.severity)+'">'+esc(f.severity)+'</span>'+
+      '<span class="pill">'+esc(CATLABEL[f.category]||f.category)+'</span>'+
+      '<span class="ttl">'+esc(f.title)+'</span>'+
+    '</div>'+
+    '<div class="det">'+esc(f.detail)+'</div>'+
+    (f.source?'<div class="foot">'+esc(f.source)+'</div>':'')+
+    ev + assessBlock +
+    '<div class="row">'+
+      '<button class="btn sm '+(a?'ghost':'')+'" data-act="assess" data-id="'+f.finding_id+'">'+(a?'Re-assess':'Assess')+'</button>'+
+      (f.ticket_id?'<span class="pill">ticket linked</span>':'<button class="btn ghost sm" data-act="ticket" data-id="'+f.finding_id+'">Open ticket</button>')+
+      ((f.status==='resolved'||f.status==='ignored')
+        ? '<button class="btn ghost sm" data-act="reopen" data-id="'+f.finding_id+'">Reopen</button>'
+        : '<button class="btn ghost sm" data-act="resolve" data-id="'+f.finding_id+'">Resolve</button>'+
+          '<button class="btn ghost sm" data-act="ignore" data-id="'+f.finding_id+'">Ignore</button>')+
+    '</div>'+
+  '</div>';
+}
+
+async function act(kind, id, btn){
+  const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
+  try {
+    if(kind==='assess') await api('/findings/'+id+'/assess', {method:'POST'});
+    else if(kind==='ticket') await api('/findings/'+id+'/ticket', {method:'POST'});
+    else if(kind==='resolve') await api('/findings/'+id, {method:'PATCH', body:JSON.stringify({status:'resolved'})});
+    else if(kind==='ignore') await api('/findings/'+id, {method:'PATCH', body:JSON.stringify({status:'ignored'})});
+    else if(kind==='reopen') await api('/findings/'+id, {method:'PATCH', body:JSON.stringify({status:'open'})});
+    await render();
+  } catch(e){ alert('Failed: '+e.message); btn.disabled=false; btn.textContent=orig; }
+}
+
+document.getElementById('scanBtn').onclick = async () => {
+  const btn = document.getElementById('scanBtn');
+  const kinds = [...document.querySelectorAll('#scopes input:checked')].map(i => i.value);
+  if(!kinds.length){ alert('Pick at least one scope.'); return; }
+  btn.disabled = true; btn.textContent = 'Scanning…';
+  try { const r = await api('/scan', {method:'POST', body:JSON.stringify({kinds})}); await render(); btn.textContent = 'Run scan'; }
+  catch(e){ alert('Scan failed: '+e.message); btn.textContent='Run scan'; }
+  finally { btn.disabled = false; }
+};
+
+(function init(){ render().catch(e => { document.getElementById('findings').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }); })();
+</script>
+</body>
+</html>

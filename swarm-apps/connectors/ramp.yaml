@@ -1,0 +1,39 @@
+provider: ramp
+displayName: Ramp
+version: 1.0.0
+baseUrl: https://api.ramp.com/developer/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: transactions
+    tool: ramp-transactions
+    method: GET
+    path: /transactions
+    query:
+      page_size: '{pageSize}'
+  - name: cards
+    tool: ramp-cards
+    method: GET
+    path: /cards
+    query:
+      page_size: '{pageSize}'
+  - name: users
+    tool: ramp-users
+    method: GET
+    path: /users
+    query:
+      page_size: '{pageSize}'
+  - name: departments
+    tool: ramp-departments
+    method: GET
+    path: /departments
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/ramp.com.ico

@@ -1,0 +1,464 @@
+{
+  "name": "oshal-framework",
+  "displayName": "OSHAL",
+  "description": "Unified home cockpit. Jarvis is the pinned front door; every app surface is grouped in the scrollable middle rail — including Connections (connectors / cloud / identity / files), Security (security center / devops+vault) and Optimization (optimizer / test lab / eval wall), which used to crowd the pinned bottom tray as 'Cloud & Ops'. Only the base essentials (tickets, calendar, swarm messages, settings, operations) stay pinned at the bottom. Focusing a single app via /applications or ?app=<name> still narrows the ribbon to just that app.",
+  "ribbon": {
+    "items": [
+      {
+        "id": "tool-jarvis-home",
+        "icon": "codicon codicon-sparkle",
+        "label": "Jarvis",
+        "section": "home",
+        "toolUi": { "iframeUrl": "/api/jarvis/", "sidebarLabel": "Jarvis" }
+      },
+
+      {
+        "id": "tool-lm-dashboard",
+        "icon": "codicon codicon-mortar-board",
+        "label": "Student Dashboard",
+        "section": "top",
+        "group": "Little Monsters",
+        "toolUi": { "iframeUrl": "/api/education/dashboard", "sidebarLabel": "Student Dashboard" }
+      },
+      {
+        "id": "tool-lm-my-day",
+        "icon": "codicon codicon-calendar",
+        "label": "My Day",
+        "section": "top",
+        "group": "Little Monsters",
+        "toolUi": { "iframeUrl": "/api/education/my-day", "sidebarLabel": "My Day" }
+      },
+      {
+        "id": "tool-lm-tutor",
+        "icon": "codicon codicon-comment-discussion",
+        "label": "Tutor",
+        "section": "top",
+        "group": "Little Monsters",
+        "toolUi": { "iframeUrl": "/api/education/tutor", "sidebarLabel": "Tutor" }
+      },
+      {
+        "id": "tool-lm-flashcards",
+        "icon": "codicon codicon-versions",
+        "label": "Flashcards",
+        "section": "top",
+        "group": "Little Monsters",
+        "toolUi": { "iframeUrl": "/api/education/flashcards", "sidebarLabel": "Flashcards" }
+      },
+
+      {
+        "id": "tool-career-board",
+        "icon": "codicon codicon-briefcase",
+        "label": "Job Board",
+        "section": "top",
+        "group": "Career Placement",
+        "toolUi": { "iframeUrl": "/api/career-hunter/board-native", "sidebarLabel": "Job Board" }
+      },
+      {
+        "id": "tool-career-strengthen",
+        "icon": "codicon codicon-sparkle",
+        "label": "Strengthen (Resume + Gaps)",
+        "section": "top",
+        "group": "Career Placement",
+        "toolUi": { "iframeUrl": "/api/career-hunter/strengthen-ui", "sidebarLabel": "Strengthen" }
+      },
+      {
+        "id": "tool-career-recruiters",
+        "icon": "codicon codicon-organization",
+        "label": "Recruiters",
+        "section": "top",
+        "group": "Career Placement",
+        "toolUi": { "iframeUrl": "/api/career-hunter/recruiters-ui", "sidebarLabel": "Recruiters" }
+      },
+      {
+        "id": "tool-career-approvals",
+        "icon": "codicon codicon-checklist",
+        "label": "Approvals",
+        "section": "top",
+        "group": "Career Placement",
+        "toolUi": { "iframeUrl": "/api/career-hunter/approvals", "sidebarLabel": "Approvals" }
+      },
+      {
+        "id": "tool-career-insights",
+        "icon": "codicon codicon-graph-line",
+        "label": "Insights",
+        "section": "top",
+        "group": "Career Placement",
+        "toolUi": { "iframeUrl": "/api/career-hunter/insights-ui", "sidebarLabel": "Insights" }
+      },
+      {
+        "id": "tool-career-settings",
+        "icon": "codicon codicon-settings-gear",
+        "label": "Career Settings",
+        "section": "top",
+        "group": "Career Placement",
+        "toolUi": { "iframeUrl": "/api/career-hunter/settings", "sidebarLabel": "Career Settings" }
+      },
+
+      {
+        "id": "tool-govcon-board",
+        "icon": "codicon codicon-target",
+        "label": "Capture Board",
+        "section": "top",
+        "group": "Intelligent Opportunities — Federal",
+        "toolUi": { "iframeUrl": "/api/gov-contracting/board", "sidebarLabel": "Capture Board" }
+      },
+      {
+        "id": "tool-govcon-plan",
+        "icon": "codicon codicon-checklist",
+        "label": "Formation Plan",
+        "section": "top",
+        "group": "Intelligent Opportunities — Federal",
+        "toolUi": { "iframeUrl": "/api/gov-contracting/plan", "sidebarLabel": "Formation Plan" }
+      },
+
+      {
+        "id": "tool-email-inbox",
+        "icon": "codicon codicon-mail",
+        "label": "Inbox",
+        "section": "top",
+        "group": "Communications",
+        "toolUi": { "iframeUrl": "/api/email/inbox", "sidebarLabel": "Inbox" }
+      },
+      {
+        "id": "tool-email-myday",
+        "icon": "codicon codicon-checklist",
+        "label": "My Day (Summary)",
+        "section": "top",
+        "group": "Communications",
+        "toolUi": { "iframeUrl": "/api/email/my-day", "sidebarLabel": "My Day (Summary)" }
+      },
+      {
+        "id": "tool-social-workspace",
+        "icon": "codicon codicon-edit",
+        "label": "Social",
+        "section": "top",
+        "group": "Communications",
+        "toolUi": { "iframeUrl": "/api/social/workspace", "sidebarLabel": "Social" }
+      },
+      {
+        "id": "tool-home-dashboard",
+        "icon": "codicon codicon-home",
+        "label": "Smart Home (IoT)",
+        "section": "top",
+        "group": "Everyday",
+        "toolUi": { "iframeUrl": "/api/home/ui", "sidebarLabel": "Smart Home" }
+      },
+      {
+        "id": "tool-feeds-dashboard",
+        "icon": "codicon codicon-rss",
+        "label": "Feeds",
+        "section": "top",
+        "group": "Communications",
+        "toolUi": { "iframeUrl": "/feeds", "sidebarLabel": "Feeds" }
+      },
+
+      {
+        "id": "tool-world-dashboard",
+        "icon": "codicon codicon-globe",
+        "label": "World Intelligence",
+        "section": "top",
+        "group": "Intelligence",
+        "toolUi": { "iframeUrl": "/api/world/app", "sidebarLabel": "World Intelligence" }
+      },
+      {
+        "id": "tool-ambient-recall",
+        "icon": "codicon codicon-history",
+        "label": "Ambient Recall",
+        "section": "top",
+        "group": "Intelligence",
+        "toolUi": { "iframeUrl": "/api/jarvis/ambient/person/", "sidebarLabel": "Ambient Recall" }
+      },
+
+      {
+        "id": "tool-drone-ops",
+        "icon": "codicon codicon-broadcast",
+        "label": "Drone Ops",
+        "section": "top",
+        "group": "Robotics & Space",
+        "toolUi": { "iframeUrl": "/api/drone/app", "sidebarLabel": "Drone Ops" }
+      },
+      {
+        "id": "tool-sat-ops",
+        "icon": "codicon codicon-radio-tower",
+        "label": "Sat Ops",
+        "section": "top",
+        "group": "Robotics & Space",
+        "toolUi": { "iframeUrl": "/api/sat/app", "sidebarLabel": "Sat Ops" }
+      },
+      {
+        "id": "tool-camera-ops",
+        "icon": "codicon codicon-device-camera",
+        "label": "Camera Ops",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/api/camera/app", "sidebarLabel": "Camera Ops" }
+      },
+
+      {
+        "id": "tool-intelligent-trades-home",
+        "icon": "codicon codicon-pulse",
+        "label": "Intelligent Trades",
+        "section": "top",
+        "group": "Money",
+        "toolUi": { "iframeUrl": "/api/trading/", "sidebarLabel": "Intelligent Trades" }
+      },
+      {
+        "id": "tool-kalshi-home",
+        "icon": "codicon codicon-graph-scatter",
+        "label": "Kalshi Edge",
+        "section": "top",
+        "group": "Money",
+        "toolUi": { "iframeUrl": "/api/kalshi/", "sidebarLabel": "Kalshi Edge" }
+      },
+
+      {
+        "id": "tool-travel-concierge",
+        "icon": "codicon codicon-globe",
+        "label": "Travel",
+        "section": "top",
+        "group": "Everyday",
+        "toolUi": { "iframeUrl": "/api/travel/app", "sidebarLabel": "Travel" }
+      },
+      {
+        "id": "tool-movies-concierge",
+        "icon": "codicon codicon-device-camera-video",
+        "label": "Movies & TV",
+        "section": "top",
+        "group": "Everyday",
+        "toolUi": { "iframeUrl": "/api/movies/app", "sidebarLabel": "Movies & TV" }
+      },
+      {
+        "id": "tool-spotify-concierge",
+        "icon": "codicon codicon-music",
+        "label": "Music",
+        "section": "top",
+        "group": "Everyday",
+        "toolUi": { "iframeUrl": "/api/spotify/app", "sidebarLabel": "Music" }
+      },
+      {
+        "id": "tool-eats-concierge",
+        "icon": "codicon codicon-flame",
+        "label": "Order Food",
+        "section": "top",
+        "group": "Everyday",
+        "toolUi": { "iframeUrl": "/api/eats/app", "sidebarLabel": "Order Food" }
+      },
+      {
+        "id": "tool-rides-concierge",
+        "icon": "codicon codicon-location",
+        "label": "Get a Ride",
+        "section": "top",
+        "group": "Everyday",
+        "toolUi": { "iframeUrl": "/api/rides/app", "sidebarLabel": "Get a Ride" }
+      },
+      {
+        "id": "tool-shop-concierge",
+        "icon": "codicon codicon-package",
+        "label": "Shopping",
+        "section": "top",
+        "group": "Everyday",
+        "toolUi": { "iframeUrl": "/api/purchasing/chat", "sidebarLabel": "Shopping" }
+      },
+      {
+        "id": "tool-games-dnd",
+        "icon": "codicon codicon-game",
+        "label": "Dungeon Master",
+        "section": "top",
+        "group": "Games",
+        "toolUi": { "iframeUrl": "/api/dnd/table", "sidebarLabel": "Dungeon Master" }
+      },
+      {
+        "id": "tool-games-game-show",
+        "icon": "codicon codicon-device-camera-video",
+        "label": "Game Show",
+        "section": "top",
+        "group": "Games",
+        "toolUi": { "iframeUrl": "/api/game-show/stage", "sidebarLabel": "Game Show" }
+      },
+      {
+        "id": "tool-finance-home",
+        "icon": "codicon codicon-graph-line",
+        "label": "Finance",
+        "section": "top",
+        "group": "Money",
+        "toolUi": { "iframeUrl": "/api/finance/", "sidebarLabel": "Finance" }
+      },
+      {
+        "id": "tool-presentations-studio",
+        "icon": "codicon codicon-files",
+        "label": "AI Office",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/api/presentations/sections/ui", "sidebarLabel": "AI Office" }
+      },
+      {
+        "id": "tool-lora-studio",
+        "icon": "codicon codicon-circuit-board",
+        "label": "LoRA Studio",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/api/lora/ui", "sidebarLabel": "LoRA Studio" }
+      },
+      {
+        "id": "tool-portrait-studio",
+        "icon": "codicon codicon-person",
+        "label": "Portrait Studio",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/api/portrait-studio/app", "sidebarLabel": "Portrait Studio" }
+      },
+      {
+        "id": "tool-forge",
+        "icon": "codicon codicon-tools",
+        "label": "Bot Forge",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/api/forge", "sidebarLabel": "Bot Forge" }
+      },
+      {
+        "id": "tool-workflow-studio",
+        "icon": "codicon codicon-type-hierarchy-sub",
+        "label": "Workflow Studio",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/workflow-studio/", "sidebarLabel": "Workflow Studio" }
+      },
+      {
+        "id": "tool-video-studio",
+        "icon": "codicon codicon-device-camera-video",
+        "label": "Video Studio",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/api/video/ui", "sidebarLabel": "Video Studio" }
+      },
+      {
+        "id": "tool-creative-studio",
+        "icon": "codicon codicon-play-circle",
+        "label": "Creative Studio",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/api/vids/app", "sidebarLabel": "Creative Studio" }
+      },
+      {
+        "id": "tool-pumpkin",
+        "icon": "codicon codicon-star-full",
+        "label": "Pumpkin",
+        "section": "top",
+        "group": "Create",
+        "toolUi": { "iframeUrl": "/api/pumpkin/app", "sidebarLabel": "Pumpkin" }
+      },
+      {
+        "id": "connectors",
+        "icon": "codicon codicon-plug",
+        "label": "Connectors",
+        "section": "top",
+        "group": "Connections"
+      },
+      {
+        "id": "tool-cloud-accounts",
+        "icon": "codicon codicon-cloud",
+        "label": "Cloud",
+        "section": "top",
+        "group": "Connections",
+        "toolUi": { "iframeUrl": "/utilities", "sidebarLabel": "Cloud" }
+      },
+      {
+        "id": "tool-identity-home",
+        "icon": "codicon codicon-key",
+        "label": "Identity Hub",
+        "section": "top",
+        "group": "Connections",
+        "toolUi": { "iframeUrl": "/api/identity/", "sidebarLabel": "Identity Hub" }
+      },
+      {
+        "id": "tool-storage-files",
+        "icon": "codicon codicon-folder",
+        "label": "Files",
+        "section": "top",
+        "group": "Connections",
+        "toolUi": { "iframeUrl": "/api/files", "sidebarLabel": "Files" }
+      },
+
+      {
+        "id": "tool-security-center-home",
+        "icon": "codicon codicon-shield",
+        "label": "Security Center",
+        "section": "top",
+        "group": "Security",
+        "toolUi": { "iframeUrl": "/api/security/", "sidebarLabel": "Security Center" }
+      },
+      {
+        "id": "tool-devops-vault-console",
+        "icon": "codicon codicon-lock",
+        "label": "DevOps + Vault",
+        "section": "top",
+        "group": "Security",
+        "toolUi": { "iframeUrl": "/api/devops/console", "sidebarLabel": "DevOps + Vault" }
+      },
+
+      {
+        "id": "tool-token-chase",
+        "icon": "codicon codicon-rocket",
+        "label": "Optimizer",
+        "section": "top",
+        "group": "Optimization",
+        "toolUi": { "iframeUrl": "/api/token-chase/ui", "sidebarLabel": "Optimizer" }
+      },
+      {
+        "id": "tool-test-lab",
+        "icon": "codicon codicon-beaker",
+        "label": "AI Test Lab",
+        "section": "top",
+        "group": "Optimization",
+        "toolUi": { "iframeUrl": "/api/test-lab/app", "sidebarLabel": "AI Test Lab" }
+      },
+      {
+        "id": "tool-eval-wall",
+        "icon": "codicon codicon-dashboard",
+        "label": "Eval Wall",
+        "section": "top",
+        "group": "Optimization",
+        "toolUi": { "iframeUrl": "/api/eval-wall/app", "sidebarLabel": "Eval Wall" }
+      },
+      {
+        "id": "tool-intelligent-processing",
+        "icon": "codicon codicon-server-process",
+        "label": "Intelligent Processing",
+        "section": "top",
+        "group": "Optimization",
+        "toolUi": { "iframeUrl": "/intelligent-processing", "sidebarLabel": "Intelligent Processing" }
+      },
+
+      {
+        "id": "tickets",
+        "icon": "codicon codicon-tag",
+        "label": "Tickets",
+        "section": "bottom"
+      },
+      {
+        "id": "calendar",
+        "icon": "codicon codicon-calendar",
+        "label": "Calendar",
+        "section": "bottom"
+      },
+      {
+        "id": "chat",
+        "icon": "codicon codicon-comment-discussion",
+        "label": "Swarm Messages",
+        "section": "bottom"
+      },
+      {
+        "id": "settings",
+        "icon": "codicon codicon-gear",
+        "label": "Settings",
+        "section": "bottom"
+      }
+    ],
+    "dynamicTools": {
+      "allow": ["lm-class-*"],
+      "section": "top",
+      "group": "Little Monsters"
+    }
+  },
+  "defaultView": "tool-jarvis-home"
+}

@@ -1,0 +1,36 @@
+provider: ably
+displayName: Ably
+version: 1.0.0
+baseUrl: https://rest.ably.io
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: time
+    tool: ably-time
+    method: GET
+    path: /time
+  - name: stats
+    tool: ably-stats
+    method: GET
+    path: /stats
+    query:
+      start: '{start}'
+      end: '{end}'
+      limit: '{limit}'
+  - name: channel-messages
+    tool: ably-channel-messages
+    method: GET
+    path: /channels/{channel_id}/messages
+    query:
+      limit: '{limit}'
+      direction: '{direction}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/rest.ably.io.ico

@@ -1,0 +1,42 @@
+provider: jfrog
+displayName: JFrog Artifactory
+version: 1.0.0
+baseUrl: ${env:JFROG_BASE_URL:-https://yourcompany.jfrog.io}/artifactory/api
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: ping
+    tool: jfrog-ping
+    method: GET
+    path: /system/ping
+  - name: version
+    tool: jfrog-version
+    method: GET
+    path: /system/version
+  - name: repositories
+    tool: jfrog-repositories
+    method: GET
+    path: /repositories
+  - name: repository
+    tool: jfrog-repository
+    method: GET
+    path: /repositories/{repoKey}
+  - name: storage-info
+    tool: jfrog-storage-info
+    method: GET
+    path: /storageinfo
+  - name: builds
+    tool: jfrog-builds
+    method: GET
+    path: /build
+metadata:
+  icon: jfrog
+  iconTitle: JFrog
+  iconSource: simple-icons
+  iconVerified: true

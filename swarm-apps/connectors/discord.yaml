@@ -1,0 +1,28 @@
+provider: discord
+displayName: Discord
+version: 1.0.0
+baseUrl: https://discord.com/api/v10
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: discord-me
+    method: GET
+    path: /users/@me
+  - name: guilds
+    tool: discord-guilds
+    method: GET
+    path: /users/@me/guilds
+metadata:
+  description: "Read the connected Discord user profile and the servers (guilds) they belong to."
+  category: "Communications"
+  icon: discord
+  iconTitle: Discord
+  iconSource: simple-icons
+  iconVerified: true

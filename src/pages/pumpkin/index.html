@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#000000" />
+  <title>Pumpkin — Projector</title>
+  <link rel="stylesheet" href="/pumpkin/pumpkin.css" />
+  <!-- Shared glass treatment (contract: tests/unit/static-surface-glass.spec.ts). Loaded after the
+       local stylesheet per the ordering rule; visually inert for the projector prop — its globals
+       are color-scheme + background-attachment only, and the card classes it skins are unused here. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <canvas id="stage"></canvas>
+
+  <!-- Operator chrome — auto-hides on a still projector; press H to toggle. -->
+  <div id="chrome">
+    <div class="bar">
+      <span class="brand">🎃 <b id="presetName">Pumpkin</b></span>
+      <span class="sep"></span>
+      <button id="btnMimic" class="seg">Mimic</button>
+      <button id="btnAuto" class="seg">Autonomous</button>
+      <button id="btnListen" class="pill" title="Toggle push-to-talk / always-on (L)">Push-to-talk</button>
+      <span class="sep"></span>
+      <button id="btnTalk" class="pill talk" title="Hold to talk (or hold SPACE)">🎤 Hold to talk</button>
+      <button id="btnFull" class="pill" title="Fullscreen (F)">⛶</button>
+      <span class="grow"></span>
+      <span class="room">room: <b id="roomName">—</b></span>
+      <span id="status" class="status">…</span>
+    </div>
+    <div class="hint">SPACE = talk · M = mode · L = listen mode · F = fullscreen · H = hide this bar</div>
+  </div>
+
+  <script src="/pumpkin/pumpkin-face.js"></script>
+  <script src="/pumpkin/pumpkin-audio.js"></script>
+  <script src="/pumpkin/pumpkin-app.js"></script>
+</body>
+</html>

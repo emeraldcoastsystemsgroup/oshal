@@ -1,0 +1,51 @@
+provider: outlook
+displayName: Microsoft 365 (Outlook)
+version: 1.0.0
+baseUrl: https://graph.microsoft.com/v1.0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: link
+  nextField: '@odata.nextLink'
+  itemsField: value
+resources:
+  - name: list-messages
+    tool: outlook-list-messages
+    method: GET
+    path: /me/messages
+    query:
+      $top: '50'
+      $select: id,subject,from,receivedDateTime,bodyPreview,isRead,importance,flag
+    paginate: true
+  - name: get-message
+    tool: outlook-get-message
+    method: GET
+    path: /me/messages/{messageId}
+  - name: list-events
+    tool: outlook-list-events
+    method: GET
+    path: /me/events
+    query:
+      $top: '50'
+    paginate: true
+  - name: send-mail
+    tool: outlook-send-mail
+    method: POST
+    path: /me/sendMail
+    body: '{message}'
+    emptyOk:
+      - 202
+    retry:
+      maxRetries: 0
+metadata:
+  description: "Read Outlook mail and calendar events through Microsoft Graph, with a sendMail resource for outbound messages."
+  category: "Email"
+  iconVerified: true
+  iconSource: favicon-curated
+  iconUrl: https://icons.duckduckgo.com/ip3/outlook.office.com.ico

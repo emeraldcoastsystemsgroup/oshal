@@ -1,0 +1,915 @@
+<!--
+  OSHAL "Spaces" — self-contained WebGL2 3D Gaussian Splatting viewer.
+
+  This single file is a REAL anisotropic 3D Gaussian Splatting rasterizer. No CDN,
+  no imports, no build step: all JS + GLSL are inline. It is meant to be embedded as
+  an <iframe> inside a cockpit page.
+
+  --------------------------------------------------------------------------------
+  INPUT MODES (both supported)
+  --------------------------------------------------------------------------------
+   1. ?url=<splat-url>  — fetched with credentials:'include' (same-origin, auth-gated
+      OSHAL route needing the session cookie), read as arrayBuffer, rendered.
+   2. postMessage       — window 'message' with event.data = { type:'splat-buffer',
+      buffer: ArrayBuffer } renders those bytes directly. On boot the viewer posts
+      { type:'splat-viewer-ready' } to its parent so the parent knows it can send.
+   If neither is provided, a friendly "No scene loaded" overlay is shown.
+
+  --------------------------------------------------------------------------------
+  .splat BINARY FORMAT (authoritative — N x 32 bytes, little-endian, no header)
+  --------------------------------------------------------------------------------
+     offset  field            type      count
+     ------  ---------------- --------  -----
+      0      position x,y,z    float32   3
+      12     scale sx,sy,sz    float32   3   (world-space std-dev, used directly)
+      24     color R,G,B,A     uint8     4   (0..255 sRGB-ish; A = opacity)
+      28     rotation q0..q3   uint8     4   (quat, (byte-128)/128, order w,x,y,z)
+   Identity quat bytes [255,128,128,128] -> (0.992,0,0,0) -> normalized (1,0,0,0).
+
+  --------------------------------------------------------------------------------
+  RENDER MATH (EWA / Zwicker splatting, the standard 3DGS approach)
+  --------------------------------------------------------------------------------
+   Per gaussian (once, at load, on the CPU): build the world-space 3D covariance
+     Sigma = R * S * S^T * R^T,  S = diag(sx,sy,sz),  R = quat->mat3
+   and store its 6 unique components + position + color in a data texture.
+
+   Per frame (in the vertex shader, per gaussian):
+     - transform center to view space: cam = View * center
+     - Jacobian J (2x3) of the perspective projection at cam, W = view rotation:
+         Sigma2D = J * W * Sigma * W^T * J^T   (upper-left 2x2, in pixel^2 units)
+     - a low-pass 0.3 px^2 dilation keeps sub-pixel gaussians visible
+     - eigen-decompose the 2x2 -> major/minor screen axes, orient+size an
+       instanced quad; the fragment shader evaluates exp(-0.5 * mahalanobis)
+       and outputs color.rgb with alpha = opacity * gaussianFalloff.
+
+   Blending: back-to-front, gl.blendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA), depth
+   test OFF, depth write OFF. Gaussians are depth-sorted on the CPU (counting sort
+   on quantized view-space depth, O(N)) into an instance-index buffer that is
+   reordered and re-uploaded — throttled so it stays smooth at large N.
+
+  .html files are exempt from this repo's file-size cap and the CHANGE-LOG header
+  requirement; correctness is prioritized over brevity here.
+-->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>OSHAL Spaces — Gaussian Splat Viewer</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #0b0f14;
+  }
+  #gl {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    background: #0b0f14;
+    touch-action: none;
+    outline: none;
+  }
+  .overlay {
+    position: fixed;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #cfd8e3;
+    pointer-events: none;
+    z-index: 10;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #stats {
+    top: 10px;
+    left: 12px;
+    padding: 7px 11px;
+    background: rgba(8, 12, 18, 0.55);
+    border: 1px solid rgba(120, 150, 190, 0.18);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    backdrop-filter: blur(2px);
+    display: none;
+  }
+  #stats .count {
+    font-weight: 600;
+    color: #eaf1f9;
+  }
+  #stats .hint {
+    color: #8fa3ba;
+    font-size: 11px;
+  }
+  #status {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    max-width: 82vw;
+    padding: 18px 22px;
+    background: rgba(8, 12, 18, 0.66);
+    border: 1px solid rgba(120, 150, 190, 0.18);
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  #status .title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #eaf1f9;
+    margin-bottom: 4px;
+  }
+  #status .detail {
+    color: #9fb0c4;
+    font-size: 12.5px;
+    word-break: break-word;
+  }
+  #status.error {
+    border-color: rgba(220, 90, 90, 0.45);
+  }
+  #status.error .title {
+    color: #ff9a9a;
+  }
+  .spinner {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    margin-right: 8px;
+    vertical-align: -2px;
+    border: 2px solid rgba(160, 185, 215, 0.28);
+    border-top-color: #9fc3ff;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+<canvas id="gl" tabindex="0"></canvas>
+<div id="stats" class="overlay">
+  <div><span class="count">0</span> gaussians</div>
+  <div class="hint">drag to orbit · scroll to zoom · WASD to fly</div>
+</div>
+<div id="status" class="overlay">
+  <div class="title">No scene loaded</div>
+  <div class="detail">Pass <code>?url=&lt;splat-url&gt;</code> or post a <code>splat-buffer</code> message.</div>
+</div>
+
+<script>
+"use strict";
+(function () {
+  /* ======================================================================== */
+  /*  DOM + overlay helpers                                                    */
+  /* ======================================================================== */
+  const canvas = document.getElementById("gl");
+  const statsEl = document.getElementById("stats");
+  const statsCountEl = statsEl.querySelector(".count");
+  const statusEl = document.getElementById("status");
+  const statusTitle = statusEl.querySelector(".title");
+  const statusDetail = statusEl.querySelector(".detail");
+
+  let state = "empty"; // 'empty' | 'loading' | 'ready' | 'error'
+
+  function showStatus(title, detail, isError, isLoading) {
+    statusEl.style.display = "block";
+    statusEl.classList.toggle("error", !!isError);
+    statusTitle.innerHTML = (isLoading ? '<span class="spinner"></span>' : "") + title;
+    statusDetail.textContent = detail || "";
+  }
+  function hideStatus() { statusEl.style.display = "none"; }
+  function showError(msg) {
+    state = "error";
+    statsEl.style.display = "none";
+    showStatus("Could not load scene", String(msg), true, false);
+    // eslint-disable-next-line no-console
+    console.error("[spaces-viewer]", msg);
+  }
+
+  /* ======================================================================== */
+  /*  Tiny inline vector / matrix math (column-major mat4, row-major helpers)  */
+  /* ======================================================================== */
+  function vsub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+  function vadd(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+  function vscale(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+  function vdot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+  function vcross(a, b) {
+    return [
+      a[1] * b[2] - a[2] * b[1],
+      a[2] * b[0] - a[0] * b[2],
+      a[0] * b[1] - a[1] * b[0],
+    ];
+  }
+  function vlen(a) { return Math.hypot(a[0], a[1], a[2]); }
+  function vnorm(a) {
+    const l = vlen(a) || 1e-8;
+    return [a[0] / l, a[1] / l, a[2] / l];
+  }
+
+  /**
+   * OpenGL-style view matrix (world -> view), camera looks down -z.
+   * Returns a column-major length-16 array.
+   */
+  function lookAt(eye, center, up) {
+    const z = vnorm(vsub(eye, center));      // points from scene back toward eye (+z)
+    let x = vcross(up, z);
+    if (vlen(x) < 1e-6) x = [1, 0, 0];       // guard against up || view
+    x = vnorm(x);
+    const y = vcross(z, x);
+    return [
+      x[0], y[0], z[0], 0,
+      x[1], y[1], z[1], 0,
+      x[2], y[2], z[2], 0,
+      -vdot(x, eye), -vdot(y, eye), -vdot(z, eye), 1,
+    ];
+  }
+
+  /**
+   * Standard OpenGL perspective (column-major). clip.w = -cam.z, so a point in
+   * front of the -z camera has positive w. Matches the covariance focal below.
+   */
+  function perspective(fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy / 2);
+    const nf = 1 / (near - far);
+    return [
+      f / aspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, (far + near) * nf, -1,
+      0, 0, 2 * far * near * nf, 0,
+    ];
+  }
+
+  /* ======================================================================== */
+  /*  WebGL2 boot                                                             */
+  /* ======================================================================== */
+  const gl = canvas.getContext("webgl2", {
+    alpha: false,
+    antialias: false,
+    depth: false,
+    premultipliedAlpha: false,
+    preserveDrawingBuffer: false,
+  });
+  if (!gl) {
+    showError("WebGL2 is not available in this browser. The Spaces viewer requires a WebGL2-capable GPU/context.");
+    return;
+  }
+
+  const VERT_SRC = `#version 300 es
+  precision highp float;
+  precision highp int;
+
+  layout(location = 0) in vec2 aCorner;  // quad corner in [-2, 2]
+  layout(location = 1) in uint aIndex;   // gaussian index (depth-sorted each frame)
+
+  uniform mat4 uView;
+  uniform mat4 uProj;
+  uniform vec2 uViewport;   // device pixels
+  uniform vec2 uFocal;      // focal length in pixels (fx, fy) = 0.5*H/tan(fovy/2)
+  uniform int  uTexWidth;   // data texture width, in texels
+  uniform sampler2D uData;  // RGBA32F: 4 texels per gaussian
+
+  out vec2  vQuad;
+  out vec3  vColor;
+  out float vOpacity;
+
+  // Fetch texel k (0..3) for gaussian gi from the packed data texture.
+  vec4 fetch(int gi, int k) {
+    int lin = gi * 4 + k;
+    int x = lin % uTexWidth;
+    int y = lin / uTexWidth;
+    return texelFetch(uData, ivec2(x, y), 0);
+  }
+
+  void main() {
+    int gi = int(aIndex);
+    vec4 t0 = fetch(gi, 0); // pos.xyz, opacity
+    vec4 t1 = fetch(gi, 1); // cov00, cov01, cov02, _
+    vec4 t2 = fetch(gi, 2); // cov11, cov12, cov22, _
+    vec4 t3 = fetch(gi, 3); // color.rgb, _
+
+    vec3  center  = t0.xyz;
+    float opacity = t0.w;
+
+    // World-space 3D covariance (symmetric), reconstructed from 6 stored values.
+    mat3 Sigma = mat3(
+      t1.x, t1.y, t1.z,
+      t1.y, t2.x, t2.y,
+      t1.z, t2.y, t2.z
+    );
+
+    // Center in view space, and its clip position.
+    vec4 cam  = uView * vec4(center, 1.0);
+    vec4 clip = uProj * cam;
+
+    // Frustum cull (share the same result for all 4 corners of the instance).
+    if (clip.w <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+    vec2 ndc = clip.xy / clip.w;
+    if (ndc.x < -1.3 || ndc.x > 1.3 || ndc.y < -1.3 || ndc.y > 1.3) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return;
+    }
+
+    // 2x3 Jacobian of the perspective projection at cam (view-space -> pixels).
+    // The row is squared inside the covariance, so its overall sign is irrelevant.
+    float invz  = 1.0 / cam.z;
+    float invz2 = invz * invz;
+    float a = uFocal.x * invz;                 // d(px_x)/d(cam.x)
+    float b = -uFocal.x * cam.x * invz2;       // d(px_x)/d(cam.z)
+    float c = uFocal.y * invz;                 // d(px_y)/d(cam.y)
+    float e = -uFocal.y * cam.y * invz2;       // d(px_y)/d(cam.z)
+
+    // Rows of the world->view rotation W = mat3(uView).
+    mat3 W = mat3(uView);
+    vec3 Wr0 = vec3(W[0][0], W[1][0], W[2][0]);
+    vec3 Wr1 = vec3(W[0][1], W[1][1], W[2][1]);
+    vec3 Wr2 = vec3(W[0][2], W[1][2], W[2][2]);
+
+    // T = J * W  (2x3), stored as its two 3-vector rows.
+    vec3 Tx = a * Wr0 + b * Wr2;
+    vec3 Ty = c * Wr1 + e * Wr2;
+
+    // Sigma2D = T * Sigma * T^T  (upper-left 2x2) + low-pass dilation.
+    vec3 STx = Sigma * Tx;
+    vec3 STy = Sigma * Ty;
+    float A = dot(Tx, STx) + 0.3;
+    float B = dot(Tx, STy);
+    float C = dot(Ty, STy) + 0.3;
+
+    // Eigen-decompose the symmetric 2x2 [[A,B],[B,C]].
+    float mid = 0.5 * (A + C);
+    float rad = length(vec2(0.5 * (A - C), B)); // == sqrt(mid^2 - det)
+    float l1 = mid + rad;                        // major eigenvalue (variance, px^2)
+    float l2 = mid - rad;                        // minor eigenvalue
+    if (l2 <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+
+    vec2 dir1 = normalize(vec2(B, l1 - A));      // major axis direction
+    vec2 dir2 = vec2(-dir1.y, dir1.x);           // minor axis (perpendicular)
+
+    // Axis half-lengths in pixels: quad corner c maps to |c|^2 = 0.5*mahalanobis,
+    // which requires a per-unit length of sqrt(2*lambda). Cap for pathological cases.
+    float len1 = min(sqrt(2.0 * l1), 1024.0);
+    float len2 = min(sqrt(2.0 * l2), 1024.0);
+    vec2 majorAxis = len1 * dir1;
+    vec2 minorAxis = len2 * dir2;
+
+    vec2 offsetPix = aCorner.x * majorAxis + aCorner.y * minorAxis;
+    vec2 offsetNDC = offsetPix * 2.0 / uViewport;
+
+    vQuad    = aCorner;
+    vColor   = t3.xyz;
+    vOpacity = opacity;
+
+    gl_Position = vec4(ndc + offsetNDC, clip.z / clip.w, 1.0);
+  }`;
+
+  const FRAG_SRC = `#version 300 es
+  precision highp float;
+
+  in vec2  vQuad;
+  in vec3  vColor;
+  in float vOpacity;
+  out vec4 outColor;
+
+  void main() {
+    // |vQuad|^2 equals 0.5 * the Mahalanobis distance for this fragment,
+    // so exp(-|vQuad|^2) == exp(-0.5 * d) — the true gaussian falloff.
+    float d2 = dot(vQuad, vQuad);
+    if (d2 > 4.0) discard;                     // clip beyond ~2.8 sigma
+    float alpha = vOpacity * exp(-d2);
+    if (alpha < 0.00392) discard;              // below 1/255, invisible
+    outColor = vec4(vColor, alpha);
+  }`;
+
+  function compile(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      const log = gl.getShaderInfoLog(sh);
+      gl.deleteShader(sh);
+      throw new Error("Shader compile failed: " + log);
+    }
+    return sh;
+  }
+
+  let prog;
+  try {
+    const vs = compile(gl.VERTEX_SHADER, VERT_SRC);
+    const fs = compile(gl.FRAGMENT_SHADER, FRAG_SRC);
+    prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      throw new Error("Program link failed: " + gl.getProgramInfoLog(prog));
+    }
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+  } catch (err) {
+    showError(err.message || err);
+    return;
+  }
+
+  // Uniform locations.
+  const uView = gl.getUniformLocation(prog, "uView");
+  const uProj = gl.getUniformLocation(prog, "uProj");
+  const uViewport = gl.getUniformLocation(prog, "uViewport");
+  const uFocal = gl.getUniformLocation(prog, "uFocal");
+  const uTexWidth = gl.getUniformLocation(prog, "uTexWidth");
+  const uData = gl.getUniformLocation(prog, "uData");
+
+  /* ======================================================================== */
+  /*  Static GL objects: VAO, base quad, per-instance index buffer, texture   */
+  /* ======================================================================== */
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+
+  // Base quad corners in [-2, 2], drawn as a TRIANGLE_STRIP (4 verts).
+  const quadBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array([-2, -2, 2, -2, -2, 2, 2, 2]),
+    gl.STATIC_DRAW
+  );
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.vertexAttribDivisor(0, 0);
+
+  // Per-instance sorted gaussian index (uint32); reuploaded after each sort.
+  const indexBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, indexBuf);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribIPointer(1, 1, gl.UNSIGNED_INT, 0, 0);
+  gl.vertexAttribDivisor(1, 1);
+
+  gl.bindVertexArray(null);
+
+  // Data texture (RGBA32F, 4 texels per gaussian). Sampled via texelFetch (NEAREST).
+  const TEX_WIDTH = 2048; // multiple of 4 -> each gaussian's 4 texels stay in one row
+  const dataTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, dataTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+
+  /* ======================================================================== */
+  /*  Scene state                                                             */
+  /* ======================================================================== */
+  let N = 0;                    // gaussian count
+  let positions = null;         // Float32Array(3N) — for CPU depth sort
+  let order = null;             // Uint32Array(N)   — sorted instance indices
+  let depths = null;            // Float32Array(N)  — scratch for sort
+  let bucketOf = null;          // Uint32Array(N)   — scratch for counting sort
+  let sceneScale = 1;           // bounding-box diagonal
+  let sceneCenter = [0, 0, 0];  // centroid target
+
+  const SORT_BUCKETS = 65536;
+  const counts = new Uint32Array(SORT_BUCKETS + 1);
+
+  /* ======================================================================== */
+  /*  .splat parsing + covariance precomputation + texture upload             */
+  /* ======================================================================== */
+  /**
+   * Parse a .splat ArrayBuffer and populate the data texture. Throws on a
+   * malformed (non-32-divisible) buffer. Sets N === 0 for an empty buffer.
+   */
+  function loadBuffer(buffer) {
+    let bytes;
+    if (buffer instanceof ArrayBuffer) bytes = buffer;
+    else if (buffer && buffer.buffer instanceof ArrayBuffer) bytes = buffer.buffer; // typed-array
+    else { showError("Received data is not an ArrayBuffer."); return; }
+
+    if (bytes.byteLength % 32 !== 0) {
+      showError(
+        "Malformed .splat: byteLength (" + bytes.byteLength +
+        ") is not a multiple of 32. Each gaussian is exactly 32 bytes."
+      );
+      return;
+    }
+
+    const count = bytes.byteLength / 32;
+    if (count === 0) {
+      N = 0;
+      state = "empty";
+      statsEl.style.display = "none";
+      showStatus("Scene is empty", "The .splat file contained zero gaussians.", false, false);
+      return;
+    }
+
+    let texData;
+    try {
+      texData = parseSplat(bytes, count);
+    } catch (err) {
+      showError("Failed to parse .splat: " + (err && err.message ? err.message : err));
+      return;
+    }
+
+    uploadScene(texData, count);
+    N = count;
+    order = new Uint32Array(N);
+    depths = new Float32Array(N);
+    bucketOf = new Uint32Array(N);
+    for (let i = 0; i < N; i++) order[i] = i;
+
+    // Allocate the (dynamic) instance-index buffer once at final size.
+    gl.bindBuffer(gl.ARRAY_BUFFER, indexBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, order.byteLength, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+    frameCameraToScene();
+    needSort = true;
+
+    state = "ready";
+    hideStatus();
+    statsCountEl.textContent = count.toLocaleString();
+    statsEl.style.display = "block";
+  }
+
+  /**
+   * Decode every 32-byte record into the packed RGBA32F texture layout and the
+   * flat positions array. Builds each gaussian's world-space 3D covariance.
+   */
+  function parseSplat(bytes, count) {
+    const dv = new DataView(bytes);
+    positions = new Float32Array(count * 3);
+
+    const texHeight = Math.ceil((count * 4) / TEX_WIDTH);
+    const texData = new Float32Array(TEX_WIDTH * texHeight * 4);
+
+    for (let i = 0; i < count; i++) {
+      const off = i * 32;
+
+      const px = dv.getFloat32(off + 0, true);
+      const py = dv.getFloat32(off + 4, true);
+      const pz = dv.getFloat32(off + 8, true);
+
+      const sx = dv.getFloat32(off + 12, true);
+      const sy = dv.getFloat32(off + 16, true);
+      const sz = dv.getFloat32(off + 20, true);
+
+      const cr = dv.getUint8(off + 24);
+      const cg = dv.getUint8(off + 25);
+      const cb = dv.getUint8(off + 26);
+      const ca = dv.getUint8(off + 27);
+
+      // Quaternion: each byte -> (byte-128)/128, order (w, x, y, z), normalized.
+      let qw = (dv.getUint8(off + 28) - 128) / 128;
+      let qx = (dv.getUint8(off + 29) - 128) / 128;
+      let qy = (dv.getUint8(off + 30) - 128) / 128;
+      let qz = (dv.getUint8(off + 31) - 128) / 128;
+      const ql = Math.hypot(qw, qx, qy, qz) || 1;
+      qw /= ql; qx /= ql; qy /= ql; qz /= ql;
+
+      // R = quat -> mat3 (row-major).
+      const r00 = 1 - 2 * (qy * qy + qz * qz);
+      const r01 = 2 * (qx * qy - qw * qz);
+      const r02 = 2 * (qx * qz + qw * qy);
+      const r10 = 2 * (qx * qy + qw * qz);
+      const r11 = 1 - 2 * (qx * qx + qz * qz);
+      const r12 = 2 * (qy * qz - qw * qx);
+      const r20 = 2 * (qx * qz - qw * qy);
+      const r21 = 2 * (qy * qz + qw * qx);
+      const r22 = 1 - 2 * (qx * qx + qy * qy);
+
+      // Sigma = R * diag(sx^2, sy^2, sz^2) * R^T  (symmetric; 6 unique terms).
+      const a0 = sx * sx, a1 = sy * sy, a2 = sz * sz;
+      const c00 = r00 * r00 * a0 + r01 * r01 * a1 + r02 * r02 * a2;
+      const c01 = r00 * r10 * a0 + r01 * r11 * a1 + r02 * r12 * a2;
+      const c02 = r00 * r20 * a0 + r01 * r21 * a1 + r02 * r22 * a2;
+      const c11 = r10 * r10 * a0 + r11 * r11 * a1 + r12 * r12 * a2;
+      const c12 = r10 * r20 * a0 + r11 * r21 * a1 + r12 * r22 * a2;
+      const c22 = r20 * r20 * a0 + r21 * r21 * a1 + r22 * r22 * a2;
+
+      positions[i * 3 + 0] = px;
+      positions[i * 3 + 1] = py;
+      positions[i * 3 + 2] = pz;
+
+      const base = i * 16; // 4 texels * 4 floats
+      texData[base + 0] = px;
+      texData[base + 1] = py;
+      texData[base + 2] = pz;
+      texData[base + 3] = ca / 255;   // opacity
+      texData[base + 4] = c00;
+      texData[base + 5] = c01;
+      texData[base + 6] = c02;
+      texData[base + 7] = 0;
+      texData[base + 8] = c11;
+      texData[base + 9] = c12;
+      texData[base + 10] = c22;
+      texData[base + 11] = 0;
+      texData[base + 12] = cr / 255; // color r
+      texData[base + 13] = cg / 255; // color g
+      texData[base + 14] = cb / 255; // color b
+      texData[base + 15] = 0;
+    }
+    return texData;
+  }
+
+  function uploadScene(texData, count) {
+    const texHeight = Math.ceil((count * 4) / TEX_WIDTH);
+    gl.bindTexture(gl.TEXTURE_2D, dataTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texImage2D(
+      gl.TEXTURE_2D, 0, gl.RGBA32F,
+      TEX_WIDTH, texHeight, 0,
+      gl.RGBA, gl.FLOAT, texData
+    );
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  /* ======================================================================== */
+  /*  Camera + controls                                                       */
+  /* ======================================================================== */
+  const FOVY = 60 * Math.PI / 180;
+  const WORLD_UP = [0, 1, 0];
+
+  let yaw = 0;          // radians, around world up
+  let pitch = -0.28;    // radians, look slightly downward by default
+  let camDist = 3;      // orbit distance from target
+  let target = [0, 0, 0];
+
+  function forwardDir() {
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    return [cp * Math.sin(yaw), sp, cp * Math.cos(yaw)];
+  }
+  function computeEye() {
+    return vsub(target, vscale(forwardDir(), camDist));
+  }
+
+  /** Frame the camera to see the whole scene from its bounding box. */
+  function frameCameraToScene() {
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let i = 0; i < N; i++) {
+      const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    sceneCenter = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+    const diag = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ);
+    sceneScale = diag > 1e-4 ? diag : 1;
+    target = sceneCenter.slice();
+    camDist = sceneScale * 1.1;
+    yaw = 0;
+    pitch = -0.28;
+  }
+
+  const pressed = new Set();
+  const MOVE_CODES = new Set([
+    "KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE",
+    "Space", "ShiftLeft", "ShiftRight",
+    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  ]);
+
+  window.addEventListener("keydown", (e) => {
+    if (MOVE_CODES.has(e.code)) { pressed.add(e.code); e.preventDefault(); }
+  });
+  window.addEventListener("keyup", (e) => { pressed.delete(e.code); });
+  window.addEventListener("blur", () => pressed.clear());
+
+  /** Apply held-key fly/rotate movement for this frame. */
+  function applyMovement(dt) {
+    if (state !== "ready") return;
+    const rot = 1.4 * dt;             // arrow-key rotation speed (rad/s)
+    if (pressed.has("ArrowLeft")) yaw += rot;
+    if (pressed.has("ArrowRight")) yaw -= rot;
+    if (pressed.has("ArrowUp")) pitch += rot;
+    if (pressed.has("ArrowDown")) pitch -= rot;
+    clampPitch();
+
+    const step = sceneScale * 0.7 * dt; // fly speed (units/s)
+    if (step <= 0) return;
+    const f = forwardDir();
+    let right = vcross(f, WORLD_UP);
+    if (vlen(right) < 1e-6) right = [1, 0, 0];
+    right = vnorm(right);
+
+    let move = [0, 0, 0];
+    if (pressed.has("KeyW")) move = vadd(move, f);
+    if (pressed.has("KeyS")) move = vsub(move, f);
+    if (pressed.has("KeyD")) move = vadd(move, right);
+    if (pressed.has("KeyA")) move = vsub(move, right);
+    if (pressed.has("KeyE") || pressed.has("Space")) move = vadd(move, WORLD_UP);
+    if (pressed.has("KeyQ") || pressed.has("ShiftLeft") || pressed.has("ShiftRight")) {
+      move = vsub(move, WORLD_UP);
+    }
+    if (move[0] || move[1] || move[2]) {
+      target = vadd(target, vscale(move, step));
+    }
+  }
+
+  function clampPitch() {
+    const lim = 1.5; // ~86 degrees; keeps world-up valid
+    if (pitch > lim) pitch = lim;
+    if (pitch < -lim) pitch = -lim;
+  }
+
+  // Mouse: left-drag orbit, right/middle-drag pan, wheel dolly.
+  let dragging = false, dragBtn = 0, lastX = 0, lastY = 0;
+  canvas.addEventListener("mousedown", (e) => {
+    dragging = true; dragBtn = e.button; lastX = e.clientX; lastY = e.clientY;
+    canvas.focus();
+    e.preventDefault();
+  });
+  window.addEventListener("mouseup", () => { dragging = false; });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    if (dragBtn === 0) {
+      // Orbit.
+      yaw -= dx * 0.005;
+      pitch -= dy * 0.005;
+      clampPitch();
+    } else {
+      // Pan in the camera plane.
+      const f = forwardDir();
+      let right = vnorm(vcross(f, WORLD_UP));
+      const up = vnorm(vcross(right, f));
+      const k = camDist * 0.0016;
+      target = vadd(target, vscale(right, -dx * k));
+      target = vadd(target, vscale(up, dy * k));
+    }
+  });
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  canvas.addEventListener("wheel", (e) => {
+    camDist *= Math.exp(e.deltaY * 0.001);
+    const lo = Math.max(1e-4, sceneScale * 0.01);
+    const hi = sceneScale * 60 + 1;
+    if (camDist < lo) camDist = lo;
+    if (camDist > hi) camDist = hi;
+    e.preventDefault();
+  }, { passive: false });
+
+  /* ======================================================================== */
+  /*  Depth sort (counting sort on quantized view-space depth, O(N))           */
+  /* ======================================================================== */
+  /**
+   * Sort gaussian indices back-to-front (farthest first) by view-space z.
+   * View-space z = row 2 of the column-major view matrix dotted with (x,y,z,1);
+   * more-negative z is farther from the -z camera, so ascending order = far->near.
+   */
+  function sortByDepth(view) {
+    const m2 = view[2], m6 = view[6], m10 = view[10], m14 = view[14];
+    let minD = Infinity, maxD = -Infinity;
+    for (let i = 0; i < N; i++) {
+      const d = m2 * positions[i * 3] + m6 * positions[i * 3 + 1] + m10 * positions[i * 3 + 2] + m14;
+      depths[i] = d;
+      if (d < minD) minD = d;
+      if (d > maxD) maxD = d;
+    }
+    const range = (maxD - minD) || 1;
+    const scale = (SORT_BUCKETS - 1) / range;
+
+    counts.fill(0);
+    for (let i = 0; i < N; i++) {
+      let bi = ((depths[i] - minD) * scale) | 0;
+      if (bi < 0) bi = 0; else if (bi >= SORT_BUCKETS) bi = SORT_BUCKETS - 1;
+      bucketOf[i] = bi;
+      counts[bi]++;
+    }
+    // Prefix sum -> end offsets.
+    for (let k = 1; k < SORT_BUCKETS; k++) counts[k] += counts[k - 1];
+    // Stable placement (ascending): position 0 receives the min-depth = farthest.
+    for (let i = N - 1; i >= 0; i--) {
+      order[--counts[bucketOf[i]]] = i;
+    }
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, indexBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, order);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  }
+
+  // Sort throttling — resort when the camera moved enough, rate-limited, and
+  // more conservatively for very large scenes so the O(N) pass stays smooth.
+  let needSort = false;
+  let lastSortEye = [1e18, 1e18, 1e18];
+  let lastSortTime = -1e9;
+
+  function maybeSort(view, eye, now) {
+    const moved = vlen(vsub(eye, lastSortEye));
+    const threshold = sceneScale * 0.01;
+    const minInterval = N > 250000 ? 250 : 40; // ms
+    const doSort =
+      needSort ||
+      (moved > threshold && now - lastSortTime > minInterval);
+    if (doSort) {
+      sortByDepth(view);
+      lastSortEye = eye.slice();
+      lastSortTime = now;
+      needSort = false;
+    }
+  }
+
+  /* ======================================================================== */
+  /*  Resize + render loop                                                    */
+  /* ======================================================================== */
+  function resizeIfNeeded() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  }
+
+  let lastFrame = performance.now();
+  function render() {
+    requestAnimationFrame(render);
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - lastFrame) / 1000);
+    lastFrame = now;
+
+    applyMovement(dt);
+    resizeIfNeeded();
+
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.043, 0.059, 0.078, 1); // #0b0f14
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    if (state !== "ready" || N === 0) return;
+
+    const eye = computeEye();
+    const view = lookAt(eye, target, WORLD_UP);
+    const aspect = canvas.width / canvas.height;
+    const near = Math.max(0.01, sceneScale * 0.002);
+    const far = (camDist + sceneScale) * 8 + 10;
+    const proj = perspective(FOVY, aspect, near, far);
+
+    maybeSort(view, eye, now);
+
+    const focal = 0.5 * canvas.height / Math.tan(FOVY / 2);
+
+    gl.useProgram(prog);
+    gl.uniformMatrix4fv(uView, false, view);
+    gl.uniformMatrix4fv(uProj, false, proj);
+    gl.uniform2f(uViewport, canvas.width, canvas.height);
+    gl.uniform2f(uFocal, focal, focal);
+    gl.uniform1i(uTexWidth, TEX_WIDTH);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, dataTex);
+    gl.uniform1i(uData, 0);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+
+    gl.bindVertexArray(vao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, N);
+    gl.bindVertexArray(null);
+  }
+
+  /* ======================================================================== */
+  /*  Input wiring: ?url= fetch  +  postMessage                               */
+  /* ======================================================================== */
+  window.addEventListener("message", (event) => {
+    const data = event && event.data;
+    if (data && data.type === "splat-buffer" && data.buffer) {
+      state = "loading";
+      showStatus("Loading scene", "Rendering received buffer…", false, true);
+      // Defer so the overlay paints before the (synchronous) parse.
+      setTimeout(() => loadBuffer(data.buffer), 0);
+    }
+  });
+
+  async function loadFromUrl(url) {
+    state = "loading";
+    showStatus("Loading scene", url, false, true);
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("HTTP " + res.status + " " + res.statusText);
+      const buf = await res.arrayBuffer();
+      loadBuffer(buf);
+    } catch (err) {
+      showError((err && err.message ? err.message : err) + " — while fetching " + url);
+    }
+  }
+
+  // Boot.
+  const params = new URLSearchParams(window.location.search);
+  const url = params.get("url");
+  if (url) {
+    loadFromUrl(url);
+  } else {
+    state = "empty";
+    showStatus(
+      "No scene loaded",
+      "Pass ?url=<splat-url> or post a { type:'splat-buffer', buffer } message.",
+      false,
+      false
+    );
+  }
+
+  // Let the embedding parent know we're ready to receive a buffer.
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: "splat-viewer-ready" }, "*");
+    }
+  } catch (e) { /* cross-origin parent: harmless */ }
+
+  requestAnimationFrame(render);
+})();
+</script>

@@ -1,0 +1,279 @@
+# =============================================================================
+# OSHAL — Argo WorkflowTemplate: incident-rca pipeline as a batch job (ADR-078)
+# -----------------------------------------------------------------------------
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                                        | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-078 local prove-out: map the existing 'incident-rca' WorkflowDefinition (src/features/swarm-orchestration/services/dispatch-routing.ts) onto an Argo Workflows DAG. Scaffold — validates offline; a live cluster + Argo CRDs + a one-shot bot-node batch entrypoint are still required to run it (see ops/deployment/argo/README.md and docs/architecture/078-argo-batch-proveout-status.md).
+# =============================================================================
+#
+# WHAT THIS IS
+#   A runnable-WHEN-Argo-is-installed WorkflowTemplate that expresses ONE existing
+#   OSHAL ticket-type/workflow — the 'incident' ticketType, pipeline 'incident-rca'
+#   (WORKFLOW_PIPELINES[0]) — as a Kubernetes-native batch job.
+#
+# FAITHFUL MAPPING (OSHAL concept -> Argo form; per ADR-078 §1)
+#   ticket of type 'incident'                 -> a Workflow submission of this template
+#   dispatchIncidentTicket() phases           -> a DAG of steps
+#   bot-node executes one phase               -> a DAG task = a Job pod (bot-node-phase)
+#   rca-specialist worker (workerBot)         -> the worker-investigate task
+#   opt-in reviewerBot + maxRevisions         -> the reviewer-review task (guarded by `when`)
+#   graph-engine approval-gate node           -> the approval-gate suspend task (guarded by `when`)
+#   MODE A/B/C finalize (INCIDENT_MODE_DISPOSITION) -> the finalize task
+#   recordCost -> chat_tasks                  -> the onExit record-cost handler
+#
+# TENANCY (per ADR-078 §3): this template is submitted INTO a per-tenant worker
+#   namespace (see tenant-namespace.example.yaml). The namespace + NetworkPolicy +
+#   ResourceQuota + per-tenant DB role ARE the isolation boundary — not just a WHERE
+#   clause. serviceAccountName below is the per-tenant SA created by that manifest.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: oshal-incident-rca
+  # NOTE: submitted into the per-tenant worker namespace, e.g. oshal-tenant-acme.
+  # The literal below is a placeholder; the submitter stamps the caller's tenant ns.
+  namespace: oshal-tenant-acme
+  labels:
+    app.kubernetes.io/part-of: oshal
+    oshal.io/pipeline: incident-rca
+    oshal.io/ticket-type: incident
+spec:
+  entrypoint: incident-rca
+  # Per-tenant service account (from tenant-namespace.example.yaml). Argo runs the
+  # DAG pods under this SA; RBAC + NetworkPolicy scope it to this tenant only.
+  serviceAccountName: oshal-workflow
+  # Cost ledger: mirrors recordCost -> chat_tasks. Runs regardless of success/failure.
+  onExit: record-cost
+  # TTL + pod GC so batch Jobs "spin up ... and tear down" (ADR-078 §1).
+  ttlStrategy:
+    secondsAfterCompletion: 3600
+  podGC:
+    strategy: OnWorkflowCompletion
+  arguments:
+    parameters:
+      # ── Identity of the unit of work (a 'ticket' IS a job — ADR-078 §Context) ──
+      - name: ticket-id
+        value: "REQUIRED-at-submit"
+      - name: tenant
+        value: "REQUIRED-at-submit"
+      - name: title
+        value: ""
+      - name: description
+        value: ""
+      # ── Pipeline shape, carried from the WorkflowDefinition ──
+      # NOTE (double-check 2026-07-08): pass the RESOLVED agent UUID, not the registry
+      # name. resolveRuntimeIdentity matches AGENT_ID against agentId (UUIDs) and only
+      # matches names via BOT_NAME; the submitter must resolve names → UUIDs exactly like
+      # dispatchIncidentTicket (resolveAgentIdByName). The default below is the same
+      # fallback UUID dispatchIncidentTicket uses for rca-specialist.
+      # SUBMITTER CONTRACT: the ticket must be in 'approved' state — the first phase
+      # moves it to in_process_discovery (backlog does not allow that transition).
+      - name: worker-bot
+        value: "e0000000-0000-0000-0000-000000000100"   # rca-specialist (resolved UUID)
+      - name: reviewer-bot
+        value: ""                         # opt-in; "" = one-and-done (the default)
+      - name: max-revisions
+        value: "1"                        # WorkflowDefinition.maxRevisions default
+      - name: require-approval
+        value: "false"                    # graph approval-gate node maps to suspend
+      # ── In-cluster model endpoint (ADR-078 §2): no token leaves the tenant ──
+      # Consumed as OLLAMA_HOST — the env the cline harness actually reads
+      # (cline-config-builder.ts). LLM_BASE_URL was dead config: nothing reads it.
+      - name: model-endpoint
+        value: "http://ollama.oshal-model.svc.cluster.local:11434"
+      # ── The OSHAL runtime image (the real any-bot image; see Dockerfile.oshal) ──
+      - name: bot-image
+        value: "any-bot:latest"
+      # ── Shared workspace PVC: deliverables must outlive the pod (podGC + ttl destroy
+      # the pod filesystem) and the reviewer runs in a DIFFERENT pod. Single-node local
+      # clusters can use the RWO example (tenant-workspace-pvc.example.yaml); multi-node
+      # needs RWX storage. ──
+      - name: workspace-pvc
+        value: "oshal-workspace-shared"
+
+  volumes:
+    - name: workspace-shared
+      persistentVolumeClaim:
+        claimName: "{{workflow.parameters.workspace-pvc}}"
+
+  templates:
+    # ── The DAG: one entry per phase of dispatchIncidentTicket() ──────────────
+    - name: incident-rca
+      dag:
+        tasks:
+          # Phase 1 — the rca-specialist worker investigates. A Job pod that does
+          # the LLM work against the in-cluster model, writes RCA-REPORT.md +
+          # HANDOVER.md to the workspace, and emits the parsed MODE marker.
+          - name: worker-investigate
+            template: bot-node-phase
+            arguments:
+              parameters:
+                - name: agent-id
+                  value: "{{workflow.parameters.worker-bot}}"
+                - name: phase
+                  value: "investigate"
+
+          # Optional approval gate. incident-rca has NO gate by default
+          # (require-approval=false); a graph workflow's approval-gate node sets it
+          # true and the Workflow pauses here until `argo resume`.
+          - name: approval-gate
+            dependencies: [worker-investigate]
+            template: suspend-for-approval
+            when: "{{workflow.parameters.require-approval}} == true"
+
+          # Phase 2 — opt-in reviewer. Runs ONLY when a manifest declared reviewerBot.
+          # A skipped `when` task is treated as satisfied by downstream deps, so
+          # finalize still runs in the default one-and-done case.
+          - name: reviewer-review
+            dependencies: [approval-gate]
+            template: bot-node-phase
+            # QUOTED substitution (double-check 2026-07-08, live-proven): Argo substitutes
+            # the parameter TEXTUALLY, so the unquoted form with the default "" became
+            # ` != ""` — govaluate parse error, node Error, whole Workflow Error, finalize
+            # Omitted on EVERY default one-and-done submission. Quoting makes both the
+            # empty default (evaluates false → Skipped → finalize still runs) and real
+            # bot names (string literals) valid.
+            when: "\"{{workflow.parameters.reviewer-bot}}\" != \"\""
+            arguments:
+              parameters:
+                - name: agent-id
+                  value: "{{workflow.parameters.reviewer-bot}}"
+                - name: phase
+                  value: "review"
+
+          # Finalize — parse the MODE marker (Mode A/B/C) into ticket
+          # status/disposition, exactly like finalizeIncidentByMode().
+          - name: finalize
+            dependencies: [reviewer-review]
+            template: finalize-incident
+            arguments:
+              parameters:
+                - name: mode
+                  value: "{{tasks.worker-investigate.outputs.parameters.mode}}"
+
+    # ── A DAG task = a Job pod running one bot-node phase ─────────────────────
+    # BUILT 2026-07-08: scripts/bot-node-batch.sh → dist/app/bot-node-batch.js runs a
+    # SINGLE phase and exits (vs. the long-lived bot-node-server.ts). Both entrypoints
+    # share ONE construction path (src/app/bot-node-runtime.ts), so a batch phase runs on
+    # the same accountable any-bot stack and its cost still lands in chat_tasks. It writes
+    # the classified MODE to mode.txt, lifted below as an output parameter.
+    # STILL TARGET-STATE: turning QueueManagerService into a thin Workflow submitter (ADR-078 §1).
+    - name: bot-node-phase
+      inputs:
+        parameters:
+          - name: agent-id
+          - name: phase
+      metadata:
+        labels:
+          oshal.io/tenant: "{{workflow.parameters.tenant}}"
+          oshal.io/ticket-id: "{{workflow.parameters.ticket-id}}"
+      container:
+        image: "{{workflow.parameters.bot-image}}"
+        imagePullPolicy: IfNotPresent
+        command: ["/app/scripts/bot-node-batch.sh"]   # BUILT — one-shot phase entrypoint
+        args:
+          - "--ticket-id={{workflow.parameters.ticket-id}}"
+          - "--agent-id={{inputs.parameters.agent-id}}"
+          - "--phase={{inputs.parameters.phase}}"
+          # Work content (double-check 2026-07-08): these become the envelope's workUnits —
+          # the ONLY carrier of work on the non-direct path. Without them the pod burned a
+          # real LLM call on a bot that had no idea what incident it was investigating.
+          - "--title={{workflow.parameters.title}}"
+          - "--description={{workflow.parameters.description}}"
+        volumeMounts:
+          - name: workspace-shared
+            mountPath: /app/workspace-shared
+        env:
+          - name: BOT_RUNTIME
+            value: "bot-node-batch"            # runtime mode consumed by bot-node-batch.sh
+          - name: AGENT_ID
+            value: "{{inputs.parameters.agent-id}}"
+          # Name-based identity fallback: resolveRuntimeIdentity only matches names via
+          # BOT_NAME (AGENT_ID is matched against UUIDs). Harmless when agent-id IS a UUID.
+          - name: BOT_NAME
+            value: "{{inputs.parameters.agent-id}}"
+          - name: TICKET_ID
+            value: "{{workflow.parameters.ticket-id}}"
+          - name: OSHAL_TENANT
+            value: "{{workflow.parameters.tenant}}"
+          # Workspace-root agreement (double-check 2026-07-08): with these unset, the prompt
+          # assembler preferred /app/workspace (it exists in the image) while resolveMode read
+          # /app/workspace-shared — so RCA-REPORT.md was always written where the mode reader
+          # never looked, silently degrading Mode C escalations to 'completed_no_mode'.
+          - name: SHARED_WORKSPACE_ROOT
+            value: "/app/workspace-shared"
+          - name: WORKSPACE_DIR
+            value: "/app/workspace-shared"
+          # In-cluster model — OLLAMA_HOST is the env the cline harness actually reads
+          # (cline-config-builder.ts). The previous LLM_BASE_URL was dead config.
+          - name: OLLAMA_HOST
+            value: "{{workflow.parameters.model-endpoint}}"
+          # Per-tenant DB credentials. HONESTY (double-check 2026-07-08): the GUC wrapper
+          # stamps trusted SYSTEM context (is_operator='on') for bot pods, which BYPASSES
+          # every RLS policy — so RLS is NOT currently an isolation leg for batch pods.
+          # Data isolation must come from a per-tenant DATABASE in this Secret (or a future
+          # tenant-scoped service identity). See BACKLOG Plan C.
+          - name: DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: oshal-tenant-db
+                key: DATABASE_URL
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+      outputs:
+        parameters:
+          # The worker writes the classified MODE (A/B/C) to this path; Argo lifts it
+          # into a task output so finalize can branch on disposition.
+          - name: mode
+            valueFrom:
+              default: "unknown"
+              path: /app/workspace-shared/{{workflow.parameters.ticket-id}}/mode.txt
+
+    # ── Approval gate = an Argo suspend step (ADR-078 §1 mapping) ─────────────
+    - name: suspend-for-approval
+      suspend: {}
+
+    # ── Finalize by MODE — status/disposition, like INCIDENT_MODE_DISPOSITION ──
+    - name: finalize-incident
+      inputs:
+        parameters:
+          - name: mode
+      container:
+        image: "{{workflow.parameters.bot-image}}"
+        imagePullPolicy: IfNotPresent
+        command: ["/app/scripts/finalize-incident.sh"]   # BUILT — mode -> ticket disposition
+        args:
+          - "--ticket-id={{workflow.parameters.ticket-id}}"
+          - "--mode={{inputs.parameters.mode}}"
+        env:
+          - name: DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: oshal-tenant-db
+                key: DATABASE_URL
+
+    # ── Cost ledger exit handler — the recordCost -> chat_tasks row ───────────
+    # BUILT: writes ONE workflow-level chat_tasks run marker. It carries ZERO cost on
+    # purpose — each bot-node-phase pod already recorded its own per-call cost row, so
+    # billing the run again here would double-count every Argo workflow in cost reports.
+    - name: record-cost
+      container:
+        image: "{{workflow.parameters.bot-image}}"
+        imagePullPolicy: IfNotPresent
+        command: ["/app/scripts/record-cost.sh"]   # BUILT — zero-cost run marker
+        args:
+          - "--ticket-id={{workflow.parameters.ticket-id}}"
+          - "--workflow-status={{workflow.status}}"
+        env:
+          - name: DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: oshal-tenant-db
+                key: DATABASE_URL

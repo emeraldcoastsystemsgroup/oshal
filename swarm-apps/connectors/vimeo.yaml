@@ -1,0 +1,55 @@
+provider: vimeo
+displayName: Vimeo
+version: 1.0.0
+baseUrl: https://api.vimeo.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: vimeo-me
+    method: GET
+    path: /me
+  - name: videos
+    tool: vimeo-videos
+    method: GET
+    path: /me/videos
+    query:
+      - page
+      - per_page
+      - query
+      - sort
+      - direction
+  - name: video
+    tool: vimeo-video
+    method: GET
+    path: /videos/{videoId}
+  - name: albums
+    tool: vimeo-albums
+    method: GET
+    path: /me/albums
+    query:
+      - page
+      - per_page
+      - sort
+  - name: folders
+    tool: vimeo-folders
+    method: GET
+    path: /me/projects
+    query:
+      - page
+      - per_page
+  - name: video-stats
+    tool: vimeo-video-stats
+    method: GET
+    path: /videos/{videoId}/privacy/users
+metadata:
+  icon: vimeo
+  iconTitle: Vimeo
+  iconSource: simple-icons
+  iconVerified: true

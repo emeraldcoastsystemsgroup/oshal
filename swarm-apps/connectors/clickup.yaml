@@ -1,0 +1,29 @@
+provider: clickup
+displayName: ClickUp
+version: 1.0.0
+baseUrl: https://api.clickup.com/api/v2
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: clickup-me
+    method: GET
+    path: /user
+  - name: teams
+    tool: clickup-teams
+    method: GET
+    path: /team
+metadata:
+  description: "Read the connected ClickUp user profile and its workspaces (teams)."
+  category: "Project management"
+  icon: clickup
+  iconTitle: ClickUp
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,663 @@
+/*
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added styling for the OSHAL-native config admin engineering page
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added styles for native per-bot config detail panels, actions, and tool controls
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added bot-scope layout mode so /config?scope=agent focuses directly on per-bot settings surfaces
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added shared service-runtime styling for Presentron configuration and health feedback
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Session 20: Restyled to cockpit glassmorphism design system — glass cards, blur, accent gradients, liquid borders
+ */
+
+/* ── Design Tokens — inherited from cockpit theme CSS via data-theme ── */
+/* Fallback values only used when no theme file is loaded (standalone access). */
+:root {
+  color-scheme: dark;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 9999px;
+  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-family-display: 'Plus Jakarta Sans', 'SF Pro Display', system-ui, -apple-system, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Monaco', monospace;
+  --transition-fast: 150ms ease;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  min-height: 100vh;
+  overflow-y: auto;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  line-height: 1.5;
+}
+
+.page-shell {
+  min-height: 100vh;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── Agent scope: hide non-agent sections ─────────────────────────── */
+body[data-scope="agent"] .hero,
+body[data-scope="agent"] .metrics-grid,
+body[data-scope="agent"] .panel[data-scope="shared"],
+body[data-scope="agent"] .panel[data-scope="ownership"] {
+  display: none;
+}
+
+/* ── Glass card mixin (shared by hero, panels, metric cards) ──────── */
+.hero,
+.metric-card,
+.panel,
+.status-banner,
+.ownership-card,
+.agent-card,
+.agent-config-metric,
+.agent-tool-card,
+.provider-auth-card,
+.bulk-config-card,
+.runtime-config-card,
+.agent-runtime-guide {
+  background: linear-gradient(145deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.01) 100%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--card-shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::before,
+.panel::before,
+.metric-card::before,
+.ownership-card::before,
+.agent-card::before,
+.provider-auth-card::before,
+.bulk-config-card::before,
+.runtime-config-card::before,
+.agent-runtime-guide::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--glass-glare);
+  pointer-events: none;
+  opacity: 0.3;
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────── */
+.hero {
+  padding: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 20px;
+}
+
+h1, h2, h3, p { margin-top: 0; }
+
+h1 {
+  margin-bottom: 8px;
+  font-size: clamp(1.6rem, 2vw, 2.2rem);
+  font-family: var(--font-family-display);
+  font-weight: 700;
+}
+
+h2 {
+  font-family: var(--font-family-display);
+  font-weight: 600;
+}
+
+.eyebrow,
+.panel-eyebrow,
+.metric-label {
+  margin: 0 0 6px;
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.hero-copy {
+  max-width: 720px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 0;
+  font-size: 14px;
+}
+
+.hero-actions,
+.form-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+button, .top-link, .ghost-link {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-heavy);
+  color: var(--text-primary);
+  padding: 10px 16px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+button:hover, .top-link:hover, .ghost-link:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--border-color-hover);
+  transform: translateY(-1px);
+}
+
+button:active { transform: translateY(0); }
+
+/* ── Metrics Grid ─────────────────────────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric-card {
+  padding: 16px;
+}
+
+.metric-label {
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.metric-card strong {
+  font-size: 1.5rem;
+  font-family: var(--font-family-display);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Status Banner ────────────────────────────────────────────────── */
+.status-banner {
+  padding: 12px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.status-banner[data-tone="success"] { color: var(--status-success); }
+.status-banner[data-tone="error"] { color: var(--status-error); }
+
+/* ── Content Grid ─────────────────────────────────────────────────── */
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 16px;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.panel-wide {
+  grid-column: 1 / -1;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* ── Forms ─────────────────────────────────────────────────────────── */
+.config-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+textarea,
+input,
+select {
+  font: inherit;
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  padding: 10px 14px;
+  font-size: 14px;
+  transition: border-color var(--transition-fast);
+}
+
+textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.helper-text,
+.field-copy,
+.tool-auth-status {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── Service Runtime ──────────────────────────────────────────────── */
+.service-runtime-copy { margin-bottom: 14px; }
+
+.service-runtime-status {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-secondary);
+  padding: 12px 16px;
+  min-height: 48px;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.service-runtime-status[data-tone="success"] {
+  border-color: rgba(52, 211, 153, 0.3);
+  color: var(--status-success);
+}
+
+.service-runtime-status[data-tone="error"] {
+  border-color: rgba(248, 113, 113, 0.3);
+  color: var(--status-error);
+}
+
+/* ── Ownership Grid ───────────────────────────────────────────────── */
+.ownership-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.ownership-card,
+.agent-card {
+  padding: 16px;
+}
+
+.ownership-card h3,
+.agent-card h3 {
+  margin-bottom: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.route-code,
+.agent-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-primary);
+  word-break: break-all;
+}
+
+.ownership-copy,
+.agent-copy {
+  color: var(--text-secondary);
+  line-height: 1.55;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+/* ── Chips ─────────────────────────────────────────────────────────── */
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--glass-bg);
+}
+
+/* ── Agent List ───────────────────────────────────────────────────── */
+.agent-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.agent-card.is-selected {
+  border-color: var(--accent-primary);
+  background: linear-gradient(145deg, rgba(99,102,241,0.08) 0%, rgba(255,255,255,0.02) 100%);
+}
+
+.agent-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.agent-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.agent-card-actions,
+.agent-config-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.agent-config-panel {
+  display: grid;
+  gap: 16px;
+}
+
+/* ── Agent Config (bot detail panel) ──────────────────────────────── */
+.agent-config-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.agent-config-metric {
+  padding: 14px;
+}
+
+.agent-config-metric-label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.agent-config-metric-value {
+  font-size: 14px;
+  font-family: var(--font-mono);
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.agent-config-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+}
+
+.agent-config-form {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-config-form textarea,
+.tool-auth-select,
+.agent-config-form input,
+.agent-config-form select {
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.agent-config-form textarea {
+  min-height: 120px;
+  resize: vertical;
+  font-family: var(--font-family);
+}
+
+.agent-config-form textarea:focus,
+.agent-config-form input:focus,
+.agent-config-form select:focus,
+.tool-auth-select:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ── Tools List ───────────────────────────────────────────────────── */
+.agent-tools-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(72vh, 760px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.agent-tool-card {
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.agent-tool-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.agent-tool-card-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.agent-tool-card code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-primary);
+}
+
+.tool-auth-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* ── Provider Auth Card ───────────────────────────────────────────── */
+.provider-auth-card {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.provider-auth-copy h3 {
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+
+.provider-auth-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.auth-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.auth-status-badge[data-tone="success"] {
+  color: var(--status-success);
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+.auth-status-badge[data-tone="error"] {
+  color: var(--status-error);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.auth-status-badge[data-tone="muted"] {
+  color: var(--text-muted);
+}
+
+/* ── Bulk Config Card ─────────────────────────────────────────────── */
+.bulk-config-card {
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.bulk-config-card h3 {
+  margin-bottom: 0;
+  font-size: 15px;
+}
+
+.runtime-config-card {
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.agent-runtime-guide {
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.agent-runtime-guide h3 {
+  margin-bottom: 0;
+  font-size: 15px;
+}
+
+.agent-runtime-guide-summary {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-runtime-guide-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-primary);
+  word-break: break-word;
+}
+
+.agent-runtime-guide-content {
+  margin: 0;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow: auto;
+}
+
+/* ── Empty State ──────────────────────────────────────────────────── */
+.empty-state {
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ── Checkbox ─────────────────────────────────────────────────────── */
+.checkbox-field { gap: 10px; }
+
+.checkbox-row {
+  display: flex;
+  gap: 10px;
+  align-items: start;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin-top: 2px;
+  accent-color: var(--accent-primary);
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 980px) {
+  .metrics-grid,
+  .content-grid,
+  .config-form {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-config-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-tools-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .hero,
+  .panel-head {
+    align-items: start;
+    flex-direction: column;
+  }
+}

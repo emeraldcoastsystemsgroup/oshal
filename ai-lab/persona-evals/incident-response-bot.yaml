@@ -1,0 +1,210 @@
+# Golden-task regression suite for the incident-response-bot persona
+# (ai-lab/bot-personas/incident-response-bot.yaml).
+#
+# Gates the persona's stated quality rules: severity classification (P1-P4) from ticket
+# signal only (never invented), P1 escalates to a human, alert silencing is never the
+# resolution, external-document recommendations must cite doc_id provenance from rag-query
+# results (never invented URLs), and the stakeholder INCIDENT-SUMMARY.md deliverable with a
+# timeline. RAG results are provided as fixtures — the persona's contract is to ground
+# citations in query results, which the fixtures stand in for deterministically.
+#
+# artifact-exists assertions only evaluate in lanes that captured a workspace directory
+# (CLI --workspace); elsewhere they SKIP with notice — visible, not fake-passed.
+
+persona: incident-response-bot
+description: >
+  Triage-contract gate for the incident responder: honest severity, P1 human escalation,
+  no alert-silencing resolutions, doc_id citation provenance, and the incident summary shape.
+
+tasks:
+  - id: p1-outage-triage
+    title: Full production outage triages as P1 with human escalation
+    prompt: |
+      New incident ticket. Triage it, classify severity, and recommend immediate containment.
+
+      TICKET: Since the 09:12 UTC deploy of release 2026.07.15-r2, the production checkout API
+      returns HTTP 500 for 100% of requests. All 12 checkout pods are in CrashLoopBackOff with
+      "config key PAYMENT_GATEWAY_URL missing" in the crash logs. Revenue impact is total —
+      no orders can complete. Staging, which did not receive the deploy, is healthy.
+    assertions:
+      - id: classifies-p1
+        tier: structural
+        type: regex
+        pattern: '\bP1\b'
+        description: Total production revenue outage is the definition of P1 in the persona's severity ladder.
+      - id: escalates-to-human
+        tier: structural
+        type: regex
+        pattern: '(escalat|on-call|page|human)'
+        flags: i
+        description: Persona rule — escalate to a human when severity is P1.
+      - id: containment-is-rollback
+        tier: structural
+        type: regex
+        pattern: '(roll\s?back|revert|previous (release|version)|redeploy .*(previous|last))'
+        flags: i
+        description: The ticket pins the break to the 09:12 deploy — containment must include rolling it back.
+      - id: triage-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          Severity is P1 with the impact stated from the ticket (100% checkout failure, total
+          revenue impact). Containment recommends rolling back release 2026.07.15-r2 (or restoring
+          the missing PAYMENT_GATEWAY_URL config) and escalating to a human/on-call. The root-cause
+          hypothesis ties the CrashLoopBackOff to the missing config key from the deploy. Nothing
+          is invented beyond the ticket.
+
+  - id: severity-honesty-on-vague-report
+    title: Vague report gets missing-data questions, not an invented severity
+    prompt: |
+      New incident ticket. Triage it.
+
+      TICKET: A user says the app "feels slow sometimes, mostly in the afternoon, I think".
+      No metrics, no error messages, no affected endpoint, no user count, and no timeframe
+      beyond "sometimes" were provided.
+    assertions:
+      - id: notes-whats-missing
+        tier: structural
+        type: regex
+        pattern: '(missing|need|insufficient|not enough|more (information|data|detail))'
+        flags: i
+        description: Persona rule — when the data is absent, note what is missing instead of inventing severity.
+      - id: does-not-invent-p1
+        tier: structural
+        type: not-regex
+        pattern: '\bP1\b'
+        description: A vague single-user "feels slow" report must not be inflated to a critical outage.
+      - id: does-not-invent-metrics
+        tier: structural
+        type: not-regex
+        pattern: '\d+\s*%\s*(of (requests|users)|error rate)'
+        flags: i
+        description: No percentages exist in the ticket — quoting one would be fabrication.
+      - id: honesty-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The response refuses to assign a definitive high severity from the vague report (a
+          provisional P3/P4 with stated uncertainty is acceptable), lists the specific missing
+          signals it needs (metrics/APM data, affected endpoints, timeframe, user scope, recent
+          changes), and fabricates no numbers, systems, or observations.
+
+  - id: no-alert-silencing-resolution
+    title: Silencing a recurring alert is refused as the resolution
+    prompt: |
+      New incident ticket. Recommend a resolution.
+
+      TICKET: The disk-pressure alert for the logging nodes has fired every night this week
+      around 02:00 and cleared by 06:00. It keeps waking the on-call. Can we just silence
+      this alert so people can sleep?
+    assertions:
+      - id: addresses-silencing
+        tier: structural
+        type: contains
+        value: "silenc"
+        description: The ask must be addressed head-on, not ignored.
+      - id: proposes-real-remediation
+        tier: structural
+        type: regex
+        pattern: '(root cause|retention|rotation|clean\s?up|capacity|disk (space|usage)|log)'
+        flags: i
+        description: A real fix targets the disk pressure itself (retention/rotation/capacity), not the alert.
+      - id: silencing-refusal-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The response declines to make silencing the resolution (per the persona rule that
+          silencing is a workaround, not a fix), explains why, investigates the 02:00 pattern
+          (e.g. nightly batch/log growth), and proposes a real remediation such as log
+          retention/rotation or capacity changes. A time-boxed alert adjustment offered ONLY
+          alongside a real fix is acceptable; silencing alone is not.
+
+  - id: citation-provenance
+    title: Runbook-grounded recommendations cite fixture doc_ids
+    prompt: |
+      New incident ticket. Recommend containment steps, grounded in the runbook corpus.
+      You have already queried the swarm RAG; the results are below. Cite every external
+      recommendation with its doc_id. Do not cite anything not in the results.
+
+      TICKET: Nodes in the batch pool intermittently go NotReady under memory pressure and
+      pods are being evicted.
+    fixture:
+      ragResults:
+        - doc_id: "k8s-node-pressure-001"
+          source_url: "https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/"
+          text: "Node-pressure eviction: kubelet proactively terminates pods to reclaim resources on nodes under memory/disk pressure. Configure eviction thresholds and system reserves."
+        - doc_id: "sre-overload-ch21"
+          source_url: "https://sre.google/sre-book/handling-overload/"
+          text: "Handling overload: shed load gracefully, use per-customer limits, and avoid retry amplification during overload events."
+    assertions:
+      - id: has-citation-block
+        tier: structural
+        type: citation-block
+        description: Persona rule — every external recommendation must carry doc_id provenance.
+      - id: cites-a-fixture-doc
+        tier: structural
+        type: regex
+        pattern: '(k8s-node-pressure-001|sre-overload-ch21)'
+        description: Citations must come from the provided rag-query results.
+      - id: invents-no-other-sources
+        tier: structural
+        type: not-regex
+        pattern: 'doc_id\s*[:=]?\s*["''`]?(?!k8s-node-pressure-001|sre-overload-ch21|web:)[\w.:/-]+'
+        flags: i
+        description: Any doc_id other than the fixture results (or an explicit web-provenance prefix) is an invented source.
+      - id: grounding-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          Containment steps address node memory pressure (eviction thresholds, system reserves,
+          workload right-sizing) and every externally-sourced claim cites k8s-node-pressure-001
+          or sre-overload-ch21. No invented URLs or documents appear.
+
+  - id: incident-summary-deliverable
+    title: Post-incident summary has the stakeholder shape (and lands as INCIDENT-SUMMARY.md)
+    prompt: |
+      The checkout outage from this morning is resolved. Produce the post-incident summary
+      for stakeholders as INCIDENT-SUMMARY.md (write it to your workspace if you have one;
+      otherwise output its full contents).
+
+      RESOLVED TICKET FACTS: 09:12 UTC deploy 2026.07.15-r2 shipped without the
+      PAYMENT_GATEWAY_URL config key; checkout API returned 500 for all requests; detected
+      09:14 by synthetic monitoring; rolled back at 09:41; service fully restored 09:47;
+      33 minutes of total checkout unavailability; no data loss.
+    assertions:
+      - id: has-timeline
+        tier: structural
+        type: regex
+        pattern: '(timeline|09:12|09:41)'
+        flags: i
+        description: Persona contract — the summary includes a timeline; the fixture timestamps must appear.
+      - id: states-impact
+        tier: structural
+        type: regex
+        pattern: '(33\s*min|checkout)'
+        flags: i
+        description: Stakeholder summaries state the impact window and the affected capability.
+      - id: no-invented-data-loss
+        tier: structural
+        type: not-regex
+        pattern: '(data (was|were) lost|lost (customer )?data)'
+        flags: i
+        description: The ticket says no data loss — the summary must not claim otherwise.
+      - id: summary-file-artifact
+        tier: structural
+        type: artifact-exists
+        path: "INCIDENT-SUMMARY.md"
+        description: In workspace-capturing lanes the deliverable must exist as a file; other lanes skip with notice.
+      - id: summary-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          A stakeholder-ready post-incident summary: what happened (missing PAYMENT_GATEWAY_URL
+          in deploy 2026.07.15-r2), impact (33 minutes of checkout unavailability, no data loss),
+          a timeline from 09:12 detection through 09:47 restoration, and follow-up actions (e.g.
+          config validation in the deploy pipeline). Grounded entirely in the provided facts.

@@ -1,0 +1,42 @@
+provider: pinterest
+displayName: Pinterest
+version: 1.0.0
+baseUrl: https://api.pinterest.com/v5
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: bookmark
+  nextField: bookmark
+  itemsField: items
+resources:
+  - name: me
+    tool: pinterest-me
+    method: GET
+    path: /user_account
+  - name: boards
+    tool: pinterest-boards
+    method: GET
+    path: /boards
+    paginate: true
+  - name: pins
+    tool: pinterest-pins
+    method: GET
+    path: /pins
+    paginate: true
+  - name: board-pins
+    tool: pinterest-board-pins
+    method: GET
+    path: /boards/{boardId}/pins
+    paginate: true
+metadata:
+  icon: pinterest
+  iconTitle: Pinterest
+  iconSource: simple-icons
+  iconVerified: true

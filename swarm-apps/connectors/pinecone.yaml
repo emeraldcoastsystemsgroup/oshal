@@ -1,0 +1,30 @@
+provider: pinecone
+displayName: Pinecone
+version: 1.0.0
+baseUrl: https://api.pinecone.io
+auth:
+  type: apiKeyHeader
+  header: Api-Key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: indexes
+    tool: pinecone-indexes
+    method: GET
+    path: /indexes
+  - name: index
+    tool: pinecone-index
+    method: GET
+    path: /indexes/{index_name}
+  - name: collections
+    tool: pinecone-collections
+    method: GET
+    path: /collections
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/pinecone.io.ico

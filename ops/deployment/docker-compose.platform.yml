@@ -1,0 +1,192 @@
+# =============================================================================
+# OSHAL Platform Stack (Compose)
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added portable compose stack for OSHAL runtime (api, keycloak, postgres, redis, chromadb, optional presentron)
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: oshal-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-keycloak}
+      POSTGRES_USER: ${POSTGRES_USER:-keycloak}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-keycloak_db_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-keycloak} -d ${POSTGRES_DB:-keycloak}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - oshal
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: oshal-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-keycloak}
+      KC_DB_USERNAME: ${POSTGRES_USER:-keycloak}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-keycloak_db_password}
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-localhost}
+      KC_HTTP_PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo ok >&3 && cat <&3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - oshal
+
+  redis:
+    image: redis:7-alpine
+    container_name: oshal-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - oshal
+
+  chromadb:
+    image: chromadb/chroma:0.4.24
+    container_name: oshal-chromadb
+    ports:
+      - "8000:8000"
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - oshal
+
+  presentron:
+    image: ${PRESENTRON_IMAGE:-presentron:latest}
+    container_name: oshal-presentron
+    profiles: ["presentron"]
+    environment:
+      PRESENTRON_API_KEY: ${PRESENTRON_API_KEY:-}
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - oshal
+
+  api-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: oshal-api-server
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PORT: 3456
+      OPENAI_CODEX_CALLBACK_PORT: 1455
+
+      CONFIG_OUTPUT_DIR: /app/output
+      SHARED_WORKSPACE_ROOT: /app/workspace-shared
+      CLINE_SHARED_WORKSPACE_ROOT: /app/workspace-shared
+
+      MOCK_OIDC: ${MOCK_OIDC:-false}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_EXTERNAL_URL: ${KEYCLOAK_EXTERNAL_URL:-http://localhost:8080}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-oshal}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-oshal-swarm}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-changeme}
+      SESSION_SECRET: ${SESSION_SECRET:-changeme-session-secret}
+      APP_URL: ${APP_URL:-http://localhost:3456}
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-keycloak}
+      POSTGRES_USER: ${POSTGRES_USER:-keycloak}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-keycloak_db_password}
+
+      REDIS_URL: redis://redis:6379
+      ENABLE_AGENT_SCHEDULER: ${ENABLE_AGENT_SCHEDULER:-true}
+      SCHEDULER_POLL_INTERVAL_MS: ${SCHEDULER_POLL_INTERVAL_MS:-15000}
+
+      CHROMADB_URL: http://chromadb:8000
+      RAG_INGESTION_ENDPOINT: ${RAG_INGESTION_ENDPOINT:-}
+      PRESENTRON_ENDPOINT: ${PRESENTRON_ENDPOINT:-http://presentron:8080}
+
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-5-20250929}
+      SWARM_MODE: ${SWARM_MODE:-single}
+    ports:
+      - "3456:3456"
+      - "1455:1455"
+    volumes:
+      - api_output:/app/output
+      - api_workspace:/app/workspace
+      - api_workspace_shared:/app/workspace-shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3456/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - oshal
+
+networks:
+  oshal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:
+  api_output:
+  api_workspace:
+  api_workspace_shared:

@@ -1,0 +1,26 @@
+provider: site24x7
+displayName: Site24x7
+version: 1.0.0
+baseUrl: https://www.site24x7.com/api
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: monitors
+    tool: site24x7-monitors
+    method: GET
+    path: /monitors
+  - name: current-status
+    tool: site24x7-current-status
+    method: GET
+    path: /current_status
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/site24x7.com.ico

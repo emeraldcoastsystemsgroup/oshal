@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Trunk-discipline nudge (see CLAUDE.md RULE 0). Non-blocking: post-checkout cannot abort,
+# this only prints a reminder when an agent/human switches AWAY from `main` onto a branch.
+#
+# Install (per machine; hooks aren't cloned): from the repo root run
+#   git config core.hooksPath scripts/git-hooks
+# or copy this file to .git/hooks/post-checkout and chmod +x it.
+#
+# Args: $1=prev-HEAD $2=new-HEAD $3=branch-flag (1 when a branch checkout, 0 for file checkout)
+branch_flag="$3"
+[ "$branch_flag" = "1" ] || exit 0
+
+current="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo DETACHED)"
+if [ "$current" != "main" ]; then
+  printf '\n\033[33m[trunk-rule] You are on "%s", not main.\033[0m\n' "$current"
+  printf '\033[33m            This repo is trunk-based (CLAUDE.md RULE 0): work on main, commit + push often.\033[0m\n'
+  printf '\033[33m            Switch back with:  git switch main\033[0m\n\n'
+fi
+exit 0

@@ -1,0 +1,29 @@
+provider: printify
+displayName: Printify
+version: 1.0.0
+baseUrl: https://api.printify.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: shops
+    tool: printify-shops
+    method: GET
+    path: /shops.json
+  - name: shop-products
+    tool: printify-shop-products
+    method: GET
+    path: /shops/{shop_id}/products.json
+  - name: shop-orders
+    tool: printify-shop-orders
+    method: GET
+    path: /shops/{shop_id}/orders.json
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/printify.com.ico

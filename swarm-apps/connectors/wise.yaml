@@ -1,0 +1,35 @@
+provider: wise
+displayName: Wise
+version: 1.0.0
+baseUrl: https://api.transferwise.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: profiles
+    tool: wise-profiles
+    method: GET
+    path: /profiles
+  - name: borderless-accounts
+    tool: wise-borderless-accounts
+    method: GET
+    path: /borderless-accounts
+    query:
+      profileId: '{profileId}'
+  - name: transfers
+    tool: wise-transfers
+    method: GET
+    path: /transfers
+    query:
+      profile: '{profileId}'
+      limit: '{limit}'
+metadata:
+  icon: wise
+  iconTitle: Wise
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Optimize — Configs</title>
+<link rel="stylesheet" href="/api/optimize/static/optimize.css">
+<style>
+@media (max-width: 640px) {
+  .wrap { padding: 16px 12px 40px; }
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .grid .btn { width: 100%; }
+  select, input[type=text] { font-size: 16px; }
+  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .bar { flex-wrap: wrap; gap: 8px; }
+  .bar .spacer { display: none; }
+  .bar .btn { flex: 1 1 auto; }
+}
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head><body>
+<div class="wrap">
+  <h1>Model Optimize — Roster</h1>
+  <p class="lede">Build the set of models you want to race one prompt across, then compare cost, tokens,
+  latency, and answer quality. Pick a provider, a model, and the harness it runs under, then <b>Save</b>.
+  (The live race, quality scoring, report, and history are the next phases.)</p>
+
+  <div class="card">
+    <h2>Add a config</h2>
+    <div class="grid">
+      <div>
+        <label class="fld" for="provider">Provider</label>
+        <select id="provider"></select>
+      </div>
+      <div>
+        <label class="fld" for="model">Model</label>
+        <select id="model"></select>
+      </div>
+      <div>
+        <label class="fld" for="harness">Harness</label>
+        <select id="harness">
+          <option value="claude-code">claude-code</option>
+          <option value="codex-cli">codex-cli</option>
+          <option value="gemini-cli">gemini-cli</option>
+          <option value="cline">cline</option>
+        </select>
+      </div>
+      <div>
+        <label class="fld" for="label">Label (optional)</label>
+        <input type="text" id="label" placeholder="e.g. codex high">
+      </div>
+      <button class="btn primary" id="add">Add</button>
+    </div>
+    <p class="note" id="reqNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Race roster</h2>
+    <table id="rosterTable">
+      <thead><tr><th>Label</th><th>Provider</th><th>Model</th><th>Harness</th><th>On</th><th></th></tr></thead>
+      <tbody id="rosterBody"></tbody>
+    </table>
+    <div id="emptyMsg" class="empty">No configs yet — add a few above to build your race roster.</div>
+    <div class="bar">
+      <button class="btn ghost" id="reset">Discard changes</button>
+      <span class="spacer"></span>
+      <span class="note" id="dirty" style="margin:0"></span>
+      <button class="btn primary" id="save">Save roster</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/api/optimize', $ = (s) => document.querySelector(s);
+let CATALOG = [];        // [{id,label,harness,requiresApiKey,defaultModelId,models:[{id,name}]}]
+let roster = [];         // working copy: [{provider,model,harness,label,enabled}]
+let saved = '[]';        // JSON snapshot of last-saved roster (dirty detection)
+
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2200); }
+function byId(id) { return CATALOG.find((p) => p.id === id); }
+
+/** Populate the model dropdown + default harness for the selected provider. */
+function onProviderChange() {
+  const p = byId($('#provider').value);
+  const modelSel = $('#model');
+  modelSel.innerHTML = '';
+  (p ? p.models : []).forEach((m) => {
+    const o = document.createElement('option'); o.value = m.id; o.textContent = m.name; modelSel.appendChild(o);
+  });
+  if (p) { modelSel.value = p.defaultModelId || (p.models[0] && p.models[0].id) || ''; $('#harness').value = p.harness; }
+  $('#reqNote').textContent = p && p.requiresApiKey
+    ? 'Needs a provider key — add it on the Connections page; the race brokers your per-user token.'
+    : '';
+}
+
+function renderRoster() {
+  const body = $('#rosterBody');
+  body.innerHTML = '';
+  roster.forEach((c, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${esc(c.label || '—')}</td>
+      <td>${esc((byId(c.provider) || {}).label || c.provider)}</td>
+      <td><span class="pill">${esc(c.model)}</span></td>
+      <td>${esc(c.harness)}</td>
+      <td><input type="checkbox" ${c.enabled !== false ? 'checked' : ''} data-i="${i}" class="en"></td>
+      <td><button class="btn danger" data-i="${i}">Remove</button></td>`;
+    body.appendChild(tr);
+  });
+  $('#emptyMsg').style.display = roster.length ? 'none' : 'block';
+  $('#rosterTable').style.display = roster.length ? 'table' : 'none';
+  body.querySelectorAll('button[data-i]').forEach((b) => b.onclick = () => { roster.splice(+b.dataset.i, 1); renderRoster(); markDirty(); });
+  body.querySelectorAll('input.en').forEach((c) => c.onchange = () => { roster[+c.dataset.i].enabled = c.checked; markDirty(); });
+  markDirty();
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function markDirty() { const d = JSON.stringify(roster) !== saved; $('#dirty').textContent = d ? 'Unsaved changes' : ''; }
+
+$('#add').onclick = () => {
+  const provider = $('#provider').value, model = $('#model').value;
+  if (!provider || !model) { toast('Pick a provider and model'); return; }
+  const harness = $('#harness').value, label = $('#label').value.trim();
+  if (roster.some((c) => c.provider === provider && c.model === model && c.harness === harness)) { toast('Already in the roster'); return; }
+  roster.push({ provider, model, harness, label: label || null, enabled: true });
+  $('#label').value = '';
+  renderRoster();
+};
+
+$('#save').onclick = async () => {
+  const r = await fetch(API + '/configs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ configs: roster }) }).then((x) => x.json()).catch(() => ({}));
+  if (r && r.ok) { saved = JSON.stringify(roster); markDirty(); toast('Saved ' + r.saved + ' config' + (r.saved === 1 ? '' : 's')); }
+  else { toast('Save failed'); }
+};
+
+$('#reset').onclick = () => { roster = JSON.parse(saved); renderRoster(); };
+$('#provider').onchange = onProviderChange;
+
+async function init() {
+  const cat = await fetch(API + '/catalog').then((r) => r.json()).catch(() => ({ providers: [] }));
+  CATALOG = cat.providers || [];
+  const provSel = $('#provider');
+  CATALOG.forEach((p) => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.label; provSel.appendChild(o); });
+  onProviderChange();
+  const cfg = await fetch(API + '/configs').then((r) => r.json()).catch(() => ({ configs: [] }));
+  roster = (cfg.configs || []).map((c) => ({ provider: c.provider, model: c.model, harness: c.harness, label: c.label, enabled: c.enabled }));
+  saved = JSON.stringify(roster);
+  renderRoster();
+}
+init();
+</script>
+</body></html>

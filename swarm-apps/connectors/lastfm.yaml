@@ -1,0 +1,45 @@
+provider: lastfm
+displayName: Last.fm
+version: 1.0.0
+baseUrl: https://ws.audioscrobbler.com/2.0
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: artist-info
+    tool: lastfm-artist-info
+    method: GET
+    path: /
+    query:
+      method: artist.getinfo
+      format: json
+      artist: '{artist}'
+  - name: album-info
+    tool: lastfm-album-info
+    method: GET
+    path: /
+    query:
+      method: album.getinfo
+      format: json
+      artist: '{artist}'
+      album: '{album}'
+  - name: track-info
+    tool: lastfm-track-info
+    method: GET
+    path: /
+    query:
+      method: track.getinfo
+      format: json
+      artist: '{artist}'
+      track: '{track}'
+metadata:
+  icon: lastdotfm
+  iconTitle: Last.fm
+  iconSource: simple-icons
+  iconVerified: true

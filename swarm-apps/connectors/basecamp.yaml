@@ -1,0 +1,26 @@
+provider: basecamp
+displayName: Basecamp
+version: 1.0.0
+baseUrl: ${env:BASECAMP_BASE_URL:-https://3.basecampapi.com/0000000}
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: projects
+    tool: basecamp-projects
+    method: GET
+    path: /projects.json
+  - name: people
+    tool: basecamp-people
+    method: GET
+    path: /people.json
+metadata:
+  icon: basecamp
+  iconTitle: Basecamp
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,30 @@
+provider: nocodb
+displayName: NocoDB
+version: 1.0.0
+baseUrl: ${env:NOCODB_BASE_URL:-https://your-nocodb.example.com}/api/v2
+auth:
+  type: apiKeyHeader
+  header: xc-token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: bases
+    tool: nocodb-bases
+    method: GET
+    path: /meta/bases
+  - name: tables
+    tool: nocodb-tables
+    method: GET
+    path: /meta/bases/{baseId}/tables
+  - name: records
+    tool: nocodb-records
+    method: GET
+    path: /tables/{tableId}/records
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/nocodb.com.ico

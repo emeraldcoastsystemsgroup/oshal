@@ -1,0 +1,29 @@
+provider: stabilityai
+displayName: Stability AI
+version: 1.0.0
+baseUrl: https://api.stability.ai/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: account
+    tool: stabilityai-account
+    method: GET
+    path: /user/account
+  - name: balance
+    tool: stabilityai-balance
+    method: GET
+    path: /user/balance
+  - name: engines
+    tool: stabilityai-engines
+    method: GET
+    path: /engines/list
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/stability.ai.ico

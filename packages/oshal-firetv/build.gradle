@@ -1,0 +1,6 @@
+// Root Gradle build — declares the Android + Kotlin plugin versions used by :app.
+// Apply false here; the :app module applies them. See app/build.gradle.
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+}

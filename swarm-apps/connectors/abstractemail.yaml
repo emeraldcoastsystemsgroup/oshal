@@ -1,0 +1,25 @@
+provider: abstractemail
+displayName: Abstract Email Validation
+version: 1.0.0
+baseUrl: https://emailvalidation.abstractapi.com/v1
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: validate
+    tool: abstractemail-validate
+    method: GET
+    path: /
+    query:
+      email: '{email}'
+metadata:
+  icon: abstract
+  iconTitle: Abstract
+  iconSource: simple-icons
+  iconVerified: true

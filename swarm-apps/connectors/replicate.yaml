@@ -1,0 +1,31 @@
+provider: replicate
+displayName: Replicate
+version: 1.0.0
+baseUrl: https://api.replicate.com/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: models
+    tool: replicate-models
+    method: GET
+    path: /models
+  - name: predictions
+    tool: replicate-predictions
+    method: GET
+    path: /predictions
+  - name: collections
+    tool: replicate-collections
+    method: GET
+    path: /collections
+metadata:
+  icon: replicate
+  iconTitle: Replicate
+  iconSource: simple-icons
+  iconVerified: true

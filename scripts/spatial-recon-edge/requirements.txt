@@ -1,0 +1,16 @@
+# spatial-recon-edge Python requirements
+# -----------------------------------------------------------------------------
+# The HTTP service (server.py) and the .ply->.splat converter (ply_to_splat.py)
+# are STDLIB ONLY — nothing here is needed to run or self-test the protocol
+# (`RECON_STUB=1 python server.py`, `python test_recon.py`).
+#
+# The REAL reconstruction pipeline (pipeline.py) shells out to three tools that
+# are NOT pip-installable the naive way — install them per the README:
+#   - ffmpeg   (apt / system package)
+#   - COLMAP   (apt / conda / prebuilt binary; needs a CUDA GPU for dense)
+#   - nerfstudio (provides `ns-process-data` / `ns-train` / `ns-export`)
+#
+# nerfstudio requires a torch build matched to your CUDA. Do NOT `pip install`
+# it blind — follow https://docs.nerf.studio/quickstart/installation.html to
+# install torch+CUDA first, then:
+nerfstudio>=1.1.0

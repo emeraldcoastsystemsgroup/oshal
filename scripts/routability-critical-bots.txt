@@ -1,0 +1,26 @@
+# Routing-critical bots — the single source of truth for the liveness guard.
+#
+# WHY THIS FILE EXISTS: the swarm routes a user request to a specialist bot via the
+# ADR-083 call-out, which only considers bots that have a LIVE Redis heartbeat
+# (oshal:runtime-agent:{agentId}, status=online — see agent-runtime-registry-service.ts).
+# When one of these bots is NOT heartbeating (a wedged Docker engine, a crashed
+# container, a stale LLM login), the call-out silently falls back to general-bot or
+# strands the ticket — which LOOKS like "routing broke" but is really "the bot is dead".
+# Unit tests mock the online set, so they can never see this. This list is what
+# scripts/swarm-routability-check.sh probes, and tests/unit/routability-critical-bots.spec.ts
+# asserts every id below still exists in LOCAL_BOT_REGISTRY (so the list can't rot the way
+# scripts/verify-bot-health.sh did — stale swarm-* names checking dead HTTP ports).
+#
+# FORMAT (pipe-delimited, one bot per line):
+#   agentId | name | jarvisReachable | what breaks for the user if this bot is down
+# jarvisReachable: yes = a Jarvis-sourced task must be able to route here
+#   (the test asserts isBotAccessibleTo(id,'jarvis') === true); no = structural bot
+#   that must be ALIVE but is not itself a call-out target (e.g. the Jarvis brain).
+#
+# To add a bot: add a line, add its agentId to the registry (the test enforces the match).
+
+a0000000-0000-0000-0000-000000000050 | oshal-assistant   | no  | Jarvis itself has no brain — NO assistant answer works at all (every "simple question" fails)
+a0000000-0000-0000-0000-000000000099 | general-bot       | yes | the task call-out has no fallback owner — Jarvis 'task' tickets strand with nobody assigned
+a0000000-0000-0000-0000-000000000046 | trading-analyst   | yes | trading / portfolio-audit / trade-decision questions never reach the trading concierge (fall to general-bot)
+a0000000-0000-0000-0000-000000000044 | finance-analyst   | yes | net-worth / accounts / cashflow questions strand or get a data-less answer
+b0000000-0000-0000-0000-000000000001 | communications-bot | yes | email / calendar / signals requests strand or get a data-less answer

@@ -1,0 +1,29 @@
+provider: dropboxsign
+displayName: Dropbox Sign
+version: 1.0.0
+baseUrl: https://api.hellosign.com/v3
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-signature-requests
+    tool: dropboxsign-list-signature-requests
+    method: GET
+    path: /signature_request/list
+  - name: list-templates
+    tool: dropboxsign-list-templates
+    method: GET
+    path: /template/list
+  - name: account
+    tool: dropboxsign-account
+    method: GET
+    path: /account
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/hellosign.com.ico

@@ -1,0 +1,36 @@
+provider: guardian
+displayName: The Guardian
+version: 1.0.0
+baseUrl: https://content.guardianapis.com
+auth:
+  type: apiKeyQuery
+  param: api-key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: search
+    tool: guardian-search
+    method: GET
+    path: /search
+    query:
+      q: '{q}'
+  - name: sections
+    tool: guardian-sections
+    method: GET
+    path: /sections
+    query: {}
+  - name: tags
+    tool: guardian-tags
+    method: GET
+    path: /tags
+    query:
+      q: '{q}'
+metadata:
+  icon: theguardian
+  iconTitle: The Guardian
+  iconSource: simple-icons
+  iconVerified: true

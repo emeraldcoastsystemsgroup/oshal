@@ -1,0 +1,33 @@
+provider: soundcloud
+displayName: SoundCloud
+version: 1.0.0
+baseUrl: https://api.soundcloud.com
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: soundcloud-me
+    method: GET
+    path: /me
+  - name: tracks
+    tool: soundcloud-tracks
+    method: GET
+    path: /tracks
+    query:
+      q: '{q}'
+  - name: user
+    tool: soundcloud-user
+    method: GET
+    path: /users/{id}
+metadata:
+  icon: soundcloud
+  iconTitle: SoundCloud
+  iconSource: simple-icons
+  iconVerified: true

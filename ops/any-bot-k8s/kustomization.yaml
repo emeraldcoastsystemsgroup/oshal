@@ -1,0 +1,17 @@
+# =============================================================================
+# OSHAL any-bot Kubernetes Kustomization
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added root kustomization for any-bot Kubernetes deployment workspace
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: any-bot
+
+resources:
+  - namespace.yaml
+  - any-bot-stack.yaml

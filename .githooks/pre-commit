@@ -1,0 +1,44 @@
+#!/bin/sh
+# ------------------------------------------------------------------------------
+# OSHAL guardrail: BLOCK commits that contain unresolved merge-conflict markers.
+# This is the fix for the "auto-sweep committed a half-merged tree" incident — a
+# conflicted file must never reach history (or main). See CLAUDE.md RULE 0.
+# ------------------------------------------------------------------------------
+# NOTE: this repo uses a FEATURE-BRANCH workflow (branch off main → PR → merge), so there is
+# deliberately NO "code only on main" restriction here. That rule came from the private
+# multi-agent working repo, where one shared worktree made branches hazardous; it does not
+# apply to this public trunk. See DEVELOPING.md.
+
+markers=$(git diff --cached -U0 --no-color | grep -nE '^\+(<<<<<<<|>>>>>>>)( |$)' || true)
+if [ -n "$markers" ]; then
+  echo "" >&2
+  echo "COMMIT BLOCKED — staged changes contain merge-conflict markers." >&2
+  echo "Resolve the conflict (no <<<<<<< / ======= / >>>>>>>), then commit." >&2
+  echo "Files staged:" >&2
+  git diff --cached --name-only | sed 's/^/  - /' >&2
+  exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# OSHAL guardrail: BLOCK commits that introduce secret-looking values. Mirrors the
+# regex gate in scripts/build-public-baseline.sh so a secret never reaches history
+# in the first place (not just at public-release time). Placeholders / env refs are
+# allowed. Genuine false positive? add to the allowlist below, or override once:
+#   ALLOW_SECRET_COMMIT=1 git commit ...
+# ------------------------------------------------------------------------------
+if [ "$ALLOW_SECRET_COMMIT" != "1" ]; then
+  added=$(git diff --cached -U0 --no-color | grep -E '^\+' | grep -vE '^\+\+\+')
+  secrets=$(printf '%s\n' "$added" \
+    | grep -En "AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|(password|secret|api_?key|token|access_key)[\"' ]*[:=][\"' ]*[A-Za-z0-9/+_=-]{16,}" \
+    | grep -viE "REPLACE_ME|CHANGE_ME|changeme|example|placeholder|<[^>]+>|\\\$\\{|\\\$env|process\.env|import\.meta\.env|__[A-Z_]+__|do-not-use|dev-secret|your[-_]|sample|TODO|keycloak_db_password|ats_token|Initialize-Secret|New-JoinSecret|Get-EnvFileValue|Set-EnvFileValue|generateCliToken|generateInviteToken|localAuthSigningSecret|decodeURIComponent|encryptedAccessToken|encryptedRefreshToken|leak-|safeLanguageToken|resolveStoreToken" \
+    || true)
+  if [ -n "$secrets" ]; then
+    echo "" >&2
+    echo "COMMIT BLOCKED — staged changes look like they contain a secret:" >&2
+    printf '%s\n' "$secrets" | sed 's/^/  /' >&2
+    echo "Use an env var / placeholder. False positive? add it to the allowlist in" >&2
+    echo ".githooks/pre-commit, or override once: ALLOW_SECRET_COMMIT=1 git commit ..." >&2
+    exit 1
+  fi
+fi
+exit 0

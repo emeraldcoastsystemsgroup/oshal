@@ -1,0 +1,30 @@
+# GoCardless Bank Account Data — open-banking institutions, accounts, and transactions via Bearer token.
+provider: gocardless
+displayName: GoCardless Bank Account Data
+version: 1.0.0
+baseUrl: https://bankaccountdata.gocardless.com/api/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: institutions
+    tool: gocardless-institutions
+    method: GET
+    path: /institutions/
+  - name: account
+    tool: gocardless-account
+    method: GET
+    path: /accounts/{id}/
+  - name: transactions
+    tool: gocardless-transactions
+    method: GET
+    path: /accounts/{id}/transactions/
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/bankaccountdata.gocardless.com.ico

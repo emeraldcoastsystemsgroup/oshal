@@ -1,0 +1,19 @@
+# Explicit, reviewed vulnerability quarantines for the ci-local trivy gate (gate_trivy mounts this
+# file from the committed tree it is judging and passes it via --ignorefile). Every entry must
+# carry: why it is not fixable today, why the real risk is acceptable, and the BACKLOG done-when
+# that retires it. An entry with no justification is a gate bypass — reject it in review.
+
+# CVE-2026-14257 — brace-expansion DoS via crafted expansion input.
+# Upstream published a fix ONLY as v5.0.8; the 1.x and 2.x majors have no fixed release, and v5
+# changed the export shape ({expand} named vs bare-function), so forcing 5.0.8 tree-wide breaks
+# every minimatch@3/@5 consumer (proven: eslint brace patterns die with "expand is not a function").
+# What we COULD fix is fixed: minimatch@>=10's copy is override-pinned to ^5.0.8 (package.json).
+# Remaining vulnerable copies in the image and why they are acceptable:
+#   - brace-expansion@1.1.16 under eslint→minimatch@3: dev tooling; only ever expands
+#     code-authored lint globs, never request/user input.
+#   - brace-expansion@2.1.2 under exceljs→archiver→readdir-glob→minimatch@5: zip staging of
+#     server-generated paths with constant, code-authored patterns; no untrusted input reaches it.
+#     (Escaping it means archiver 5→8 under exceljs — a cross-major API break, riskier than the DoS.)
+# Retire when: docs/BACKLOG.md "brace-expansion CVE-2026-14257 quarantine" done-when is met
+# (compat fixed releases for 1.x/2.x appear, or eslint/exceljs chains move to brace-expansion@>=5).
+CVE-2026-14257

@@ -1,0 +1,68 @@
+provider: todoist
+displayName: Todoist
+version: 1.0.0
+baseUrl: https://api.todoist.com/rest/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: projects
+    tool: todoist-projects
+    method: GET
+    path: /projects
+  - name: tasks
+    tool: todoist-tasks
+    method: GET
+    path: /tasks
+    query:
+      project_id: '{projectId}'
+  - name: create-task
+    tool: todoist-create-task
+    method: POST
+    path: /tasks
+    body: '{task}'
+    retry:
+      maxRetries: 0
+# Write-capable action tier (connector-writes). Real documented endpoints (REST v2):
+# https://developer.todoist.com/rest/v2/#create-a-new-task
+# https://developer.todoist.com/rest/v2/#close-a-task
+actions:
+  - name: create-task
+    method: POST
+    urlTemplate: /tasks
+    riskLevel: low
+    approvalRequired: false
+    description: Create a task in the connected user's Todoist (POST /tasks). Non-destructive; visible immediately in their inbox/project.
+    paramsSchema:
+      type: object
+      required: [content]
+      additionalProperties: false
+      properties:
+        content: { type: string, minLength: 1, description: Task text. }
+        description: { type: string, description: Extra notes shown under the task. }
+        project_id: { type: string, description: Target project ID; omit for the inbox. }
+        due_string: { type: string, description: Human due date like "tomorrow at 12:00". }
+        priority: { type: integer, minimum: 1, maximum: 4, description: 1 = normal .. 4 = urgent. }
+  - name: close-task
+    method: POST
+    urlTemplate: /tasks/{id}/close
+    riskLevel: medium
+    description: Complete a task (POST /tasks/{id}/close; returns 204). Recurring tasks advance to the next occurrence.
+    paramsSchema:
+      type: object
+      required: [id]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1, description: Todoist task ID. }
+metadata:
+  description: "List Todoist projects and tasks, with gated actions to create and close tasks."
+  category: "Productivity"
+  icon: todoist
+  iconTitle: Todoist
+  iconSource: simple-icons
+  iconVerified: true

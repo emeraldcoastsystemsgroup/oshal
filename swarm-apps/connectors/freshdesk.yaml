@@ -1,0 +1,37 @@
+provider: freshdesk
+displayName: Freshdesk
+version: 1.0.0
+baseUrl: https://${env:FRESHDESK_DOMAIN:-yourdomain}.freshdesk.com/api/v2
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: tickets
+    tool: freshdesk-tickets
+    method: GET
+    path: /tickets
+  - name: ticket
+    tool: freshdesk-ticket
+    method: GET
+    path: /tickets/{id}
+  - name: contacts
+    tool: freshdesk-contacts
+    method: GET
+    path: /contacts
+  - name: companies
+    tool: freshdesk-companies
+    method: GET
+    path: /companies
+  - name: agents
+    tool: freshdesk-agents
+    method: GET
+    path: /agents
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/freshdesk.com.ico

@@ -1,0 +1,252 @@
+<!doctype html>
+<!--
+  Bot Forge — the front door for OSHAL's agentic-swarm-injection engine.
+  Gallery + lifecycle over the live swarm (GET/DELETE/import on /api/swarm/apps).
+  The codex-packer chat agent (right rail) does the authoring; this surface shows
+  the result going live. Holds no state. Author: maintainer@emeraldcoastsystemsgroup.com
+-->
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Bot Forge</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  /* Keep the surface's own short alias names, but DERIVE each from a framework theme token so all
+     eleven themes work — not just the dark one the old literal hex happened to match. Status colors
+     come from the theme with the old hex as a comma-fallback so they stay legible if a theme omits
+     one; the scrollbar thumb is a translucent overlay and stays literal. */
+  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-secondary); --accent:var(--accent-primary, #7c6cff); --accent2:var(--status-success, #00d3a7); --warn:var(--status-warning, #ffb454); --danger:var(--status-error, #ff6b6b); --scrollbar-thumb:rgba(255,255,255,.14); }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width:980px; margin:0 auto; padding:26px 24px 60px; }
+  h1 { font-size:24px; margin:0 0 6px; display:flex; align-items:center; gap:12px; }
+  .badge { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:4px 9px; border-radius:6px; background:rgba(0,211,167,.13); color:var(--accent2); border:1px solid rgba(0,211,167,.4); }
+  .sub { color:var(--muted); font-size:14px; margin:6px 0 22px; line-height:1.55; max-width:740px; }
+  .steps { display:flex; align-items:stretch; gap:10px; margin:0 0 22px; flex-wrap:wrap; }
+  .step { flex:1; min-width:180px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:13px 15px; font-size:12.5px; }
+  .step b { display:block; font-size:13px; margin-bottom:3px; color:var(--text); }
+  .step span { color:var(--muted); line-height:1.5; }
+  .step .n { display:inline-grid; place-items:center; width:20px; height:20px; border-radius:6px; background:var(--bg); color:var(--accent); font-weight:700; font-size:11px; margin-right:7px; }
+  .cta { display:flex; align-items:center; gap:14px; margin:0 0 26px; padding:16px 20px; background:linear-gradient(180deg, rgba(124,108,255,.12), rgba(0,211,167,.05)); border:1px solid var(--line); border-radius:13px; }
+  .cta .big { font-size:15px; font-weight:600; } .cta .lil { color:var(--muted); font-size:12.5px; margin-top:2px; }
+  .cta .arrow { margin-left:auto; font-size:26px; color:var(--accent); }
+  .row { display:flex; align-items:center; gap:10px; margin:0 0 14px; }
+  .row h2 { font-size:15px; margin:0; } .row .count { color:var(--muted); font-size:12.5px; }
+  .row .inject { margin-left:auto; }
+  .btn { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 13px; font-size:12.5px; cursor:pointer; }
+  .btn:hover { border-color:var(--accent); } .btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn.danger:hover { border-color:var(--danger); color:var(--danger); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:16px; display:flex; flex-direction:column; }
+  .card h3 { margin:0 0 4px; font-size:15px; display:flex; align-items:center; gap:8px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--accent2); flex:none; }
+  .dot.pending { background:var(--warn); }
+  .card.pending { border-color:rgba(255,180,84,.45); background:linear-gradient(180deg, rgba(255,180,84,.06), transparent); }
+  .card p { color:var(--muted); font-size:12.5px; line-height:1.5; margin:4px 0 12px; flex:1; }
+  .meta { display:flex; gap:12px; color:var(--muted); font-size:11.5px; margin-bottom:12px; }
+  .acts { display:flex; gap:8px; }
+  .empty { color:var(--muted); font-size:13px; padding:30px; text-align:center; border:1px dashed var(--line); border-radius:12px; }
+  .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:10px 16px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.show { opacity:1; } .toast.err { border-color:var(--danger); color:var(--danger); }
+  ::-webkit-scrollbar{width:11px;height:11px}
+  ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb,rgba(255,255,255,.14));border-radius:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  html{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb,rgba(255,255,255,.14)) transparent}
+  input[type=file]{display:none}
+  @media (max-width:640px) {
+    .wrap { padding:16px 14px 48px; }
+    .steps { flex-direction:column; }
+    .step { min-width:0; width:100%; }
+    .cta { flex-wrap:wrap; }
+    .cta .arrow { display:none; }
+    .row { flex-wrap:wrap; }
+    .row .inject { margin-left:0; width:100%; }
+    .row .inject .btn { width:100%; text-align:center; }
+    .grid { grid-template-columns:1fr; }
+    .acts { flex-wrap:wrap; }
+    .acts .btn { padding:9px 13px; font-size:13px; flex:1; text-align:center; }
+    input,select,textarea { font-size:16px; }
+  }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>Bot Forge <span class="badge">Live swarm injection</span></h1>
+  <p class="sub">Describe a bot in plain language and it's <b>packed, built, and injected into your running swarm</b> — on your connectors, talking to your other bots, in seconds. No redeploy. No code. This is how you add a capability to OSHAL.</p>
+
+  <div class="steps">
+    <div class="step"><b><span class="n">1</span>Describe</b><span>Tell the Forge bot (right&nbsp;→) the task, its inputs, outputs, and what "done" looks like.</span></div>
+    <div class="step"><b><span class="n">2</span>Pack &amp; build</b><span>It writes the persona, the app manifest, the tools, and any knowledge corpus.</span></div>
+    <div class="step"><b><span class="n">3</span>Inject live</b><span>The new bot registers into the running swarm and appears below — open it and use it.</span></div>
+  </div>
+
+  <a class="cta" id="forgeBuilderCta" href="/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000030" target="_top" style="text-decoration:none;color:inherit;cursor:pointer">
+    <div>
+      <div class="big">Build a new bot →</div>
+      <div class="lil">Opens the Forge agent in the chat panel — it walks you through five questions and the new bot appears below, ready to inject.</div>
+    </div>
+    <div class="arrow">→</div>
+  </a>
+
+  <div id="pendingWrap" style="display:none">
+    <div class="row"><h2>Ready to inject</h2><span class="count" id="pcount"></span></div>
+    <div class="grid" id="pgrid"></div>
+    <div style="height:24px"></div>
+  </div>
+
+  <div class="row">
+    <h2>Your live swarm</h2><span class="count" id="count"></span>
+    <span class="inject">
+      <label class="btn" for="injectFile">Inject from YAML</label>
+      <input type="file" id="injectFile" accept=".yaml,.yml"/>
+    </span>
+  </div>
+  <div class="grid" id="grid"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const grid = document.getElementById('grid');
+const countEl = document.getElementById('count');
+const toastEl = document.getElementById('toast');
+const CODEX_PACKER_AGENT_ID = 'a0000000-0000-0000-0000-000000000030';
+
+function newTaskId() {
+  return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+}
+
+document.getElementById('forgeBuilderCta')?.addEventListener('click', (event) => {
+  event.preventDefault();
+  const href = `/swarmbot/chat?agentId=${encodeURIComponent(CODEX_PACKER_AGENT_ID)}&taskId=${encodeURIComponent(newTaskId())}`;
+  try { (window.top || window).location.href = href; } catch { window.location.href = href; }
+});
+
+/** Flash a transient toast (err=true tints it red). */
+function toast(msg, err) {
+  toastEl.textContent = msg; toastEl.className = 'toast show' + (err ? ' err' : '');
+  setTimeout(() => { toastEl.className = 'toast'; }, 2600);
+}
+
+/** Escape user/manifest text before injecting into the DOM. */
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/** Navigate the whole cockpit (not the iframe) to the app's ribbon shape. */
+function openApp(name) { try { (window.top || window).location.href = '/cockpit/?app=' + encodeURIComponent(name); } catch (e) { window.location.href = '/cockpit/?app=' + encodeURIComponent(name); } }
+
+/** Download the app's manifest YAML. */
+function exportApp(name) { window.open('/api/swarm/apps/' + encodeURIComponent(name) + '/export', '_blank'); }
+
+/** Unload a bot from the live swarm (with confirm), then refresh. */
+async function unloadApp(name, label) {
+  if (!window.confirm('Unload "' + label + '" from the live swarm? Its manifest stays on disk; you can re-inject it later.')) return;
+  try {
+    const r = await fetch('/api/swarm/apps/' + encodeURIComponent(name), { method: 'DELETE' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    toast('Unloaded ' + label); loadApps();
+  } catch (e) { toast('Unload failed: ' + e.message, true); }
+}
+
+/** Render one app card. */
+function card(a) {
+  const name = esc(a.name);
+  const label = esc(a.displayName || a.name);
+  const desc = esc(a.description || 'No description.');
+  const bots = a.botCount != null ? a.botCount : 0;
+  const tools = a.toolCount != null ? a.toolCount : 0;
+  return `<div class="card">
+    <h3><span class="dot"></span>${label}</h3>
+    <p>${desc}</p>
+    <div class="meta"><span>${bots} bot${bots === 1 ? '' : 's'}</span><span>${tools} tool${tools === 1 ? '' : 's'}</span><span>v${esc(a.version || '1.0.0')}</span></div>
+    <div class="acts">
+      <button class="btn primary" onclick="openApp('${name}')">Open</button>
+      <button class="btn" onclick="exportApp('${name}')">Export</button>
+      <button class="btn danger" onclick="unloadApp('${name}','${label.replace(/'/g, '&#39;')}')">Unload</button>
+    </div>
+  </div>`;
+}
+
+/** Inject a pending (authored-but-not-loaded) bot into the live swarm. */
+async function injectApp(path, label) {
+  try {
+    const r = await fetch('/api/swarm/apps/load', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path }),
+    });
+    if (!r.ok) { const t = await r.json().catch(() => ({})); throw new Error(t.error || ('HTTP ' + r.status)); }
+    const { app } = await r.json();
+    toast('Injected ' + ((app && app.displayName) || label) + ' — live'); refresh();
+  } catch (e) { toast('Inject failed: ' + e.message, true); }
+}
+
+/** Render one "ready to inject" card. */
+function pendingCard(p) {
+  const label = esc(p.displayName || p.name);
+  const safePath = esc(p.path).replace(/'/g, '&#39;');
+  return `<div class="card pending">
+    <h3><span class="dot pending"></span>${label}</h3>
+    <p>${esc(p.description || 'Authored by the Forge — not yet live.')}</p>
+    <div class="acts"><button class="btn primary" onclick="injectApp('${safePath}','${label.replace(/'/g, '&#39;')}')">Inject into swarm</button></div>
+  </div>`;
+}
+
+/** Load manifests the Forge authored but hasn't injected yet. */
+async function loadPending() {
+  try {
+    const r = await fetch('/api/swarm/apps/pending');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const { pending } = await r.json();
+    const list = Array.isArray(pending) ? pending : [];
+    const wrap = document.getElementById('pendingWrap');
+    if (!list.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    document.getElementById('pcount').textContent = list.length + ' waiting';
+    document.getElementById('pgrid').innerHTML = list.map(pendingCard).join('');
+  } catch (e) {
+    document.getElementById('pendingWrap').style.display = 'none';
+  }
+}
+
+/** Refresh both trays. */
+function refresh() { loadApps(); loadPending(); }
+
+/** Load the live (active) swarm and render the gallery. */
+async function loadApps() {
+  try {
+    const r = await fetch('/api/swarm/apps?status=active');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const { apps } = await r.json();
+    const list = Array.isArray(apps) ? apps : [];
+    countEl.textContent = list.length + ' active';
+    grid.innerHTML = list.length
+      ? list.map(card).join('')
+      : '<div class="empty">No bots injected yet. Talk to the Forge agent on the right to build your first one.</div>';
+  } catch (e) {
+    grid.innerHTML = '<div class="empty">Could not load the swarm: ' + esc(e.message) + '</div>';
+  }
+}
+
+/** Inject a manifest the operator already has as a YAML file. */
+document.getElementById('injectFile').addEventListener('change', async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const fd = new FormData(); fd.append('manifest', file);
+  try {
+    const r = await fetch('/api/swarm/apps/import', { method: 'POST', body: fd });
+    if (!r.ok) { const t = await r.json().catch(() => ({})); throw new Error(t.error || ('HTTP ' + r.status)); }
+    const { app } = await r.json();
+    toast('Injected ' + (app && app.displayName ? app.displayName : file.name)); loadApps();
+  } catch (e) { toast('Inject failed: ' + e.message, true); }
+  finally { ev.target.value = ''; }
+});
+
+refresh();
+setInterval(refresh, 15000); // pick up bots the Forge agent authors/injects mid-conversation
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+provider: virustotal
+displayName: VirusTotal
+version: 1.0.0
+baseUrl: https://www.virustotal.com/api/v3
+auth:
+  type: apiKeyHeader
+  header: x-apikey
+rateLimit:
+  burst: 4
+  perSecond: 4
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: domain
+    tool: virustotal-domain
+    method: GET
+    path: /domains/{domain}
+  - name: ip
+    tool: virustotal-ip
+    method: GET
+    path: /ip_addresses/{ip}
+  - name: file
+    tool: virustotal-file
+    method: GET
+    path: /files/{hash}
+  - name: url
+    tool: virustotal-url
+    method: GET
+    path: /urls/{id}
+metadata:
+  icon: virustotal
+  iconTitle: VirusTotal
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DevOps + Vault — OSHAL</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary);
+    --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted);
+    --accent:var(--accent-primary); --accent2:#00d3a7; --vault:#ffd814;
+    --warn:var(--status-warning, #ffb454); --danger:var(--status-error, #ff6b6b);
+    --ok:var(--status-success, #48c78e);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+  .page { max-width:1020px; margin:0 auto; padding:26px 24px 80px; }
+  .hero { display:flex; align-items:center; gap:12px; margin-bottom:4px; flex-wrap:wrap; }
+  .hero h1 { font-size:23px; margin:0; }
+  .badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:4px 9px; border-radius:6px; }
+  .badge.live { background:rgba(72,199,142,.14); color:var(--ok); border:1px solid rgba(72,199,142,.4); }
+  .badge.tier { background:rgba(124,108,255,.14); color:var(--accent); border:1px solid rgba(124,108,255,.4); }
+  .badge.sealed { background:rgba(255,107,107,.14); color:var(--danger); border:1px solid rgba(255,107,107,.4); }
+  .sub { color:var(--muted); font-size:13.5px; margin:6px 0 20px; line-height:1.55; max-width:760px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:820px){ .grid { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+  .card h2 { font-size:14px; margin:0 0 12px; display:flex; align-items:center; gap:8px; }
+  .card h2 .pill { font-size:10px; font-weight:700; padding:2px 7px; border-radius:20px; background:var(--panel2); color:var(--muted); border:1px solid var(--line); margin-left:auto; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input, select, textarea { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 11px; font-size:13px; font-family:inherit; }
+  textarea { min-height:66px; resize:vertical; font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .row2 { display:flex; gap:10px; } .row2 > div { flex:1; }
+  .btn { border:none; border-radius:9px; padding:10px 16px; font-size:13px; font-weight:600; cursor:pointer; margin-top:12px; }
+  .btn.primary { background:var(--accent); color:#fff; } .btn.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--text); }
+  .btn.warn { background:rgba(255,107,107,.16); border:1px solid rgba(255,107,107,.45); color:var(--danger); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .btns { display:flex; gap:9px; flex-wrap:wrap; }
+  pre.out { margin:12px 0 0; background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:10px 12px; font-size:11.5px; font-family:ui-monospace,Consolas,monospace; white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; color:var(--muted); }
+  pre.out.ok { border-color:rgba(72,199,142,.4); } pre.out.err { border-color:rgba(255,107,107,.4); color:var(--danger); }
+  .term { background:#0a0d16; border:1px solid var(--line); border-radius:9px; padding:10px 12px; font-family:ui-monospace,Consolas,monospace; font-size:12px; line-height:1.5; max-height:240px; overflow:auto; }
+  .tl { padding:1px 0; white-space:pre-wrap; word-break:break-word; }
+  .tl .ts { color:var(--muted); opacity:.8; }
+  .tl.start { color:var(--accent); } .tl.ok { color:var(--ok); } .tl.error { color:var(--danger); } .tl.info, .tl.muted { color:var(--muted); }
+  .flow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:2px 0 0; }
+  .step { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:7px 10px; font-size:11.5px; }
+  .step.k { border-color:rgba(255,216,20,.4); } .step.d { border-color:rgba(255,107,107,.4); }
+  .arrow { color:var(--muted); }
+  .full { grid-column:1 / -1; }
+  .gate { text-align:center; padding:40px 24px; }
+  .gate .lock { font-size:34px; } .gate h2 { justify-content:center; }
+  .roadmap { font-size:12px; color:var(--muted); margin-top:10px; line-height:1.6; }
+  .roadmap b { color:var(--text); }
+  .statusline { display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; color:var(--muted); }
+  .statusline b { color:var(--text); }
+  .k { color:var(--vault); } .hidden { display:none !important; }
+  @media (max-width:640px){ .page{padding:16px 14px 60px;} .row2{flex-direction:column;} input,select,textarea{font-size:16px;} }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <h1>🔐 DevOps + Vault</h1>
+      <span class="badge live" id="liveBadge">● Live</span>
+      <span class="badge tier">Premium tier</span>
+    </div>
+    <div class="sub">
+      The <b>vault-bot</b> and this console broker <b>short-lived, scoped credentials</b> from your
+      HashiCorp Vault: manage KV secrets, define a scope, mint a credential that <b>revokes itself</b>,
+      and hand out real short-TTL database logins. Super-admin only; the Vault token stays server-side.
+    </div>
+
+    <!-- Gate: shown when the caller is not a super-admin -->
+    <div class="card gate hidden" id="gate">
+      <div class="lock">🔒</div>
+      <h2>Super-admin access required</h2>
+      <div class="sub" id="gateReason" style="margin:8px auto 0;">This console operates the platform's infrastructure Vault.</div>
+    </div>
+
+    <!-- Console: shown to super-admins -->
+    <div id="console" class="hidden">
+      <div class="card full" style="margin-bottom:16px;">
+        <h2>🗝️ Vault status <span class="pill" id="statusPill">…</span></h2>
+        <div class="statusline" id="statusLine">Loading…</div>
+      </div>
+
+      <div class="card full" style="margin-bottom:16px;">
+        <h2>🖥 Live process trace <span class="pill" id="traceDot">● connecting…</span></h2>
+        <div id="traceLog" class="term"><div class="tl muted">Waiting — this lights up when an action runs. Quiet while you're just reading; a firehose the moment something changes.</div></div>
+      </div>
+
+      <div class="grid">
+        <!-- KV secrets -->
+        <div class="card">
+          <h2>📦 KV secrets</h2>
+          <label>Path prefix (list) or path (read)</label>
+          <input id="kvPath" placeholder="aws/prod" />
+          <div class="btns">
+            <button class="btn ghost" onclick="kvList()">List</button>
+            <button class="btn ghost" onclick="kvRead()">Read</button>
+            <button class="btn warn" onclick="kvDelete()">Delete</button>
+          </div>
+          <div id="kvKeys"></div>
+          <label style="margin-top:14px;">Write — data as JSON {key: value}</label>
+          <textarea id="kvData" placeholder='{"api_key":"…","region":"us-east-1"}'></textarea>
+          <button class="btn primary" onclick="kvWrite()">Write secret</button>
+          <pre class="out hidden" id="kvOut"></pre>
+        </div>
+
+        <!-- Scope (policy) -->
+        <div class="card">
+          <h2>🎯 Scope (ACL policy)</h2>
+          <label>Policy name</label>
+          <input id="polName" placeholder="deploy-prod" />
+          <label>Paths — JSON [{path, capabilities:[…]}]</label>
+          <textarea id="polPaths" placeholder='[{"path":"secret/data/aws/prod","capabilities":["read"]}]'></textarea>
+          <button class="btn primary" onclick="setPolicy()">Set scope</button>
+          <pre class="out hidden" id="polOut"></pre>
+        </div>
+
+        <!-- Broker -->
+        <div class="card full">
+          <h2>♻️ Credential broker <span class="pill">issue → use → revoke</span></h2>
+          <div class="flow" style="margin-bottom:12px;">
+            <span class="step k">set scope</span><span class="arrow">→</span>
+            <span class="step">issue short-TTL cred</span><span class="arrow">→</span>
+            <span class="step">bot/tool uses it</span><span class="arrow">→</span>
+            <span class="step d">revoke (provably dead)</span>
+          </div>
+          <div class="row2">
+            <div>
+              <label>Mode</label>
+              <select id="issueMode" onchange="toggleMode()">
+                <option value="token">Scoped token (bind a policy)</option>
+                <option value="dynamic">Dynamic secret (engine + role)</option>
+              </select>
+            </div>
+            <div id="ttlWrap">
+              <label>TTL</label>
+              <input id="issueTtl" value="15m" />
+            </div>
+          </div>
+          <div class="row2" style="margin-top:2px;">
+            <div id="policyWrap"><label>Policy</label><input id="issuePolicy" placeholder="deploy-prod" /></div>
+            <div id="engineWrap" class="hidden"><label>Engine</label><input id="issueEngine" placeholder="database" /></div>
+            <div id="roleWrap" class="hidden"><label>Role</label><input id="issueRole" placeholder="app-readonly" /></div>
+          </div>
+          <div class="btns">
+            <button class="btn primary" onclick="issueCred()">Issue credential</button>
+          </div>
+          <div class="row2" style="margin-top:12px;">
+            <div>
+              <label>Lease accessor (lookup / revoke)</label>
+              <input id="leaseAccessor" placeholder="hmac-accessor…" />
+            </div>
+            <div style="flex:0 0 auto; display:flex; align-items:flex-end; gap:9px;">
+              <button class="btn ghost" onclick="lookupLease()">Lookup</button>
+              <button class="btn warn" onclick="revokeLease()">Revoke</button>
+            </div>
+          </div>
+          <pre class="out hidden" id="brokerOut"></pre>
+        </div>
+
+        <!-- Database engine -->
+        <div class="card full">
+          <h2>🐘 Database dynamic secrets</h2>
+          <div class="sub" style="margin:0 0 10px;">
+            Mount Vault's postgresql engine + a read-only short-TTL role, then
+            <span class="k">Issue → Dynamic (engine=<b>database</b>, role=<b>app-readonly</b>)</span>
+            hands out a real, self-expiring Postgres login. Idempotent.
+          </div>
+          <button class="btn primary" onclick="setupDb()">Set up DB engine</button>
+          <pre class="out hidden" id="dbOut"></pre>
+        </div>
+      </div>
+
+      <div class="roadmap">
+        <b>Live today:</b> vault-bot (KV + broker + DB dynamic creds) — real HashiCorp Vault, this console, and the vault_* bot tools.
+        <b>Roadmap (ADR-040):</b> terraform plan/drift, k8s remediation, and observability (Splunk/ServiceNow) workers, plus per-session ephemeral runtime isolation for multi-user tenancy.
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const base = '/api/devops';
+
+  function show(el, data, ok) {
+    el.classList.remove('hidden', 'ok', 'err');
+    el.classList.add(ok ? 'ok' : 'err');
+    el.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  }
+  async function call(pathname, body) {
+    const opts = { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(base + pathname, opts);
+    const j = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
+    return { ok: r.ok && !j.error, status: r.status, j };
+  }
+
+  // ── Gate: reveal the console only to super-admins ──────────────────────────
+  async function init() {
+    let acc; try { acc = await (await fetch(base + '/access')).json(); } catch { acc = { superAdmin: false, reason: 'Could not reach the server.' }; }
+    if (!acc.superAdmin) {
+      $('gate').classList.remove('hidden');
+      if (acc.reason) $('gateReason').textContent = acc.reason;
+      return;
+    }
+    $('console').classList.remove('hidden');
+    loadStatus();
+    connectTrace();
+  }
+
+  // ── Live process trace (owner-scoped SSE) — the terminal reflects every action ────
+  // EventSource carries the OIDC session cookie; the route is superadmin-gated + owner-scoped,
+  // so this stream only ever shows THIS operator's own actions.
+  let traceES;
+  function connectTrace() {
+    try { traceES = new EventSource(base + '/trace/stream'); } catch { return; }
+    traceES.onopen = () => { $('traceDot').textContent = '● live'; $('traceDot').style.color = 'var(--ok)'; };
+    traceES.onerror = () => { $('traceDot').textContent = '● reconnecting…'; $('traceDot').style.color = 'var(--warn)'; };
+    traceES.onmessage = (e) => { let f; try { f = JSON.parse(e.data); } catch { return; } appendTrace(f); };
+  }
+  function appendTrace(f) {
+    const log = $('traceLog');
+    const placeholder = log.querySelector('.muted'); if (placeholder) placeholder.remove();
+    const glyph = { start: '▶', ok: '✓', error: '✗', info: '·' }[f.level] || '·';
+    let when = ''; try { when = new Date(f.ts || Date.now()).toLocaleTimeString(); } catch (e) {}
+    const body = glyph + ' ' + (f.action || '') + (f.resource ? ' ' + f.resource : '') + (f.text ? '  ' + f.text : '');
+    const line = document.createElement('div');
+    line.className = 'tl ' + (f.level || 'info');
+    line.innerHTML = '<span class="ts">' + esc(when) + '</span>  ' + esc(body);
+    log.appendChild(line);
+    while (log.childNodes.length > 300) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // Green / yellow / red creds light: working · can't reach the server · denied|sealed.
+  const LIGHT = {
+    green:  { dot: '🟢', badge: 'badge live',   label: '● Working',      say: 'Vault reachable and credentials accepted.' },
+    yellow: { dot: '🟡', badge: 'badge tier',   label: '● Unreachable',  say: 'The Vault server can’t be reached (network / DNS / down).' },
+    red:    { dot: '🔴', badge: 'badge sealed',  label: '● Denied',       say: 'Vault is reachable but the credential is rejected or Vault is sealed.' },
+  };
+  async function loadStatus() {
+    const { j } = await call('/status');            // /status always returns a light (even on !ok)
+    const light = LIGHT[j.light] || LIGHT.yellow;
+    $('liveBadge').className = light.badge;
+    $('liveBadge').textContent = light.dot + ' ' + (j.reason ? j.reason[0].toUpperCase() + j.reason.slice(1) : light.label);
+    $('statusPill').textContent = j.version ? 'v' + j.version : (j.light || '—');
+    const facts = 'Address <b>' + esc(j.addr || '') + '</b>' +
+      (j.light === 'green' ? ' · Sealed <b>' + j.sealed + '</b> · Initialized <b>' + j.initialized + '</b> · Standby <b>' + j.standby + '</b>' : '');
+    $('statusLine').innerHTML = light.dot + ' <b>' + esc(light.say) + '</b><br>' + facts + (j.error ? '<br><span style="color:var(--danger)">' + esc(j.error) + '</span>' : '');
+  }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  // ── KV ─────────────────────────────────────────────────────────────────────
+  async function kvList() {
+    const prefix = $('kvPath').value.trim();
+    const { ok, j } = await call('/kv/list', { path: prefix || undefined });
+    // A folder with no secrets (e.g. right after deleting its last key) is "empty", not an error —
+    // Vault answers 404 for an absent prefix; treat that as an empty list rather than a red error.
+    const empty404 = !ok && /404/.test(String(j.error || ''));
+    if (empty404) { show($('kvOut'), { ok: true, path: prefix, keys: [] }, true); $('kvKeys').innerHTML = '<div style="color:var(--muted);font-size:12.5px;padding:6px 2px;">(no secrets here)</div>'; return; }
+    show($('kvOut'), j, ok);
+    // Render each key with an inline 🗑 (a leaf key deletes; a folder key drills in).
+    const keys = (ok && Array.isArray(j.keys)) ? j.keys : [];
+    $('kvKeys').innerHTML = keys.map((k) => {
+      const full = (prefix ? prefix.replace(/\/$/, '') + '/' : '') + k;
+      const folder = k.endsWith('/');
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--line);font-size:12.5px;">' +
+        '<span style="flex:1;font-family:ui-monospace,Consolas,monospace;cursor:pointer;" onclick="pick(\'' + esc(full) + '\')">' + (folder ? '📁 ' : '🔑 ') + esc(k) + '</span>' +
+        (folder ? '' : '<span class="ref" style="color:var(--danger);cursor:pointer;" onclick="kvDeletePath(\'' + esc(full) + '\')">🗑</span>') +
+        '</div>';
+    }).join('');
+  }
+  function pick(p) { $('kvPath').value = p; if (p.endsWith('/')) kvList(); else kvRead(); }
+  async function kvRead() { const { ok, j } = await call('/kv/read', { path: $('kvPath').value.trim() }); show($('kvOut'), j, ok); }
+  async function kvWrite() {
+    let data; try { data = JSON.parse($('kvData').value || '{}'); } catch { show($('kvOut'), 'Data must be valid JSON.', false); return; }
+    const { ok, j } = await call('/kv/write', { confirm: true, path: $('kvPath').value.trim(), data });
+    show($('kvOut'), j, ok); if (ok) kvList();
+  }
+  function kvDelete() { kvDeletePath($('kvPath').value.trim()); }
+  async function kvDeletePath(p) {
+    if (!p || p.endsWith('/')) { show($('kvOut'), 'Enter a secret path (not a folder) to delete.', false); return; }
+    if (!confirm('Delete the secret at "' + p + '"? This destroys all its versions.')) return;
+    const { ok, j } = await call('/kv/delete', { confirm: true, path: p });
+    show($('kvOut'), j, ok);
+    if (ok) { const prefix = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''; $('kvPath').value = prefix; kvList(); }
+  }
+
+  // ── Scope ──────────────────────────────────────────────────────────────────
+  async function setPolicy() {
+    let paths; try { paths = JSON.parse($('polPaths').value || '[]'); } catch { show($('polOut'), 'Paths must be valid JSON.', false); return; }
+    const { ok, j } = await call('/policy', { confirm: true, name: $('polName').value.trim(), paths });
+    show($('polOut'), j, ok);
+  }
+
+  // ── Broker ─────────────────────────────────────────────────────────────────
+  function toggleMode() {
+    const dyn = $('issueMode').value === 'dynamic';
+    $('policyWrap').classList.toggle('hidden', dyn);
+    $('ttlWrap').classList.toggle('hidden', dyn);
+    $('engineWrap').classList.toggle('hidden', !dyn);
+    $('roleWrap').classList.toggle('hidden', !dyn);
+  }
+  async function issueCred() {
+    const body = { confirm: true };
+    if ($('issueMode').value === 'dynamic') { body.engine = $('issueEngine').value.trim(); body.role = $('issueRole').value.trim(); }
+    else { body.policy = $('issuePolicy').value.trim(); body.ttl = $('issueTtl').value.trim() || '15m'; }
+    const { ok, j } = await call('/issue', body);
+    show($('brokerOut'), j, ok);
+    if (ok && j.accessor) $('leaseAccessor').value = j.accessor;
+  }
+  async function lookupLease() { const { ok, j } = await call('/lookup', { accessor: $('leaseAccessor').value.trim() }); show($('brokerOut'), j, ok); }
+  async function revokeLease() {
+    if (!confirm('Revoke this lease now? The credential becomes provably dead.')) return;
+    const { ok, j } = await call('/revoke', { confirm: true, accessor: $('leaseAccessor').value.trim() });
+    show($('brokerOut'), j, ok);
+  }
+
+  // ── DB engine ────────────────────────────────────────────────────────────────
+  async function setupDb() {
+    if (!confirm('Mount the Vault postgresql database secrets engine + read-only role?')) return;
+    const { ok, j } = await call('/setup-db', { confirm: true });
+    show($('dbOut'), j, ok);
+  }
+
+  init();
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+provider: strava
+displayName: Strava
+version: 1.0.0
+baseUrl: https://www.strava.com/api/v3
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: strava-me
+    method: GET
+    path: /athlete
+  - name: activities
+    tool: strava-activities
+    method: GET
+    path: /athlete/activities
+    query:
+      per_page: '100'
+      page: '{page}'
+  - name: stats
+    tool: strava-stats
+    method: GET
+    path: /athletes/{athleteId}/stats
+metadata:
+  icon: strava
+  iconTitle: Strava
+  iconSource: simple-icons
+  iconVerified: true

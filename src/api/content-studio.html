@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Content Studio</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  /* Short alias names kept, but DERIVED from the framework theme tokens rather than hardcoded hex —
+     so all eleven themes work, not just the dark ones. --accent2 follows the theme's success color;
+     --li stays a literal (LinkedIn brand blue). Fallbacks after the comma keep the surface legible
+     if a theme omits a status token. */
+  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary, #7c6cff); --accent2:var(--status-success, #00d3a7); --li:#0a66c2; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+  .page { max-width:880px; margin:0 auto; padding:28px 24px 70px; }
+  .head { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  h1 { font-size:22px; margin:0; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
+  .refresh { margin-left:auto; background:var(--panel2); border:1px solid var(--line); color:var(--muted); border-radius:7px; padding:7px 12px; cursor:pointer; font-size:12px; }
+  .refresh:hover { color:var(--text); }
+  .focus { display:flex; gap:8px; margin-bottom:18px; }
+  .focus input { flex:1; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 11px; font-size:13px; }
+  .focus button { background:var(--panel2); border:1px solid var(--line); color:var(--muted); border-radius:8px; padding:8px 12px; cursor:pointer; font-size:12px; }
+  .cards { display:grid; gap:12px; }
+  .card { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px 17px; cursor:pointer; transition:border-color .15s; }
+  .card .dismiss { position:absolute; top:8px; right:10px; background:transparent; border:none; color:var(--muted); font-size:15px; line-height:1; cursor:pointer; padding:4px 6px; border-radius:6px; opacity:.5; }
+  .card .dismiss:hover { opacity:1; color:var(--status-error, #ff6b6b); background:rgba(255,107,107,.1); }
+  .card:hover { border-color:var(--accent); }
+  .card.sel { border-color:var(--accent); background:var(--panel2); }
+  .card .t { font-size:15px; font-weight:600; margin-bottom:5px; }
+  .card .why { color:var(--text-secondary, #c8c8da); font-size:13px; line-height:1.5; }
+  .card .meta { display:flex; gap:10px; align-items:center; margin-top:9px; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+  .catchips { display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 14px; }
+  .catchip { background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:18px; padding:6px 13px; cursor:pointer; font-size:13px; }
+  .catchip:hover { border-color:var(--accent); }
+  .catchip.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .catchip .cc { opacity:.6; font-size:11px; margin-left:3px; }
+  .catpill { background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:1px 7px; font-size:11px; color:var(--accent2); }
+  .card .meta a { color:var(--accent); text-decoration:none; }
+  .compose { background:linear-gradient(160deg,var(--bg-tertiary, #191929),var(--bg-card, #15151f)); border:1px solid var(--accent); border-radius:14px; padding:20px; margin-top:18px; }
+  .compose .q { font-size:15px; color:var(--accent2); margin-bottom:4px; }
+  .compose .angle { color:var(--muted); font-size:13px; margin-bottom:12px; }
+  textarea { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:9px; padding:12px; font-family:inherit; font-size:14px; line-height:1.55; resize:vertical; }
+  #take { min-height:90px; } #draft { min-height:200px; margin-top:14px; }
+  .bar { display:flex; gap:10px; align-items:center; margin-top:12px; }
+  .btn { border:none; border-radius:8px; padding:10px 16px; cursor:pointer; font-size:13px; font-weight:600; }
+  .btn.primary { background:var(--accent); color:#fff; }
+  .btn.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--text); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .draftHead { font-size:12px; color:var(--accent2); text-transform:uppercase; letter-spacing:.5px; margin:16px 0 0; }
+  .spin { color:var(--muted); font-size:14px; }
+  .notice { color:var(--muted); padding:30px 0; text-align:center; }
+  .toast { margin-left:auto; color:var(--accent2); font-size:12px; }
+  .sources { margin-top:14px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .sources .srchead { font-size:12px; color:var(--accent2); margin-bottom:8px; }
+  .sources ul { margin:0; padding-left:18px; }
+  .sources li { font-size:12px; line-height:1.6; color:var(--text-secondary, #c8c8da); }
+  .sources a { color:var(--accent); }
+  .sources .src { color:var(--muted); }
+  .savedDraft { border-top:1px solid var(--line); padding:10px 0 4px; }
+  .savedDraft:first-of-type { border-top:none; }
+  .savedDraft .sdTop { font-size:13px; display:flex; gap:8px; align-items:baseline; }
+  .savedDraft .sdBody { color:var(--muted); font-size:12px; line-height:1.5; margin:4px 0 8px; white-space:pre-wrap; }
+  .savedDraft .sdBar { display:flex; gap:8px; }
+  .chips { display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin-top:13px; }
+  .chiplbl { color:var(--muted); font-size:12px; margin-right:2px; }
+  .chip { background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:16px; padding:6px 11px; cursor:pointer; font-size:12px; transition:border-color .15s; }
+  .chip:hover { border-color:var(--accent); }
+  .chip:disabled { opacity:.45; cursor:default; }
+  .refineRow { display:flex; gap:8px; margin-top:10px; }
+  .refineRow input { flex:1; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 11px; font-size:13px; }
+  .err { color:var(--status-error, #ff8b8b); }
+  .settings { margin:-8px 0 16px; }
+  .toggle { display:inline-flex; gap:8px; align-items:center; color:var(--muted); font-size:13px; cursor:pointer; }
+  .toggle input { accent-color:var(--accent); width:15px; height:15px; }
+  .sighead { font-size:12px; color:var(--accent2); text-transform:uppercase; letter-spacing:.5px; margin:4px 0 9px; }
+  .siggrid { display:grid; gap:10px; margin-bottom:20px; }
+  .sig { background:linear-gradient(160deg,var(--bg-tertiary, #191929),var(--bg-card, #15151f)); border:1px solid var(--line); border-radius:11px; padding:12px 15px; }
+  .sig .lbl { font-size:12px; color:var(--accent2); font-weight:600; }
+  .sig .subj { font-size:14px; margin:3px 0; }
+  .sig .from { color:var(--muted); font-size:12px; }
+  .sig .noteBtn { margin-top:9px; background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:7px; padding:6px 12px; cursor:pointer; font-size:12px; }
+  .sig .noteBtn:hover { border-color:var(--accent); } .sig .noteBtn:disabled { opacity:.5; }
+  .sig textarea { width:100%; margin-top:9px; min-height:62px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:9px; font-family:inherit; font-size:13px; line-height:1.5; resize:vertical; }
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb,rgba(255,255,255,.14));border-radius:6px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--muted,rgba(255,255,255,.28))}
+  html{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb,rgba(255,255,255,.14)) transparent}
+  @media (max-width: 640px) {
+    .page { padding: 16px 14px 60px; }
+    .head { flex-wrap: wrap; gap: 8px; }
+    .head h1 { font-size: 19px; }
+    .refresh { margin-left: 0; }
+    .focus { flex-direction: column; }
+    .focus input { font-size: 16px; }
+    .focus button { width: 100%; padding: 10px 12px; font-size: 14px; }
+    .settings .toggle { font-size: 14px; }
+    textarea { font-size: 16px; }
+    .refineRow { flex-direction: column; }
+    .refineRow input { font-size: 16px; width: 100%; }
+    .refineRow .btn { width: 100%; }
+    .bar { flex-wrap: wrap; }
+    .bar .btn { flex: 1 1 calc(50% - 5px); min-width: 0; }
+    .bar .toast { flex-basis: 100%; }
+    .chips { gap: 6px; }
+    .chip { font-size: 12px; padding: 7px 10px; }
+    .catchips { gap: 6px; }
+    .catchip { font-size: 12px; padding: 5px 11px; }
+    .compose { padding: 14px; }
+    .card { padding: 12px 14px; }
+  }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="head"><h1>🔥 Content Studio</h1><button class="refresh" id="draftsBtn">📁 My drafts</button><button class="refresh" id="refresh">↻ Rescan feeds</button></div>
+    <div class="sub">Pick a trending article → add your take → I draft a post that <b>links it</b> → review and post to LinkedIn/X (you confirm — nothing auto-posts). Turn on email scan for people to congratulate.</div>
+    <div id="draftsPanel"></div>
+    <div class="focus">
+      <input id="focusInput" placeholder="Focus terms (comma-separated) — e.g. AI agents, RAG, MCP, enterprise AI" />
+      <button id="focusSave">Save focus</button>
+    </div>
+    <div class="settings">
+      <label class="toggle"><input type="checkbox" id="scanToggle" /> 📨 Scan my email for social updates (work anniversaries, new jobs, mentions)</label>
+    </div>
+    <div id="signals"></div>
+    <div id="catChips" class="catchips"></div>
+    <div id="cards" class="cards"><div class="spin">Scanning Hacker News, Reddit, Lobsters & feeds for what's hot in your areas…</div></div>
+    <div id="compose"></div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+let CARDS = [], selected = null, SIGNALS = [], SAVED = [], DRAFTS_OPEN = false, CURRENT_CAT = '';
+
+/** Focus terms → categories (the dashboard's columns). */
+function focusCats(){ return ($('focusInput').value||'').split(',').map(s=>s.trim()).filter(s=>s.length>1); }
+/** Which categories a card belongs to (term appears in its title/why/source). */
+function cardCats(c){ const hay=((c.title||'')+' '+(c.whyItMatters||'')+' '+(c.source||'')).toLowerCase(); return focusCats().filter(t=>hay.includes(t.toLowerCase())); }
+function cardInCat(c){ return !CURRENT_CAT || cardCats(c).map(x=>x.toLowerCase()).includes(CURRENT_CAT.toLowerCase()); }
+function renderCatChips(){
+  const cats = focusCats();
+  if (!cats.length || !CARDS.length) { $('catChips').innerHTML=''; return; }
+  const count = (t) => t==='' ? CARDS.length : CARDS.filter(c=>cardCats(c).map(x=>x.toLowerCase()).includes(t.toLowerCase())).length;
+  const chip = (label,val) => `<button class="catchip${CURRENT_CAT===val?' active':''}" data-cat="${esc(val)}">${esc(label)} <span class="cc">${count(val)}</span></button>`;
+  $('catChips').innerHTML = chip('All','') + cats.map(t=>chip(t,t)).join('');
+  document.querySelectorAll('#catChips .catchip').forEach(b=>b.onclick=()=>{ CURRENT_CAT=b.dataset.cat; renderCatChips(); render(); });
+}
+
+async function loadSettings(){
+  try { const r = await fetch('/api/content/settings'); const j = await r.json(); $('scanToggle').checked = !!j.emailSocialScan; if (j.emailSocialScan) loadSignals(); } catch{}
+}
+$('scanToggle').onchange = async () => {
+  try { await fetch('/api/content/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ emailSocialScan: $('scanToggle').checked }) }); } catch{}
+  if ($('scanToggle').checked) loadSignals(); else $('signals').innerHTML = '';
+};
+async function loadSignals(){
+  $('signals').innerHTML = '<div class="spin">Scanning your inbox for social updates…</div>';
+  try {
+    const r = await fetch('/api/content/signals'); const j = await r.json();
+    if (!j.enabled) { $('signals').innerHTML = ''; return; }
+    SIGNALS = j.signals || [];
+    const scanned = j.scanned ? ` · ${j.scanned} emails scanned` : '';
+    if (!SIGNALS.length) { $('signals').innerHTML = '<div class="sighead">📨 People to engage</div><div class="sub">Nothing worth acting on right now'+scanned+'. Noise (security alerts, notification counts) is filtered out.</div>'; return; }
+    const dot = p => p==='high' ? '🔴' : p==='medium' ? '🟡' : '⚪';
+    $('signals').innerHTML = '<div class="sighead">📨 People to engage</div><div class="sub">'+SIGNALS.length+' worth your attention'+scanned+'</div><div class="siggrid">' + SIGNALS.map((s,i)=>`
+      <div class="sig">
+        <div class="lbl">${dot(s.priority)} ${esc(s.action||'Engage')}${s.person?' · <b>'+esc(s.person)+'</b>':''}</div>
+        <div class="subj">${esc(s.summary||'')}</div>
+        <div class="from">${esc(s.network||'')}</div>
+        <button class="noteBtn" data-i="${i}">✍️ Draft a note</button>
+        <div class="noteWrap"></div>
+      </div>`).join('') + '</div>';
+    document.querySelectorAll('#signals .noteBtn').forEach(b => b.onclick = () => draftNote(Number(b.dataset.i), b));
+  } catch (e) { $('signals').innerHTML = ''; }
+}
+async function draftNote(i, btn){
+  const s = SIGNALS[i]; if (!s) return;
+  btn.disabled = true; btn.textContent = 'Drafting…';
+  const wrap = btn.parentElement.querySelector('.noteWrap');
+  try {
+    const r = await fetch('/api/content/note', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subject: s.summary || s.action, type: s.type, from: s.person || s.network }) });
+    const j = await r.json();
+    if (r.ok && j.note) {
+      wrap.innerHTML = `<textarea>${esc(j.note)}</textarea><button class="noteBtn copyN">Copy</button>`;
+      const cp = wrap.querySelector('.copyN'); cp.onclick = () => { navigator.clipboard.writeText(wrap.querySelector('textarea').value); cp.textContent='Copied ✓'; };
+    } else wrap.innerHTML = '<div class="err">Couldn\'t draft a note.</div>';
+  } catch (e) { wrap.innerHTML = '<div class="err">Note error.</div>'; }
+  btn.disabled = false; btn.textContent = '✍️ Draft a note';
+}
+
+async function loadFocus(){ try { const r = await fetch('/api/content/focus'); const j = await r.json(); if (j.focus) $('focusInput').value = j.focus; } catch{} }
+$('focusSave').onclick = async () => {
+  await fetch('/api/content/focus', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ focus: $('focusInput').value.trim() }) });
+  loadTopics(true);
+};
+
+async function loadTopics(refresh){
+  $('cards').innerHTML = '<div class="spin">Scanning the feeds for what\'s hot in your areas… (this takes ~30–60s)</div>';
+  $('compose').innerHTML = '';
+  try {
+    const r = await fetch('/api/content/topics' + (refresh?'?refresh=1':''));
+    if (r.status === 401) { $('cards').innerHTML = '<div class="notice">Sign in to use Content Studio.</div>'; return; }
+    if (!r.ok) { $('cards').innerHTML = '<div class="notice">Couldn\'t scan feeds ('+r.status+'). Try Rescan.</div>'; return; }
+    const j = await r.json();
+    CARDS = Array.isArray(j.cards) ? j.cards : [];
+    if (!CARDS.length) { $('catChips').innerHTML=''; $('cards').innerHTML = '<div class="notice">No strong topics right now — try Rescan or widen your focus.</div>'; return; }
+    renderCatChips(); render();
+  } catch (e) { $('cards').innerHTML = '<div class="notice">Error scanning feeds.</div>'; }
+}
+
+function fmtDate(d){ const t=Date.parse(d||''); if(!t) return ''; return new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
+
+function render(){
+  const html = CARDS.map((c,i) => cardInCat(c) ? `
+    <div class="card${selected===i?' sel':''}" data-i="${i}">
+      <button class="dismiss" data-d="${i}" title="Dismiss — hidden from the feed but kept in your history">✕</button>
+      <div class="t">${esc(c.title)}</div>
+      <div class="why">${esc(c.whyItMatters||'')}</div>
+      <div class="meta">${c.source?'<span>'+esc(c.source)+'</span>':''}${c.date?'<span>· '+esc(fmtDate(c.date))+'</span>':''}${cardCats(c).slice(0,2).map(t=>'<span class="catpill">'+esc(t)+'</span>').join('')}${c.url?'<a href="'+esc(c.url)+'" target="_blank" rel="noopener">source ↗</a>':''}<span>· tap to comment</span></div>
+    </div>` : '').join('');
+  $('cards').innerHTML = html || '<div class="notice">Nothing in “'+esc(CURRENT_CAT)+'” right now — pick another category.</div>';
+  document.querySelectorAll('.card').forEach(el => el.onclick = () => select(Number(el.dataset.i)));
+  document.querySelectorAll('.dismiss').forEach(b => b.onclick = (e) => { e.stopPropagation(); dismissCard(Number(b.dataset.d)); });
+}
+
+async function dismissCard(i){
+  const c = CARDS[i]; if(!c) return;
+  CARDS.splice(i,1);
+  if (selected===i) { selected=null; $('compose').innerHTML=''; } else if (selected>i) { selected--; }
+  if (!CARDS.length) { $('cards').innerHTML = '<div class="notice">No topics left — Rescan for fresh ones.</div>'; } else { render(); }
+  try { await fetch('/api/content/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:c.url})}); } catch(e){}
+}
+
+function select(i){
+  selected = i; render();
+  const c = CARDS[i];
+  $('compose').innerHTML = `
+    <div class="compose">
+      <div class="q">${esc(c.question || "What's your take on this?")}</div>
+      <div class="angle">Suggested angle: ${esc(c.angle||'your perspective as a builder')}</div>
+      <textarea id="take" placeholder="Your take — rough notes are fine. Where have you seen this in your own work? Agree? Disagree? This becomes the heart of the post."></textarea>
+      <div class="bar"><button class="btn primary" id="draftBtn">✨ Draft post</button><button class="btn ghost" id="deepBtn" title="Researches real data points first, then writes a grounded, cited analysis. Slower.">🔬 Deep analysis</button><span class="toast" id="toast"></span></div>
+      <div id="draftWrap"></div>
+      <div id="relatedWrap"></div>
+    </div>`;
+  $('compose').scrollIntoView({ behavior:'smooth', block:'nearest' });
+  $('draftBtn').onclick = () => draft(c);
+  $('deepBtn').onclick = () => deepAnalysis(c);
+  loadRelated(c);
+}
+
+async function loadRelated(c){
+  if (!c.url) return;
+  try {
+    const r = await fetch('/api/content/related?url='+encodeURIComponent(c.url));
+    const j = await r.json();
+    const rel = Array.isArray(j.related) ? j.related : [];
+    if (!rel.length || $('relatedWrap')===null) return;
+    $('relatedWrap').innerHTML = '<div class="sources"><div class="srchead">🔗 Related from your feed history:</div><ul>'+
+      rel.map(x=>'<li><a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.title||x.url)+'</a> <span class="src">'+esc(x.source||'')+'</span></li>').join('')+'</ul></div>';
+  } catch(e){}
+}
+
+async function deepAnalysis(c){
+  const btn = $('deepBtn'); btn.disabled = true; btn.textContent = 'Researching…';
+  $('draftWrap').innerHTML = '<div class="draftHead">Deep analysis</div><div class="spin">Searching for real data points, then writing a grounded analysis… (this takes ~1-2 min)</div>';
+  try {
+    const r = await fetch('/api/content/draft-deep', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ topic: c.title, take: $('take').value.trim(), url: c.url, source: c.source }) });
+    const j = await r.json();
+    if (r.ok && j.draft) { renderDraft(c, j.draft); renderSources(j.sources); }
+    else $('draftWrap').innerHTML = '<div class="notice">Deep analysis failed: '+esc(j.error||r.status)+'</div>';
+  } catch (e) { $('draftWrap').innerHTML = '<div class="notice">Deep analysis error.</div>'; }
+  btn.disabled = false; btn.textContent = '🔬 Deep analysis';
+}
+
+function renderSources(sources){
+  if (!Array.isArray(sources) || !sources.length) return;
+  const seen = new Set(); const items = [];
+  for (const s of sources){ if(!s.url||seen.has(s.url))continue; seen.add(s.url); items.push('<li><a href="'+esc(s.url)+'" target="_blank" rel="noopener">'+esc(s.title||s.source||s.url)+'</a> <span class="src">'+esc(s.source||'')+'</span></li>'); }
+  const wrap = document.createElement('div'); wrap.className='sources';
+  wrap.innerHTML = '<div class="srchead">📚 Grounded in '+items.length+' source'+(items.length>1?'s':'')+' — verify before posting:</div><ul>'+items.join('')+'</ul>';
+  $('draftWrap').appendChild(wrap);
+}
+
+const REFINEMENTS = [
+  ['✂️ Punchier', 'Make it punchier and more concise — tighten every line, stronger hook.'],
+  ['📏 Shorter', 'Cut it down by about half while keeping the core point.'],
+  ['🔬 More technical', 'Make it more technical and specific for an engineering audience.'],
+  ['🙋 More personal', 'Make it more personal and first-person — my lived experience as a builder.'],
+  ['📣 Add CTA', 'Add a clear, natural call-to-action at the end (invite comments or a follow).'],
+  ['❓ End w/ question', 'End with one sharp question that invites discussion.'],
+];
+function flash(el, msg, isErr){ if(!el) return; el.textContent = msg; el.className = 'toast' + (isErr?' err':''); }
+
+async function draft(c){
+  $('draftBtn').disabled = true; $('draftBtn').textContent = 'Drafting…';
+  $('draftWrap').innerHTML = '<div class="draftHead">Draft</div><div class="spin">Writing in your voice…</div>';
+  try {
+    const r = await fetch('/api/content/draft', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ topic: c.title, angle: c.angle, take: $('take').value.trim(), url: c.url, source: c.source }) });
+    const j = await r.json();
+    if (r.ok && j.draft) renderDraft(c, j.draft);
+    else $('draftWrap').innerHTML = '<div class="notice">Draft failed: '+esc(j.error||r.status)+'</div>';
+  } catch (e) { $('draftWrap').innerHTML = '<div class="notice">Draft error.</div>'; }
+  $('draftBtn').disabled = false; $('draftBtn').textContent = '✨ Draft post';
+}
+
+function renderDraft(c, text){
+  const chips = REFINEMENTS.map((p,i)=>`<button class="chip" data-r="${i}">${p[0]}</button>`).join('');
+  $('draftWrap').innerHTML = `<div class="draftHead">Draft — edit freely, or refine below</div>
+    <textarea id="draft">${esc(text)}</textarea>
+    <div class="chips"><span class="chiplbl">Refine:</span>${chips}</div>
+    <div class="refineRow">
+      <input id="refineInput" placeholder="…or tell me exactly how to change it (e.g. 'add a stat about agent adoption')" />
+      <button class="btn ghost" id="refineBtn">Refine ↻</button></div>
+    <div class="bar"><button class="btn ghost" id="copyBtn">Copy</button><button class="btn ghost" id="saveBtn">Save draft</button>
+      <button class="btn ghost" id="reBtn">↻ Redraft</button>
+      <button class="btn primary" id="postLiBtn">📤 Post to LinkedIn</button>
+      <button class="btn ghost" id="postXBtn">𝕏 Post to X</button>
+      <span class="toast" id="rToast"></span></div>`;
+  document.querySelectorAll('#draftWrap .chip').forEach(el => el.onclick = () => refine(c, REFINEMENTS[Number(el.dataset.r)][1]));
+  $('refineBtn').onclick = () => refine(c, $('refineInput').value);
+  $('refineInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') refine(c, $('refineInput').value); });
+  $('copyBtn').onclick = () => { navigator.clipboard.writeText($('draft').value); $('copyBtn').textContent='Copied ✓'; };
+  $('saveBtn').onclick = async () => { await fetch('/api/content/drafts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:c.title,take:($('take')?$('take').value:''),draft:$('draft').value})}); $('saveBtn').textContent='Saved ✓'; };
+  $('reBtn').onclick = () => draft(c);
+  $('postLiBtn').onclick = () => postDraft('linkedin');
+  $('postXBtn').onclick = () => postDraft('twitter');
+}
+
+// Approval-gated publish: you review the text, click, and confirm. Nothing auto-posts.
+async function postDraft(target){
+  const text = ($('draft') ? $('draft').value : '').trim();
+  if (!text) return;
+  const net = target === 'twitter' ? 'X' : 'LinkedIn';
+  if (target === 'twitter' && text.length > 280) { if (!confirm('This is '+text.length+' chars; X allows 280. Shorten first?\nPress Cancel to edit, OK to try anyway.')) return; }
+  if (!confirm('Post this to your '+net+' account now?\n\n"'+text.slice(0,200)+(text.length>200?'…':'')+'"')) return;
+  const btn = target === 'twitter' ? $('postXBtn') : $('postLiBtn');
+  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Posting…';
+  try {
+    const r = await fetch('/api/social/post', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text, target, confirm: true }) });
+    const j = await r.json();
+    if (r.ok && j.ok) { flash($('rToast'), 'Posted to '+net+' ✓'); btn.textContent = 'Posted ✓'; }
+    else { flash($('rToast'), 'Post failed: '+esc(j.error||j.message||('HTTP '+r.status)), true); btn.disabled=false; btn.textContent=orig; }
+  } catch (e) { flash($('rToast'), 'Post error', true); btn.disabled=false; btn.textContent=orig; }
+}
+
+async function refine(c, instruction){
+  const inst = (instruction||'').trim(); const cur = ($('draft')?$('draft').value:'').trim();
+  if (!inst || !cur) return;
+  const ctrls = document.querySelectorAll('#draftWrap .chip, #refineBtn'); ctrls.forEach(b=>b.disabled=true);
+  flash($('rToast'), 'Refining…');
+  try {
+    const r = await fetch('/api/content/refine', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ draft: cur, instruction: inst, topic: c.title, take: ($('take')?$('take').value:'').trim() }) });
+    const j = await r.json();
+    if (r.ok && j.draft) { $('draft').value = j.draft; flash($('rToast'), 'Updated ✓'); if($('refineInput')) $('refineInput').value=''; }
+    else flash($('rToast'), 'Refine failed: '+esc(j.error||r.status), true);
+  } catch (e) { flash($('rToast'), 'Refine error', true); }
+  ctrls.forEach(b=>b.disabled=false);
+}
+
+// ── My drafts: list saved drafts, re-open into the editor (with post/refine) ──
+$('draftsBtn').onclick = () => { DRAFTS_OPEN = !DRAFTS_OPEN; if (DRAFTS_OPEN) loadDrafts(); else $('draftsPanel').innerHTML = ''; };
+async function loadDrafts(){
+  $('draftsPanel').innerHTML = '<div class="spin">Loading your saved drafts…</div>';
+  try {
+    const r = await fetch('/api/content/drafts'); const j = await r.json();
+    SAVED = Array.isArray(j.drafts) ? j.drafts : [];
+    if (!SAVED.length) { $('draftsPanel').innerHTML = '<div class="sources"><div class="srchead">📁 No saved drafts yet — write one and hit “Save draft”.</div></div>'; return; }
+    $('draftsPanel').innerHTML = '<div class="sources"><div class="srchead">📁 Saved drafts ('+SAVED.length+')</div>' +
+      SAVED.map((d,i)=>`<div class="savedDraft"><div class="sdTop"><b>${esc(d.topic||'Untitled')}</b> <span class="src">${esc(fmtDate(d.created_at))}</span></div>
+        <div class="sdBody">${esc((d.draft||'').slice(0,170))}${(d.draft||'').length>170?'…':''}</div>
+        <div class="sdBar"><button class="btn ghost sdOpen" data-i="${i}">Open &amp; post</button><button class="btn ghost sdCopy" data-i="${i}">Copy</button></div></div>`).join('') + '</div>';
+    document.querySelectorAll('.sdOpen').forEach(b=>b.onclick=()=>openSaved(Number(b.dataset.i)));
+    document.querySelectorAll('.sdCopy').forEach(b=>{ b.onclick=()=>{ navigator.clipboard.writeText(SAVED[Number(b.dataset.i)].draft||''); b.textContent='Copied ✓'; }; });
+  } catch (e) { $('draftsPanel').innerHTML = '<div class="notice">Couldn\'t load drafts.</div>'; }
+}
+function openSaved(i){
+  const d = SAVED[i]; if (!d) return;
+  selected = null; render();
+  $('compose').innerHTML = '<div class="compose"><div class="q">📁 Saved draft — edit, refine, or post</div><div id="draftWrap"></div></div>';
+  renderDraft({ title: d.topic || '', url: '', source: '' }, d.draft || '');
+  $('compose').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+$('refresh').onclick = () => loadTopics(true);
+loadFocus();
+loadSettings();
+loadTopics(false);
+</script>
+</body>
+</html>

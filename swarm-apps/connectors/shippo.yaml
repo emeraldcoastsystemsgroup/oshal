@@ -1,0 +1,40 @@
+provider: shippo
+displayName: Shippo
+version: 1.0.0
+baseUrl: https://api.goshippo.com
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: link
+  nextField: next
+  itemsField: results
+resources:
+  - name: addresses
+    tool: shippo-addresses
+    method: GET
+    path: /addresses/
+    paginate: true
+  - name: shipments
+    tool: shippo-shipments
+    method: GET
+    path: /shipments/
+    paginate: true
+  - name: get-shipment
+    tool: shippo-get-shipment
+    method: GET
+    path: /shipments/{shipmentId}
+  - name: tracking
+    tool: shippo-tracking
+    method: GET
+    path: /tracks/{carrier}/{trackingNumber}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/goshippo.com.ico

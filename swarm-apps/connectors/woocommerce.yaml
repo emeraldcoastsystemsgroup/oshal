@@ -1,0 +1,34 @@
+provider: woocommerce
+displayName: WooCommerce
+version: 1.0.0
+baseUrl: ${env:WOOCOMMERCE_BASE_URL:-https://yourstore.example.com}/wp-json/wc/v3
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: products
+    tool: woocommerce-products
+    method: GET
+    path: /products
+  - name: orders
+    tool: woocommerce-orders
+    method: GET
+    path: /orders
+  - name: customers
+    tool: woocommerce-customers
+    method: GET
+    path: /customers
+  - name: product
+    tool: woocommerce-product
+    method: GET
+    path: /products/{id}
+metadata:
+  icon: woocommerce
+  iconTitle: WooCommerce
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,32 @@
+provider: deviantart
+displayName: DeviantArt
+version: 1.0.0
+baseUrl: https://www.deviantart.com/api/v1/oauth2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: whoami
+    tool: deviantart-whoami
+    method: GET
+    path: /user/whoami
+  - name: browse-popular
+    tool: deviantart-browse-popular
+    method: GET
+    path: /browse/popular
+    query:
+      q: '{q}'
+  - name: gallery-all
+    tool: deviantart-gallery-all
+    method: GET
+    path: /gallery/all
+metadata:
+  icon: deviantart
+  iconTitle: DeviantArt
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<!--
+  Add a computer — operator-only surface (served by createJoinRoutes at /api/join/).
+  Mints a fresh join code from the swarm's live REMOTE_CLIENT_SHARED_SECRET so a new worker
+  node can be added long after the installer printed the original one. Self-contained page;
+  owns its own CSS (never edit the shared cockpit stylesheets) and matches their palette.
+
+  2026-07-25: added the "bind it to you" enrollment step (POST /api/join/enroll, shipped 07-23
+  server-side but never surfaced here). Dispatch is owner-scoped (device-access.ts), so a node
+  joined with ONLY the join code registers unowned and is invisible to its own user — the page
+  now mints both: the enrollment code that binds the node to the signed-in user, and the join
+  code that lets a brand-new install attach to the swarm. Reached from cockpit Settings →
+  "Add a computer (remote node)".
+-->
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Add a computer</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<!-- Shared framework surface styling. Read-only: never edit the shared stylesheets. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+<style>
+  /* Short alias names kept, but DERIVED from framework theme tokens so all eleven themes work —
+     not just the dark one whose hex these used to match. Semantic status colors come from the
+     theme too, with the old hex as a fallback so the surface stays legible if a theme omits one. */
+  :root {
+    --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color);
+    --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary);
+    --good:var(--status-success, #5fd0a8);
+    --warn:var(--status-warning, #ffd24a); --bad:var(--status-error, #ff5d6c);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; padding:28px; background:var(--bg); color:var(--text);
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif; line-height:1.5;
+  }
+  h1 { margin:0 0 4px; font-size:22px; }
+  .sub { color:var(--muted); margin:0 0 24px; font-size:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; max-width:900px; }
+  .steps { counter-reset:step; list-style:none; padding:0; margin:0 0 20px; }
+  .steps li { counter-increment:step; position:relative; padding-left:34px; margin-bottom:10px; color:var(--muted); font-size:14px; }
+  .steps li::before {
+    content:counter(step); position:absolute; left:0; top:1px; width:22px; height:22px;
+    background:var(--panel2); border:1px solid var(--line); border-radius:50%;
+    text-align:center; line-height:20px; font-size:12px; color:var(--accent);
+  }
+  code.inline { background:var(--panel2); padding:1px 6px; border-radius:4px; font-size:13px; color:var(--accent); }
+  .codebox {
+    background:var(--bg-tertiary, #0a0d14); border:1px solid var(--line); border-radius:8px; padding:14px;
+    font-family:Consolas,'Courier New',monospace; font-size:13px; word-break:break-all;
+    min-height:52px; color:var(--good); user-select:all;
+  }
+  .row { display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap; }
+  button {
+    background:var(--accent); color:#0c0f17; border:0; border-radius:7px; padding:10px 18px;
+    font-weight:600; font-size:14px; cursor:pointer; font-family:inherit;
+  }
+  button.ghost { background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+  .note { font-size:13px; color:var(--muted); margin-top:14px; }
+  .banner { border-radius:7px; padding:11px 14px; font-size:13px; margin-top:14px; display:none; }
+  .banner.warn { background:rgba(255,210,74,.1); border:1px solid var(--warn); color:var(--warn); }
+  .banner.bad  { background:rgba(255,93,108,.1); border:1px solid var(--bad); color:var(--bad); }
+  .card + .card { margin-top:18px; }
+  .card h2 { margin:0 0 4px; font-size:16px; }
+  .card .cardsub { color:var(--muted); margin:0 0 14px; font-size:13px; }
+  input[type=text] {
+    background:var(--panel2); border:1px solid var(--line); border-radius:7px; color:var(--text);
+    padding:9px 12px; font-size:14px; font-family:inherit; min-width:220px;
+  }
+</style>
+<!-- Shared framework surface styling. Read-only: never edit the shared stylesheets. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <h1>Add a computer</h1>
+  <p class="sub">Turn another machine into a worker node for this swarm.</p>
+
+  <div class="card">
+    <h2>1 &middot; Bind it to you</h2>
+    <p class="cardsub">
+      Dispatch is owner-scoped: a node that joins without this step belongs to nobody and will not
+      show up as yours. This mints a short-lived enrollment code the node exchanges once at startup
+      to register bound to <em>you</em>.
+    </p>
+
+    <div class="row" style="margin-top:0;">
+      <input type="text" id="pcname" placeholder="Computer name (optional, e.g. GARAGE-PC)" maxlength="40" />
+      <button id="enroll">Generate enrollment code</button>
+    </div>
+
+    <div class="codebox" id="enrollCode" style="margin-top:14px;">Click &ldquo;Generate enrollment code&rdquo; to mint one.</div>
+
+    <div class="row">
+      <button id="enrollCopy" class="ghost" disabled>Copy</button>
+      <span class="note" id="enrollMeta"></span>
+    </div>
+
+    <p class="note" id="enrollExisting" style="display:none;">
+      Computer already has the node app installed? Run this on it and you&rsquo;re done:
+    </p>
+    <div class="codebox" id="enrollExistingCmd" style="display:none;"></div>
+
+    <div class="banner warn" id="enrollWarn"></div>
+    <div class="banner bad" id="enrollErr"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 &middot; Join code (new installs)</h2>
+    <ol class="steps">
+      <li>On the other computer, open the Open Swarm folder and double-click <code class="inline">Install-OpenSwarm.bat</code>.</li>
+      <li>Choose <strong>Join a swarm</strong>.</li>
+      <li>Paste the code below (and the enrollment code from step 1 when it asks).</li>
+    </ol>
+
+    <div class="codebox" id="code">Click &ldquo;Generate join code&rdquo; to mint one.</div>
+
+    <div class="row">
+      <button id="gen">Generate join code</button>
+      <button id="copy" class="ghost" disabled>Copy</button>
+      <span class="note" id="target"></span>
+    </div>
+
+    <div class="banner warn" id="warn"></div>
+    <div class="banner bad" id="err"></div>
+
+    <p class="note">
+      The code contains this swarm&rsquo;s shared secret. Anyone holding it can attach a worker node,
+      so treat it like a password. It stays valid until you rotate
+      <code class="inline">REMOTE_CLIENT_SHARED_SECRET</code>.
+    </p>
+    <p class="note" id="offlan"></p>
+
+    <p class="note" id="fullCmdLabel" style="display:none;">
+      Or skip the prompts &mdash; full one-line install for a brand-new computer (both codes baked in):
+    </p>
+    <div class="codebox" id="fullCmd" style="display:none;"></div>
+  </div>
+
+<script>
+  const el = (id) => document.getElementById(id);
+  let current = '';        // minted join code
+  let enrollment = null;   // minted enrollment response (token + install commands)
+
+  /** Wires a copy button to a value getter, with the standard "Copied" flash. */
+  function bindCopy(btnId, getValue) {
+    el(btnId).addEventListener('click', async () => {
+      await navigator.clipboard.writeText(getValue());
+      el(btnId).textContent = 'Copied';
+      setTimeout(() => { el(btnId).textContent = 'Copy'; }, 1600);
+    });
+  }
+
+  /** When BOTH codes exist, render the complete one-line new-install command. */
+  function renderFullCommand() {
+    if (!current || !enrollment || !enrollment.install || !enrollment.install.newInstall) return;
+    const cmd = enrollment.install.newInstall.replace('<OSJOIN1...>', current);
+    el('fullCmd').textContent = cmd;
+    el('fullCmd').style.display = 'block';
+    el('fullCmdLabel').style.display = 'block';
+  }
+
+  /** Mints a per-user enrollment code (binds the node to the signed-in user). */
+  async function enroll() {
+    el('enroll').disabled = true;
+    el('enrollErr').style.display = 'none';
+    el('enrollWarn').style.display = 'none';
+
+    try {
+      const res = await fetch('enroll', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ computerName: el('pcname').value.trim() }),
+      });
+      const body = await res.json();
+
+      if (!res.ok) {
+        el('enrollErr').textContent = body.message || body.error || 'Could not mint an enrollment code.';
+        el('enrollErr').style.display = 'block';
+        el('enrollCode').textContent = '—';
+        return;
+      }
+
+      enrollment = body;
+      el('enrollCode').textContent = body.enrollment.token;
+      el('enrollCopy').disabled = false;
+      el('enrollMeta').textContent = 'Expires in ' + body.enrollment.ttlMinutes + ' minutes — use it before then. Revoke any time under API tokens.';
+
+      if (body.install && body.install.existingNode) {
+        el('enrollExisting').style.display = 'block';
+        el('enrollExistingCmd').textContent = body.install.existingNode;
+        el('enrollExistingCmd').style.display = 'block';
+      }
+      if (body.warning) {
+        el('enrollWarn').textContent = body.warning;
+        el('enrollWarn').style.display = 'block';
+      }
+      renderFullCommand();
+    } catch (e) {
+      el('enrollErr').textContent = 'Request failed: ' + e.message;
+      el('enrollErr').style.display = 'block';
+    } finally {
+      el('enroll').disabled = false;
+    }
+  }
+
+  /** Fetches a freshly-minted join code and renders it, surfacing the loopback warning. */
+  async function generate() {
+    el('gen').disabled = true;
+    el('err').style.display = 'none';
+    el('warn').style.display = 'none';
+
+    try {
+      const res = await fetch('code', { credentials: 'same-origin' });
+      const body = await res.json();
+
+      if (!res.ok) {
+        el('err').textContent = body.message || 'Could not mint a join code.';
+        el('err').style.display = 'block';
+        el('code').textContent = '—';
+        return;
+      }
+
+      current = body.joinCode;
+      el('code').textContent = current;
+      el('copy').disabled = false;
+      el('target').textContent = 'Points at ' + body.controlPlaneUrl;
+      el('offlan').textContent = body.offLanHint || '';
+
+      if (body.warning) {
+        el('warn').textContent = body.warning;
+        el('warn').style.display = 'block';
+      }
+      renderFullCommand();
+    } catch (e) {
+      el('err').textContent = 'Request failed: ' + e.message;
+      el('err').style.display = 'block';
+    } finally {
+      el('gen').disabled = false;
+    }
+  }
+
+  el('enroll').addEventListener('click', enroll);
+  el('gen').addEventListener('click', generate);
+  bindCopy('enrollCopy', () => (enrollment ? enrollment.enrollment.token : ''));
+  bindCopy('copy', () => current);
+</script>
+</body>
+</html>

@@ -1,0 +1,615 @@
+/* ===== Address Book — Bot profile cards grid ===== */
+/* CHANGE LOG
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added min-height:0 to fix flex scroll, list-mode styles, view-toggle button, degraded/unknown status colours, full-detail expand row
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Icon-only action buttons (30x30 squares), compacted card padding/gap
+ */
+
+.addressbook-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.ab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.ab-search {
+  flex: 1;
+  min-width: 160px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  padding: 7px 14px;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.ab-search:focus {
+  border-color: var(--accent-primary);
+}
+
+.ab-filter-select {
+  padding: 7px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+  cursor: pointer;
+  outline: none;
+}
+
+.ab-count {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* View mode toggle */
+.ab-view-toggle {
+  display: flex;
+  gap: 2px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.ab-view-btn {
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.ab-view-btn.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.ab-view-btn:not(.active):hover {
+  background: var(--glass-bg-heavy);
+  color: var(--text-primary);
+}
+
+/* ── CARD MODE ──────────────────────────────────────────── */
+
+.ab-grid {
+  flex: 1;
+  min-height: 0; /* critical: lets flex child shrink so overflow-y activates */
+  overflow-y: auto;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+.ab-grid.list-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 14px;
+}
+
+/* Individual bot card */
+.ab-card {
+  background: linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: visible;
+}
+
+.ab-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--glass-glare);
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.ab-card:hover {
+  border-color: var(--border-color-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+/* Card header row */
+.ab-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ab-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent-gradient);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.ab-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.ab-status-indicator {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-secondary);
+}
+
+.ab-status-indicator.online  { background: var(--status-success); box-shadow: 0 0 6px var(--status-success); }
+.ab-status-indicator.offline { background: var(--text-muted); }
+.ab-status-indicator.degraded { background: #f59e0b; box-shadow: 0 0 6px #f59e0b80; }
+.ab-status-indicator.unknown  { background: #6b7280; }
+
+.ab-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ab-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ab-role {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Bot ID subtitle */
+.ab-bot-id {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.7;
+  line-height: 1.3;
+}
+
+.ab-bot-id:empty { display: none; }
+
+/* Bot properties (read-only) */
+.ab-props {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.ab-prop {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ab-prop-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.ab-prop-value {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Disabled action button */
+.ab-action-btn.disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Backstory — unclamped in card view */
+.ab-backstory {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Specialty tags */
+.ab-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ab-tag {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* Health vitals */
+.ab-vitals {
+  display: flex;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.ab-vital {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.ab-vital-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ab-vital-label {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Action buttons — icon-only (shared card + list) */
+.ab-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}
+
+.ab-action-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  color: var(--text-secondary);
+  font-size: 15px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.ab-action-btn:hover {
+  background: var(--glass-bg-heavy);
+  color: var(--text-primary);
+}
+
+.ab-action-btn i { font-size: 15px; }
+
+.ab-action-btn.primary {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.ab-action-btn.primary:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+/* ── LIST MODE ──────────────────────────────────────────── */
+
+.ab-list-row {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+
+.ab-list-row:hover { border-color: var(--border-color-hover); }
+.ab-list-row.expanded { border-color: var(--accent-primary); }
+
+.ab-list-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: linear-gradient(145deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.01) 100%);
+}
+
+.ab-list-summary:hover { background: var(--glass-bg); }
+
+.ab-list-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ab-list-dot.online   { background: var(--status-success); box-shadow: 0 0 5px var(--status-success); }
+.ab-list-dot.offline  { background: var(--text-muted); }
+.ab-list-dot.degraded { background: #f59e0b; }
+.ab-list-dot.unknown  { background: #6b7280; }
+
+.ab-list-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 0 0 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ab-list-role {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ab-list-meta {
+  display: flex;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.ab-list-meta-item {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.ab-list-chevron {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 200ms;
+}
+
+.ab-list-row.expanded .ab-list-chevron { transform: rotate(90deg); }
+
+/* Expanded detail panel inside list row */
+.ab-list-detail {
+  display: none;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--glass-border);
+  background: rgba(0,0,0,0.12);
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ab-list-row.expanded .ab-list-detail { display: flex; }
+
+.ab-detail-props {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.ab-detail-prop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ab-detail-prop-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.ab-detail-prop-value {
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.ab-detail-backstory {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  border-left: 2px solid var(--accent-primary);
+  padding-left: 10px;
+}
+
+/* ── Bot active/inactive toggle switch ──────────────────────────── */
+.ab-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.ab-toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.ab-toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.ab-toggle-track {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--text-muted, #4b5563);
+  border-radius: 20px;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.ab-toggle-track::before {
+  content: '';
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.ab-toggle-switch input:checked + .ab-toggle-track {
+  background: var(--accent-primary, #3b82f6);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-primary, #3b82f6) 40%, transparent);
+}
+
+.ab-toggle-switch input:checked + .ab-toggle-track::before {
+  transform: translateX(18px);
+}
+
+.ab-toggle-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ab-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ── Mobile (≤640 px) ───────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Toolbar: let items wrap naturally */
+  .ab-toolbar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  /* Search input: full-row on its own line, 16px font avoids iOS zoom */
+  .ab-search {
+    flex-basis: 100%;
+    min-width: 0;
+    font-size: 16px;
+  }
+
+  /* Card grid: honour auto-fill but floor minmax at 150px so two can fit
+     at ~370px usable width; the 270px desktop floor would force one column
+     with overflow on some devices. */
+  .ab-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    padding: 10px;
+    gap: 10px;
+  }
+
+  /* Two-column prop grid inside each card: collapse to single column */
+  .ab-props {
+    grid-template-columns: 1fr;
+    gap: 6px 0;
+  }
+
+  /* List row summary: stack the fixed-width name above role + meta */
+  .ab-list-summary {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 8px 10px;
+  }
+
+  /* Fixed 200px name column → full row */
+  .ab-list-name {
+    flex: 1 1 100%;
+    white-space: nowrap;
+  }
+
+  /* Role takes remaining space on the second line */
+  .ab-list-role {
+    flex: 1 1 auto;
+  }
+
+  /* Meta items can wrap and reduce gap */
+  .ab-list-meta {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    flex-shrink: 1;
+  }
+
+  /* Expanded detail props: auto-fill already responsive, keep as-is but
+     reduce padding */
+  .ab-list-detail {
+    padding: 10px;
+  }
+
+  /* Action buttons: ensure tap target is at least 44px when stacked */
+  .ab-action-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+  }
+  .ab-action-btn i { font-size: 16px; }
+}

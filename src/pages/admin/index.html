@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Admin Console</title>
+  <script>
+    (() => {
+      const supported = ['midnight','daylight','ocean','sakura','forest','gray','black','light-blue','aurora','graphite','amber'];
+      try {
+        const saved = localStorage.getItem('cockpit-theme');
+        if (saved && supported.includes(saved)) {
+          document.documentElement.setAttribute('data-theme', saved);
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/forest.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/gray.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/black.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/amber.css" />
+  <link rel="stylesheet" href="/admin/admin.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="admin-shell" data-admin-console="buyer-grade">
+    <header class="admin-hero">
+      <div>
+        <p class="eyebrow">Enterprise Control Plane</p>
+        <h1>Admin Console</h1>
+        <p class="hero-copy">Users, tenants, connectors, tools, audit, cost, posture, and readiness in one operator-grade surface.</p>
+      </div>
+      <div class="hero-actions">
+        <button class="icon-btn" id="refreshAdmin" type="button" title="Refresh admin snapshot" aria-label="Refresh admin snapshot">
+          <span class="codicon codicon-refresh"></span>
+        </button>
+        <a class="icon-btn" href="/cockpit/" title="Open Cockpit" aria-label="Open Cockpit">
+          <span class="codicon codicon-rocket"></span>
+        </a>
+      </div>
+    </header>
+
+    <section class="status-strip" id="adminStatus">
+      <span class="codicon codicon-loading codicon-modifier-spin"></span>
+      Loading admin posture...
+    </section>
+
+    <main class="admin-grid">
+      <section class="panel panel-wide" data-admin-section="identity-rbac">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Identity & RBAC</p>
+            <h2>Current Operator</h2>
+          </div>
+          <span class="state-pill" id="rbacState">loading</span>
+        </div>
+        <div class="operator-row">
+          <div class="operator-avatar"><span class="codicon codicon-account"></span></div>
+          <div>
+            <strong id="operatorRole">Loading...</strong>
+            <p id="operatorIdentity" class="muted">Resolving OIDC identity and effective permissions.</p>
+          </div>
+        </div>
+        <div class="chip-wrap" id="operatorPermissions"></div>
+      </section>
+
+      <section class="panel" data-admin-section="security-posture">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Security</p>
+            <h2>Control Posture</h2>
+          </div>
+        </div>
+        <div id="controlList" class="kv-list"></div>
+      </section>
+
+      <section class="panel" data-admin-section="tenant-isolation">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Isolation</p>
+            <h2>RLS Release Gate</h2>
+          </div>
+          <span class="state-pill" id="rlsState">loading</span>
+        </div>
+        <div id="rlsDetails" class="kv-list"></div>
+      </section>
+
+      <section class="panel" data-admin-section="tenants-users">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Tenants & Users</p>
+            <h2>Membership</h2>
+          </div>
+          <a class="text-link" href="/utilities" target="_top" rel="noreferrer">Manage</a>
+        </div>
+        <div id="tenantList" class="stack-list"></div>
+        <form class="audit-filters" id="createTenantForm" style="margin-top:12px">
+          <input class="audit-input" id="newTenantName" type="text" placeholder="New household name" aria-label="New household name" />
+          <button class="action-btn" type="submit"><span class="codicon codicon-add"></span> Create household</button>
+        </form>
+        <form class="audit-filters" id="addMemberForm" style="margin-top:6px">
+          <select class="audit-input" id="memberTenant" aria-label="Tenant you admin"></select>
+          <input class="audit-input" id="memberSub" type="text" placeholder="Member sub / id" aria-label="Member sub" />
+          <select class="audit-input" id="memberRole" aria-label="Member role">
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+          <button class="action-btn" type="submit"><span class="codicon codicon-add"></span> Add member</button>
+        </form>
+        <div id="tenantMembers" class="stack-list" style="margin-top:8px"></div>
+        <div id="tenantActionMsg" class="muted" style="margin-top:6px"></div>
+      </section>
+
+      <section class="panel" data-admin-section="connectors">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Connectors</p>
+            <h2>Marketplace Governance</h2>
+          </div>
+          <a class="text-link" href="/api/connectors/marketplace/audit-export?format=csv">Export</a>
+        </div>
+        <div class="metric-row" id="connectorMetrics"></div>
+        <div id="connectorRisk" class="stack-list"></div>
+        <form class="audit-filters" id="connectorToggleForm" style="margin-top:12px">
+          <input class="audit-input" id="connectorProvider" type="text" placeholder="Provider id (e.g. github)" aria-label="Provider id" />
+          <button class="action-btn" id="connectorEnableBtn" type="submit"><span class="codicon codicon-plug"></span> Enable</button>
+          <button class="action-btn" id="connectorDisableBtn" type="button"><span class="codicon codicon-close"></span> Disable</button>
+        </form>
+        <input class="audit-input" id="connectorSearch" type="text" placeholder="Search the catalog to enable/disable" aria-label="Search connectors" style="margin-top:8px" />
+        <div id="connectorSearchResults" class="stack-list" style="margin-top:6px"></div>
+        <div id="connectorActionMsg" class="muted" style="margin-top:6px"></div>
+      </section>
+
+      <section class="panel" data-admin-section="tools-approvals">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Tools & Approvals</p>
+            <h2>Risk Controls</h2>
+          </div>
+          <span class="state-pill" id="approvalState">loading</span>
+        </div>
+        <div class="metric-row" id="approvalMetrics"></div>
+        <div id="approvalControls" class="kv-list"></div>
+      </section>
+
+      <section class="panel panel-wide" data-admin-section="audit-search">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Audit</p>
+            <h2>Access Audit Log</h2>
+          </div>
+          <span class="state-pill" id="auditState">idle</span>
+        </div>
+        <form class="audit-filters" id="auditFilters">
+          <input class="audit-input" id="auditAction" type="text" placeholder="Action" aria-label="Action" />
+          <input class="audit-input" id="auditResourceType" type="text" placeholder="Resource type" aria-label="Resource type" />
+          <input class="audit-input" id="auditActor" type="text" placeholder="Actor sub" aria-label="Actor sub" />
+          <select class="audit-input" id="auditDecision" aria-label="Decision">
+            <option value="">Any decision</option>
+            <option value="allow">allow</option>
+            <option value="deny">deny</option>
+            <option value="info">info</option>
+          </select>
+          <input class="audit-input" id="auditSince" type="date" aria-label="Since" title="Since (inclusive)" />
+          <input class="audit-input" id="auditUntil" type="date" aria-label="Until" title="Until (exclusive)" />
+          <button class="action-btn" id="auditSearch" type="submit"><span class="codicon codicon-search"></span> Search</button>
+          <button class="action-btn" id="auditReset" type="button"><span class="codicon codicon-clear-all"></span> Reset</button>
+          <a class="action-btn" id="auditCsv" href="/api/governance/audit/export?format=csv&limit=5000"><span class="codicon codicon-cloud-download"></span> CSV</a>
+        </form>
+        <div class="audit-table-wrap">
+          <table class="audit-table">
+            <thead>
+              <tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Decision</th></tr>
+            </thead>
+            <tbody id="auditRows"></tbody>
+          </table>
+        </div>
+        <div class="audit-foot">
+          <span id="auditCount" class="muted">No query run yet — Search reads the per-resource access audit log.</span>
+          <button class="action-btn" id="auditMore" type="button" hidden><span class="codicon codicon-add"></span> Load more</button>
+        </div>
+      </section>
+
+      <section class="panel" data-admin-section="cost-governance">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Cost</p>
+            <h2>LLM Budgets</h2>
+          </div>
+          <span class="state-pill" id="budgetState">loading</span>
+        </div>
+        <div id="budgetList" class="kv-list"></div>
+      </section>
+
+      <section class="panel panel-wide" data-admin-section="procurement-readiness">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Readiness</p>
+            <h2>Procurement & SaaS Gates</h2>
+          </div>
+        </div>
+        <div class="readiness-grid" id="readinessGrid"></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/admin/admin.js"></script>
+</body>
+</html>

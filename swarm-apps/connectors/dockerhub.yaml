@@ -1,0 +1,47 @@
+provider: dockerhub
+displayName: Docker Hub
+version: 1.0.0
+baseUrl: https://hub.docker.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: page
+  pageSize: 25
+  nextField: next
+  itemsField: results
+resources:
+  - name: user
+    tool: dockerhub-user
+    method: GET
+    path: /users/{username}/
+  - name: repositories
+    tool: dockerhub-repositories
+    method: GET
+    path: /repositories/{namespace}/
+    paginate: true
+  - name: repository
+    tool: dockerhub-repository
+    method: GET
+    path: /repositories/{namespace}/{repository}/
+  - name: tags
+    tool: dockerhub-tags
+    method: GET
+    path: /repositories/{namespace}/{repository}/tags/
+    paginate: true
+  - name: orgs
+    tool: dockerhub-orgs
+    method: GET
+    path: /user/orgs/
+    paginate: true
+metadata:
+  icon: docker
+  iconTitle: Docker
+  iconSource: simple-icons
+  iconVerified: true

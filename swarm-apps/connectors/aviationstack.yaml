@@ -1,0 +1,36 @@
+provider: aviationstack
+displayName: Aviationstack
+version: 1.0.0
+baseUrl: https://api.aviationstack.com/v1
+auth:
+  type: apiKeyQuery
+  param: access_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: flights
+    tool: aviationstack-flights
+    method: GET
+    path: /flights
+    query:
+      flight_status: '{status}'
+  - name: airports
+    tool: aviationstack-airports
+    method: GET
+    path: /airports
+    query:
+      search: '{q}'
+  - name: airlines
+    tool: aviationstack-airlines
+    method: GET
+    path: /airlines
+    query:
+      search: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/aviationstack.com.ico

@@ -1,0 +1,35 @@
+provider: telnyx
+displayName: Telnyx
+version: 1.0.0
+baseUrl: https://api.telnyx.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: message
+    tool: telnyx-message
+    method: GET
+    path: /messages/{id}
+  - name: phone-numbers
+    tool: telnyx-phone-numbers
+    method: GET
+    path: /phone_numbers
+    query:
+      page[number]: '{page}'
+      page[size]: '{size}'
+  - name: messaging-profiles
+    tool: telnyx-messaging-profiles
+    method: GET
+    path: /messaging_profiles
+    query:
+      page[number]: '{page}'
+      page[size]: '{size}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/telnyx.com.ico

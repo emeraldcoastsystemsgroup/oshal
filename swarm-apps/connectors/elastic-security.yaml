@@ -1,0 +1,50 @@
+provider: elastic-security
+displayName: Elastic Security
+version: 1.0.0
+baseUrl: ${env:ELASTIC_BASE_URL:-https://YOUR-DEPLOYMENT.kb.us-central1.gcp.cloud.es.io}
+auth:
+  type: apiKeyHeader
+  header: Authorization
+headers:
+  kbn-xsrf: 'true'
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: detection-rules
+    tool: elastic-detection-rules
+    method: GET
+    path: /api/detection_engine/rules/_find
+    query:
+      filter: '{filter}'
+      page: '{page}'
+      per_page: '{perPage}'
+  - name: detection-rule
+    tool: elastic-detection-rule
+    method: GET
+    path: /api/detection_engine/rules
+    query:
+      id: '{ruleId}'
+  - name: signals-index
+    tool: elastic-signals-index
+    method: GET
+    path: /api/detection_engine/index
+  - name: fleet-agents
+    tool: elastic-fleet-agents
+    method: GET
+    path: /api/fleet/agents
+    query:
+      kuery: '{kuery}'
+      perPage: '{perPage}'
+  - name: endpoint-metadata
+    tool: elastic-endpoint-metadata
+    method: GET
+    path: /api/endpoint/metadata
+metadata:
+  icon: elastic
+  iconTitle: Elastic
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,28 @@
+provider: opensky
+displayName: OpenSky Network
+version: 1.0.0
+baseUrl: https://opensky-network.org/api
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: states-all
+    tool: opensky-states-all
+    method: GET
+    path: /states/all
+  - name: flights-all
+    tool: opensky-flights-all
+    method: GET
+    path: /flights/all
+    query:
+      begin: '{begin}'
+      end: '{end}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/opensky-network.org.ico

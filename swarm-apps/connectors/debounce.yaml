@@ -1,0 +1,24 @@
+provider: debounce
+displayName: DeBounce
+version: 1.0.0
+baseUrl: https://api.debounce.io/v1
+auth:
+  type: apiKeyQuery
+  param: api
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: validate
+    tool: debounce-validate
+    method: GET
+    path: /
+    query:
+      email: '{email}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/debounce.io.ico

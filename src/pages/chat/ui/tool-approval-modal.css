@@ -1,0 +1,175 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial styles for tool approval modal
+ */
+
+/* =============================================================================
+ * TOOL APPROVAL MODAL — Glassmorphism overlay for tool execution approval
+ * ========================================================================== */
+
+.tool-approval-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg-primary, #000) 74%, transparent);
+  backdrop-filter: blur(6px);
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: approvalFadeIn 200ms ease forwards;
+}
+
+@keyframes approvalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.tool-approval-modal {
+  background:
+    var(--glass-highlight, none),
+    linear-gradient(145deg, color-mix(in srgb, var(--bg-secondary, #252526) 92%, transparent), color-mix(in srgb, var(--bg-card, var(--bg-tertiary, #2d2d2d)) 90%, transparent));
+  border: 1px solid var(--glass-border, var(--border-color, #3c3c3c));
+  border-radius: var(--radius-lg, 12px);
+  width: 90%;
+  max-width: 520px;
+  box-shadow: var(--panel-shadow, 0 12px 48px rgba(0, 0, 0, 0.6));
+  animation: approvalSlideUp 250ms ease forwards;
+  overflow: hidden;
+  backdrop-filter: blur(var(--glass-blur, 20px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px));
+}
+
+@keyframes approvalSlideUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.tool-approval-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--glass-border, var(--border-color, #3c3c3c));
+  background: var(--glass-bg, rgba(255, 255, 255, 0.02));
+}
+
+.tool-approval-modal__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #d4d4d4);
+  margin: 0;
+}
+
+.tool-approval-modal__countdown {
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary, #858585);
+  min-width: 36px;
+  text-align: right;
+}
+
+.tool-approval-modal__body {
+  padding: 20px;
+}
+
+.tool-approval-modal__info {
+  margin-bottom: 16px;
+}
+
+.tool-approval-modal__field {
+  display: flex;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--glass-border, rgba(255,255,255,0.08)) 90%, transparent);
+  font-size: 13px;
+}
+
+.tool-approval-modal__field:last-child {
+  border-bottom: none;
+}
+
+.tool-approval-modal__label {
+  width: 100px;
+  flex-shrink: 0;
+  color: var(--text-secondary, #858585);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tool-approval-modal__value {
+  color: var(--text-primary, #d4d4d4);
+  font-size: 13px;
+}
+
+.tool-approval-modal__input-section {
+  margin-top: 12px;
+}
+
+.tool-approval-modal__input-section .tool-approval-modal__label {
+  display: block;
+  margin-bottom: 8px;
+  width: auto;
+}
+
+.tool-approval-modal__input-json {
+  background: color-mix(in srgb, var(--bg-primary, #000) 28%, var(--glass-bg-heavy, rgba(255,255,255,0.08)));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm, 4px);
+  padding: 10px 12px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-primary, #d4d4d4);
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  line-height: 1.6;
+}
+
+.tool-approval-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--glass-border, var(--border-color, #3c3c3c));
+  background: var(--glass-bg, rgba(255, 255, 255, 0.02));
+}
+
+.tool-approval-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 150ms ease;
+}
+
+.tool-approval-btn--approve {
+  background: color-mix(in srgb, var(--status-success, #4ec9b0) 14%, var(--glass-bg, transparent));
+  border-color: color-mix(in srgb, var(--status-success, #4ec9b0) 48%, transparent);
+  color: var(--status-success, #4ec9b0);
+}
+
+.tool-approval-btn--approve:hover {
+  background: color-mix(in srgb, var(--status-success, #4ec9b0) 24%, var(--glass-bg-heavy, transparent));
+}
+
+.tool-approval-btn--deny {
+  background: color-mix(in srgb, var(--status-error, #f44747) 12%, var(--glass-bg, transparent));
+  border-color: color-mix(in srgb, var(--status-error, #f44747) 44%, transparent);
+  color: var(--status-error, #f44747);
+}
+
+.tool-approval-btn--deny:hover {
+  background: color-mix(in srgb, var(--status-error, #f44747) 20%, var(--glass-bg-heavy, transparent));
+}

@@ -1,0 +1,34 @@
+# Pingdom uptime monitoring — read checks, per-check detail, and outage summaries (Bearer token).
+provider: pingdom
+displayName: Pingdom
+version: 1.0.0
+baseUrl: https://api.pingdom.com/api/3.1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: checks
+    tool: pingdom-checks
+    method: GET
+    path: /checks
+  - name: check
+    tool: pingdom-check
+    method: GET
+    path: '/checks/{checkid}'
+  - name: outage-summary
+    tool: pingdom-outage-summary
+    method: GET
+    path: '/summary.outage/{checkid}'
+    query:
+      from: '{from}'
+      to: '{to}'
+metadata:
+  icon: pingdom
+  iconTitle: Pingdom
+  iconSource: simple-icons
+  iconVerified: true

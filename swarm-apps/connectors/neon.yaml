@@ -1,0 +1,33 @@
+provider: neon
+displayName: Neon
+version: 1.0.0
+baseUrl: https://console.neon.tech/api/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: projects
+    tool: neon-projects
+    method: GET
+    path: /projects
+  - name: project
+    tool: neon-project
+    method: GET
+    path: /projects/{project_id}
+  - name: branches
+    tool: neon-branches
+    method: GET
+    path: /projects/{project_id}/branches
+  - name: databases
+    tool: neon-databases
+    method: GET
+    path: /projects/{project_id}/branches/{branch_id}/databases
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/console.neon.tech.ico

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fire TV home-row banner (320x180, vector — no binary PNG needed).
+     Dark panel + accent "house" glyph. Amazon recommends baking the app name into the art;
+     for the Appstore release, replace this with a 320x180 PNG that includes "OSHAL Home". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#15151F"
+        android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#7C6CFF"
+        android:pathData="M70,60 L104,90 L96,90 L96,124 L80,124 L80,104 L64,104 L64,124 L48,124 L48,90 L40,90 Z" />
+    <path
+        android:fillColor="#00D3A7"
+        android:pathData="M150,86 h120 v8 h-120 z" />
+    <path
+        android:fillColor="#8B8BA3"
+        android:pathData="M150,104 h84 v6 h-84 z" />
+</vector>

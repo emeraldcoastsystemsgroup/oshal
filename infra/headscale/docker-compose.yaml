@@ -1,0 +1,29 @@
+# =============================================================================
+# OSHAL Headscale Docker Compose
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added starter Docker Compose deployment for self-hosted Headscale
+# =============================================================================
+services:
+  headscale:
+    image: docker.io/headscale/headscale:latest
+    container_name: oshal-headscale
+    restart: unless-stopped
+    read_only: true
+    ports:
+      - "8085:8080"
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./config:/etc/headscale:ro
+      - ./data/lib:/var/lib/headscale
+      - ./data/run:/var/run/headscale
+    command: serve
+    healthcheck:
+      test: ["CMD", "headscale", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

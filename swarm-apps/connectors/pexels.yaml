@@ -1,0 +1,33 @@
+provider: pexels
+displayName: Pexels
+version: 1.0.0
+baseUrl: https://api.pexels.com/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: search
+    tool: pexels-search
+    method: GET
+    path: /search
+    query:
+      query: '{q}'
+  - name: curated
+    tool: pexels-curated
+    method: GET
+    path: /curated
+  - name: photo
+    tool: pexels-photo
+    method: GET
+    path: /photos/{id}
+metadata:
+  icon: pexels
+  iconTitle: Pexels
+  iconSource: simple-icons
+  iconVerified: true

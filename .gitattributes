@@ -1,0 +1,22 @@
+# Line-ending policy. core.autocrlf=true on Windows checkouts was rewriting shell
+# scripts to CRLF, and the bot containers bind-mount ./scripts — a CRLF
+# bot-entrypoint.sh makes the container shell die with `$'\r': command not found`.
+# 2026-07-24: force LF on ALL text — a full re-checkout rewrote unpinned .js to CRLF
+# on disk, breaking every source-reading spec that asserts multi-line \n snippets.
+* text=auto eol=lf
+# Force LF on everything that a Linux shell/container executes.
+*.sh   text eol=lf
+*.bash text eol=lf
+entrypoint.sh text eol=lf
+Dockerfile* text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+# Git hooks are extensionless POSIX scripts run by git-bash. If they come down as CRLF,
+# `exit 1` is neutered — the guard prints "BLOCKED" but the commit still goes through
+# (how a fake-secret test fixture once slipped onto main). Force LF so the guards work.
+.githooks/** text eol=lf
+
+# COLLABORATE.md is the shared multi-bot coordination thread (append-only).
+# union merge: concurrent appends from different bots auto-merge instead of
+# conflicting — each bot appends self-contained entries at the end.
+COLLABORATE.md merge=union

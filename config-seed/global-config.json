@@ -1,0 +1,50 @@
+{
+  "mode": "act",
+  "actModeApiProvider": "claude-code",
+  "planModeApiProvider": "claude-code",
+  "actModeApiModelId": "claude-sonnet-4-20250514",
+  "planModeApiModelId": "claude-sonnet-4-20250514",
+  "voice": {
+    "tts": {
+      "default": "google-cloud-tts",
+      "serverSide": "google-cloud-tts",
+      "providers": {
+        "browser": {},
+        "gemini-tts": {
+          "model": "gemini-2.5-flash-preview-tts",
+          "defaultVoice": "Kore",
+          "sampleRateHz": 24000
+        },
+        "openai-tts": {
+          "model": "gpt-4o-mini-tts",
+          "defaultVoice": "marin",
+          "responseFormat": "mp3",
+          "instructions": "Speak as a natural, cinematic game master: warm, crisp, emotionally grounded, and clearly paced. Use restrained dramatic emphasis, distinct character energy, and never sound robotic. Read the text exactly as written.",
+          "timeoutMs": 20000,
+          "retryDelayMs": 250
+        },
+        "google-cloud-tts": {
+          "defaultVoice": "en-US-Chirp3-HD-Kore",
+          "defaultLanguageCode": "en-US",
+          "audioEncoding": "MP3"
+        }
+      }
+    },
+    "stt": {
+      "default": "gemini-stt",
+      "providers": {
+        "browser": {},
+        "gemini-stt": {
+          "model": "gemini-2.5-flash",
+          "defaultLanguageCode": "en-US",
+          "transcribePrompt": "Transcribe this audio verbatim. Return only the transcript, no commentary."
+        },
+        "google-cloud-stt": {
+          "model": "chirp_3",
+          "defaultLanguageCode": "en-US",
+          "location": "us"
+        }
+      }
+    }
+  }
+}

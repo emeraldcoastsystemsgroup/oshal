@@ -1,0 +1,45 @@
+provider: wikipedia
+displayName: Wikipedia
+version: 1.0.0
+baseUrl: https://en.wikipedia.org/w/api.php
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: search
+    tool: wikipedia-search
+    method: GET
+    path: /
+    query:
+      action: query
+      list: search
+      srsearch: '{q}'
+      format: json
+  - name: page-extract
+    tool: wikipedia-page-extract
+    method: GET
+    path: /
+    query:
+      action: query
+      prop: extracts
+      titles: '{title}'
+      explaintext: '1'
+      format: json
+  - name: opensearch
+    tool: wikipedia-opensearch
+    method: GET
+    path: /
+    query:
+      action: opensearch
+      search: '{q}'
+      format: json
+metadata:
+  icon: wikipedia
+  iconTitle: Wikipedia
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,350 @@
+<!--
+  CHANGE LOG
+  =============================================================================
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  =============================================================================
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Initial standalone implementation of OSHAL chat with inlined scripting and SSE integration
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Added browser voice controls using Web Speech API and speechSynthesis
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Refactored to use modular TypeScript services
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Added tool-approval modal assets for standalone chat workflow testing
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Switched standalone chat task session IDs to UUID format for workspace/task traceability
+  6 | maintainer@emeraldcoastsystemsgroup.com   | Added provider status indicator and external config-window flow with fallback navigation
+  7 | maintainer@emeraldcoastsystemsgroup.com   | Re-skinned standalone chat with cockpit glass panel styles and structure while preserving existing chat wiring
+  8 | maintainer@emeraldcoastsystemsgroup.com   | Replaced the external config popup with an in-chat gear modal for provider, MCP, agent profile, and switch-framework tool configuration
+  9 | maintainer@emeraldcoastsystemsgroup.com   | Reworked the gear modal into a cockpit-style left-nav workspace and embedded the full API configuration UI directly into the popup
+  10 | maintainer@emeraldcoastsystemsgroup.com   | Added theme chooser sync for embedded /ui panel and introduced per-tool runtime auth configuration editor in tools settings
+  11 | maintainer@emeraldcoastsystemsgroup.com   | Added standalone popup suite hooks for conversation history, RAG service config, and Presentron service config
+  12 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed inline CSS/JS into external assets, added header theme cycle toggle, and moved theme selection into agent personalization
+  13 | maintainer@emeraldcoastsystemsgroup.com   | Unified theme control to top-level header toggle and removed duplicate modal theme selectors for consistency
+  14 | maintainer@emeraldcoastsystemsgroup.com   | Added gray, black, and light-blue cockpit theme assets to the standalone chat page
+  15 | maintainer@emeraldcoastsystemsgroup.com   | Moved the connection-status pill out of the crowded header action cluster and into the footer runtime telemetry row
+  16 | maintainer@emeraldcoastsystemsgroup.com   | Added aurora, graphite, and amber premium glass themes to expand the strong-looking theme set
+  17 | maintainer@emeraldcoastsystemsgroup.com   | Added cockpit embed-mode bootstrapping so the real /chat workspace can run cleanly inside the cockpit right rail
+  18 | maintainer@emeraldcoastsystemsgroup.com   | Added a lightweight cockpit embed bridge so the native chat footer can reflect cockpit-selected bot context
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat</title>
+  <script>fetch('/api/branding').then(r=>r.json()).then(b=>{window.__BRAND=b;document.title=b.displayName+' Chat';}).catch(()=>{});</script>
+  <script>
+    (() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('embed') === 'cockpit') {
+        document.documentElement.setAttribute('data-embedded', 'cockpit');
+      }
+    })();
+  </script>
+  <!-- B4/CM-2: Codicon font served from @vscode/codicons npm package via /fonts route -->
+  <link rel="stylesheet" href="/fonts/codicon.css">
+  <link rel="stylesheet" href="/cockpit/css/base.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/forest.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/gray.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/black.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/amber.css">
+  <link rel="stylesheet" href="/cockpit/css/layout.css">
+  <link rel="stylesheet" href="/cockpit/css/chat.css">
+  <link rel="stylesheet" href="/cockpit/css/components.css">
+  <link rel="stylesheet" href="/chat-assets/tool-approval-modal.css">
+  <link rel="stylesheet" href="/chat-assets/chat-standalone-base.css">
+  <link rel="stylesheet" href="/chat-assets/chat-standalone-config.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="chat-shell">
+    <aside class="chat-panel" id="chatPanel">
+      <div class="panel-header">
+        <span class="panel-title">
+          <span class="codicon codicon-comment-discussion"></span>
+          OSHAL Chat
+        </span>
+        <div class="panel-actions">
+          <button id="ttsToggle" class="voice-toggle" title="Toggle AI voice responses">
+            <span class="codicon codicon-mute"></span>
+            <span>AI Voice</span>
+          </button>
+          <button class="btn-sm" onclick="clearChat()">Clear</button>
+          <button id="themeCycleBtn" class="panel-theme-btn" title="Cycle UI theme" aria-label="Cycle UI theme">
+            <span class="codicon codicon-symbol-color"></span>
+          </button>
+          <button id="openToolsConfigBtn" class="panel-icon-btn" title="Open tools configuration">
+            <span class="codicon codicon-gear"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="chat-selectors">
+        <div class="chat-meta">
+          <span id="taskId">Task: Loading...</span>
+          <span id="providerStatus">Provider: Loading...</span>
+        </div>
+      </div>
+
+      <div class="chat-messages" id="messageArea">
+        <div class="chat-welcome" id="chatWelcome">
+          <div class="welcome-icon"><span class="codicon codicon-hubot"></span></div>
+          <h3>Connected to OSHAL chat</h3>
+          <p>Use the gear menu to configure your agent, provider, MCP servers, and framework tools before chatting.</p>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <div id="recordingIndicator" class="recording-indicator" style="display: none;">
+          <span class="codicon codicon-record pulsing"></span>
+          <span>Recording</span>
+        </div>
+        <div id="ttsIndicator" class="tts-indicator" style="display: none;">
+          <span class="codicon codicon-unmute pulsing"></span>
+          <span>Assistant speaking</span>
+        </div>
+        <div class="chat-input-wrapper">
+          <button id="micButton" class="voice-icon-btn" title="Voice input (click to record)">
+            <span class="codicon codicon-mic"></span>
+          </button>
+          <textarea
+            id="messageInput"
+            placeholder="What would you like to build?"
+            rows="1"
+          ></textarea>
+          <button id="sendBtn" class="send-btn" title="Send message">
+            <span class="codicon codicon-send"></span>
+          </button>
+        </div>
+        <div class="chat-runtime-note">
+          <span id="connectionStatus" class="connection-status disconnected">
+            <span class="codicon codicon-circle-slash"></span>
+            <span>Disconnected</span>
+          </span>
+          <span id="cockpitContextSummary" hidden><span class="codicon codicon-person"></span>Cockpit selection: Personal Assistant</span>
+          <span id="agentSummary"><span class="codicon codicon-hubot"></span>Agent: Loading...</span>
+          <span id="providerSummary"><span class="codicon codicon-plug"></span>Provider: Loading...</span>
+          <span id="modelSummary"><span class="codicon codicon-symbol-parameter"></span>Model: Loading...</span>
+          <span id="taskStatusSummary"><span class="codicon codicon-clock"></span>Status: idle</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div id="toolsConfigModal" class="config-modal" hidden>
+    <div class="config-modal-backdrop" data-close-modal></div>
+    <div class="config-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="toolsConfigTitle">
+      <div class="config-modal-header">
+        <div class="config-modal-title">
+          <strong id="toolsConfigTitle"><span class="codicon codicon-gear"></span>Tools Configuration</strong>
+          <span>One cockpit-style workspace for API runtime, agent profile, MCP servers, and framework capability toggles.</span>
+        </div>
+        <div class="config-modal-actions">
+          <button id="closeToolsConfigBtn" class="btn-sm" type="button">Close</button>
+          <button id="saveToolsConfigBtn" class="btn-sm" type="button">Save</button>
+        </div>
+      </div>
+
+      <div id="modalStatus" class="config-status"></div>
+
+      <div class="config-shell">
+        <aside class="config-sidebar">
+          <div class="config-sidebar-head">
+            <strong>Settings Cockpit</strong>
+            <span>Jump between API runtime configuration, agent profile, MCP runtime, and framework tool controls.</span>
+          </div>
+          <nav class="config-nav" aria-label="Configuration sections">
+            <button class="config-nav-btn active" type="button" data-config-section="api">
+              <span class="codicon codicon-plug"></span>
+              <span>API Runtime</span>
+            </button>
+            <button class="config-nav-btn" type="button" data-config-section="agent">
+              <span class="codicon codicon-hubot"></span>
+              <span>Agent Settings</span>
+            </button>
+            <button class="config-nav-btn" type="button" data-config-section="tools">
+              <span class="codicon codicon-tools"></span>
+              <span>Tools Settings</span>
+            </button>
+            <button class="config-nav-btn" type="button" data-config-section="mcp">
+              <span class="codicon codicon-server-environment"></span>
+              <span>MCP Settings</span>
+            </button>
+          </nav>
+          <div class="config-sidebar-foot">
+            <span id="modalModePill" class="status-pill">Mode: plan</span>
+            <span id="modalProviderPill" class="status-pill">Provider: not configured</span>
+          </div>
+        </aside>
+
+        <div class="config-content">
+          <section class="config-panel config-panel-stack" data-config-panel="api">
+            <section class="config-section config-section-compact api-overview-section">
+              <h3><span class="codicon codicon-plug"></span>API Configuration</h3>
+              <p>Current runtime snapshot. The full provider setup is directly below.</p>
+              <div id="apiRuntimeSummary" class="api-summary-grid"></div>
+            </section>
+            <section class="config-section api-runtime-section">
+              <div class="api-runtime-toolbar">
+                <span>Provider setup, auth, model selection, and advanced runtime controls.</span>
+                <div class="config-modal-actions">
+                  <button id="reloadApiConfigBtn" class="btn-sm" type="button">Reload Saved Config</button>
+                </div>
+              </div>
+              <div class="api-runtime-grid">
+                <section class="api-mode-card">
+                  <h4><span class="status-pill">plan</span> Plan Runtime</h4>
+                  <label class="config-field">
+                    <span class="config-label">API Provider</span>
+                    <select id="apiPlanProviderSelect" class="config-select">
+                      <option value="">Select provider...</option>
+                    </select>
+                  </label>
+                  <label class="config-field">
+                    <span class="config-label">Model</span>
+                    <select id="apiPlanModelSelect" class="config-select">
+                      <option value="">Select provider first...</option>
+                    </select>
+                  </label>
+                  <p id="apiPlanProviderInfo" class="config-helper"></p>
+                </section>
+                <section class="api-mode-card">
+                  <h4><span class="status-pill">act</span> Act Runtime</h4>
+                  <label class="config-field">
+                    <span class="config-label">API Provider</span>
+                    <select id="apiActProviderSelect" class="config-select">
+                      <option value="">Select provider...</option>
+                    </select>
+                  </label>
+                  <label class="config-field">
+                    <span class="config-label">Model</span>
+                    <select id="apiActModelSelect" class="config-select">
+                      <option value="">Select provider first...</option>
+                    </select>
+                  </label>
+                  <p id="apiActProviderInfo" class="config-helper"></p>
+                </section>
+              </div>
+              <section class="api-mode-card api-runtime-advanced">
+                <div class="api-runtime-mode-row">
+                  <div>
+                    <h4><span class="status-pill">live</span> Active Mode</h4>
+                    <p class="config-helper">This controls which runtime summary is shown under the chat box.</p>
+                  </div>
+                  <div class="auth-toggle-group" role="tablist" aria-label="Runtime mode">
+                    <button id="apiModePlanBtn" class="auth-toggle" type="button" data-api-runtime-mode="plan">Plan</button>
+                    <button id="apiModeActBtn" class="auth-toggle" type="button" data-api-runtime-mode="act">Act</button>
+                  </div>
+                </div>
+                <div class="config-form-grid">
+                  <label class="config-field">
+                    <span class="config-label">Max Tokens</span>
+                    <input id="apiMaxTokensInput" class="config-input" type="number" min="1" step="1" placeholder="8192">
+                  </label>
+                  <label class="config-field">
+                    <span class="config-label">Temperature</span>
+                    <input id="apiTemperatureInput" class="config-input" type="number" min="0" max="2" step="0.1" placeholder="0.7">
+                  </label>
+                </div>
+              </section>
+              <section class="api-provider-fields-shell">
+                <div class="api-provider-fields-header">
+                  <div>
+                    <h4>Provider Configuration</h4>
+                    <p class="config-helper">Provider credentials and runtime fields are shared across plan and act. Only the selected providers are shown here.</p>
+                  </div>
+                </div>
+                <div id="apiProviderFields" class="api-provider-fields-list"></div>
+              </section>
+            </section>
+          </section>
+
+          <section class="config-panel config-panel-grid" data-config-panel="agent" hidden>
+            <section class="config-section">
+              <h3><span class="codicon codicon-graph-line"></span>Bot Stats</h3>
+              <p>Operational summary for the active chat profile and its enabled framework context.</p>
+              <div id="botStats" class="stats-grid"></div>
+            </section>
+
+            <section class="config-section">
+              <h3><span class="codicon codicon-hubot"></span>Agent Configuration</h3>
+              <p>Project routing, editable selector skills, and profile presentation for the default standalone chat agent.</p>
+              <div class="agent-profile-row">
+                <div id="agentAvatarPreview" class="agent-avatar"><span class="codicon codicon-hubot"></span></div>
+                <div class="agent-profile-meta">
+                  <strong id="agentDisplayName">Chat Agent</strong>
+                  <span>Default standalone chat agent</span>
+                </div>
+              </div>
+              <div class="config-form-grid">
+                <label class="config-field">
+                  <span class="config-label">Agent Name</span>
+                  <input id="agentNameInput" class="config-input" type="text" placeholder="Chat Agent">
+                </label>
+                <label class="config-field">
+                  <span class="config-label">Profile Picture</span>
+                  <div class="avatar-upload-shell">
+                    <input id="agentAvatarFileInput" class="config-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                    <span id="agentAvatarFileStatus" class="config-helper">Upload an image and it will be stored in the bot profile record.</span>
+                    <div class="config-modal-actions">
+                      <button id="clearAgentAvatarBtn" class="btn-sm" type="button">Remove Picture</button>
+                    </div>
+                  </div>
+                </label>
+                <label class="config-field config-field-wide">
+                  <span class="config-label">GitLab or GitHub Project URL</span>
+                  <input id="projectUrlInput" class="config-input" type="url" placeholder="https://gitlab.example.com/group/project or https://github.com/org/repo">
+                </label>
+                <label class="config-field config-field-wide">
+                  <span class="config-label">Bot Selector Skills</span>
+                  <textarea id="selectorSkillsInput" class="config-textarea" placeholder="List the additional routing and selector skills for this agent. One per line or comma-separated."></textarea>
+                </label>
+                <div class="config-field config-field-wide">
+                  <span class="config-label">Bot Tool Skills</span>
+                  <div id="generatedSkills" class="chip-list"></div>
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <section class="config-panel config-panel-stack" data-config-panel="mcp" hidden>
+            <section class="config-section">
+              <h3><span class="codicon codicon-server-environment"></span>MCP Configuration</h3>
+              <p>Configured MCP servers are listed here with their current work profile. Use Configure JSON to edit the runtime `~/.cline/mcp_settings.json` payload directly.</p>
+              <div id="mcpServerList" class="mcp-server-list"></div>
+              <div class="json-editor-shell">
+                <div class="config-modal-actions">
+                  <button id="toggleMcpEditorBtn" class="btn-sm" type="button">Configure JSON</button>
+                </div>
+                <div id="mcpEditorWrap" class="hidden">
+                  <textarea id="mcpJsonEditor" class="config-textarea" spellcheck="false"></textarea>
+                  <div class="json-editor-actions">
+                    <button id="cancelMcpEditorBtn" class="btn-sm" type="button">Cancel</button>
+                    <button id="applyMcpEditorBtn" class="btn-sm" type="button">Apply JSON</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <section class="config-panel config-panel-stack" data-config-panel="tools" hidden>
+            <section class="config-section">
+              <h3><span class="codicon codicon-tools"></span>Switch Framework</h3>
+              <p>Each tool contributes skills and routing context for Layer-1 prompt composition. `Off` removes it, `Ask` keeps it approval-gated, and `Auto` marks it as immediately available. Operational workspaces such as Redis Jobs live in the chat header popups.</p>
+              <div id="toolSwitchList" class="tool-switch-list"></div>
+            </section>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/chat-assets/tool-approval-modal.js" defer></script>
+  <script type="module" src="/chat-assets/chat-cockpit-embed.mjs"></script>
+  <script type="module" src="/chat-assets/chat-workspace-popups.mjs"></script>
+  <script type="module" src="/chat-assets/chat-config-modal.mjs"></script>
+</body>
+</html>

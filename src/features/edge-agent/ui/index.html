@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSHAL Edge Agent</title>
+<style>
+  :root {
+    --bg: #0f1117; --bg2: #1a1d27; --bg3: #252836;
+    --fg: #e4e4e7; --fg2: #a1a1aa; --fg3: #71717a;
+    --accent: #6366f1; --accent2: #818cf8;
+    --green: #22c55e; --red: #ef4444; --yellow: #eab308; --blue: #3b82f6;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg); color: var(--fg); min-height: 100vh;
+  }
+
+  /* ── Layout ────────────────────────────────────────────── */
+  .app { display: flex; flex-direction: column; min-height: 100vh; }
+  .topbar {
+    display: flex; align-items: center; gap: 16px; padding: 12px 24px;
+    background: var(--bg2); border-bottom: 1px solid #2a2d3a;
+  }
+  .topbar h1 { font-size: 1.1rem; font-weight: 600; }
+  .topbar .spacer { flex: 1; }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px; padding: 4px 12px;
+    border-radius: 20px; font-size: 0.8rem; font-weight: 500;
+  }
+  .status-pill.online { background: rgba(34,197,94,0.15); color: var(--green); }
+  .status-pill.offline { background: rgba(239,68,68,0.1); color: var(--red); }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+  .sidebar { width: 280px; background: var(--bg2); border-right: 1px solid #2a2d3a; display: flex; flex-direction: column; overflow-y: auto; }
+  .content { flex: 1; overflow-y: auto; padding: 24px; }
+
+  /* ── Cards ──────────────────────────────────────────────── */
+  .card { background: var(--bg2); border-radius: var(--radius); border: 1px solid #2a2d3a; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 0.9rem; font-weight: 600; margin-bottom: 12px; color: var(--fg2); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* ── Stats row ─────────────────────────────────────────── */
+  .stats { display: flex; gap: 12px; margin-bottom: 16px; }
+  .stat { flex: 1; background: var(--bg2); border-radius: var(--radius); border: 1px solid #2a2d3a; padding: 16px; }
+  .stat .label { font-size: 0.75rem; color: var(--fg3); margin-bottom: 4px; }
+  .stat .value { font-size: 1.4rem; font-weight: 700; }
+
+  /* ── Dots ───────────────────────────────────────────────── */
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.red { background: var(--red); }
+  .dot.yellow { background: var(--yellow); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+
+  /* ── Forms ─────────────────────────────────────────────── */
+  label { display: block; color: var(--fg2); font-size: 0.75rem; margin-bottom: 4px; font-weight: 500; }
+  input, select, textarea {
+    width: 100%; padding: 8px 10px; background: var(--bg3); border: 1px solid #3a3d4a;
+    border-radius: 6px; color: var(--fg); font-size: 0.85rem; outline: none;
+    font-family: inherit; resize: vertical;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  .field { margin-bottom: 10px; }
+  .field-row { display: flex; gap: 10px; }
+  .field-row .field { flex: 1; }
+  .hint { color: var(--fg3); font-size: 0.7rem; margin-top: 2px; }
+
+  button {
+    padding: 8px 16px; border: none; border-radius: 6px; font-size: 0.85rem;
+    font-weight: 600; cursor: pointer; transition: all 0.15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; width: 100%; }
+  .btn-primary:hover { background: var(--accent2); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-sm { padding: 5px 10px; font-size: 0.75rem; width: auto; }
+  .btn-danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
+  .btn-danger:hover { background: rgba(239,68,68,0.1); }
+  .btn-ghost { background: transparent; color: var(--fg2); border: 1px solid #3a3d4a; }
+  .btn-ghost:hover { background: var(--bg3); color: var(--fg); }
+
+  /* ── Bot list ──────────────────────────────────────────── */
+  .bot-item {
+    display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    border-bottom: 1px solid #1f222d; cursor: default; font-size: 0.85rem;
+  }
+  .bot-item:hover { background: var(--bg3); }
+  .bot-item .name { font-weight: 500; }
+  .bot-item .role { color: var(--fg3); font-size: 0.7rem; }
+  .bot-item .you { color: var(--accent2); font-size: 0.65rem; font-weight: 600; margin-left: 4px; }
+
+  /* ── Activity feed ─────────────────────────────────────── */
+  .feed { max-height: 400px; overflow-y: auto; }
+  .feed-item {
+    display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #1f222d;
+    font-size: 0.8rem;
+  }
+  .feed-item .arrow { font-size: 0.9rem; flex-shrink: 0; width: 20px; text-align: center; }
+  .feed-item .arrow.in { color: var(--blue); }
+  .feed-item .arrow.out { color: var(--green); }
+  .feed-item .time { color: var(--fg3); font-size: 0.7rem; flex-shrink: 0; width: 60px; }
+  .feed-item .type { color: var(--accent2); font-weight: 500; margin-right: 6px; }
+  .feed-item .msg { color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: var(--fg3); font-style: italic; padding: 12px 0; font-size: 0.85rem; }
+
+  /* ── Sections visibility ───────────────────────────────── */
+  .hidden { display: none !important; }
+
+  /* ── Connect overlay ───────────────────────────────────── */
+  .connect-overlay {
+    position: fixed; inset: 0; background: var(--bg); z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .connect-box { width: 460px; }
+  .connect-box h1 { font-size: 1.5rem; margin-bottom: 4px; text-align: center; }
+  .connect-box .sub { color: var(--fg2); font-size: 0.85rem; margin-bottom: 28px; text-align: center; }
+
+  /* ── Tabs ───────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 1px solid #2a2d3a; }
+  .tab {
+    padding: 8px 16px; font-size: 0.8rem; font-weight: 500; color: var(--fg3);
+    cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s;
+  }
+  .tab:hover { color: var(--fg2); }
+  .tab.active { color: var(--accent2); border-bottom-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+</style>
+</head>
+<body>
+
+<!-- ════════════ CONNECT OVERLAY ════════════ -->
+<div class="connect-overlay" id="connect-overlay">
+  <div class="connect-box">
+    <h1>OSHAL Edge Agent</h1>
+    <p class="sub">Connect your machine to the swarm</p>
+    <div class="card">
+      <div class="field">
+        <label>Redis URL</label>
+        <input id="c-url" type="text" value="redis://localhost:6379" placeholder="redis://host:6379">
+        <div class="hint">Redis — mesh communication, runtime registry.</div>
+      </div>
+      <div class="field">
+        <label>Database URL</label>
+        <input id="c-db" type="text" value="postgresql://oshal:oshalpass@localhost:5432/oshal" placeholder="postgresql://user:pass@host:5432/db">
+        <div class="hint">Postgres — agent profile, routing, tickets. Required for PM to route tasks to you.</div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Agent Name</label>
+          <input id="c-name" type="text" placeholder="my-macbook">
+        </div>
+        <div class="field">
+          <label>Role</label>
+          <select id="c-role">
+            <option value="edge/local-executor">Local Executor</option>
+            <option value="edge/developer-workstation">Developer Workstation</option>
+            <option value="edge/operator">Operator</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint">Local MCP tools can only be configured by the machine operator through
+        <code>EDGE_AGENT_MCP_COMMAND</code> and <code>EDGE_AGENT_MCP_ARGS</code> before startup.</div>
+      <button class="btn-primary" id="connect-btn" onclick="doConnect()">Connect to Swarm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ MAIN APP ════════════ -->
+<div class="app hidden" id="app">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <h1>OSHAL Edge Agent</h1>
+    <div class="spacer"></div>
+    <div class="status-pill online" id="pill">
+      <span class="dot green" id="pill-dot"></span>
+      <span id="pill-text">Connected</span>
+    </div>
+    <span style="color:var(--fg3);font-size:0.8rem" id="top-name"></span>
+    <button class="btn-sm btn-danger" onclick="doDisconnect()">Disconnect</button>
+  </div>
+
+  <div class="main">
+    <!-- Sidebar: bots -->
+    <div class="sidebar">
+      <div style="padding:14px 16px 8px;font-size:0.75rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.05em;">
+        Swarm Bots <span id="bot-count" style="color:var(--accent2)"></span>
+      </div>
+      <div id="bot-list"></div>
+    </div>
+
+    <!-- Content area -->
+    <div class="content">
+      <!-- Stats -->
+      <div class="stats">
+        <div class="stat"><div class="label">Uptime</div><div class="value" id="s-uptime">0s</div></div>
+        <div class="stat"><div class="label">Messages</div><div class="value" id="s-msgs">0</div></div>
+        <div class="stat"><div class="label">Tasks Executed</div><div class="value" id="s-tasks">0</div></div>
+        <div class="stat"><div class="label">Capabilities</div><div class="value" id="s-caps" style="font-size:0.85rem">-</div></div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab active" data-tab="activity" onclick="switchTab('activity')">Activity</div>
+        <div class="tab" data-tab="submit" onclick="switchTab('submit')">Submit Ticket</div>
+        <div class="tab" data-tab="message" onclick="switchTab('message')">Send Message</div>
+      </div>
+
+      <!-- Activity tab -->
+      <div class="tab-content active" id="tab-activity">
+        <div class="card">
+          <div class="feed" id="feed"><div class="empty">No activity yet</div></div>
+        </div>
+      </div>
+
+      <!-- Submit ticket tab -->
+      <div class="tab-content" id="tab-submit">
+        <div class="card">
+          <h2>Submit Ticket to Swarm</h2>
+          <p style="color:var(--fg3);font-size:0.8rem;margin-bottom:14px">
+            Creates a task for the Project Manager bot. The PM will plan, decompose, and dispatch to swarm bots &mdash; including back to this agent if your capabilities match.
+          </p>
+          <div class="field">
+            <label>Title</label>
+            <input id="t-title" type="text" placeholder="What needs to be done?">
+          </div>
+          <div class="field">
+            <label>Description</label>
+            <textarea id="t-desc" rows="4" placeholder="Details, acceptance criteria, etc."></textarea>
+          </div>
+          <div class="field">
+            <label>Priority</label>
+            <select id="t-priority">
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+          <button class="btn-primary" onclick="doSubmitTicket()">Submit to PM</button>
+          <div id="t-result" style="margin-top:8px;font-size:0.8rem"></div>
+        </div>
+      </div>
+
+      <!-- Send message tab -->
+      <div class="tab-content" id="tab-message">
+        <div class="card">
+          <h2>Send Direct Message</h2>
+          <p style="color:var(--fg3);font-size:0.8rem;margin-bottom:14px">
+            Send a message directly to any bot in the swarm via the mesh.
+          </p>
+          <div class="field">
+            <label>To Bot</label>
+            <select id="m-to"><option value="">Select a bot...</option></select>
+          </div>
+          <div class="field">
+            <label>Message (JSON payload)</label>
+            <textarea id="m-payload" rows="5" placeholder='{"type": "ping", "message": "hello from edge"}'></textarea>
+          </div>
+          <button class="btn-primary" onclick="doSendMessage()">Send</button>
+          <div id="m-result" style="margin-top:8px;font-size:0.8rem"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+const edgeAgentToken = new URLSearchParams(location.hash.slice(1)).get('token') || '';
+if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set('x-edge-agent-token', edgeAgentToken);
+  return fetch(url, { ...options, headers });
+}
+let pollTimer = null, activityTimer = null, connectedAt = null;
+let allBots = [];
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
+}
+
+// ── Connect ───────────────────────────────────────────────────────────────
+async function doConnect() {
+  const btn = document.getElementById('connect-btn');
+  btn.disabled = true; btn.textContent = 'Connecting...';
+
+  const swarmUrl = document.getElementById('c-url').value.trim();
+  const databaseUrl = document.getElementById('c-db').value.trim() || undefined;
+  const botName = document.getElementById('c-name').value.trim() || undefined;
+  const botRole = document.getElementById('c-role').value;
+  try {
+    const res = await apiFetch(`${API}/api/edge-agent/connect`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redisUrl: swarmUrl, databaseUrl, botName, botRole }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Connection failed');
+    connectedAt = Date.now();
+    showApp(data);
+  } catch (err) {
+    alert('Connection failed: ' + err.message);
+    btn.disabled = false; btn.textContent = 'Connect to Swarm';
+  }
+}
+
+async function doDisconnect() {
+  await apiFetch(`${API}/api/edge-agent/disconnect`, { method: 'POST' });
+  showOverlay();
+}
+
+// ── Show/hide ─────────────────────────────────────────────────────────────
+function showApp(data) {
+  document.getElementById('connect-overlay').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('top-name').textContent = data.agentName + ' (' + data.agentId.slice(0, 8) + '...)';
+  document.getElementById('s-caps').textContent = (data.capabilities || []).join(', ') || '-';
+  startPolling();
+}
+
+function showOverlay() {
+  document.getElementById('connect-overlay').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+  document.getElementById('connect-btn').disabled = false;
+  document.getElementById('connect-btn').textContent = 'Connect to Swarm';
+  if (pollTimer) clearInterval(pollTimer);
+  if (activityTimer) clearInterval(activityTimer);
+}
+
+// ── Polling ───────────────────────────────────────────────────────────────
+function startPolling() {
+  pollStatus(); pollActivity();
+  pollTimer = setInterval(pollStatus, 3000);
+  activityTimer = setInterval(pollActivity, 2000);
+}
+
+async function pollStatus() {
+  try {
+    const data = await (await apiFetch(`${API}/api/edge-agent/status`)).json();
+    if (data.status !== 'connected') { showOverlay(); return; }
+
+    // Stats
+    const secs = Math.floor((Date.now() - (connectedAt || Date.now())) / 1000);
+    const m = Math.floor(secs / 60), s = secs % 60;
+    document.getElementById('s-uptime').textContent = m > 0 ? m + 'm ' + s + 's' : s + 's';
+    document.getElementById('s-msgs').textContent = data.messagesProcessed;
+    document.getElementById('s-tasks').textContent = data.tasksExecuted;
+
+    // Bots
+    allBots = data.bots || [];
+    renderBots(allBots, data.agentId);
+  } catch { /* ignore */ }
+}
+
+function renderBots(bots, myId) {
+  document.getElementById('bot-count').textContent = '(' + bots.length + ')';
+  const el = document.getElementById('bot-list');
+  if (!bots.length) { el.innerHTML = '<div class="empty" style="padding:16px">No bots online</div>'; return; }
+  el.innerHTML = bots.map(b => `
+    <div class="bot-item">
+      <span class="dot ${b.status === 'online' ? 'green' : 'red'}"></span>
+      <div>
+        <div class="name">${esc(b.agentName)}${b.agentId === myId ? '<span class="you">YOU</span>' : ''}</div>
+        <div class="role">${esc(b.role || '')} ${(b.capabilities || []).length ? '&middot; ' + (b.capabilities || []).slice(0,3).join(', ') : ''}</div>
+      </div>
+    </div>
+  `).join('');
+
+  // Update "To Bot" dropdown in message tab
+  const sel = document.getElementById('m-to');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Select a bot...</option>' +
+    bots.filter(b => b.agentId !== myId).map(b =>
+      `<option value="${esc(b.agentId)}">${esc(b.agentName)}</option>`
+    ).join('');
+  if (cur) sel.value = cur;
+}
+
+async function pollActivity() {
+  try {
+    const data = await (await apiFetch(`${API}/api/edge-agent/activity?limit=50`)).json();
+    renderActivity(data.activity || []);
+  } catch { /* ignore */ }
+}
+
+function renderActivity(items) {
+  const el = document.getElementById('feed');
+  if (!items.length) { el.innerHTML = '<div class="empty">No activity yet</div>'; return; }
+  el.innerHTML = items.map(a => `
+    <div class="feed-item">
+      <span class="arrow ${a.dir}">${a.dir === 'in' ? '\u2B07' : '\u2B06'}</span>
+      <span class="time">${new Date(a.ts).toLocaleTimeString()}</span>
+      <span class="type">${esc(a.type)}</span>
+      <span class="msg">${esc(a.summary)}</span>
+    </div>
+  `).join('');
+}
+
+// ── Submit ticket ─────────────────────────────────────────────────────────
+async function doSubmitTicket() {
+  const title = document.getElementById('t-title').value.trim();
+  if (!title) { alert('Title is required'); return; }
+  const description = document.getElementById('t-desc').value.trim();
+  const priority = document.getElementById('t-priority').value;
+
+  try {
+    const res = await apiFetch(`${API}/api/edge-agent/submit-ticket`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description, priority }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    document.getElementById('t-result').innerHTML = '<span style="color:var(--green)">Sent to PM bot</span>';
+    document.getElementById('t-title').value = '';
+    document.getElementById('t-desc').value = '';
+  } catch (err) {
+    document.getElementById('t-result').innerHTML = '<span style="color:var(--red)">' + esc(err.message) + '</span>';
+  }
+}
+
+// ── Send message ──────────────────────────────────────────────────────────
+async function doSendMessage() {
+  const toAgentId = document.getElementById('m-to').value;
+  if (!toAgentId) { alert('Select a bot'); return; }
+  let payload;
+  try { payload = JSON.parse(document.getElementById('m-payload').value.trim() || '{}'); }
+  catch { alert('Invalid JSON'); return; }
+
+  try {
+    const res = await apiFetch(`${API}/api/edge-agent/send`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toAgentId, payload }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    document.getElementById('m-result').innerHTML = '<span style="color:var(--green)">Sent</span>';
+  } catch (err) {
+    document.getElementById('m-result').innerHTML = '<span style="color:var(--red)">' + esc(err.message) + '</span>';
+  }
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+// ── Auto-reconnect if already connected ───────────────────────────────────
+(async () => {
+  try {
+    const res = await apiFetch(`${API}/api/edge-agent/info`);
+    const data = await res.json();
+    if (data.hostname) document.getElementById('c-name').value = 'edge-' + data.hostname;
+    if (data.connected) {
+      connectedAt = Date.now() - (data.uptimeMs || 0);
+      showApp(data);
+    }
+  } catch { /* ignore */ }
+})();
+</script>
+</body>
+</html>

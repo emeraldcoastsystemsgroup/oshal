@@ -1,0 +1,248 @@
+<!--
+  CHANGE LOG
+  =============================================================================
+  DATE         | AUTHOR  | DESCRIPTION
+  =============================================================================
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of API Configuration UI
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Added provider-specific configuration fields
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Added authentication section (API key input, toggle,
+               |         | status indicator) for Bearer token auth support
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Added OIDC login/logout UI, user status, and token-based authentication
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Per-user config storage: OIDC token now used for user-scoped secrets
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Updated login/logout links to /login and /logout; switched auth status UI to /api/user session checks
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cline API Configuration UI</title>
+  <style>
+    /* ...existing styles... */
+    /* Add OIDC Auth styles */
+    .oidc-auth-section {
+      margin-bottom: 20px;
+      padding: 12px;
+      background: #2d2d2d;
+      border-radius: 6px;
+      border: 1px solid #3c3c3c;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .oidc-auth-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .oidc-user-info {
+      color: #4ec9b0;
+      font-size: 13px;
+      margin-left: 8px;
+    }
+    .oidc-status {
+      font-size: 12px;
+      color: #858585;
+     -left: 8px;
+    }
+    .oidc-auth-btn {
+      padding: 8px 16px;
+      background: #007acc;
+      border: none;
+      color: white;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .oidc-auth-btn:hover {
+      background: #005a9e;
+    }
+    .oidc-auth-btn.secondary {
+      background: #3c3c3c;
+      color: #d4d4d4;
+    }
+    .oidc-auth-btn.secondary:hover {
+      background: #4c4c4c;
+    }
+  </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 Cline API Configuration</h1>
+    <p class="subtitle">Configure API providers, models, and settings for Plan and Act modes</p>
+
+    <!-- OIDC Authentication Section -->
+    <div class="oidc-auth-section" id="oidc-auth-section">
+      <div class="oidc-auth-row">
+        <span id="oidc-status" class="oidc-status">Checking authentication...</span>
+        <span id="oidc-user-info" class="oidc-user-info"></span>
+        <button id="oidc-login-btn" class="oidc-auth-btn" style="display:none;" onclick="window.location.href='/login'">🔐 Login</button>
+        <button id="oidc-logout-btn" class="oidc-auth-btn secondary" style="display:none;" onclick="window.location.href='/logout'">🚪 Logout</button>
+      </div>
+    </div>
+
+    <!-- Authentication (API Key) -->
+    <div class="form-group" id="auth-section" style="margin-bottom: 20px; padding: 12px; background: #2d2d2d; border-radius: 6px; border: 1px solid #3c3c3c;">
+      <label for="auth-api-key" style="color: #858585; font-size: 12px; display: block; margin-bottom: 4px;">🔑 API Key (optional — required when server has AUTH_API_KEY set)</label>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <input type="password" id="auth-api-key" placeholder="Enter API key for server authentication"
+          style="flex: 1; padding: 8px 12px; background: #3c3c3c; border: 1px solid #555; border-radius: 4px; color: #d4d4d4; font-size: 13px;">
+        <button type="button" onclick="toggleAuthKeyVisibility()" id="auth-toggle-btn"
+          style="padding: 8px 12px; background: #3c3c3c; border: 1px solid #555; border-radius: 4px; color: #d4d4d4; cursor: pointer; font-size: 13px;">👁️</button>
+        <span id="auth-status" style="font-size: 12px; color: #858585;">Not set</span>
+      </div>
+    </div>
+
+    <!-- ...rest of the UI unchanged... -->
+    <!-- Mode Toggle -->
+    <div class="mode-toggle">
+      <button class="mode-btn active" data-mode="plan">📋 Plan Mode</button>
+      <button class="mode-btn" data-mode="act">⚡ Act Mode</button>
+    </div>
+
+    <!-- Plan Mode Configuration -->
+    <div class="config-section active" id="plan-config">
+      <h2 class="section-title">Plan Mode Configuration</h2>
+      <!-- ...existing content... -->
+      <div class="form-group">
+        <label for="plan-provider">API Provider</label>
+<select id="plan-provider">
+  <option value="">Select Provider...</option>
+</select>
+<script>
+  // Dynamically populate provider dropdown from PROVIDER_CONFIG
+  document.addEventListener('DOMContentLoaded', function() {
+    const providerSelect = document.getElementById('plan-provider');
+    if (providerSelect && window.PROVIDER_CONFIG) {
+      Object.keys(window.PROVIDER_CONFIG).forEach(key => {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = key.charAt(0).toUpperCase() + key.slice(1);
+        providerSelect.appendChild(option);
+      });
+    }
+  });
+</script>
+        <div class="provider-info" id="plan-provider-info"></div>
+      </div>
+      <div class="form-group">
+        <label for="plan-model">Model</label>
+        <select id="plan-model">
+          <option value="">Select provider first...</option>
+        </select>
+      </div>
+      <div class="provider-config-section" id="plan-provider-config"></div>
+    </div>
+
+    <!-- Act Mode Configuration -->
+    <div class="config-section" id="act-config">
+      <h2 class="section-title">Act Mode Configuration</h2>
+      <!-- ...existing content... -->
+      <div class="form-group">
+        <label for="act-provider">API Provider</label>
+<select id="act-provider">
+  <option value="">Select Provider...</option>
+</select>
+<script>
+  // Dynamically populate act-provider dropdown from PROVIDER_CONFIG
+  document.addEventListener('DOMContentLoaded', function() {
+    const providerSelect = document.getElementById('act-provider');
+    if (providerSelect && window.PROVIDER_CONFIG) {
+      Object.keys(window.PROVIDER_CONFIG).forEach(key => {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = key.charAt(0).toUpperCase() + key.slice(1);
+        providerSelect.appendChild(option);
+      });
+    }
+  });
+</script>
+        <div class="provider-info" id="act-provider-info"></div>
+      </div>
+      <div class="form-group">
+        <label for="act-model">Model</label>
+        <select id="act-model">
+          <option value="">Select provider first...</option>
+        </select>
+      </div>
+      <div class="provider-config-section" id="act-provider-config"></div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="api-keys-section">
+      <h2 class="section-title">⚙️ Advanced Settings</h2>
+      <div class="advanced-settings">
+        <div class="form-group">
+          <label for="max-tokens">Max Tokens</label>
+          <input type="number" id="max-tokens" placeholder="8192" value="8192">
+        </div>
+        <div class="form-group">
+          <label for="temperature">Temperature</label>
+          <input type="number" id="temperature" step="0.1" min="0" max="2" placeholder="0.7" value="0.7">
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <div>
+        <button onclick="saveConfiguration()">💾 Save Configuration</button>
+        <button class="secondary" onclick="loadConfiguration()">📂 Load Configuration</button>
+      </div>
+      <div>
+        <button class="secondary" onclick="clearConfiguration()">🗑️ Clear All</button>
+      </div>
+    </div>
+
+    <!-- Output -->
+    <div class="output" id="output">
+      <pre>Ready to configure...</pre>
+    </div>
+
+    <!-- Chat UI Mount Point -->
+    <div id="chat-root"></div>
+  </div>
+
+  <script src="ui-logic.js"></script>
+  <script src="dist/chat-ui.js"></script>
+  <script>
+    /**
+     * @description Checks OIDC authentication status from server session and updates UI.
+     * Uses /api/user so status reflects actual authenticated cookies rather than localStorage.
+     */
+    async function updateOidcAuthUI() {
+      const statusEl = document.getElementById('oidc-status');
+      const userInfoEl = document.getElementById('oidc-user-info');
+      const loginBtn = document.getElementById('oidc-login-btn');
+      const logoutBtn = document.getElementById('oidc-logout-btn');
+
+      try {
+        const response = await fetch('/api/user', { credentials: 'include' });
+        if (response.ok) {
+          const data = await response.json();
+          const user = data.user || {};
+          statusEl.textContent = '✅ Logged in';
+          userInfoEl.textContent = user.name ? `${user.name} (${user.email || ''})` : (user.preferred_username || '');
+          loginBtn.style.display = 'none';
+          logoutBtn.style.display = '';
+          return;
+        }
+      } catch (_error) {
+        // falls through to logged-out UI state
+      }
+
+      statusEl.textContent = '🔒 Logged out';
+      userInfoEl.textContent = '';
+      loginBtn.style.display = '';
+      logoutBtn.style.display = 'none';
+    }
+
+    // Run on page load
+    document.addEventListener('DOMContentLoaded', () => { void updateOidcAuthUI(); });
+    window.addEventListener('focus', () => { void updateOidcAuthUI(); });
+  </script>
+</body>
+</html>

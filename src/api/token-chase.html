@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<!--
+  Token Chase — debugger view (ADR-046 §10, steps 1 + 2b). Read-only timeline over captured
+  per-call frames with the recorded replay/variant/grade history rendered side-by-side.
+  Data: GET /api/token-chase/runs, /runs/:runId, /runs/:runId/observations,
+  /runs/:runId/frames/:seq, /runs/:runId/frames/:seq/inspect. No build step.
+  The debugger itself never fires replays — the Replay / Optimizer buttons are the actions.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Optimizer — Token Chase</title>
+  <link rel="stylesheet" href="/shared/ui/css/design-system.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/forest.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/gray.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/black.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css" />
+  <link rel="stylesheet" href="/cockpit/css/themes/amber.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage) so the embedded optimizer
+    // matches the rest of the framework instead of a hardcoded palette.
+    try { var _t = localStorage.getItem('cockpit-theme'); if (_t) document.documentElement.setAttribute('data-theme', _t); } catch (e) {}
+  </script>
+  <style>
+    /* Pull every colour from the framework design tokens (theme-driven) — no bespoke palette. */
+    :root {
+      --bg: var(--bg-primary);
+      --panel: var(--bg-card, var(--bg-secondary));
+      --line: var(--border-color);
+      --fg: var(--text-primary);
+      --muted: var(--text-secondary);
+      --accent: var(--accent-primary);
+      --warn: var(--status-warning);
+      --ok: var(--status-success);
+      --bad: var(--status-error);
+    }
+    html { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:14px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
+    select option { background: var(--bg-secondary); color: var(--text-primary); }
+    header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+    header h1 { order:1; font-size:15px; margin:0; letter-spacing:.5px; }
+    header .sub { order:2; flex:1; color:var(--muted); font-size:12px; }
+    .wrap { display:grid; grid-template-columns:minmax(250px, 300px) minmax(320px, 440px) minmax(0, 1fr); height:calc(100vh - 50px); }
+    .col { overflow:auto; padding:12px; }
+    .col + .col { border-left:1px solid var(--line); }
+    h2 { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin:0 0 10px; }
+    .item { padding:8px 10px; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; cursor:pointer; background:var(--panel); }
+    .item:hover { border-color:var(--accent); }
+    .item.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+    .item .t { font-size:13px; }
+    .item .m { font-size:11px; color:var(--muted); margin-top:2px; }
+    .frame { display:flex; align-items:center; gap:8px; }
+    .seq { color:var(--muted); min-width:28px; }
+    .badge { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); color:var(--muted); }
+    .badge.fired { color:var(--accent); border-color:var(--accent); }
+    .badge.warn { color:var(--warn); border-color:var(--warn); }
+    .tok { margin-left:auto; font-size:11px; color:var(--ok); }
+    .empty { color:var(--muted); font-size:12px; padding:20px 0; text-align:center; }
+    .empty-card { border:1px solid var(--line); border-radius:6px; background:var(--panel); padding:14px; color:var(--muted); }
+    .empty-card h3 { margin:0 0 6px; color:var(--fg); font-size:15px; line-height:1.25; }
+    .empty-card p { margin:0 0 10px; font-size:12px; line-height:1.45; }
+    .empty-card code { color:var(--fg); background:rgba(127,127,127,.16); border:1px solid var(--line); border-radius:4px; padding:1px 5px; }
+    .empty-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+    .inline-button { font:inherit; font-size:12px; border:1px solid var(--accent); border-radius:6px; background:transparent; color:var(--accent); padding:7px 10px; cursor:pointer; }
+    .inline-button.primary { background:var(--accent); color:var(--bg); }
+    .inline-button:hover { filter:brightness(1.08); }
+    .mini-steps { display:grid; gap:6px; margin-top:12px; }
+    .mini-step { display:grid; grid-template-columns:22px minmax(0,1fr); gap:8px; align-items:start; font-size:12px; }
+    .mini-step b { width:22px; height:22px; display:grid; place-items:center; border:1px solid var(--line); border-radius:50%; color:var(--fg); font-size:11px; }
+    .field { margin-bottom:14px; }
+    .field .k { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin-bottom:4px; }
+    details.field { border:1px solid var(--line); border-radius:6px; background:var(--panel); overflow:hidden; }
+    details.field summary { cursor:pointer; list-style:none; padding:9px 10px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    details.field summary::-webkit-details-marker { display:none; }
+    details.field summary::after { content:'+'; color:var(--muted); font-size:14px; }
+    details.field[open] summary { border-bottom:1px solid var(--line); }
+    details.field[open] summary::after { content:'-'; }
+    details.field pre { border:0; border-radius:0; background:transparent; }
+    pre { white-space:pre-wrap; word-break:break-word; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px; margin:0; max-height:260px; overflow:auto; }
+    .kv { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12px; color:var(--muted); }
+    .kv b { color:var(--fg); font-weight:600; }
+    .header-actions { margin-left:auto; display:flex; gap:10px; align-items:center; }
+    a.refresh { color:var(--accent); text-decoration:none; font-size:12px; cursor:pointer; }
+    a.refresh.demo { order:3; }
+    a.refresh:not(.demo) { order:4; }
+    button.replay { font:inherit; font-size:12px; background:var(--panel); color:var(--accent); border:1px solid var(--accent); border-radius:6px; padding:6px 12px; cursor:pointer; }
+    button.replay:hover { background:var(--accent); color:var(--bg); }
+    button.replay:disabled { opacity:.5; cursor:default; border-color:var(--line); color:var(--muted); }
+    .verdict { margin-top:6px; padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+    .vbadge { font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px; border:1px solid var(--line); }
+    .v-deterministic { color:var(--ok); border-color:var(--ok); }
+    .v-equivalent { color:var(--accent); border-color:var(--accent); }
+    .v-divergent, .v-replay-error { color:var(--bad); border-color:var(--bad); }
+    .v-non-replayable, .v-no-endpoint, .v-open-frame { color:var(--warn); border-color:var(--warn); }
+    .inspect-head { margin-bottom:10px; }
+    .inspect-head h2 { margin-bottom:2px; }
+    .inspect-head .m { color:var(--muted); font-size:12px; }
+    .summary-grid { display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:8px; margin-bottom:12px; }
+    .summary-card { border:1px solid var(--line); border-radius:6px; background:var(--panel); padding:9px 10px; min-height:58px; }
+    .summary-card .k { font-size:10px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin-bottom:4px; }
+    .summary-card .v { font-size:16px; font-weight:700; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .summary-card .m { font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .inspect-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 12px; }
+    .inspect-actions .hint { margin:0; }
+    .inspect-section-title { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin:16px 0 8px; }
+    /* ── Optimizer (ADR-046 step 3) ───────────────────────────── */
+    .opt { margin:0 0 12px; padding:12px; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+    .opt h3 { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--accent); margin:0 0 10px; }
+    .opt .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
+    .opt select, .opt input { font:inherit; font-size:12px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+    .opt input { width:150px; }
+    button.opt-run { font:inherit; font-size:12px; background:var(--bg); color:var(--ok); border:1px solid var(--ok); border-radius:6px; padding:6px 12px; cursor:pointer; }
+    button.opt-run:hover { background:var(--ok); color:var(--bg); }
+    button.opt-run.all { color:var(--warn); border-color:var(--warn); }
+    button.opt-run.all:hover { background:var(--warn); color:var(--bg); }
+    button.opt-run:disabled { opacity:.5; cursor:default; }
+    table.cmp { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+    table.cmp th, table.cmp td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+    table.cmp th { color:var(--muted); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.5px; }
+    table.cmp td b { color:var(--fg); }
+    table.cmp tr.base td { color:var(--muted); }
+    .tier { font-size:10px; font-weight:600; padding:1px 6px; border-radius:10px; border:1px solid var(--line); }
+    .tier-equivalent-cheaper { color:var(--ok); border-color:var(--ok); }
+    .tier-equivalent-pricier { color:var(--muted); border-color:var(--muted); }
+    .tier-divergent { color:var(--bad); border-color:var(--bad); }
+    .cheaper { color:var(--ok); } .pricier { color:var(--bad); }
+    .hint { color:var(--muted); font-size:11px; margin-top:6px; }
+    /* ── Debugger (ADR-046 step 2b): stepper + recorded results ── */
+    .badge.rec { color:var(--ok); border-color:var(--ok); }
+    .stepper { display:inline-flex; gap:6px; margin-left:10px; vertical-align:middle; }
+    .stepper button { font:inherit; font-size:11px; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:3px 10px; cursor:pointer; }
+    .stepper button:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+    .stepper button:disabled { opacity:.4; cursor:default; }
+    table.cmp tr.obs-row { cursor:pointer; }
+    table.cmp tr.obs-row:hover td { background:rgba(127,127,127,.08); }
+    table.cmp tr.obs-detail { display:none; }
+    table.cmp tr.obs-detail.open { display:table-row; }
+    table.cmp tr.obs-detail td { white-space:normal; }
+    /* ── Savings report (ADR-046 step 4b) ─────────────────────── */
+    a.refresh.report { order:3; }
+    .rep-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 12px; }
+    .rep-controls input { font:inherit; font-size:12px; width:64px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+    .rep-controls label { font-size:11px; color:var(--muted); }
+    .mode-tag { font-size:10px; font-weight:600; padding:1px 6px; border-radius:10px; border:1px solid var(--line); }
+    .mode-llm { color:var(--ok); border-color:var(--ok); }
+    .mode-lex { color:var(--warn); border-color:var(--warn); }
+    table.cmp td.sep, table.cmp th.sep { border-left:1px solid var(--line); }
+
+    @media (max-width: 640px) {
+      header { flex-wrap: wrap; gap: 6px; padding: 10px 12px; }
+      header h1 { font-size: 14px; }
+      header .sub { font-size: 11px; }
+      a.refresh { margin-left: 0; }
+      .wrap {
+        display: block;
+        height: auto;
+        overflow: visible;
+      }
+      .col {
+        overflow: visible;
+        padding: 10px 12px;
+        width: 100%;
+        max-width: 100%;
+      }
+      .col + .col {
+        border-left: none;
+        border-top: 1px solid var(--line);
+      }
+      .opt .row { flex-direction: column; align-items: stretch; }
+      .opt select, .opt input { width: 100%; max-width: none; font-size: 16px; }
+      button.replay, button.opt-run { font-size: 16px; padding: 10px 14px; width: 100%; }
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .inspect-actions { align-items:stretch; }
+      table.cmp { display: block; overflow-x: auto; white-space: nowrap; }
+      pre { max-height: 220px; }
+    }
+  </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <header>
+    <h1>OPTIMIZER</h1>
+    <a class="refresh demo" onclick="loadDemoComparison()">Demo comparison</a>
+    <a class="refresh report" onclick="loadSavingsReport()">Savings report</a>
+    <span class="sub">replay a captured call against your own providers — compare cost · time · accuracy</span>
+    <a class="refresh" onclick="loadRuns()">↻ refresh</a>
+  </header>
+  <div class="wrap">
+    <div class="col" id="runs"><h2>Runs</h2><div class="empty">loading…</div></div>
+    <div class="col" id="frames"><h2>Frames</h2><div class="empty">select a run</div></div>
+    <div class="col" id="inspector"><h2>Inspector</h2><div class="empty">select a frame</div></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let activeRun = null, activeSeq = null;
+    // Debugger (step 2b): the active run's ordered frame summaries, for call-by-call stepping.
+    let framesCache = [];
+
+    async function api(pathname) {
+      const r = await fetch('/api/token-chase' + pathname, { credentials: 'same-origin' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+
+    async function loadRuns() {
+      const el = $('runs');
+      el.innerHTML = '<h2>Runs</h2>';
+      try {
+        const { runs } = await api('/runs');
+        if (!runs.length) {
+          el.innerHTML += emptyRunState();
+          await loadDemoComparison();
+          return;
+        }
+        for (const run of runs) {
+          const d = document.createElement('div');
+          d.className = 'item' + (run.runId === activeRun ? ' active' : '');
+          d.innerHTML = `<div class="t">${esc(run.runId)}</div><div class="m">${run.frameCount} calls · ${fmtDate(run.modified)}</div>`;
+          d.onclick = () => loadFrames(run.runId);
+          el.appendChild(d);
+        }
+      } catch (e) { el.innerHTML += `<div class="empty">failed to load: ${esc(e.message)}</div>`; }
+    }
+
+    async function loadFrames(runId) {
+      activeRun = runId; activeSeq = null;
+      [...document.querySelectorAll('#runs .item')].forEach((n) => n.classList.toggle('active', n.querySelector('.t').textContent === runId));
+      const el = $('frames'); el.innerHTML = '<h2>Frames</h2>';
+      $('inspector').innerHTML = '<h2>Inspector</h2><div class="empty">select a frame</div>';
+      try {
+        const { frames } = await api('/runs/' + encodeURIComponent(runId));
+        framesCache = frames;
+        if (!frames.length) { el.innerHTML += '<div class="empty">no frames</div>'; return; }
+        for (const f of frames) {
+          const fired = f.harnessFired || f.providerRequested || '—';
+          const tok = (f.tokensIn != null || f.tokensOut != null) ? `${f.tokensIn ?? '?'}→${f.tokensOut ?? '?'} tok` : (f.phase === 'open' ? 'in-flight' : '');
+          const warn = f.replayable ? '' : '<span class="badge warn">non-replayable</span>';
+          const d = document.createElement('div');
+          d.className = 'item';
+          d.dataset.seq = String(f.seq);
+          d.innerHTML = `<div class="frame"><span class="seq">#${f.seq}</span>
+            <span class="badge fired">${esc(fired)}</span>${warn}
+            <span class="tok">${esc(tok)}</span></div>
+            <div class="m">${f.inputMessages ?? '?'} msgs in · ${f.latencyMs != null ? f.latencyMs + 'ms' : '—'} · ${f.tools.length} tools</div>`;
+          d.onclick = () => loadFrame(runId, f.seq, d);
+          el.appendChild(d);
+        }
+        badgeRecordedObservations(runId);
+      } catch (e) { el.innerHTML += `<div class="empty">failed: ${esc(e.message)}</div>`; }
+    }
+
+    // Debugger (step 2b): badge timeline frames that already have recorded replay/variant grades in
+    // the corpus. Best-effort read-only decoration — an older api without the endpoint just no-ops.
+    async function badgeRecordedObservations(runId) {
+      let observations;
+      try { ({ observations } = await api('/runs/' + encodeURIComponent(runId) + '/observations')); }
+      catch { return; }
+      if (runId !== activeRun || !Array.isArray(observations) || !observations.length) return;
+      const bySeq = new Map();
+      for (const o of observations) bySeq.set(o.seq, (bySeq.get(o.seq) || 0) + 1);
+      for (const [seq, count] of bySeq) {
+        const node = document.querySelector(`#frames .item[data-seq="${seq}"] .frame`);
+        if (!node || node.querySelector('.badge.rec')) continue;
+        const b = document.createElement('span');
+        b.className = 'badge rec';
+        b.textContent = count + ' recorded';
+        node.insertBefore(b, node.querySelector('.tok'));
+      }
+    }
+
+    async function loadDemoComparison() {
+      $('frames').innerHTML = '<h2>Frames</h2><div class="empty">demo comparison - no token spend</div>';
+      const el = $('inspector');
+      el.innerHTML = '<h2>Optimizer Demo</h2><div class="empty">loading demo comparison...</div>';
+      try {
+        const { variant, noTokenSpend } = await api('/demo/comparison');
+        el.innerHTML = renderDemoComparison(variant, noTokenSpend === true);
+      } catch (e) {
+        el.innerHTML = `<h2>Optimizer Demo</h2><div class="empty">failed: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function emptyRunState() {
+      return `<div class="empty-card">
+        <h3>No captured runs yet</h3>
+        <p>Token Chase is ready. Turn on capture for real calls, or use the no-token demo to see cost, latency, and accuracy comparison immediately.</p>
+        <div class="mini-steps">
+          <div class="mini-step"><b>1</b><span>Set <code>TOKEN_CHASE_CAPTURE=true</code> for live frame capture.</span></div>
+          <div class="mini-step"><b>2</b><span>Run a bot task, then select a captured frame.</span></div>
+          <div class="mini-step"><b>3</b><span>Replay it against your own providers and compare cost.</span></div>
+        </div>
+        <div class="empty-actions">
+          <button class="inline-button primary" type="button" onclick="loadDemoComparison()">Show demo comparison</button>
+          <button class="inline-button" type="button" onclick="loadRuns()">Refresh runs</button>
+        </div>
+      </div>`;
+    }
+
+    function renderDemoComparison(v, noTokenSpend) {
+      const b = v.baseline || {};
+      const va = v.variant || {};
+      const d = v.diff || {};
+      const dc = d.costDeltaUsd ?? 0;
+      const costCls = dc < 0 ? 'cheaper' : (dc > 0 ? 'pricier' : '');
+      const dcStr = dc === 0 ? '0' : (dc < 0 ? '-$' + fmtCost(-dc) : '+$' + fmtCost(dc));
+      return `<div class="inspect-head"><h2>Demo comparison</h2><div class="m">${noTokenSpend ? 'No-token sample: proves the optimizer math and UI without making a provider call.' : 'Sample comparison'}</div></div>
+        <div class="summary-grid">
+          <div class="summary-card"><div class="k">Baseline</div><div class="v">$${fmtCost(b.costUsd)}</div><div class="m">${b.costEstimated ? 'estimated from tokens' : 'actual provider cost'}</div></div>
+          <div class="summary-card"><div class="k">Variant</div><div class="v">$${fmtCost(va.costUsd)}</div><div class="m">${va.costEstimated ? 'estimated' : 'actual provider cost'}</div></div>
+          <div class="summary-card"><div class="k">Savings</div><div class="v ${costCls}">${dcStr}</div><div class="m">${d.costPct == null ? 'baseline cost unknown' : d.costPct + '%'}</div></div>
+          <div class="summary-card"><div class="k">Accuracy</div><div class="v">${Number(d.accuracy || 0).toFixed(3)}</div><div class="m">${esc(v.tier || v.status || 'demo')}</div></div>
+        </div>
+        <table class="cmp">
+          <thead><tr><th>lane</th><th>model</th><th>cost</th><th>latency</th><th>cost mode</th><th>verdict</th></tr></thead>
+          <tbody>
+            <tr class="base"><td>baseline</td><td>${esc(b.model || '-')}</td><td>$${fmtCost(b.costUsd)}</td><td>${b.latencyMs ?? '-'}ms</td><td>${b.costEstimated ? 'estimated' : 'actual'}</td><td>captured</td></tr>
+            <tr><td><b>${esc(va.label || 'variant')}</b></td><td>${esc(va.model || '-')}</td><td>$${fmtCost(va.costUsd)}</td><td>${va.latencyMs ?? '-'}ms</td><td>${va.costEstimated ? 'estimated' : 'actual'}</td><td><span class="tier tier-${esc(v.tier || '')}">${esc(tierLabel(v.tier || v.status || 'demo'))}</span></td></tr>
+          </tbody>
+        </table>
+        <div class="inspect-section-title">Sample payload</div>
+        ${field('Baseline response', b.preview || '', true)}
+        ${field('Variant response', va.preview || '', false)}`;
+    }
+
+    async function loadFrame(runId, seq, node) {
+      activeSeq = seq;
+      [...document.querySelectorAll('#frames .item')].forEach((n) => n.classList.remove('active'));
+      const target = node || document.querySelector(`#frames .item[data-seq="${seq}"]`);
+      if (target) target.classList.add('active');
+      const el = $('inspector'); el.innerHTML = '<h2>Inspector</h2><div class="empty">loading…</div>';
+      try {
+        // Step 2b: the inspect bundle = the frame + its recorded replay/variant/grade observations
+        // in one read. Falls back to the plain frame read on an older api (frame-only, no history rows).
+        let frame, observations = [], observationsUnavailable = false;
+        try {
+          const { inspect } = await api(`/runs/${encodeURIComponent(runId)}/frames/${seq}/inspect`);
+          frame = inspect.frame;
+          observations = Array.isArray(inspect.observations) ? inspect.observations : [];
+          observationsUnavailable = inspect.observationsUnavailable === true;
+        } catch {
+          ({ frame } = await api(`/runs/${encodeURIComponent(runId)}/frames/${seq}`));
+          observationsUnavailable = true;
+        }
+        const canReplay = frame.replayable !== false && frame.phase !== 'open';
+        frame.history = Array.isArray(frame.history) ? frame.history : [];
+        el.innerHTML = renderFrameInspector(frame, seq, canReplay, observations, observationsUnavailable);
+        const btn = $('replayBtn');
+        if (btn) btn.onclick = () => replayFrame(runId, seq);
+        if (canReplay) wireOptimizer(runId, seq, frame);
+      } catch (e) { el.innerHTML = `<h2>Inspector</h2><div class="empty">failed: ${esc(e.message)}</div>`; }
+    }
+
+    // Debugger (step 2b): step the inspector call-by-call along the captured timeline.
+    function stepFrame(delta) {
+      if (!activeRun || activeSeq == null || !framesCache.length) return;
+      const idx = framesCache.findIndex((f) => f.seq === activeSeq);
+      const next = framesCache[idx + delta];
+      if (next) loadFrame(activeRun, next.seq);
+    }
+
+    // ── Optimizer (ADR-046 step 3): replay this captured call on the user's own LLM connections ──
+    function renderFrameInspector(frame, seq, canReplay, observations, observationsUnavailable) {
+      const baseline = frame.responseContent || (frame.phase === 'open' ? '(call still in flight)' : '(none)');
+      const history = Array.isArray(frame.history) ? frame.history : [];
+      return `<div class="inspect-head"><h2>Inspector - call #${seq}${stepper(seq)}</h2><div class="m">Use this captured call to compare model cost, latency, and replay stability.</div></div>`
+        + summaryCards(frame, canReplay)
+        + `<div class="inspect-actions"><button class="replay" id="replayBtn" ${canReplay ? '' : 'disabled'}>Replay determinism check</button><span class="hint">${canReplay ? 'Runs the same prompt once on the accountable bot node.' : replayBlockedReason(frame)}</span></div>`
+        + `<div id="verdict"></div>`
+        + recordedResults(observations || [], observationsUnavailable === true)
+        + (canReplay ? optimizerPanel(frame) : '')
+        + '<div class="inspect-section-title">Captured payload</div>'
+        + field('Response (baseline)', baseline, true)
+        + field('System prompt', frame.systemPrompt, false)
+        + field('Sent history (' + history.length + ' messages)', pretty(history), false);
+    }
+
+    // Debugger (step 2b): prev/next stepper — walk the captured timeline call-by-call.
+    function stepper(seq) {
+      const idx = framesCache.findIndex((f) => f.seq === seq);
+      if (idx < 0) return '';
+      const prevOk = idx > 0, nextOk = idx < framesCache.length - 1;
+      return `<span class="stepper">
+        <button type="button" onclick="stepFrame(-1)" ${prevOk ? '' : 'disabled'}>← prev call</button>
+        <button type="button" onclick="stepFrame(1)" ${nextOk ? '' : 'disabled'}>next call →</button>
+      </span>`;
+    }
+
+    // Debugger (step 2b): the RECORDED replay/variant/grade history for this frame, side-by-side
+    // with the captured baseline. Read-only — rows render what the corpus already holds; the
+    // Replay / Optimizer buttons above are the only actions that add rows.
+    function recordedResults(observations, unavailable) {
+      const title = '<div class="inspect-section-title">Recorded results (replays · variants · grades)</div>';
+      if (unavailable) {
+        return title + '<div class="hint">Recorded results are unavailable right now (corpus read failed or endpoint missing) — the captured frame above is still complete.</div>';
+      }
+      if (!observations.length) {
+        return title + '<div class="hint">No recorded replays or variant grades for this call yet. Fire the Replay or Optimizer actions above — each graded result is recorded and shows up here.</div>';
+      }
+      const first = observations[0];
+      const baseRow = `<tr class="base"><td>baseline</td><td>${esc(first.baselineModel || '—')}</td>`
+        + `<td>$${fmtCost(first.baselineCostUsd)}</td><td>—</td><td>—</td><td>1.000</td><td>—</td><td>captured</td><td></td></tr>`;
+      const rows = observations.map((o, i) => obsRow(o, i)).join('');
+      return title + `<table class="cmp">
+        <thead><tr><th>lane</th><th>model</th><th>cost</th><th>Δ cost</th><th>latency</th><th>accuracy</th><th>judge</th><th>verdict</th><th>when</th></tr></thead>
+        <tbody>${baseRow}${rows}</tbody>
+      </table>
+      <div class="hint">Recorded metrics only — variant response text is not persisted. Click a row for the full diff vs baseline; re-fire the lane with the Optimizer to see its live output.</div>`;
+    }
+
+    function obsRow(o, i) {
+      const dc = o.costDeltaUsd;
+      const costCls = dc != null && dc < 0 ? 'cheaper' : (dc != null && dc > 0 ? 'pricier' : '');
+      const dcStr = dc == null ? '—' : (dc === 0 ? '±0' : (dc < 0 ? '−$' + fmtCost(-dc) : '+$' + fmtCost(dc)));
+      const judge = o.judgeScore != null
+        ? `${o.judgeScore} <span class="mode-tag ${o.judgeMode === 'llm' ? 'mode-llm' : 'mode-lex'}">${o.judgeMode === 'llm' ? 'LLM' : 'lexical'}</span>`
+        : '—';
+      const tier = o.tier || o.status || '—';
+      const lane = o.variantProvider || 'variant';
+      return `<tr class="obs-row" onclick="toggleObsDetail(this)">
+          <td><b>${esc(lane)}</b></td><td>${esc(o.variantModel || '—')}</td>
+          <td>$${fmtCost(o.variantCostUsd)}</td><td class="${costCls}">${dcStr}</td>
+          <td>${o.latencyMs != null ? o.latencyMs + 'ms' : '—'}</td>
+          <td>${o.accuracy != null ? Number(o.accuracy).toFixed(3) : '—'}</td>
+          <td>${judge}</td>
+          <td><span class="tier tier-${esc(o.tier || '')}">${esc(tierLabel(tier))}</span></td>
+          <td>${o.createdAt ? esc(fmtDate(o.createdAt)) : '—'}</td>
+        </tr>
+        <tr class="obs-detail"><td colspan="9">${obsDetail(o)}</td></tr>`;
+    }
+
+    // The single-frame diff drill-in: recorded baseline-vs-variant metrics for one observation.
+    function obsDetail(o) {
+      const pct = (o.baselineCostUsd != null && o.baselineCostUsd > 0 && o.costDeltaUsd != null)
+        ? Math.round((o.costDeltaUsd / o.baselineCostUsd) * 1000) / 10 : null;
+      return `<div class="kv">
+        <span>baseline <b>${esc(o.baselineProvider || '—')} / ${esc(o.baselineModel || '—')}</b> at <b>$${fmtCost(o.baselineCostUsd)}</b></span>
+        <span>variant <b>${esc(o.variantProvider || '—')} / ${esc(o.variantModel || '—')}</b> at <b>$${fmtCost(o.variantCostUsd)}</b></span>
+        <span>Δ cost <b>${o.costDeltaUsd == null ? '—' : '$' + fmtCost(o.costDeltaUsd)}${pct != null ? ' (' + pct + '%)' : ''}</b></span>
+        <span>equivalent <b>${o.equivalent == null ? '—' : o.equivalent}</b></span>
+        <span>accuracy (lexical) <b>${o.accuracy != null ? Number(o.accuracy).toFixed(3) : '—'}</b></span>
+        <span>judge <b>${o.judgeScore != null ? o.judgeScore + ' (' + esc(o.judgeMode || 'ungraded') + ')' : 'ungraded'}</b></span>
+        <span>query type <b>${esc(o.queryType || '—')}</b></span>
+        <span>harness <b>${esc(o.harness || '—')}</b></span>
+      </div>`;
+    }
+
+    function toggleObsDetail(row) {
+      const detail = row.nextElementSibling;
+      if (detail && detail.classList.contains('obs-detail')) detail.classList.toggle('open');
+    }
+
+    function summaryCards(frame, canReplay) {
+      const fired = frame.harnessFired || frame.providerRequested || 'unknown';
+      const tokenText = `${frame.tokensIn ?? '?'} -> ${frame.tokensOut ?? '?'}`;
+      const latencyText = frame.latencyMs != null ? `${frame.latencyMs}ms` : 'unknown';
+      const replayText = canReplay ? 'ready' : 'blocked';
+      return `<div class="summary-grid">
+        <div class="summary-card"><div class="k">Provider</div><div class="v">${esc(fired)}</div><div class="m">${esc(frame.model || 'model unknown')}</div></div>
+        <div class="summary-card"><div class="k">Tokens</div><div class="v">${esc(tokenText)}</div><div class="m">input -> output</div></div>
+        <div class="summary-card"><div class="k">Latency</div><div class="v">${esc(latencyText)}</div><div class="m">captured baseline</div></div>
+        <div class="summary-card"><div class="k">Replay</div><div class="v">${esc(replayText)}</div><div class="m">${esc(frame.phase || 'closed')}</div></div>
+      </div>`;
+    }
+
+    function replayBlockedReason(frame) {
+      if (frame.phase === 'open') return 'This call is still in flight; wait for the captured response before replaying.';
+      if (frame.replayable === false) return 'This frame is marked non-replayable, usually because it depends on live or unpinned data.';
+      return 'Replay is unavailable for this frame.';
+    }
+
+    function optimizerPanel(frame) {
+      const base = frame.model || frame.harnessFired || 'baseline';
+      return `<div class="opt">
+        <h3>Optimizer — try a different provider / model</h3>
+        <div class="row">
+          <select id="connSel"><option value="">loading your providers…</option></select>
+          <button class="opt-run" id="runVariantBtn" disabled>▶ Run</button>
+          <button class="opt-run all" id="runAllBtn" disabled>▶▶ Run all my providers</button>
+        </div>
+        <div class="hint">Fires this exact full prompt once against the provider you pick — your own logged-in LLM, billed to your key. Baseline = the captured <b>${esc(base)}</b> call. These are the logins the framework already has: your signed-in providers plus any Bring-Your-Own-LLM connections.</div>
+        <table class="cmp" id="cmpTable" style="display:none">
+          <thead><tr><th>label</th><th>model</th><th>cost</th><th>Δ cost</th><th>latency</th><th>accuracy</th><th>verdict</th></tr></thead>
+          <tbody id="cmpBody"></tbody>
+        </table>
+        <div id="optMsg" class="hint"></div>
+      </div>`;
+    }
+
+    // The caller's own configured LLM connections — what the framework already logged them into.
+    let connectionsCache = null;
+    async function loadConnections() {
+      if (connectionsCache) return connectionsCache;
+      try {
+        const r = await fetch('/api/token-chase/connections', { credentials: 'same-origin' });
+        const data = r.ok ? await r.json() : {};
+        connectionsCache = Array.isArray(data.connections) ? data.connections : [];
+      } catch { connectionsCache = []; }
+      return connectionsCache;
+    }
+
+    const connLabel = (c) => `${c.label || c.model}${c.model ? '  ·  ' + c.model : ''}`;
+
+    async function wireOptimizer(runId, seq, frame) {
+      const sel = $('connSel'), runBtn = $('runVariantBtn'), allBtn = $('runAllBtn'), msg = $('optMsg');
+      const conns = await loadConnections();
+      if (!conns.length) {
+        sel.innerHTML = '<option value="">no connected providers</option>';
+        msg.innerHTML = 'No LLM logins available on this instance. Sign into a provider (e.g. add an API key in Settings) or connect one under <b>Connections → Bring Your Own LLM</b>, then refresh.';
+        return;
+      }
+      sel.innerHTML = conns.map(c =>
+        `<option value="${esc(c.connectionId)}">${esc(connLabel(c))}</option>`).join('');
+      runBtn.disabled = false; allBtn.disabled = conns.length < 2;
+      const chosen = () => conns.find(c => String(c.connectionId) === String(sel.value));
+      runBtn.onclick = () => { const c = chosen(); if (c) runVariant(runId, seq, c.connectionId, connLabel(c)); };
+      allBtn.onclick = () => runAllConnections(runId, seq, conns);
+    }
+
+    function ensureBaselineRow() {
+      const table = $('cmpTable'), body = $('cmpBody');
+      table.style.display = '';
+      if (!body.querySelector('tr.base')) {
+        // Baseline row is filled from the first variant result (it carries the priced baseline).
+        const tr = document.createElement('tr'); tr.className = 'base'; tr.id = 'baseRow';
+        tr.innerHTML = '<td>baseline</td><td colspan="6">run a model to price the baseline…</td>';
+        body.appendChild(tr);
+      }
+    }
+
+    async function runVariant(runId, seq, connectionId, label) {
+      if (!connectionId) { $('optMsg').textContent = 'Pick a provider first.'; return; }
+      ensureBaselineRow();
+      const body = $('cmpBody');
+      label = label || connectionId;
+      const rowId = 'lane-' + connectionId;
+      let row = document.getElementById(rowId);
+      if (!row) { row = document.createElement('tr'); row.id = rowId; body.appendChild(row); }
+      row.innerHTML = `<td><b>${esc(label)}</b></td><td colspan="6">⏳ re-firing on your provider…</td>`;
+      $('optMsg').textContent = '';
+      try {
+        const r = await fetch(`/api/token-chase/runs/${encodeURIComponent(runId)}/frames/${seq}/variant`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectionId, label }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        renderVariantRow(row, data.variant);
+      } catch (e) {
+        row.innerHTML = `<td><b>${esc(label)}</b></td><td colspan="6" class="pricier">failed: ${esc(e.message)}</td>`;
+      }
+    }
+
+    async function runAllConnections(runId, seq, conns) {
+      const allBtn = $('runAllBtn'), runBtn = $('runVariantBtn');
+      if (!conns.length) { $('optMsg').textContent = 'No connected providers to sweep.'; return; }
+      allBtn.disabled = true; runBtn.disabled = true;
+      allBtn.textContent = `⏳ running ${conns.length} providers…`;
+      ensureBaselineRow();
+      // Sequential — one at a time (each fires the captured prompt against that provider).
+      for (const c of conns) { await runVariant(runId, seq, c.connectionId, connLabel(c)); }
+      allBtn.disabled = false; runBtn.disabled = false;
+      allBtn.textContent = '▶▶ Run all my providers';
+    }
+
+    function renderVariantRow(row, v) {
+      if (!v || v.status === 'replay-error' || !v.variant) {
+        row.innerHTML = `<td>${esc(row.firstChild ? row.firstChild.textContent : 'lane')}</td><td colspan="6" class="pricier">${esc(v && v.reason ? v.reason : 'no result')}</td>`;
+        return;
+      }
+      // Fill the baseline row once, from the priced baseline this result carries.
+      if (v.baseline) {
+        const baseRow = document.getElementById('baseRow');
+        if (baseRow) baseRow.innerHTML =
+          `<td>baseline</td><td>${esc(v.baseline.model || '—')}</td><td>$${fmtCost(v.baseline.costUsd)}${v.baseline.costEstimated ? '*' : ''}</td>`
+          + `<td>—</td><td>${v.baseline.latencyMs ?? '—'}ms</td><td>1.000</td><td>captured</td>`;
+      }
+      const d = v.diff || {};
+      const va = v.variant;
+      const dc = d.costDeltaUsd ?? 0;
+      const costCls = dc < 0 ? 'cheaper' : (dc > 0 ? 'pricier' : '');
+      const dcStr = (dc === 0 ? '±0' : (dc < 0 ? '−$' + fmtCost(-dc) : '+$' + fmtCost(dc))) + (d.costPct != null ? ` (${d.costPct > 0 ? '+' : ''}${d.costPct}%)` : '');
+      const lat = va.latencyMs == null ? '—' : va.latencyMs + 'ms';
+      const tier = v.tier || v.status;
+      row.innerHTML =
+        `<td><b>${esc(va.label)}</b></td><td>${esc(va.model || '—')}</td>`
+        + `<td>$${fmtCost(va.costUsd)}${va.costEstimated ? '*' : ''}</td>`
+        + `<td class="${costCls}">${dcStr}</td>`
+        + `<td>${lat}</td>`
+        + `<td><b>${(d.accuracy ?? 0).toFixed(3)}</b></td>`
+        + `<td><span class="tier tier-${esc(tier)}">${esc(tierLabel(tier))}</span></td>`;
+    }
+
+    // ── Savings report (ADR-046 step 4b): the judged headline table over the corpus ──
+    async function loadSavingsReport(bar) {
+      const el = $('inspector');
+      el.innerHTML = '<h2>Savings report</h2><div class="empty">loading…</div>';
+      try {
+        const qs = [];
+        if (activeRun) qs.push('runId=' + encodeURIComponent(activeRun));
+        if (bar != null && bar !== '') qs.push('bar=' + encodeURIComponent(bar));
+        const r = await fetch('/api/token-chase/savings/report' + (qs.length ? '?' + qs.join('&') : ''), { credentials: 'same-origin' });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        el.innerHTML = renderSavingsReport(data.report);
+        const barInput = $('repBar');
+        const applyBtn = $('repApply');
+        if (applyBtn) applyBtn.onclick = () => loadSavingsReport(barInput ? barInput.value : undefined);
+      } catch (e) {
+        el.innerHTML = `<h2>Savings report</h2><div class="empty">failed: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function renderSavingsReport(rep) {
+      const scopeText = rep.scope === 'run' ? `run ${rep.runId}` : 'your whole corpus';
+      const totalSaved = rep.totals.savedUsd;
+      const savedCls = totalSaved > 0 ? 'cheaper' : (totalSaved < 0 ? 'pricier' : '');
+      const head = `<div class="inspect-head"><h2>Savings report</h2>
+        <div class="m">Corpus-backed (${esc(scopeText)}, ${rep.observations} graded frames) — re-runs nothing. Quality bar: judge score ≥ ${rep.threshold}.</div></div>`;
+      const controls = `<div class="rep-controls">
+        <label>quality bar</label><input id="repBar" type="number" min="0" max="100" value="${rep.threshold}">
+        <button class="inline-button" id="repApply" type="button">Apply</button>
+        <span class="hint">${activeRun ? 'Scoped to the selected run — deselect (↻ refresh) for the whole corpus.' : 'Whole corpus — select a run first to narrow the report.'}</span>
+      </div>`;
+      const cards = `<div class="summary-grid">
+        <div class="summary-card"><div class="k">Verified savings <span class="mode-tag mode-llm">LLM-judged</span></div><div class="v cheaper">$${fmtCost(rep.verifiedSavedUsd)}</div><div class="m">${rep.verifiedFrames} frames held the bar</div></div>
+        <div class="summary-card"><div class="k">Proxy savings <span class="mode-tag mode-lex">lexical fallback</span></div><div class="v">$${fmtCost(rep.lexicalProxySavedUsd)}</div><div class="m">${rep.lexicalProxyFrames} frames · proxy-scored, NOT verified</div></div>
+        <div class="summary-card"><div class="k">Baseline vs variant</div><div class="v">$${fmtCost(rep.totals.baselineCostUsd)} → $${fmtCost(rep.totals.variantCostUsd)}</div><div class="m">all graded frames</div></div>
+        <div class="summary-card"><div class="k">Raw delta</div><div class="v ${savedCls}">${totalSaved < 0 ? '+$' + fmtCost(-totalSaved) : '−$' + fmtCost(totalSaved)}</div><div class="m">${rep.totals.savedPct == null ? 'baseline cost unknown' : rep.totals.savedPct + '% of baseline'}${rep.ungradedFrames ? ' · ' + rep.ungradedFrames + ' ungraded frames excluded from both headline numbers' : ''}</div></div>
+      </div>`;
+      if (!rep.observations) {
+        return head + controls + '<div class="empty-card"><h3>No graded observations yet</h3><p>Run the optimizer on a captured frame (or a whole run via the savings loop) — each graded replay lands a corpus row, now with an LLM-judge quality grade.</p></div>';
+      }
+      const rows = rep.lanes.map((l) => {
+        const saved = l.savedUsd;
+        const cls = saved > 0 ? 'cheaper' : (saved < 0 ? 'pricier' : '');
+        return `<tr>
+          <td><b>${esc(l.lane)}</b></td><td>${l.frames}</td>
+          <td>$${fmtCost(l.baselineCostUsd)}</td><td>$${fmtCost(l.variantCostUsd)}</td>
+          <td class="${cls}">${saved < 0 ? '+$' + fmtCost(-saved) : '−$' + fmtCost(saved)}${l.savedPct != null ? ' (' + l.savedPct + '%)' : ''}</td>
+          <td class="sep">${l.llm.qualityHeld}/${l.llm.frames}</td><td class="cheaper">$${fmtCost(l.llm.heldSavedUsd)}</td>
+          <td class="sep">${l.lexical.qualityHeld}/${l.lexical.frames}</td><td>$${fmtCost(l.lexical.heldSavedUsd)}</td>
+          <td class="sep">${l.ungraded}</td>
+        </tr>`;
+      }).join('');
+      const table = `<table class="cmp">
+        <thead><tr><th>lane (provider / model)</th><th>frames</th><th>baseline $</th><th>variant $</th><th>Δ saved</th>
+          <th class="sep">LLM held</th><th>verified $</th><th class="sep">lexical held</th><th>proxy $</th><th class="sep">ungraded</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+      const legend = `<div class="hint"><span class="mode-tag mode-llm">LLM-judged</span> = the quality-judge bot verified the cheaper output held the bar — the number to lead with.
+        <span class="mode-tag mode-lex">lexical fallback</span> = deterministic token-overlap proxy (judge lane unavailable) — reported separately, never blended into the verified number.
+        “held” = judge score ≥ ${rep.threshold}; only held-and-cheaper frames bank savings.</div>`;
+      return head + controls + cards + table + legend;
+    }
+
+    const tierLabel = (t) => ({ 'equivalent-cheaper': 'SWAP ✓ cheaper, same answer',
+      'equivalent-pricier': 'same answer, costs more', 'divergent': 'answer differs' }[t] || t);
+    const fmtCost = (n) => Number(n || 0) < 0.01 ? Number(n || 0).toFixed(6) : Number(n || 0).toFixed(4);
+
+    async function replayFrame(runId, seq) {
+      const btn = $('replayBtn'), box = $('verdict');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ re-firing on the bot node…'; }
+      box.innerHTML = '<div class="verdict">Replaying — the bot node is re-running the captured prompt. This makes a real LLM call.</div>';
+      try {
+        const r = await fetch(`/api/token-chase/runs/${encodeURIComponent(runId)}/replay`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fromFrame: seq }),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const { replay } = await r.json();
+        box.innerHTML = renderVerdict(replay);
+      } catch (e) {
+        box.innerHTML = `<div class="verdict v-divergent">replay failed: ${esc(e.message)}</div>`;
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '▶ Replay (no-edit determinism check)'; }
+      }
+    }
+
+    function renderVerdict(r) {
+      const v = r.verdict;
+      const label = { deterministic: 'DETERMINISTIC — reproduced baseline byte-for-byte',
+        equivalent: 'EQUIVALENT — within tolerance, gate trusts it',
+        divergent: 'DIVERGENT — drifted past tolerance; counterfactuals here are untrustworthy',
+        'non-replayable': 'NON-REPLAYABLE — excluded (live/unpinned read)',
+        'no-endpoint': 'NO BOT NODE — replay needs an accountable node, not the controller',
+        'open-frame': 'IN FLIGHT — no baseline to compare', 'replay-error': 'REPLAY ERROR' }[r.status] || r.status;
+      let html = `<div class="verdict"><span class="vbadge v-${esc(r.status)}">${esc(label)}</span>`;
+      if (v) html += `<div class="kv" style="margin-top:8px">
+        <span>byte-exact <b>${v.byteExact}</b></span><span>similarity <b>${v.similarity}</b></span>
+        <span>tokens <b>${v.baselineTokens}→${v.replayTokens}</b></span><span>Δ <b>${v.tokenDeltaPct}%</b></span>
+        ${r.replay ? `<span>replay model <b>${esc(r.replay.model || '—')}</b></span><span>cost <b>$${(r.replay.costUsd ?? 0).toFixed(6)}</b></span><span>latency <b>${r.replay.latencyMs ?? '—'}ms</b></span>` : ''}
+      </div>`;
+      if (r.reason) html += `<div class="m" style="margin-top:6px">${esc(r.reason)}</div>`;
+      if (r.replay) html += field('Replayed response', r.replay.preview);
+      return html + '</div>';
+    }
+
+    function kv(f) {
+      const fired = f.harnessFired || '—', req = f.providerRequested || '—';
+      const mismatch = f.harnessFired && f.providerRequested && f.harnessFired !== f.providerRequested ? ' ⚠ fallback' : '';
+      return `<div class="field"><div class="kv">
+        <span>requested <b>${esc(req)}</b></span><span>fired <b>${esc(fired)}${mismatch}</b></span>
+        <span>model <b>${esc(f.model || '—')}</b></span><span>tokens <b>${f.tokensIn ?? '?'}→${f.tokensOut ?? '?'}</b></span>
+        <span>latency <b>${f.latencyMs != null ? f.latencyMs + 'ms' : '—'}</b></span>
+        <span>replayable <b>${f.replayable}</b></span><span>agent <b>${esc(f.agentId || '—')}</b></span>
+      </div></div>`;
+    }
+    const field = (k, v, open = false) => `<details class="field" ${open ? 'open' : ''}><summary><span class="k">${esc(k)}</span></summary><pre>${esc(v == null ? '(none)' : String(v))}</pre></details>`;
+    const pretty = (o) => { try { return JSON.stringify(o, null, 2); } catch { return String(o); } };
+    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const fmtDate = (iso) => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+
+    loadRuns();
+  </script>
+</body>
+</html>

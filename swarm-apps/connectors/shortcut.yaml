@@ -1,0 +1,35 @@
+provider: shortcut
+displayName: Shortcut
+version: 1.0.0
+baseUrl: https://api.app.shortcut.com/api/v3
+auth:
+  type: apiKeyHeader
+  header: Shortcut-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: epics
+    tool: shortcut-epics
+    method: GET
+    path: /epics
+  - name: members
+    tool: shortcut-members
+    method: GET
+    path: /members
+  - name: projects
+    tool: shortcut-projects
+    method: GET
+    path: /projects
+  - name: workflows
+    tool: shortcut-workflows
+    method: GET
+    path: /workflows
+metadata:
+  icon: shortcut
+  iconTitle: Shortcut
+  iconSource: simple-icons
+  iconVerified: true

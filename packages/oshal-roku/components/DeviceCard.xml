@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DeviceCard — one device tile in the HomeScene MarkupGrid. Reads its data from the bound
+     `itemContent` ContentNode (name/state custom fields) and shows a focus ring + on/off pill.
+     ADR-047 Roku surface. -->
+<component name="DeviceCard" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" onChange="onContent" />
+    <field id="width" type="float" value="300" />
+    <field id="height" type="float" value="120" />
+    <field id="focusPercent" type="float" onChange="onFocus" />
+  </interface>
+  <children>
+    <Rectangle id="bg" color="0x15151fff" width="300" height="120">
+      <Rectangle id="ring" color="0x7c6cffff" width="300" height="120" opacity="0" />
+      <Rectangle id="inner" color="0x15151fff" width="294" height="114" translation="[3,3]" />
+      <Label id="name" color="0xe6e6f0ff" translation="[18,20]" width="264" maxLines="2"
+             font="font:MediumBoldSystemFont" />
+      <Label id="state" translation="[18,82]" font="font:SmallSystemFont" />
+    </Rectangle>
+  </children>
+  <script type="text/brightscript" uri="pkg:/components/DeviceCard.brs" />
+</component>

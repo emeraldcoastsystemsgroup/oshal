@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HttpTask — a one-shot HTTP request on a Task thread. Roku forbids roUrlTransfer on the
+     render thread, so every OSHAL API call goes through here. The owner sets request fields,
+     observes `done`, then reads `code` + `body`. ADR-047 Roku surface. -->
+<component name="HttpTask" extends="Task">
+  <interface>
+    <field id="method" type="string" value="GET" />
+    <field id="url" type="string" />
+    <field id="token" type="string" />          <!-- TV bearer; sent as X-OSHAL-TV-Token when set -->
+    <field id="body" type="string" />            <!-- JSON request body for POST/DELETE -->
+    <field id="code" type="int" value="0" />     <!-- HTTP status (or negative on transport error) -->
+    <field id="response" type="string" />        <!-- raw response body -->
+    <field id="done" type="boolean" value="false" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/components/HttpTask.brs" />
+</component>

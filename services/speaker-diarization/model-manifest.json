@@ -1,0 +1,41 @@
+{
+  "serviceModelId": "sherpa-onnx-1.13.1/pyannote-segmentation-3.0/3dspeaker-eres2net-en-voxceleb-16k",
+  "sampleRate": 16000,
+  "runtime": {
+    "name": "sherpa-onnx",
+    "version": "1.13.1",
+    "license": "Apache-2.0",
+    "source": "https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.1"
+  },
+  "models": [
+    {
+      "role": "speaker-segmentation",
+      "name": "sherpa-onnx-pyannote-segmentation-3-0",
+      "file": "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+      "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+      "upstream": "pyannote/segmentation-3.0",
+      "license": "MIT"
+    },
+    {
+      "role": "speaker-embedding",
+      "name": "3dspeaker_speech_eres2net_sv_en_voxceleb_16k",
+      "file": "3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx",
+      "sha256": "c59158379255ad66e161679cca6af8d52d51e389e3224ab7d7a7baae295c2db5",
+      "upstream": "modelscope/3D-Speaker",
+      "license": "Apache-2.0"
+    },
+    {
+      "role": "speech-recognition",
+      "name": "sherpa-onnx-moonshine-base-en-int8",
+      "file": "sherpa-onnx-moonshine-base-en-int8.tar.bz2",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-int8.tar.bz2",
+      "sha256": "21870cecaa2e44e4e2bf63e02d1072bed183ccd10284871353bd9d24dad14e5e",
+      "upstream": "UsefulSensors/moonshine",
+      "license": "MIT",
+      "note": "Optional. Absent -> /v1/transcribe returns 503 and diarization is unaffected. Variable-length input, unlike Whisper's fixed 30s window."
+    }
+  ],
+  "asrModelId": "sherpa-onnx-1.13.1/moonshine-base-en-int8"
+}

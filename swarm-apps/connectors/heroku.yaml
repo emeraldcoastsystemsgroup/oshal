@@ -1,0 +1,48 @@
+provider: heroku
+displayName: Heroku
+version: 1.0.0
+baseUrl: https://api.heroku.com
+auth:
+  type: oauth2
+headers:
+  Accept: application/vnd.heroku+json; version=3
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: link-header
+resources:
+  - name: account
+    tool: heroku-account
+    method: GET
+    path: /account
+  - name: apps
+    tool: heroku-apps
+    method: GET
+    path: /apps
+    paginate: true
+  - name: app
+    tool: heroku-app
+    method: GET
+    path: /apps/{appId}
+  - name: dynos
+    tool: heroku-dynos
+    method: GET
+    path: /apps/{appId}/dynos
+  - name: addons
+    tool: heroku-addons
+    method: GET
+    path: /apps/{appId}/addons
+  - name: releases
+    tool: heroku-releases
+    method: GET
+    path: /apps/{appId}/releases
+    paginate: true
+metadata:
+  icon: heroku
+  iconTitle: Heroku
+  iconSource: simple-icons
+  iconVerified: true

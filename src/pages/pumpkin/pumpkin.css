@@ -1,0 +1,69 @@
+/*
+ * CHANGE LOG
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial: full-bleed black
+ *   projector styling for the jack-o'-lantern. Canvas fills the viewport; the operator chrome is a
+ *   translucent auto-hiding bar (hidden with the cursor when the projector is idle).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Mobile projector controls:
+ *   44px touch targets, tighter small-screen chrome, and full-width talk/status rows.
+ */
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%; width: 100%;
+  background: #000; overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #ffdca8;
+  -webkit-user-select: none; user-select: none;
+}
+
+#stage { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh; }
+
+/* Operator chrome */
+#chrome {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 10;
+  padding: 10px 14px 4px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.62), rgba(0,0,0,0));
+  transition: opacity .5s ease;
+}
+.bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.brand { font-size: 18px; letter-spacing: .3px; }
+.brand b { color: #ffb020; font-weight: 600; }
+.sep { width: 1px; height: 20px; background: rgba(255,180,60,0.25); margin: 0 4px; }
+.grow { flex: 1 1 auto; }
+
+button.seg, button.pill {
+  appearance: none; border: 1px solid rgba(255,170,60,0.35);
+  background: rgba(30,14,0,0.6); color: #ffdca8;
+  min-height: 44px; padding: 9px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  touch-action: manipulation;
+  transition: background .15s, border-color .15s, transform .05s;
+}
+button.seg:hover, button.pill:hover { background: rgba(60,26,0,0.75); }
+button.seg.on { background: #ff8c1a; border-color: #ffb020; color: #1a0a00; font-weight: 600; }
+button.pill.talk { background: rgba(80,20,0,0.7); }
+#btnFull { min-width: 44px; }
+button.pill.talk:active { transform: scale(0.97); background: #ff5a1a; color: #200; }
+
+.room { font-size: 12px; color: rgba(255,220,170,0.65); }
+.room b { color: #ffb020; }
+.status { font-size: 13px; color: #ffcf7a; min-width: 140px; text-align: right; }
+.hint { margin-top: 6px; font-size: 11px; color: rgba(255,220,170,0.45); }
+
+/* Listening pulse cue */
+body.listening #chrome { box-shadow: inset 0 3px 0 0 #35d07a; }
+
+/* Idle: hide chrome + cursor (projector at rest). */
+body.idle { cursor: none; }
+body.idle #chrome { opacity: 0; pointer-events: none; }
+body.chrome-hidden #chrome { display: none; }
+
+@media (max-width: 720px) {
+  #chrome { padding: 8px 8px 4px; }
+  .bar { gap: 6px; }
+  .sep, .grow { display: none; }
+  button.pill.talk { flex: 1 1 150px; }
+  .room { flex: 1 1 auto; }
+  .status { flex: 1 1 100%; text-align: left; }
+  .hint { display: none; }
+  .status { min-width: 0; }
+}

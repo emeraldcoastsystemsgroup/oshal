@@ -1,0 +1,42 @@
+provider: gmail
+credProvider: google
+displayName: Gmail
+version: 1.0.0
+baseUrl: https://gmail.googleapis.com/gmail/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: pageToken
+  nextField: nextPageToken
+  itemsField: messages
+resources:
+  - name: list-messages
+    tool: gmail-list-messages
+    method: GET
+    path: /users/me/messages
+    query:
+      q: '{query}'
+      maxResults: '100'
+    paginate: true
+  - name: get-message
+    tool: gmail-get-message
+    method: GET
+    path: /users/me/messages/{messageId}
+  - name: list-labels
+    tool: gmail-list-labels
+    method: GET
+    path: /users/me/labels
+metadata:
+  description: "List and read Gmail messages and labels for the connected mailbox."
+  category: "Email"
+  icon: gmail
+  iconTitle: Gmail
+  iconSource: simple-icons
+  iconVerified: true

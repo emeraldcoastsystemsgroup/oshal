@@ -1,0 +1,31 @@
+provider: etsy
+displayName: Etsy
+version: 1.0.0
+baseUrl: https://openapi.etsy.com/v3/application
+auth:
+  type: apiKeyHeader
+  header: x-api-key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: shop
+    tool: etsy-shop
+    method: GET
+    path: /shops/{shop_id}
+  - name: active-listings
+    tool: etsy-active-listings
+    method: GET
+    path: /listings/active
+  - name: shop-listings
+    tool: etsy-shop-listings
+    method: GET
+    path: /shops/{shop_id}/listings
+metadata:
+  icon: etsy
+  iconTitle: Etsy
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,44 @@
+provider: monzo
+displayName: Monzo
+version: 1.0.0
+baseUrl: https://api.monzo.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: whoami
+    tool: monzo-whoami
+    method: GET
+    path: /ping/whoami
+  - name: accounts
+    tool: monzo-accounts
+    method: GET
+    path: /accounts
+  - name: balance
+    tool: monzo-balance
+    method: GET
+    path: /balance
+    query:
+      account_id: '{accountId}'
+  - name: transactions
+    tool: monzo-transactions
+    method: GET
+    path: /transactions
+    query:
+      account_id: '{accountId}'
+  - name: pots
+    tool: monzo-pots
+    method: GET
+    path: /pots
+    query:
+      current_account_id: '{accountId}'
+metadata:
+  icon: monzo
+  iconTitle: Monzo
+  iconSource: simple-icons
+  iconVerified: true

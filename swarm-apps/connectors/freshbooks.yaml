@@ -1,0 +1,30 @@
+# FreshBooks — accounting profile, invoices, and clients via Bearer token.
+provider: freshbooks
+displayName: FreshBooks
+version: 1.0.0
+baseUrl: https://api.freshbooks.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: freshbooks-me
+    method: GET
+    path: /auth/api/v1/users/me
+  - name: invoices
+    tool: freshbooks-invoices
+    method: GET
+    path: /accounting/account/{accountId}/invoices/invoices
+  - name: clients
+    tool: freshbooks-clients
+    method: GET
+    path: /accounting/account/{accountId}/users/clients/clients
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/freshbooks.com.ico

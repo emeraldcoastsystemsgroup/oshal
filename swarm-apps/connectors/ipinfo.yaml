@@ -1,0 +1,26 @@
+provider: ipinfo
+displayName: IPinfo
+version: 1.0.0
+baseUrl: https://ipinfo.io
+auth:
+  type: apiKeyQuery
+  param: token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: lookup-json
+    tool: ipinfo-lookup-json
+    method: GET
+    path: /{ip}/json
+  - name: lookup
+    tool: ipinfo-lookup
+    method: GET
+    path: /{ip}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/ipinfo.io.ico

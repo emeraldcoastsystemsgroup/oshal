@@ -1,0 +1,30 @@
+provider: personio
+displayName: Personio
+version: 1.0.0
+baseUrl: https://api.personio.de/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: employees
+    tool: personio-employees
+    method: GET
+    path: /company/employees
+    query:
+      limit: '100'
+  - name: attendances
+    tool: personio-attendances
+    method: GET
+    path: /company/attendances
+    query:
+      limit: '100'
+metadata:
+  iconVerified: true
+  iconSource: simple-icons
+  icon: personio
+  iconTitle: Personio

@@ -1,0 +1,52 @@
+provider: quickbooks
+displayName: QuickBooks Online
+version: 1.0.0
+baseUrl: https://quickbooks.api.intuit.com/v3/company/${env:QUICKBOOKS_REALM_ID:-realmid}
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: quickbooks-customers
+    method: GET
+    path: /query
+    query:
+      query: select * from Customer
+  - name: customer
+    tool: quickbooks-customer
+    method: GET
+    path: /customer/{customerId}
+  - name: invoices
+    tool: quickbooks-invoices
+    method: GET
+    path: /query
+    query:
+      query: select * from Invoice
+  - name: invoice
+    tool: quickbooks-invoice
+    method: GET
+    path: /invoice/{invoiceId}
+  - name: payments
+    tool: quickbooks-payments
+    method: GET
+    path: /query
+    query:
+      query: select * from Payment
+  - name: items
+    tool: quickbooks-items
+    method: GET
+    path: /query
+    query:
+      query: select * from Item
+metadata:
+  description: "Query QuickBooks Online company data - customers, invoices, payments, and accounts - via the query API."
+  category: "Finance"
+  icon: quickbooks
+  iconTitle: QuickBooks
+  iconSource: simple-icons
+  iconVerified: true

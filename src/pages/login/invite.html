@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set your password</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
+<style>
+  :root {
+    --surface: #ffffff; --text: #14161c; --dim: #5b6472; --line: #d7dbe3;
+    --panel: #f5f7fb; --accent: #2f5fb0; --bad: #b0362c; --workspace: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1b1e26; --text: #e8eaef; --dim: #9aa2b1; --line: #363b47;
+      --panel: #232733; --accent: #6f9ce0; --bad: #e07a70; --workspace: #14161c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--workspace); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .card {
+    width: min(400px, calc(100vw - 32px)); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 12px; padding: 32px 30px 26px;
+  }
+  .brand { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
+  .sub b { color: var(--text); }
+  label { display: block; font-size: 12.5px; font-weight: 600; margin: 14px 0 4px; }
+  input {
+    width: 100%; padding: 9px 11px; font-size: 14px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    width: 100%; margin-top: 20px; padding: 10px; font-size: 14.5px; font-weight: 600;
+    color: #fff; background: var(--accent); border: none; border-radius: 7px; cursor: pointer;
+  }
+  button:disabled { opacity: .6; cursor: default; }
+  .error { color: var(--bad); font-size: 13px; margin: 12px 0 0; min-height: 1.4em; }
+  .hidden { display: none; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand" id="brand">oshal</div>
+    <h1 id="title">Set your password</h1>
+    <p class="sub" id="subtitle">Checking your invitation&hellip;</p>
+
+    <form id="form" class="hidden" autocomplete="on">
+      <label for="password">Choose a password</label>
+      <input id="password" type="password" required autocomplete="new-password" minlength="10" autofocus>
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" type="password" required autocomplete="new-password">
+      <button id="submit" type="submit">Set password and sign in</button>
+      <p class="error" id="error"></p>
+    </form>
+    <p id="dead" class="hidden">This invitation link is invalid, expired, or already used.
+      Ask your administrator to send a new one. <br><br><a href="/login">Go to sign-in</a></p>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var token = new URLSearchParams(location.search).get('token') || '';
+
+  fetch('/api/branding').then(function (r) { return r.json(); }).then(function (b) {
+    if (b && b.displayName) { $('brand').textContent = b.displayName; document.title = 'Set your password - ' + b.displayName; }
+  }).catch(function () {});
+
+  function showDead() {
+    $('subtitle').classList.add('hidden');
+    $('form').classList.add('hidden');
+    $('dead').classList.remove('hidden');
+  }
+
+  if (!token) { showDead(); }
+  else {
+    fetch('/api/local-auth/invite-info?token=' + encodeURIComponent(token))
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('gone')); })
+      .then(function (info) {
+        var sub = $('subtitle');
+        sub.textContent = 'You are signing up as ';
+        var b = document.createElement('b');
+        b.textContent = info.email;
+        sub.appendChild(b);
+        sub.appendChild(document.createTextNode('.'));
+        $('form').classList.remove('hidden');
+      })
+      .catch(showDead);
+  }
+
+  $('form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    $('error').textContent = '';
+    var password = $('password').value;
+    if (password.length < 10) { $('error').textContent = 'Passwords need at least 10 characters.'; return; }
+    if (password !== $('confirm').value) { $('error').textContent = 'The passwords do not match.'; return; }
+    $('submit').disabled = true;
+    fetch('/api/local-auth/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token, password: password }),
+    }).then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
+      .then(function (res) {
+        if (res.status < 300 && res.data && res.data.ok) { location.assign('/'); return; }
+        if (res.status === 410) { showDead(); return; }
+        $('submit').disabled = false;
+        $('error').textContent = (res.data && res.data.error) || 'That did not work. Try again.';
+      })
+      .catch(function () {
+        $('submit').disabled = false;
+        $('error').textContent = 'The server did not answer. Try again.';
+      });
+  });
+})();
+</script>
+</body>
+</html>

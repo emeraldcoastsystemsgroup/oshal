@@ -1,0 +1,42 @@
+provider: hunter
+displayName: Hunter
+version: 1.0.0
+baseUrl: https://api.hunter.io/v2
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: domain-search
+    tool: hunter-domain-search
+    method: GET
+    path: /domain-search
+    query:
+      domain: '{domain}'
+  - name: email-finder
+    tool: hunter-email-finder
+    method: GET
+    path: /email-finder
+    query:
+      domain: '{domain}'
+      first_name: '{first_name}'
+      last_name: '{last_name}'
+  - name: email-verifier
+    tool: hunter-email-verifier
+    method: GET
+    path: /email-verifier
+    query:
+      email: '{email}'
+  - name: account
+    tool: hunter-account
+    method: GET
+    path: /account
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/hunter.io.ico

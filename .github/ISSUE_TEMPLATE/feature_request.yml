@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose new functionality or a meaningful change
+title: "[feat] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the proposal. Big-picture changes (new harnesses,
+        new dispatch paths, new persona families) work better as a
+        short design doc PR against `docs/adr/` first — see
+        [ADR-033](https://github.com/OWNER/REPO/blob/main/docs/adr/033-multi-harness-execution-framework.md)
+        for the format.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What's the operator / developer pain that motivates this?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you'd like to see. Be concrete — interfaces, file paths, env vars.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you think about? Why not those?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - new harness (extend HarnessType + adapter + factory)
+        - new bot / persona
+        - new ticket-type workflow (swarm-apps manifest)
+        - cockpit UI
+        - RAG corpus / ranking
+        - ops / deployment
+        - docs / DX
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Breaking change?
+      options:
+        - "No"
+        - "Yes — needs migration"
+        - "Yes — needs ADR amendment"
+        - "Unsure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: success
+    attributes:
+      label: How will we know this is done?
+      description: Done-when criteria. Same shape as the entries in BACKLOG.md.
+    validations:
+      required: true

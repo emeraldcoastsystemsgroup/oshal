@@ -1,0 +1,31 @@
+provider: directus
+displayName: Directus
+version: 1.0.0
+baseUrl: ${env:DIRECTUS_BASE_URL:-https://your-directus.example.com}
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: collections
+    tool: directus-collections
+    method: GET
+    path: /collections
+  - name: items
+    tool: directus-items
+    method: GET
+    path: /items/{collection}
+  - name: users
+    tool: directus-users
+    method: GET
+    path: /users
+metadata:
+  icon: directus
+  iconTitle: Directus
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,51 @@
+provider: rollbar
+displayName: Rollbar
+version: 1.0.0
+baseUrl: https://api.rollbar.com/api/1
+auth:
+  type: apiKeyHeader
+  header: X-Rollbar-Access-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: items
+    tool: rollbar-items
+    method: GET
+    path: /items
+    query:
+      - status
+      - level
+      - environment
+      - page
+  - name: item
+    tool: rollbar-item
+    method: GET
+    path: /item/{id}
+  - name: item-by-counter
+    tool: rollbar-item-by-counter
+    method: GET
+    path: /item_by_counter/{counter}
+  - name: occurrences
+    tool: rollbar-occurrences
+    method: GET
+    path: /instances
+    query:
+      - page
+  - name: deploys
+    tool: rollbar-deploys
+    method: GET
+    path: /deploys
+    query:
+      - page
+  - name: project
+    tool: rollbar-project
+    method: GET
+    path: /project
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/rollbar.com.ico

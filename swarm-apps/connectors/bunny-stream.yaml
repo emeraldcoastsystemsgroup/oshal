@@ -1,0 +1,36 @@
+provider: bunny-stream
+displayName: Bunny Stream
+version: 1.0.0
+baseUrl: https://video.bunnycdn.com/library/{libraryId}
+auth:
+  type: apiKeyHeader
+  header: AccessKey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: videos
+    tool: bunny-stream-videos
+    method: GET
+    path: /videos
+    query:
+      page: '{page}'
+      itemsPerPage: '{itemsPerPage}'
+  - name: video
+    tool: bunny-stream-video
+    method: GET
+    path: /videos/{videoId}
+  - name: collections
+    tool: bunny-stream-collections
+    method: GET
+    path: /collections
+    query:
+      page: '{page}'
+      itemsPerPage: '{itemsPerPage}'
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/video.bunnycdn.com.ico

@@ -1,0 +1,30 @@
+provider: upstash
+displayName: Upstash
+version: 1.0.0
+baseUrl: https://api.upstash.com/v2
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: redis-databases
+    tool: upstash-redis-databases
+    method: GET
+    path: /redis/databases
+  - name: redis-database
+    tool: upstash-redis-database
+    method: GET
+    path: /redis/database/{id}
+  - name: kafka-clusters
+    tool: upstash-kafka-clusters
+    method: GET
+    path: /kafka/clusters
+metadata:
+  icon: upstash
+  iconTitle: Upstash
+  iconSource: simple-icons
+  iconVerified: true

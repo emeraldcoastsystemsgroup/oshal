@@ -1,0 +1,25 @@
+provider: teamwork
+displayName: Teamwork
+version: 1.0.0
+baseUrl: ${env:TEAMWORK_BASE_URL:-https://yourco.teamwork.com}
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: projects
+    tool: teamwork-projects
+    method: GET
+    path: /projects.json
+  - name: tasks
+    tool: teamwork-tasks
+    method: GET
+    path: /tasks.json
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/teamwork.com.ico

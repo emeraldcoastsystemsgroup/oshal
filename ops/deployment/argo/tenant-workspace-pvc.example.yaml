@@ -1,0 +1,25 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-tenant shared workspace PVC — one per tenant namespace (ADR-078).
+#
+# Why this exists (double-check finding 2026-07-08): the incident-rca DAG's pods
+# each get an ephemeral filesystem. Without a shared volume, (a) the worker's
+# deliverables (RCA-REPORT.md etc.) are destroyed by podGC + ttlStrategy — a
+# mode-A/B "customer_action" disposition would point the operator at files that
+# no longer exist anywhere; and (b) an opt-in reviewer runs in a DIFFERENT pod
+# and would review an empty workspace.
+#
+# ACCESS MODE: ReadWriteOnce works on a single-node cluster (docker-desktop —
+# all pods land on the one node). A multi-node cluster needs RWX-capable
+# storage (NFS/CephFS/EFS) for worker + reviewer pods to share it.
+#
+#   kubectl apply -n tenant-a -f ops/deployment/argo/tenant-workspace-pvc.example.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oshal-workspace-shared
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi

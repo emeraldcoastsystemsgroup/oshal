@@ -1,0 +1,48 @@
+provider: datadog
+displayName: Datadog
+version: 1.0.0
+baseUrl: ${env:DATADOG_BASE_URL:-https://api.datadoghq.com}
+auth:
+  type: apiKeyHeader
+  header: DD-API-KEY
+headers:
+  DD-APPLICATION-KEY: ${env:DATADOG_APP_KEY}
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: monitors
+    tool: datadog-monitors
+    method: GET
+    path: /api/v1/monitor
+  - name: monitor
+    tool: datadog-monitor
+    method: GET
+    path: /api/v1/monitor/{monitorId}
+  - name: incidents
+    tool: datadog-incidents
+    method: GET
+    path: /api/v2/incidents
+  - name: events
+    tool: datadog-events
+    method: GET
+    path: /api/v1/events
+    query:
+      start: '{start}'
+      end: '{end}'
+  - name: metric-search
+    tool: datadog-metric-search
+    method: GET
+    path: /api/v1/search
+    query:
+      q: '{q}'
+metadata:
+  description: "Read Datadog monitors, incidents, and events, and search monitors and hosts."
+  category: "Operations"
+  icon: datadog
+  iconTitle: Datadog
+  iconSource: simple-icons
+  iconVerified: true

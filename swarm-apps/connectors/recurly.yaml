@@ -1,0 +1,41 @@
+provider: recurly
+displayName: Recurly
+version: 1.0.0
+baseUrl: https://v3.recurly.com
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: accounts
+    tool: recurly-accounts
+    method: GET
+    path: /accounts
+  - name: account
+    tool: recurly-account
+    method: GET
+    path: /accounts/{account_id}
+  - name: subscriptions
+    tool: recurly-subscriptions
+    method: GET
+    path: /subscriptions
+  - name: invoices
+    tool: recurly-invoices
+    method: GET
+    path: /invoices
+  - name: transactions
+    tool: recurly-transactions
+    method: GET
+    path: /transactions
+  - name: plans
+    tool: recurly-plans
+    method: GET
+    path: /plans
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/v3.recurly.com.ico

@@ -1,0 +1,48 @@
+provider: google-calendar
+credProvider: google
+displayName: Google Calendar
+version: 1.0.0
+baseUrl: https://www.googleapis.com/calendar/v3
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: pageToken
+  nextField: nextPageToken
+  itemsField: items
+resources:
+  - name: list-events
+    tool: gcal-list-events
+    method: GET
+    path: /calendars/{calendarId}/events
+    query:
+      timeMin: '{timeMin}'
+      maxResults: '100'
+      singleEvents: 'true'
+      orderBy: startTime
+    paginate: true
+  - name: list-calendars
+    tool: gcal-list-calendars
+    method: GET
+    path: /users/me/calendarList
+    paginate: true
+  - name: create-event
+    tool: gcal-create-event
+    method: POST
+    path: /calendars/{calendarId}/events
+    body: '{event}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List Google Calendar calendars and their events, with a resource to create events."
+  category: "Scheduling"
+  icon: googlecalendar
+  iconTitle: Google Calendar
+  iconSource: simple-icons
+  iconVerified: true

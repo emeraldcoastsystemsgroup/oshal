@@ -1,0 +1,99 @@
+# Google Vids / Veo — generate-a-clip recipe.
+#
+# Targets are deliberately TEXT/ROLE-first so the recipe survives cosmetic UI
+# churn. When a step's target can't be found, the engine's vision fallback (P2)
+# screenshots the page and asks Codex where to click, then records the resolved
+# selector back here so the recipe self-heals over time.
+#
+# Variables (interpolated as {{name}}): prompt, orientation, insertMode,
+# ingredientPath. The engine fills them per job.
+
+name: google-vids
+displayName: Google Vids (Veo 3.1)
+urlHint: docs.google.com/videos
+description: >-
+  Generate an AI video clip in the Google Vids editor: open the AI-clip panel,
+  describe the shot, set orientation, optionally add an ingredient image/video,
+  Generate, wait for the render, then Insert or Extend onto the timeline.
+
+# Sensible defaults; a job may override any of these.
+defaults:
+  orientation: Landscape
+  insertMode: Insert      # Insert | Extend | none
+  generateTimeoutMs: 240000
+
+steps:
+  - id: enter-editor
+    intent: If on the Vids home page, start a blank video so the Veo panel exists
+    action: ensure
+    presentWhen: { text: "AI video clip" }   # already inside an editor → skip
+    target: { text: "Blank video" }
+    altTargets:
+      - { text: "Start a new video" }
+      - { role: button, name: "New" }
+      - { role: button, name: "Start a new video" }
+    optional: true
+
+  - id: open-ai-clip
+    intent: Open the "AI video clip" generation panel (Veo)
+    action: ensure                 # click only if not already present
+    presentWhen: { text: "AI video clip" }
+    target: { role: button, name: "Veo" }
+    optional: true
+
+  - id: from-scratch
+    intent: Make sure the panel is in "Create from scratch" mode
+    action: ensure
+    presentWhen: { text: "Create from scratch" }
+    target: { text: "Create from scratch" }
+    optional: true
+
+  - id: type-prompt
+    intent: Type the video description into the prompt box
+    action: type
+    target: { placeholder: "Describe" }
+    altTargets:
+      - { role: textbox }
+      - { selector: "textarea" }
+    value: "{{prompt}}"
+
+  - id: set-orientation
+    intent: Set the clip orientation chip (Landscape / Portrait / Square)
+    action: click
+    target: { text: "{{orientation}}" }
+    optional: true
+
+  - id: add-ingredient
+    intent: Attach the operator's input image/video as an Ingredient
+    action: upload
+    target: { text: "Ingredients" }
+    when: hasIngredient            # skipped unless ingredientPath is set
+    file: "{{ingredientPath}}"
+    optional: true
+
+  - id: generate
+    intent: Start generation
+    action: click
+    target: { role: button, name: "Generate" }
+    altTargets:
+      - { text: "Generate" }
+
+  - id: wait-render
+    intent: Wait for the generated clip thumbnail (duration badge) to appear
+    action: waitFor
+    # A finished clip card shows a 0:NN duration badge and Insert/Extend controls.
+    domPredicate: |
+      () => {
+        const t = document.body.innerText || '';
+        const hasDur = /\b0:0?\d\b/.test(t);
+        const hasInsert = /\bInsert\b/.test(t) || /\bExtend\b/.test(t);
+        return hasDur && hasInsert;
+      }
+    timeoutKey: generateTimeoutMs
+
+  - id: place-clip
+    intent: Place the rendered clip onto the timeline (Insert or Extend)
+    action: click
+    target: { text: "{{insertMode}}" }
+    when: shouldPlace              # skipped when insertMode == none
+    optional: true

@@ -1,0 +1,53 @@
+provider: notion
+displayName: Notion
+version: 1.0.0
+baseUrl: https://api.notion.com/v1
+auth:
+  type: oauth2
+headers:
+  Notion-Version: '2022-06-28'
+rateLimit:
+  burst: 3
+  perSecond: 3
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: start_cursor
+  nextField: next_cursor
+  itemsField: results
+resources:
+  - name: search
+    tool: notion-search
+    method: POST
+    path: /search
+    body:
+      query: '{query}'
+      page_size: 50
+    paginate: true
+  - name: query-database
+    tool: notion-query-database
+    method: POST
+    path: /databases/{databaseId}/query
+    body:
+      page_size: 50
+    paginate: true
+  - name: get-page
+    tool: notion-get-page
+    method: GET
+    path: /pages/{pageId}
+  - name: create-page
+    tool: notion-create-page
+    method: POST
+    path: /pages
+    body: '{page}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "Search a Notion workspace, query databases, and read pages, with a resource to create pages."
+  category: "Knowledge"
+  icon: notion
+  iconTitle: Notion
+  iconSource: simple-icons
+  iconVerified: true

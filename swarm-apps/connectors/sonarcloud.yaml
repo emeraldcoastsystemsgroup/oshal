@@ -1,0 +1,47 @@
+provider: sonarcloud
+displayName: SonarCloud
+version: 1.0.0
+baseUrl: https://sonarcloud.io/api
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: projects
+    tool: sonarcloud-projects
+    method: GET
+    path: /projects/search
+    query:
+      organization: '{organization}'
+  - name: issues
+    tool: sonarcloud-issues
+    method: GET
+    path: /issues/search
+    query:
+      componentKeys: '{componentKeys}'
+  - name: measures
+    tool: sonarcloud-measures
+    method: GET
+    path: /measures/component
+    query:
+      component: '{component}'
+      metricKeys: '{metricKeys}'
+  - name: quality-gate-status
+    tool: sonarcloud-quality-gate-status
+    method: GET
+    path: /qualitygates/project_status
+    query:
+      projectKey: '{projectKey}'
+  - name: metrics
+    tool: sonarcloud-metrics
+    method: GET
+    path: /metrics/search
+metadata:
+  icon: sonarcloud
+  iconTitle: SonarCloud
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Test Lab</title>
+<style>
+  :root {
+    --bg: var(--bg-primary, #090b13);
+    --panel: var(--bg-card, rgba(18, 22, 34, 0.74));
+    --panel2: var(--bg-tertiary, rgba(255, 255, 255, 0.06));
+    --line: var(--border-color, rgba(255, 255, 255, 0.13));
+    --text: var(--text-primary, #eef2ff);
+    --muted: var(--text-secondary, rgba(226, 232, 240, 0.66));
+    --accent: var(--accent-primary, #8b7cff);
+    --success: var(--status-success, #34d399);
+    --warning: var(--status-warning, #fbbf24);
+    --danger: var(--status-error, #f87171);
+    --gap: #a78bfa;
+    --radius: 8px;
+    --font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    color: var(--text);
+    font: 13px/1.45 var(--font);
+    background:
+      linear-gradient(120deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 28%),
+      linear-gradient(240deg, color-mix(in srgb, var(--success) 8%, transparent), transparent 32%),
+      var(--bg);
+  }
+
+  button, a.lab-link {
+    min-height: 34px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel2);
+    color: var(--text);
+    padding: 0 12px;
+    font: inherit;
+    font-weight: 750;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  button.primary { background: var(--accent); border-color: color-mix(in srgb, var(--accent) 75%, white 10%); color: #fff; }
+  button:disabled { opacity: 0.55; cursor: default; }
+
+  .lab-shell { min-height: 100vh; padding: 18px 20px 42px; display: flex; flex-direction: column; gap: 14px; }
+  .lab-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: center;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  .eyebrow { color: var(--success); font-size: 10px; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
+  h1 { margin: 3px 0 0; font-size: 24px; line-height: 1.1; }
+  .sub { max-width: 880px; margin-top: 7px; color: var(--muted); }
+  .hero-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+  .summary-grid { display: grid; grid-template-columns: repeat(6, minmax(112px, 1fr)); gap: 10px; }
+  .metric {
+    min-height: 76px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  .metric b { display: block; font-size: 23px; line-height: 1; }
+  .metric span { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.05em; }
+  .metric.pass b { color: var(--success); }
+  .metric.degraded b { color: var(--warning); }
+  .metric.gap b { color: var(--gap); }
+  .metric.fail b { color: var(--danger); }
+
+  .lab-status {
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 13px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    color: var(--muted);
+  }
+  .lab-status strong { color: var(--text); }
+
+  .group { margin-top: 4px; }
+  .group-title { margin: 18px 0 8px; color: var(--muted); font-size: 11px; font-weight: 850; text-transform: uppercase; letter-spacing: 0.08em; }
+  .scenario-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .scenario-card {
+    min-height: 238px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .scenario-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 13px 14px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .scenario-title { font-size: 14px; font-weight: 820; }
+  .scenario-desc { margin-top: 4px; color: var(--muted); font-size: 12px; }
+  .scenario-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 78px;
+    min-height: 24px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 9px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 850;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge.pass { color: var(--success); border-color: color-mix(in srgb, var(--success) 70%, transparent); }
+  .badge.degraded { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 70%, transparent); }
+  .badge.gap { color: var(--gap); border-color: color-mix(in srgb, var(--gap) 70%, transparent); }
+  .badge.fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 70%, transparent); }
+  .badge.run { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
+
+  .steps { display: flex; flex-direction: column; padding: 10px 14px 12px; gap: 8px; }
+  .step {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 9px;
+    align-items: start;
+    padding: 8px 0;
+    border-bottom: 1px dashed color-mix(in srgb, var(--line) 65%, transparent);
+  }
+  .step:last-child { border-bottom: 0; }
+  .step-state { width: fit-content; min-width: 62px; border-radius: 999px; border: 1px solid var(--line); padding: 2px 8px; color: var(--muted); font-size: 10px; font-weight: 800; text-align: center; }
+  .step-state.pass { color: var(--success); border-color: color-mix(in srgb, var(--success) 70%, transparent); }
+  .step-state.degraded { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 70%, transparent); }
+  .step-state.gap { color: var(--gap); border-color: color-mix(in srgb, var(--gap) 70%, transparent); }
+  .step-state.fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 70%, transparent); }
+  .step-label { min-width: 0; color: var(--text); font-weight: 680; }
+  .step-detail { margin-top: 3px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+
+  /* Rich-visual thumbnail: the actual SVG the renderer / Jarvis produced, rendered on demand. */
+  .step-visual { margin-top: 8px; }
+  .step-visual a { display: inline-block; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #0b0e18; line-height: 0; }
+  .step-visual img { display: block; width: 100%; max-width: 420px; height: auto; }
+  .step-visual .cap { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+
+  .empty { padding: 24px; color: var(--muted); text-align: center; }
+
+  @media (max-width: 760px) {
+    .lab-shell { padding: 12px; }
+    .lab-hero { grid-template-columns: 1fr; }
+    .hero-actions { justify-content: stretch; }
+    .hero-actions button, .hero-actions a { flex: 1 1 auto; }
+    .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .scenario-grid { grid-template-columns: 1fr; }
+  }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="lab-shell">
+    <header class="lab-hero surface-card">
+      <div>
+        <div class="eyebrow">Operational Proof</div>
+        <h1>AI Test Lab</h1>
+        <div class="sub">Run black-box scenarios through live OSHAL endpoints — every tool, every app, and the rich visuals Jarvis delivers on demand. Results stay honest: pass, degraded, gap, or fail. No silent spinner states.</div>
+      </div>
+      <div class="hero-actions">
+        <button id="runAll" class="primary" type="button">Run all</button>
+        <button id="refreshCatalog" type="button">Refresh</button>
+        <a class="lab-link" href="/api/eval-wall/app">Eval Wall</a>
+      </div>
+    </header>
+
+    <section id="summary" class="summary-grid" aria-label="Test Lab summary"></section>
+    <section id="runStatus" class="lab-status surface-card"><strong>Loading catalog.</strong><span>Fetching live scenario list...</span></section>
+    <main id="main"><div class="empty">Loading scenarios...</div></main>
+  </div>
+
+<script>
+const API = '/api/test-lab';
+const GROUPS = [
+  ['visual', 'Rich visuals — rendered on demand'],
+  ['tool', 'Individual tools'],
+  ['jarvis', 'Jarvis routing + live visual delivery'],
+  ['coupled', 'Coupled multi-app workflows'],
+];
+let catalog = { scenarios: [], apps: [] };
+let scenarioStates = new Map();
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function setStatus(title, detail) {
+  $('runStatus').innerHTML = '<strong>' + esc(title) + '</strong><span>' + esc(detail || '') + '</span>';
+}
+
+async function fetchJson(path, options) {
+  const response = await fetch(path, { credentials: 'same-origin', ...(options || {}) });
+  let body = null;
+  try { body = await response.json(); } catch {}
+  if (!response.ok) {
+    const message = body && (body.error || body.message) ? (body.error || body.message) : 'HTTP ' + response.status;
+    throw new Error(message);
+  }
+  return body || {};
+}
+
+async function load() {
+  setStatus('Loading catalog.', 'Fetching live scenario list...');
+  try {
+    catalog = await fetchJson(API + '/catalog');
+    scenarioStates = new Map((catalog.scenarios || []).map((scenario) => [scenario.id, 'idle']));
+    render();
+    const appCount = (catalog.apps || []).length;
+    setStatus('Ready.', (catalog.scenarios || []).length + ' scenarios loaded' + (appCount ? ' across ' + appCount + ' live apps.' : '.'));
+  } catch (error) {
+    $('main').innerHTML = '<div class="empty">Test Lab unavailable: ' + esc(error.message) + '</div>';
+    setStatus('Unavailable.', error.message);
+    renderSummary();
+  }
+}
+
+function render() {
+  renderSummary();
+  const main = $('main');
+  const scenarios = catalog.scenarios || [];
+  if (!scenarios.length) {
+    main.innerHTML = '<div class="empty">No scenarios are registered.</div>';
+    return;
+  }
+  main.innerHTML = GROUPS.map(([group, label]) => {
+    const items = scenarios.filter((scenario) => scenario.group === group);
+    if (!items.length) return '';
+    return '<section class="group"><div class="group-title">' + esc(label) + '</div><div class="scenario-grid">'
+      + items.map(renderScenarioCard).join('')
+      + '</div></section>';
+  }).join('');
+  main.querySelectorAll('[data-run-id]').forEach((button) => {
+    button.addEventListener('click', () => runOne(button.getAttribute('data-run-id')));
+  });
+}
+
+function renderScenarioCard(scenario) {
+  const state = scenarioStates.get(scenario.id) || 'idle';
+  return '<article class="scenario-card surface-card" id="card-' + esc(scenario.id) + '">'
+    + '<div class="scenario-head">'
+    + '<div><div class="scenario-title">' + esc(scenario.title) + '</div><div class="scenario-desc">' + esc(scenario.description) + '</div></div>'
+    + '<div class="scenario-actions"><span class="badge ' + esc(state) + '" id="badge-' + esc(scenario.id) + '">' + esc(state) + '</span>'
+    + '<button type="button" data-run-id="' + esc(scenario.id) + '">Run</button></div>'
+    + '</div>'
+    + '<div class="steps" id="steps-' + esc(scenario.id) + '">'
+    + (scenario.steps || []).map((step) => renderStep(step, 'idle', step.app)).join('')
+    + '</div></article>';
+}
+
+function renderStep(step, state, detail) {
+  return '<div class="step">'
+    + '<span class="step-state ' + esc(state) + '">' + esc(state) + '</span>'
+    + '<div><div class="step-label">' + esc(step.label) + '</div><div class="step-detail">' + esc(detail || step.app || '') + '</div>'
+    + renderStepVisual(step.visual)
+    + '</div></div>';
+}
+
+// When a step produced a real image (deterministic render or a live Jarvis artifact), show it.
+// The <img> is same-origin so the session cookie rides along for owner-scoped Jarvis visuals.
+function renderStepVisual(visual) {
+  if (!visual || !visual.url) return '';
+  const alt = esc(visual.alt || 'rendered visual');
+  const cap = visual.kind ? esc(visual.kind) + ' · ' + alt : alt;
+  return '<div class="step-visual"><a href="' + esc(visual.url) + '" target="_blank" rel="noopener">'
+    + '<img src="' + esc(visual.url) + '" alt="' + alt + '" loading="lazy" /></a>'
+    + '<span class="cap">' + cap + '</span></div>';
+}
+
+function renderSummary() {
+  const total = (catalog.scenarios || []).length;
+  const counts = { idle: 0, run: 0, pass: 0, degraded: 0, gap: 0, fail: 0 };
+  for (const state of scenarioStates.values()) counts[state] = (counts[state] || 0) + 1;
+  const cells = [
+    ['Catalog', total, ''],
+    ['Passed', counts.pass || 0, 'pass'],
+    ['Degraded', counts.degraded || 0, 'degraded'],
+    ['Gaps', counts.gap || 0, 'gap'],
+    ['Failed', counts.fail || 0, 'fail'],
+    ['Running', counts.run || 0, ''],
+  ];
+  $('summary').innerHTML = cells.map(([label, value, cls]) =>
+    '<div class="metric ' + cls + ' surface-card"><b>' + Number(value).toLocaleString() + '</b><span>' + esc(label) + '</span></div>'
+  ).join('');
+}
+
+function setScenarioState(id, state) {
+  scenarioStates.set(id, state);
+  const badge = $('badge-' + id);
+  if (badge) {
+    badge.className = 'badge ' + state;
+    badge.textContent = state;
+  }
+  renderSummary();
+}
+
+function setCardRunning(id, running) {
+  const card = $('card-' + id);
+  if (!card) return;
+  card.querySelectorAll('button').forEach((button) => { button.disabled = running; });
+}
+
+function paintScenario(result) {
+  if (!result || !result.id) return;
+  setScenarioState(result.id, result.state || 'fail');
+  const steps = $('steps-' + result.id);
+  if (steps) {
+    steps.innerHTML = (result.steps || []).map((step) => renderStep(step, step.state || 'fail', step.detail || step.app)).join('');
+  }
+}
+
+function paintFailure(id, message) {
+  setScenarioState(id, 'fail');
+  const steps = $('steps-' + id);
+  if (steps) {
+    steps.innerHTML = renderStep({ label: 'Run failed', app: 'test-lab' }, 'fail', message);
+  }
+}
+
+async function runOne(id) {
+  if (!id) return;
+  setScenarioState(id, 'run');
+  setCardRunning(id, true);
+  setStatus('Running scenario.', id);
+  try {
+    const payload = await fetchJson(API + '/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scenarioId: id }),
+    });
+    const result = (payload.results || [])[0];
+    if (!result) throw new Error('No result payload returned.');
+    paintScenario(result);
+    setStatus('Scenario complete.', result.title + ' finished as ' + result.state + '.');
+  } catch (error) {
+    paintFailure(id, error.message);
+    setStatus('Scenario failed.', id + ': ' + error.message);
+  } finally {
+    setCardRunning(id, false);
+  }
+}
+
+async function runAll() {
+  const button = $('runAll');
+  button.disabled = true;
+  button.textContent = 'Running...';
+  (catalog.scenarios || []).forEach((scenario) => {
+    setScenarioState(scenario.id, 'run');
+    setCardRunning(scenario.id, true);
+  });
+  setStatus('Running all scenarios.', 'This may take a few minutes for Jarvis and coupled workflows.');
+  try {
+    const payload = await fetchJson(API + '/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scenarioId: 'all' }),
+    });
+    const results = payload.results || [];
+    if (!results.length) throw new Error('No result payload returned.');
+    results.forEach(paintScenario);
+    setStatus('All scenarios complete.', results.length + ' scenarios returned results.');
+  } catch (error) {
+    (catalog.scenarios || []).forEach((scenario) => {
+      if (scenarioStates.get(scenario.id) === 'run') paintFailure(scenario.id, error.message);
+    });
+    setStatus('Run all failed.', error.message);
+  } finally {
+    (catalog.scenarios || []).forEach((scenario) => setCardRunning(scenario.id, false));
+    button.disabled = false;
+    button.textContent = 'Run all';
+  }
+}
+
+$('runAll').addEventListener('click', runAll);
+$('refreshCatalog').addEventListener('click', load);
+load();
+</script>
+<script>
+(function(){
+  const map = {
+    '--bg': '--bg-primary',
+    '--panel': '--bg-secondary',
+    '--panel2': '--bg-tertiary',
+    '--line': '--border-color',
+    '--text': '--text-primary',
+    '--muted': '--text-secondary',
+    '--accent': '--accent-primary',
+    '--success': '--status-success',
+    '--warning': '--status-warning',
+    '--danger': '--status-error'
+  };
+  function syncTheme(){
+    try {
+      const parent = window.parent && window.parent !== window ? window.parent : null;
+      if (!parent) return;
+      const styles = parent.getComputedStyle(parent.document.documentElement);
+      Object.keys(map).forEach((local) => {
+        const value = styles.getPropertyValue(map[local]).trim();
+        if (value) document.documentElement.style.setProperty(local, value);
+      });
+    } catch {}
+  }
+  syncTheme();
+  document.addEventListener('DOMContentLoaded', syncTheme);
+  window.addEventListener('storage', (event) => { if (event.key === 'cockpit-theme') setTimeout(syncTheme, 30); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+provider: steam
+displayName: Steam
+version: 1.0.0
+baseUrl: https://api.steampowered.com
+auth:
+  type: apiKeyQuery
+  param: key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: player-summaries
+    tool: steam-player-summaries
+    method: GET
+    path: /ISteamUser/GetPlayerSummaries/v2
+    query:
+      steamids: '{q}'
+  - name: owned-games
+    tool: steam-owned-games
+    method: GET
+    path: /IPlayerService/GetOwnedGames/v1
+    query:
+      steamid: '{q}'
+  - name: friend-list
+    tool: steam-friend-list
+    method: GET
+    path: /ISteamUser/GetFriendList/v1
+    query:
+      steamid: '{q}'
+metadata:
+  icon: steam
+  iconTitle: Steam
+  iconSource: simple-icons
+  iconVerified: true

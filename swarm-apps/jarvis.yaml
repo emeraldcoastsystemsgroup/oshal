@@ -1,0 +1,81 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — jarvis ("OSHAL Assistant")
+#
+# The unified front door over every OSHAL app. One chat box; behind it the whole swarm.
+# Jarvis is a ROUTE-LAYER ORCHESTRATOR (jarvis-routes.ts), not a domain bot: it CLASSIFIES the
+# user's message (which specialist app handles it), DELEGATES to the accountable specialist bot
+# via BotNodeClient.execute (cost lands in chat_tasks under that bot), and SYNTHESIZES one answer
+# in its own voice. Data-apps that need their own screen first (finance, identity,
+# storage) are handed off with a deep link rather than answered thinly.
+#
+# Excludes the education ("little-monsters") app by design — that has its own multi-bot cockpit.
+#
+# The only LLM work Jarvis itself does is classify + synthesize, on the reason-only
+# oshal-assistant bot running INLINE on the api container (claude-code) — same pattern as
+# finance-analyst / identity-advisor. See ADR-050.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: jarvis
+suite: platform   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: OSHAL Assistant
+description: >-
+  Your single assistant over everything OSHAL connects to. Ask in plain language — Jarvis routes
+  it to the right specialist (email, jobs, smart home, cloud, social, presentations) and answers
+  as one voice, or points you to the app that needs your screen first (finance or identity).
+version: 1.0.0
+status: active
+
+# Calm, focused assistant skin.
+theme: midnight
+
+# No ticketType — Jarvis is interactive-only (direct BotNodeClient path in jarvis-routes).
+bots:
+  - agentId: a0000000-0000-0000-0000-000000000050
+    name: oshal-assistant
+    persona: ai-lab/bot-personas/oshal-assistant.yaml
+    role: assistant/unified-front-door
+    capabilities:
+      - intent-routing
+      - cross-app-orchestration
+      - answer-synthesis
+    selectorDescriptor: >-
+      Select this bot when the user asks in natural language for OSHAL to route a request
+      across apps, choose the right specialist, synthesize a cross-app answer, or hand off
+      to a focused app surface. Use Jarvis for "ask OSHAL", "do this for me", "which app
+      handles this", and multi-domain assistant requests.
+    routingKeywords:
+      - jarvis
+      - assistant
+      - route my request
+      - natural language routing
+      - cross-app orchestration
+      - app handoff
+      - do this for me
+      - unified assistant
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COCKPIT UI SURFACE — one ribbon icon opens the Jarvis page (served by createJarvisRoutes
+# at /api/jarvis/). The page is the unified chat; it posts to POST /api/jarvis/ask.
+# ─────────────────────────────────────────────────────────────────────────────
+ui:
+  static:
+    - toolName: jarvis-home
+      label: Assistant
+      icon: codicon codicon-sparkle
+      iframeUrl: /api/jarvis/
+      section: top
+
+ribbon:
+  hideFrameworkItems:
+    - tickets
+    - chat
+    - calendar
+    - addressbook
+    - dashboard
+    - echo
+    - logs
+    - operations
+  # Jarvis IS the chat surface (the voice/orb assistant page), so the cockpit's
+  # generic right-rail swarm-bot panel is redundant here — hide it entirely.
+  hideChatPanel: true
+  defaultView: jarvis-home

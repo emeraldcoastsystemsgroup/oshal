@@ -1,0 +1,100 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — security ("Security Center")
+#
+# The swarm's self-security app (ADR-055). It watches the platform's OWN posture and runtime
+# across four scopes: active posture scan (committed secrets, unauthenticated routes, vulnerable
+# dependencies), runtime threat detection (anomalous bot/tool/auth activity), money-ledger
+# anomalies (suspicious trading/purchase rows), and access/audit (dispatch-trail anomalies).
+#
+# ADR-036 split (same as trading/finance): the controller runs the deterministic scanners +
+# stores findings; the accountable security-analyst bot REASONS over each finding (real threat?
+# false positive? attack scenario? fix?) so cost lands in chat_tasks. The bot is reason-only, so
+# it runs INLINE on the api container — no dedicated bot-node container.
+#
+# SCOPE: observe + triage + escalate-to-ticket. It does NOT auto-remediate (no key rotation, no
+# code edits, no closing findings) — the operator acts on the assessment.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: security-center
+suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: Security Center
+description: >-
+  Active scanning and threat detection for the swarm itself. Scan for committed secrets,
+  unauthenticated routes, and vulnerable dependencies; watch live bot activity, money ledgers,
+  and the dispatch trail for anomalies. The security-analyst triages each finding into a
+  real/false-positive verdict with an attack scenario and a fix, and one click escalates it to
+  a tracked ticket.
+version: 1.0.0
+status: active
+
+# OPERATOR-ONLY (operator decision 2026-07-07): findings map the platform's own weak
+# points — secret locations/previews, ungated routes — so basic users must never see
+# this app. 'operator' scope hides it from every non-operator catalog/ribbon listing
+# (service filter + RLS backstop); the real boundary is the route mount, which layers
+# requiresOperator on top of requiresAuth (server.ts /api/security).
+scope: operator
+
+# Dark, focused security skin.
+theme: midnight
+
+ticketType: security-finding
+
+workflow:
+  name: Security Triage
+  # Single-bot pipeline. A ticketType=security-finding ticket (created by POST
+  # /api/security/findings/:id/ticket) routes to the security-analyst, which reasons over the
+  # finding payload. The interactive scan -> assess flow in security-routes also works direct.
+  pipeline: security
+  workerBot: security-analyst
+
+bots:
+  - agentId: a0000000-0000-0000-0000-000000000047
+    name: security-analyst
+    persona: ai-lab/bot-personas/security-analyst.yaml
+    role: security/triage-specialist
+    capabilities:
+      - finding-triage
+      - threat-assessment
+      - attack-scenario-analysis
+      - remediation-recommendation
+
+# Routes this app owns. mountPath is AUTHORITATIVE — it drives the gate middleware so
+# /api/security/* returns 503 when the app is toggled inactive. module/factory are
+# informational: the Express mount is hardcoded in server.ts (framework Phase 1), same as trading.
+routes:
+  - module: src/app/routes/security-routes.ts
+    factory: createSecurityRoutes
+    mountPath: /api/security
+    auth: operator   # what server.ts ACTUALLY mounts (ADR-085 D2)
+    requiresAuth: true
+    requiresContext: true
+
+# Migrations this app owns (informational in Phase 1 — applied by the framework bootstrap; the
+# routes also self-heal the schema via ensureSchema).
+migrations:
+  - scripts/migrations/039-security-center.sql
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COCKPIT UI SURFACE — one ribbon icon opens the Security Center page (served by
+# createSecurityRoutes at /api/security/). The page runs scans across the four scopes, shows the
+# severity rollup, lists findings worst-first, and drives assess / escalate-to-ticket / resolve.
+# ─────────────────────────────────────────────────────────────────────────────
+ui:
+  static:
+    - toolName: security-center-home
+      label: Security Center
+      icon: codicon codicon-shield
+      iframeUrl: /api/security/
+      section: top
+
+ribbon:
+  hideFrameworkItems:
+    - tickets
+    - chat
+    - calendar
+    - addressbook
+    - dashboard
+    - echo
+    - logs
+    - operations
+  defaultView: security-center-home

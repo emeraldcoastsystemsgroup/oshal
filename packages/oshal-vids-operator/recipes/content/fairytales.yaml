@@ -1,0 +1,334 @@
+# Content pack — Classic Fairytales (data only; no code, no headers required).
+#
+# The creative bot cycles this corpus: each entry is a short, kid-safe, public-domain
+# story with a ~100-word narration script. The StoryScript builder (src/stories/script.js)
+# splits `script` into beats (~7 words each — patient pacing) and composes each Veo scene
+# prompt from: defaultStyle + the story's pinned `setting` + the FULL `characters`
+# descriptions (restated EVERY scene so nobody drifts) + the beat's action + spoken
+# narration/dialogue voice directives. Nothing here is copyrighted: the tales are classic
+# (Brothers Grimm / Hans Christian Andersen / traditional, all public domain); these
+# gentle retellings are original to OSHAL (CC0). Dark endings are softened for young
+# viewers — no one is eaten, boiled, or harmed; every tale ends warm and happy.
+#
+# Schema (one pack per file):
+#   pack, displayName, license, audience, theme, defaultStyle, defaultOrientation,
+#   narratorVoice
+#   stories: [ { id, title, moral, tags[], setting, characters[], script, style?, scenes?[] } ]
+# `setting`    = the FIXED world (season, light, palette) — restated every scene; stops
+#                Veo from inventing winter halfway through.
+# `characters` = the character bible: name + exact visual description (restated every
+#                scene) + a distinct voice (used for that character's spoken lines).
+# `script`     = the ~100-word narration (source of truth; builder derives beats).
+# `scenes`     = OPTIONAL curated per-beat visual prompts; when present, used verbatim.
+
+pack: fairytales
+displayName: Classic Fairytales
+license: "Public domain (Brothers Grimm / Hans Christian Andersen / traditional); original retellings by OSHAL (CC0)"
+audience: kids
+theme: fairytale
+defaultOrientation: Landscape
+narratorVoice: "Nyx voice - warm, clear, gentle storyteller, lower-middle pitch, unhurried"
+defaultStyle: >-
+  A simple children's crayon animation: everything looks hand-drawn with wax crayons
+  on white construction paper — wobbly hand-drawn outlines, bold flat crayon colors
+  with visible waxy stroke texture, simple rounded child-like shapes, the white paper
+  texture showing through, gentle 2D flipbook-style motion, warm cozy bedtime mood.
+  Flat 2D children's drawing, not realistic, not 3D.
+
+stories:
+  - id: the-three-little-pigs
+    title: The Three Little Pigs
+    moral: Hard work keeps you safe.
+    tags: [animals, hard-work, houses]
+    setting: >-
+      A sunny green valley with a winding dirt lane linking three little houses —
+      one of golden straw, one of brown sticks, one of sturdy red brick — rolling
+      hills, wildflowers, warm bright afternoon light. The season never changes.
+    characters:
+      - name: the first little pig
+        description: >-
+          a small plump pink pig in blue overalls with a wisp of straw tucked
+          behind one ear and a carefree grin — the SAME pig in blue overalls in
+          every scene
+        voice: a giggly, breezy, high little voice, always in a hurry to play
+      - name: the second little pig
+        description: >-
+          a small round pink pig in a red neckerchief with freckled cheeks and a
+          cheerful bounce — the SAME pig in the red neckerchief in every scene
+        voice: a chirpy, cheerful, squeaky mid-high voice
+      - name: the third little pig
+        description: >-
+          a sturdy pink pig in a green work apron with a little trowel in his
+          pocket and calm, clever eyes — the SAME pig in the green apron in every
+          scene
+        voice: a warm, steady, proud voice, a touch deeper than his brothers
+      - name: the wolf
+        description: >-
+          a shaggy grey wolf with big puffy cheeks, bushy eyebrows, and an
+          over-the-top hungry grin, comic and silly rather than scary — the SAME
+          grey wolf in every scene
+        voice: a low, huffy, growly comic voice, all bluster and no bite
+    script: >-
+      Three little pigs set off to build their own homes. The first pig quickly
+      built a house of straw, the second a house of sticks, so they could hurry
+      off to play. The third pig worked hard all day building strong brick walls.
+      Along came a hungry wolf, huffing and puffing. Down blew the straw house,
+      then the sticks, and the frightened pigs ran to their brother's brick home.
+      The wolf huffed and puffed with all his might, but the sturdy bricks would
+      not budge. Worn out, the wolf gave up and scampered away. The three pigs
+      stayed cozy and safe together.
+
+  - id: the-ugly-duckling
+    title: The Ugly Duckling
+    moral: You are beautiful just as you are.
+    tags: [birds, kindness, growing-up]
+    setting: >-
+      A quiet farm pond ringed with cattails and reeds beside a red barn, lily
+      pads on calm water, soft golden light. (Only the middle journey scenes drift
+      through amber autumn leaves and gentle snow; the final scenes open onto a
+      bright shining spring lake — otherwise the world never changes.)
+    characters:
+      - name: the ugly duckling
+        description: >-
+          a big fluffy grey duckling with a long neck, gentle dark eyes, and
+          slightly too-large feet — the SAME grey duckling in every scene (in the
+          final scenes he is a graceful white swan with the same kind dark eyes)
+        voice: a soft, shy, wobbly young voice that grows brighter and braver
+      - name: the farm ducklings
+        description: >-
+          four small round bright-yellow ducklings, fluffy and tidy, always in a
+          neat little row — the SAME four yellow ducklings every time
+        voice: quick, peeping, teasing little voices, high and fluttery
+      - name: the swans
+        description: >-
+          three graceful snow-white swans with elegant curved necks and calm dark
+          eyes — the SAME three white swans in every scene
+        voice: smooth, gentle, welcoming voices, low and musical
+    script: >-
+      On a farm by a pond, a big grey duckling hatched who looked nothing like his
+      brothers and sisters. The other ducks teased him for being different, so the
+      lonely duckling wandered away to find a place to belong. Through autumn leaves
+      and winter snow he traveled, feeling sad and out of place. When spring arrived,
+      he glided onto a shining lake and saw graceful white swans. To his wonder, they
+      welcomed him warmly. Peering into the calm water, the duckling gasped, for he
+      had grown into a beautiful swan all along. He spread his wide wings and felt
+      truly, joyfully at home.
+
+  - id: goldilocks-and-the-three-bears
+    title: Goldilocks and the Three Bears
+    moral: Always ask before you use what isn't yours.
+    tags: [bears, manners, forest]
+    setting: >-
+      A sunny friendly forest of tall oaks with a cozy timbered cottage in a
+      clearing — round wooden door, flower boxes, smoke curling from a stone
+      chimney — dappled warm morning light. The season never changes.
+    characters:
+      - name: goldilocks
+        description: >-
+          a small curious girl with bouncy golden curls, a sky-blue dress with a
+          white pinafore, and rosy cheeks — the SAME golden-haired girl in every
+          scene
+        voice: a bright, curious, chatty young girl's voice, high and lively
+      - name: papa bear
+        description: >-
+          a huge chocolate-brown bear in a red waistcoat, broad and gentle with a
+          deep kindly face — the SAME big brown bear in every scene
+        voice: a big, deep, rumbly voice, slow and patient
+      - name: mama bear
+        description: >-
+          a soft honey-brown bear in a flowered apron with warm round eyes — the
+          SAME honey-brown bear in every scene
+        voice: a warm, mellow, motherly voice, medium pitch
+      - name: baby bear
+        description: >-
+          a small fuzzy light-brown bear cub in a little yellow scarf with wide
+          excited eyes — the SAME little bear cub in every scene
+        voice: a tiny, squeaky, excitable cub voice
+    script: >-
+      A curious girl named Goldilocks wandered deep into the woods and found a cozy
+      cottage. Inside sat three bowls of porridge. The first was too hot, the second
+      too cold, but the third was just right, so she ate it all up. Feeling sleepy,
+      she tried three chairs and three beds until she found the softest little one
+      and drifted off. Soon the three bears came home and found their porridge gone
+      and Goldilocks fast asleep. When she woke to see them, she gasped, said a quick
+      sorry, and hurried home. After that, Goldilocks always asked before touching
+      what wasn't hers.
+
+  - id: the-frog-prince
+    title: The Frog Prince
+    moral: A kept promise is a kind heart.
+    tags: [magic, promises, kindness]
+    setting: >-
+      A castle garden with clipped green hedges, climbing roses, and a deep
+      blue-green pond ringed by mossy stones, pale castle towers rising behind,
+      soft golden late-afternoon light. The season never changes.
+    characters:
+      - name: the princess
+        description: >-
+          a young princess with long chestnut hair, a small golden crown, and a
+          rose-pink gown, carrying a shining golden ball — the SAME princess in
+          the SAME pink gown every scene
+        voice: a light, sweet, earnest young voice
+      - name: the frog
+        description: >-
+          a small shiny bright-green frog with big hopeful golden eyes and a wide
+          friendly smile — the SAME green frog in every scene (until the final
+          sparkle of magic, when he becomes a smiling young prince in a
+          green-and-gold coat with the same golden eyes)
+        voice: a croaky, cheerful, polite little voice, bubbly and warm
+    script: >-
+      A young princess dropped her favorite golden ball into a deep pond. A friendly
+      frog popped up and offered to fetch it, if only she would be his friend. She
+      happily agreed, and he dove down and returned her shining ball. That evening
+      the little frog hopped to the castle to remind her of her promise. Though
+      surprised, the princess kept her word, shared her supper, and treated him
+      kindly. As she gently placed him on a soft cushion, a sparkle of magic swirled.
+      The frog became a smiling prince, freed by her kindness. They became the very
+      best of friends.
+
+  - id: little-red-riding-hood
+    title: Little Red Riding Hood
+    moral: Listen to those who love you.
+    tags: [forest, family, safety]
+    setting: >-
+      A friendly sunlit forest with a winding earthen path between tall pines and
+      white birches, ferns and red-capped toadstools along the way, and grandma's
+      stone cottage with green shutters at the far end, warm dappled light. The
+      season never changes.
+    characters:
+      - name: little red riding hood
+        description: >-
+          a small girl in a bright red hooded cape over a simple white dress,
+          with dark braids, rosy cheeks, and a wicker basket on her arm — the
+          SAME girl in the SAME red cape every scene
+        voice: a sweet, clear, curious young voice
+      - name: the wolf
+        description: >-
+          a lanky grey wolf with big ears, huge yellow eyes, and a goofy toothy
+          grin, comic and silly rather than scary — the SAME grey wolf in every
+          scene
+        voice: a low, sly, growly comic voice, full of silly pretend charm
+      - name: grandma
+        description: >-
+          a small twinkly-eyed grandma with round spectacles, a lavender shawl,
+          and silver hair in a neat bun — the SAME grandma in every scene
+        voice: a soft, crinkly, chuckling elderly voice
+      - name: the woodsman
+        description: >-
+          a tall friendly woodsman in a green plaid shirt with a bushy brown
+          beard and an axe over his shoulder — the SAME woodsman in every scene
+        voice: a booming, hearty, kind deep voice
+    script: >-
+      Little Red Riding Hood set off through the woods with a basket of treats for
+      her grandma. A sly wolf met her on the path and, learning where she was going,
+      hurried ahead. He slipped into grandma's cottage, but wise grandma spotted him
+      and tucked herself safely inside the closet. When Red arrived, she noticed the
+      wolf's big ears and toothy grin and cried out. Just then a kind woodsman heard
+      her and burst through the door. With one mighty shout, he sent the startled wolf
+      running far away, never to return. Grandma stepped out, and they all shared the
+      treats together.
+
+  - id: the-elves-and-the-shoemaker
+    title: The Elves and the Shoemaker
+    moral: Kindness returned is the sweetest reward.
+    tags: [magic, kindness, helpers]
+    setting: >-
+      A snug little shoemaker's shop on a cobbled village lane — a worn wooden
+      workbench, shelves of leather and spools of thread, a frosty window glowing
+      with warm candlelight against the soft winter night outside. The season
+      never changes.
+    characters:
+      - name: the shoemaker
+        description: >-
+          a thin gentle old shoemaker with tufty white hair, small round glasses,
+          and a brown leather apron — the SAME shoemaker in every scene
+        voice: a soft, kindly, tired old voice that grows brighter with hope
+      - name: the shoemaker's wife
+        description: >-
+          a round rosy-cheeked old woman with a grey braid, a patched blue dress,
+          and a warm woolen shawl — the SAME wife in every scene
+        voice: a gentle, humming, motherly voice, a little quicker than her husband's
+      - name: the two elves
+        description: >-
+          two tiny barefoot elves, knee-high, with pointy ears, twinkling eyes,
+          and merry grins — the SAME two little elves in every scene (in the final
+          scenes they wear the tiny red coats and boots sewn for them)
+        voice: two tiny, tinkling, giggly high voices, quick as sparrows
+    script: >-
+      A poor shoemaker and his wife had only enough leather left for one last pair of
+      shoes. Tired, they cut the leather and went to bed. In the morning they gasped,
+      for the finest shoes stood finished on the bench. Night after night, tiny helpers
+      came while they slept and stitched beautiful shoes. Soon the little shop was busy
+      and cheerful again. Curious, the couple peeked one night and saw two happy elves
+      working in the cold with no clothes at all. To say thank you, they sewed tiny
+      coats and boots. The delighted elves danced away, and good fortune stayed forever.
+
+  - id: the-princess-and-the-pea
+    title: The Princess and the Pea
+    moral: The smallest things can show what's true.
+    tags: [royalty, magic, rain]
+    setting: >-
+      A grand storybook castle with tall turrets and warm candlelit halls; gentle
+      night rain streaks the tall windows while inside everything glows golden and
+      cozy, and one bedroom holds a wobbly tower of twenty colorful mattresses.
+      The season never changes.
+    characters:
+      - name: the princess
+        description: >-
+          a young woman with long wavy auburn hair and gentle grey eyes, first
+          rain-soaked in a simple grey traveling cloak, then dry and warm in a
+          soft cream nightgown — the SAME auburn-haired princess in every scene
+        voice: a gentle, honest, slightly sleepy young voice
+      - name: the queen
+        description: >-
+          a stately queen with silver-streaked hair in a high bun, a deep plum
+          velvet gown, and a knowing kindly smile — the SAME queen in every scene
+        voice: a smooth, wise, measured voice, low and warm
+      - name: the prince
+        description: >-
+          a kind young prince with neat black hair, a royal-blue coat with gold
+          buttons, and a hopeful smile — the SAME prince in every scene
+        voice: an eager, friendly, bright young man's voice
+    script: >-
+      One stormy night, a soaked young woman knocked at a castle door, saying she was
+      a real princess. The queen wished to know for certain in a gentle way. She placed
+      a single tiny pea beneath twenty soft mattresses and invited the visitor to sleep.
+      In the morning the queen asked how she had rested. "Oh, hardly a wink," the girl
+      yawned. "Something small and lumpy kept me tossing all night!" The queen smiled
+      warmly, for only someone truly gentle could notice such a little pea. The kind
+      prince was overjoyed, and the true princess had found a cozy home at last.
+
+  - id: jack-and-the-beanstalk
+    title: Jack and the Beanstalk
+    moral: A little courage can change everything.
+    tags: [magic, adventure, courage]
+    setting: >-
+      A small farm cottage with a crooked chimney on a green hillside, and beside
+      it an enormous emerald beanstalk twisting up through puffy white clouds to a
+      grey stone castle in the sky, bright clear daylight. The season never changes.
+    characters:
+      - name: jack
+        description: >-
+          a scrappy cheerful boy with tousled brown hair, a patched green tunic,
+          and bare feet — the SAME boy in the SAME green tunic every scene
+        voice: a quick, plucky, adventurous young voice
+      - name: jack's mother
+        description: >-
+          a kind weary mother with a faded yellow headscarf, an apron over a
+          simple brown dress, and gentle worried eyes — the SAME mother in every
+          scene
+        voice: a warm, fretful, loving voice, medium pitch
+      - name: the giant
+        description: >-
+          an enormous round giant with a bristly orange beard, a patchwork vest,
+          and huge stompy boots, grumpy and comic rather than scary — the SAME
+          giant in every scene
+        voice: a huge, booming, slow grumbly voice, more grouchy than frightening
+    script: >-
+      Jack traded the family cow for a handful of magic beans, which upset his mother.
+      But overnight the beans grew into a towering beanstalk that reached the clouds.
+      Brave Jack climbed up and up until he found a giant's castle in the sky. There he
+      discovered a hen that laid golden eggs and a harp that sang sweet songs. When the
+      grumpy giant stomped after him, Jack scrambled quickly down the beanstalk. Safe at
+      the bottom, he snipped it with a snip, and the giant stayed grumbling far up in the
+      clouds. Jack and his mother were never poor or hungry again.

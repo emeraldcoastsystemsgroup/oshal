@@ -1,0 +1,155 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native task explorer page for cockpit Advanced engineering workflows
+  2 | maintainer@emeraldcoastsystemsgroup.com   | CM-3: Added search/filter/sort/group-by toolbar + Process and Cost detail tabs
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Task Explorer</title>
+  <link rel="stylesheet" href="/task-explorer/task-explorer.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Engineering Surface</p>
+        <h1>Task Explorer</h1>
+      </div>
+      <div class="topbar-actions">
+        <label class="project-picker" for="projectSelect">
+          <span>Project</span>
+          <select id="projectSelect" aria-label="Project">
+            <option value="">Loading projects...</option>
+          </select>
+        </label>
+        <button id="refreshButton" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="metrics-grid" aria-label="Task explorer summary">
+      <article class="metric-card">
+        <span class="metric-label">Queued</span>
+        <strong id="metricQueue">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">In Progress</span>
+        <strong id="metricInProgress">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Review</span>
+        <strong id="metricReview">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Done</span>
+        <strong id="metricDone">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Agents</span>
+        <strong id="metricAgents">0/0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Avg Duration</span>
+        <strong id="metricDuration">—</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Cost</span>
+        <strong id="metricCost">$0.00</strong>
+      </article>
+    </section>
+
+    <section class="explorer-toolbar" aria-label="Filter and sort controls">
+      <input class="toolbar-search" id="toolbarSearch" type="text" placeholder="Search tickets..." aria-label="Search tickets">
+      <select class="toolbar-select" id="toolbarStatusFilter" aria-label="Filter by status">
+        <option value="all">All Status</option>
+        <option value="active">Active</option>
+        <option value="backlog">Backlog</option>
+        <option value="approved">Approved</option>
+        <option value="in progress">In Progress</option>
+        <option value="approval_required">Approval Required</option>
+        <option value="escalated">Escalated</option>
+        <option value="complete">Complete</option>
+        <option value="paused">Paused</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+      <select class="toolbar-select" id="toolbarAgentFilter" aria-label="Filter by agent">
+        <option value="all">All Agents</option>
+      </select>
+      <select class="toolbar-select" id="toolbarSort" aria-label="Sort by">
+        <option value="date-desc">Newest First</option>
+        <option value="date-asc">Oldest First</option>
+        <option value="name-asc">Name A-Z</option>
+        <option value="name-desc">Name Z-A</option>
+        <option value="status-asc">Status A-Z</option>
+        <option value="cost-desc">Highest Cost</option>
+        <option value="cost-asc">Lowest Cost</option>
+      </select>
+      <select class="toolbar-select" id="toolbarGroupBy" aria-label="Group by">
+        <option value="none">No Grouping</option>
+        <option value="status">Group by Status</option>
+        <option value="project">Group by Project</option>
+        <option value="agent">Group by Agent</option>
+      </select>
+    </section>
+
+    <main class="workspace">
+      <aside class="tree-panel" id="treePanel">
+        <div class="panel-header">
+          <div>
+            <p class="panel-title">Ticket Hierarchy</p>
+            <p class="panel-subtitle" id="treeSubtitle">No project selected</p>
+          </div>
+        </div>
+        <div class="tree-scroll" id="treeContent">
+          <div class="empty-state">
+            <strong>Loading tickets...</strong>
+          </div>
+        </div>
+      </aside>
+
+      <div class="resize-handle" id="resizeHandle" aria-hidden="true"></div>
+
+      <section class="detail-panel">
+        <nav class="tab-bar" aria-label="Detail tabs">
+          <button class="tab active" data-tab="activity" type="button">Activity</button>
+          <button class="tab" data-tab="process" type="button">Process</button>
+          <button class="tab" data-tab="cost" type="button">Cost</button>
+          <button class="tab" data-tab="files" type="button">Files</button>
+        </nav>
+
+        <section class="tab-panel" id="activityPanel">
+          <div class="empty-state">
+            <strong>Select a ticket to inspect activity.</strong>
+          </div>
+        </section>
+
+        <section class="tab-panel hidden" id="processPanel">
+          <div class="empty-state">
+            <strong>Select a ticket to view status history.</strong>
+          </div>
+        </section>
+
+        <section class="tab-panel hidden" id="costPanel">
+          <div class="empty-state">
+            <strong>Select a ticket to view cost breakdown.</strong>
+          </div>
+        </section>
+
+        <section class="tab-panel hidden" id="filesPanel">
+          <div class="empty-state">
+            <strong>Select a ticket to inspect its workspace.</strong>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/task-explorer/task-explorer.js"></script>
+</body>
+</html>

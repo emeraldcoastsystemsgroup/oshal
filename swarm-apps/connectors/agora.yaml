@@ -1,0 +1,30 @@
+# Agora RESTful API — basic auth (Customer Key : Customer Secret); query channel state and list projects.
+provider: agora
+displayName: Agora
+version: 1.0.0
+baseUrl: https://api.agora.io/dev/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: channel
+    tool: agora-channel
+    method: GET
+    path: "/channel/{appid}"
+    query:
+      page_no: "{page_no}"
+      page_size: "{page_size}"
+  - name: projects
+    tool: agora-projects
+    method: GET
+    path: /projects
+metadata:
+  icon: agora
+  iconTitle: Agora
+  iconSource: simple-icons
+  iconVerified: true

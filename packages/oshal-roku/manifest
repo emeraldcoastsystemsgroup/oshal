@@ -1,0 +1,21 @@
+# OSHAL Home — Roku channel manifest (data file; not a logic-bearing source file).
+# Roku reads this at sideload/publish time for channel metadata + asset paths.
+title=OSHAL Home
+major_version=1
+minor_version=0
+build_version=00001
+
+# Splash + icon assets (placeholder vectors checked in under images/ — replace with real
+# PNGs at the exact Roku-required dimensions before publishing; see README.md).
+mm_icon_focus_hd=pkg:/images/icon_focus_hd.png
+mm_icon_focus_fhd=pkg:/images/icon_focus_fhd.png
+splash_screen_hd=pkg:/images/splash_hd.png
+splash_screen_fhd=pkg:/images/splash_fhd.png
+splash_color=#0e0e16
+splash_min_time=800
+
+# Render at 1080p; Roku downscales to 720p devices automatically.
+ui_resolutions=fhd
+
+# Surface only — no DRM, no certificates beyond the system CA bundle used for HTTPS.
+confirm_partner_button=1

@@ -1,0 +1,50 @@
+provider: digitalocean
+displayName: DigitalOcean
+version: 1.0.0
+baseUrl: https://api.digitalocean.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: page
+  pageSize: 50
+  nextField: links
+  itemsField: droplets
+resources:
+  - name: account
+    tool: digitalocean-account
+    method: GET
+    path: /account
+  - name: droplets
+    tool: digitalocean-droplets
+    method: GET
+    path: /droplets
+    paginate: true
+  - name: droplet
+    tool: digitalocean-droplet
+    method: GET
+    path: /droplets/{dropletId}
+  - name: apps
+    tool: digitalocean-apps
+    method: GET
+    path: /apps
+    paginate: true
+  - name: databases
+    tool: digitalocean-databases
+    method: GET
+    path: /databases
+  - name: kubernetes-clusters
+    tool: digitalocean-kubernetes-clusters
+    method: GET
+    path: /kubernetes/clusters
+metadata:
+  icon: digitalocean
+  iconTitle: DigitalOcean
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,37 @@
+provider: pixabay
+displayName: Pixabay
+version: 1.0.0
+baseUrl: https://pixabay.com/api
+auth:
+  type: apiKeyQuery
+  param: key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: image-search
+    tool: pixabay-image-search
+    method: GET
+    path: /
+    query:
+      q: '{q}'
+  - name: video-search
+    tool: pixabay-video-search
+    method: GET
+    path: /videos
+    query:
+      q: '{q}'
+  - name: editors-choice
+    tool: pixabay-editors-choice
+    method: GET
+    path: /
+    query:
+      editors_choice: 'true'
+metadata:
+  icon: pixabay
+  iconTitle: Pixabay
+  iconSource: simple-icons
+  iconVerified: true

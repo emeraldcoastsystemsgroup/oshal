@@ -1,0 +1,28 @@
+provider: kickbox
+displayName: Kickbox
+version: 1.0.0
+baseUrl: https://api.kickbox.com/v2
+auth:
+  type: apiKeyQuery
+  param: apikey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: verify
+    tool: kickbox-verify
+    method: GET
+    path: /verify
+    query:
+      email: '{email}'
+  - name: balance
+    tool: kickbox-balance
+    method: GET
+    path: /balance
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/kickbox.com.ico

@@ -1,0 +1,30 @@
+provider: formstack
+displayName: Formstack
+version: 1.0.0
+baseUrl: https://www.formstack.com/api/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-forms
+    tool: formstack-list-forms
+    method: GET
+    path: /form.json
+  - name: get-form
+    tool: formstack-get-form
+    method: GET
+    path: /form/{id}.json
+  - name: list-folders
+    tool: formstack-list-folders
+    method: GET
+    path: /folder.json
+metadata:
+  icon: formstack
+  iconTitle: Formstack
+  iconSource: simple-icons
+  iconVerified: true

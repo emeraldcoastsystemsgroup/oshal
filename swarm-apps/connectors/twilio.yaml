@@ -1,0 +1,40 @@
+provider: twilio
+displayName: Twilio
+version: 1.0.0
+baseUrl: https://api.twilio.com/2010-04-01
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: messages
+    tool: twilio-messages
+    method: GET
+    path: /Accounts/{AccountSid}/Messages.json
+  - name: message
+    tool: twilio-message
+    method: GET
+    path: /Accounts/{AccountSid}/Messages/{Sid}.json
+  - name: calls
+    tool: twilio-calls
+    method: GET
+    path: /Accounts/{AccountSid}/Calls.json
+  - name: incoming-phone-numbers
+    tool: twilio-incoming-phone-numbers
+    method: GET
+    path: /Accounts/{AccountSid}/IncomingPhoneNumbers.json
+  - name: account
+    tool: twilio-account
+    method: GET
+    path: /Accounts/{AccountSid}.json
+metadata:
+  description: "Read Twilio SMS message and call logs, owned phone numbers, and account details."
+  category: "Communications"
+  icon: twilio
+  iconTitle: Twilio
+  iconSource: simple-icons
+  iconVerified: true

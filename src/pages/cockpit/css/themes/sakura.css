@@ -1,0 +1,32 @@
+/* ═══ Sakura — Cherry Blossom Rose Dark ═══ */
+[data-theme="sakura"] {
+  --bg-primary: #1a0a14;
+  --bg-secondary: rgba(30, 14, 24, 0.85);
+  --bg-tertiary: rgba(48, 22, 38, 0.7);
+  --bg-card: rgba(42, 18, 32, 0.55);
+  --bg-card-hover: rgba(60, 28, 46, 0.65);
+  --border-color: rgba(236, 72, 153, 0.08);
+  --border-color-hover: rgba(236, 72, 153, 0.16);
+  --text-primary: #fce7f3;
+  --text-secondary: #f9a8d4;
+  --text-muted: #ec4899;
+  --accent-primary: #ec4899;
+  --accent-primary-hover: #f472b6;
+  --accent-gradient: linear-gradient(135deg, #ec4899 0%, #f43f5e 50%, #fb923c 100%);
+  --accent-glow: rgba(236, 72, 153, 0.25);
+  --status-success: #34d399;
+  --status-active: #f472b6;
+  --status-warning: #fbbf24;
+  --status-error: #f87171;
+  --glass-bg: rgba(236, 72, 153, 0.04);
+  --glass-bg-heavy: rgba(236, 72, 153, 0.08);
+  --glass-border: rgba(236, 72, 153, 0.1);
+  --glass-highlight: linear-gradient(135deg, rgba(236,72,153,0.12) 0%, rgba(236,72,153,0) 50%);
+  --glass-blur: 20px;
+  --glass-blur-light: 12px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(236, 72, 153, 0.15);
+  --panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(236,72,153,0.08);
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(236,72,153,0.06);
+  --depth-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}

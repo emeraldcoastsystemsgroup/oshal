@@ -1,0 +1,28 @@
+provider: wordnik
+displayName: Wordnik
+version: 1.0.0
+baseUrl: https://api.wordnik.com/v4
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: definitions
+    tool: wordnik-definitions
+    method: GET
+    path: /word.json/{word}/definitions
+    query: {}
+  - name: random-word
+    tool: wordnik-random-word
+    method: GET
+    path: /words.json/randomWord
+    query: {}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/wordnik.com.ico

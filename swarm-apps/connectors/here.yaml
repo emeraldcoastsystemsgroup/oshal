@@ -1,0 +1,31 @@
+provider: here
+displayName: HERE
+version: 1.0.0
+baseUrl: https://geocode.search.hereapi.com/v1
+auth:
+  type: apiKeyQuery
+  param: apiKey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: geocode
+    tool: here-geocode
+    method: GET
+    path: /geocode
+    query:
+      q: '{q}'
+  - name: discover
+    tool: here-discover
+    method: GET
+    path: /discover
+    query:
+      q: '{q}'
+metadata:
+  icon: here
+  iconTitle: HERE
+  iconSource: simple-icons
+  iconVerified: true

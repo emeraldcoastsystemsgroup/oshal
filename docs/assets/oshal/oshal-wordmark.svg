@@ -1,0 +1,22 @@
+<svg width="1200" height="360" viewBox="0 0 1200 360" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">OSHAL wordmark</title>
+  <desc id="desc">OSHAL wordmark with a connected swarm runtime mark.</desc>
+  <rect width="1200" height="360" rx="48" fill="#0B1020"/>
+  <g transform="translate(72 48) scale(0.516)">
+    <path d="M256 72L415.1 164V348L256 440L96.9 348V164L256 72Z" stroke="#7DD3FC" stroke-width="18" stroke-linejoin="round"/>
+    <path d="M256 126L368.4 191V321L256 386L143.6 321V191L256 126Z" stroke="#34D399" stroke-width="12" stroke-linejoin="round" opacity="0.9"/>
+    <path d="M256 126V386M143.6 191L368.4 321M368.4 191L143.6 321" stroke="#94A3B8" stroke-width="8" stroke-linecap="round" opacity="0.72"/>
+    <circle cx="256" cy="126" r="22" fill="#7DD3FC"/>
+    <circle cx="368.4" cy="191" r="22" fill="#34D399"/>
+    <circle cx="368.4" cy="321" r="22" fill="#7DD3FC"/>
+    <circle cx="256" cy="386" r="22" fill="#34D399"/>
+    <circle cx="143.6" cy="321" r="22" fill="#7DD3FC"/>
+    <circle cx="143.6" cy="191" r="22" fill="#34D399"/>
+    <circle cx="256" cy="256" r="56" fill="#E2E8F0"/>
+    <circle cx="256" cy="256" r="30" fill="#0B1020"/>
+    <path d="M239 256L253 270L281 238" stroke="#34D399" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="380" y="167" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="96" font-weight="800" letter-spacing="0">OSHAL</text>
+  <text x="386" y="230" fill="#BAE6FD" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="32" font-weight="500" letter-spacing="0">Open Swarm Harness Agent LLM</text>
+  <text x="386" y="278" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="500" letter-spacing="0">Runtime infrastructure for agent-backed applications</text>
+</svg>

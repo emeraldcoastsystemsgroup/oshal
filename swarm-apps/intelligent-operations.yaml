@@ -1,0 +1,98 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — Intelligent Operations
+# Framework: OSHAL (see the swarm-application-manifests ADR in docs/adr/)
+#
+# The base ticket system with the RCA process enabled. One operations app:
+# tickets come in, the swarm triages, runs root-cause analysis, and writes
+# remediation scripts for human review (never auto-applied to production).
+#
+# This replaces the previously separate incident-remediation and issue-rca
+# manifests — they were the same base ticket + RCA workflow with different
+# tunings, so they are unified here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: intelligent-operations
+suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: Intelligent Operations
+description: >-
+  The base ticket system with the RCA process enabled. The swarm triages an
+  incident, performs root-cause analysis, and writes remediation scripts for
+  operator review — never auto-applied to production. Incident investigation
+  is grounded in a curated, operator-seeded runbook corpus.
+version: 1.0.0
+status: active
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BOTS — standard incident roster
+# ─────────────────────────────────────────────────────────────────────────────
+bots:
+  - agentId: a0000000-0000-0000-0000-000000000016
+    name: rca-specialist
+    persona: ai-lab/bot-personas/rca-specialist.yaml
+    role: incident/rca
+    capabilities:
+      - root-cause-analysis
+      - debugging
+      - investigation
+      - timeline-reconstruction
+      - impact-assessment
+
+  - agentId: a0000000-0000-0000-0000-00000000000b
+    name: incident-response-bot
+    persona: ai-lab/bot-personas/incident-response-bot.yaml
+    role: incident/response
+    capabilities:
+      - incident-response
+      - triage
+      - runbook-execution
+      - stakeholder-communication
+
+  - agentId: e0000000-0000-0000-0000-000000000100
+    name: incident-remediation-bot
+    persona: ai-lab/bot-personas/incident-remediation-bot.yaml
+    role: incident/remediation
+    capabilities:
+      - runbook-generation
+      - remediation-script-authoring
+      - rollback-planning
+      - topology-analysis
+      - log-analysis
+      - infrastructure-inspection
+
+  # NOTE: the self-healing-bot (the container fix-applier) now lives in its own
+  # app, swarm-apps/intelligent-processing.yaml, which owns the streamlined
+  # Prometheus self-healing queue. Kept out of here so the generic `incident`
+  # queue and the self-healing queue stay cleanly separated.
+
+# No app-specific UI surfaces — incidents show in the standard cockpit tickets
+# view, filtered by ticketType. The framework ribbon is kept in full.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKFLOW — the framework's embedded incident-rca pipeline
+# (queue-manager-service.ts). Worker → review → revision.
+# ─────────────────────────────────────────────────────────────────────────────
+ticketType: incident
+workflow:
+  name: Intelligent Operations RCA Pipeline
+  pipeline: incident-rca
+  workerBot: rca-specialist
+  reviewerBot: queue-bot
+  phases:
+    - worker
+    - review
+    - revision
+  maxRevisions: 2
+
+# RAG collection the RCA bots query. Empty until the operator seeds it
+# (POST each doc to /api/rag/ingest with provenance metadata).
+rag:
+  collection: infra-runbooks
+  description: Operator-curated infrastructure runbook corpus
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RIBBON VISIBILITY POLICY — keep the full framework default ribbon so operators
+# see tickets / chat / dashboard / logs / settings while this app is focused.
+# ─────────────────────────────────────────────────────────────────────────────
+ribbon:
+  hideFrameworkItems: []
+  defaultView: tickets

@@ -1,0 +1,40 @@
+provider: cryptocompare
+displayName: CryptoCompare
+version: 1.0.0
+baseUrl: https://min-api.cryptocompare.com/data
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: price
+    tool: cryptocompare-price
+    method: GET
+    path: /price
+    query:
+      fsym: '{fsym}'
+      tsyms: '{tsyms}'
+  - name: histo-day
+    tool: cryptocompare-histo-day
+    method: GET
+    path: /v2/histoday
+    query:
+      fsym: '{fsym}'
+      tsym: '{tsym}'
+      limit: '{limit}'
+  - name: top-totalvolfull
+    tool: cryptocompare-top-totalvolfull
+    method: GET
+    path: /top/totalvolfull
+    query:
+      limit: '{limit}'
+      tsym: '{tsym}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/min-api.cryptocompare.com.ico

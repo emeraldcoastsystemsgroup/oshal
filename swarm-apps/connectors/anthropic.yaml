@@ -1,0 +1,31 @@
+provider: anthropic
+displayName: Anthropic
+version: 1.0.0
+baseUrl: https://api.anthropic.com/v1
+auth:
+  type: apiKeyHeader
+  header: x-api-key
+headers:
+  anthropic-version: '2023-06-01'
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: models
+    tool: anthropic-models
+    method: GET
+    path: /models
+  - name: model
+    tool: anthropic-model
+    method: GET
+    path: /models/{model_id}
+metadata:
+  description: "List and inspect the Claude models available to the connected Anthropic account."
+  category: "AI"
+  icon: anthropic
+  iconTitle: Anthropic
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,32 @@
+provider: mobygames
+displayName: MobyGames
+version: 1.0.0
+baseUrl: https://api.mobygames.com/v1
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: games
+    tool: mobygames-games
+    method: GET
+    path: /games
+    query:
+      title: '{q}'
+  - name: platforms
+    tool: mobygames-platforms
+    method: GET
+    path: /platforms
+  - name: genres
+    tool: mobygames-genres
+    method: GET
+    path: /genres
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/mobygames.com.ico

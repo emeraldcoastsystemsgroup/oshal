@@ -1,0 +1,32 @@
+provider: currencyapi
+displayName: CurrencyAPI
+version: 1.0.0
+baseUrl: https://api.currencyapi.com/v3
+auth:
+  type: apiKeyHeader
+  header: apikey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: latest
+    tool: currencyapi-latest
+    method: GET
+    path: /latest
+  - name: currencies
+    tool: currencyapi-currencies
+    method: GET
+    path: /currencies
+  - name: historical
+    tool: currencyapi-historical
+    method: GET
+    path: /historical
+    query:
+      date: '{date}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/currencyapi.com.ico

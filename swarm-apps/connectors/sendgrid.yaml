@@ -1,0 +1,36 @@
+provider: sendgrid
+displayName: SendGrid
+version: 1.0.0
+baseUrl: https://api.sendgrid.com/v3
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-templates
+    tool: sendgrid-list-templates
+    method: GET
+    path: /templates
+    query:
+      generations: legacy
+      page_size: '{pageSize}'
+  - name: send-mail
+    tool: sendgrid-send-mail
+    method: POST
+    path: /mail/send
+    body: '{mail}'
+    emptyOk:
+      - 202
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List SendGrid transactional mail templates, with a resource to send email."
+  category: "Email"
+  icon: sendgrid
+  iconTitle: SendGrid
+  iconSource: simple-icons
+  iconVerified: true

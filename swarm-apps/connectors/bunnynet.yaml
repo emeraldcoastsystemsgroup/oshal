@@ -1,0 +1,42 @@
+provider: bunnynet
+displayName: Bunny.net
+version: 1.0.0
+baseUrl: https://api.bunny.net
+auth:
+  type: apiKeyHeader
+  header: AccessKey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: pull-zones
+    tool: bunnynet-pull-zones
+    method: GET
+    path: /pullzone
+  - name: pull-zone
+    tool: bunnynet-pull-zone
+    method: GET
+    path: /pullzone/{id}
+  - name: storage-zones
+    tool: bunnynet-storage-zones
+    method: GET
+    path: /storagezone
+  - name: dns-zones
+    tool: bunnynet-dns-zones
+    method: GET
+    path: /dnszone
+  - name: statistics
+    tool: bunnynet-statistics
+    method: GET
+    path: /statistics
+  - name: countries
+    tool: bunnynet-countries
+    method: GET
+    path: /country
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/bunny.net.ico

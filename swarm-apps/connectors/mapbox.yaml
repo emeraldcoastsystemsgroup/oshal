@@ -1,0 +1,25 @@
+provider: mapbox
+displayName: Mapbox
+version: 1.0.0
+baseUrl: https://api.mapbox.com
+auth:
+  type: apiKeyQuery
+  param: access_token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: geocode
+    tool: mapbox-geocode
+    method: GET
+    path: /geocoding/v5/mapbox.places/{query}.json
+    query:
+      limit: '5'
+metadata:
+  icon: mapbox
+  iconTitle: Mapbox
+  iconSource: simple-icons
+  iconVerified: true

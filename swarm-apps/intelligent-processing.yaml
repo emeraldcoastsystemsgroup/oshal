@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — Intelligent Processing
+# Framework: OSHAL (see the swarm-application-manifests ADR in docs/adr/)
+#
+# The streamlined self-healing queue. Prometheus alerts about the swarm's own
+# containers land here as `intelligent-processing` tickets (kept distinct from
+# generic `incident` so they filter cleanly in the cockpit), park in BACKLOG for
+# operator triage, and — once promoted to approved — flow through the framework's
+# incident-rca pipeline: RCA bots root-cause and PROPOSE a fix, then on the
+# approve-or-close gate the self-healing-bot applies the container action.
+#
+# Intake path: Prometheus → Alertmanager → POST /api/alerts/alertmanager
+#   (see src/app/routes/alertmanager-routes.ts, docs/runbooks/self-healing-monitoring.md)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: intelligent-processing
+suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: Intelligent Processing
+description: >-
+  Streamlined self-healing alert queue. Prometheus self-monitoring alerts open
+  intelligent-processing tickets that park in backlog until an operator promotes
+  them, then run the incident-rca pipeline (RCA proposes, self-healing-bot
+  applies the container fix at the approve-or-close gate).
+version: 1.0.0
+status: active
+
+ticketType: intelligent-processing
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKFLOW — reuse the framework's 3-phase incident-rca pipeline. The worker
+# (rca-specialist) and reviewer (queue-bot) are framework bots already active via
+# intelligent-operations.yaml, so they are referenced by name here, not
+# re-declared (same pattern as the other explicit-load variants).
+# ─────────────────────────────────────────────────────────────────────────────
+workflow:
+  name: Intelligent Processing RCA Pipeline
+  pipeline: incident-rca
+  workerBot: rca-specialist
+  reviewerBot: queue-bot
+  phases:
+    - worker
+    - review
+    - revision
+  maxRevisions: 2
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BOTS — only the bot unique to this app. self-healing-bot is the fix-APPLIER:
+# the one worker with the Docker socket + restart-container tool (its container
+# is in docker-compose.oshal-local.yml, profile: incident). Selected post-RCA on
+# approval to execute the remediation. Runs the protected autonomous-monitoring
+# hook (ENABLE_SELF_HEALING_SCHEDULER).
+# ─────────────────────────────────────────────────────────────────────────────
+bots:
+  - agentId: a0000000-0000-0000-0000-000000000030
+    name: self-healing-bot
+    persona: ai-lab/bot-personas/self-healing-bot.yaml
+    role: incident/self-healing
+    capabilities:
+      - self-healing
+      - container-restart
+      - infrastructure-remediation
+      - docker
+      - monitoring
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI — a dedicated ribbon screen for the queue. Served standalone at
+# /intelligent-processing (registered in server.ts), grouped by alert fingerprint
+# with a Status filter (default Backlog) and a Promote-to-approval action. Also
+# reachable via the native cockpit tickets view filtered to Type = Intelligent
+# Processing, or focus mode /cockpit?app=intelligent-processing.
+# ─────────────────────────────────────────────────────────────────────────────
+ui:
+  static:
+    - toolName: intelligent-processing-queue
+      label: Intelligent Processing
+      icon: codicon-pulse
+      iframeUrl: /intelligent-processing
+      section: top
+
+ribbon:
+  hideFrameworkItems: []
+  defaultView: tickets

@@ -1,0 +1,45 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * DATE         | AUTHOR  | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation - Daylight (light) theme for oshal
+ * =============================================================================
+ *
+ * Daylight Theme — default light mode for oshal design system
+ * Usage: <link rel="stylesheet" href="/shared/ui/css/themes/daylight.css">
+ */
+
+:root, [data-theme="daylight"] {
+  --bg-primary: #f4f4f6;
+  --bg-secondary: #e9ecf2;
+  --bg-tertiary: #e9ecf2;
+  --bg-card: rgba(255, 255, 255, 0.92);
+  --bg-card-hover: rgba(245, 247, 250, 0.98);
+
+  --border-color: #e9ecf2;
+  --border-color-hover: #d1d5db;
+
+  --text-primary: #181a20;
+  --text-secondary: #353945;
+  --text-muted: #6e7380;
+
+  --accent-primary: #3b6eea;
+  --accent-primary-hover: #5e8fff;
+  --accent-gradient: linear-gradient(90deg, #3b6eea 0%, #5e8fff 100%);
+  --accent-glow: rgba(94, 143, 255, 0.18);
+
+  --status-success: #34c759;
+  --status-active: #3b6eea;
+  --status-warning: #ff9f0a;
+  --status-error: #ff453a;
+
+  --glass-bg: rgba(255, 255, 255, 0.85);
+  --glass-bg-heavy: rgba(255, 255, 255, 0.95);
+  --glass-border: rgba(24,26,32,0.08);
+  --glass-highlight: linear-gradient(90deg, transparent, rgba(24,26,32,0.12), transparent);
+  --glass-blur: 20px;
+
+  --shadow-md: 0 2px 8px rgba(24, 26, 32, 0.10);
+  --shadow-lg: 0 8px 32px rgba(24, 26, 32, 0.18);
+}

@@ -1,0 +1,30 @@
+provider: turso
+displayName: Turso
+version: 1.0.0
+baseUrl: https://api.turso.tech/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: databases
+    tool: turso-databases
+    method: GET
+    path: /organizations/{organization}/databases
+  - name: database
+    tool: turso-database
+    method: GET
+    path: /organizations/{organization}/databases/{database}
+  - name: groups
+    tool: turso-groups
+    method: GET
+    path: /organizations/{organization}/groups
+metadata:
+  icon: turso
+  iconTitle: Turso
+  iconSource: simple-icons
+  iconVerified: true

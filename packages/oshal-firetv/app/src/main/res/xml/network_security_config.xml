@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The OSHAL host is frequently a LAN box reached over plain http (e.g. the edge-agent host
+     at http://192.168.x.x:5000). Permit cleartext so the surface can reach it; production
+     deployments behind the Cloudflare tunnel use https and are unaffected. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

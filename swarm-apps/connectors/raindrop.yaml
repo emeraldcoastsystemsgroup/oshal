@@ -1,0 +1,47 @@
+provider: raindrop
+displayName: Raindrop.io
+version: 1.0.0
+baseUrl: https://api.raindrop.io/rest/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: page
+  pageSize: 1
+  itemsField: items
+resources:
+  - name: me
+    tool: raindrop-me
+    method: GET
+    path: /user
+  - name: collections
+    tool: raindrop-collections
+    method: GET
+    path: /collections
+  - name: raindrops
+    tool: raindrop-raindrops
+    method: GET
+    path: /raindrops/{collectionId}
+    query:
+      page: '{page}'
+      perpage: '50'
+    paginate: true
+  - name: search
+    tool: raindrop-search
+    method: GET
+    path: /raindrops/0
+    query:
+      search: '{query}'
+      page: '{page}'
+      perpage: '50'
+    paginate: true
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/raindrop.io.ico

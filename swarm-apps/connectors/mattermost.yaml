@@ -1,0 +1,38 @@
+provider: mattermost
+displayName: Mattermost
+version: 1.0.0
+baseUrl: ${env:MATTERMOST_BASE_URL:-https://your-mattermost.example.com/api/v4}
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: mattermost-me
+    method: GET
+    path: /users/me
+  - name: teams
+    tool: mattermost-teams
+    method: GET
+    path: /teams
+  - name: channel
+    tool: mattermost-channel
+    method: GET
+    path: /channels/{channel_id}
+  - name: channel-posts
+    tool: mattermost-channel-posts
+    method: GET
+    path: /channels/{channel_id}/posts
+  - name: user
+    tool: mattermost-user
+    method: GET
+    path: /users/{user_id}
+metadata:
+  icon: mattermost
+  iconTitle: Mattermost
+  iconSource: simple-icons
+  iconVerified: true

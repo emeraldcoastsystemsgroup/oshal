@@ -1,0 +1,131 @@
+# Vids tool registry (ADR-073, Phase 2) — the "playwright scripts" as callable tools.
+#
+# Each tool is a NAMED function the director LLM can call. The director picks
+# WHICH tool to call (reasoning about the video); it never figures out clicks.
+# Each tool's `steps` are the deterministic click-path. On the real-screen path a
+# `find` step is resolved by a single focused vision lookup ("where is THIS one
+# control?" -> coords) — far cheaper than open-ended "what do I do next" planning.
+# Screen capture is still taken after each tool so the director SEES the result
+# and verifies before the next call.
+#
+# Step schema (executed by src/tools/executor.js):
+#   { action: click,       find: "<control description>", optional?: true }
+#   { action: type,        find?: "<box to focus first>", value: "<text|{{param}}>" }
+#   { action: key,         key: "{ENTER}" }
+#   { action: wait,        ms: 1500 }
+#   { action: wait_render }                 # poll until a finished clip card appears
+#   { action: upload,      find: "<button>", file: "{{param}}" }   # click -> type path -> Enter
+#   { action: ensure,      find: "<control>", present: "<what means already-open>" }
+# `{{param}}` tokens are filled from the tool call's params.
+
+tools:
+  - name: generate_clip
+    description: >-
+      Generate a brand-new AI video clip from a text prompt (Veo, create-from-scratch).
+      Use when you need footage and have NO source image. Params: prompt (required),
+      orientation (Landscape|Portrait|Square).
+    params: [prompt, orientation]
+    steps:
+      - { action: click, find: "the Veo icon in the right vertical rail (opens the AI video clip panel)" }
+      - { action: click, find: "the mode dropdown reading 'Create from scratch' at the top of the AI video clip panel", optional: true }
+      - { action: click, find: "the 'Create from scratch' option in the open dropdown", optional: true }
+      - { action: type,  find: "the prompt description text box in the AI video clip panel", value: "{{prompt}}" }
+      - { action: click, find: "the {{orientation}} orientation chip", optional: true }
+      - { action: click, find: "the blue Generate button" }
+      - { action: wait_render }
+
+  - name: animate_image
+    description: >-
+      Animate a single still image into a talking/moving clip (Veo "Animate an image").
+      The cheap, proven talking-host path — reuse one avatar still. Params: image
+      (absolute path, required), prompt (motion + spoken line), orientation.
+    params: [image, prompt, orientation]
+    steps:
+      - { action: click,  find: "the Veo tool icon in the right-side vertical toolbar (opens a FRESH AI video clip panel; each scene is a new clip)" }
+      - { action: wait,   ms: 1500 }
+      - { action: ensure, present: "the panel mode dropdown at the top reading 'Animate an image'", find: "the panel mode dropdown at the top of the AI video clip panel (e.g. reading 'Create from scratch')" }
+      - { action: click,  find: "the 'Animate an image' option in the open dropdown menu", optional: true }
+      - { action: upload, find: "the dashed 'Add image' box (labeled Add image) in the AI video clip panel", file: "{{image}}" }
+      - { action: wait,   ms: 2000 }
+      - { action: type,   find: "the description/prompt text box in the AI video clip panel", value: "{{prompt}}" }
+      - { action: click,  find: "the {{orientation}} orientation chip", optional: true }
+      - { action: click,  find: "the blue Generate button at the bottom of the AI video clip panel" }
+      - { action: wait_render }
+
+  - name: insert_clip
+    description: >-
+      Place the most recently generated clip onto the timeline as a NEW scene/cut.
+      Call right after generate_clip / animate_image. No params.
+    params: []
+    steps:
+      - { action: click, find: "the Insert button on the rendered clip result card" }
+
+  - name: extend_clip
+    description: >-
+      Continue the previous timeline clip with the newly generated one (no cut).
+      Use instead of insert_clip when extending the same beat. No params.
+    params: []
+    steps:
+      - { action: click, find: "the Extend button on the rendered clip result card" }
+
+  - name: add_caption
+    description: >-
+      Turn on auto-captions so spoken dialogue is subtitled. Call after the talking
+      clip is on the timeline. No params.
+    params: []
+    steps:
+      - { action: click, find: "the Captions icon in the right vertical rail" }
+      - { action: click, find: "the button that generates or turns on automatic captions" }
+
+  - name: add_text
+    description: >-
+      Add an on-screen text box (a title, lower-third, or CTA) — the "box with some
+      words". NEVER ask a Veo prompt to render words; use this. Params: text (required).
+    params: [text]
+    steps:
+      - { action: click, find: "the Text icon in the right vertical rail" }
+      - { action: click, find: "the option to add a text box / 'Add text' to the current scene", optional: true }
+      - { action: type,  value: "{{text}}" }
+
+  - name: add_shape
+    description: >-
+      Add a shape (rectangle, circle, line, arrow) to the current scene — useful as
+      a background plate behind text. Params: shape (e.g. rectangle, circle).
+    params: [shape]
+    steps:
+      - { action: click, find: "the Shapes icon in the right vertical rail" }
+      - { action: click, find: "the {{shape}} shape in the shapes panel" }
+
+  - name: add_image
+    description: >-
+      Place an existing image file directly onto the timeline (a logo, screenshot,
+      photo) — NOT generation. Params: image (absolute path, required).
+    params: [image]
+    steps:
+      - { action: click,  find: "the Uploads (or Image) icon in the right vertical rail" }
+      - { action: upload, find: "the button to upload / choose a file", file: "{{image}}" }
+
+  - name: add_voiceover
+    description: >-
+      Add a spoken voiceover line via the Voiceover tool (use for LONGER scripts that
+      exceed what a Veo clip prompt can speak). Params: line (the text to speak).
+    params: [line]
+    steps:
+      - { action: click, find: "the Voiceover icon in the right vertical rail" }
+      - { action: type,  find: "the text box where voiceover script is entered", value: "{{line}}" }
+
+  - name: add_music
+    description: >-
+      Add a background music track from the Music library to set the mood. No params
+      (pick the first suitable track).
+    params: []
+    steps:
+      - { action: click, find: "the Music icon in the right vertical rail" }
+      - { action: click, find: "the first add/use button next to a music track", optional: true }
+
+  - name: set_orientation
+    description: >-
+      Change the clip/scene orientation. Params: orientation (Landscape|Portrait|Square).
+    params: [orientation]
+    steps:
+      - { action: click, find: "the {{orientation}} orientation chip" }

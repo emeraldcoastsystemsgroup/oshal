@@ -1,0 +1,52 @@
+provider: posthog
+displayName: PostHog
+version: 1.0.0
+baseUrl: https://app.posthog.com/api
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: offset
+  pageSize: 100
+  nextField: next
+  itemsField: results
+resources:
+  - name: organizations
+    tool: posthog-organizations
+    method: GET
+    path: /organizations/
+  - name: projects
+    tool: posthog-projects
+    method: GET
+    path: /organizations/{organizationId}/projects/
+  - name: insights
+    tool: posthog-insights
+    method: GET
+    path: /projects/{projectId}/insights/
+    paginate: true
+  - name: events
+    tool: posthog-events
+    method: GET
+    path: /projects/{projectId}/events/
+    paginate: true
+  - name: dashboards
+    tool: posthog-dashboards
+    method: GET
+    path: /projects/{projectId}/dashboards/
+    paginate: true
+  - name: feature-flags
+    tool: posthog-feature-flags
+    method: GET
+    path: /projects/{projectId}/feature_flags/
+    paginate: true
+metadata:
+  icon: posthog
+  iconTitle: PostHog
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Batch Job Telemetry</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg-primary); color: var(--text-primary); }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+    h1 { margin: 0; font-size: 28px; letter-spacing: 0; }
+    .status { color: var(--text-secondary); font-size: 14px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    input, button { border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 10px; background: var(--bg-card); color: var(--text-primary); }
+    button { cursor: pointer; background: var(--accent-primary); color: var(--text-primary); border-color: var(--accent-primary); }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+    .run { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; }
+    .row { display: grid; grid-template-columns: 180px 1fr 120px 120px 140px; gap: 12px; align-items: center; }
+    .bar-track { height: 18px; background: var(--bg-tertiary); border-radius: 4px; overflow: hidden; }
+    .bar { height: 100%; background: var(--accent-primary); min-width: 2px; }
+    .failed .bar { background: #b42318; }
+    .meta { color: var(--text-secondary); font-size: 13px; margin-top: 8px; }
+    .error { color: #b42318; margin-top: 8px; font-size: 13px; white-space: pre-wrap; }
+    .empty { padding: 28px; background: var(--bg-card); border: 1px dashed var(--border-color); border-radius: 8px; color: var(--text-secondary); }
+    @media (max-width: 820px) { .row { grid-template-columns: 1fr; } header { align-items: start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Batch Job Telemetry</h1>
+        <div id="status" class="status">Loading recent jobs...</div>
+      </div>
+      <div class="toolbar">
+        <input id="since" type="datetime-local" aria-label="Since">
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+    </header>
+    <section id="runs" class="grid"></section>
+  </main>
+  <script>
+    const runsEl = document.getElementById('runs');
+    const statusEl = document.getElementById('status');
+    const sinceEl = document.getElementById('since');
+    sinceEl.value = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+    document.getElementById('refresh').addEventListener('click', load);
+    load().catch(showError);
+
+    async function load() {
+      statusEl.textContent = 'Loading recent jobs...';
+      const since = new Date(sinceEl.value).toISOString();
+      const res = await fetch('/api/batch-jobs/recent?scope=all&limit=100&since=' + encodeURIComponent(since));
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Request failed');
+      render(data.runs || []);
+      statusEl.textContent = `${data.count || 0} job(s) since ${new Date(since).toLocaleString()}`;
+    }
+
+    function render(runs) {
+      if (!runs.length) {
+        runsEl.innerHTML = '<div class="empty">No persisted batch Job telemetry exists in this window.</div>';
+        return;
+      }
+      const max = Math.max(...runs.map((r) => r.durationMs || 1));
+      runsEl.innerHTML = runs.map((run) => {
+        const pct = Math.max(1, Math.round(((run.durationMs || 0) / max) * 100));
+        const cpu = [fmtCores(run.cpuRequestCores), fmtCores(run.cpuLimitCores), fmtCpu(run)].filter(Boolean).join(' / ') || 'CPU n/a';
+        const mem = run.memoryRssBytes ? `${Math.round(run.memoryRssBytes / 1048576)} MiB RSS` : 'Memory n/a';
+        return `<article class="run ${escapeHtml(run.status)}">
+          <div class="row">
+            <strong>${escapeHtml(run.phase)}</strong>
+            <div class="bar-track"><div class="bar" style="width:${pct}%"></div></div>
+            <span>${fmtMs(run.durationMs)}</span>
+            <span>${escapeHtml(run.status)}</span>
+            <span>${escapeHtml(cpu)}</span>
+          </div>
+          <div class="meta">${escapeHtml(run.ticketId)} · ${escapeHtml(run.agentId)} · ${escapeHtml(run.queueName)} · ${escapeHtml(run.workerId)} · ${new Date(run.startedAt).toLocaleString()} · ${escapeHtml(mem)}</div>
+          ${run.backendError ? `<div class="error">${escapeHtml(run.backendError)}</div>` : ''}
+        </article>`;
+      }).join('');
+    }
+
+    function showError(error) {
+      statusEl.textContent = 'Batch telemetry failed to load.';
+      runsEl.innerHTML = `<div class="empty">${escapeHtml(error.message || error)}</div>`;
+    }
+    function fmtMs(ms) {
+      if (ms == null) return 'n/a';
+      if (ms < 1000) return `${ms} ms`;
+      const sec = ms / 1000;
+      return sec < 60 ? `${sec.toFixed(1)} s` : `${(sec / 60).toFixed(1)} min`;
+    }
+    function fmtCores(value) { return value == null ? '' : `${Number(value).toFixed(2)} cores`; }
+    function fmtCpu(run) {
+      const micros = (run.cpuUsageUserMicros || 0) + (run.cpuUsageSystemMicros || 0);
+      return micros ? `${(micros / 1000000).toFixed(2)} CPU-s` : '';
+    }
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+provider: fastly
+displayName: Fastly
+version: 1.0.0
+baseUrl: https://api.fastly.com
+auth:
+  type: apiKeyHeader
+  header: Fastly-Key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: current-user
+    tool: fastly-current-user
+    method: GET
+    path: /current_user
+  - name: services
+    tool: fastly-services
+    method: GET
+    path: /service
+  - name: service
+    tool: fastly-service
+    method: GET
+    path: /service/{serviceId}
+  - name: service-versions
+    tool: fastly-service-versions
+    method: GET
+    path: /service/{serviceId}/version
+  - name: datacenters
+    tool: fastly-datacenters
+    method: GET
+    path: /datacenters
+  - name: public-ip-list
+    tool: fastly-public-ip-list
+    method: GET
+    path: /public-ip-list
+metadata:
+  icon: fastly
+  iconTitle: Fastly
+  iconSource: simple-icons
+  iconVerified: true

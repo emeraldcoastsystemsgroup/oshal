@@ -1,0 +1,24 @@
+provider: opencage
+displayName: OpenCage
+version: 1.0.0
+baseUrl: https://api.opencagedata.com/geocode/v1
+auth:
+  type: apiKeyQuery
+  param: key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: geocode
+    tool: opencage-geocode
+    method: GET
+    path: /json
+    query:
+      q: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/opencagedata.com.ico

@@ -1,0 +1,38 @@
+# Zoho Books — invoices, contacts, and items via Authorization "Zoho-oauthtoken <t>" header plus required organization_id query.
+provider: zohobooks
+displayName: Zoho Books
+version: 1.0.0
+baseUrl: https://www.zohoapis.com/books/v3
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: invoices
+    tool: zohobooks-invoices
+    method: GET
+    path: /invoices
+    query:
+      organization_id: '{orgId}'
+  - name: contacts
+    tool: zohobooks-contacts
+    method: GET
+    path: /contacts
+    query:
+      organization_id: '{orgId}'
+  - name: items
+    tool: zohobooks-items
+    method: GET
+    path: /items
+    query:
+      organization_id: '{orgId}'
+metadata:
+  icon: zohobooks
+  iconTitle: Zoho Books
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,301 @@
+# Content pack — Famous Sayings & Idioms (data only; no code, no headers required).
+#
+# The creative bot cycles this corpus: each entry is a short, kid-safe saying with a
+# ~100-word narration script. The StoryScript builder (src/stories/script.js) splits
+# `script` into beats (~7 words each — patient pacing) and composes each Veo scene
+# prompt from: defaultStyle + the story's pinned `setting` + the FULL `characters`
+# descriptions (restated EVERY scene so nobody drifts) + the beat's action + spoken
+# narration/dialogue voice directives. Nothing here is copyrighted: idioms are
+# common-language (uncopyrightable); these illustrative retellings are original to
+# OSHAL (CC0). Each script plays the silly LITERAL picture first, then reveals the
+# REAL figurative meaning.
+#
+# Schema (one pack per file):
+#   pack, displayName, license, audience, theme, defaultStyle, defaultOrientation,
+#   narratorVoice
+#   stories: [ { id, title, moral, tags[], setting, characters[], script, style?, scenes?[] } ]
+# `setting`    = the FIXED world (place, light, palette) — restated every scene; stops
+#                Veo from drifting the world mid-story.
+# `characters` = the character bible: name + exact visual description (restated every
+#                scene) + a distinct voice (used for that character's spoken lines).
+# `script`     = the ~100-word narration (source of truth; builder derives beats).
+# `scenes`     = OPTIONAL curated per-beat visual prompts; when present, used verbatim.
+
+pack: sayings
+displayName: Famous Sayings & Idioms
+license: "Idioms are common-language (uncopyrightable); illustrative scripts original to OSHAL (CC0)"
+audience: kids
+theme: saying
+defaultOrientation: Landscape
+narratorVoice: "Nyx voice - warm, clear, playful storyteller, lower-middle pitch, with a twinkle"
+defaultStyle: >-
+  A simple children's crayon animation: everything looks hand-drawn with wax crayons
+  on white construction paper — wobbly hand-drawn outlines, bright cheerful flat
+  crayon colors with visible waxy stroke texture, simple rounded child-like shapes,
+  the white paper texture showing through, gentle bouncy 2D flipbook-style motion.
+  Flat 2D children's drawing, not realistic, not 3D.
+
+stories:
+  - id: raining-cats-and-dogs
+    title: "It's Raining Cats and Dogs"
+    moral: It means it is raining very hard.
+    tags: [weather, funny, animals]
+    setting: >-
+      A cozy small-town street with colorful shop fronts, bright umbrellas bobbing
+      along the sidewalk, green grass strips and shiny puddles, all under puffy grey
+      rainclouds with soft silvery daylight. The season never changes.
+    characters:
+      - name: the little girl
+        description: >-
+          a small cheerful girl in a shiny yellow raincoat with the hood up, red
+          rubber boots, rosy cheeks, and a gap-toothed grin — the SAME girl in the
+          SAME yellow raincoat in every scene
+        voice: a bright, bubbly, giggling young voice, high and delighted
+      - name: the falling kittens and puppies
+        description: >-
+          soft round pastel kittens (grey, ginger, and white) and floppy-eared
+          puppies — including one white puppy with brown spots — all fluffy and
+          happy, drifting down gently like balloons — the SAME kittens and puppies
+          in every scene
+        voice: tiny happy mews and playful little yips, soft and squeaky
+    script: >-
+      One gray afternoon the puffy clouds grew heavy, and then plop, plop, plop,
+      down tumbled soft kittens and floppy-eared puppies. They bounced gently onto
+      umbrellas, rolled across the grass, and curled up in cozy puddles. A little
+      girl giggled as a spotted puppy landed right in her hood. But wait, that is
+      only a silly picture! When grown-ups say it is raining cats and dogs, no pets
+      fall from the sky at all. They simply mean the rain is pouring down very, very
+      hard. So grab your boots, open your umbrella, and splash happily through the
+      big, busy rain.
+
+  - id: a-piece-of-cake
+    title: "It's a Piece of Cake"
+    moral: It means something is very easy to do.
+    tags: [funny, food, easy]
+    setting: >-
+      A warm, sunny family kitchen with honey-colored wooden floors, a big window
+      pouring in golden afternoon light, a tall teetering pile of chores beside the
+      table, and a cozy cream-and-yellow palette. The season never changes.
+    characters:
+      - name: Theo
+        description: >-
+          a small boy with curly dark-brown hair, a bright green t-shirt, blue
+          shorts, and big expressive eyes — the SAME boy in every scene
+        voice: a groany-then-giggly young boy's voice, medium-high pitch
+      - name: Theo's grandma
+        description: >-
+          a twinkly-eyed grandma with a neat silver bun, round glasses, and a
+          flowery pink apron — the SAME grandma in every scene
+        voice: a warm, chuckling, comforting elderly voice
+      - name: the giant cake slice
+        description: >-
+          an enormous fluffy slice of golden sponge cake with swirly pink frosting
+          and one bright red cherry on top, gently wobbling — the SAME pink-frosted
+          cake slice whenever it appears
+        voice: a soft, squishy, jiggly wobble of a voice, sweet and silly
+    script: >-
+      A boy named Theo had a big pile of chores, and he groaned at the tall stack.
+      Then his grandma smiled and said, "Don't worry, it's a piece of cake." Suddenly
+      Theo imagined a giant, fluffy slice of cake with pink frosting sitting right on
+      the floor, wobbling and smelling sweet. He blinked and laughed out loud. But
+      wait, there was no real cake at all! When grown-ups say a piece of cake, they
+      do not mean dessert. They mean the job is so simple and easy that it feels like
+      fun. Theo grinned, rolled up his sleeves, and finished every chore quickly.
+
+  - id: break-the-ice
+    title: Break the Ice
+    moral: It means to be friendly so people feel comfortable.
+    tags: [friendship, funny]
+    setting: >-
+      A bright, friendly elementary classroom with rows of colorful desks, kids'
+      drawings on the walls, big windows full of morning light, and a cheerful
+      primary-color palette. The season never changes.
+    characters:
+      - name: Mia
+        description: >-
+          a shy little girl with dark hair in two neat braids, a purple sweater, a
+          small star-covered backpack, and hopeful brown eyes — the SAME girl in
+          every scene
+        voice: a soft, shy young voice that grows brighter and braver
+      - name: the teacher
+        description: >-
+          a kind teacher with curly auburn hair, a mint-green cardigan, warm eyes,
+          and a gentle smile — the SAME teacher in every scene
+        voice: a warm, encouraging grown-up voice, soft and clear
+      - name: the classmates
+        description: >-
+          a small friendly group of kids in bright t-shirts and sweaters of
+          different colors — the SAME group of classmates in every scene
+        voice: a happy jumble of young voices, chattering and welcoming
+    script: >-
+      On the first day at a new school, Mia stood quietly, feeling shy among the
+      strangers. Her teacher whispered, "Go on, break the ice!" Right away Mia
+      pictured a giant sheet of shiny blue ice covering the whole classroom, with
+      everyone frozen still like statues. She imagined tapping it with a tiny hammer
+      until it cracked with a friendly tinkle. She giggled at the funny idea. But
+      wait, there was no real ice at all! To break the ice means to smile, say hello,
+      and start a warm chat so everyone feels cozy and welcome. So Mia waved, said
+      hi, and soon made new friends.
+
+  - id: spill-the-beans
+    title: Spill the Beans
+    moral: It means to tell a secret.
+    tags: [funny, food, secrets]
+    setting: >-
+      A cozy family dining room with a long wooden table and chairs, half-hung
+      streamers and balloons ready for the surprise party, warm golden lamplight,
+      and a festive palette of reds and golds. The season never changes.
+    characters:
+      - name: Sam
+        description: >-
+          a little boy with freckles, a red-and-white striped shirt, and a proud
+          zipped-lips grin — the SAME freckled boy in every scene
+        voice: a small, excited voice that drops to a careful whisper
+      - name: Sam's cousin
+        description: >-
+          a slightly older girl with bouncy curly hair, a teal hoodie, and big
+          curious eyes — the SAME cousin in every scene
+        voice: a nosy, wheedling, playful voice, quick and teasing
+      - name: the giant jellybean jar
+        description: >-
+          an enormous glass jar packed with shiny rainbow jellybeans, tipping over
+          and spilling beans in a colorful river — the SAME giant jar whenever it
+          appears
+        voice: a clattering, rattling chorus of tiny bean bounces
+    script: >-
+      The whole family was planning a surprise party, and little Sam knew the secret.
+      His cousin leaned in and whispered, "Come on, spill the beans!" At once Sam
+      imagined a giant jar of colorful jellybeans tipping over and clattering
+      everywhere, bouncing across the table and rolling under the chairs. He pictured
+      beans spilling and spilling in a rainbow river. He laughed at the silly sight.
+      But wait, there were no real beans at all! To spill the beans means to share a
+      secret you were keeping. Sam only grinned and zipped his lips, saving the
+      wonderful surprise for the very special day.
+
+  - id: under-the-weather
+    title: Feeling Under the Weather
+    moral: It means feeling a little poorly or sniffly.
+    tags: [funny, weather, feelings]
+    setting: >-
+      A snug little bedroom with a quilt-covered bed, a mug of warm soup on the
+      nightstand, and a big window full of cheerful sunshine — warm honey-colored
+      light everywhere except Leo's tiny patch of drizzle. The season never changes.
+    characters:
+      - name: Leo
+        description: >-
+          a small boy in blue-and-white striped pajamas with tousled brown hair, a
+          pink sniffly nose, and sleepy eyes — the SAME boy in every scene
+        voice: a stuffy-nosed, sniffly little voice, small but cheerful
+      - name: Leo's dad
+        description: >-
+          a tall, gentle dad in a soft grey sweater with kind eyes and a caring
+          smile — the SAME dad in every scene
+        voice: a deep, soft, soothing grown-up voice
+      - name: the tiny raincloud
+        description: >-
+          a small fluffy grey cloud floating just above Leo's head, sprinkling a
+          gentle drizzle of tiny blue drops — the SAME little cloud whenever it
+          appears
+        voice: a soft pitter-patter murmur, drizzly and mumbly
+    script: >-
+      One morning Leo woke up with a sniffly nose and a tickly throat. His dad felt
+      his forehead and said, "You seem a little under the weather." Right away Leo
+      imagined a tiny gray raincloud floating just above his head, sprinkling soft
+      drizzle only on him while the rest of the room stayed sunny. He pictured
+      himself carrying a wee umbrella indoors. He sniffled and smiled. But wait,
+      there was no real cloud at all! Under the weather just means feeling a bit
+      poorly, sniffly, and tired. So Leo sipped warm soup, snuggled under a cozy
+      blanket, and rested until he felt bright again.
+
+  - id: the-early-bird-catches-the-worm
+    title: The Early Bird Catches the Worm
+    moral: It means people who start early get the best chance.
+    tags: [animals, morning, effort]
+    setting: >-
+      A rolling green hillside meadow at sunrise, dewy grass sparkling with tiny
+      drops, one big leafy tree full of nests, and a soft sky of pink and gold
+      morning light. The season never changes.
+    characters:
+      - name: the early robin
+        description: >-
+          a plump cheerful robin with a bright red-orange chest, warm brown wings,
+          and sparkling eager eyes — the SAME robin in every scene
+        voice: a chipper, tweeting, wide-awake little voice, bright and proud
+      - name: the wiggly worms
+        description: >-
+          plump pink garden worms with sleepy smiles, stretching and wiggling in
+          the dewy grass — the SAME wiggly worms in every scene
+        voice: slow, stretchy, yawning little voices
+      - name: the snoozing birds
+        description: >-
+          a row of round sleepy songbirds in soft blues and yellows, tucked into
+          their nests with closed eyes — the SAME sleepy birds in every scene
+        voice: soft, whistling little snores
+    script: >-
+      As the sun peeked over the hills, a cheerful little robin hopped out first,
+      while all the other birds were still snoozing in their nests. Down in the dewy
+      grass, plump wiggly worms were stretching in the cool morning air. The early
+      robin spotted a juicy one and gently tugged it up for a tasty breakfast. But
+      this saying is more than a bird story! When grown-ups say the early bird catches
+      the worm, they mean that people who start early and get going first often have
+      the best chance to win. So wake up bright, get ready, and greet the morning.
+
+  - id: barking-up-the-wrong-tree
+    title: Barking Up the Wrong Tree
+    moral: It means looking in the wrong place for an answer.
+    tags: [animals, funny, mistakes]
+    setting: >-
+      A sunny green backyard park with two tall leafy oak trees on a wide lawn,
+      scattered acorns, a low wooden fence, and warm dappled afternoon light. The
+      season never changes.
+    characters:
+      - name: Biscuit the puppy
+        description: >-
+          a fluffy golden puppy with floppy ears, a shiny black nose, a red collar,
+          and a nonstop wagging tail — the SAME golden puppy in every scene
+        voice: an eager, yippy, bouncy young voice, full of happy woofs
+      - name: the squirrel
+        description: >-
+          a cheeky red-brown squirrel with a huge bushy tail, bright black eyes,
+          and a shiny acorn held in tiny paws — the SAME squirrel in every scene
+        voice: a quick, chittery, teasing little voice
+    script: >-
+      A fluffy puppy named Biscuit saw a squirrel scamper and dashed after it,
+      barking up at a tall oak tree. "Woof, woof!" he yipped at the leaves. But the
+      clever squirrel had already hopped to a different tree far away, munching an
+      acorn and giggling. Poor Biscuit was barking at the wrong tree entirely!
+      Grown-ups borrowed this funny picture for a saying. When someone is barking up
+      the wrong tree, it means they are looking in the wrong place or blaming the
+      wrong thing for an answer. So Biscuit sniffed around, found the right tree, and
+      wagged his happy tail.
+
+  - id: when-pigs-fly
+    title: When Pigs Fly
+    moral: It means something that will probably never happen.
+    tags: [animals, funny, silly]
+    setting: >-
+      A boy's happily messy bedroom with toys scattered across the floor and one
+      big open window looking out over cozy town rooftops and a bright blue sky of
+      fluffy white clouds. The season never changes.
+    characters:
+      - name: Max
+        description: >-
+          a boy with spiky brown hair, an orange t-shirt, denim shorts, and a
+          dramatic grumbly frown that melts into laughter — the SAME boy in every
+          scene
+        voice: a grumbly, dramatic boy's voice that turns bright and giggly
+      - name: the flying pigs
+        description: >-
+          round rosy-pink pigs with tiny white feathery wings, curly tails, and
+          happy snouts, floating and looping like balloons — the SAME pink flying
+          pigs in every scene
+        voice: merry, floaty little oinks, light and musical
+    script: >-
+      Asked to clean his messy room right this second, a boy named Max grumbled,
+      "I'll do it when pigs fly!" Suddenly the sky filled with round pink pigs
+      flapping little feathery wings, oinking happily as they floated over the
+      rooftops and looped through the fluffy clouds. One waved a curly tail like a
+      kite string. Max stared and burst out laughing. But wait, pigs cannot really
+      fly at all! That is exactly the point. When grown-ups say when pigs fly, they
+      mean something so unlikely it will probably never happen. Max chuckled, decided
+      not to wait, and tidied his room right away.

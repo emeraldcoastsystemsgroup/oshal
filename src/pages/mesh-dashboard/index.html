@@ -1,0 +1,124 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native mesh dashboard engineering page for real channel, ticket, and participant process flow visibility
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mesh Dashboard</title>
+  <link rel="stylesheet" href="/mesh-dashboard/mesh-dashboard.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Engineering Surface</p>
+        <h1>Mesh Dashboard</h1>
+        <p class="hero-copy">Native OSHAL operator flow for cross-agent channels, ticket linkage, and participant workload using live mesh runtime APIs only.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+        <a class="top-link" href="/cockpit/" target="_top" rel="noreferrer">Open Cockpit</a>
+      </div>
+    </header>
+
+    <p class="status-banner" id="statusBanner">Loading mesh process flow...</p>
+
+    <section class="metrics-grid" aria-label="Mesh dashboard summary">
+      <article class="metric-card">
+        <span class="metric-label">Active Channels</span>
+        <strong id="metricActiveChannels">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Unique Participants</span>
+        <strong id="metricParticipants">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Ticket Linked</span>
+        <strong id="metricTicketLinked">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Coverage</span>
+        <strong id="metricCoverage">0%</strong>
+      </article>
+    </section>
+
+    <main class="content-grid">
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Channel Lifecycle</p>
+            <h2>Process Flow Snapshot</h2>
+          </div>
+        </div>
+        <div class="flow-grid" id="flowGrid" data-testid="mesh-flow-grid"></div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Mesh Channels</p>
+            <h2>Current Topology</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Topic</th>
+                <th>Scope</th>
+                <th>Status</th>
+                <th>Members</th>
+                <th>Messages</th>
+                <th>Ticket</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="channelTableBody" data-testid="mesh-channel-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Participant Load</p>
+            <h2>Agent Involvement</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Participant</th>
+                <th>Channels</th>
+                <th>Ticket Channels</th>
+                <th>Active Work Items</th>
+              </tr>
+            </thead>
+            <tbody id="participantTableBody" data-testid="mesh-participant-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Ticket Linkage</p>
+            <h2>Coverage and Gaps</h2>
+          </div>
+        </div>
+        <ul class="linkage-list" id="linkageList" data-testid="mesh-linkage-list"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/mesh-dashboard/mesh-dashboard.js"></script>
+</body>
+</html>

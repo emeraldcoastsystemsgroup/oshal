@@ -1,0 +1,35 @@
+provider: newrelic
+displayName: New Relic
+version: 1.0.0
+baseUrl: ${env:NEW_RELIC_BASE_URL:-https://api.newrelic.com/v2}
+auth:
+  type: apiKeyHeader
+  header: X-Api-Key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: applications
+    tool: newrelic-applications
+    method: GET
+    path: /applications.json
+  - name: application
+    tool: newrelic-application
+    method: GET
+    path: /applications/{appId}.json
+  - name: alerts-violations
+    tool: newrelic-alerts-violations
+    method: GET
+    path: /alerts_violations.json
+  - name: alerts-incidents
+    tool: newrelic-alerts-incidents
+    method: GET
+    path: /alerts_incidents.json
+metadata:
+  icon: newrelic
+  iconTitle: New Relic
+  iconSource: simple-icons
+  iconVerified: true

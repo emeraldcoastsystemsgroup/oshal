@@ -1,0 +1,715 @@
+/* Operations View — consolidated ops surface (replaces 6 iframe engineering screens)
+ * Glass-themed, responsive, consistent with cockpit design language.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com
+ */
+
+.ops-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0;
+  color: var(--text-primary, #e2e8f0);
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+}
+
+/* ── Header ───────────────────────────────────── */
+
+.ops-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.ops-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.ops-title i { margin-right: 8px; opacity: 0.7; }
+
+.ops-nav {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.ops-tab {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ops-tab:hover { color: rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.04); }
+.ops-tab.active { color: white; background: rgba(139, 92, 246, 0.25); }
+
+.ops-refresh {
+  margin-left: auto;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.ops-refresh:hover { color: white; border-color: rgba(255, 255, 255, 0.2); }
+
+/* ── Body ─────────────────────────────────────── */
+
+.ops-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ops-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  font-size: 24px;
+  opacity: 0.3;
+}
+
+/* ── KPI Strip ────────────────────────────────── */
+
+.ops-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.ops-kpi {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 16px;
+  text-align: center;
+  backdrop-filter: blur(12px);
+}
+
+.ops-kpi-icon { font-size: 20px; margin-bottom: 6px; }
+.ops-kpi-value { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+.ops-kpi-label { font-size: 11px; color: rgba(255, 255, 255, 0.45); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+
+/* ── Cards ────────────────────────────────────── */
+
+.ops-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  padding: 20px;
+  backdrop-filter: blur(12px);
+}
+
+.ops-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 16px;
+}
+
+.ops-empty { color: rgba(255, 255, 255, 0.3); font-size: 13px; padding: 24px 0; text-align: center; }
+
+.ops-grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .ops-grid-2 { grid-template-columns: 1fr; } }
+
+/* ── Pipeline Flow ────────────────────────────── */
+
+.ops-pipeline { display: flex; flex-direction: column; gap: 10px; }
+
+.ops-pipeline-stage {
+  display: grid;
+  grid-template-columns: 120px 1fr 48px;
+  align-items: center;
+  gap: 12px;
+}
+
+.ops-pipeline-label { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+
+.ops-pipeline-bar {
+  height: 8px;
+  border-radius: 4px;
+  min-width: 4px;
+  transition: width 0.4s ease;
+}
+
+.ops-pipeline-count { font-size: 14px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ── Health Ring ───────────────────────────────── */
+
+.ops-health-card { display: flex; flex-direction: column; align-items: center; }
+.ops-health-ring { width: 140px; height: 140px; margin: 8px 0; }
+.ops-ring-svg { width: 100%; height: 100%; }
+
+.ops-health-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 8px;
+}
+
+.ops-health-legend i { font-size: 8px; vertical-align: middle; margin-right: 4px; }
+
+/* Queue health */
+
+.ops-queue-card {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.ops-queue-card--blocked {
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.ops-queue-card--degraded {
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.ops-queue-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.ops-queue-generated {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: -8px;
+}
+
+.ops-queue-status {
+  color: var(--queue-color);
+  background: color-mix(in srgb, var(--queue-color) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--queue-color) 28%, transparent);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ops-queue-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.ops-queue-stat {
+  min-height: 72px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ops-queue-stat-value {
+  display: block;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-queue-stat-label {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ops-queue-stat-flag {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: #ef4444;
+}
+
+.ops-work-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.ops-work-status {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.ops-work-status b {
+  color: rgba(255, 255, 255, 0.9);
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-queue-blockers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ops-queue-blocker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ops-queue-blocker-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+}
+
+.ops-queue-blocker-meta {
+  color: rgba(255, 255, 255, 0.44);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ops-queue-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.ops-queue-action {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ops-queue-action i {
+  color: rgba(255, 255, 255, 0.35);
+  margin-top: 2px;
+}
+
+.ops-empty--compact {
+  padding: 10px 0;
+}
+
+/* ── Tables ───────────────────────────────────── */
+
+.ops-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ops-table th {
+  text-align: left;
+  padding: 8px 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ops-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ops-table tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+.ops-mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; opacity: 0.7; }
+
+/* ── Status Badge ─────────────────────────────── */
+
+.ops-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--badge-color) 15%, transparent);
+  color: var(--badge-color);
+  text-transform: capitalize;
+}
+
+/* ── Agent Cards ──────────────────────────────── */
+
+.ops-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.ops-agent-card {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 0.15s;
+}
+
+.ops-agent-card:hover { border-color: rgba(255, 255, 255, 0.12); }
+.ops-agent-card.offline { opacity: 0.5; }
+.ops-agent-card.disabled { opacity: 0.35; border-style: dashed; }
+
+.ops-agent-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ops-agent-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ops-agent-name { font-weight: 600; font-size: 13px; flex: 1; }
+.ops-agent-status { font-size: 11px; color: rgba(255, 255, 255, 0.4); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.ops-agent-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.ops-agent-meta i { margin-right: 3px; }
+
+/* ── Cost Bars ────────────────────────────────── */
+
+.ops-cost-bars { display: flex; flex-direction: column; gap: 10px; }
+
+.ops-cost-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 72px;
+  align-items: center;
+  gap: 12px;
+}
+
+.ops-cost-name { font-size: 12px; color: rgba(255, 255, 255, 0.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Per-model cost row — name column stacks label + sub-label */
+.ops-cost-name-col { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.ops-cost-name-col .ops-cost-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ops-cost-sub { font-size: 10px; color: rgba(255, 255, 255, 0.35); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.ops-cost-bar-wrap { height: 6px; background: rgba(255, 255, 255, 0.04); border-radius: 3px; overflow: hidden; }
+.ops-cost-bar { height: 100%; background: linear-gradient(90deg, #8b5cf6, #a78bfa); border-radius: 3px; transition: width 0.4s ease; }
+/* Model bars use their own dynamic color set via inline style — allow inline to win */
+.ops-cost-bar--model { background: unset; }
+
+.ops-cost-amount { font-size: 12px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.8); }
+
+/* ── Cost Timeline ────────────────────────────── */
+
+.ops-timeline {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 64px;
+  padding-top: 4px;
+}
+
+.ops-timeline-bar {
+  flex: 1;
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.6), rgba(139, 92, 246, 0.15));
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+  transition: height 0.3s ease;
+}
+
+.ops-timeline-bar:hover { background: linear-gradient(180deg, rgba(139, 92, 246, 0.9), rgba(139, 92, 246, 0.3)); }
+
+.ops-timeline-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.25);
+  margin-top: 4px;
+}
+
+/* ── Mobile (≤640px) ──────────────────────────── */
+
+@media (max-width: 640px) {
+  /* Header: wrap nav below title so it doesn't overflow */
+  .ops-header {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    gap: 10px;
+  }
+
+  .ops-nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .ops-refresh {
+    margin-left: auto;
+  }
+
+  /* Body: reduce horizontal padding */
+  .ops-body {
+    padding: 14px 16px;
+  }
+
+  /* Agent grid: minmax(240px) forces cards wider than 390px — collapse to single column */
+  .ops-agent-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Cost rows: 140px label + 72px amount leaves ~178px for the bar — restack vertically */
+  .ops-cost-row {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    row-gap: 4px;
+  }
+
+  .ops-cost-name,
+  .ops-cost-name-col {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .ops-cost-amount {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: right;
+  }
+
+  .ops-cost-bar-wrap {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  /* Pipeline stage: 120px label can stay but tighten the count column */
+  .ops-pipeline-stage {
+    grid-template-columns: 100px 1fr 36px;
+    gap: 8px;
+  }
+
+  .ops-queue-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ops-queue-blocker {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .ops-queue-blocker-meta {
+    white-space: normal;
+  }
+}
+
+/* Theme-aware polish layer.
+ * The original Operations surface was tuned only for dark glass and used
+ * white alpha text everywhere. In daylight that becomes white-on-white.
+ * Keep this last so cockpit theme tokens win for every tab. */
+.ops-view {
+  --ops-surface: color-mix(in srgb, var(--bg-card, rgba(255,255,255,.6)) 92%, transparent);
+  --ops-surface-strong: color-mix(in srgb, var(--bg-secondary, rgba(255,255,255,.8)) 94%, transparent);
+  --ops-surface-soft: color-mix(in srgb, var(--bg-tertiary, rgba(240,242,248,.7)) 86%, transparent);
+  --ops-border: var(--border-color, rgba(0,0,0,.08));
+  --ops-border-strong: var(--border-color-hover, rgba(0,0,0,.14));
+  --ops-text: var(--text-primary, #1a1a2e);
+  --ops-muted: var(--text-secondary, #4a4a6a);
+  --ops-faint: var(--text-muted, #8a8aa0);
+  --ops-accent: var(--accent-primary, #5b4cdb);
+  --ops-shadow: var(--card-shadow, 0 10px 30px rgba(15, 23, 42, .08));
+  color: var(--ops-text);
+}
+
+.ops-header {
+  border-bottom-color: var(--ops-border);
+  background: color-mix(in srgb, var(--bg-secondary, transparent) 70%, transparent);
+}
+
+.ops-title,
+.ops-kpi-value,
+.ops-pipeline-count,
+.ops-agent-name,
+.ops-cost-amount,
+.ops-table td {
+  color: var(--ops-text);
+}
+
+.ops-title i {
+  color: var(--ops-accent);
+  opacity: 1;
+}
+
+.ops-nav {
+  background: var(--ops-surface-soft);
+  border: 1px solid var(--ops-border);
+}
+
+.ops-tab {
+  color: var(--ops-muted);
+}
+
+.ops-tab:hover {
+  color: var(--ops-text);
+  background: color-mix(in srgb, var(--ops-accent) 9%, transparent);
+}
+
+.ops-tab.active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent-primary, #5b4cdb), var(--accent-primary-hover, #7c6ef0));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--ops-accent) 22%, transparent);
+}
+
+.ops-refresh {
+  border-color: var(--ops-border);
+  color: var(--ops-muted);
+  background: var(--ops-surface-soft);
+}
+
+.ops-refresh:hover {
+  color: var(--ops-text);
+  border-color: var(--ops-border-strong);
+  background: var(--ops-surface-strong);
+}
+
+.ops-kpi,
+.ops-card,
+.ops-queue-stat,
+.ops-agent-card,
+.ops-queue-blocker,
+.ops-work-status,
+.ops-table tr:hover td {
+  background: var(--ops-surface);
+  border-color: var(--ops-border);
+  box-shadow: var(--ops-shadow);
+}
+
+.ops-kpi,
+.ops-card {
+  backdrop-filter: blur(var(--glass-blur-light, 12px)) saturate(130%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-light, 12px)) saturate(130%);
+}
+
+.ops-card-title,
+.ops-kpi-label,
+.ops-pipeline-label,
+.ops-health-legend,
+.ops-queue-generated,
+.ops-queue-stat-label,
+.ops-work-status,
+.ops-agent-status,
+.ops-agent-meta,
+.ops-cost-name,
+.ops-cost-sub,
+.ops-timeline-labels,
+.ops-empty,
+.ops-mono {
+  color: var(--ops-muted);
+}
+
+.ops-kpi-label,
+.ops-card-title,
+.ops-queue-stat-label {
+  color: var(--ops-faint);
+}
+
+.ops-empty,
+.ops-cost-sub,
+.ops-queue-blocker-meta,
+.ops-queue-action,
+.ops-queue-action i,
+.ops-agent-status {
+  color: var(--ops-faint);
+}
+
+.ops-work-status b,
+.ops-queue-blocker-title,
+.ops-table td {
+  color: var(--ops-text);
+}
+
+.ops-table th {
+  color: var(--ops-faint);
+  border-bottom-color: var(--ops-border);
+}
+
+.ops-table td {
+  border-bottom-color: color-mix(in srgb, var(--ops-border) 64%, transparent);
+}
+
+.ops-agent-card:hover {
+  border-color: var(--ops-border-strong);
+  background: var(--ops-surface-strong);
+}
+
+.ops-cost-bar-wrap {
+  background: color-mix(in srgb, var(--ops-faint) 14%, transparent);
+}
+
+.ops-cost-bar,
+.ops-timeline-bar {
+  background: linear-gradient(90deg, var(--accent-primary, #5b4cdb), var(--accent-primary-hover, #7c6ef0));
+}
+
+.ops-timeline-bar:hover {
+  background: linear-gradient(180deg, var(--accent-primary-hover, #7c6ef0), var(--accent-primary, #5b4cdb));
+}
+
+.ops-ring-svg circle:first-child {
+  stroke: color-mix(in srgb, var(--ops-faint) 18%, transparent) !important;
+}
+
+.ops-ring-svg text {
+  fill: var(--ops-text) !important;
+}
+
+.ops-ring-svg text + text {
+  fill: var(--ops-muted) !important;
+}
+
+.ops-queue-card--blocked {
+  border-color: color-mix(in srgb, var(--status-error, #dc2626) 42%, var(--ops-border));
+}
+
+.ops-queue-card--degraded {
+  border-color: color-mix(in srgb, var(--status-warning, #d97706) 42%, var(--ops-border));
+}
+
+.ops-queue-status,
+.ops-badge {
+  background: color-mix(in srgb, var(--queue-color, var(--badge-color, var(--ops-accent))) 12%, var(--ops-surface));
+}

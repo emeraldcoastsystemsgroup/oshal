@@ -1,0 +1,56 @@
+provider: bugsnag
+displayName: Bugsnag
+version: 1.0.0
+baseUrl: https://api.bugsnag.com
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: organizations
+    tool: bugsnag-organizations
+    method: GET
+    path: /user/organizations
+  - name: projects
+    tool: bugsnag-projects
+    method: GET
+    path: /organizations/{orgId}/projects
+    query:
+      - per_page
+      - sort
+      - direction
+  - name: errors
+    tool: bugsnag-errors
+    method: GET
+    path: /projects/{projectId}/errors
+    query:
+      - per_page
+      - sort
+      - filters
+  - name: error
+    tool: bugsnag-error
+    method: GET
+    path: /projects/{projectId}/errors/{errorId}
+  - name: events
+    tool: bugsnag-events
+    method: GET
+    path: /projects/{projectId}/events
+    query:
+      - per_page
+      - full_reports
+  - name: releases
+    tool: bugsnag-releases
+    method: GET
+    path: /projects/{projectId}/releases
+    query:
+      - per_page
+metadata:
+  icon: bugsnag
+  iconTitle: Bugsnag
+  iconSource: simple-icons
+  iconVerified: true

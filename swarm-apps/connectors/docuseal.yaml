@@ -1,0 +1,30 @@
+provider: docuseal
+displayName: DocuSeal
+version: 1.0.0
+baseUrl: https://api.docuseal.co
+auth:
+  type: apiKeyHeader
+  header: X-Auth-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-templates
+    tool: docuseal-list-templates
+    method: GET
+    path: /templates
+  - name: list-submissions
+    tool: docuseal-list-submissions
+    method: GET
+    path: /submissions
+  - name: list-submitters
+    tool: docuseal-list-submitters
+    method: GET
+    path: /submitters
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/docuseal.co.ico

@@ -1,0 +1,64 @@
+provider: mastodon
+displayName: Mastodon
+version: 1.0.0
+baseUrl: ${env:MASTODON_BASE_URL:-https://mastodon.social}/api/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: verify-credentials
+    tool: mastodon-verify-credentials
+    method: GET
+    path: /accounts/verify_credentials
+  - name: home-timeline
+    tool: mastodon-home-timeline
+    method: GET
+    path: /timelines/home
+    query:
+      - max_id
+      - since_id
+      - min_id
+      - limit
+  - name: public-timeline
+    tool: mastodon-public-timeline
+    method: GET
+    path: /timelines/public
+    query:
+      - local
+      - remote
+      - only_media
+      - max_id
+      - limit
+  - name: notifications
+    tool: mastodon-notifications
+    method: GET
+    path: /notifications
+    query:
+      - max_id
+      - since_id
+      - min_id
+      - limit
+      - types
+  - name: account
+    tool: mastodon-account
+    method: GET
+    path: /accounts/{id}
+  - name: account-statuses
+    tool: mastodon-account-statuses
+    method: GET
+    path: /accounts/{id}/statuses
+    query:
+      - max_id
+      - since_id
+      - limit
+      - exclude_replies
+metadata:
+  icon: mastodon
+  iconTitle: Mastodon
+  iconSource: simple-icons
+  iconVerified: true

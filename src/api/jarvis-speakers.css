@@ -1,0 +1,660 @@
+/**
+ * Voice & Speakers manager for the Jarvis ambient surface.
+ * The component inherits Jarvis theme variables and remains usable as a standalone modal.
+ */
+
+.jarvis-speakers {
+  --js-bg: var(--panel, #0c0d17);
+  --js-card: var(--card, rgba(255, 255, 255, .055));
+  --js-line: var(--border, rgba(255, 255, 255, .13));
+  --js-text: var(--text, #f4f4fa);
+  --js-muted: var(--muted, #aaaabd);
+  --js-faint: var(--muted2, #73738c);
+  --js-accent: var(--accent, #7c7cff);
+  --js-ok: var(--ok, #5eead4);
+  --js-warn: #f7c768;
+  --js-danger: #ff7a91;
+  color: var(--js-text);
+  font-family: var(--font, Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+.jarvis-speakers[hidden],
+.jarvis-speakers [hidden] { display: none !important; }
+
+.jarvis-speakers *,
+.jarvis-speakers *::before,
+.jarvis-speakers *::after { box-sizing: border-box; }
+
+body.jarvis-speakers-open { overflow: hidden; }
+
+.jarvis-speakers__backdrop,
+.jarvis-speakers__action-backdrop {
+  position: fixed;
+  z-index: 10020;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 3, 10, .78);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.jarvis-speakers__panel {
+  width: min(900px, 100%);
+  max-height: min(900px, calc(100dvh - 48px));
+  overflow: auto;
+  color: var(--js-text);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--js-bg) 95%, var(--js-accent) 5%), var(--js-bg));
+  border: 1px solid color-mix(in srgb, var(--js-line) 78%, var(--js-accent) 22%);
+  border-radius: 24px;
+  box-shadow: 0 34px 110px rgba(0, 0, 0, .64), inset 0 1px rgba(255, 255, 255, .08);
+}
+
+.jarvis-speakers__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 25px 28px 18px;
+  border-bottom: 1px solid var(--js-line);
+}
+
+.jarvis-speakers__eyebrow,
+.jarvis-speakers__kicker {
+  margin: 0 0 5px;
+  color: var(--js-accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.jarvis-speakers__header h2 {
+  margin: 0;
+  color: var(--js-text);
+  font-family: var(--font-d, Inter, system-ui, sans-serif);
+  font-size: clamp(22px, 4vw, 30px);
+  letter-spacing: -.025em;
+}
+
+.jarvis-speakers__subtitle {
+  max-width: 640px;
+  margin: 7px 0 0;
+  color: var(--js-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.jarvis-speakers__close {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  color: var(--js-muted);
+  background: var(--js-card);
+  border: 1px solid var(--js-line);
+  border-radius: 50%;
+  font-size: 23px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.jarvis-speakers__body {
+  display: grid;
+  gap: 18px;
+  padding: 22px 28px 26px;
+}
+
+.jarvis-speakers__disclosure {
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--js-ok) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--js-ok) 28%, transparent);
+  border-radius: 14px;
+}
+
+.jarvis-speakers__disclosure.is-limited {
+  background: color-mix(in srgb, var(--js-warn) 8%, transparent);
+  border-color: color-mix(in srgb, var(--js-warn) 32%, transparent);
+}
+
+.jarvis-speakers__disclosure strong {
+  display: block;
+  color: var(--js-ok);
+  font-size: 13px;
+}
+
+.jarvis-speakers__disclosure.is-limited strong { color: var(--js-warn); }
+
+.jarvis-speakers__disclosure p {
+  margin: 5px 0 0;
+  color: var(--js-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.jarvis-speakers__state-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.jarvis-speakers__pill,
+.jarvis-speakers__badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 9px;
+  color: var(--js-faint);
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--js-line);
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.jarvis-speakers__pill b { color: var(--js-muted); }
+.jarvis-speakers__pill.is-on { color: var(--js-ok); border-color: color-mix(in srgb, var(--js-ok) 32%, transparent); }
+
+.jarvis-speakers__organization-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--js-muted);
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.jarvis-speakers__organization-picker select {
+  min-width: 0;
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--js-text);
+  background: var(--js-card);
+  border: 1px solid var(--js-line);
+  border-radius: 9px;
+  font: inherit;
+}
+
+.jarvis-speakers__card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: var(--js-card);
+  border: 1px solid var(--js-line);
+  border-radius: 16px;
+}
+
+.jarvis-speakers__card-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.jarvis-speakers__card h3,
+.jarvis-speakers__profile-group h3,
+.jarvis-speakers__profile-card h4,
+.jarvis-speakers__action-dialog h3 {
+  margin: 0;
+  color: var(--js-text);
+}
+
+.jarvis-speakers__card h3 { font-size: 16px; }
+
+.jarvis-speakers__card-copy p {
+  margin: 5px 0 0;
+  color: var(--js-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.jarvis-speakers__prerequisite {
+  flex: 0 0 100%;
+  margin: 0;
+  color: var(--js-warn);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.jarvis-speakers__avatar {
+  display: grid;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(140deg, var(--js-accent), #4bc4d5);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 50%;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--js-accent) 20%, transparent);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.jarvis-speakers__avatar--small {
+  width: 38px;
+  height: 38px;
+  font-size: 11px;
+}
+
+.jarvis-speakers__audio-tools { align-items: flex-start; }
+
+.jarvis-speakers__audio-controls {
+  display: grid;
+  flex: 0 0 min(330px, 43%);
+  gap: 9px;
+}
+
+.jarvis-speakers__file-control {
+  display: grid;
+  gap: 5px;
+}
+
+.jarvis-speakers__file-label {
+  display: grid;
+  gap: 6px;
+  color: var(--js-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.jarvis-speakers__file-label input {
+  min-width: 0;
+  width: 100%;
+  padding: 7px;
+  color: var(--js-muted);
+  background: rgba(0, 0, 0, .16);
+  border: 1px dashed var(--js-line);
+  border-radius: 10px;
+  font: inherit;
+}
+
+.jarvis-speakers__file-label input::file-selector-button {
+  margin-right: 8px;
+  padding: 7px 10px;
+  color: var(--js-text);
+  background: var(--js-card);
+  border: 1px solid var(--js-line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.jarvis-speakers__file-control small {
+  color: var(--js-faint);
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+.jarvis-speakers__profiles {
+  display: grid;
+  gap: 22px;
+}
+
+.jarvis-speakers__profile-group {
+  display: grid;
+  gap: 11px;
+}
+
+.jarvis-speakers__section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.jarvis-speakers__section-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.jarvis-speakers__section-heading h3 span {
+  display: inline-grid;
+  min-width: 23px;
+  height: 23px;
+  place-items: center;
+  color: var(--js-muted);
+  background: var(--js-card);
+  border: 1px solid var(--js-line);
+  border-radius: 50%;
+  font-size: 9px;
+}
+
+.jarvis-speakers__section-heading p {
+  margin: 0;
+  color: var(--js-faint);
+  font-size: 10.5px;
+}
+
+.jarvis-speakers__profile-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.jarvis-speakers__profile-card {
+  display: grid;
+  align-content: start;
+  gap: 13px;
+  min-width: 0;
+  padding: 14px;
+  background: rgba(0, 0, 0, .13);
+  border: 1px solid var(--js-line);
+  border-radius: 15px;
+}
+
+.jarvis-speakers__profile-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.jarvis-speakers__profile-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.jarvis-speakers__profile-copy h4 {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jarvis-speakers__meta {
+  margin: 4px 0 0;
+  color: var(--js-faint);
+  font-size: 9.5px;
+}
+
+.jarvis-speakers__badge { flex: none; }
+.jarvis-speakers__badge.is-self,
+.jarvis-speakers__badge.is-tenant_member { color: var(--js-ok); }
+.jarvis-speakers__badge.is-custom { color: #b7a8ff; }
+.jarvis-speakers__badge.is-anonymous { color: var(--js-warn); }
+
+.jarvis-speakers__excerpts {
+  display: grid;
+  gap: 6px;
+}
+
+.jarvis-speakers__no-audio,
+.jarvis-speakers__read-only {
+  margin: 0;
+  color: var(--js-faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+.jarvis-speakers__excerpts blockquote {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--js-muted);
+  background: rgba(255, 255, 255, .025);
+  border-left: 2px solid color-mix(in srgb, var(--js-accent) 55%, transparent);
+  border-radius: 0 8px 8px 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.jarvis-speakers__excerpts cite {
+  display: block;
+  margin-top: 4px;
+  color: var(--js-faint);
+  font-size: 8.5px;
+  font-style: normal;
+}
+
+.jarvis-speakers__profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 3px;
+}
+
+.jarvis-speakers__button {
+  min-height: 34px;
+  padding: 8px 11px;
+  color: var(--js-muted);
+  background: var(--js-card);
+  border: 1px solid var(--js-line);
+  border-radius: 9px;
+  font: 800 10.5px/1 var(--font, Inter, system-ui, sans-serif);
+  cursor: pointer;
+}
+
+.jarvis-speakers__button--primary {
+  color: #fff;
+  background: var(--js-accent);
+  border-color: color-mix(in srgb, var(--js-accent) 78%, white 22%);
+}
+
+.jarvis-speakers__button--danger {
+  color: var(--js-danger);
+  background: color-mix(in srgb, var(--js-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--js-danger) 28%, transparent);
+}
+
+.jarvis-speakers__button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.jarvis-speakers button:hover:not(:disabled),
+.jarvis-speakers__file-label input::file-selector-button:hover {
+  filter: brightness(1.12);
+}
+
+.jarvis-speakers button:focus-visible,
+.jarvis-speakers input:focus-visible,
+.jarvis-speakers select:focus-visible {
+  outline: 2px solid var(--js-accent);
+  outline-offset: 2px;
+}
+
+.jarvis-speakers__empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 17px;
+  color: var(--js-faint);
+  background: rgba(255, 255, 255, .025);
+  border: 1px dashed var(--js-line);
+  border-radius: 13px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.jarvis-speakers__status {
+  min-height: 1.4em;
+  margin: 0;
+  color: var(--js-faint);
+  font-size: 10px;
+  text-align: right;
+}
+
+.jarvis-speakers__status.is-error { color: var(--js-danger); }
+
+.jarvis-speakers__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 28px;
+  color: var(--js-faint);
+  background: rgba(0, 0, 0, .12);
+  border-top: 1px solid var(--js-line);
+  font-size: 9.5px;
+}
+
+.jarvis-speakers__action-backdrop {
+  z-index: 10030;
+  background: rgba(2, 2, 8, .72);
+}
+
+.jarvis-speakers__action-dialog {
+  width: min(500px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  padding: 22px;
+  color: var(--js-text);
+  background: var(--js-bg);
+  border: 1px solid color-mix(in srgb, var(--js-line) 72%, var(--js-accent) 28%);
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .6);
+}
+
+.jarvis-speakers__action-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.jarvis-speakers__action-dialog h3 { font-size: 18px; }
+
+.jarvis-speakers__action-notice {
+  margin: 7px 0 17px;
+  color: var(--js-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.jarvis-speakers__action-notice.is-error { color: var(--js-danger); }
+
+.jarvis-speakers__action-form,
+.jarvis-speakers__confirmation {
+  display: grid;
+  gap: 14px;
+}
+
+.jarvis-speakers__action-form fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.jarvis-speakers__action-form legend {
+  margin-bottom: 7px;
+  color: var(--js-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.jarvis-speakers__radio {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 11px;
+  color: var(--js-muted);
+  background: var(--js-card);
+  border: 1px solid var(--js-line);
+  border-radius: 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.jarvis-speakers__radio input { accent-color: var(--js-accent); }
+
+.jarvis-speakers__field {
+  display: grid;
+  gap: 6px;
+  color: var(--js-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.jarvis-speakers__field input,
+.jarvis-speakers__field select {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 10px;
+  color: var(--js-text);
+  background: color-mix(in srgb, var(--js-card) 74%, black 10%);
+  border: 1px solid var(--js-line);
+  border-radius: 9px;
+  font: 500 12px/1.35 var(--font, Inter, system-ui, sans-serif);
+}
+
+.jarvis-speakers__field option { color: #151520; background: #f4f4fa; }
+
+.jarvis-speakers__identity-note {
+  color: var(--js-warn);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.jarvis-speakers__warning,
+.jarvis-speakers__confirmation > p {
+  margin: 0;
+  color: var(--js-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.jarvis-speakers__action-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .jarvis-speakers__organization-picker { grid-template-columns: 1fr; gap: 6px; }
+  .jarvis-speakers__backdrop,
+  .jarvis-speakers__action-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .jarvis-speakers__panel {
+    width: 100%;
+    max-height: 96dvh;
+    border-radius: 20px 20px 0 0;
+  }
+
+  .jarvis-speakers__header,
+  .jarvis-speakers__body,
+  .jarvis-speakers__footer { padding-right: 17px; padding-left: 17px; }
+
+  .jarvis-speakers__card,
+  .jarvis-speakers__audio-tools {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .jarvis-speakers__audio-controls { flex-basis: auto; width: 100%; }
+  .jarvis-speakers__profile-list { grid-template-columns: 1fr; }
+  .jarvis-speakers__section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .jarvis-speakers__profile-top { align-items: flex-start; }
+  .jarvis-speakers__badge { margin-left: auto; }
+
+  .jarvis-speakers__footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .jarvis-speakers__footer .jarvis-speakers__button { width: 100%; }
+
+  .jarvis-speakers__action-dialog {
+    width: 100%;
+    max-height: 90dvh;
+    border-radius: 18px 18px 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jarvis-speakers *,
+  .jarvis-speakers *::before,
+  .jarvis-speakers *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+}

@@ -1,0 +1,34 @@
+provider: coinmarketcap
+displayName: CoinMarketCap
+version: 1.0.0
+baseUrl: https://pro-api.coinmarketcap.com/v1
+auth:
+  type: apiKeyHeader
+  header: X-CMC_PRO_API_KEY
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: listings-latest
+    tool: coinmarketcap-listings-latest
+    method: GET
+    path: /cryptocurrency/listings/latest
+    query:
+      start: '{start}'
+      limit: '{limit}'
+      convert: '{convert}'
+  - name: quotes-latest
+    tool: coinmarketcap-quotes-latest
+    method: GET
+    path: /cryptocurrency/quotes/latest
+    query:
+      symbol: '{symbol}'
+      convert: '{convert}'
+metadata:
+  icon: coinmarketcap
+  iconTitle: CoinMarketCap
+  iconSource: simple-icons
+  iconVerified: true

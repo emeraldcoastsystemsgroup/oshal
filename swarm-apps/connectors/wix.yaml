@@ -1,0 +1,31 @@
+provider: wix
+displayName: Wix
+version: 1.0.0
+baseUrl: https://www.wixapis.com
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: site-properties
+    tool: wix-site-properties
+    method: GET
+    path: /site-properties/v4/properties
+  - name: members
+    tool: wix-members
+    method: GET
+    path: /members/v1/members
+  - name: member
+    tool: wix-member
+    method: GET
+    path: /members/v1/members/{member_id}
+metadata:
+  icon: wix
+  iconTitle: Wix
+  iconSource: simple-icons
+  iconVerified: true

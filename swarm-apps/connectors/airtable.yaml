@@ -1,0 +1,43 @@
+provider: airtable
+displayName: Airtable
+version: 1.0.0
+baseUrl: https://api.airtable.com/v0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: offset
+  nextField: offset
+  itemsField: records
+resources:
+  - name: list-records
+    tool: airtable-list-records
+    method: GET
+    path: /{baseId}/{tableName}
+    query:
+      pageSize: '100'
+    paginate: true
+  - name: get-record
+    tool: airtable-get-record
+    method: GET
+    path: /{baseId}/{tableName}/{recordId}
+  - name: create-records
+    tool: airtable-create-records
+    method: POST
+    path: /{baseId}/{tableName}
+    body: '{payload}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List, read, and create records in Airtable bases and tables."
+  category: "Productivity"
+  icon: airtable
+  iconTitle: Airtable
+  iconSource: simple-icons
+  iconVerified: true

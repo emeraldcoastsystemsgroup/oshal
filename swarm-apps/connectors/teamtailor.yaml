@@ -1,0 +1,39 @@
+# Teamtailor API v1 — read jobs, candidates, and users (Authorization header carries "Token token=<key>", plus required X-Api-Version).
+provider: teamtailor
+displayName: Teamtailor
+version: 1.0.0
+baseUrl: https://api.teamtailor.com/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+headers:
+  X-Api-Version: '20210218'
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: jobs
+    tool: teamtailor-jobs
+    method: GET
+    path: /jobs
+    query:
+      page[size]: '30'
+  - name: candidates
+    tool: teamtailor-candidates
+    method: GET
+    path: /candidates
+    query:
+      page[size]: '30'
+  - name: users
+    tool: teamtailor-users
+    method: GET
+    path: /users
+    query:
+      page[size]: '30'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/teamtailor.com.ico

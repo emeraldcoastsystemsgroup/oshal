@@ -1,0 +1,30 @@
+provider: nhl
+displayName: NHL
+version: 1.0.0
+baseUrl: https://api-web.nhle.com/v1
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: standings-now
+    tool: nhl-standings-now
+    method: GET
+    path: /standings/now
+  - name: club-schedule-season
+    tool: nhl-club-schedule-season
+    method: GET
+    path: /club-schedule-season/{team}/{season}
+  - name: player-landing
+    tool: nhl-player-landing
+    method: GET
+    path: /player/{playerId}/landing
+metadata:
+  icon: nhl
+  iconTitle: NHL
+  iconSource: simple-icons
+  iconVerified: true

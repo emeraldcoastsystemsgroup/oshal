@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ambient Recall</title>
+  <!-- Framework theme tokens. Theme files scope to [data-theme="…"] with NO :root fallback, so the
+       default on <html> above is what guarantees tokens exist when the surface loads standalone;
+       the cockpit's theme-manager overwrites it to the operator's pick. Consumed read-only
+       (contract: tests/unit/surface-theme-inheritance.spec.ts). -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <style>
+    /* Consume the framework theme read-only; own only this surface's layout. The hex fallbacks
+       only apply where the token stylesheet failed to load (e.g. served outside the api origin). */
+    :root {
+      color-scheme: light dark;
+      --pm-accent: var(--accent-primary, #6ea8fe);
+      --pm-line: var(--border-color, rgba(128,128,128,0.28));
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg-primary, transparent); color: var(--text-primary, inherit); padding: 22px;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 1.35rem; margin: 0 0 4px; }
+    .sub { opacity: 0.7; margin: 0 0 18px; font-size: 0.9rem; }
+    .ask { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ask input {
+      flex: 1 1 340px; padding: 11px 13px; border: 1px solid var(--pm-line); border-radius: 10px;
+      background: rgba(128,128,128,0.06); color: inherit; font-size: 15px;
+    }
+    .ask button, .playbtn {
+      padding: 11px 16px; border: 0; border-radius: 10px; background: var(--pm-accent); color: #06121f;
+      font-weight: 650; cursor: pointer; font-size: 14px;
+    }
+    .ask button:disabled { opacity: 0.5; cursor: default; }
+    .examples { margin: 10px 0 0; font-size: 0.82rem; opacity: 0.66; }
+    .examples code { cursor: pointer; border-bottom: 1px dashed var(--pm-line); }
+    .answer { margin-top: 22px; }
+    .headline { font-size: 1.1rem; font-weight: 650; margin: 0 0 4px; }
+    .meta { opacity: 0.65; font-size: 0.82rem; margin: 0 0 14px; }
+    .receipt {
+      border-left: 3px solid var(--pm-accent); padding: 8px 12px; margin: 8px 0;
+      background: rgba(128,128,128,0.06); border-radius: 0 8px 8px 0;
+    }
+    .receipt .t { display: block; opacity: 0.6; font-size: 0.74rem; margin-bottom: 2px; }
+    .note { padding: 12px 14px; border: 1px solid var(--pm-line); border-radius: 10px; opacity: 0.85; }
+    .inference-tag { font-size: 0.7rem; opacity: 0.6; margin-top: 12px; }
+    .playbtn { margin-top: 10px; background: transparent; border: 1px solid var(--pm-accent); color: inherit; }
+  </style>
+  <!-- Shared glass treatment (contract: tests/unit/surface-glass-assets.spec.ts); after local styles. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Ambient Recall</h1>
+    <p class="sub">Ask what someone said. Answers are counted from your own transcripts — the number is exact, the lines are quoted verbatim, and playback re-speaks them in the assistant voice. No audio is ever stored.</p>
+
+    <div class="ask">
+      <input id="q" type="text" autocomplete="off"
+             placeholder="How many times has Ella mentioned volleyball today?" />
+      <button id="go">Recall</button>
+    </div>
+    <p class="examples">Try:
+      <code data-ex="How many times has Ella mentioned volleyball today?">count a topic</code> ·
+      <code data-ex="What did Sam say about the school trip?">what did they say</code>
+    </p>
+
+    <div id="answer" class="answer" hidden></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let lastReceipts = [];
+
+    async function recall() {
+      const q = $('q').value.trim();
+      if (!q) return;
+      $('go').disabled = true;
+      const box = $('answer'); box.hidden = false; box.innerHTML = '<p class="meta">Searching your transcripts…</p>';
+      try {
+        const res = await fetch('/api/jarvis/ambient/person/recall?q=' + encodeURIComponent(q), { credentials: 'include' });
+        if (res.status === 401) { box.innerHTML = '<div class="note">Please sign in to search your ambient transcripts.</div>'; return; }
+        if (res.status === 400) { box.innerHTML = '<div class="note">That is not a recall question. Try “how many times has &lt;person&gt; mentioned &lt;topic&gt;”.</div>'; return; }
+        if (!res.ok) { box.innerHTML = '<div class="note">Recall is unavailable right now.</div>'; return; }
+        render(await res.json());
+      } catch (e) {
+        box.innerHTML = '<div class="note">Could not reach the recall service.</div>';
+      } finally {
+        $('go').disabled = false;
+      }
+    }
+
+    function esc(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+    function render(data) {
+      const box = $('answer');
+      if (!data.resolved) {
+        box.innerHTML = '<div class="note">No enrolled or named voice matches “' + esc(data.intent?.personName || '') +
+          '”. Name that person under <b>Manage Voices</b> first, then ask again.</div>';
+        return;
+      }
+      lastReceipts = data.receipts || [];
+      const who = esc(data.personLabel || 'They');
+      const topic = data.terms ? ' about “' + esc(data.terms) + '”' : '';
+      const when = data.range === 'today' ? 'today' : 'on record';
+      const headline = data.count === 0
+        ? who + ' has not been heard' + topic + ' ' + when + '.'
+        : who + ' was heard' + topic + ' <b>' + data.count + '</b> time' + (data.count === 1 ? '' : 's') + ' ' + when + '.';
+      let html = '<p class="headline">' + headline + '</p>';
+      html += '<p class="meta">Counted from your transcripts — exact, not an estimate.</p>';
+      for (const r of lastReceipts) {
+        html += '<div class="receipt"><span class="t">' + esc(new Date(r.capturedAt).toLocaleString()) + '</span>“' + esc(r.quote) + '”</div>';
+      }
+      if (lastReceipts.length) html += '<button class="playbtn" id="play">🔊 Play it back</button>';
+      box.innerHTML = html;
+      const play = $('play');
+      if (play) play.onclick = playback;
+    }
+
+    function playback() {
+      if (!('speechSynthesis' in window) || !lastReceipts.length) return;
+      speechSynthesis.cancel();
+      for (const r of lastReceipts) speechSynthesis.speak(new SpeechSynthesisUtterance(r.quote));
+    }
+
+    $('go').onclick = recall;
+    $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') recall(); });
+    document.querySelectorAll('[data-ex]').forEach((el) => el.addEventListener('click', () => { $('q').value = el.dataset.ex; recall(); }));
+  </script>
+</body>
+</html>

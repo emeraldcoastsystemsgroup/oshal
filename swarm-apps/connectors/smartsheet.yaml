@@ -1,0 +1,29 @@
+provider: smartsheet
+displayName: Smartsheet
+version: 1.0.0
+baseUrl: https://api.smartsheet.com/2.0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: sheets
+    tool: smartsheet-sheets
+    method: GET
+    path: /sheets
+  - name: get-sheet
+    tool: smartsheet-get-sheet
+    method: GET
+    path: /sheets/{id}
+  - name: folders
+    tool: smartsheet-folders
+    method: GET
+    path: /folders
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/smartsheet.com.ico

@@ -1,0 +1,36 @@
+provider: reddit
+displayName: Reddit
+version: 1.0.0
+baseUrl: https://oauth.reddit.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: subreddit-hot
+    tool: reddit-subreddit-hot
+    method: GET
+    path: /r/{subreddit}/hot
+  - name: subreddit-about
+    tool: reddit-subreddit-about
+    method: GET
+    path: /r/{subreddit}/about
+  - name: user-about
+    tool: reddit-user-about
+    method: GET
+    path: /user/{username}/about
+  - name: popular-subreddits
+    tool: reddit-popular-subreddits
+    method: GET
+    path: /subreddits/popular
+metadata:
+  description: "Read subreddit hot posts and metadata, user profiles, and popular subreddits."
+  category: "Social"
+  icon: reddit
+  iconTitle: Reddit
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,32 @@
+# Recruitee API — read job offers, candidates, and departments for a company (Bearer token).
+provider: recruitee
+displayName: Recruitee
+version: 1.0.0
+baseUrl: https://api.recruitee.com/c/${env:RECRUITEE_COMPANY_ID:-companyid}
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: offers
+    tool: recruitee-offers
+    method: GET
+    path: /offers
+  - name: candidates
+    tool: recruitee-candidates
+    method: GET
+    path: /candidates
+    query:
+      limit: '100'
+  - name: departments
+    tool: recruitee-departments
+    method: GET
+    path: /departments
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/recruitee.com.ico

@@ -1,0 +1,90 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native user dashboard shell with charts and activity feed
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Dashboard</title>
+  <link rel="stylesheet" href="/user-dashboard/user-dashboard.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">User Workspace</p>
+        <h1>User Dashboard</h1>
+        <p class="hero-copy">Live snapshot of your tickets, task throughput, and activity feed with real-time updates.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+        <a class="top-link" href="/cockpit/" target="_top" rel="noreferrer">Open Cockpit</a>
+      </div>
+    </header>
+
+    <p class="status-banner" id="statusBanner">Loading user dashboard...</p>
+
+    <section class="metrics-grid" aria-label="User dashboard summary">
+      <article class="metric-card">
+        <span class="metric-label">Active Tickets</span>
+        <strong id="metricActive">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Queued Tickets</span>
+        <strong id="metricQueue">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Agents Online</span>
+        <strong id="metricAgents">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Estimated Cost</span>
+        <strong id="metricCost">$0</strong>
+      </article>
+    </section>
+
+    <main class="content-grid">
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Ticket Flow</p>
+            <h2>Ticket Status Mix</h2>
+          </div>
+          <span class="panel-subtitle" id="ticketChartCaption">No data yet.</span>
+        </div>
+        <div class="chart-shell" id="ticketChart" data-testid="user-ticket-chart"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Throughput</p>
+            <h2>Processing Pace</h2>
+          </div>
+          <span class="panel-subtitle" id="throughputCaption">Loading pace...</span>
+        </div>
+        <div class="chart-shell" id="throughputChart" data-testid="user-throughput-chart"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Latest Activity</p>
+            <h2>Activity Feed</h2>
+          </div>
+          <span class="panel-subtitle" id="activityCaption">Live updates connected.</span>
+        </div>
+        <ul class="activity-feed" id="activityFeed" data-testid="user-activity-feed"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/user-dashboard/user-dashboard.js"></script>
+</body>
+</html>

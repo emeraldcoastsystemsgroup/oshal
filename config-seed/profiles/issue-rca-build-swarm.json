@@ -1,0 +1,30 @@
+{
+  "name": "issue-rca-build-swarm",
+  "displayName": "Issue RCA + Build Swarm",
+  "description": "Sandbox configuration combining the build swarm (oshal-engineering — code construction) with the issue-rca swarm (standard incident investigation). Legacy product integrations + Little Monsters are off; no AWS / Kubernetes / Gardener creds are seeded; Anthropic auth via the host's ~/.claude OAuth mount only. Operators see a unified ticket queue containing both `build` and `incident` tickets, filterable by ticketType.",
+  "requires": {
+    "swarmAppsActive": [
+      "oshal-engineering",
+      "issue-rca"
+    ],
+    "swarmAppsInactive": [
+      "little-monsters"
+    ]
+  },
+  "ribbon": {
+    "items": [
+      "tickets",
+      "chat",
+      "calendar",
+      "addressbook",
+      "dashboard",
+      "logs",
+      "settings",
+      "operations"
+    ],
+    "dynamicTools": {
+      "allow": []
+    }
+  },
+  "defaultView": "tickets"
+}

@@ -1,0 +1,61 @@
+provider: activecampaign
+displayName: ActiveCampaign
+version: 1.0.0
+baseUrl: https://${env:ACTIVECAMPAIGN_ACCOUNT:-youraccount}.api-us1.com/api/3
+auth:
+  type: apiKeyHeader
+  header: Api-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: contacts
+    tool: activecampaign-contacts
+    method: GET
+    path: /contacts
+    query:
+      limit: null
+      offset: null
+      search: null
+  - name: lists
+    tool: activecampaign-lists
+    method: GET
+    path: /lists
+    query:
+      limit: null
+      offset: null
+  - name: campaigns
+    tool: activecampaign-campaigns
+    method: GET
+    path: /campaigns
+    query:
+      limit: null
+      offset: null
+  - name: automations
+    tool: activecampaign-automations
+    method: GET
+    path: /automations
+    query:
+      limit: null
+      offset: null
+  - name: deals
+    tool: activecampaign-deals
+    method: GET
+    path: /deals
+    query:
+      limit: null
+      offset: null
+  - name: tags
+    tool: activecampaign-tags
+    method: GET
+    path: /tags
+    query:
+      limit: null
+      offset: null
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/activecampaign.com.ico

@@ -1,0 +1,28 @@
+provider: ebay
+displayName: eBay
+version: 1.0.0
+baseUrl: https://api.ebay.com/buy/browse/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: item-summary-search
+    tool: ebay-item-summary-search
+    method: GET
+    path: /item_summary/search
+    query:
+      q: '{q}'
+  - name: item
+    tool: ebay-item
+    method: GET
+    path: /item/{item_id}
+metadata:
+  icon: ebay
+  iconTitle: eBay
+  iconSource: simple-icons
+  iconVerified: true

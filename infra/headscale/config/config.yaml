@@ -1,0 +1,87 @@
+# =============================================================================
+# OSHAL Headscale Starter Configuration
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added starter Headscale configuration for Docker and Kubernetes labs
+# =============================================================================
+
+# The URL your Tailscale clients will use to reach this Headscale server.
+# For Docker Compose local dev, this is your machine's LAN IP on port 8080.
+# For production, prefer HTTPS behind a reverse proxy or ingress.
+#
+# Override at startup:  HEADSCALE_SERVER_URL=http://192.168.1.50:8080 docker compose up
+# Or edit this line directly before enrolling nodes.
+server_url: http://localhost:8085
+
+# Headscale listens on plain HTTP internally; terminate TLS in front of it.
+listen_addr: 0.0.0.0:8080
+# SECURITY: metrics bound to loopback — the Prometheus endpoint exposes tailnet
+# node/health data and has no auth, so it must not listen on all interfaces.
+metrics_listen_addr: 127.0.0.1:9090
+grpc_listen_addr: 127.0.0.1:50443
+grpc_allow_insecure: false
+
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+
+# For first-time success this starter config keeps the public DERP map.
+# If you want full self-host ownership, replace this with your own DERP plan.
+derp:
+  server:
+    enabled: false
+    region_id: 999
+    region_code: "oshal"
+    region_name: "OSHAL Embedded DERP"
+    stun_listen_addr: "0.0.0.0:3478"
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: true
+  update_frequency: 24h
+
+disable_check_updates: false
+ephemeral_node_inactivity_timeout: 30m
+
+database:
+  type: sqlite
+  debug: false
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+    wal_autocheckpoint: 1000
+
+# The starter policy is intentionally permissive for local lab use only.
+policy:
+  mode: file
+  path: /etc/headscale/policy.hujson
+
+# Use --accept-dns=false on clients while you are learning the setup.
+dns:
+  magic_dns: false
+  base_domain: mesh.example.internal
+  override_local_dns: false
+  nameservers:
+    global: []
+  search_domains: []
+  extra_records: []
+
+log:
+  format: json
+  level: info
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+
+# Leave blank when TLS is terminated by an ingress or reverse proxy.
+tls_cert_path: ""
+tls_key_path: ""

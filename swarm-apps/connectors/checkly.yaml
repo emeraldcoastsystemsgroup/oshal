@@ -1,0 +1,38 @@
+provider: checkly
+displayName: Checkly
+version: 1.0.0
+baseUrl: https://api.checklyhq.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: checks
+    tool: checkly-checks
+    method: GET
+    path: /checks
+    query:
+      limit: '{limit}'
+      page: '{page}'
+  - name: check-groups
+    tool: checkly-check-groups
+    method: GET
+    path: /check-groups
+    query:
+      limit: '{limit}'
+      page: '{page}'
+  - name: check-results
+    tool: checkly-check-results
+    method: GET
+    path: /check-results
+    query:
+      limit: '{limit}'
+      page: '{page}'
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/checklyhq.com.ico

@@ -1,0 +1,31 @@
+provider: vidyard
+displayName: Vidyard
+version: 1.0.0
+baseUrl: https://api.vidyard.com/dashboard/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: players
+    tool: vidyard-players
+    method: GET
+    path: /players
+    query:
+      page: '{page}'
+      per_page: '{per_page}'
+  - name: videos
+    tool: vidyard-videos
+    method: GET
+    path: /videos
+    query:
+      page: '{page}'
+      per_page: '{per_page}'
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/vidyard.com.ico

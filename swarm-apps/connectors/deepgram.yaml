@@ -1,0 +1,31 @@
+provider: deepgram
+displayName: Deepgram
+version: 1.0.0
+baseUrl: https://api.deepgram.com/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: projects
+    tool: deepgram-projects
+    method: GET
+    path: /projects
+  - name: project
+    tool: deepgram-project
+    method: GET
+    path: /projects/{project_id}
+  - name: project-keys
+    tool: deepgram-project-keys
+    method: GET
+    path: /projects/{project_id}/keys
+metadata:
+  icon: deepgram
+  iconTitle: Deepgram
+  iconSource: simple-icons
+  iconVerified: true

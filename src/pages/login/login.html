@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
+<style>
+  :root {
+    --surface: #ffffff; --text: #14161c; --dim: #5b6472; --line: #d7dbe3;
+    --panel: #f5f7fb; --accent: #2f5fb0; --bad: #b0362c; --workspace: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1b1e26; --text: #e8eaef; --dim: #9aa2b1; --line: #363b47;
+      --panel: #232733; --accent: #6f9ce0; --bad: #e07a70; --workspace: #14161c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--workspace); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .card {
+    width: min(400px, calc(100vw - 32px)); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 12px; padding: 32px 30px 26px;
+  }
+  .brand { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
+  label { display: block; font-size: 12.5px; font-weight: 600; margin: 14px 0 4px; }
+  input {
+    width: 100%; padding: 9px 11px; font-size: 14px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    width: 100%; margin-top: 20px; padding: 10px; font-size: 14.5px; font-weight: 600;
+    color: #fff; background: var(--accent); border: none; border-radius: 7px; cursor: pointer;
+  }
+  button:disabled { opacity: .6; cursor: default; }
+  .error { color: var(--bad); font-size: 13px; margin: 12px 0 0; min-height: 1.4em; }
+  .hidden { display: none; }
+  .foot { color: var(--dim); font-size: 11.5px; margin-top: 18px; }
+</style>
+</head>
+<body>
+  <form class="card" id="form" autocomplete="on">
+    <div class="brand" id="brand">oshal</div>
+    <h1 id="title">Sign in</h1>
+    <p class="sub" id="subtitle">Only invited accounts can sign in.</p>
+
+    <div id="nameRow" class="hidden">
+      <label for="name">Your name</label>
+      <input id="name" name="name" type="text" autocomplete="name">
+    </div>
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required autocomplete="username" autofocus>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required autocomplete="current-password" minlength="10">
+
+    <div id="confirmRow" class="hidden">
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" name="confirm" type="password" autocomplete="new-password">
+    </div>
+
+    <button id="submit" type="submit">Sign in</button>
+    <p class="error" id="error"></p>
+    <p class="foot" id="foot">Forgot your password? Ask your administrator to send a new invitation link.</p>
+  </form>
+
+<script>
+(function () {
+  'use strict';
+  var bootstrapMode = false;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function returnTo() {
+    var raw = new URLSearchParams(location.search).get('returnTo') || '/';
+    // Same-origin relative paths only — the server re-sanitizes, this is belt-and-braces.
+    return (raw.charAt(0) === '/' && raw.slice(0, 2) !== '//') ? raw : '/';
+  }
+
+  fetch('/api/branding').then(function (r) { return r.json(); }).then(function (b) {
+    if (b && b.displayName) { $('brand').textContent = b.displayName; document.title = 'Sign in - ' + b.displayName; }
+  }).catch(function () {});
+
+  fetch('/api/local-auth/state').then(function (r) { return r.json(); }).then(function (s) {
+    if (s && s.bootstrapRequired) {
+      bootstrapMode = true;
+      $('title').textContent = 'Create the administrator account';
+      $('subtitle').textContent = 'This is a fresh install. The first account created here is the administrator.';
+      $('nameRow').classList.remove('hidden');
+      $('confirmRow').classList.remove('hidden');
+      $('password').setAttribute('autocomplete', 'new-password');
+      $('submit').textContent = 'Create account';
+      $('foot').textContent = 'You will invite everyone else from the admin screen once you are in.';
+    }
+  }).catch(function () {});
+
+  $('form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    $('error').textContent = '';
+    var password = $('password').value;
+    if (password.length < 10) { $('error').textContent = 'Passwords need at least 10 characters.'; return; }
+    if (bootstrapMode && password !== $('confirm').value) {
+      $('error').textContent = 'The passwords do not match.'; return;
+    }
+    $('submit').disabled = true;
+    var url = bootstrapMode ? '/api/local-auth/bootstrap' : '/api/local-auth/login';
+    var body = bootstrapMode
+      ? { email: $('email').value, name: $('name').value, password: password }
+      : { email: $('email').value, password: password, returnTo: returnTo() };
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
+      .then(function (res) {
+        if (res.status < 300 && res.data && res.data.ok !== false) {
+          location.assign((res.data && res.data.returnTo) || returnTo());
+          return;
+        }
+        $('submit').disabled = false;
+        $('error').textContent = (res.data && res.data.error) || 'Sign-in failed. Try again.';
+      })
+      .catch(function () {
+        $('submit').disabled = false;
+        $('error').textContent = 'The server did not answer. Try again.';
+      });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+provider: zoom
+displayName: Zoom
+version: 1.0.0
+baseUrl: https://api.zoom.us/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: next_page_token
+  nextField: next_page_token
+  itemsField: meetings
+resources:
+  - name: list-meetings
+    tool: zoom-list-meetings
+    method: GET
+    path: /users/me/meetings
+    query:
+      page_size: '100'
+    paginate: true
+  - name: get-meeting
+    tool: zoom-get-meeting
+    method: GET
+    path: /meetings/{meetingId}
+  - name: create-meeting
+    tool: zoom-create-meeting
+    method: POST
+    path: /users/me/meetings
+    body: '{meeting}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List and inspect the connected user Zoom meetings, with a resource to schedule a new meeting."
+  category: "Communications"
+  icon: zoom
+  iconTitle: Zoom
+  iconSource: simple-icons
+  iconVerified: true

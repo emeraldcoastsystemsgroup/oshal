@@ -1,0 +1,178 @@
+/* ============================================================
+   base.css — Glossy Cockpit Dashboard · Base Styles
+   ============================================================ */
+
+/* ----- CSS Reset ----- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ----- Root Variables ----- */
+:root {
+  /* ── Spacing ── */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* ── Fonts ── */
+  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-family-display: 'Plus Jakarta Sans', 'SF Pro Display', system-ui, -apple-system, sans-serif;
+
+  --font-size-xs: 12px;
+  --font-size-sm: 14px;
+  --font-size-md: 16px;
+  --font-size-lg: 20px;
+  --font-size-xl: 24px;
+  --font-size-2xl: 32px;
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+
+  /* ── Border Radii (Apple Liquid Glass) ── */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 9999px;
+
+  /* ── Shadows (Softer, Liquid feel) ── */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08),
+               0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12),
+               0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.18),
+               0 8px 16px rgba(0, 0, 0, 0.08);
+  
+  /* ── Liquid Borders ── */
+  --border-light: rgba(255, 255, 255, 0.2);
+  --border-highlight: rgba(255, 255, 255, 0.4);
+  --glass-glare: linear-gradient(110deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.05) 30%, rgba(255,255,255,0) 100%);
+
+  /* ── Transitions ── */
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+
+  /* ── Layout: Panel Widths ── */
+  --panel-chat-width: 320px;
+  --panel-insights-width: 320px;
+  --panel-width-chat: 320px;
+  --panel-width-insights: 320px;
+
+  /* ── Layout: Heights ── */
+  --header-height: 56px;
+  --status-bar-height: 32px;
+}
+
+/* ----- Base Typography ----- */
+html {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  /* Optional: a subtle noise texture to look more like macOS materials */
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
+}
+
+/* ----- Scrollbar Styling (thin, themed) ----- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ----- Selection Styling ----- */
+::selection {
+  background: rgba(99, 179, 237, 0.35);
+  color: inherit;
+}
+
+::-moz-selection {
+  background: rgba(99, 179, 237, 0.35);
+  color: inherit;
+}
+
+/* ----- Focus Visible Styling ----- */
+:focus-visible {
+  outline: 2px solid rgba(99, 179, 237, 0.7);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ----- Utility: Hidden ----- */
+.hidden {
+  display: none !important;
+}
+
+/* ----- Glass Card ----- */
+.glass-card {
+  position: relative;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%);
+  backdrop-filter: blur(30px) saturate(140%);
+  -webkit-backdrop-filter: blur(30px) saturate(140%);
+  border: 1px solid var(--border-light);
+  border-top: 1.5px solid var(--border-highlight);
+  border-left: 1.5px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md), inset 0 0 20px rgba(255,255,255,0.05);
+  transition: box-shadow var(--transition-normal),
+              border-color var(--transition-normal),
+              transform var(--transition-normal);
+  overflow: hidden;
+}
+
+.glass-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--glass-glare);
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.glass-card:hover {
+  box-shadow: var(--shadow-lg), inset 0 0 30px rgba(255,255,255,0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-4px) scale(1.01);
+}

@@ -1,0 +1,40 @@
+provider: locationiq
+displayName: LocationIQ
+version: 1.0.0
+baseUrl: https://us1.locationiq.com/v1
+auth:
+  type: apiKeyQuery
+  param: key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: search
+    tool: locationiq-search
+    method: GET
+    path: /search
+    query:
+      q: '{q}'
+      format: json
+  - name: reverse
+    tool: locationiq-reverse
+    method: GET
+    path: /reverse
+    query:
+      lat: '{lat}'
+      lon: '{lon}'
+      format: json
+  - name: autocomplete
+    tool: locationiq-autocomplete
+    method: GET
+    path: /autocomplete
+    query:
+      q: '{q}'
+      format: json
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/us1.locationiq.com.ico

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+    },
+    "unrealMCP": {
+      "command": "uv",
+      "args": ["--directory", "./unreal-mcp/Python", "run", "unreal_mcp_server.py"]
+    }
+  }
+}

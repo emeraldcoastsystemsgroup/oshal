@@ -1,0 +1,32 @@
+id: service-unreachable
+name: Service Unreachable Recovery
+description: Detects and remediates services that are not responding to health checks
+trigger:
+  type: health_check
+  pattern: "ECONNREFUSED|ETIMEDOUT|unreachable|connection refused|503|502"
+  severity: high
+diagnosis:
+  commands:
+    - "kubectl get pods -n ${namespace} -l app=${service} --no-headers"
+    - "kubectl get svc -n ${namespace} ${service} --no-headers"
+    - "kubectl logs -n ${namespace} -l app=${service} --tail=30"
+  expectedPatterns:
+    - "0/1"
+    - "Pending"
+    - "ImagePullBackOff"
+    - "CrashLoopBackOff"
+    - "Error"
+remediation:
+  commands:
+    - "kubectl rollout restart deployment/${service} -n ${namespace}"
+  requiresApproval: false
+  maxAutoRetries: 2
+verification:
+  commands:
+    - "kubectl get pods -n ${namespace} -l app=${service} --no-headers"
+  successPatterns:
+    - "Running"
+    - "1/1"
+  delayMs: 45000
+  retries: 3
+  retryDelayMs: 20000

@@ -1,0 +1,45 @@
+provider: convertkit
+displayName: ConvertKit
+version: 1.0.0
+baseUrl: https://api.convertkit.com/v3
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: subscribers
+    tool: convertkit-subscribers
+    method: GET
+    path: /subscribers
+    query:
+      page: null
+      from: null
+      to: null
+      sort_order: null
+  - name: forms
+    tool: convertkit-forms
+    method: GET
+    path: /forms
+  - name: sequences
+    tool: convertkit-sequences
+    method: GET
+    path: /sequences
+  - name: tags
+    tool: convertkit-tags
+    method: GET
+    path: /tags
+  - name: broadcasts
+    tool: convertkit-broadcasts
+    method: GET
+    path: /broadcasts
+    query:
+      page: null
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/convertkit.com.ico

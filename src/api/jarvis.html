@@ -1,0 +1,2084 @@
+<!DOCTYPE html>
+<!--
+  OSHAL Assistant ("Jarvis") surface — the unified front door over every OSHAL app (ADR-050).
+
+  VOICE-FIRST, THEME-NATIVE: leads with an audio-reactive orb + voice I/O, but it is a first-class
+  cockpit surface — it MIRRORS the active cockpit theme (midnight etc.) via the standard theme-sync
+  script every sibling surface uses, so the orb + glass cards take the live accent (purple in
+  midnight) and switch with the operator's theme. The orb voices the answer; the data lives on the
+  same focused, width-constrained column directly under it:
+    • a live Command Center glance (GET /api/jarvis/overview) — swarm, comms, active work, calendar
+    • a conversation log with markdown / GFM tables / Mermaid diagrams / "Open ↗" handoff chips
+  Voice runs in the browser (Web Speech API). The brain is POST /api/jarvis/ask. The cockpit hides
+  its generic right-rail chat panel here (it IS the chat). Served by createJarvisRoutes at /api/jarvis/.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OSHAL Assistant</title>
+<!-- Framework theme tokens + the bootstrap that applies the operator's saved theme (and follows it
+     live). Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html>
+     above is what gives the surface colours until the bootstrap resolves the operator's choice. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    /* Short alias names DERIVED from the framework theme tokens (surface-themes.css) rather than
+       hardcoded hex, so all eleven themes follow — not just midnight. Semantic status/accent
+       colours keep the old hex as a fallback in case a theme omits one. (--scrollbar-thumb is a
+       framework token of the same name, so it flows through directly — no local alias needed.) */
+    --bg:var(--bg-primary); --panel:var(--bg-secondary); --panel2:var(--bg-tertiary);
+    --card:var(--bg-card); --card-hover:var(--bg-card-hover);
+    --line:var(--border-color); --line-hover:var(--border-color-hover);
+    --text:var(--text-primary); --muted:var(--text-secondary); --faint:var(--text-muted);
+    --accent:var(--accent-primary, #7c7cff); --accent-hover:var(--accent-primary-hover, #9d9dff);
+    --ok:var(--status-success, #34d399); --active:var(--status-active, #60a5fa); --warn:var(--status-warning, #fbbf24); --danger:var(--status-error, #f87171);
+    --glass:var(--glass-bg, rgba(255,255,255,.04));
+    --font:'Inter',system-ui,-apple-system,sans-serif;
+    --font-d:'Plus Jakarta Sans','SF Pro Display',system-ui,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; font-family:var(--font); color:var(--text); background:var(--bg);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .scroll { flex:1; overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; scrollbar-color:var(--scrollbar-thumb) transparent; }
+  .scroll::-webkit-scrollbar { width:10px; }
+  .scroll::-webkit-scrollbar-thumb { background:var(--scrollbar-thumb); border-radius:6px; }
+  .scroll::-webkit-scrollbar-track { background:transparent; }
+
+  /* Two-pane: main (orb + chat) + a right rail (work queue + small metrics). Less vertical scroll. */
+  /* Push the whole surface down so the orb sits nearer the vertical middle — balances the layout
+     and (since the node-field hub tracks the orb) drops the map with it instead of crowding the top. */
+  .layout { display:flex; gap:18px; max-width:1560px; width:100%; margin:0 auto; padding:0 24px 48px; align-items:flex-start; }
+  /* Orb/controls pushed down so the orb sits nearer mid-screen (the node-field hub tracks it). The
+     rail starts at the cloud's TOP (var set from JS) so Conversations is level with the cloud top. */
+  .main { flex:1; min-width:0; display:flex; flex-direction:column; padding-top:clamp(72px,25vh,220px); }
+  .rail { width:300px; flex:none; position:sticky; top:14px; display:flex; flex-direction:column; gap:2px; padding-top:var(--cloud-top-px,72px); }
+  .rail .sect:first-child { margin-top:4px; }   /* the rail's own top spacing comes from --cloud-top-px */
+  @media (max-width:880px){ .layout { flex-direction:column; } .rail { width:100%; position:static; } }
+  /* legacy single-column container (unused after the two-pane redesign) */
+  .col { max-width:680px; width:100%; margin:0 auto; padding:26px 20px 44px; }
+
+  /* ── Orb hero ────────────────────────────────────────────────────────── */
+  .hero { display:flex; flex-direction:column; align-items:center; text-align:center; }
+  .eyebrow { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); font-weight:700; opacity:.9; }
+  .canvas-wrap { position:relative; width:min(168px,40vw); aspect-ratio:1; margin:6px auto 54px; }
+  #orb { width:100%; height:100%; display:block; cursor:pointer; }
+  .status { font-family:var(--font-d); font-weight:600; font-size:.92rem; color:var(--muted); min-height:1.3em; }
+  .status.err { color:var(--danger); }
+  .bubble { width:100%; max-width:560px; min-width:0; margin:8px auto 0; min-height:1.2em; opacity:0; transition:opacity .2s ease; }
+  .bubble.has-copy { opacity:1; }
+  .bubble .you { color:var(--faint); font-size:.86rem; margin-bottom:5px; word-break:break-word; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bubble .you b { color:var(--muted); font-weight:600; }
+  .bubble .ai { width:100%; min-width:0; max-width:100%; padding-inline:2px; color:var(--text); font-size:1.02rem; line-height:1.5; font-family:var(--font-d); font-weight:500; overflow-wrap:anywhere; word-break:normal; }
+  .result-panel { width:min(860px,100%); margin:16px auto 4px; padding:16px 18px; text-align:left;
+    background:linear-gradient(160deg,rgba(255,255,255,.065),rgba(255,255,255,.022)); border:1px solid var(--line);
+    border-radius:16px; box-shadow:0 18px 48px rgba(0,0,0,.16); }
+  .result-panel[hidden] { display:none; }
+  .result-panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px;
+    color:var(--accent); font-size:11px; font-weight:750; letter-spacing:.12em; text-transform:uppercase; }
+  .result-panel .bx { max-width:100%; color:var(--text); font-size:.96rem; line-height:1.55; overflow-wrap:anywhere; }
+  .result-panel .bx p:first-child { margin-top:0; }
+  .result-panel .bx p:last-child { margin-bottom:0; }
+  .result-panel .bx .tablewrap { overflow-x:auto; margin:10px 0; }
+  .result-panel .bx table.md { border-collapse:collapse; font-size:13px; width:100%; }
+  .result-panel .bx table.md th,.result-panel .bx table.md td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  .result-panel .bx table.md th { background:var(--glass); color:var(--accent); }
+
+  /* Lowered well clear of the ambient cloud (radiusY ~190px around the orb) so the
+     Tap-to-talk row + options never crowd the eye — operator ask, repeated. */
+  .controls { display:flex; justify-content:center; margin-top:clamp(84px,15vh,168px); }
+  .mic { display:inline-flex; align-items:center; gap:9px; font-family:var(--font-d); font-weight:700; font-size:.96rem; color:#fff;
+    background:var(--accent); border:0; border-radius:var(--radius-pill,9999px); padding:12px 24px; cursor:pointer; transition:.18s;
+    box-shadow:0 8px 24px -8px var(--accent); }
+  .mic:hover { background:var(--accent-hover); transform:translateY(-1px); }
+  .mic.live { background:var(--danger); box-shadow:0 8px 24px -8px var(--danger); }
+  .mic svg { width:18px; height:18px; fill:currentColor; }
+
+  .ctlrow { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:11px; }
+  .ctl { font-family:var(--font); font-weight:600; font-size:.78rem; color:var(--muted); border:1px solid var(--line);
+    background:var(--glass); border-radius:9999px; padding:7px 13px; cursor:pointer; transition:.16s; white-space:nowrap; display:inline-flex; align-items:center; gap:5px; }
+  .ctl:hover { border-color:var(--accent); color:var(--text); }
+
+  .typer { display:none; gap:8px; width:100%; max-width:520px; margin:13px auto 0; }
+  .typer.show { display:flex; }
+  .typer input { flex:1; min-width:0; background:var(--glass); border:1px solid var(--line); border-radius:9999px; padding:11px 16px; color:var(--text); font-size:.92rem; font-family:var(--font); }
+  .typer input::placeholder { color:var(--faint); } .typer input:focus { outline:none; border-color:var(--accent); }
+  .typer button { background:var(--accent); color:#fff; border:0; border-radius:9999px; padding:0 20px; font-weight:700; cursor:pointer; font-family:var(--font-d); }
+  .typer button:hover { background:var(--accent-hover); }
+
+  .chips { display:flex; gap:7px; flex-wrap:wrap; justify-content:center; margin:16px auto 0; }
+  .chip { font-size:.78rem; color:var(--muted); border:1px solid var(--line); border-radius:9999px; padding:7px 13px; cursor:pointer; transition:.16s; background:var(--glass); }
+  .chip:hover { border-color:var(--accent); color:var(--text); }
+  /* ── Media attach: menu, preview strip, chips ─────────────────────────── */
+  .attach-menu { position:relative; display:flex; gap:7px; flex-wrap:wrap; justify-content:center; width:100%; max-width:520px; margin:9px auto 0; }
+  .attach-menu[hidden] { display:none; }
+  .attach-opt { font-family:var(--font); font-weight:600; font-size:.82rem; color:var(--text); border:1px solid var(--line);
+    background:var(--glass); border-radius:9999px; padding:9px 15px; cursor:pointer; transition:.16s; -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); }
+  .attach-opt:hover { border-color:var(--accent); }
+  .attach-strip { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; width:100%; max-width:520px; margin:12px auto 2px; }
+  .attach-strip[hidden] { display:none; }
+  .attach-chip { position:relative; display:inline-flex; align-items:center; gap:8px; max-width:210px; font-size:.78rem; color:var(--muted);
+    border:1px solid var(--line); border-radius:12px; padding:6px 8px 6px 6px; background:var(--glass); }
+  .attach-chip .attach-thumb { width:34px; height:34px; border-radius:8px; object-fit:cover; flex:0 0 auto; background:var(--line); }
+  .attach-chip .attach-doc-ic { width:34px; height:34px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:1rem; background:var(--line); flex:0 0 auto; }
+  .attach-chip .attach-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attach-chip .attach-x { flex:0 0 auto; cursor:pointer; border:0; background:transparent; color:var(--faint); font-size:1rem; line-height:1; padding:2px 4px; }
+  .attach-chip .attach-x:hover { color:var(--danger); }
+  @media (max-width:700px){
+    /* Keep one user line plus two answer lines reserved. A reply now fills this slot instead of
+       pushing every control and the mobile page scrollbar down by roughly 53px. */
+    .bubble { height:4.5rem; min-height:4.5rem; flex:none; }
+    .controls { margin-top:12px; }
+    .ctlrow { gap:6px; margin-top:8px; }
+    .chips { gap:6px; margin-top:10px; }
+  }
+
+  /* ── Section label (matches sibling surfaces) ────────────────────────── */
+  .sect { display:flex; align-items:center; gap:10px; margin:26px 2px 10px; }
+  .sect .t { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--faint); font-weight:700; }
+  .sect .refresh { margin-left:auto; font-size:11px; color:var(--muted); background:var(--glass); border:1px solid var(--line); border-radius:8px; padding:4px 9px; cursor:pointer; }
+  .sect .refresh:hover { color:var(--text); border-color:var(--accent); }
+
+  /* ── Compact metrics (rail) ── */
+  .cc-mini { display:flex; flex-direction:column; gap:5px; }
+  .cc-row { display:flex; align-items:center; gap:8px; background:var(--card); border:1px solid var(--line); border-radius:9px; padding:7px 10px; font-size:12px; min-width:0; }
+  .cc-row .ico { color:var(--accent); font-size:13px; flex:none; }
+  .cc-row .lbl { color:var(--muted); flex:none; }
+  .cc-row .val { margin-left:auto; color:var(--text); font-weight:700; font-family:var(--font-d); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:62%; }
+
+  /* ── Session shelf ── */
+  .shelf { display:flex; flex-direction:column; gap:6px; }
+  .shelf-item { display:flex; align-items:center; gap:9px; background:var(--card); border:1px solid var(--line); border-left:2px solid var(--line); border-radius:10px; padding:8px 11px; font-size:12.5px; min-width:0; }
+  .shelf-item.done, .shelf-item.err { cursor:pointer; }
+  .shelf-item.done { border-left-color:var(--ok); }
+  .shelf-item.err { border-left-color:var(--danger); }
+  .shelf-item.done:hover, .shelf-item.err:hover { border-color:var(--accent); border-left-color:var(--ok); }
+  .si-dot { flex:none; width:12px; text-align:center; color:var(--faint); font-size:11px; }
+  .shelf-item.done .si-dot { color:var(--ok); }
+  .shelf-item.err .si-dot { color:var(--danger); }
+  .si-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+  .si-when { flex:none; font-size:11px; color:var(--faint); }
+  .shelf-item.done .si-when { color:var(--ok); font-weight:600; }
+  /* Unread results POP (accent); read results recede (dim) so the eye lands on what's new. */
+  .shelf-item.done.unread { border-left-color:var(--accent); border-left-width:3px; background:color-mix(in srgb, var(--accent) 12%, var(--card)); }
+  .shelf-item.done.unread .si-label { font-weight:700; color:var(--text); }
+  .shelf-item.done.unread .si-when { color:var(--accent); font-weight:800; letter-spacing:.4px; }
+  .shelf-item.done.unread .si-dot { color:var(--accent); }
+  .shelf-item.done.read { opacity:.58; }
+  .shelf-item.done.read .si-label { color:var(--muted); }
+  .shelf-item.done.read .si-when { color:var(--faint); font-weight:500; }
+  .shelf-item.done.read .si-dot { color:var(--faint); }
+  .si-x { flex:none; color:var(--faint); cursor:pointer; padding:0 2px; font-size:14px; line-height:1; }
+  .si-x:hover { color:var(--danger); }
+
+  /* ── Command Center cards (native glass) ─────────────────────────────── */
+  .cc { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:560px){ .cc { grid-template-columns:1fr; } }
+  .pnl { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:13px 14px; min-width:0; min-height:106px; display:flex; flex-direction:column; }
+  .pnl .ph { display:flex; align-items:center; gap:7px; margin-bottom:9px; }
+  .pnl .ph .ico { font-size:14px; color:var(--accent); }
+  .pnl .ph .name { font-size:12.5px; font-weight:700; }
+  .pnl .ph .count { margin-left:auto; font-size:10.5px; color:var(--faint); white-space:nowrap; }
+  .empty { color:var(--faint); font-size:12px; padding:4px 0; }
+
+  /* stat-first cards: big number + one supporting line (+ optional health bar) */
+  .stat { display:flex; align-items:baseline; gap:6px; margin:auto 0 6px; min-width:0; }
+  .stat .big { font-family:var(--font-d); font-size:1.7rem; font-weight:700; color:var(--text); line-height:1.04; letter-spacing:-.01em; }
+  .stat .unit { font-size:.76rem; color:var(--muted); font-weight:600; }
+  .bar { height:5px; border-radius:9999px; background:var(--glass); overflow:hidden; margin:0 0 8px; }
+  .bar > i { display:block; height:100%; background:var(--accent); border-radius:9999px; transition:width .4s ease; }
+  .sub { font-size:11.5px; color:var(--muted); line-height:1.4; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; }
+
+  /* ── Conversation (full rich answers) ────────────────────────────────── */
+  #convo:empty { display:none; }
+  #convo:empty + .convo-empty { display:block; }
+  .convo-empty { display:none; color:var(--faint); font-size:12px; padding:2px 2px; }
+  .msg { margin:0 0 14px; line-height:1.6; min-width:0; }
+  .msg .who { font-size:10.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--faint); margin-bottom:4px; font-weight:700; }
+  .msg.user .bx { background:var(--glass); border:1px solid var(--line); border-radius:12px; padding:9px 13px; display:inline-block; max-width:100%; word-break:break-word; }
+  .msg.bot .bx { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 15px; overflow-wrap:anywhere; }
+  .bx h2 { font-size:14px; color:var(--accent); margin:12px 0 6px; }
+  .bx h3 { font-size:12.5px; margin:10px 0 4px; }
+  .bx ul { margin:6px 0; padding-left:18px; } .bx li { margin:3px 0; }
+  .bx p { margin:7px 0; } .bx strong { color:var(--text); } .bx code { background:var(--glass); padding:1px 5px; border-radius:5px; }
+  .bx .md-image-note { display:inline-flex; align-items:center; max-width:100%; color:var(--muted); border:1px dashed var(--line); border-radius:9px; padding:5px 8px; overflow-wrap:anywhere; }
+  .bx .tablewrap { overflow-x:auto; margin:9px 0; }
+  .bx table.md { border-collapse:collapse; font-size:12px; width:100%; }
+  .bx table.md th, .bx table.md td { border:1px solid var(--line); padding:6px 9px; text-align:left; }
+  .bx table.md th { background:var(--glass); color:var(--accent); }
+  .bx pre.code { background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:8px; padding:10px 12px; overflow-x:auto; font-size:11.5px; }
+  .bx .mermaid { background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:10px; padding:12px; margin:9px 0; white-space:pre-wrap; font-size:11.5px; text-align:center; }
+  .bx .mermaid[data-rendered] { white-space:normal; }
+  .bx .mermaid svg { max-width:100%; height:auto; }
+  .ans-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:9px; }
+  .ans-chips .chip { color:var(--accent); font-weight:600; }
+  .spin { color:var(--muted); font-size:12.5px; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--accent); animation:p 1s infinite; }
+  @keyframes p { 0%,100%{opacity:.3} 50%{opacity:1} }
+  .err { color:var(--danger); }
+
+  /* ══════════ Cooler Jarvis — ambient swarm field + Apple-glass surfaces ══════════ */
+  /* Full-bleed living backdrop: the swarm as a node-field, online bots lit. Masked so it
+     fades toward the edges and never competes with the foreground. */
+  .nodefield { position:fixed; inset:0; width:100vw; height:100vh; z-index:0; pointer-events:none; opacity:.55; }
+  /* Hover tooltip for a swarm node — name + status, only on hover (no random pop-ups). */
+  .node-tip { position:fixed; z-index:6; pointer-events:none; transform:translate(-50%,-100%);
+    background:rgba(12,12,22,0.78); border:1px solid rgba(var(--accent-rgb,120,130,255),0.45); color:rgba(236,236,250,0.96);
+    font:600 11px/1.3 Inter,system-ui,sans-serif; padding:5px 9px; border-radius:8px; white-space:nowrap;
+    box-shadow:0 6px 20px rgba(0,0,0,0.35); opacity:0; transition:opacity .12s ease; }
+  .node-tip.on { opacity:.96; }
+  .node-tip .nt-sub { color:rgba(180,185,220,0.85); font-weight:500; margin-left:6px; }
+  body { position:relative; background:
+      radial-gradient(1100px 680px at 50% -10%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 62%),
+      radial-gradient(820px 560px at 86% 2%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 58%),
+      var(--bg); }
+  .scroll { position:relative; z-index:1; }
+
+  /* Frosted glass for every floating surface. */
+  .pnl, .cc-row, .shelf-item, .msg.bot .bx, .msg.user .bx {
+    -webkit-backdrop-filter:blur(16px) saturate(150%); backdrop-filter:blur(16px) saturate(150%); }
+  .pnl, .cc-row, .shelf-item {
+    background:linear-gradient(160deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
+    border-color:var(--border-color, rgba(255,255,255,.10));
+    box-shadow:0 10px 34px -18px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.06); }
+  .cc-row:hover, .shelf-item:hover { border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); }
+
+  /* The hero orb floats over the field with a soft accent bloom. */
+  .canvas-wrap { width:min(204px,46vw); }
+  .canvas-wrap::after { content:''; position:absolute; inset:-24% -24% -14% -24%; z-index:-1; border-radius:50%;
+    background:radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--accent) 26%, transparent), transparent 68%);
+    filter:blur(14px); }
+  .eyebrow { text-shadow:0 0 22px color-mix(in srgb, var(--accent) 55%, transparent); }
+  .status { font-size:1rem; }
+
+  /* Conversation as Apple-glass bubbles — user accent-tinted + right, Jarvis neutral + left. */
+  .msg.bot .bx { border-radius:20px; border-color:var(--border-color, rgba(255,255,255,.11));
+    background:linear-gradient(168deg, rgba(255,255,255,.085), rgba(255,255,255,.03));
+    box-shadow:0 14px 40px -20px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.08); }
+  .msg.user { text-align:right; }
+  .msg.user .bx { border-radius:20px; text-align:left;
+    background:linear-gradient(165deg, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 9%, transparent));
+    border-color:color-mix(in srgb, var(--accent) 32%, transparent);
+    box-shadow:0 12px 34px -20px color-mix(in srgb, var(--accent) 60%, transparent); }
+  .msg .who { margin:0 3px 4px; }
+
+  /* Floating console accents. */
+  .mic { box-shadow:0 12px 30px -10px color-mix(in srgb, var(--accent) 70%, transparent); }
+  .ctl, .chip, .typer input { -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); }
+  .sect .t { color:color-mix(in srgb, var(--accent) 32%, var(--faint)); }
+
+  /* Conversation gets its OWN bounded scroll so the orb stays fixed above it (no page scroll). */
+  #convo { max-height:46vh; overflow-y:auto; overflow-x:hidden; padding-right:4px;
+    scrollbar-width:thin; scrollbar-color:var(--scrollbar-thumb) transparent; }
+  #convo::-webkit-scrollbar { width:8px; }
+  #convo::-webkit-scrollbar-thumb { background:var(--scrollbar-thumb); border-radius:6px; }
+
+  /* Conversations list (rail): the user's open chat-tickets, searched from the queue on load. */
+  .threads { display:flex; flex-direction:column; gap:5px; margin-bottom:4px; }
+  .thread-item { display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12.5px;
+    background:linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,.015));
+    border:1px solid var(--line); border-left:2px solid color-mix(in srgb, var(--accent) 50%, var(--line));
+    border-radius:10px; padding:7px 10px; -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); }
+  .thread-item:hover { border-color:var(--accent); }
+  .thread-item.cur { border-left-color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .th-dot { flex:none; width:7px; height:7px; border-radius:50%; background:color-mix(in srgb, var(--accent) 70%, transparent); }
+  .th-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+  <link rel="stylesheet" href="/api/jarvis/assets/jarvis-stage.css" />
+  <link rel="stylesheet" href="/api/jarvis/assets/jarvis-ambient.css" />
+  <link rel="stylesheet" href="/api/jarvis/assets/jarvis-speakers.css" />
+</head>
+<body>
+  <!-- Ambient swarm field: the live bot mesh, drawn behind Jarvis; online bots glow + pulse. -->
+  <canvas id="nodes" class="nodefield" aria-hidden="true"></canvas>
+  <div id="nodeTip" class="node-tip" aria-hidden="true"></div>
+  <!-- The cloud is the response: this domain-blind stage samples any image supplied by the
+       backend, morphs the ambient particles into it, then reverses into the Discussion archive. -->
+  <section class="response-stage" id="responseStage" data-state="idle" aria-label="Jarvis visual answer stage">
+    <canvas id="responseMorph" aria-hidden="true"></canvas>
+    <img id="responseStageImage" class="response-stage-image" alt="" />
+    <div id="responseStageCaption" class="response-stage-caption" role="status" aria-live="polite"></div>
+    <div id="responseStageStatus" class="response-stage-status" aria-live="polite">Jarvis is ready</div>
+    <nav class="response-stage-actions" id="responseStageActions" aria-label="Visual answer controls" hidden>
+      <button class="response-stage-action" id="responseStopBtn" type="button">Back to Jarvis</button>
+      <button class="response-stage-action" id="responseDiscussionBtn" type="button" aria-controls="discussionDrawer">Full result</button>
+    </nav>
+  </section>
+  <div class="scroll" id="scroll">
+    <div class="layout">
+      <!-- ── MAIN: orb + conversation ──────────────────────────────────── -->
+      <div class="main">
+        <section class="hero">
+          <div class="eyebrow">OSHAL Assistant</div>
+          <div class="canvas-wrap">
+            <canvas id="orb" role="button" tabindex="0" aria-label="Talk to Jarvis" aria-describedby="status"></canvas>
+            <div class="ambient-mount" id="ambientMount"></div>
+          </div>
+          <div class="status" id="status">Tap the orb and start talking</div>
+
+          <!-- Haven (ADR-079): pull-based proactive suggestions — shown when you arrive, never pushed. -->
+          <div id="havenNotices" style="display:none;max-width:640px;margin:10px auto 0;text-align:left;"></div>
+          <script>
+            (function () {
+              fetch('/api/user-model/suggestions', { credentials: 'same-origin' })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                  var list = (d && d.suggestions) || [];
+                  if (!list.length) return;
+                  var host = document.getElementById('havenNotices');
+                  host.style.display = 'block';
+                  list.forEach(function (s) {
+                    var row = document.createElement('div');
+                    row.style.cssText = 'display:flex;gap:10px;align-items:flex-start;background:rgba(94,234,212,.07);border:1px solid rgba(94,234,212,.25);border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:13px;line-height:1.45;';
+                    var txt = document.createElement('div');
+                    txt.textContent = s.message;
+                    var review = document.createElement('button');
+                    review.textContent = 'Review';
+                    review.title = 'Discuss this proposal before anything is created';
+                    review.style.cssText = 'margin-left:auto;background:rgba(94,234,212,.12);border:1px solid rgba(94,234,212,.35);border-radius:8px;color:inherit;padding:5px 9px;cursor:pointer;font-size:11px;';
+                    review.addEventListener('click', function () {
+                      row.remove();
+                      fetch('/api/user-model/suggestions/' + encodeURIComponent(s.suggestionId) + '/resolve', {
+                        method: 'POST', credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'done' }),
+                      });
+                      handleInput('Help me review this transcript follow-up: ' + s.message + ' Do not create anything until I explicitly confirm.');
+                    });
+                    var x = document.createElement('button');
+                    x.textContent = '×';
+                    x.title = 'Dismiss';
+                    x.style.cssText = 'margin-left:auto;background:none;border:none;color:inherit;opacity:.6;cursor:pointer;font-size:15px;line-height:1;';
+                    x.addEventListener('click', function () {
+                      row.remove();
+                      fetch('/api/user-model/suggestions/' + encodeURIComponent(s.suggestionId) + '/resolve', {
+                        method: 'POST', credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'dismissed' }),
+                      });
+                    });
+                    row.appendChild(txt); row.appendChild(review); row.appendChild(x); host.appendChild(row);
+                  });
+                })
+                .catch(function () {});
+            })();
+          </script>
+
+          <div class="bubble">
+            <div class="you" id="you"></div>
+            <div class="ai" id="ai"></div>
+          </div>
+
+          <section class="result-panel" id="resultPanel" aria-label="Latest Jarvis result" hidden>
+            <div class="result-panel-head"><span>Latest result</span><button class="ctl" id="resultDiscussionBtn" type="button">Full discussion</button></div>
+            <div class="bx" id="resultContent"></div>
+          </section>
+
+          <div class="controls">
+            <button class="mic" id="mic"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-3.06A9 9 0 0 0 21 11h-2Z"/></svg><span id="miclabel">Tap to talk</span></button>
+          </div>
+          <div class="ctlrow" id="ctlrow">
+            <button class="ctl" id="newThreadBtn" title="Start a new chat thread (opens a fresh chat-ticket)">✎ New</button>
+            <button class="ctl" id="typeToggle">⌨ Type</button>
+            <button class="ctl" id="addMediaBtn" title="Add a photo or document" aria-haspopup="true" aria-expanded="false">＋ Add</button>
+            <button class="ctl" id="mute" title="Stop / mute voice">■ Stop</button>
+            <button class="ctl" id="orbBtn" title="Cycle orb style">◎ Halo</button>
+            <button class="ctl" id="voiceBtn" title="Cycle voice">🔊 Voice</button>
+            <button class="ctl" id="discussionBtn" title="Open the durable discussion" aria-controls="discussionDrawer">☰ Discussion</button>
+            <button class="ctl" id="closeThreadBtn" title="Close this chat (marks its ticket complete)">✕ Close</button>
+          </div>
+
+          <div class="attach-strip" id="attachStrip" hidden aria-label="Attached media"></div>
+
+          <form class="typer" id="typer">
+            <input id="typein" type="text" placeholder="Ask me anything…" autocomplete="off" />
+            <button type="submit">Ask</button>
+          </form>
+
+          <!-- Media picker. Camera uses <input capture> (native camera app) not getUserMedia —
+               the cockpit iframe blocks getUserMedia, and capture works on phones regardless. -->
+          <div class="attach-menu" id="attachMenu" hidden role="menu" aria-label="Add media">
+            <button type="button" class="attach-opt" data-pick="cam" role="menuitem">📷 Take photo</button>
+            <button type="button" class="attach-opt" data-pick="img" role="menuitem">🖼️ Upload photo</button>
+            <button type="button" class="attach-opt" data-pick="doc" role="menuitem">📄 Add document</button>
+          </div>
+          <input id="camInput" type="file" accept="image/*" capture="environment" hidden />
+          <input id="imgInput" type="file" accept="image/*" multiple hidden />
+          <input id="docInput" type="file" accept=".txt,.md,.markdown,.csv,.json,.log,.text,.yml,.yaml,.tsv,.xml,.html,.rtf,text/*" multiple hidden />
+
+          <div class="chips" id="chips"><span class="spin"><span class="dot"></span> loading…</span></div>
+        </section>
+
+      </div>
+
+      <!-- ── RAIL: work queue + compact status ─────────────────────────── -->
+      <aside class="rail">
+        <div class="sect" id="threadsSect" style="display:none"><span class="t">Conversations</span></div>
+        <div id="threads" class="threads"></div>
+
+        <div class="sect" id="shelfSect" style="display:none"><span class="t">Work queue</span></div>
+        <div id="shelf" class="shelf"></div>
+
+        <div class="sect"><span class="t">Status</span><button class="refresh" id="refresh" title="Refresh">↻</button></div>
+        <div class="cc-mini" id="cc"><div class="empty"><span class="spin"><span class="dot"></span> loading…</span></div></div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Full durable transcript lives here instead of forcing the center stage to scroll. -->
+  <div class="discussion-overlay" id="discussionOverlay" aria-hidden="true"></div>
+  <aside class="discussion-drawer" id="discussionDrawer" role="dialog" aria-modal="true" aria-label="Full discussion" aria-hidden="true" inert>
+    <header class="discussion-drawer-head">
+      <div><strong>Full discussion</strong><span>Text, sources, and replayable visual answers</span></div>
+      <button class="discussion-close" id="discussionClose" type="button" aria-label="Close discussion">×</button>
+    </header>
+    <div class="discussion-content">
+      <div class="sect" id="convoSect" style="display:none"><span class="t">Conversation</span></div>
+      <div id="convo" role="log" aria-label="Jarvis conversation"></div>
+    </div>
+  </aside>
+
+<!-- Diagram engine: Jarvis renders Mermaid on the fly. CDN; degrades to readable text if blocked. -->
+<script type="module">
+  try {
+    const mermaid = (await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')).default;
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark' });
+    window.__mermaid = mermaid;
+    window.dispatchEvent(new Event('mermaid-ready'));
+  } catch (e) { /* offline / blocked — diagrams stay as readable text */ }
+</script>
+<script src="/api/jarvis/assets/jarvis-stage.js"></script>
+<script src="/api/jarvis/assets/jarvis-ambient-core.js"></script>
+<script src="/api/jarvis/assets/jarvis-ambient-ui.js"></script>
+<script src="/api/jarvis/assets/jarvis-ambient-recognition.js"></script>
+<script src="/api/jarvis/assets/jarvis-ambient.js"></script>
+<script src="/api/jarvis/assets/jarvis-speakers.js"></script>
+<script src="/api/jarvis/assets/jarvis-speaker-capture.js"></script>
+<script src="/api/jarvis/assets/jarvis-person-consent.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+/* ================= Visualizer: audio-reactive orb (theme-driven colors) ================= */
+const cvs = $('orb'), cctx = cvs.getContext('2d');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let W=0,H=0,DPR=Math.min(devicePixelRatio||1,2);
+function sizeOrb(){ const r=cvs.getBoundingClientRect(); W=r.width; H=r.height; cvs.width=W*DPR; cvs.height=H*DPR; cctx.setTransform(DPR,0,0,DPR,0,0); }
+sizeOrb(); addEventListener('resize', sizeOrb);
+let mode='idle', level=0, targetLevel=0, freq=null, t=0; const BARS=72;
+
+// Orb takes the live cockpit accent so it matches the active theme (purple in midnight).
+const TC = { acc:'#7c7cff', bright:'#9d9dff', glow:'124,124,255', core:'#0a0a12' };
+function hexToRgb(h){ try{ h=String(h).trim().replace('#',''); if(h.length===3)h=h.split('').map(c=>c+c).join(''); const n=parseInt(h,16); return ((n>>16)&255)+','+((n>>8)&255)+','+(n&255); }catch(e){ return '124,124,255'; } }
+function readTheme(){
+  const cs=getComputedStyle(document.documentElement);
+  const acc=(cs.getPropertyValue('--accent').trim()||'#7c7cff');
+  const br =(cs.getPropertyValue('--accent-hover').trim()||'#9d9dff');
+  const bg =(cs.getPropertyValue('--bg').trim()||'#0a0a12');
+  TC.acc=acc; TC.bright=br; if(/^#/.test(bg))TC.core=bg; TC.glow=hexToRgb(acc);
+}
+readTheme();
+window.addEventListener('theme-synced', readTheme);
+
+function palette(){
+  if(mode==='speaking') return [TC.acc,TC.bright,'#ffffff'];
+  if(mode==='listening')return [TC.acc,TC.bright,TC.bright];
+  if(mode==='thinking') return [TC.acc,TC.bright,TC.bright];
+  return [TC.acc,TC.acc,TC.bright];
+}
+let orbStyle=(function(){try{return localStorage.getItem('oshalOrb')||'eye'}catch(e){return'eye'}})();
+function bgGlow(cx,cy,R,baseR,amp){ const g=cctx.createRadialGradient(cx,cy,baseR*0.5,cx,cy,R);
+  g.addColorStop(0,'rgba('+TC.glow+','+(0.16+0.22*amp)+')'); g.addColorStop(1,'rgba('+TC.glow+',0)');
+  cctx.fillStyle=g; cctx.beginPath(); cctx.arc(cx,cy,R,0,7); cctx.fill(); }
+function coreSphere(cx,cy,baseR,c1,c3,amp){ const core=cctx.createRadialGradient(cx-baseR*0.3,cy-baseR*0.3,baseR*0.1,cx,cy,baseR);
+  core.addColorStop(0,'#ffffff'); core.addColorStop(0.35,c3); core.addColorStop(0.75,c1); core.addColorStop(1,TC.core);
+  cctx.fillStyle=core; cctx.beginPath(); cctx.arc(cx,cy,baseR,0,7); cctx.fill();
+  cctx.fillStyle='rgba(255,255,255,'+(0.10+0.22*amp)+')'; cctx.beginPath(); cctx.arc(cx-baseR*0.25,cy-baseR*0.28,baseR*0.32,0,7); cctx.fill(); }
+function drawHalo(cx,cy,R,amp,baseR,c1,c2,c3){
+  bgGlow(cx,cy,R,baseR,amp);
+  for(let i=0;i<BARS;i++){ const a=(i/BARS)*Math.PI*2; let h=Math.max(0.04,(mode==='listening'&&freq)?freq[i%freq.length]/255:0.5+0.5*Math.sin(t*3+i*0.5)*(0.4+0.6*amp));
+    const inner=baseR*1.12,outer=inner+h*R*0.34*(0.5+amp);
+    const x1=cx+Math.cos(a)*inner,y1=cy+Math.sin(a)*inner,x2=cx+Math.cos(a)*outer,y2=cy+Math.sin(a)*outer;
+    const g=cctx.createLinearGradient(x1,y1,x2,y2); g.addColorStop(0,c2); g.addColorStop(1,c3);
+    cctx.strokeStyle=g; cctx.lineWidth=Math.max(2,R*0.018); cctx.lineCap='round'; cctx.globalAlpha=0.85;
+    cctx.beginPath(); cctx.moveTo(x1,y1); cctx.lineTo(x2,y2); cctx.stroke(); }
+  cctx.globalAlpha=1;
+  for(let k=0;k<2;k++){ cctx.save(); cctx.strokeStyle='rgba('+TC.glow+','+(0.12+0.10*amp)+')'; cctx.lineWidth=1.2; cctx.beginPath();
+    const rr=baseR*(1.3+k*0.22);
+    for(let i=0;i<=64;i++){ const a=(i/64)*Math.PI*2+t*(k?-0.3:0.4); const wob=1+0.05*Math.sin(a*6+t*2)*amp; cctx.lineTo(cx+Math.cos(a)*rr*wob,cy+Math.sin(a)*rr*wob); }
+    cctx.stroke(); cctx.restore(); }
+  coreSphere(cx,cy,baseR,c1,c3,amp);
+}
+function drawPulse(cx,cy,R,amp,baseR,c1,c2,c3){
+  bgGlow(cx,cy,R,baseR,amp);
+  for(let k=0;k<4;k++){ const phase=((t*0.45)+k/4)%1; const rr=baseR*(0.7+phase*1.7);
+    cctx.globalAlpha=(1-phase)*0.55; cctx.strokeStyle=c3; cctx.lineWidth=Math.max(2,R*0.022*(0.6+amp));
+    cctx.beginPath(); cctx.arc(cx,cy,rr,0,7); cctx.stroke(); }
+  cctx.globalAlpha=1; coreSphere(cx,cy,baseR*0.82,c1,c3,amp);
+}
+function drawWave(cx,cy,R,amp,baseR,c1,c2,c3){
+  bgGlow(cx,cy,R,baseR,amp);
+  const w=R*1.7,n=100; cctx.lineWidth=Math.max(2,R*0.02); cctx.lineCap='round'; cctx.lineJoin='round';
+  const g=cctx.createLinearGradient(cx-w/2,0,cx+w/2,0); g.addColorStop(0,c1); g.addColorStop(0.5,c3); g.addColorStop(1,c1);
+  for(let pass=0;pass<2;pass++){ cctx.globalAlpha=pass?0.25:1; cctx.strokeStyle=g; cctx.beginPath();
+    for(let i=0;i<=n;i++){ const x=cx-w/2+(i/n)*w; const f=(mode==='listening'&&freq)?(freq[i%freq.length]/255-0.45):Math.sin(i*0.28+t*4)*0.5;
+      const env=Math.sin((i/n)*Math.PI); const y=cy+(pass?-1:1)*f*env*R*0.66*(0.3+amp*1.5); i?cctx.lineTo(x,y):cctx.moveTo(x,y); }
+    cctx.stroke(); }
+  cctx.globalAlpha=1; cctx.fillStyle=c3; cctx.beginPath(); cctx.arc(cx,cy,R*0.05*(1+amp),0,7); cctx.fill();
+}
+function drawBars(cx,cy,R,amp,baseR,c1,c2,c3){
+  bgGlow(cx,cy,R,baseR,amp);
+  const N=64,ring=baseR*0.62;
+  for(let i=0;i<N;i++){ const a=(i/N)*Math.PI*2-Math.PI/2; let h=Math.max(0.05,(mode==='listening'&&freq)?freq[i%freq.length]/255:0.5+0.5*Math.sin(t*4+i*0.4)*(0.4+0.7*amp));
+    const inner=ring,outer=ring+h*R*0.5*(0.4+amp);
+    const x1=cx+Math.cos(a)*inner,y1=cy+Math.sin(a)*inner,x2=cx+Math.cos(a)*outer,y2=cy+Math.sin(a)*outer;
+    const g=cctx.createLinearGradient(x1,y1,x2,y2); g.addColorStop(0,c1); g.addColorStop(1,c3);
+    cctx.strokeStyle=g; cctx.lineWidth=Math.max(2,R*0.024); cctx.lineCap='round';
+    cctx.beginPath(); cctx.moveTo(x1,y1); cctx.lineTo(x2,y2); cctx.stroke(); }
+  cctx.fillStyle=TC.core; cctx.beginPath(); cctx.arc(cx,cy,ring*0.9,0,7); cctx.fill();
+  cctx.globalAlpha=0.45+0.45*amp; cctx.fillStyle=c3; cctx.beginPath(); cctx.arc(cx,cy,ring*0.28,0,7); cctx.fill(); cctx.globalAlpha=1;
+}
+/* Eye: an autonomous watcher — it blinks on its own, glances around, and the
+   pupil tracks + dilates with the voice. Pure canvas, takes the theme accent. */
+/* Pointer tracking so the eye orb can look at the cursor (iframe-local — follows while the cursor is
+   over the Jarvis surface; falls back to autonomous glances when it's idle or away). */
+const mouse={x:null,y:null,seen:-99};
+addEventListener('mousemove',(e)=>{ mouse.x=e.clientX; mouse.y=e.clientY; mouse.seen=t; },{passive:true});
+const eye={gx:0,gy:0,tx:0,ty:0,nextSaccade:0,blinking:false,blinkT:0,nextBlink:2.4};
+function eyePath(cx,cy,hw,hh){ cctx.beginPath();
+  cctx.moveTo(cx-hw,cy); cctx.quadraticCurveTo(cx,cy-hh*1.9,cx+hw,cy);
+  cctx.quadraticCurveTo(cx,cy+hh*1.9,cx-hw,cy); cctx.closePath(); }
+function drawEye(cx,cy,R,amp,baseR,c1,c2,c3){
+  bgGlow(cx,cy,R,baseR,amp);
+  // Look at the cursor when it's recently moved over the surface; otherwise glance around on its own.
+  if(mouse.x!=null && (t-mouse.seen)<4){
+    const rc=cvs.getBoundingClientRect(), ox=rc.left+rc.width/2, oy=rc.top+rc.height/2;
+    let dx=(mouse.x-ox)/((rc.width*0.5)||1), dy=(mouse.y-oy)/((rc.height*0.5)||1);
+    const m=Math.hypot(dx,dy); if(m>1){ dx/=m; dy/=m; }   // clamp gaze to the eye's range
+    eye.tx=dx; eye.ty=dy*0.6;
+  } else if(!reduce && t>eye.nextSaccade){ const a=Math.random()*6.283, rad=Math.pow(Math.random(),0.7)*0.34;
+    // Calm gaze: small, infrequent glances that stay near centre (was a wide, twitchy dart).
+    eye.tx=Math.cos(a)*rad; eye.ty=Math.sin(a)*rad*0.6; eye.nextSaccade=t+4.5+Math.random()*5; }
+  // Slow, smooth glide to the target — no high-frequency tremor (that read as a stressed shake).
+  eye.gx+=(eye.tx-eye.gx)*0.05; eye.gy+=(eye.ty-eye.gy)*0.05;
+  const gx=eye.gx, gy=eye.gy;
+  // blink: a quick lid sweep at random intervals
+  if(!reduce && !eye.blinking && t>eye.nextBlink){ eye.blinking=true; eye.blinkT=t; }
+  let lid=0;
+  if(eye.blinking){ const p=(t-eye.blinkT)/0.3;
+    if(p>=1){ eye.blinking=false; eye.nextBlink=t+2+Math.random()*4.5; } else lid=Math.sin(Math.min(p,1)*Math.PI); }
+  const open=1-lid, hw=R*0.92, hh=R*0.5*open;   // full blink → eye disappears cleanly
+  const irisR=R*0.34, ix=cx+gx*(hw-irisR*0.9), iy=cy+gy*R*0.27*open;
+  cctx.save();
+  // Soft almond body — just a faint accent glow that fades fully to transparent, so the eye SHAPE
+  // still reads but there is no hard "socket" edge or outline. No sclera, no rim stroke.
+  eyePath(cx,cy,hw,hh);
+  const sc=cctx.createRadialGradient(cx,cy,R*0.08,cx,cy,hw);
+  sc.addColorStop(0,'rgba('+TC.glow+',0.10)'); sc.addColorStop(0.7,'rgba('+TC.glow+',0.035)'); sc.addColorStop(1,'rgba('+TC.glow+',0)');
+  cctx.fillStyle=sc; cctx.fill();
+  // Iris + pupil, clipped to the almond so they sweep away cleanly as the lid blinks. A smooth
+  // glowing iris (no striations — those read as bloodshot/"strained") + one soft catch-light.
+  cctx.save(); eyePath(cx,cy,hw,hh); cctx.clip();
+    const ir=cctx.createRadialGradient(ix,iy,irisR*0.12,ix,iy,irisR);
+    ir.addColorStop(0,c3); ir.addColorStop(0.5,c1); ir.addColorStop(1,'rgba('+TC.glow+',0)');
+    cctx.fillStyle=ir; cctx.beginPath(); cctx.arc(ix,iy,irisR*1.05,0,7); cctx.fill();
+    const pr=irisR*(0.36+0.18*amp);   // pupil dilates with the voice
+    cctx.fillStyle='#05060a'; cctx.beginPath(); cctx.arc(ix,iy,pr,0,7); cctx.fill();
+    cctx.fillStyle='rgba(255,255,255,0.7)'; cctx.beginPath(); cctx.arc(ix-irisR*0.26,iy-irisR*0.3,irisR*0.1,0,7); cctx.fill();
+  cctx.restore();
+  cctx.restore();
+}
+const ORB={halo:drawHalo,pulse:drawPulse,wave:drawWave,bars:drawBars,eye:drawEye};
+function draw(){
+  cctx.clearRect(0,0,W,H);
+  const cx=W/2,cy=H/2,R=Math.min(W,H)/2,[c1,c2,c3]=palette();
+  const amp=reduce?Math.min(level,0.3):level, baseR=R*0.40+R*0.10*amp;
+  (ORB[orbStyle]||drawHalo)(cx,cy,R,amp,baseR,c1,c2,c3);
+}
+function tick(){
+  t+=0.016;
+  if(mode==='listening'&&freq){ let s=0; for(let i=0;i<freq.length;i++)s+=freq[i]; targetLevel=Math.min(1,(s/freq.length)/110); }
+  else if(mode==='speaking'){ targetLevel=0.45+0.35*Math.abs(Math.sin(t*7))+0.18*Math.abs(Math.sin(t*13.3)); }
+  else if(mode==='thinking'){ targetLevel=0.22+0.06*Math.sin(t*5); }
+  else { targetLevel=0.16+0.05*Math.sin(t*1.6); }
+  level+=(targetLevel-level)*0.18; draw(); requestAnimationFrame(tick);
+}
+tick();
+
+/* ================= Ambient SWARM field — the real bots, grinding =================
+   The backdrop IS the live swarm. Every registered bot is a node (online = lit); any bot actively
+   working a swarm work-item GRINDS — hard pulse, a spinning work-arc, particles streaming to the
+   hub (work flowing to Jarvis), and its task title floating beside it. Fed by /overview
+   (roster + online) and /api/swarm/work-items (who's working on what) — gated GETs the signed-in
+   cockpit session can read. Positions stable across polls (keyed by agentId). Colours from TC.glow. */
+const ncv=$('nodes'), nctx=ncv.getContext('2d');
+let NW=0,NH=0; const NDPR=Math.min(devicePixelRatio||1,2);
+let nodes=[], nt=0, clusterCenters={}, callout=null, nextCallout=3;
+/* The orb's centre when the clusters were last laid out. If the orb moves after
+   layout() (late web-font reflow, mobile address-bar resize, conversation scroll),
+   the node-map must re-centre on it — otherwise the eyeball and the field drift
+   apart. drawNodes() relayouts whenever the live hub leaves this point. */
+let layoutHub=[0,0];
+const JARVIS_ID='a0000000-0000-0000-0000-000000000050';
+const TERMINAL=new Set(['completed','complete','done','failed','error','cancelled','canceled','closed','delivered']);
+/* Functional areas: a bot joins the first group whose keyword matches its name/role/capabilities.
+   Jarvis (the assistant) is the hub in the middle; everything else clusters into its own circle. */
+const GROUPS=[
+  {key:'comms',    label:'Comms',       kw:['email','mail','comms','communicat','calendar','inbox','message']},
+  {key:'content',  label:'Content',     kw:['social','writer','present','deck','slide','content','brand','post']},
+  {key:'home',     label:'Home',        kw:['home','smartthings','device','scene','thermostat','light','nest']},
+  {key:'cloud',    label:'Cloud · Ops', kw:['cloud','gcp','devops','infra','deploy',' ops','mesh','queue','runtime']},
+  {key:'career',   label:'Career',      kw:['career','job','resume','hunter','recruit','applicat']},
+  {key:'money',    label:'Money',       kw:['finance','plaid','portfolio','trade','trading','stock','market','shop','purchas','walmart','eats','rides','uber','pay']},
+  {key:'learn',    label:'Learning',    kw:['kid','youtube','educat','tutor','monster','student','quiz','lecture','study','class','librarian','scribe','coach','teach']},
+  {key:'security', label:'Security',    kw:['security','secret','threat','incident','rca','audit','remediat','vuln']},
+  {key:'eng',      label:'Engineering', kw:['code','developer','architect','test','review','build','engineer','doc','qa']},
+];
+function nodeById(id){ return nodes.find(n=>n.id===id); }
+function groupOf(n){
+  if(n.id===JARVIS_ID) return 'assistant';
+  const hay=((n.name||'')+' '+(n.role||'')+' '+((n.caps||[]).join(' '))).toLowerCase();
+  for(const g of GROUPS){ if(g.kw.some(k=>hay.includes(k))) return g.key; }
+  return 'swarm';
+}
+function placeNode(id,extra){   // born near the hub; layout() eases it out to its functional cluster
+  return Object.assign({ id, name:'', role:'', caps:[], on:false, busy:false, task:'', taskCount:0, roster:false,
+    group:'swarm', ph:Math.random()*6.283, parts:[],
+    x:NW*0.5+(Math.random()-0.5)*40, y:NH*0.34+(Math.random()-0.5)*40, tx:NW*0.5, ty:NH*0.34 }, extra||{});
+}
+/* Lay out cluster centres in a ring around the hub, then each bot in a mini-circle within its cluster. */
+/* The hub is the ORB's real centre (not the viewport centre) so the map radiates from Jarvis. */
+function hubXY(){ try{ const r=cvs.getBoundingClientRect(); if(r.width) return [r.left+r.width/2, r.top+r.height/2]; }catch(_){} return [NW/2, NH*0.34]; }
+/* Left edge of the right-hand rail (Conversations/Status) — the field must stay LEFT of it so it
+   never overlays the work area. Falls back to the full width when the rail isn't present. */
+function railLeftX(){ try{ const el=document.querySelector('.rail'); if(el){ const r=el.getBoundingClientRect(); if(r.width && r.left>NW*0.5) return r.left; } }catch(_){} return NW; }
+function layout(){
+  const [cx,cy]=hubXY(); const rl=railLeftX();
+  layoutHub=[cx,cy];   // remember where the orb was so drawNodes can detect drift
+  for(const n of nodes){ n.group=groupOf(n); }
+  const order=[...GROUPS.map(g=>g.key),'swarm'];
+  const present=order.filter(k=>nodes.some(n=>n.group===k));
+  // Ellipse around the orb: bounded by room to the left edge, the rail, AND the vertical room above
+  // and below (accounting for the vertical squash) so it NEVER clips top/bottom or runs under the
+  // rail. Squashed wider-than-tall so clusters favour the empty side-bands instead of stacking over
+  // the centred label + controls.
+  const MG=104, SQ=0.62;   // MG = margin headroom (cluster radius + label); SQ = wider-than-tall
+  const N=Math.max(1,present.length);
+  const ring=Math.max(110, Math.min(cx-MG, rl-cx-MG, (cy-MG)/SQ, (NH-cy-MG)/SQ));
+  // The Conversations rail top should sit LEVEL with the cloud's top — publish it for the rail CSS var.
+  try{ document.documentElement.style.setProperty('--cloud-top-px', Math.max(8, cy - ring*SQ - 58) + 'px'); window.__cloudTopY = cy - ring*SQ; }catch(_){}
+  clusterCenters={};
+  present.forEach((k,i)=>{
+    const a=-Math.PI/2+(i/N)*Math.PI*2;
+    const gx=cx+Math.cos(a)*ring, gy=cy+Math.sin(a)*ring*SQ;
+    clusterCenters[k]={x:gx,y:gy,label:(GROUPS.find(g=>g.key===k)||{label:'Swarm'}).label};
+    const members=nodes.filter(n=>n.group===k), M=members.length, cr=Math.min(58,18+M*6);
+    members.forEach((n,j)=>{ const a2=(j/Math.max(1,M))*Math.PI*2+i*0.6;
+      n.tx=gx+Math.cos(a2)*cr*(M>1?1:0.15); n.ty=gy+Math.sin(a2)*cr*(M>1?1:0.15); });
+  });
+  for(const n of nodes){ if(n.group==='assistant'){ n.tx=cx; n.ty=cy; } }   // Jarvis → hub
+}
+function sizeNodes(){ NW=innerWidth; NH=innerHeight; ncv.width=NW*NDPR; ncv.height=NH*NDPR; nctx.setTransform(NDPR,0,0,NDPR,0,0); layout(); }
+sizeNodes(); addEventListener('resize', sizeNodes);
+/* Roster + online status from /overview (carries role + capabilities for grouping). */
+function setNodes(bots){
+  const list=Array.isArray(bots)?bots:[];
+  list.forEach((b)=>{ const n=nodeById(b.agentId);
+    if(n){ n.on=!!b.online; n.active=!!b.active; n.name=b.name||n.name; n.role=b.role||n.role; n.caps=b.capabilities||n.caps; n.roster=true; }
+    else { const nn=placeNode(b.agentId,{name:b.name||'',role:b.role||'',caps:b.capabilities||[],on:!!b.online,roster:true}); nn.active=!!b.active; nodes.push(nn); } });
+  layout();
+}
+/* Live work — who's grinding on what — from /api/swarm/work-items. */
+function setActivity(items){
+  const active=new Map();
+  for(const it of (Array.isArray(items)?items:[])){
+    const id=it.assignedAgentId; if(!id) continue;
+    if(TERMINAL.has(String(it.status||'').toLowerCase())) continue;
+    const cur=active.get(id)||{title:'',count:0}; cur.count++; if(!cur.title)cur.title=it.title||''; active.set(id,cur);
+  }
+  for(const n of nodes){ n.busy=false; n.task=''; n.taskCount=0; }
+  for(const [id,info] of active){ let n=nodeById(id); if(!n){ n=placeNode(id,{on:true}); nodes.push(n); }
+    n.busy=true; n.on=true; n.task=info.title; n.taskCount=info.count; }
+  nodes=nodes.filter(n=>n.roster||n.busy);
+  layout();
+}
+function shortTask(s){ s=String(s||'').replace(/\s+/g,' ').trim(); return s.length>28?s.slice(0,27)+'…':s; }
+/* Cute-but-truthful callouts: every few seconds one bot pops up its name + what it's REALLY doing
+   (its live work-item title when busy, else "standing by"). No fabricated activity. */
+function pickCallout(){
+  const cands=nodes.filter(n=>n.group!=='assistant'&&(n.busy||n.on));
+  if(!cands.length) return null;
+  const busy=cands.filter(n=>n.busy&&n.task), pool=busy.length?busy:cands;
+  const n=pool[Math.floor(Math.random()*pool.length)];
+  const text=(n.busy&&n.task)?((n.name||'bot')+': '+shortTask(n.task)):((n.name||'bot')+' · standing by');
+  return { id:n.id, text, t0:nt, dur:4.2 };
+}
+function roundRect(x,y,w,h,r){ nctx.beginPath(); nctx.moveTo(x+r,y); nctx.arcTo(x+w,y,x+w,y+h,r);
+  nctx.arcTo(x+w,y+h,x,y+h,r); nctx.arcTo(x,y+h,x,y,r); nctx.arcTo(x,y,x+w,y,r); nctx.closePath(); }
+function drawCalloutPill(x,y,text,alpha){
+  nctx.save(); nctx.globalAlpha=Math.max(0,Math.min(1,alpha));
+  nctx.font='11px Inter,system-ui,sans-serif'; const w=nctx.measureText(text).width+18, h=22;
+  const bx=Math.max(8,Math.min(NW-w-8, x-w/2)), by=Math.max(6, y-32-h);
+  nctx.fillStyle='rgba(10,10,20,0.85)'; nctx.strokeStyle='rgba('+TC.glow+',0.55)'; nctx.lineWidth=1;
+  roundRect(bx,by,w,h,9); nctx.fill(); nctx.stroke();
+  nctx.strokeStyle='rgba('+TC.glow+',0.4)'; nctx.beginPath(); nctx.moveTo(x,by+h); nctx.lineTo(x,y-5); nctx.stroke();
+  nctx.fillStyle='rgba(236,236,250,0.96)'; nctx.textAlign='left'; nctx.textBaseline='middle';
+  nctx.fillText(text, bx+9, by+h/2); nctx.restore(); nctx.textBaseline='alphabetic';
+}
+function drawNodes(){
+  nctx.clearRect(0,0,NW,NH);
+  if(!nodes.length) return;
+  const [cx,cy]=hubXY();   // radiate from the orb's real centre
+  // Keep the field locked to the orb: if the orb has shifted since the last
+  // layout (reflow / scroll / mobile resize), re-centre the clusters on it now.
+  if(Math.hypot(cx-layoutHub[0],cy-layoutHub[1])>2) layout();
+  // Confine the field to the main area (left of the rail) so it never overlays the work panels.
+  const rl=railLeftX();
+  nctx.save(); nctx.beginPath(); nctx.rect(0,0,Math.max(40,rl-6),NH); nctx.clip();
+  // ease each bot toward its cluster slot + a little life-jitter
+  for(const n of nodes){ const jx=reduce?0:Math.cos(nt*0.8+n.ph), jy=reduce?0:Math.sin(nt*0.7+n.ph);
+    n.x+=(n.tx-n.x)*0.06+jx*0.04; n.y+=(n.ty-n.y)*0.06+jy*0.04; }
+  const groupBusy={}; for(const n of nodes){ if(n.busy) groupBusy[n.group]=true; }
+  // dispatch lanes: hub → each functional cluster (brighter when that area is working) + its label
+  for(const k in clusterCenters){ if(k==='assistant')continue; const c=clusterCenters[k], busy=groupBusy[k];
+    nctx.strokeStyle='rgba('+TC.glow+','+(busy?0.22:0.07)+')'; nctx.lineWidth=busy?1.6:1;
+    nctx.beginPath(); nctx.moveTo(cx,cy); nctx.lineTo(c.x,c.y); nctx.stroke();
+    nctx.textAlign='center'; nctx.font='10px Inter,system-ui,sans-serif';
+    nctx.fillStyle='rgba('+TC.glow+','+(busy?0.9:0.45)+')';
+    nctx.fillText(c.label.toUpperCase(), c.x, c.y-40);
+  }
+  // intra-cluster edges (members of the same area wired together)
+  for(const k in clusterCenters){ const mem=nodes.filter(n=>n.group===k);
+    for(let i=0;i<mem.length;i++)for(let j=i+1;j<mem.length;j++){ const a=mem[i],b=mem[j], lit=a.on&&b.on;
+      nctx.strokeStyle='rgba('+TC.glow+','+(lit?0.15:0.05)+')'; nctx.lineWidth=1;
+      nctx.beginPath(); nctx.moveTo(a.x,a.y); nctx.lineTo(b.x,b.y); nctx.stroke(); } }
+  // DISPATCH particles flow OUTWARD hub → busy bot — you watch work get sent out to its area
+  for(const n of nodes){ if(!n.busy||n.group==='assistant')continue;
+    if(!reduce && n.parts.length<4 && Math.random()<0.12) n.parts.push({t:0});
+    for(const p of n.parts){ p.t+=reduce?0.5:0.02; const px=cx+(n.x-cx)*p.t, py=cy+(n.y-cy)*p.t;
+      nctx.fillStyle='rgba('+TC.glow+','+(0.9*(1-Math.abs(0.5-p.t)*1.3))+')'; nctx.beginPath(); nctx.arc(px,py,2.2,0,7); nctx.fill(); }
+    n.parts=n.parts.filter(p=>p.t<1);
+  }
+  // the bots
+  for(const n of nodes){
+    if(n.group==='assistant') continue;   // the orb itself is the hub — don't draw a dot over it
+    const beat=reduce?0.6:Math.max(0,Math.sin(nt*(n.busy?3.4:2)+n.ph));
+    const r=(n.busy?4.2:(n.on?2.8:1.8))+((n.busy?2.2:(n.on?1.2:0))*beat);
+    if(n.on||n.busy){ const gr=r*(n.busy?8:6); const g=nctx.createRadialGradient(n.x,n.y,0,n.x,n.y,gr);
+      const gcol=n.active?'52,211,153':TC.glow;   // GREEN halo when the bot was just called to work
+      g.addColorStop(0,'rgba('+gcol+','+((n.busy?0.34:n.active?0.30:0.15)+0.30*beat)+')'); g.addColorStop(1,'rgba('+gcol+',0)');
+      nctx.fillStyle=g; nctx.beginPath(); nctx.arc(n.x,n.y,gr,0,7); nctx.fill(); }
+    if(n.busy && !reduce){ const a0=nt*3+n.ph; nctx.strokeStyle='rgba('+TC.glow+',0.9)'; nctx.lineWidth=2; nctx.lineCap='round';
+      nctx.beginPath(); nctx.arc(n.x,n.y,r+4,a0,a0+1.7); nctx.stroke(); }
+    // White=busy now · GREEN=called in last ~2 min · accent=online idle · grey=offline.
+    nctx.fillStyle=n.busy?'#fff':(n.active?'rgba(52,211,153,0.95)':(n.on?('rgba('+TC.glow+',0.95)'):'rgba(150,150,180,0.30)'));
+    nctx.beginPath(); nctx.arc(n.x,n.y,r,0,7); nctx.fill();
+    // node radius cached for hover hit-testing (name shown on hover, not always-on).
+    n._r = r;
+  }
+  // soft edge fade centred on the orb (replaces the CSS mask), then drop the main-area clip
+  const vr=Math.max(NW,NH)*0.6, vg=nctx.createRadialGradient(cx,cy,vr*0.62,cx,cy,vr);
+  vg.addColorStop(0,'rgba(0,0,0,1)'); vg.addColorStop(1,'rgba(0,0,0,0)');
+  nctx.globalCompositeOperation='destination-in'; nctx.fillStyle=vg; nctx.fillRect(0,0,NW,NH);
+  nctx.globalCompositeOperation='source-over';
+  nctx.restore();   // end main-area clip
+  // No random pop-ups: bot names appear only on hover (see the #nodeTip mousemove handler below).
+}
+function nodeTick(){ nt+=0.016; drawNodes(); requestAnimationFrame(nodeTick); }
+nodeTick();
+/* Hover a swarm node → show its name + live status. Window-level hit-test (canvas stays
+   pointer-events:none so it never blocks the UI). Hover the green/lit dot to see the bot working. */
+const nodeTipEl = $('nodeTip');
+addEventListener('mousemove', (e) => {
+  if (!nodeTipEl) return;
+  let best = null, bestD = Infinity;
+  for (const n of nodes) {
+    if (n.group === 'assistant') continue;
+    const hitR = Math.max(12, (n._r || 3) + 9);
+    const d = Math.hypot(e.clientX - n.x, e.clientY - n.y);
+    if (d <= hitR && d < bestD) { best = n; bestD = d; }
+  }
+  if (!best) { nodeTipEl.classList.remove('on'); return; }
+  const sub = best.busy ? ('working — ' + (esc(shortTask(best.task)) || 'on a task'))
+            : best.active ? 'just called in'
+            : best.on ? 'online · standing by' : 'offline';
+  nodeTipEl.innerHTML = esc(best.name || 'bot') + '<span class="nt-sub">' + sub + '</span>';
+  nodeTipEl.style.left = best.x + 'px';
+  nodeTipEl.style.top = (best.y - (best._r || 4) - 6) + 'px';
+  nodeTipEl.classList.add('on');
+});
+addEventListener('mouseout', (e) => { if (!e.relatedTarget && nodeTipEl) nodeTipEl.classList.remove('on'); });
+/* Live "who's grinding" poll — work-items map a bot to its active task; refresh briskly so the
+   field genuinely tracks the swarm. Gated GET; degrades silently if signed out. */
+async function loadActivity(){
+  try{ const r=await fetch('/api/swarm/work-items',{credentials:'include'});
+    if(!r.ok) return; const j=await r.json(); setActivity(j.workItems||j.items||[]);
+  }catch(_){}
+}
+
+/* ================= DOM + state ================= */
+const scroll=$('scroll'), statusEl=$('status'), youEl=$('you'), aiEl=$('ai'), bubbleEl=document.querySelector('.bubble');
+const micBtn=$('mic'), micLabel=$('miclabel');
+function setStatus(s,err){ statusEl.textContent=s; statusEl.classList.toggle('err',!!err); }
+function setMode(m){ mode=m; }
+let centerCopyVersion=0;
+function showCenterUserCopy(text,interim){
+  centerCopyVersion+=1;
+  youEl.innerHTML='<b>You:</b> '+esc(String(text||''))+(interim?'<span style="opacity:.5"> ▍</span>':'');
+  bubbleEl?.classList.add('has-copy');
+  return centerCopyVersion;
+}
+function showCenterAnswerCopy(text){
+  const copyVersion=++centerCopyVersion;
+  if (!$('resultPanel')?.hidden) {
+    aiEl.textContent='';
+    bubbleEl?.classList.remove('has-copy');
+    return copyVersion;
+  }
+  aiEl.textContent=String(text||'').trim();
+  bubbleEl?.classList.add('has-copy');
+  return copyVersion;
+}
+function clearCenterCopy(token){
+  if(token!=null && token!==centerCopyVersion)return;
+  youEl.innerHTML=''; aiEl.textContent=''; bubbleEl?.classList.remove('has-copy');
+}
+/* Scroll WITHIN the conversation panel (it has its own bounded scroll) so adding a message never
+   scrolls the whole page and shoves the orb off-screen — the orb stays put, the convo scrolls. */
+function scrollToConvo(){ const c=$('convo'); if(c) c.scrollTop = c.scrollHeight; }
+
+/* ================= Markdown → HTML (mermaid / tables / headings / bold / bullets) ============= */
+function renderMarkdown(md) {
+  // Links require a deliberate click. Model-authored image URLs never auto-load: that would bypass
+  // the owner-scoped visual-artifact service and permit tracking/data exfiltration via a remote URL.
+  const safeUrl = (u) => {
+    const raw = String(u).trim();
+    if (raw.startsWith('/app/workspace-shared/')) {
+      const workspaceFile = /^\/app\/workspace-shared\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*$/i;
+      return raw.length <= 500 && workspaceFile.test(raw) ? '/code?file=' + encodeURIComponent(raw) : '#';
+    }
+    return /^(https?:\/\/|\/(?!\/))/i.test(raw) ? raw : '#';
+  };
+  const inline = (s) => esc(s)
+    // Images arrive only as authenticated `visual` metadata. Keep model Markdown readable but inert.
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_m, alt) => '<span class="md-image-note" role="note">Image link not loaded' + (alt ? ': ' + alt : '') + '</span>')
+    // links: [text](url)
+    .replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, txt, url) => '<a href="' + safeUrl(url) + '" target="_blank" rel="noopener">' + (txt || safeUrl(url)) + '</a>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/`(.+?)`/g,'<code>$1</code>');
+  const lines = String(md || '').split(/\r?\n/);
+  let html = '', inList = false, i = 0;
+  const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+  const isSep = (s) => /^\s*\|?[\s:|-]+\|?\s*$/.test(s) && s.includes('-');
+  const cells = (r) => r.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    const fence = line.match(/^```\s*([\w-]*)/);
+    if (fence) {
+      closeList();
+      const lang = (fence[1] || '').toLowerCase(); const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      i++;
+      const code = buf.join('\n');
+      html += lang === 'mermaid' ? '<div class="mermaid">' + esc(code) + '</div>' : '<pre class="code">' + esc(code) + '</pre>';
+      continue;
+    }
+    if (line.includes('|') && i + 1 < lines.length && isSep(lines[i + 1])) {
+      closeList();
+      const headers = cells(line); i += 2; const body = [];
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) { body.push(cells(lines[i])); i++; }
+      html += '<div class="tablewrap"><table class="md"><thead><tr>' + headers.map((h) => '<th>' + inline(h) + '</th>').join('') + '</tr></thead><tbody>'
+        + body.map((row) => '<tr>' + row.map((c) => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+      continue;
+    }
+    if (!line) { closeList(); i++; continue; }
+    if (line.startsWith('## ')) { closeList(); html += '<h2>' + inline(line.slice(3)) + '</h2>'; }
+    else if (line.startsWith('### ')) { closeList(); html += '<h3>' + inline(line.slice(4)) + '</h3>'; }
+    else if (/^[-*]\s+/.test(line)) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(line.replace(/^[-*]\s+/,'')) + '</li>'; }
+    else { closeList(); html += '<p>' + inline(line) + '</p>'; }
+    i++;
+  }
+  closeList();
+  return html;
+}
+async function renderMermaidIn(container) {
+  const nodes = [...container.querySelectorAll('.mermaid:not([data-rendered])')];
+  if (!nodes.length) return;
+  const run = async () => {
+    const m = window.__mermaid; if (!m) return false;
+    try { await m.run({ nodes }); nodes.forEach((n) => n.setAttribute('data-rendered', '1')); } catch (e) {}
+    return true;
+  };
+  if (!(await run())) window.addEventListener('mermaid-ready', run, { once: true });
+}
+
+/** Keep the newest complete answer on the primary Jarvis surface; Discussion remains the archive. */
+function showInlineResult(html) {
+  const panel=$('resultPanel'), content=$('resultContent');
+  if(!panel||!content)return;
+  content.innerHTML=html||'<p>(no answer)</p>';
+  panel.hidden=false;
+  wireChips(content); wireWorkspaceChips(content); renderMermaidIn(content);
+}
+function clearInlineResult(){
+  const panel=$('resultPanel'),content=$('resultContent');
+  if(panel)panel.hidden=true;
+  if(content)content.innerHTML='';
+}
+
+/* Strip Markdown to speakable text. Only claim a visual is on the center stage after the stage
+   controller confirms that exact artifact finished materializing; otherwise point to Discussion. */
+function toSpeech(md, materializedVisualKind) {
+  let s = String(md || ''); let extras = [];
+  if (/```mermaid/i.test(s)) extras.push(materializedVisualKind === 'diagram' ? 'I drew a diagram on screen' : 'the diagram is in Discussion');
+  s = s.replace(/```mermaid[\s\S]*?```/gi, ' ');
+  if (/```/.test(s)) extras.push('there is code on screen');
+  s = s.replace(/```[\s\S]*?```/g, ' ');
+  if (/^\s*\|.*\|/m.test(s)) {
+    extras.push(materializedVisualKind === 'table' ? 'the table is on screen' : 'the table is in Discussion');
+    s = s.replace(/^\s*\|.*\|\s*$/gm, ' ');
+  }
+  s = s.replace(/^#{1,6}\s+/gm, '').replace(/[*_`>#]/g, '').replace(/\[(.*?)\]\(.*?\)/g, '$1');
+  s = s.replace(/\n{2,}/g, '. ').replace(/\n/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  if (extras.length) s += (s ? ' — ' : '') + extras.join(', ') + '.';
+  return s;
+}
+
+/* ================= Status (compact metric rows in the rail) ================= */
+function ccRow(ico, label, val, title) {
+  return `<div class="cc-row" title="${esc(title || '')}"><span class="ico codicon ${ico}"></span><span class="lbl">${esc(label)}</span><span class="val">${esc(val)}</span></div>`;
+}
+/* First readable line of a markdown digest — the one-liner that carries the gist. */
+function firstLine(md) {
+  if (!md) return '';
+  const s = String(md).replace(/```[\s\S]*?```/g, ' ').replace(/[#*_`>]/g, '').replace(/\[(.*?)\]\(.*?\)/g, '$1');
+  return (s.split(/\r?\n/).map((x) => x.trim()).filter(Boolean)[0] || '');
+}
+function shortDate(d) { const t = new Date(d); if (isNaN(t)) return String(d || '—'); return t.toLocaleDateString([], { month: 'short', day: 'numeric' }); }
+
+function renderSwarm(bots) {
+  if (!bots || !bots.length) return ccRow('codicon-circuit-board', 'Swarm', '—', 'No bots registered');
+  const on = bots.filter((b) => b.online).length, total = bots.length;
+  return ccRow('codicon-circuit-board', 'Swarm', on + '/' + total, (total - on) + ' offline');
+}
+function renderComms(comms) {
+  const c = comms || {}, sigs = c.signals || [];
+  const sub = (c.digest && c.digest.summary) ? firstLine(c.digest.summary) : (sigs[0] && sigs[0].subject) || '';
+  return ccRow('codicon-mail', 'Comms', sigs.length ? String(sigs.length) : '0', sub || 'inbox clear');
+}
+function renderActivity(activity) {
+  const a = activity || {}, tk = a.tickets || [];
+  const n = (a.openCount != null) ? a.openCount : tk.length;
+  return ccRow('codicon-list-flat', 'Work', n + ' open', tk.length ? (tk[0].title || tk[0].id || '') : 'nothing open');
+}
+function renderCalendar(calendar) {
+  const ev = (calendar && calendar.events) || [];
+  if (!ev.length) return ccRow('codicon-calendar', 'Next', '—', 'nothing upcoming');
+  return ccRow('codicon-calendar', 'Next', shortDate(ev[0].when), (ev[0].title || '') + (ev.length > 1 ? '  · +' + (ev.length - 1) : ''));
+}
+let ccLoading = false;
+async function loadOverview() {
+  if (ccLoading) return; ccLoading = true;
+  const cc = $('cc');
+  try {
+    const r = await fetch('/api/jarvis/overview', { credentials: 'include' });
+    if (r.status === 401) { cc.innerHTML = `<div class="cc-row"><span class="lbl err">Sign in to see status</span></div>`; return; }
+    const j = await r.json();
+    cc.innerHTML = renderSwarm(j.bots) + renderComms(j.comms) + renderActivity(j.activity) + renderCalendar(j.calendar);
+    setNodes(j.bots || []);   // light up the ambient swarm field with live online status
+  } catch (e) {
+    cc.innerHTML = `<div class="cc-row"><span class="lbl err">Status unavailable</span></div>`;
+  } finally { ccLoading = false; }
+}
+
+/* ================= Conversation log (full rich answers) ================= */
+let currentAssistantName = 'Jarvis';
+function assistantLabel() { return currentAssistantName || 'Jarvis'; }
+function openApp(url) { try { window.top.location.href = url; } catch { window.open(url, '_blank', 'noopener'); } }
+function addConvo(who, cls, html) {
+  $('convoSect').style.display = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + cls;
+  wrap.innerHTML = `<div class="who">${esc(who)}</div><div class="bx">${html}</div>`;
+  $('convo').appendChild(wrap);
+  return wrap.querySelector('.bx');
+}
+function chipsHtml(items) {
+  if (!items || !items.length) return '';
+  return `<div class="ans-chips">` + items.map((i) => `<span class="chip" data-link="${esc(i.deepLink)}">Open ${esc(i.name)} ↗</span>`).join('') + `</div>`;
+}
+const VISUAL_ARTIFACT_ID_PATTERN=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TRUSTED_VISUAL_KINDS=new Set(['weather','priority-email','table','chart','summary','timeline','diagram','gallery','map','gauge','checklist','agenda','comparison','profile','image']);
+function trustedVisualMetadata(candidate) {
+  if(!candidate || candidate.type!=='image' || candidate.mimeType!=='image/svg+xml')return null;
+  if(typeof candidate.kind!=='string'||!TRUSTED_VISUAL_KINDS.has(candidate.kind)||typeof candidate.artifactId!=='string'||typeof candidate.url!=='string'||typeof candidate.alt!=='string'||typeof candidate.width!=='number'||typeof candidate.height!=='number')return null;
+  const artifactId=candidate.artifactId;
+  const alt=candidate.alt.trim();
+  const width=candidate.width,height=candidate.height;
+  if(!VISUAL_ARTIFACT_ID_PATTERN.test(artifactId)||!alt||alt.length>420||!Number.isInteger(width)||!Number.isInteger(height)||width<=0||height<=0||width>16384||height>16384)return null;
+  try{
+    const expected='/api/jarvis/visuals/'+artifactId;
+    if(candidate.url!==expected)return null;
+    const parsed=new URL(candidate.url,location.origin);
+    if(parsed.origin!==location.origin||parsed.pathname!==expected||parsed.search||parsed.hash||parsed.username||parsed.password)return null;
+    return {...candidate,artifactId,type:'image',mimeType:'image/svg+xml',url:expected,alt,width,height};
+  }catch(_){return null;}
+}
+function visualReplayHtml(visual) {
+  const trusted=trustedVisualMetadata(visual); if(!trusted)return '';
+  const safeUrl=trusted.url,alt=trusted.alt;
+  const payload = encodeURIComponent(JSON.stringify({
+    artifactId:trusted.artifactId,type:'image',kind:trusted.kind,url:safeUrl,alt,
+    width:trusted.width,height:trusted.height,mimeType:trusted.mimeType,
+  }));
+  return `<figure class="discussion-visual"><img class="discussion-visual-thumb" src="${esc(safeUrl)}" alt="${esc(alt)}" loading="lazy" decoding="async"><figcaption><span>Saved visual</span><button type="button" class="chip" data-visual="${esc(payload)}">Rematerialize visual</button></figcaption></figure>`;
+}
+function wireChips(bx) {
+  bx.querySelectorAll('[data-link]').forEach((c) => c.onclick = () => openApp(c.getAttribute('data-link')));
+  bx.querySelectorAll('[data-visual]').forEach((c) => c.onclick = () => replayDiscussionVisual(c));
+}
+
+/* ================= Durable discussion drawer ================= */
+let responseSurfaceActive = false;
+let discussionSurfaceOpen = false;
+let responseReturnFocus = null;
+let discussionReturnFocus = null;
+
+function syncJarvisSurfaceAccess() {
+  const surface = $('scroll'), stage = $('responseStage'), actions = $('responseStageActions');
+  const surfaceUnavailable = responseSurfaceActive || discussionSurfaceOpen;
+  if (surface) {
+    surface.inert = surfaceUnavailable;
+    if (surfaceUnavailable) surface.setAttribute('aria-hidden', 'true');
+    else surface.removeAttribute('aria-hidden');
+  }
+  if (stage) {
+    stage.inert = discussionSurfaceOpen;
+    if (discussionSurfaceOpen) stage.setAttribute('aria-hidden', 'true');
+    else stage.removeAttribute('aria-hidden');
+  }
+  if (actions) actions.hidden = !responseSurfaceActive || discussionSurfaceOpen;
+}
+
+function setResponseActive(active) {
+  const next = Boolean(active);
+  if (next === responseSurfaceActive) return;
+  responseSurfaceActive = next;
+  document.body.classList.toggle('jarvis-response-active', next);
+  if (next) responseReturnFocus = document.activeElement;
+  syncJarvisSurfaceAccess();
+  if (next) setTimeout(() => $('responseStopBtn')?.focus({ preventScroll: true }), 0);
+  else if (!discussionSurfaceOpen) {
+    const target = responseReturnFocus && document.contains(responseReturnFocus) && responseReturnFocus.offsetParent !== null && !responseReturnFocus.closest('[inert]')
+      ? responseReturnFocus : cvs;
+    responseReturnFocus = null;
+    target?.focus?.({ preventScroll: true });
+  }
+}
+
+function trapDiscussionFocus(event) {
+  if (!discussionSurfaceOpen || event.key !== 'Tab') return;
+  const drawer = $('discussionDrawer');
+  const focusable = [...drawer.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),[tabindex]:not([tabindex="-1"])')]
+    .filter((node) => !node.hidden && node.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+}
+
+function openDiscussion() {
+  const drawer = $('discussionDrawer'), overlay = $('discussionOverlay');
+  if (!drawer || !overlay) return;
+  if (!discussionSurfaceOpen) discussionReturnFocus = document.activeElement;
+  discussionSurfaceOpen = true;
+  drawer.classList.add('open'); overlay.classList.add('open');
+  drawer.removeAttribute('inert'); drawer.setAttribute('aria-hidden', 'false');
+  overlay.setAttribute('aria-hidden', 'false'); $('discussionBtn')?.setAttribute('aria-expanded', 'true');
+  $('responseDiscussionBtn')?.setAttribute('aria-expanded', 'true');
+  syncJarvisSurfaceAccess();
+  setTimeout(() => $('discussionClose')?.focus(), 40);
+}
+function closeDiscussion() {
+  const drawer = $('discussionDrawer'), overlay = $('discussionOverlay');
+  if (!drawer || !overlay) return;
+  discussionSurfaceOpen = false;
+  drawer.classList.remove('open'); overlay.classList.remove('open'); drawer.setAttribute('inert', '');
+  drawer.setAttribute('aria-hidden', 'true'); overlay.setAttribute('aria-hidden', 'true');
+  $('discussionBtn')?.setAttribute('aria-expanded', 'false');
+  $('responseDiscussionBtn')?.setAttribute('aria-expanded', 'false');
+  syncJarvisSurfaceAccess();
+  const target = discussionReturnFocus && document.contains(discussionReturnFocus) && discussionReturnFocus.offsetParent !== null && !discussionReturnFocus.closest('[inert]')
+    ? discussionReturnFocus : (responseSurfaceActive ? $('responseDiscussionBtn') : $('discussionBtn'));
+  discussionReturnFocus = null;
+  target?.focus?.({ preventScroll: true });
+}
+function replayDiscussionVisual(button) {
+  const raw = button?.getAttribute('data-visual');
+  if (!raw || !responseStageController) return;
+  try {
+    const visual = JSON.parse(decodeURIComponent(raw));
+    closeDiscussion();
+    presentJarvisAnswer({ answer: visual.alt || 'Saved visual answer', visual }, visual.alt || 'Here is that answer again.');
+  } catch (_) { setStatus('That saved visual is unavailable', true); }
+}
+
+let responsePresentationToken = 0;
+async function presentJarvisAnswer(data, speechText) {
+  const presentationVersion = ++responsePresentationToken;
+  const speechSource = String(speechText || data?.answer || '');
+  const spokenFor = (materializedKind) => toSpeech(speechSource, materializedKind).trim() || 'Here is the answer.';
+  const caption = firstLine(data?.answer || speechSource).slice(0, 220);
+  const visual = trustedVisualMetadata(data?.visual || data?.visualArtifact || data?.presentation?.visual);
+  const hasVisual = Boolean(visual);
+  if (!hasVisual) {
+    setResponseActive(false);
+    setMode('speaking');
+    speak(spokenFor());
+    return;
+  }
+  let shown = false;
+  try {
+    if (responseStageController) {
+      shown = await responseStageController.materialize({ ...data, visual, spokenText: caption, title: visual?.alt || caption });
+    }
+  } catch (_) { /* The spoken/text answer remains available even if its image cannot load. */ }
+  if (presentationVersion !== responsePresentationToken) return;
+  if (!shown) {
+    setResponseActive(false);
+    setMode('speaking');
+    speak(spokenFor());
+    return;
+  }
+  setResponseActive(true);
+  setMode('speaking');
+  // A successful visual is the result, not a transient speech animation. Keep it visible until the
+  // user explicitly returns to Jarvis or another visual replaces it.
+  speak(spokenFor(visual.kind));
+}
+
+/* ================= The brain: fire-and-forget + session shelf ================= */
+let busy = false;                 // kept for the mic toggle; turns are non-blocking now
+let responseStageController = null;
+let ambientController = null;
+let speakerPanelController = null;
+let speakerCaptureController = null;
+const seenDone = new Set();       // jobIds whose completion we've already announced
+
+/* Stable per-browser conversation id → the bot runs every turn in the SAME session folder, so it
+   remembers the thread instead of treating each message as a brand-new task (the amnesia bug). */
+let SESSION_ID = (function () {
+  try {
+    let s = localStorage.getItem('jarvisSessionId');
+    if (!s) {
+      s = 'jarvis-' + ((window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
+      localStorage.setItem('jarvisSessionId', s);
+    }
+    return s;
+  } catch (_) { return 'jarvis-' + Date.now(); }
+})();
+function freshSessionId() {
+  return 'jarvis-' + ((window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
+}
+/* Start a NEW thread → a fresh chat-ticket opens on the next send. Clears the on-screen
+   conversation + rolling context so the new thread is genuinely separate. */
+function startNewThread(announce) {
+  SESSION_ID = freshSessionId();
+  try { localStorage.setItem('jarvisSessionId', SESSION_ID); } catch (_) {}
+  convoLog.length = 0; loggedAnswers.clear && loggedAnswers.clear();
+  const c = $('convo'); if (c) c.innerHTML = '';
+  $('convoSect').style.display = 'none';
+  clearCenterCopy(++centerCopyVersion);
+  clearInlineResult();
+  responseStageController?.reset(); setResponseActive(false);
+  if (announce !== false) setStatus('New chat — ask me anything');
+  if (typeof loadThreads === 'function') loadThreads();
+}
+/* Close the current thread: mark its chat-ticket complete on the board, then roll to a fresh thread. */
+async function closeThread() {
+  try {
+    await fetch('/api/jarvis/thread/close', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: SESSION_ID }),
+    });
+  } catch (_) {}
+  startNewThread(false);
+  setStatus('Chat closed — started a new one');
+}
+
+/* ── Conversation memory: a short rolling transcript so follow-ups have context ──
+   Jarvis's /ask is stateless per call, so we carry recent turns with each request. The user's
+   raw request leads the payload (keeps the work-queue label clean — the backend slices the first
+   chars for it); the transcript + intent guidance follow as clearly-fenced context for the bot. */
+const convoLog = [];              // {role:'user'|'jarvis', text}
+const loggedAnswers = new Set();  // jobIds whose answer we've already folded into context
+function pushTurn(role, text) {
+  const t = String(text || '').trim();
+  if (!t) return;
+  convoLog.push({ role, text: t.slice(0, 700) });
+  if (convoLog.length > 8) convoLog.splice(0, convoLog.length - 8);
+}
+function buildContextualMessage(text) {
+  if (!convoLog.length) return text;
+  const recent = convoLog.slice(-6).map((m) => (m.role === 'user' ? 'User: ' : 'Jarvis: ') + m.text).join('\n');
+  return [
+    text,
+    '',
+    '———  CONTEXT FOR YOU, JARVIS (not part of the request above)  ———',
+    'Conversation so far (most recent last):',
+    recent,
+    '',
+    'Before you act, weigh this against the request above: is the user CONTINUING or UPDATING',
+    'something already in flight (e.g. adding detail to a ticket/task they just asked you to work),',
+    'or starting something new? If they are updating work in progress, update THAT item rather than',
+    'creating a duplicate. If it is genuinely unclear which item they mean, ask one short clarifying',
+    'question instead of guessing.',
+  ].join('\n');
+}
+
+/* One turn, shown inline in the SAME thread: post the raw message (the bot remembers the rest via
+   SESSION_ID — no transcript stuffing, which used to leak into the message + the work label), show a
+   "thinking" bubble, then replace it with the actual answer. Still async under the hood (a tool-using
+   turn can exceed Cloudflare's ~100s edge timeout), but it reads as a normal conversation, not a queue. */
+async function handleInput(text) {
+  text = (text || '').trim();
+  const atts = pendingAttachments.slice();   // snapshot the media attached to THIS turn
+  if (!text && !atts.length) return;
+  clearInlineResult();
+  stopListening();
+  // ── Results-backlog voice/typed commands — handled locally, no /ask round-trip ──
+  const _low = text.toLowerCase();
+  const offeredResultIdForTurn = pendingResultOfferId;
+  pendingResultOfferId = null; // An offer belongs only to the immediately following user turn.
+  if (!atts.length && offeredResultIdForTurn && /^\s*(?:yes|yeah|yep|sure|ok(?:ay)?|please do|go ahead)\s*[.!]?\s*$/.test(_low)) {
+    showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
+    await openJob(offeredResultIdForTurn);
+    return;
+  }
+  if (!atts.length && /\bread\b/.test(_low) && /(backlog|unread|all\b.*\bresults?|all results?|all of (my|them)|all my|everything)/.test(_low)) {
+    showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
+    await readAllBacklog(); return;
+  }
+  if (!atts.length && /^\s*(read it|read that( one)?|give me (the|an) update|yes,? read( it)?|go ahead( and read)?)\.?\s*$/.test(_low)) {
+    showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
+    const u = unreadDone();
+    if (offeredResultIdForTurn && durableTaskResults[offeredResultIdForTurn]?.status === 'done') { await openJob(offeredResultIdForTurn); }
+    else if (u.length) { await openJob(u[0].id); }
+    else { addConvo(assistantLabel(), 'bot', '<div>Nothing unread to read right now.</div>'); speak('Nothing unread right now.'); }
+    return;
+  }
+  const noteText = atts.length ? attachNoteText(atts) : '';
+  const shownText = text || '(attached media)';
+  showCenterUserCopy(shownText);
+  addConvo('You', 'user', `<div>${esc(shownText)}</div>`
+    + (noteText ? `<div style="opacity:.55;font-size:.82em;margin-top:3px">📎 ${esc(noteText)}</div>` : ''));
+  const bubble = addConvo(assistantLabel(), 'bot', '<div style="opacity:.6">Thinking…</div>');
+  setMode('thinking');
+  setStatus(atts.length ? 'Looking at your media…' : 'Thinking…');
+  scrollToConvo();
+  try {
+    // Reduce attachments to text before the /ask turn: images → a vision description (accountable
+    // server call), docs → their already-read text. Mirrors mic → transcript → ask.
+    const outAttachments = [];
+    if (atts.length) {
+      const imgs = atts.filter(a=>a.kind==='image'), docs = atts.filter(a=>a.kind==='doc');
+      if (imgs.length) {
+        setStatus('Looking at your photo…');
+        const description = await describeImages(imgs, text);   // throws → caught below, attachments kept
+        outAttachments.push({ kind:'image', name: imgs.length===1 ? imgs[0].name : (imgs.length+' photos'), description });
+      }
+      for (const d of docs) outAttachments.push({ kind:'doc', name:d.name, text:d.text });
+      pendingAttachments = []; renderAttachStrip();   // consumed for this turn — clear the strip
+      setStatus('Thinking…');
+    }
+    const r = await fetch('/api/jarvis/ask', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, sessionId: SESSION_ID, attachments: outAttachments }),
+    });
+    const j0 = await r.json().catch(() => ({}));
+    if (!r.ok || !j0.jobId) throw new Error(j0.message || j0.error || ('HTTP ' + r.status));
+    seenDone.add(j0.jobId);   // handled inline here — keep the shelf from re-announcing it
+    const d = await waitForResult(j0.jobId);
+    if (d.status === 'error') {
+      bubble.innerHTML = `<span class="err">${esc(d.error || "That didn't work.")}</span>`;
+      speak("Sorry, that didn't work.");
+    } else {
+      let html = renderMarkdown(d.answer || '(no answer)');
+      if (d.handoffs && d.handoffs.length) html += chipsHtml(d.handoffs);
+      html += visualReplayHtml(d.visual);
+      bubble.innerHTML = html;
+      showInlineResult(html);
+      wireChips(bubble);
+      renderMermaidIn(bubble);
+      await presentJarvisAnswer(d, d.answer);
+    }
+  } catch (e) {
+    bubble.innerHTML = `<span class="err">${esc(e.message || 'Could not do that.')}</span>`;
+    speak("Sorry — I couldn't do that just now.");
+  } finally {
+    if (mode !== 'speaking' && mode !== 'listening') setMode('idle');
+    scrollToConvo();
+    pollShelf();   // keep the shelf in sync (history), but it no longer drives the conversation
+    loadThreads(); // a fresh thread just opened a chat-ticket — surface it in Conversations
+  }
+}
+
+/* Poll one job to completion. Async because a tool-using turn can outlast Cloudflare's ~100s edge
+   timeout if a connection is held open; returns the final {status:'done'|'error', ...} payload. */
+async function waitForResult(jobId) {
+  for (let i = 0; i < 200; i++) {   // ~5 min ceiling at 1.5s cadence
+    try {
+      const r = await fetch('/api/jarvis/ask/result?jobId=' + encodeURIComponent(jobId), { credentials: 'include' });
+      const d = await r.json();
+      if (d.status && d.status !== 'pending') return d;
+    } catch (_) { /* transient network blip — keep polling */ }
+    await new Promise((res) => setTimeout(res, 1500));
+  }
+  return { status: 'error', error: 'This is taking unusually long — it may still finish; check the shelf.' };
+}
+
+/* ================= Session-manager shelf ================= */
+function timeAgo(ms) { const d = Date.now() - ms; if (d < 60000) return 'just now'; if (d < 3600000) return Math.floor(d / 60000) + 'm'; return Math.floor(d / 3600000) + 'h'; }
+/* ── Read / unread tracking for delivered results (per-browser) ─────────────
+   A finished result is UNREAD until the user actually hears it (opens it or runs
+   "read all my backlog"). Unread items are highlighted in the work queue. */
+const READ_KEY = 'jarvisReadResults';
+let readSet = new Set(); try { readSet = new Set(JSON.parse(localStorage.getItem(READ_KEY) || '[]')); } catch (_) {}
+function isRead(id) { return readSet.has(id); }
+function markRead(id) { if (!id || readSet.has(id)) return; readSet.add(id); try { localStorage.setItem(READ_KEY, JSON.stringify([...readSet].slice(-500))); } catch (_) {} }
+let lastShelfJobs = null;
+function renderShelfFromCache() { if (lastShelfJobs) renderShelf(lastShelfJobs); }
+/* Done results the user hasn't heard yet, newest first. */
+function unreadDone() {
+  return Object.values(durableTaskResults)
+    .filter((t) => t && t.status === 'done' && !isRead(t.id))
+    .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+}
+/* "read all my backlog" → read every unread result aloud, oldest→newest, marking each read. */
+async function readAllBacklog() {
+  const items = unreadDone().reverse();   // oldest first so the newest lands last/freshest
+  if (!items.length) { addConvo(assistantLabel(), 'bot', '<div>You’re all caught up — no unread results in your backlog.</div>'); speak('You’re all caught up — nothing unread.'); return; }
+  addConvo(assistantLabel(), 'bot', `<div>Reading your ${items.length} unread result${items.length > 1 ? 's' : ''} now.</div>`);
+  for (const t of items) { await openJob(t.id); }   // openJob renders, speaks, and marks read
+  setStatus('Backlog read'); renderShelfFromCache();
+}
+
+function renderShelf(jobs) {
+  const el = $('shelf');
+  if (!jobs.length) { $('shelfSect').style.display = 'none'; el.innerHTML = ''; return; }
+  $('shelfSect').style.display = '';
+  el.innerHTML = jobs.map((j) => {
+    const cls = j.status === 'done' ? ('done' + (isRead(j.jobId) ? ' read' : ' unread')) : (j.status === 'error' ? 'err' : 'run');
+    const dot = j.status === 'pending' ? '<span class="dot"></span>' : '●';
+    const when = j.status === 'done' ? (isRead(j.jobId) ? 'read' : 'NEW') : (j.status === 'error' ? 'failed' : timeAgo(j.createdAt));
+    return `<div class="shelf-item ${cls}" data-job="${esc(j.jobId)}" title="${esc(j.label)}">
+      <span class="si-dot">${dot}</span>
+      <span class="si-label">${esc(j.label)}</span>
+      <span class="si-when">${esc(when)}</span>
+      <span class="si-x" data-dismiss="${esc(j.jobId)}" title="Dismiss">×</span>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.shelf-item').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('[data-dismiss]')) return;
+      if (row.classList.contains('run')) { setStatus('still working on that one…'); return; }
+      focusTask(row.getAttribute('data-job'));
+    });
+  });
+  el.querySelectorAll('[data-dismiss]').forEach((x) => x.addEventListener('click', (e) => { e.stopPropagation(); dismissJob(x.getAttribute('data-dismiss')); }));
+}
+/* Click a task to inspect its full result without replacing the active Jarvis chat session. */
+async function focusTask(jobId) {
+  await openJob(jobId);   // render the result / info inline
+  const t = durableTaskResults[jobId];
+  if (!t) return;
+  const title = (t.title || 'this task').slice(0, 50);
+  setStatus('Showing result: “' + title + '”');
+  scrollToConvo();
+}
+/* Proactively DELIVER the result when a task finishes — render it inline in the conversation so the
+   user never has to ask "did it finish / update me". A short spoken lead-in, then the full result. */
+function announceReady(job) {
+  const label = job.label || 'your request';
+  // Don't barge in with the full readout — just say it's ready and let the user pull it.
+  // It stays UNREAD (highlighted in the work queue) until they hear it.
+  addConvo(assistantLabel(), 'bot',
+    `<div>I have your results ready for <b>“${esc(label)}”</b> — want an update? Say <b>“read it”</b> ` +
+    `(or “read all my backlog”). Otherwise it’s waiting in your work queue, marked <b>NEW</b>.` +
+    `<div class="ans-chips" style="margin-top:6px"><span class="chip" data-job-read="${esc(job.jobId)}">Read it ↗</span></div></div>`);
+  // Wire the "Read it" chip on the just-added bubble.
+  const box = $('convo').lastElementChild;
+  pendingResultOfferId = job.jobId;
+  if (box) box.querySelectorAll('[data-job-read]').forEach((c) => c.onclick = () => {
+    const id = c.getAttribute('data-job-read');
+    if (pendingResultOfferId === id) pendingResultOfferId = null;
+    focusTask(id);
+  });
+  speak('I have your results ready for ' + label + '. Want an update?');
+  setStatus('Results ready: ' + label.slice(0, 30));
+  renderShelfFromCache();   // reflect the new unread item's highlight
+}
+let shelfPolling = false, shelfPrimed = false, shelfTimer = null;
+let pendingResultOfferId = null;
+const durableTaskResults = {};   // taskId → full row from /tasks, so finished items survive reloads
+async function pollShelf() {
+  let anyRunning = false;
+  try {
+    // Durable Tasks list — survives reloads/restarts (the in-session /ask/jobs is in-memory only),
+    // so a returning user sees their old tasks + results.
+    const r = await fetch('/api/jarvis/tasks', { credentials: 'include' });
+    const tasks = (await r.json()).tasks || [];
+    const jobs = tasks.map((t) => {
+      durableTaskResults[t.id] = t;
+      return { jobId: t.id, label: t.title, status: t.status, createdAt: Date.parse(t.createdAt) || Date.now() };
+    });
+    lastShelfJobs = jobs;
+    renderShelf(jobs);
+    for (const t of tasks) {
+      if (t.status === 'pending' || t.status === 'running' || t.status === 'queued' || t.status === 'summarizing') { anyRunning = true; continue; }
+      if (t.delivered) continue;   // already pushed once — DB-durable, survives reloads (not brittle)
+      // Voice-gated: never talk over the user. Leave it undelivered and announce on the next idle tick.
+      if (mode === 'speaking' || mode === 'listening') { anyRunning = true; continue; }
+      if (t.status === 'done') announceReady({ jobId: t.id, label: t.title });   // render the result inline
+      markDelivered(t.id);   // mark once (done or error) so it never re-announces
+    }
+    if (mode !== 'speaking' && mode !== 'listening') setMode(anyRunning ? 'thinking' : 'idle');
+  } catch (_) {}
+  // Self-schedule: poll fast (3s) only while work is in flight; when idle, back off to
+  // 30s so a new user with no jobs isn't hammering /ask/jobs every 3s forever. Direct
+  // pollShelf() calls (after an ask/dismiss) reschedule via this same path.
+  if (shelfPolling) { clearTimeout(shelfTimer); shelfTimer = setTimeout(pollShelf, anyRunning ? 3000 : 30000); }
+}
+function startShelfPoller() { if (shelfPolling) return; shelfPolling = true; pollShelf(); }
+/* Mark a finished task delivered so it's pushed exactly once (DB-durable — survives reloads). */
+function markDelivered(id) {
+  if (durableTaskResults[id]) durableTaskResults[id].delivered = true;
+  try { fetch('/api/jarvis/tasks/' + encodeURIComponent(id) + '/delivered', { method: 'POST', credentials: 'include' }); } catch (_) {}
+}
+
+/* Open a finished item → render its full answer in the conversation + a link into its workspace. */
+function workspaceChipHtml(taskId) {
+  const id = typeof taskId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/.test(taskId) ? taskId : '';
+  return id ? `<div class="ans-chips"><span class="chip" data-open-task="${esc(id)}">Open workspace ↗</span></div>` : '';
+}
+function wireWorkspaceChips(container) {
+  container?.querySelectorAll('[data-open-task]').forEach((c) => c.onclick = () => openApp('/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000050&taskId=' + encodeURIComponent(c.getAttribute('data-open-task'))));
+}
+async function openJob(jobId) {
+  try {
+    // Prefer the durable task row (survives reloads); fall back to the in-memory job result.
+    let d = durableTaskResults[jobId];
+    if (d) {
+      const durable = d;
+      const note = durable.kind === 'complex'
+        ? (durable.status === 'done' ? 'The team finished this — open it from your tasks/cockpit for the full result.' : 'The team is building this — I’ll update you here when it’s done.')
+        : '';
+      d = {
+        status: durable.status, answer: durable.result || note, error: durable.error,
+        label: durable.title, visual: durable.visual, jarvisTaskId: durable.id,
+        ticketId: durable.ticketId, taskId: durable.ticketId || undefined,
+      };
+    } else {
+      const r = await fetch('/api/jarvis/ask/result?jobId=' + encodeURIComponent(jobId), { credentials: 'include' });
+      d = await r.json();
+    }
+    if (d.status === 'error') { addConvo(assistantLabel(), 'bot', `<span class="err">${esc(d.error || 'failed')}</span>`); scrollToConvo(); return; }
+    if (d.status !== 'done') { setStatus('still working on that one…'); return; }
+    let html = renderMarkdown(d.answer);
+    if (d.handoffs && d.handoffs.length) html += chipsHtml(d.handoffs);
+    html += visualReplayHtml(d.visual);
+    html += workspaceChipHtml(d.ticketId || d.sourceTicketId || d.taskId);
+    showInlineResult(html);
+    const bx = addConvo(assistantLabel(), 'bot', html);
+    if (d.label) { const who = bx.parentElement.querySelector('.who'); if (who) who.textContent = assistantLabel() + ' · ' + d.label.slice(0, 40); }
+    wireChips(bx);
+    wireWorkspaceChips(bx);
+    renderMermaidIn(bx);
+    await presentJarvisAnswer(d, d.answer);
+    if (!loggedAnswers.has(jobId)) { loggedAnswers.add(jobId); pushTurn('jarvis', toSpeech(d.answer)); }
+    markRead(jobId); renderShelfFromCache();   // heard it → mark read, flip its work-queue color
+    scrollToConvo();
+  } catch (e) { setStatus('couldn’t open that result', true); }
+}
+async function dismissJob(jobId) {
+  try { await fetch('/api/jarvis/ask/dismiss?jobId=' + encodeURIComponent(jobId), { method: 'POST', credentials: 'include' }); } catch (_) {}
+  pollShelf();
+}
+
+/* ================= Conversations — search the queue on load, show + resume threads =================
+   On load (and after each turn) we GET the user's tickets and keep the open CHAT-queue ones — your
+   in-flight conversations — and list them in the rail so you can resume any of them. A chat-ticket's
+   metadata.taskId IS the thread's sessionId. */
+let threadsLoading = false;
+function renderThreads(tickets) {
+  const sect = $('threadsSect'), el = $('threads');
+  if (!el) return;
+  if (!tickets.length) { if (sect) sect.style.display = 'none'; el.innerHTML = ''; return; }
+  if (sect) sect.style.display = '';
+  el.innerHTML = tickets.map((t) => {
+    const m = t.metadata || {}; const tid = String(m.taskId || '');
+    const cur = tid && tid === SESSION_ID ? ' cur' : '';
+    return `<div class="thread-item${cur}" data-tid="${esc(tid)}" title="${esc(t.title || 'Conversation')}">
+      <span class="th-dot"></span><span class="th-label">${esc(t.title || 'Conversation')}</span></div>`;
+  }).join('');
+  el.querySelectorAll('.thread-item').forEach((row) => row.addEventListener('click', () => resumeThread(row.getAttribute('data-tid'))));
+}
+async function loadThreads() {
+  if (threadsLoading) return; threadsLoading = true;
+  try {
+    const r = await fetch('/api/tickets?mine=true', { credentials: 'include' });
+    if (!r.ok) return;
+    const data = await r.json();
+    const list = Array.isArray(data) ? data : (data.tickets || []);
+    const chats = list.filter((t) => {
+      const m = t.metadata || {};
+      const q = String(m.queueId || m.queue || '').toLowerCase();
+      const type = String(t.ticketType || '').toLowerCase();
+      const st = String(t.status || '').toLowerCase();
+      return (q === 'chat' || type === 'chat') && st !== 'complete' && st !== 'cancelled';
+    }).sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+    renderThreads(chats);
+  } catch (_) { /* not signed in / no tickets — leave the list hidden */ }
+  finally { threadsLoading = false; }
+}
+/* Resume a thread: point new turns at its sessionId (the bot keeps that thread's context) and
+   replay any stored messages. Best-effort replay — Jarvis history lives in the bot runtime, so the
+   api message store may be empty for it; the thread still resumes for new turns. */
+async function resumeThread(tid) {
+  if (!tid || tid === SESSION_ID) return;
+  SESSION_ID = tid; try { localStorage.setItem('jarvisSessionId', tid); } catch (_) {}
+  convoLog.length = 0; const c = $('convo'); if (c) c.innerHTML = '';
+  $('convoSect').style.display = 'none';
+  setStatus('Resumed conversation — keep going');
+  try {
+    const r = await fetch('/api/jarvis/history?sessionId=' + encodeURIComponent(tid), { credentials: 'include' });
+    if (r.ok) {
+      const j = await r.json();
+      const msgs = Array.isArray(j) ? j : (j.turns || []);
+      let prevKey = '';   // skip consecutive dupes — the api turn-save + the bot both write chat_messages
+      for (const mm of msgs) {
+        const role = mm.role === 'user' ? 'user' : 'bot';
+        const text = String(mm.text || '').trim();
+        if (!text) continue;
+        const key = role + '|' + text;
+        if (key === prevKey) continue;
+        prevKey = key;
+        const html = role === 'user'
+          ? `<div>${esc(text)}</div>`
+          : renderMarkdown(text) + visualReplayHtml(mm.visual) + workspaceChipHtml(mm.sourceTicketId);
+        const bx = addConvo(role === 'user' ? 'You' : assistantLabel(), role, html);
+        if (role === 'bot' && bx) { wireChips(bx); wireWorkspaceChips(bx); renderMermaidIn(bx); }
+      }
+      scrollToConvo();
+    }
+  } catch (_) {}
+  loadThreads();
+}
+
+/* ================= Speech synthesis ================= */
+let voice=null, voiceList=[], voiceIdx=0;
+function voiceScore(v){ const n=(v.name||'').toLowerCase(); let s=0;
+  if(/en[-_]us/i.test(v.lang))s+=5; else if(/^en/i.test(v.lang))s+=3;
+  if(/natural|online|neural/.test(n))s+=8;
+  if(/aria|jenny|ava|emma|michelle|guy|andrew|samantha|google/.test(n))s+=3;
+  return s; }
+const voiceBtn=$('voiceBtn');
+let activeVoicePreviewFinish=null;
+function shortVoice(v){ return v?(v.name.replace(/^(Microsoft|Google)\s+/,'').replace(/\s*Online.*$/i,'').replace(/\(.*?\)/g,'').trim()||v.name):'Default'; }
+function updateVoiceBtn(){ if(voiceBtn)voiceBtn.textContent='🔊 '+shortVoice(voice); }
+function buildVoiceList(){
+  if(!('speechSynthesis' in window)){ if(voiceBtn)voiceBtn.style.display='none'; return; }
+  const vs=speechSynthesis.getVoices(); if(!vs.length)return;
+  const en=vs.filter(v=>/^en/i.test(v.lang)).sort((a,b)=>voiceScore(b)-voiceScore(a));
+  voiceList=en.length?en:vs;
+  let i=voiceList.findIndex(v=>v.name===localStorage.getItem('oshalVoice')); if(i<0)i=0;
+  voiceIdx=i; voice=voiceList[i]||null; updateVoiceBtn();
+}
+if('speechSynthesis' in window){
+  buildVoiceList(); speechSynthesis.onvoiceschanged=buildVoiceList;
+  if(voiceBtn)voiceBtn.addEventListener('click',()=>{
+    if(!voiceList.length)return;
+    voiceIdx=(voiceIdx+1)%voiceList.length; voice=voiceList[voiceIdx];
+    try{localStorage.setItem('oshalVoice',voice.name)}catch(_){}
+    updateVoiceBtn();
+    activeSpeechFinish?.();
+    activeVoicePreviewFinish?.();
+    let previewDone=false,previewTimer=null;
+    const finishPreview=()=>{if(previewDone)return;previewDone=true;clearTimeout(previewTimer);if(activeVoicePreviewFinish===finishPreview)activeVoicePreviewFinish=null;setAssistantSpeaking(false);};
+    activeVoicePreviewFinish=finishPreview;
+    try{
+      speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance("This is how I'll sound."); if(voice)u.voice=voice;
+      u.onstart=()=>setAssistantSpeaking(true); u.onend=finishPreview; u.onerror=finishPreview;
+      setAssistantSpeaking(true); previewTimer=setTimeout(finishPreview,5000); speechSynthesis.speak(u);
+    }catch(_){finishPreview();}
+  });
+}else if(voiceBtn){ voiceBtn.style.display='none'; }
+let activeSpeechFinish = null;
+function setAssistantSpeaking(active) {
+  ambientController?.setAssistantSpeaking(Boolean(active));
+  document.dispatchEvent(new Event(active ? 'jarvis:speaking-start' : 'jarvis:speaking-end'));
+}
+/* Server neural TTS (Gemini) is the primary voice — the OS speechSynthesis voices are
+   robotic in Electron and populate asynchronously (inconsistent pick). We fetch synth
+   audio and play it; browser speechSynthesis is the fallback when the server can't. */
+let ttsAudio=null, ttsPulse=null;
+function stopTts(){
+  if(ttsPulse){ clearInterval(ttsPulse); ttsPulse=null; }
+  if(ttsAudio){ try{ ttsAudio.pause(); }catch(_){}; try{ ttsAudio.src=''; }catch(_){}; ttsAudio=null; }
+  if('speechSynthesis' in window){ try{ speechSynthesis.cancel(); }catch(_){} }
+}
+function speak(text, onDone){
+  const copyToken=showCenterAnswerCopy(text);
+  activeVoicePreviewFinish?.();
+  if (activeSpeechFinish) activeSpeechFinish();
+  stopTts();
+  let finished=false;
+  const finish=()=>{
+    if(finished)return; finished=true; activeSpeechFinish=null; stopTts(); setAssistantSpeaking(false);
+    Promise.resolve(typeof onDone==='function' ? onDone() : undefined).catch(()=>{}).finally(()=>{
+      clearCenterCopy(copyToken);
+      if(copyToken!==centerCopyVersion)return;
+      setMode('idle'); setStatus('Tap the orb — your turn');
+    });
+  };
+  activeSpeechFinish=finish;
+  setAssistantSpeaking(true); setMode('speaking'); setStatus('Speaking…');
+  speakViaServer(text, finish).catch(()=> { if(!finished)return speakViaBrowser(text, finish); });
+}
+/* POST the answer text to the swarm's neural TTS; play the returned audio. Rejects so
+   speak() can fall back to the browser engine on any failure (offline, no key, block). */
+function speakViaServer(text, finish){
+  return fetch('/api/voice/synthesize', {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }),
+  }).then(r=> r.ok ? r.json() : Promise.reject(new Error('tts http '+r.status)))
+    .then(j=>{
+      const d=(j&&j.data)||{}; if(!d.audioData) throw new Error('no audio');
+      const fmt=d.format||'wav', mime=fmt.indexOf('/')>=0?fmt:'audio/'+fmt;
+      const a=new Audio('data:'+mime+';base64,'+d.audioData); ttsAudio=a;
+      a.onended=finish; a.onerror=finish;   // ended/failed → release + idle
+      ttsPulse=setInterval(()=>{ if(a.paused||a.ended){ return; } level=Math.min(1,0.35+Math.random()*0.4); },140);
+      return a.play();   // rejects (e.g. autoplay block) → outer .catch → browser fallback
+    });
+}
+function speakViaBrowser(text, finish){
+  if(!('speechSynthesis' in window)){ setStatus('Showing answer…'); setTimeout(finish,1800); return; }
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text); if(voice)u.voice=voice; u.rate=1.02;
+  u.onboundary=()=>{ level=Math.min(1,level+0.25); };
+  u.onend=finish; u.onerror=finish;
+  try { speechSynthesis.speak(u); } catch (_) { finish(); }
+}
+
+/* Orb style — click the pill to cycle */
+const ORB_STYLES=[['halo','Halo'],['pulse','Pulse'],['wave','Wave'],['bars','Bars'],['eye','Eye']];
+const orbBtn=$('orbBtn');
+function orbLabel(){ const s=ORB_STYLES.find(x=>x[0]===orbStyle)||ORB_STYLES[0]; if(orbBtn)orbBtn.textContent='◎ '+s[1]; }
+orbLabel();
+if(orbBtn)orbBtn.addEventListener('click',()=>{ const i=ORB_STYLES.findIndex(x=>x[0]===orbStyle); orbStyle=ORB_STYLES[(i+1)%ORB_STYLES.length][0]; try{localStorage.setItem('oshalOrb',orbStyle)}catch(_){}; orbLabel(); });
+
+/* ================= Mic analyser ================= */
+let audioCtx,analyser,micStream;
+let nativeWakeCommandActive=false;
+function releaseNativeWakeCommandMedia(){
+  try{ if(micStream)micStream.getTracks().forEach(track=>track.stop()); }catch(_){}
+  micStream=null; analyser=null; freq=null;
+  const context=audioCtx; audioCtx=null;
+  try{ if(context&&context.state!=='closed')Promise.resolve(context.close()).catch(()=>{}); }catch(_){}
+}
+async function startAnalyser(){
+  if(analyser)return true;
+  try{
+    micStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const src=audioCtx.createMediaStreamSource(micStream);
+    analyser=audioCtx.createAnalyser(); analyser.fftSize=128; src.connect(analyser);
+    freq=new Uint8Array(analyser.frequencyBinCount);
+    (function pull(){ if(analyser){ analyser.getByteFrequencyData(freq); requestAnimationFrame(pull); } })();
+    return true;
+  }catch(e){ return false; }
+}
+
+/* ================= Speech recognition ================= */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null,listening=false,wantListening=false,finalBuf='';
+if(SR){
+  rec=new SR(); rec.lang='en-US'; rec.interimResults=true; rec.continuous=true; rec.maxAlternatives=1;
+  rec.onresult=e=>{
+    let interim='';
+    for(let i=e.resultIndex;i<e.results.length;i++){ const r=e.results[i]; if(r.isFinal)finalBuf+=r[0].transcript+' '; else interim+=r[0].transcript; }
+    showCenterUserCopy((finalBuf+interim).trim(),true);
+  };
+  rec.onerror=e=>{
+    if((e.error==='no-speech'||e.error==='aborted')&&wantListening)return;
+    const blocked=e.error==='not-allowed'||e.error==='service-not-allowed';
+    if(blocked){ micBlocked(); return; }
+    wantListening=false; listening=false; micBtn.classList.remove('live'); micLabel.textContent='Tap to talk'; if(mode==='listening')setMode('idle');
+    resumeAmbientAfterPushToTalk();
+    setStatus('Didn’t catch that — try again',true);
+  };
+  rec.onend=()=>{ if(wantListening){ try{rec.start();}catch(e){} return; }
+    listening=false; micBtn.classList.remove('live'); micLabel.textContent='Tap to talk'; if(mode==='listening')setMode('idle'); };
+}
+/* Are we embedded in the cockpit (or any) iframe? Cross-origin access to window.top throws,
+   which itself means we're framed — treat that as true. Speech recognition is frequently refused
+   inside a sandboxed iframe even when the mic is allowed at the site/OS level, so we offer an escape. */
+const IN_IFRAME=(()=>{ try{ return window.self!==window.top; }catch(_){ return true; } })();
+/* A SpeechRecognition mic-block is a dead end on its own — auto-reveal the Type fallback so the
+   user can always proceed, and (when framed) surface a one-click link to the standalone full-page
+   orb where voice works. */
+function micBlocked(){
+  wantListening=false; listening=false; micBtn.classList.remove('live'); micLabel.textContent='Tap to talk'; if(mode==='listening')setMode('idle');
+  if(nativeWakeCommandActive){ nativeWakeCommandActive=false; releaseNativeWakeCommandMedia(); }
+  resumeAmbientAfterPushToTalk();
+  $('typer').classList.add('show'); try{$('typein').focus();}catch(_){}
+  if(IN_IFRAME){
+    statusEl.innerHTML='Microphone blocked here — <a href="'+esc(location.href)+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">open full-page</a> for voice, or just type below.';
+    statusEl.classList.add('err');
+  } else {
+    setStatus('Microphone blocked — allow access in your browser/OS settings, or just type below',true);
+  }
+}
+/* PRIMARY capture path: MediaRecorder → POST /api/voice/transcribe (server STT). This WORKS inside
+   the cockpit iframe, where the browser's webkitSpeechRecognition is refused. getUserMedia +
+   MediaRecorder + fetch are all permitted by the iframe's allow="microphone". */
+let mediaRec=null, recChunks=[];
+const HAS_MR = typeof window.MediaRecorder !== 'undefined';
+let nativeWakeMonitor=null;
+function clearNativeWakeMonitor(){ if(nativeWakeMonitor){ clearInterval(nativeWakeMonitor); nativeWakeMonitor=null; } }
+function monitorNativeWakeCommand(){
+  clearNativeWakeMonitor();
+  if(!analyser) return;
+  const samples=new Uint8Array(analyser.fftSize), started=Date.now();
+  let heardVoice=false,lastVoice=started;
+  nativeWakeMonitor=setInterval(()=>{
+    if(!listening){ clearNativeWakeMonitor(); return; }
+    analyser.getByteTimeDomainData(samples);
+    let energy=0; for(const sample of samples) energy+=Math.abs(sample-128);
+    const voiced=(energy/samples.length)>4.5;
+    if(voiced){ heardVoice=true; lastVoice=Date.now(); }
+    const elapsed=Date.now()-started;
+    if((heardVoice && Date.now()-lastVoice>1100) || elapsed>12000){
+      clearNativeWakeMonitor(); stopListening(heardVoice);
+      if(!heardVoice) setStatus('I did not hear a command - tap the orb to try again',true);
+    }
+  },120);
+}
+function setSpeakerCaptureSuspended(suspended){
+  document.dispatchEvent(new CustomEvent(suspended ? 'jarvis:speaker-capture-suspend' : 'jarvis:speaker-capture-resume', { detail:{ reason:'push-to-talk' } }));
+}
+function resumeAmbientAfterPushToTalk(){ setTimeout(()=>{ ambientController?.resume(); setSpeakerCaptureSuspended(false); },250); }
+async function transcribeAndSend(blob){
+  setMode('thinking'); setStatus('Transcribing…');
+  try{
+    const fd=new FormData(); fd.append('audio', blob, 'speech.webm');
+    const r=await fetch('/api/voice/transcribe',{ method:'POST', credentials:'include', body:fd });
+    const j=await r.json().catch(()=>({}));
+    const text=String(j.text||j.transcript||(j.data&&(j.data.text||j.data.transcript))||'').trim();
+    if(text){ showCenterUserCopy(text); handleInput(text); }
+    else { setMode('idle'); setStatus('Didn’t catch that — try again, or type',true); }
+  }catch(e){ setMode('idle'); setStatus('Transcription failed — try again or type below',true); }
+}
+async function startListening(){
+  ambientController?.suspend('Push-to-talk is active');
+  setSpeakerCaptureSuspended(true);
+  activeVoicePreviewFinish?.();
+  activeSpeechFinish?.();
+  speechSynthesis&&speechSynthesis.cancel();
+  const ok=await startAnalyser();                 // mic capture + orb visualizer
+  if(!ok||!micStream){ micBlocked(); return; }    // capture itself blocked → type fallback
+  if(HAS_MR){
+    try{
+      recChunks=[]; mediaRec=new MediaRecorder(micStream);
+      mediaRec.ondataavailable=(e)=>{ if(e.data&&e.data.size) recChunks.push(e.data); };
+      mediaRec.start();
+      setMode('listening'); listening=true; micLabel.textContent='Stop & send'; micBtn.classList.add('live');
+      setStatus('Recording… tap Stop & send when done');
+      return;
+    }catch(e){ /* fall through to SpeechRecognition */ }
+  }
+  // Fallback: browser SpeechRecognition (full-page only; iframes refuse it).
+  if(!SR){ micBlocked(); return; }
+  finalBuf=''; setMode('listening'); listening=true; wantListening=true; micLabel.textContent='Stop & send'; micBtn.classList.add('live');
+  setStatus('Recording… tap Stop & send'); try{rec.start();}catch(e){}
+}
+function stopListening(send){
+  clearNativeWakeMonitor();
+  const releaseNativeMedia=nativeWakeCommandActive;
+  nativeWakeCommandActive=false;
+  listening=false; micLabel.textContent='Tap to talk'; micBtn.classList.remove('live');
+  if(mediaRec && mediaRec.state!=='inactive'){
+    mediaRec.onstop=()=>{
+      const type=(mediaRec&&mediaRec.mimeType)||'audio/webm';
+      const blob=new Blob(recChunks,{type}); mediaRec=null;
+      if(releaseNativeMedia)releaseNativeWakeCommandMedia();
+      resumeAmbientAfterPushToTalk();
+      if(send && blob.size>1200){ transcribeAndSend(blob); }
+      else { if(mode==='listening')setMode('idle'); if(send)setStatus('Didn’t catch anything — tap to try again',true); }
+    };
+    try{ mediaRec.stop(); }catch(_){ mediaRec=null; if(releaseNativeMedia)releaseNativeWakeCommandMedia(); if(mode==='listening')setMode('idle'); }
+    return;
+  }
+  // SpeechRecognition fallback path
+  wantListening=false; try{rec&&rec.stop();}catch(e){}
+  resumeAmbientAfterPushToTalk();
+  const text=finalBuf.trim();
+  if(releaseNativeMedia)releaseNativeWakeCommandMedia();
+  if(send&&text){ handleInput(text); }
+  else { if(mode==='listening')setMode('idle'); if(send)setStatus('Didn’t catch anything — tap to try again',true); }
+}
+
+/* ================= Controls ================= */
+function toggleMic(){ if(busy)return; listening?stopListening(true):startListening(); }
+micBtn.addEventListener('click',toggleMic);
+cvs.addEventListener('click',toggleMic);
+cvs.addEventListener('keydown',(event)=>{
+  if(event.key!=='Enter' && event.key!==' ') return;
+  event.preventDefault(); toggleMic();
+});
+function stopJarvisOutput(){
+  responsePresentationToken += 1;
+  stopTts(); activeVoicePreviewFinish?.(); activeSpeechFinish?.(); stopListening(false);
+  clearCenterCopy(++centerCopyVersion);
+  responseStageController?.reset(); setResponseActive(false); setMode('idle');
+  setStatus('Stopped. Tap the orb to talk');
+}
+$('mute').addEventListener('click',stopJarvisOutput);
+$('responseStopBtn')?.addEventListener('click',stopJarvisOutput);
+$('responseDiscussionBtn')?.addEventListener('click',openDiscussion);
+/* ── Media attachments: photo (camera/upload) + document ─────────────────────
+   The user attaches media to a Jarvis prompt. Images are described by
+   /api/vision/describe (the visual analog of the voice transcript) so the
+   text-only Codex brain can reason over them; docs are read as text. Camera
+   capture uses <input capture> (native camera app), not getUserMedia, which the
+   cockpit iframe blocks. */
+let pendingAttachments = [];              // { id, kind:'image'|'doc', name, dataUrl?, text? }
+const MAX_ATTACH = 6, MAX_IMAGES = 4;
+
+function attachId(){ return 'a'+Math.random().toString(36).slice(2,9); }
+function showTyper(){ $('typer').classList.add('show'); }
+
+function openAttachMenu(open){
+  const m = $('attachMenu'), b = $('addMediaBtn');
+  const show = open===undefined ? m.hasAttribute('hidden') : open;
+  if (show) m.removeAttribute('hidden'); else m.setAttribute('hidden','');
+  b.setAttribute('aria-expanded', show ? 'true' : 'false');
+}
+
+/* Downscale a captured/selected image so the describe call stays cheap + small. */
+function downscaleImage(file){
+  return new Promise((resolve,reject)=>{
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = ()=>{
+      URL.revokeObjectURL(url);
+      const max = 1024; let w = img.width, h = img.height;
+      if (w>max || h>max){ const s = Math.min(max/w, max/h); w = Math.round(w*s); h = Math.round(h*s); }
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('could not read image')); };
+    img.src = url;
+  });
+}
+
+function readDocText(file){
+  return new Promise((resolve,reject)=>{
+    const fr = new FileReader();
+    fr.onload = ()=> resolve(String(fr.result||''));
+    fr.onerror = ()=> reject(new Error('could not read file'));
+    fr.readAsText(file);
+  });
+}
+
+async function addImageFiles(files){
+  let imgCount = pendingAttachments.filter(a=>a.kind==='image').length;
+  for (const f of files){
+    if (pendingAttachments.length>=MAX_ATTACH || imgCount>=MAX_IMAGES) break;
+    if (!/^image\//.test(f.type||'')) continue;
+    try { const dataUrl = await downscaleImage(f); pendingAttachments.push({ id:attachId(), kind:'image', name:f.name||'photo.jpg', dataUrl }); imgCount++; }
+    catch { /* skip unreadable image */ }
+  }
+  renderAttachStrip(); showTyper();
+}
+
+async function addDocFiles(files){
+  for (const f of files){
+    if (pendingAttachments.length>=MAX_ATTACH) break;
+    if (f.size > 2*1024*1024){ setStatus('That document is too large (max 2MB of text).', true); continue; }
+    try { const text = await readDocText(f); if (text.trim()) pendingAttachments.push({ id:attachId(), kind:'doc', name:f.name||'document.txt', text }); }
+    catch { /* skip unreadable doc */ }
+  }
+  renderAttachStrip(); showTyper();
+}
+
+function removeAttachment(id){ pendingAttachments = pendingAttachments.filter(a=>a.id!==id); renderAttachStrip(); }
+
+function renderAttachStrip(){
+  const strip = $('attachStrip');
+  if (!pendingAttachments.length){ strip.setAttribute('hidden',''); strip.innerHTML=''; return; }
+  strip.removeAttribute('hidden');
+  strip.innerHTML = pendingAttachments.map(a=>{
+    const media = a.kind==='image' ? `<img class="attach-thumb" src="${a.dataUrl}" alt="">` : `<span class="attach-doc-ic">📄</span>`;
+    return `<span class="attach-chip" data-id="${a.id}">${media}<span class="attach-name">${esc(a.name)}</span>`
+      + `<button type="button" class="attach-x" data-x="${a.id}" title="Remove" aria-label="Remove ${esc(a.name)}">✕</button></span>`;
+  }).join('');
+  strip.querySelectorAll('.attach-x').forEach(b=> b.addEventListener('click', ()=> removeAttachment(b.getAttribute('data-x'))));
+}
+
+/* Describe attached images via the accountable server route; returns the combined description. */
+async function describeImages(images, question){
+  const r = await fetch('/api/vision/describe', {
+    method:'POST', credentials:'include', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ images: images.map(a=>({ dataUrl:a.dataUrl })), question: question||'', sessionId: SESSION_ID }),
+  });
+  const j = await r.json().catch(()=>({}));
+  if (r.status===503) throw new Error(j.message || 'image understanding isn’t configured');
+  if (!r.ok || !j.description) throw new Error(j.message || j.error || ('HTTP '+r.status));
+  return j.description;
+}
+
+function attachNoteText(atts){
+  const imgs = atts.filter(a=>a.kind==='image').length, docs = atts.filter(a=>a.kind==='doc').length;
+  const bits=[]; if(imgs) bits.push(imgs+' photo'+(imgs>1?'s':'')); if(docs) bits.push(docs+' document'+(docs>1?'s':''));
+  return bits.join(', ');
+}
+
+$('addMediaBtn').addEventListener('click', (e)=>{ e.stopPropagation(); openAttachMenu(); });
+$('attachMenu').addEventListener('click', (e)=>{
+  const opt = e.target.closest('.attach-opt'); if(!opt) return;
+  openAttachMenu(false);
+  const pick = opt.getAttribute('data-pick');
+  if (pick==='cam') $('camInput').click(); else if (pick==='img') $('imgInput').click(); else if (pick==='doc') $('docInput').click();
+});
+document.addEventListener('click', (e)=>{ if(!e.target.closest('#attachMenu') && !e.target.closest('#addMediaBtn')) openAttachMenu(false); });
+$('camInput').addEventListener('change', e=>{ addImageFiles([...e.target.files]); e.target.value=''; });
+$('imgInput').addEventListener('change', e=>{ addImageFiles([...e.target.files]); e.target.value=''; });
+$('docInput').addEventListener('change', e=>{ addDocFiles([...e.target.files]); e.target.value=''; });
+
+$('typeToggle').addEventListener('click',()=>{ $('typer').classList.toggle('show'); $('typein').focus(); });
+$('newThreadBtn') && $('newThreadBtn').addEventListener('click',()=>{ startNewThread(true); });
+$('closeThreadBtn') && $('closeThreadBtn').addEventListener('click',()=>{ closeThread(); });
+$('typer').addEventListener('submit',e=>{ e.preventDefault(); const v=$('typein').value.trim(); if(v || pendingAttachments.length){ handleInput(v); $('typein').value=''; } });
+$('refresh').onclick=loadOverview;
+
+/* ================= Response stage, durable drawer, and ambient wake-word client ================= */
+function applyAssistantIdentity(settings) {
+  const name = String(settings?.assistantName || 'Jarvis').trim().slice(0, 40) || 'Jarvis';
+  currentAssistantName = name;
+  document.title = name + ' · OSHAL';
+  const eyebrow = document.querySelector('.eyebrow'); if (eyebrow) eyebrow.textContent = name + ' Assistant';
+  cvs.setAttribute('aria-label', 'Talk to ' + name);
+  $('responseStage')?.setAttribute('aria-label', name + ' visual answer stage');
+  $('convo')?.setAttribute('aria-label', name + ' conversation');
+  responseStageController?.setAssistantName(name);
+}
+document.addEventListener('jarvis:ambient-ready', (event) => applyAssistantIdentity(event.detail?.settings));
+document.addEventListener('jarvis:ambient-settings-changed', (event) => applyAssistantIdentity(event.detail?.settings));
+document.addEventListener('jarvis:ambient-wake', () => {
+  setMode('listening'); setStatus(assistantLabel() + ' is awake — say your command');
+});
+/* Native OSHAL Node wake handoff: the desktop helper emits only a short-lived wake
+   event (no audio/transcript). This page then owns the microphone and sends the
+   command through the normal authenticated handleInput -> /api/jarvis/ask flow. */
+window.__OSHAL_JARVIS_NATIVE_WAKE_READY__ = true;
+let lastNativeWakeAt = 0;
+window.addEventListener('oshal:native-wake', async (event) => {
+  const detectedAt = Date.parse(String(event.detail?.detectedAt || ''));
+  if (!Number.isFinite(detectedAt) || Math.abs(Date.now() - detectedAt) > 20000 || detectedAt <= lastNativeWakeAt) return;
+  lastNativeWakeAt = detectedAt;
+  if (listening) stopListening(false);
+  nativeWakeCommandActive=true;
+  setMode('listening'); setStatus(assistantLabel() + ' is awake - say your command');
+  await startListening();
+  if (listening) {
+    setStatus('Listening for your command - I\'ll send it after you pause');
+    monitorNativeWakeCommand();
+  } else if(nativeWakeCommandActive) {
+    nativeWakeCommandActive=false;
+    releaseNativeWakeCommandMedia();
+  }
+});
+document.addEventListener('jarvis:speakers-open-requested', () => void speakerPanelController?.open());
+if (window.JarvisResponseStage) {
+  responseStageController = window.JarvisResponseStage.mount({
+    root: $('responseStage'), canvas: $('responseMorph'), image: $('responseStageImage'),
+    caption: $('responseStageCaption'), status: $('responseStageStatus'), discussionTarget: $('responseDiscussionBtn') || $('discussionBtn'),
+    assistantName: assistantLabel(),
+    // Center the ambient cloud on the orb's real position (stage-local coords), so the
+    // "stars" cluster around the eye instead of the viewport center the rail offsets.
+    centerProvider: () => {
+      try {
+        const o = cvs.getBoundingClientRect(), s = $('responseStage').getBoundingClientRect();
+        if (o.width) return { x: o.left + o.width / 2 - s.left, y: o.top + o.height / 2 - s.top };
+      } catch (_) {}
+      return null;
+    },
+  });
+}
+if (window.JarvisAmbient) {
+  ambientController = window.JarvisAmbient.mount({
+    mountTarget: $('ambientMount') || document.querySelector('.hero'), assistantName: assistantLabel(),
+    onWakeCommand: ({ command }) => handleInput(command),
+  });
+}
+if (window.JarvisSpeakers) {
+  speakerPanelController = window.JarvisSpeakers.mount({
+    mountTarget: document.body,
+    apiBase: '/api/jarvis/ambient',
+    settings: ambientController?.settings || {},
+  });
+}
+if (window.JarvisSpeakerCapture) {
+  speakerCaptureController = window.JarvisSpeakerCapture.mount({ apiBase: '/api/jarvis/ambient' });
+  speakerCaptureController.applySettings(ambientController?.settings || {});
+}
+if (window.JarvisPersonConsent) {
+  // ADR-100 Phase 2: self-wires a "Per-person insights" launcher next to Manage voices.
+  window.JarvisPersonConsent.mount({ apiBase: '/api/jarvis/ambient/person' });
+}
+$('discussionBtn')?.setAttribute('aria-expanded', 'false');
+$('discussionBtn')?.addEventListener('click', openDiscussion);
+$('resultDiscussionBtn')?.addEventListener('click', openDiscussion);
+$('responseDiscussionBtn')?.setAttribute('aria-expanded', 'false');
+$('discussionClose')?.addEventListener('click', closeDiscussion);
+$('discussionOverlay')?.addEventListener('click', closeDiscussion);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && discussionSurfaceOpen) { event.preventDefault(); closeDiscussion(); return; }
+  trapDiscussionFocus(event);
+});
+window.addEventListener('pagehide', () => {
+  nativeWakeCommandActive=false;
+  releaseNativeWakeCommandMedia();
+  responseStageController?.destroy();
+  speakerPanelController?.destroy();
+  speakerCaptureController?.destroy();
+}, { once: true });
+
+/* ================= Starters (catalog-driven prompt chips) ================= */
+async function loadStarters() {
+  const presets = [
+    ['Summarize my inbox', 'Summarize my inbox and flag anything urgent.'],
+    ['Jobs worth a look', 'Any jobs worth a look today, and how I should approach them?'],
+    ['Map it as a diagram', 'Draw me a diagram of everything you can do and how the apps connect.'],
+  ];
+  $('chips').innerHTML = presets.map(([label, q]) => `<button class="chip" data-q="${esc(q)}">${esc(label)}</button>`).join('');
+  $('chips').querySelectorAll('[data-q]').forEach((c) => c.onclick = () => handleInput(c.getAttribute('data-q')));
+}
+
+loadStarters();
+loadOverview();
+setInterval(loadOverview, 60000);
+loadActivity();
+setInterval(loadActivity, 5000);   // brisk so the backdrop tracks who's actually grinding
+loadThreads();                     // search the queue on load → show the user's open conversations
+setInterval(loadThreads, 45000);
+startShelfPoller();
+</script>
+</body>
+</html>

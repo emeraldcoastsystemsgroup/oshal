@@ -1,0 +1,43 @@
+provider: weatherapi
+displayName: WeatherAPI
+version: 1.0.0
+baseUrl: https://api.weatherapi.com/v1
+auth:
+  type: apiKeyQuery
+  param: key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: current
+    tool: weatherapi-current
+    method: GET
+    path: /current.json
+    query:
+      q: '{q}'
+  - name: forecast
+    tool: weatherapi-forecast
+    method: GET
+    path: /forecast.json
+    query:
+      q: '{q}'
+      days: '3'
+  - name: search
+    tool: weatherapi-search
+    method: GET
+    path: /search.json
+    query:
+      q: '{q}'
+  - name: astronomy
+    tool: weatherapi-astronomy
+    method: GET
+    path: /astronomy.json
+    query:
+      q: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/weatherapi.com.ico

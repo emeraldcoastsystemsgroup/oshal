@@ -1,0 +1,30 @@
+provider: qdrant
+displayName: Qdrant
+version: 1.0.0
+baseUrl: ${env:QDRANT_BASE_URL:-https://your-cluster.qdrant.io}
+auth:
+  type: apiKeyHeader
+  header: api-key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: collections
+    tool: qdrant-collections
+    method: GET
+    path: /collections
+  - name: collection
+    tool: qdrant-collection
+    method: GET
+    path: /collections/{collection_name}
+  - name: aliases
+    tool: qdrant-aliases
+    method: GET
+    path: /aliases
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/qdrant.tech.ico

@@ -1,0 +1,34 @@
+provider: zulip
+displayName: Zulip
+version: 1.0.0
+baseUrl: ${env:ZULIP_BASE_URL:-https://your-org.zulipchat.com}/api/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: users
+    tool: zulip-users
+    method: GET
+    path: /users
+  - name: streams
+    tool: zulip-streams
+    method: GET
+    path: /streams
+  - name: messages
+    tool: zulip-messages
+    method: GET
+    path: /messages
+    query:
+      anchor: '{anchor}'
+      num_before: '{numBefore}'
+      num_after: '{numAfter}'
+metadata:
+  icon: zulip
+  iconTitle: Zulip
+  iconSource: simple-icons
+  iconVerified: true

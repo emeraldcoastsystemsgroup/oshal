@@ -1,0 +1,28 @@
+provider: tidio
+displayName: Tidio
+version: 1.0.0
+baseUrl: https://api.tidio.com
+auth:
+  type: apiKeyHeader
+  header: X-Tidio-Openapi-Client-Id
+headers:
+  X-Tidio-Openapi-Client-Secret: '{secret}'
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: contacts
+    tool: tidio-contacts
+    method: GET
+    path: /contacts
+  - name: conversations
+    tool: tidio-conversations
+    method: GET
+    path: /conversations
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/tidio.com.ico

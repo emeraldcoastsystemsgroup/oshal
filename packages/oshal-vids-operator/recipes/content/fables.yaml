@@ -1,0 +1,361 @@
+# Content pack — Aesop's Fables (data only; no code, no headers required).
+#
+# The creative bot cycles this corpus: each entry is a short, kid-safe, public-domain
+# story with a ~100-word narration script. The StoryScript builder (src/stories/script.js)
+# splits `script` into beats (~7 words each — patient pacing) and composes each Veo scene
+# prompt from: defaultStyle + the story's pinned `setting` + the FULL `characters`
+# descriptions (restated EVERY scene so nobody drifts) + the beat's action + spoken
+# narration/dialogue voice directives. Nothing here is copyrighted: the tales are classic
+# Aesop (public domain); these retellings are original to OSHAL (CC0).
+#
+# Schema (one pack per file):
+#   pack, displayName, license, audience, theme, defaultStyle, defaultOrientation,
+#   narratorVoice
+#   stories: [ { id, title, moral, tags[], setting, characters[], script, style?, scenes?[] } ]
+# `setting`    = the FIXED world (season, light, palette) — restated every scene; stops
+#                Veo from inventing winter halfway through.
+# `characters` = the character bible: name + exact visual description (restated every
+#                scene) + a distinct voice (used for that character's spoken lines).
+# `script`     = the ~100-word narration (source of truth; builder derives beats).
+# `scenes`     = OPTIONAL curated per-beat visual prompts; when present, used verbatim.
+
+pack: fables
+displayName: Aesop's Fables
+license: "Public domain (classic Aesop); original retellings by OSHAL (CC0)"
+audience: kids
+theme: fable
+defaultOrientation: Landscape
+narratorVoice: "Nyx voice - warm, clear, gentle storyteller, lower-middle pitch, unhurried"
+defaultStyle: >-
+  A simple children's crayon animation: everything looks hand-drawn with wax crayons
+  on white construction paper — wobbly hand-drawn outlines, bold flat crayon colors
+  with visible waxy stroke texture, simple rounded child-like shapes, the white paper
+  texture showing through, gentle 2D flipbook-style motion. Flat 2D children's
+  drawing, not realistic, not 3D.
+
+stories:
+  - id: tortoise-and-hare
+    title: The Tortoise and the Hare
+    moral: Slow and steady wins the race.
+    tags: [animals, patience, classic]
+    style: >-
+      Soft watercolor storybook illustration, richly detailed, warm natural light,
+      expressive character animation faces, painterly forest backgrounds — the same
+      consistent watercolor picture-book style in every shot. Not 3D, not photoreal.
+    setting: >-
+      A sunny forest clearing with a winding dirt race trail, wildflowers, one big
+      oak tree beside the trail, a red ribbon finish line on a hill, and a crowd of
+      forest animals (deer, fox, raccoon, squirrels, hedgehogs, a bear) watching.
+      The season never changes.
+    characters:
+      - name: Toma
+        description: >-
+          a small round green tortoise with a golden-brown domed shell, kind patient
+          eyes, and a red bandana scarf around his neck — the SAME tortoise in every
+          shot, the scarf never changes
+        voice: a slow, calm, warm low voice, unhurried and kind
+      - name: Harlan
+        description: >-
+          a tall athletic tan-grey hare with long ears, a fluffy white chest and
+          tail, and a blue headband above his eyes — the SAME hare in every shot,
+          the headband never changes
+        voice: a quick, bright, boastful voice, energetic and cocky
+      - name: the blue jay
+        description: >-
+          a blue jay race starter with bold blue-and-white feathers who waves a
+          green leaf as the starting flag — the SAME blue jay whenever seen
+        voice: a crisp, chirpy announcer voice
+    # Authored shot list (operator storyboard 2026-07-07): timecoded shots with
+    # animation direction, in-clip dialogue, and narration placed at offsets.
+    shots:
+      - title: Start Line
+        animation: >-
+          Slow push-in. The forest animals gather at the start line, leaves drift,
+          Harlan stretches his legs, Toma breathes calmly.
+        dialogue:
+          - { who: Harlan, line: "Try to keep up, little shell." }
+          - { who: Toma, line: "I will keep going." }
+        narration: { at: 0, text: "On a bright morning, the forest gathered for a race." }
+      - title: The Boast
+        animation: >-
+          Low tortoise-eye angle. Harlan leans in close, pointing down the trail,
+          grinning; Toma looks up at him steadily.
+        dialogue:
+          - { who: Harlan, line: "I'll be finished before you reach that bend." }
+          - { who: Toma, line: "Then I'll see you at the bend." }
+        narration: { at: 6, text: "Some racers counted speed. One counted steps." }
+      - title: Ready, Set
+        animation: >-
+          The blue jay lifts a leaf flag high; quick glances between paws, eyes,
+          and the flag; the crowd leans in.
+        dialogue:
+          - { who: the blue jay, line: "Ready... set..." }
+          - { who: Harlan, line: "Watch closely!" }
+          - { who: Toma, line: "Ready." }
+      - title: The Launch
+        animation: >-
+          Harlan blasts forward with dust and motion streaks; Toma takes one slow
+          steady step forward.
+        dialogue:
+          - { who: Harlan, line: "Ha! Too easy!" }
+          - { who: Toma, line: "One step." }
+        narration: { at: 5, text: "The hare flew like a gust of wind." }
+      - title: Far Ahead
+        animation: >-
+          Over Harlan's shoulder as he looks back down the empty trail; Toma tiny
+          in the distance, still moving.
+        dialogue:
+          - { who: Harlan, line: "Still back there?" }
+          - { who: Toma, line: "Still coming." }
+        narration: { at: 5, text: "But the trail was longer than a laugh." }
+      - title: The Nap
+        animation: >-
+          Harlan settles into the oak tree shade, yawns wide, eyelids drooping,
+          arms crossing as he dozes off.
+        dialogue:
+          - { who: Harlan, line: "A tiny nap. I've got ages." }
+        narration: { at: 5, text: "Confidence curled up in the shade." }
+      - title: Passing Quietly
+        animation: >-
+          Toma walks past the sleeping hare with soft footsteps; a leaf drifts
+          down; Toma glances at him with a gentle smile and keeps going.
+        dialogue:
+          - { who: Toma, line: "Rest well, Harlan." }
+        narration: { at: 4, text: "Slow did not stop. Slow simply continued." }
+      - title: The Hill
+        animation: >-
+          Low heroic angle as Toma climbs the last hill toward the red ribbon;
+          spectators on the hillside notice and stir.
+        dialogue:
+          - { who: Toma, line: "Almost is still a step away." }
+        narration: { at: 0, text: "At the last hill, patience found the sunlight." }
+      - title: Hare Wakes
+        animation: >-
+          Harlan jolts awake against the tree, eyes going wide as he spots Toma
+          near the finish far up the hill, then launches into a panicked sprint.
+        dialogue:
+          - { who: Harlan, line: "No, no, no! I slept too long!" }
+        narration: { at: 5, text: "Speed returned, but time had already run ahead." }
+      - title: Finish
+        animation: >-
+          Toma breaks the red ribbon; Harlan skids in just behind him in a cloud of
+          dust; the forest animals cheer and crowd around them.
+        dialogue:
+          - { who: Harlan, line: "You won?" }
+          - { who: Toma, line: "We both learned." }
+        narration: { at: 6, text: "Steady steps can carry a quiet heart farther than pride." }
+    script: >-
+      A quick brown hare loved to brag that no one could ever beat him. A calm
+      old tortoise smiled and said, "Let us race." The hare laughed and sprinted
+      far ahead. Feeling sleepy in the warm sun, the hare curled up beside the path
+      for a little nap. The tortoise never stopped. Step after slow, steady step, the
+      tortoise plodded past the sleeping hare. When the hare finally woke and dashed
+      to the finish, the tortoise was already there, grinning. The animals cheered.
+      Slow and steady, it turned out, had won the race after all.
+
+  - id: lion-and-mouse
+    title: The Lion and the Mouse
+    moral: A kindness is never wasted.
+    tags: [animals, kindness, courage]
+    setting: >-
+      A golden savanna at the edge of a leafy jungle, tall dry grass, one flat warm
+      rock where the lion rests, soft late-afternoon sunlight. The season never changes.
+    characters:
+      - name: the lion
+        description: >-
+          a huge golden lion with a magnificent deep-orange mane, broad paws, and
+          proud amber eyes — the SAME golden lion in every scene
+        voice: a big, deep, rumbling regal voice, slow and powerful
+      - name: the mouse
+        description: >-
+          a tiny grey mouse with round pink ears, bright black eyes, thin whiskers,
+          and a long delicate tail — the SAME little grey mouse in every scene
+        voice: a tiny, quick, squeaky high voice, brave and earnest
+    script: >-
+      A tiny mouse scurried across the paws of a sleeping lion and woke him with
+      a start. The great lion trapped the mouse under one huge paw. "Please spare
+      me," squeaked the mouse, "and one day I will help you." The lion roared with
+      laughter but let the little creature go. Not long after, hunters caught the
+      lion in a strong rope net. He roared and struggled, but could not break free.
+      The little mouse heard him and came running. Nibble by nibble, she gnawed the
+      ropes until the lion sprang loose. Even the smallest friend can save the day.
+
+  - id: ant-and-grasshopper
+    title: The Ant and the Grasshopper
+    moral: There is a time to work and a time to play.
+    tags: [insects, planning, seasons]
+    setting: >-
+      A cheerful summer garden between tall sunflower stalks with a little dirt path
+      to the ants' cozy burrow door, warm bright sunshine. (Only the FINAL scenes turn
+      to gentle falling snow outside while the burrow inside glows warm and cozy.)
+    characters:
+      - name: the ant
+        description: >-
+          a small tidy dark-red ant with kind eyes, sturdy little legs, and a tiny
+          woven grain-sack on her back — the SAME red ant in every scene
+        voice: a steady, warm, practical voice, medium pitch
+      - name: the grasshopper
+        description: >-
+          a tall lanky bright-green grasshopper with long springy legs, big friendly
+          eyes, and a tiny fiddle he carries everywhere — the SAME green grasshopper
+          in every scene
+        voice: a bouncy, musical, carefree voice, a little dramatic
+    script: >-
+      All summer long the grasshopper hopped and fiddled his merry tunes. Nearby,
+      a busy ant hauled grain to her nest, one heavy crumb at a time. "Come play!"
+      called the grasshopper. "Why work so hard on such a sunny day?" The ant only
+      wiped her brow and said, "I am storing food for winter." The grasshopper
+      laughed and kept dancing. When cold winds blew and snow covered the fields,
+      the grasshopper shivered with an empty tummy. The kind ant shared her cozy
+      store and warm nest. From then on, the grasshopper worked a little each day.
+
+  - id: crow-and-pitcher
+    title: The Crow and the Pitcher
+    moral: Little by little does the trick.
+    tags: [birds, cleverness, water]
+    setting: >-
+      A dry sunlit farmyard with a wooden fence, scattered straw, and one tall clay
+      pitcher standing on cracked earth, clear blue sky, bright midday light. The
+      season never changes.
+    characters:
+      - name: the crow
+        description: >-
+          a glossy black crow with smart curious eyes, neat shining feathers, and a
+          strong grey beak — the SAME black crow in every scene
+        voice: a clever, raspy, chirpy voice, quick and bright
+    script: >-
+      A thirsty crow flew for miles under the hot sun, searching for a single sip
+      of water. At last she found a tall pitcher with a little water resting at the
+      very bottom. She stretched her beak down, but the water was far too low to
+      reach. The clever crow thought hard. One by one, she picked up small pebbles
+      and dropped them into the pitcher. Plink, plink, plink. With each stone the
+      water rose a tiny bit higher, until it reached the top. The happy crow drank
+      her fill. Little by little, cleverness had done the trick.
+
+  - id: north-wind-and-sun
+    title: The North Wind and the Sun
+    moral: Gentleness wins where force fails.
+    tags: [weather, kindness, contest]
+    setting: >-
+      A rolling green countryside with a long country road, low stone walls, and big
+      open sky where the North Wind (a cloud face) and the Sun (a golden face) watch
+      from above. Daylight, fresh and clear. The season never changes.
+    characters:
+      - name: the north wind
+        description: >-
+          a huge silvery-blue cloud with puffed cheeks and stormy eyebrows, a face
+          made of swirling cloud — the SAME cloud face in every scene
+        voice: a blustery, huffing, gusty deep voice
+      - name: the sun
+        description: >-
+          a big round golden sun with a calm, kindly smiling face and soft rays —
+          the SAME golden sun face in every scene
+        voice: a warm, smooth, gentle glowing voice
+      - name: the traveler
+        description: >-
+          a cheerful traveler in a long chestnut-brown coat with a small satchel and
+          a soft green scarf — the SAME traveler in the SAME brown coat every scene
+        voice: a pleasant, easy-going humming voice
+    script: >-
+      The North Wind and the Sun argued about who was stronger. They spotted a
+      traveler in a warm coat and agreed: whoever could make him remove it would
+      win. The North Wind blew first, cold and fierce. But the harder he howled,
+      the tighter the traveler clutched his coat. Puffing and worn out, the wind
+      gave up. Then the gentle Sun stepped out from behind a cloud and shone soft
+      and warm. Little by little the traveler felt cozy, wiped his brow, and slipped
+      off his coat all on his own. Kindness had won where force could not.
+
+  - id: goose-and-golden-eggs
+    title: The Goose and the Golden Eggs
+    moral: Too much greed loses everything.
+    tags: [birds, greed, patience]
+    setting: >-
+      A tidy little farm with a red-roofed cottage, a straw-lined goose pen, and a
+      morning sky of soft pink and gold. Fresh early-morning light. The season never
+      changes.
+    characters:
+      - name: the farmer
+        description: >-
+          a round, ruddy-cheeked farmer in a straw hat, patched blue overalls, and
+          big boots — the SAME farmer in every scene
+        voice: a hearty, eager, slightly greedy voice, medium-low pitch
+      - name: the farmer's wife
+        description: >-
+          a bustling farm wife with a neat grey bun, a red checked apron, and quick
+          bright eyes — the SAME wife in every scene
+        voice: a brisk, excited, scheming voice, medium-high pitch
+      - name: the goose
+        description: >-
+          a plump snow-white goose with an orange beak, calm gentle eyes, and one
+          shining golden egg beside her — the SAME white goose in every scene
+        voice: a soft, serene honking coo
+    script: >-
+      A farmer and his wife owned a wonderful goose. Every single morning she laid
+      one shining egg of pure gold. The happy pair sold the eggs and slowly grew
+      rich. But one golden egg a day was not enough for them. "Inside her must be a
+      great heap of gold," said the farmer, his eyes gleaming with greed. So they
+      foolishly decided to take it all at once. When they looked, of course, there
+      was no heap of gold inside at all, only a very ordinary goose. From that day
+      on, there were no more golden eggs.
+
+  - id: fox-and-crow
+    title: The Fox and the Crow
+    moral: Do not trust flattery.
+    tags: [animals, cleverness, caution]
+    setting: >-
+      A quiet forest clearing with one tall silver birch tree on which the crow
+      perches, ferns and soft moss below, dappled warm afternoon light. The season
+      never changes.
+    characters:
+      - name: the fox
+        description: >-
+          a sleek rust-red fox with a bushy white-tipped tail, narrow clever amber
+          eyes, and a sly smile — the SAME red fox in every scene
+        voice: a smooth, silky, flattering voice, purring and persuasive
+      - name: the crow
+        description: >-
+          a glossy black crow with proud shiny feathers and a wedge of pale yellow
+          cheese held in her beak — the SAME black crow in every scene
+        voice: a proud, croaky, sing-song voice
+    script: >-
+      A glossy crow found a tasty piece of cheese and flew up to a branch to enjoy
+      it. A hungry fox spied the cheese and licked his lips. "What a beautiful bird,"
+      he called sweetly. "Such shining feathers! Surely a bird so lovely must have a
+      lovely voice. Won't you sing for me?" The crow, delighted by the flattery,
+      opened her beak wide to caw a proud song. Down tumbled the cheese, and the sly
+      fox snapped it up in a flash. "Thank you," he grinned, trotting off. The crow
+      learned never to trust honeyed words again.
+
+  - id: boy-who-cried-wolf
+    title: The Boy Who Cried Wolf
+    moral: No one believes a fibber, even when he tells the truth.
+    tags: [honesty, sheep, village]
+    setting: >-
+      A gentle green hillside dotted with woolly sheep above a small village of
+      thatched cottages, a low wooden fence, big soft clouds, warm daytime light.
+      The season never changes.
+    characters:
+      - name: the shepherd boy
+        description: >-
+          a small freckled boy with messy sandy hair, a simple tan tunic, a wooden
+          crook, and a mischievous grin — the SAME boy in every scene
+        voice: a young, playful, teasing voice that turns truly frightened at the end
+      - name: the villagers
+        description: >-
+          three friendly villagers — a tall baker in a flour-dusted apron, a stout
+          farmer with a pitchfork, and a kind woman in a blue shawl — the SAME three
+          villagers every time
+        voice: warm, bustling grown-up voices, out of breath from running
+      - name: the wolf
+        description: >-
+          a shaggy grey wolf with yellow eyes and a hungry grin, comic rather than
+          scary — the SAME grey wolf in every scene
+        voice: a low, growly, sneaky voice
+    script: >-
+      A young shepherd boy watched his sheep on a quiet green hill. Feeling bored,
+      he shouted, "Wolf! Wolf!" just to see the villagers come running. They dashed
+      up the hill, but there was no wolf, only the boy giggling. He tricked them a
+      second time, and again they found nothing. The kind villagers frowned and went
+      home. Then a real wolf crept from the trees. "Wolf! Wolf!" the boy cried, truly
+      afraid. But this time no one came, for no one believes a fibber. From then on,
+      the boy always told the truth.

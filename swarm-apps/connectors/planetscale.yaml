@@ -1,0 +1,34 @@
+provider: planetscale
+displayName: PlanetScale
+version: 1.0.0
+baseUrl: https://api.planetscale.com/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: organizations
+    tool: planetscale-organizations
+    method: GET
+    path: /organizations
+  - name: databases
+    tool: planetscale-databases
+    method: GET
+    path: /organizations/{organization}/databases
+  - name: database
+    tool: planetscale-database
+    method: GET
+    path: /organizations/{organization}/databases/{database}
+  - name: branches
+    tool: planetscale-branches
+    method: GET
+    path: /organizations/{organization}/databases/{database}/branches
+metadata:
+  icon: planetscale
+  iconTitle: PlanetScale
+  iconSource: simple-icons
+  iconVerified: true

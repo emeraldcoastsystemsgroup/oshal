@@ -1,0 +1,52 @@
+provider: unsplash
+displayName: Unsplash
+version: 1.0.0
+baseUrl: https://api.unsplash.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: page
+  pageSize: 1
+  itemsField: results
+resources:
+  - name: me
+    tool: unsplash-me
+    method: GET
+    path: /me
+  - name: my-photos
+    tool: unsplash-my-photos
+    method: GET
+    path: /users/{username}/photos
+    query:
+      page: '{page}'
+      per_page: '30'
+    paginate: true
+  - name: my-likes
+    tool: unsplash-my-likes
+    method: GET
+    path: /users/{username}/likes
+    query:
+      page: '{page}'
+      per_page: '30'
+    paginate: true
+  - name: search
+    tool: unsplash-search
+    method: GET
+    path: /search/photos
+    query:
+      query: '{query}'
+      page: '{page}'
+      per_page: '30'
+    paginate: true
+metadata:
+  icon: unsplash
+  iconTitle: Unsplash
+  iconSource: simple-icons
+  iconVerified: true

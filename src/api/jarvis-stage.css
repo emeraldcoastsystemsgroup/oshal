@@ -1,0 +1,314 @@
+/**
+ * Jarvis response stage — additive styles for image-pixel materialization.
+ * The main Jarvis surface remains usable when this asset is unavailable.
+ */
+
+.response-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  overflow: hidden;
+  pointer-events: none;
+  isolation: isolate;
+}
+
+.response-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.response-stage canvas {
+  z-index: 1;
+  transition: opacity .18s ease;
+}
+
+/* Particles perform the gather/reveal transition, then yield the visual plane while
+   the completed artifact is being read. They return as soon as archiving begins. */
+.response-stage[data-state="speaking"] canvas {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.response-stage-image {
+  /* The artifact is the response plane itself: no surrounding window, card, or popup chrome. */
+  position: absolute;
+  left: 50%;
+  top: 47%;
+  z-index: 10;
+  width: min(1120px, calc(100vw - 64px));
+  height: min(620px, calc(100dvh - 190px));
+  object-fit: contain;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.72);
+  filter: blur(18px);
+  transition: opacity .55s ease, transform .8s cubic-bezier(.2,.8,.2,1), filter .65s ease;
+}
+
+.response-stage-image.visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  filter: none;
+}
+
+.response-stage-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 82px;
+  z-index: 10000;
+  width: min(720px, calc(100% - 42px));
+  transform: translateX(-50%);
+  color: var(--text, var(--text-primary, #f4f4fa));
+  text-align: center;
+  font-size: clamp(13px, 1.5vw, 17px);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  text-shadow: 0 2px 18px rgba(0,0,0,.75);
+}
+
+.response-stage-status {
+  position: absolute;
+  left: 50%;
+  top: 12%;
+  z-index: 10000;
+  transform: translateX(-50%);
+  color: var(--muted, var(--text-secondary, #a0a0be));
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  transition: opacity .2s ease, color .2s ease;
+}
+
+.response-stage[data-state="idle"] {
+  opacity: .78;
+}
+
+.response-stage[data-state="idle"] .response-stage-status {
+  opacity: 0;
+}
+
+.response-stage[data-state="gathering"] .response-stage-status,
+.response-stage[data-state="materializing"] .response-stage-status {
+  color: var(--accent, var(--accent-primary, #7c7cff));
+}
+
+.response-stage-actions {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  z-index: 20000;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.response-stage-actions[hidden] {
+  display: none;
+}
+
+.response-stage-action {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  color: var(--muted, var(--text-secondary, #a0a0be));
+  background: color-mix(in srgb, var(--bg, #090a12) 72%, transparent);
+  border: 1px solid var(--line, var(--border-color, rgba(255,255,255,.1)));
+  border-radius: 999px;
+  font: 700 11px/1 var(--font, Inter, system-ui, sans-serif);
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+
+.response-stage-action:hover {
+  color: var(--text, #f4f4fa);
+  border-color: color-mix(in srgb, var(--accent, #7c7cff) 55%, transparent);
+}
+
+.response-stage-action:focus-visible {
+  outline: 2px solid var(--accent, #7c7cff);
+  outline-offset: 3px;
+}
+
+body.jarvis-response-active .hero .canvas-wrap,
+body.jarvis-response-active .hero > .status,
+body.jarvis-response-active .hero > .bubble,
+body.jarvis-response-active .hero > .controls,
+body.jarvis-response-active .hero > .ctlrow,
+body.jarvis-response-active .hero > .typer,
+body.jarvis-response-active .hero > .chips {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(.92);
+  transition: opacity .45s ease, transform .65s ease;
+}
+
+/* The cloud becomes the response. Keep the archived discussion available through its
+   dedicated drawer, but remove the underlying page/rail from the active visual plane. */
+body > .scroll {
+  transition: opacity .35s ease;
+}
+
+body.jarvis-response-active > .scroll {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.discussion-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(0,0,0,.32);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .22s ease, visibility .22s ease;
+}
+
+.discussion-overlay.open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.discussion-drawer {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 46;
+  width: min(460px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--bg, #090a12) 97%, transparent);
+  border-left: 1px solid var(--line, var(--border-color, rgba(255,255,255,.1)));
+  box-shadow: -26px 0 70px rgba(0,0,0,.42);
+  transform: translateX(100%);
+  transition: transform .32s cubic-bezier(.2,.8,.2,1);
+}
+
+.discussion-drawer.open {
+  transform: translateX(0);
+}
+
+.discussion-drawer-head {
+  height: 64px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 17px;
+  border-bottom: 1px solid var(--line, var(--border-color, rgba(255,255,255,.1)));
+}
+
+.discussion-drawer-head strong {
+  font-size: 13px;
+}
+
+.discussion-drawer-head span {
+  display: block;
+  margin-top: 2px;
+  color: var(--faint, var(--text-muted, #666780));
+  font-size: 9px;
+}
+
+.discussion-close {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line, var(--border-color, rgba(255,255,255,.1)));
+  border-radius: 10px;
+  background: var(--glass, rgba(255,255,255,.04));
+  color: var(--muted, #a0a0be);
+  cursor: pointer;
+}
+
+.discussion-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 17px;
+}
+
+.discussion-visual {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 2px;
+}
+
+.discussion-visual-thumb {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--glass, rgba(255,255,255,.04)) 72%, transparent);
+  border: 1px solid var(--line, var(--border-color, rgba(255,255,255,.1)));
+  border-radius: 12px;
+}
+
+.discussion-visual figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--faint, var(--text-muted, #666780));
+  font-size: 10px;
+}
+
+.discussion-visual figcaption .chip {
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  .response-stage-image {
+    top: 44%;
+    width: calc(100vw - 24px);
+    height: calc(100dvh - 185px);
+  }
+
+  .response-stage-caption {
+    bottom: max(84px, calc(env(safe-area-inset-bottom) + 70px));
+    width: calc(100% - 28px);
+  }
+
+  .response-stage-status { top: max(74px, calc(env(safe-area-inset-top) + 58px)); }
+  .response-stage-action { padding: 0 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .response-stage-image,
+  .response-stage-action,
+  .discussion-overlay,
+  .discussion-drawer {
+    transition-duration: .01ms !important;
+  }
+}
+
+/* ── Legibility floor: the transcribed user line is ALWAYS fully readable ─────────────────────────
+   Bare minimum — the text on the Jarvis screen must be visible. The base `.bubble .you` rule (in the
+   bind-mounted jarvis.html) clips the transcription to ONE line with an ellipsis, and because it is
+   `white-space:nowrap` a long spoken/translated line runs off-screen and reads as a left/right scroll.
+   Override it here (id specificity beats `.bubble .you`, so no !important) so the line WRAPS and never
+   overflows sideways. This lives in this clean, separately-mounted asset on purpose: jarvis.html is
+   mid-edit by a parallel session. Fold this rule into jarvis.html when that file is free. */
+#you.you {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* On phones the bubble reserves a fixed height so replies don't shove the controls around; let a long
+   transcription grow past that reserve instead of being clipped — visibility wins over a stable
+   scroll position. */
+@media (max-width: 700px) {
+  .hero .bubble { height: auto; min-height: 4.5rem; }
+}

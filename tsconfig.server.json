@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/shared/*": ["src/shared/*"],
+      "@/entities/*": ["src/entities/*"],
+      "@/features/*": ["src/features/*"],
+      "@/swarm/*": ["src/swarm/*"],
+      "@/agent/*": ["src/agent/*"],
+      "@/app/*": ["src/app/*"],
+      "@/pages/*": ["src/pages/*"]
+    },
+    "types": ["node"]
+  },
+  "include": [
+    "src/app/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/entities/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests",
+    "src/features/**",
+    "src/api/**",
+    "src/shared/ui/**",
+    "src/shared/services/streaming-client/**",
+    "src/pages/**",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "**/*.tsx"
+  ]
+}

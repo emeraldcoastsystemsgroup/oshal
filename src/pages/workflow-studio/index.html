@@ -1,0 +1,242 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR        | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added workflow-studio WYSIWYG page for design-time swarm authoring
+  2 | maintainer@emeraldcoastsystemsgroup.com   | True n8n IA: full-bleed canvas, slim left icon rail with palette/files flyouts, the inspector is a right overlay that appears on node select (no permanent boxes), zoom controls bottom-left, floating chat assistant.
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Runs panel: rail button + left flyout listing past graph runs (GET /api/workflow-studio/runs) with a click-through per-step run inspector (status, timing, agent, redacted input/output). Own module workflow-studio-runs.js.
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow Studio</title>
+  <!--
+    Inherit the operator's cockpit theme (the sanctioned embedded-surface pattern, as in
+    identity.html / content-studio.html): restore the saved theme on load, then follow live
+    changes — the parent ribbon's <html data-theme> when embedded, and the cockpit-theme
+    storage key when it changes in another tab. We never write these token files; we only read them.
+  -->
+  <script>
+    (() => {
+      const THEMES = ['midnight','daylight','ocean','sakura','forest','gray','black','light-blue','aurora','graphite','amber'];
+      const apply = (t) => { if (t && THEMES.includes(t)) document.documentElement.setAttribute('data-theme', t); };
+      const mirror = () => {
+        try { const p = window.parent; if (p && p !== window) { const pt = p.document.documentElement.getAttribute('data-theme'); if (pt) { apply(pt); return; } } } catch (_) {}
+        try { apply(localStorage.getItem('cockpit-theme')); } catch (_) {}
+      };
+      mirror();
+      window.addEventListener('storage', (e) => { if (e.key === 'cockpit-theme') setTimeout(mirror, 30); });
+      try { const p = window.parent; if (p && p !== window) new MutationObserver(mirror).observe(p.document.documentElement, { attributes: true, attributeFilter: ['data-theme'] }); } catch (_) {}
+    })();
+  </script>
+  <!--
+    Framework theme token sets — each file defines --bg-primary / --accent-primary / --text-primary / …
+    under its [data-theme="…"] selector. workflow-studio.css consumes these via var(); loading them here
+    is what makes the studio adopt the operator's chosen theme instead of hardcoded fallbacks.
+  -->
+  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/forest.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/gray.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/black.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/amber.css">
+  <!-- Studio-owned styles last so local overrides win over the inherited theme tokens. -->
+  <link rel="stylesheet" href="/workflow-studio/workflow-studio.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+  <!--
+    Surface-bridge dock styling — scoped to #wfBridgeDock (this surface OWNS its bridge CSS; it
+    consumes the inherited theme tokens read-only and never edits shared CSS). Each host is hidden
+    while empty, so the dock is invisible until the chat-rail bot drives it.
+  -->
+  <style>
+    .wf-bridge-dock { position: fixed; left: 16px; bottom: 92px; z-index: 40; display: flex; flex-direction: column; gap: 8px; max-width: 320px; pointer-events: none; }
+    .wf-bridge-dock > * { pointer-events: auto; }
+    .wf-bridge-region:empty, .wf-bridge-host:empty { display: none; }
+    .wf-bridge-region { padding: 10px 12px; border-radius: 10px; background: var(--bg-secondary, rgba(20,24,34,0.92)); color: var(--text-primary, #e6edf3); font-size: 0.85rem; white-space: pre-wrap; box-shadow: 0 6px 20px rgba(0,0,0,0.28); }
+    .wf-bridge-host { display: flex; flex-direction: column; gap: 6px; }
+    .wf-bridge-dock .bridge-prompt { margin: 0 0 2px; font-size: 0.8rem; opacity: 0.8; }
+    .wf-bridge-dock .bridge-option, .wf-bridge-dock .bridge-confirm, .wf-bridge-dock .bridge-cancel { display: block; width: 100%; text-align: left; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border-subtle, rgba(255,255,255,0.14)); background: var(--bg-secondary, rgba(20,24,34,0.92)); color: var(--text-primary, #e6edf3); cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.28); font: inherit; }
+    .wf-bridge-dock .bridge-option:hover, .wf-bridge-dock .bridge-confirm:hover, .wf-bridge-dock .bridge-cancel:hover { border-color: var(--accent-primary, #6ea8fe); }
+    .wf-bridge-dock .bridge-option strong { display: block; }
+    .wf-bridge-dock .bridge-option-desc { display: block; font-size: 0.78rem; opacity: 0.75; margin-top: 2px; }
+    .wf-bridge-dock .bridge-propose { display: flex; flex-direction: column; gap: 6px; }
+    .wf-bridge-dock .bridge-notice { padding: 8px 12px; border-radius: 10px; font-size: 0.82rem; background: var(--bg-secondary, rgba(20,24,34,0.92)); color: var(--text-primary, #e6edf3); border-left: 3px solid var(--accent-primary, #6ea8fe); }
+    .wf-bridge-dock .bridge-notice-error { border-left-color: #f0616d; }
+    .wf-bridge-dock .bridge-notice-success { border-left-color: #3fb950; }
+    .wf-bridge-dock .bridge-notice-warn { border-left-color: #d29922; }
+  </style>
+</head>
+<body>
+  <div class="studio">
+
+    <!-- Slim top bar -->
+    <header class="topbar">
+      <div class="topbar-brand">
+        <span class="brand-mark" aria-hidden="true">&#9095;</span>
+        <span class="brand-name">Workflow Studio</span>
+        <span class="active-name" id="canvasHeading">Untitled workflow</span>
+      </div>
+      <div class="topbar-actions">
+        <button id="validateWorkflowButton" type="button">Validate</button>
+        <button id="compileWorkflowButton" type="button">Compile</button>
+        <label class="topbar-toggle" title="Auto-start: run this workflow as soon as a ticket arrives, instead of waiting for manual approval. Put an approval-gate node in the graph wherever you want a human pause.">
+          <input type="checkbox" id="autoStartToggle"> Auto-start
+        </label>
+        <button id="saveWorkflowButton" type="button" class="button-accent">Save</button>
+        <button id="publishWorkflowButton" type="button" class="button-accent">Publish</button>
+        <div class="topbar-menu">
+          <button id="moreMenuButton" type="button" class="icon-btn" title="More actions" aria-label="More">&#8943;</button>
+          <div id="moreMenu" class="menu" hidden>
+            <button id="newWorkflowButton" type="button">New draft</button>
+            <button id="duplicateWorkflowButton" type="button">Duplicate</button>
+            <button id="exportWorkflowButton" type="button">Export JSON</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <p id="statusBanner" class="status-banner" data-tone="info">Loading workflow studio…</p>
+
+    <!-- Stage: slim icon rail + full-bleed canvas + overlay panels -->
+    <div class="stage">
+      <nav class="iconrail" aria-label="Workflow tools">
+        <button id="railAddButton" class="rail-icon" type="button" title="Add node" aria-label="Add node">&#43;</button>
+        <button id="railFilesButton" class="rail-icon" type="button" title="Workflows" aria-label="Workflows">&#9776;</button>
+        <button id="railRunsButton" class="rail-icon" type="button" title="Run history" aria-label="Run history">&#9201;</button>
+        <button id="centerCanvasButton" class="rail-icon" type="button" title="Fit to screen" aria-label="Fit to screen">&#9974;</button>
+      </nav>
+
+      <div id="canvasViewport" class="canvas-viewport" aria-label="Workflow canvas">
+        <div id="canvasWorld" class="canvas-world">
+          <svg id="edgeLayer" class="edge-layer" aria-hidden="true"></svg>
+          <div id="canvasNodes" class="canvas-nodes"></div>
+        </div>
+      </div>
+
+      <div class="canvas-empty" id="canvasEmpty">
+        Open the assistant (bottom-right) and describe a process, or click <b>+</b> to add nodes and drag from a node's port to wire them.
+      </div>
+
+      <div class="canvas-meta">
+        <span class="metric-chip"><b id="metricNodes">0</b> nodes</span>
+        <span class="metric-chip"><b id="metricEdges">0</b> edges</span>
+        <span class="metric-chip metric-hidden"><b id="metricBindings">0</b> bindings</span>
+        <span class="metric-chip metric-hidden"><b id="metricDefinitions">0</b> saved</span>
+      </div>
+
+      <div class="canvas-zoom" role="group" aria-label="Zoom">
+        <button id="zoomOutButton" type="button" title="Zoom out" aria-label="Zoom out">&minus;</button>
+        <button id="zoomLevelButton" type="button" title="Reset to 100%" aria-label="Reset zoom"><span id="zoomLevel">100%</span></button>
+        <button id="zoomInButton" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+      </div>
+
+      <!-- Left flyouts (toggled by the icon rail) -->
+      <aside id="paletteFlyout" class="flyout flyout-left" hidden>
+        <div class="flyout-head"><span class="flyout-title">Add node</span><button type="button" class="flyout-close" data-close-flyout aria-label="Close">&times;</button></div>
+        <div id="paletteGrid" class="palette-grid flyout-scroll"></div>
+      </aside>
+      <aside id="filesFlyout" class="flyout flyout-left" hidden>
+        <div class="flyout-head"><span class="flyout-title">Workflows</span><button type="button" class="flyout-close" data-close-flyout aria-label="Close">&times;</button></div>
+        <div class="flyout-subhead" style="padding:8px 12px 2px;font-size:0.72rem;opacity:0.65;text-transform:uppercase;letter-spacing:0.05em">Start from template</div>
+        <div id="templateList" class="definition-list"></div>
+        <div class="flyout-subhead" style="padding:10px 12px 2px;font-size:0.72rem;opacity:0.65;text-transform:uppercase;letter-spacing:0.05em">Your workflows</div>
+        <div id="definitionList" class="definition-list flyout-scroll"></div>
+      </aside>
+      <!-- Run history + run inspector (owned by workflow-studio-runs.js; close button is NOT
+           data-close-flyout because the core app's closeFlyouts() doesn't know this panel) -->
+      <aside id="runsFlyout" class="flyout flyout-left runs-flyout" hidden>
+        <div class="flyout-head">
+          <span class="flyout-title" id="runsFlyoutTitle">Run history</span>
+          <span class="inspector-actions">
+            <button id="runsBackButton" type="button" class="flyout-close runs-back" title="Back to run list" aria-label="Back" hidden>&#8592;</button>
+            <button id="runsRefreshButton" type="button" class="flyout-close" title="Refresh" aria-label="Refresh">&#8635;</button>
+            <button id="runsCloseButton" type="button" class="flyout-close" title="Close" aria-label="Close">&times;</button>
+          </span>
+        </div>
+        <div id="runsList" class="definition-list flyout-scroll"></div>
+        <div id="runDetail" class="run-detail flyout-scroll" hidden></div>
+      </aside>
+
+      <!-- Right inspector overlay — appears when a node/edge is selected -->
+      <aside id="inspectorPanel" class="inspector-panel" hidden>
+        <div class="flyout-head">
+          <span class="flyout-title">Node settings</span>
+          <span class="inspector-actions">
+            <button id="removeSelectedButton" type="button" class="icon-btn icon-danger" title="Delete node" aria-label="Delete">&#128465;</button>
+            <button id="clearSelectionButton" type="button" class="flyout-close" title="Close" aria-label="Close">&times;</button>
+          </span>
+        </div>
+        <div class="inspector-scroll">
+          <div id="selectionState" class="selection-state">Select a node to edit it.</div>
+          <form id="inspectorForm" class="inspector-form"></form>
+          <details class="insp-section"><summary>Validation</summary><div id="validationPanel" class="report-panel report-empty">Save or validate to inspect wiring issues.</div></details>
+          <details class="insp-section"><summary>Compile preview</summary><div id="compilePanel" class="report-panel report-empty">Run compile to preview the runtime mapping.</div></details>
+          <details class="insp-section"><summary>Versions</summary><div id="versionPanel" class="report-panel report-empty">Select a workflow to inspect versions.</div></details>
+        </div>
+      </aside>
+
+      <!-- legacy chat hooks (hidden, superseded by the floating assistant) -->
+      <div class="legacy-chat-panel" hidden>
+        <textarea id="legacyWfChatInput"></textarea>
+        <button id="legacyWfChatMic" type="button">Mic</button>
+        <button id="legacyWfChatSend" type="button">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating talk-to-build assistant -->
+  <button id="wfChatFab" class="builder-fab" type="button" title="Talk to build a workflow" aria-label="Open the workflow assistant"><span aria-hidden="true">&#9881;</span></button>
+  <div id="wfChatPanel" class="builder-float" hidden>
+    <div class="builder-float-head">
+      <span class="builder-float-mark" aria-hidden="true">&#9881;</span>
+      <span class="builder-float-titles">
+        <span class="builder-float-title">Talk to build</span>
+        <span class="builder-float-sub">Describe a process — I draw &amp; revise the graph</span>
+      </span>
+      <button id="wfChatMin" class="builder-float-min" type="button" title="Minimize" aria-label="Minimize">&minus;</button>
+    </div>
+    <div class="builder-float-body">
+      <div id="wfChatLog" class="wf-chat-log"></div>
+      <p id="wfChatStatus" class="wf-chat-status"></p>
+      <div class="wf-prompt-row" aria-label="Workflow prompt starters">
+        <button type="button" data-wf-prompt="Create a customer onboarding workflow: intake request, verify account, route to the best specialist, ask for approval, then deliver the final answer.">Customer onboarding</button>
+        <button type="button" data-wf-prompt="Create a build workflow: intake a feature request, design the approach, assign implementation, run tests, summarize evidence, then wait for operator release approval.">Build pipeline</button>
+        <button type="button" data-wf-prompt="Create an incident workflow: intake an alert, classify severity, assign RCA, propose remediation, request approval, then publish a runbook note.">Incident RCA</button>
+      </div>
+    </div>
+    <div class="builder-float-foot">
+      <div class="wf-chat-input-row">
+        <textarea id="wfChatInput" class="wf-chat-input" rows="1"
+          placeholder="Describe the workflow you want — e.g. “intake a ticket, draft an RCA, then an approval gate before delivery.”"></textarea>
+        <button id="wfChatMic" type="button" class="wf-chat-mic" title="Speak" aria-label="Speak workflow prompt"><span aria-hidden="true">&#127908;</span></button>
+        <button id="wfChatSend" type="button" class="button-accent">Generate</button>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    Surface-bridge dock — the cockpit chat rail's bot drives these via the generic surface-bridge
+    contract (declared in swarm-apps/workflow-studio.yaml `surface.ops`): render_options / propose →
+    cards in the options host (a click emits `select` / `submit` back to the bot); notify → banners
+    in the notices host; set_content → the assistant-note region. Empty (and invisible) until driven.
+  -->
+  <aside id="wfBridgeDock" class="wf-bridge-dock" aria-label="Assistant options">
+    <div class="wf-bridge-region" data-bridge-region="assistant-note"></div>
+    <div class="wf-bridge-host" data-bridge-host="options"></div>
+    <div class="wf-bridge-host" data-bridge-host="notices"></div>
+  </aside>
+
+  <script type="module" src="/workflow-studio/workflow-studio.js"></script>
+  <script type="module" src="/workflow-studio/workflow-studio-chat.js"></script>
+  <script type="module" src="/workflow-studio/workflow-studio-runs.js"></script>
+  <script type="module" src="/workflow-studio/workflow-studio-bridge.js"></script>
+</body>
+</html>

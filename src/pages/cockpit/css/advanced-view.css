@@ -1,0 +1,255 @@
+/* ===== Advanced / Engineering View =====
+ * 1 | maintainer@emeraldcoastsystemsgroup.com
+ */
+
+/* ── Shell ──────────────────────────────────────── */
+
+.advanced-view {
+  display: flex;
+  height: 100%;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* ── Sidebar ribbon ─────────────────────────────── */
+
+.adv-sub-ribbon {
+  width: 44px;
+  min-width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 2px;
+  border-right: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
+}
+
+.adv-sub-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  position: relative;
+}
+
+.adv-sub-btn:hover {
+  background: var(--glass-bg-heavy);
+  color: var(--text-primary);
+}
+
+.adv-sub-btn.active {
+  background: var(--glass-bg-heavy);
+  color: var(--accent-primary);
+}
+
+.adv-sub-btn.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent-primary);
+  border-radius: 0 1px 1px 0;
+}
+
+.adv-sub-btn i {
+  font-size: 18px;
+}
+
+/* ── Content container ──────────────────────────── */
+
+.adv-iframe-container {
+  flex: 1;
+  overflow: hidden;
+}
+
+.adv-iframe-container iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+/* ── Panel scroll wrapper ────────────────────────── */
+
+.adv-panel {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  box-sizing: border-box;
+  display: grid;
+  gap: 18px;
+  grid-template-rows: auto auto 1fr;
+}
+
+/* ── Hero card ───────────────────────────────────── */
+
+.adv-hero-card {
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border-radius: 22px;
+  padding: 24px;
+  background: rgba(18, 18, 30, 0.72);
+}
+
+.adv-hero-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.adv-hero-eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent-primary, #8b5cf6);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.adv-hero-title {
+  margin: 0;
+  font-size: 28px;
+  color: var(--text-primary);
+}
+
+.adv-hero-status-chip {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.adv-hero-summary {
+  margin: 16px 0 0;
+  color: var(--text-muted, rgba(255, 255, 255, 0.68));
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+/* ── Meta card grid ──────────────────────────────── */
+
+.adv-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.adv-meta-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  padding: 18px;
+  background: rgba(18, 18, 30, 0.58);
+}
+
+.adv-meta-label {
+  font-size: 12px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.68));
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.adv-meta-value {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.adv-meta-value code {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--accent-secondary, #a78bfa);
+}
+
+/* ── Iframe section ──────────────────────────────── */
+
+.adv-iframe-section {
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border-radius: 22px;
+  padding: 12px;
+  background: rgba(18, 18, 30, 0.72);
+  min-height: 560px;
+  overflow: hidden;
+}
+
+.adv-iframe-section iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 16px;
+  background: #0f1020;
+  display: block;
+}
+
+/* ── Mobile ≤ 640px ──────────────────────────────── */
+
+@media (max-width: 640px) {
+  /* Stack sidebar ribbon above the content instead of beside it */
+  .advanced-view {
+    flex-direction: column;
+  }
+
+  /* Ribbon becomes a horizontal scrollable strip across the top */
+  .adv-sub-ribbon {
+    width: 100%;
+    min-width: 0;
+    flex-direction: row;
+    justify-content: flex-start;
+    padding: 6px 8px;
+    gap: 4px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    overflow-x: auto;
+    flex-shrink: 0;
+  }
+
+  /* Content area takes full remaining height */
+  .adv-iframe-container {
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Reduce panel padding so content fits 390px without overflow */
+  .adv-panel {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  /* Hero card padding reduction */
+  .adv-hero-card {
+    padding: 16px 12px;
+    border-radius: 14px;
+  }
+
+  /* Scale down oversized hero title */
+  .adv-hero-title {
+    font-size: 20px;
+  }
+
+  /* Meta grid: collapse to single column on narrow viewports */
+  .adv-meta-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+
+  /* Iframe section: reduce padding, lower min-height for phone */
+  .adv-iframe-section {
+    padding: 8px;
+    min-height: 320px;
+    border-radius: 14px;
+  }
+}

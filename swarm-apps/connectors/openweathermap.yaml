@@ -1,0 +1,30 @@
+provider: openweathermap
+displayName: OpenWeatherMap
+version: 1.0.0
+baseUrl: https://api.openweathermap.org/data/2.5
+auth:
+  type: apiKeyQuery
+  param: appid
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: weather
+    tool: openweathermap-weather
+    method: GET
+    path: /weather
+    query:
+      q: '{q}'
+  - name: forecast
+    tool: openweathermap-forecast
+    method: GET
+    path: /forecast
+    query:
+      q: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/openweathermap.org.ico

@@ -1,0 +1,71 @@
+provider: mixpanel
+displayName: Mixpanel
+version: 1.0.0
+baseUrl: https://mixpanel.com/api
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: events
+    tool: mixpanel-events
+    method: GET
+    path: /2.0/events
+    query:
+      - event
+      - type
+      - unit
+      - from_date
+      - to_date
+  - name: event-names
+    tool: mixpanel-event-names
+    method: GET
+    path: /2.0/events/names
+    query:
+      - type
+      - limit
+  - name: event-properties
+    tool: mixpanel-event-properties
+    method: GET
+    path: /2.0/events/properties
+    query:
+      - event
+      - name
+      - type
+      - unit
+      - from_date
+      - to_date
+  - name: segmentation
+    tool: mixpanel-segmentation
+    method: GET
+    path: /2.0/segmentation
+    query:
+      - event
+      - from_date
+      - to_date
+      - 'on'
+      - unit
+  - name: retention
+    tool: mixpanel-retention
+    method: GET
+    path: /2.0/retention
+    query:
+      - from_date
+      - to_date
+      - retention_type
+      - born_event
+      - event
+      - unit
+  - name: funnels-list
+    tool: mixpanel-funnels-list
+    method: GET
+    path: /2.0/funnels/list
+metadata:
+  icon: mixpanel
+  iconTitle: Mixpanel
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,56 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * DATE         | AUTHOR                                     | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | One link that gives a standalone surface every framework theme. 28 of 37 surfaces hardcoded their own dark palette and consumed ZERO framework tokens, so they only "worked" in dark by accident and broke in the other ten themes.
+ * =============================================================================
+ *
+ * FRAMEWORK THEME TOKENS FOR A STANDALONE SURFACE
+ *
+ * Link this ONE file and every OSHAL theme is available; the active one is chosen by the
+ * `data-theme` attribute on <html>:
+ *
+ *   <html lang="en" data-theme="midnight">
+ *   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+ *
+ * Each theme file scopes its tokens to `[data-theme="<id>"]` ONLY — there is no bare `:root`
+ * fallback — so:
+ *   • linking all eleven is safe (no load-order fight; only the active block applies), and
+ *   • a surface with NO `data-theme` gets NO tokens at all. Always set a default on <html>.
+ *
+ * The tokens a surface consumes (see any theme file for the full set):
+ *   --bg-primary  --bg-secondary  --bg-tertiary  --bg-card  --bg-card-hover
+ *   --border-color  --border-color-hover
+ *   --text-primary  --text-secondary  --text-muted
+ *   --accent-primary  --accent-primary-hover  --accent-gradient  --accent-glow
+ *   --status-success  --status-active  --status-error  --status-warning
+ *
+ * ## How a surface uses these
+ *
+ * Keep your own short alias names — just DERIVE them from the tokens instead of hardcoding hex,
+ * so the rest of your CSS never changes and every theme follows automatically:
+ *
+ *   :root {
+ *     --bg:     var(--bg-primary);
+ *     --panel:  var(--bg-card);
+ *     --text:   var(--text-primary);
+ *     --muted:  var(--text-muted);
+ *     --line:   var(--border-color);
+ *     --accent: var(--accent-primary);
+ *   }
+ *
+ * Own your surface's CSS; consume the framework theme READ-ONLY. Never edit the theme files.
+ */
+
+@import url('/cockpit/css/themes/midnight.css');
+@import url('/cockpit/css/themes/daylight.css');
+@import url('/cockpit/css/themes/ocean.css');
+@import url('/cockpit/css/themes/sakura.css');
+@import url('/cockpit/css/themes/forest.css');
+@import url('/cockpit/css/themes/gray.css');
+@import url('/cockpit/css/themes/black.css');
+@import url('/cockpit/css/themes/light-blue.css');
+@import url('/cockpit/css/themes/aurora.css');
+@import url('/cockpit/css/themes/graphite.css');
+@import url('/cockpit/css/themes/amber.css');

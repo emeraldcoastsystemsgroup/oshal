@@ -1,0 +1,62 @@
+provider: jira
+displayName: Jira
+version: 1.0.0
+baseUrl: https://${env:JIRA_SUBDOMAIN:-your-subdomain}.atlassian.net/rest/api/3
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: nextPageToken
+  nextField: nextPageToken
+  itemsField: issues
+resources:
+  - name: myself
+    tool: jira-myself
+    method: GET
+    path: /myself
+  - name: search-issues
+    tool: jira-search-issues
+    method: GET
+    path: /search/jql
+    query:
+      jql: '{jql}'
+      maxResults: '50'
+      fields: summary,status,assignee,priority,issuetype,created,updated,reporter
+    paginate: true
+  - name: get-issue
+    tool: jira-get-issue
+    method: GET
+    path: /issue/{issueKey}
+  - name: list-projects
+    tool: jira-list-projects
+    method: GET
+    path: /project/search
+    query:
+      maxResults: '100'
+  - name: create-issue
+    tool: jira-create-issue
+    method: POST
+    path: /issue
+    body: '{data}'
+    retry:
+      maxRetries: 0
+  - name: add-comment
+    tool: jira-add-comment
+    method: POST
+    path: /issue/{issueKey}/comment
+    body: '{data}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "Search Jira issues with JQL and read issues and projects, with resources to create issues and comments."
+  category: "Project management"
+  icon: jira
+  iconTitle: Jira
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,30 @@
+provider: logzio
+displayName: Logz.io
+version: 1.0.0
+baseUrl: ${env:LOGZIO_BASE_URL:-https://api.logz.io}/v1
+auth:
+  type: apiKeyHeader
+  header: X-API-TOKEN
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: alerts
+    tool: logzio-alerts
+    method: GET
+    path: /alerts
+  - name: endpoints
+    tool: logzio-endpoints
+    method: GET
+    path: /endpoints
+  - name: users
+    tool: logzio-users
+    method: GET
+    path: /users
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/logz.io.ico

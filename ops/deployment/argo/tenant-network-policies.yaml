@@ -1,0 +1,160 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Cross-tenant network isolation — the rendered, applied instance of the
+# NetworkPolicy half of `tenant-namespace.example.yaml` (ADR-078 Phase 3).
+#
+# Why this file exists: the live cluster had `tenant-a` and `tenant-b` namespaces,
+# but ONLY tenant-b carried a policy (`default-deny-ingress`), so the deny was
+# one-directional — tenant-b could freely reach into tenant-a. This applies the
+# ADR's symmetric model to both:
+#
+#   1. default-deny-all      — no Ingress, no Egress
+#   2. allow-same-tenant     — re-grant ONLY what the tenant's workload needs:
+#      same-namespace east-west · DNS · the shared `oshal` control plane (Postgres/
+#      Redis/api — the batch pods' DATABASE_URL) · the `oshal-model` namespace
+#      (OLLAMA_HOST) · the kube-apiserver (Argo's wait sidecar).
+#
+# Cross-tenant traffic is denied twice over: by the source's egress rules AND the
+# destination's ingress rules.
+#
+# HISTORY (double-check 2026-07-08): the first rendering granted only same-tenant
+# + DNS — isolation "proven" while the very workload these namespaces exist to run
+# (bot-node-batch phase pods) would have resolved its DB/model hostnames and hung
+# to TCP timeout. The control-plane/model/apiserver grants below are load-bearing.
+#
+# Enforcement is REAL here: Docker Desktop's CNI enforces NetworkPolicy (proven
+# 2026-07-08 — ADR-078's status note assumed otherwise). Verify with:
+#   bash scripts/governance/verify-tenant-isolation.sh
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+  labels:
+    oshal.io/tenant: a
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-b
+  labels:
+    oshal.io/tenant: b
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: tenant-a
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-tenant
+  namespace: tenant-a
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              oshal.io/tenant: a
+  egress:
+    # Same-tenant east-west.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              oshal.io/tenant: a
+    # DNS must be re-granted or every lookup fails under default-deny egress.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Shared control plane (Postgres / Redis / api) — the batch pods' DATABASE_URL
+    # and controller callbacks live here. Dropped in the first rendering: without it
+    # every phase pod resolved the DB hostname then hung to TCP timeout.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: oshal
+    # In-cluster model serving (ADR-078 §2) — the OLLAMA_HOST endpoint.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: oshal-model
+    # kube-apiserver (Argo's wait sidecar writes workflowtaskresults). Namespace/pod
+    # selectors can NEVER match the apiserver endpoint (a node IP), so this needs an
+    # ipBlock. Derive per cluster: `kubectl get endpoints kubernetes`. Docker Desktop's
+    # kindnet exempts apiserver traffic, so this rule's absence never shows up locally —
+    # on a conformant CNI (Calico/Cilium) its absence errors every Workflow after the
+    # work succeeds (the exit-64 failure argo-executor-rbac.yaml documents).
+    - to:
+        - ipBlock:
+            cidr: 172.26.0.4/32
+      ports:
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: tenant-b
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-tenant
+  namespace: tenant-b
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              oshal.io/tenant: b
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              oshal.io/tenant: b
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: oshal
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: oshal-model
+    - to:
+        - ipBlock:
+            cidr: 172.26.0.4/32
+      ports:
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 443

@@ -1,0 +1,46 @@
+provider: salesforce
+displayName: Salesforce
+version: 1.0.0
+baseUrl: ${env:SALESFORCE_INSTANCE_URL:-https://yourinstance.my.salesforce.com}/services/data/v60.0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: query
+    tool: salesforce-query
+    method: GET
+    path: /query
+    query:
+      q: null
+  - name: accounts
+    tool: salesforce-accounts
+    method: GET
+    path: /sobjects/Account/{id}
+  - name: contacts
+    tool: salesforce-contacts
+    method: GET
+    path: /sobjects/Contact/{id}
+  - name: leads
+    tool: salesforce-leads
+    method: GET
+    path: /sobjects/Lead/{id}
+  - name: opportunities
+    tool: salesforce-opportunities
+    method: GET
+    path: /sobjects/Opportunity/{id}
+  - name: limits
+    tool: salesforce-limits
+    method: GET
+    path: /limits
+metadata:
+  description: "Run SOQL queries and read Salesforce accounts, contacts, leads, opportunities, and org limits."
+  category: "CRM"
+  icon: salesforce
+  iconTitle: Salesforce
+  iconSource: simple-icons
+  iconVerified: true

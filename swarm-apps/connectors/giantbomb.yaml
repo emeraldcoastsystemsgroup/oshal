@@ -1,0 +1,37 @@
+provider: giantbomb
+displayName: Giant Bomb
+version: 1.0.0
+baseUrl: https://www.giantbomb.com/api
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: games
+    tool: giantbomb-games
+    method: GET
+    path: /games
+    query:
+      format: json
+      filter: '{q}'
+  - name: game
+    tool: giantbomb-game
+    method: GET
+    path: /game/{guid}
+    query:
+      format: json
+  - name: characters
+    tool: giantbomb-characters
+    method: GET
+    path: /characters
+    query:
+      format: json
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/giantbomb.com.ico

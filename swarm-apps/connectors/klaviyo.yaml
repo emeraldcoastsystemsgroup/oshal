@@ -1,0 +1,57 @@
+provider: klaviyo
+displayName: Klaviyo
+version: 1.0.0
+baseUrl: https://a.klaviyo.com/api
+auth:
+  type: apiKeyHeader
+  header: Authorization
+headers:
+  revision: '2024-10-15'
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: profiles
+    tool: klaviyo-profiles
+    method: GET
+    path: /profiles
+    query:
+      page[size]: null
+      filter: null
+  - name: lists
+    tool: klaviyo-lists
+    method: GET
+    path: /lists
+    query:
+      page[size]: null
+  - name: segments
+    tool: klaviyo-segments
+    method: GET
+    path: /segments
+    query:
+      page[size]: null
+  - name: campaigns
+    tool: klaviyo-campaigns
+    method: GET
+    path: /campaigns
+    query:
+      filter: null
+  - name: flows
+    tool: klaviyo-flows
+    method: GET
+    path: /flows
+    query:
+      page[size]: null
+  - name: metrics
+    tool: klaviyo-metrics
+    method: GET
+    path: /metrics
+    query:
+      page[size]: null
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/a.klaviyo.com.ico

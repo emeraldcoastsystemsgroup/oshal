@@ -1,0 +1,356 @@
+# =============================================================================
+# OSHAL Runtime Image - CANONICAL PRODUCTION / HOSTED COCKPIT BUILD
+# =============================================================================
+# SOURCE OF TRUTH:
+#   Build OSHAL hosted/local release images from this file:
+#
+#     docker build -f Dockerfile.oshal -t oshal-bot:latest .
+#
+#   This is the correct image for:
+#     - docker-compose.oshal-local.yml / oshal-up style local stack
+#     - registry releases via scripts/oshal-harbor-build-push.sh
+#     - hosted cockpit surfaces, app/tool HTML, shared CSS, bot runtime, and
+#       OSHAL helper scripts
+#
+#   Do not use the root Dockerfile for hosted/public OSHAL unless a script
+#   explicitly says it is running a legacy/dev path.
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                    | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | GIT_SHA ARG+ENV
+#                      |                          | moved to the label layer: an ARG
+#                      |                          | declared before the heavy RUNs
+#                      |                          | busts their cache on every value
+#                      |                          | change — the first --build-arg
+#                      |                          | GIT_SHA deploy rebuilt from the
+#                      |                          | apk layer up. Declared + consumed
+#                      |                          | last, a per-commit sha is a
+#                      |                          | seconds-cheap tail layer.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Shim onnxruntime-node
+#                      |                          | to onnxruntime-web after npm ci:
+#                      |                          | glibc natives fail on musl (and
+#                      |                          | SEGFAULT under gcompat); RAG local
+#                      |                          | embeddings run WASM single-thread.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Labeled this file as the
+#                      |                          | canonical OSHAL production
+#                      |                          | and hosted cockpit image.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Dedicated OSHAL image for
+#                      |                          | Gardener deployment conversion.
+#                      |                          | Keeps the OSHAL/container port
+#                      |                          | model from Dockerfile.bot while
+#                      |                          | restoring the live tool surface
+#                      |                          | expected by incident workflows:
+#                      |                          | kubectl, helm, argocd, aws,
+#                      |                          | docker compose, graphviz, MCP.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Upgrade the
+#                      |                          | node:20 bundled npm to latest:
+#                      |                          | npm 10's own bundled deps
+#                      |                          | (cross-spawn/glob/minimatch/
+#                      |                          | sigstore/tar) carried 12 fixable
+#                      |                          | HIGH CVEs - CI Trivy gate, run
+#                      |                          | 29046620210.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | apk upgrade
+#                      |                          | at build time: musl/zlib
+#                      |                          | carried 3 fixable HIGHs the
+#                      |                          | local Trivy gate caught; the
+#                      |                          | daily rebuild now self-heals
+#                      |                          | fixable OS CVEs.
+# =============================================================================
+#
+# Why this image exists:
+#   - Dockerfile.bot is intentionally slim, but the live OSHAL prompts/personas
+#     assume Kubernetes and devops tooling are available in-container.
+#   - Dockerfile is the broad OSHAL image, but OSHAL needs a dedicated,
+#     deployment-specific release artifact and port/runtime defaults.
+#   - This file is the "final build for Gardener": one image for the oshal
+#     workload pods, tagged in the registry and pinned in the cluster manifest.
+# =============================================================================
+
+FROM node:20-alpine
+
+# Patch the base OS at build time: alpine ships CVE fixes (musl, zlib, ...)
+# faster than the node base image re-tags them (2026-07-09: musl 1.2.5-r21 and
+# zlib 1.3.1-r2 carried 3 fixable HIGHs the Trivy gate caught). The daily local
+# CI rebuild re-runs this, so fixable OS CVEs self-heal without manual bumps.
+RUN apk upgrade --no-cache
+
+# Build metadata — override at build time:
+#   docker build --build-arg IMAGE_VERSION=2026-04-25 \
+#                --build-arg CONFIG_NAME=issue-rca-build-swarm \
+#                -f Dockerfile.oshal -t oshal-bot:latest .
+ARG IMAGE_VERSION=dev
+ARG CONFIG_NAME=issue-rca-build-swarm
+# (image labels are applied at the END of this file — metadata must never bust the heavy layer
+#  cache. GIT_SHA is declared down there too, NOT here: an ARG declaration invalidates the cache
+#  of every RUN that follows it whenever its value changes, so a per-commit ARG up here turns
+#  every deploy into a full multi-GB rebuild — proven 2026-07-25, first --build-arg GIT_SHA
+#  deploy rebuilt from the apk layer and the engine dropped mid-build.)
+
+RUN apk add --no-cache \
+    bash \
+    git \
+    curl \
+    wget \
+    unzip \
+    tar \
+    gzip \
+    jq \
+    openssh-client \
+    openssl \
+    ca-certificates \
+    docker-cli \
+    docker-cli-compose \
+    sqlite \
+    graphviz \
+    python3 \
+    py3-pip \
+    aws-cli \
+    tesseract-ocr \
+    tesseract-ocr-data-eng \
+    poppler-utils \
+    ffmpeg \
+    ttf-dejavu
+
+# Replace node:20's bundled npm (10.x): its own bundled deps ship fixable HIGH
+# CVEs (cross-spawn/glob/minimatch/sigstore/tar) that red the CI Trivy gate.
+# Pinned to npm 11 - @latest is npm 12, which requires node >=22 (EBADENGINE
+# on this node:20 base, CI run 29047937748).
+RUN npm install -g npm@11
+
+# yq for persona YAML parsing and config work
+RUN wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && \
+    chmod +x /usr/local/bin/yq
+
+# Core runtime CLIs
+# Bump CLI_CACHE_BUST at build time to force a fresh npm fetch of @latest
+# without invalidating upstream layers:
+#   docker build --build-arg CLI_CACHE_BUST=$(date +%s) -f Dockerfile.oshal -t oshal-bot:latest .
+ARG CLI_CACHE_BUST=1
+RUN echo "cli-cache-bust=${CLI_CACHE_BUST}" && \
+    npm install -g cline@latest @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest
+
+# cline@latest still bundles fast-uri 3.1.3 (CVE-2026-16221, HIGH — fixed in 3.1.4), which redded
+# the trivy gate on the first trunk ci-local run (2026-07-23). Until upstream bumps it, replace the
+# vulnerable transitive IN cline's own tree — 3.1.4 is a drop-in patch release. The trailing require
+# asserts the swap actually landed so a silent npm no-op fails the BUILD, not the trivy gate later.
+RUN cd /usr/local/lib/node_modules/cline && \
+    npm install --no-save --no-audit --no-fund --no-package-lock fast-uri@^3.1.4 && \
+    node -e "const v=require('fast-uri/package.json').version; if (v.startsWith('3.1.3')) throw new Error('fast-uri still '+v); console.log('cline fast-uri now '+v)"
+
+# Build/test tools used by swarm workers during code tasks.
+# typescript pinned to the repo's major (package.json ^5.3): unpinned @latest pulls
+# TypeScript 7's Go-native tsc, whose embedded Go stdlib carried CVE-2026-39822
+# (HIGH, os.Root symlink following) and redded the nightly Trivy gate — and workers
+# should typecheck with the same major the repo builds with anyway.
+RUN npm install -g typescript@5 vitest tsx
+
+# MCP/runtime helpers
+RUN npm install -g mcp-fetch-server @modelcontextprotocol/server-filesystem
+
+# Python tooling used by workers and Crew-style tasks
+RUN pip3 install --break-system-packages --no-cache-dir uv pytest flask requests
+
+# Career-Hunter engine deps (scrape/score/board) + PDF rendering via the system Chromium.
+# NOTE: the `playwright` PyPI package has NO musl/Alpine wheel ("No matching distribution"),
+# so it can't be pip-installed here. The engine's renderer drives the apk `chromium` directly
+# (chromium --headless --print-to-pdf), so we install chromium and skip pip-playwright.
+RUN pip3 install --break-system-packages --no-cache-dir tenacity beautifulsoup4 lxml Jinja2 pypdf python-docx anthropic \
+    && apk add --no-cache chromium nss freetype harfbuzz ttf-freefont
+ENV PLAYWRIGHT_CHROMIUM_PATH=/usr/bin/chromium-browser
+
+# Kubernetes / GitOps CLIs expected by the incident workflows
+RUN curl -L "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl && \
+    chmod +x /usr/local/bin/kubectl
+
+RUN curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 && \
+    chmod +x /usr/local/bin/argocd
+
+RUN curl -sSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# Trivy — the Security Center's `image` scanner (offline vuln/misconfig/secret). Pinned + overridable
+# so an IL6/FIPS deployment substitutes its FIPS-validated binary:
+#   docker build --build-arg TRIVY_VERSION=<approved> --build-arg TRIVY_INSTALL_URL=<internal-mirror> ...
+# The binary is baked here; the vuln DB is provisioned OUT OF BAND into TRIVY_CACHE_DIR (a mounted
+# volume) or an internal OCI registry (TRIVY_DB_REPOSITORY) — the scanner runs --skip-db-update
+# --offline-scan and never egresses. See docs/runbooks/trivy-airgap-security-scanner.md.
+#
+# BUILD-TIME RESILIENCE (matches the runtime "absent = no-op" contract): the install is a
+# best-effort layer. GitHub release-asset downloads rate-limit routinely, and this must NOT break
+# every image build for the whole swarm. On failure the layer is a no-op and the scanner degrades to
+# available:false at runtime (never a silent clean bill). To HARD-REQUIRE Trivy (IL6 deploys off an
+# internal mirror), pass --build-arg TRIVY_REQUIRED=1 and the build fails loudly if it's missing.
+ARG TRIVY_VERSION=0.58.1
+ARG TRIVY_INSTALL_URL=https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh
+ARG TRIVY_REQUIRED=0
+RUN (curl -sfL "${TRIVY_INSTALL_URL}" | sh -s -- -b /usr/local/bin "v${TRIVY_VERSION}" && trivy --version) \
+    || (echo "WARNING: trivy install failed (rate-limit/offline). Security Center 'image' scope will report available:false until trivy is present." \
+        && [ "${TRIVY_REQUIRED}" != "1" ])
+# Offline-by-default cache dir (mount a pre-seeded volume here in air-gapped deployments).
+ENV TRIVY_CACHE_DIR=/app/data/trivy-cache
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --legacy-peer-deps
+
+# onnxruntime-node ships glibc-only natives: on this musl base its import hard-fails
+# (and with the gcompat shim it SEGFAULTS the process — never add gcompat for it).
+# @xenova/transformers imports it unconditionally in Node, so shim the package to
+# onnxruntime-web: same models, same outputs, WASM execution, crash-proof. The RAG
+# local-embedding-service single-threads the WASM backend (no Worker API in Node).
+# Frees ~100MB of unusable natives as a side effect.
+RUN rm -rf node_modules/onnxruntime-node \
+    && mkdir node_modules/onnxruntime-node \
+    && printf '{"name":"onnxruntime-node","version":"1.14.0","main":"index.js"}' > node_modules/onnxruntime-node/package.json \
+    && printf 'module.exports = require("onnxruntime-web");' > node_modules/onnxruntime-node/index.js
+
+# Glob so the build never fails on a missing config: vite.config.ts is the tracked,
+# canonical config; vite.config.js is a stray local artifact that is NOT in git, so a
+# clean CI checkout has only the .ts (the old `COPY vite.config.js` hard-failed there).
+COPY vite.config.* ./
+
+COPY src/api/ ./src/api/
+COPY src/features/ ./src/features/
+COPY src/shared/ ./src/shared/
+COPY src/entities/ ./src/entities/
+COPY src/app/ ./src/app/
+COPY src/pages/ ./src/pages/
+COPY src/types/ ./src/types/
+COPY tsconfig.server.json ./
+
+# Copy only runtime-required scripts so the build matches the repo's
+# .dockerignore allowlist and does not pull in unrelated dev helpers.
+RUN mkdir -p /app/scripts
+COPY scripts/container-start.sh ./scripts/
+COPY scripts/bot-entrypoint.sh ./scripts/
+COPY scripts/setup-cline-auth.sh ./scripts/
+COPY scripts/swarm-bot-lifecycle.sh ./scripts/
+# Argo DAG hooks (ADR-078 §1): the WorkflowTemplate execs these paths directly. The COPY
+# whitelist silently excluded them — the compiled dist/app/*.js made it into the image but
+# the entry scripts did not, so every phase/finalize/record-cost pod died at container
+# start (double-check finding 2026-07-08, verified against the live image).
+COPY scripts/bot-node-batch.sh ./scripts/
+COPY scripts/finalize-incident.sh ./scripts/
+COPY scripts/record-cost.sh ./scripts/
+# ALL OSHAL connector/app CLIs (walmart, uber, uber-rides, spotify, duffel, gcp,
+# plaid, trading, …) — baked so app search/booking survives a container recreate.
+# Glob picks up new oshal-*.js automatically (allowlisted in .dockerignore).
+COPY scripts/oshal-*.js ./scripts/
+# Headless swarm CLI (terminal→Jarvis; docs/runbooks/headless-swarm-cli.md) — a real,
+# zero-dependency npm package. Installed GLOBALLY so `docker exec <container> swarm-cli …`
+# just works. Deliberately NOT named oshal-*.js: Jarvis's tool-catalog scan globs
+# /app/scripts/oshal-*.js and would otherwise offer the chat client to itself as a tool.
+COPY packages/swarm-cli/ ./packages/swarm-cli/
+RUN npm install -g ./packages/swarm-cli
+COPY scripts/migrations/ ./scripts/migrations/
+# ADR-076 app-role auto-bootstrap (OFF by default): the provisioning script + SQL so a
+# fresh deploy with OSHAL_APP_ROLE_BOOTSTRAP=true can create/own oshal_app at boot.
+COPY scripts/governance/ ./scripts/governance/
+COPY docs/governance/ ./docs/governance/
+
+
+# Swarm application manifests — ADR 2026-04-20. Each YAML in swarm-apps/
+# is auto-loaded at boot by SwarmAppService (see src/features/swarm-apps).
+COPY swarm-apps/ ./swarm-apps/
+
+# Any-bot runtime — the bot node execution layer (any-bot-swarm-separation-design.md).
+# Bot containers run `node any-bot/server/app.js` which handles LLM execution,
+# credential management, CLI spawning, and cost capture.
+COPY any-bot/server/ ./any-bot/server/
+
+# Cockpit/static assets are served directly by the API server at runtime.
+COPY any-bot/ui-cockpit/ ./any-bot/ui-cockpit/
+
+# NOTE: phase0 added a COPY block here for a directory from the pre-rename runtime that does
+# not exist on main (main runs the bot-node runtime). That COPY made the whole image build fail
+# (package.json not found), silently leaving a stale image. Removed.
+
+RUN npm run build:chat && cp src/pages/chat/ui/chat-standalone.html src/api/chat-standalone.html
+RUN npx tsc -p tsconfig.server.json && npx tsc-alias -p tsconfig.server.json
+
+# tsc only emits .js — it does NOT copy static .css assets. The /shared/ui/css route
+# (cockpit-static-routes) serves from dist/shared/ui/css (path.resolve(__dirname,'../shared/ui/css')
+# under dist/app), so the design-system + surface-glass stylesheets referenced by every page must be
+# copied into dist or they 404 (browser then rejects the SPA/redirect HTML as a stylesheet — MIME error).
+RUN mkdir -p dist/shared/ui/css && cp -r src/shared/ui/css/. dist/shared/ui/css/
+# Same for the shared surface JS (surface-theme.js — the theme bootstrap): tsc doesn't emit a
+# hand-written static .js, and the /shared/ui/js route resolves dist/shared/ui/js first.
+RUN mkdir -p dist/shared/ui/js && cp -r src/shared/ui/js/. dist/shared/ui/js/
+
+# ── Registry-install artifacts (codebase-free install; 2026-07-23) ────────────
+# Placed AFTER the compile so a compose-only change never re-runs tsc/vite.
+# ai-lab: persona YAML is read at prompt-assembly time by every bot node. In dev it arrives via
+# bind mount; a registry install has no repo checkout, and this was the ONE mounted tree with no
+# baked copy — without it every bot on a registry install boots persona-less.
+COPY ai-lab/ ./ai-lab/
+# compose.dist.yml: the canonical topology with build sections dropped, OSHAL images pointed at
+# GHCR, and repo bind-mounts removed (this image carries those trees at the same /app paths).
+# Generated HERE, against the exact compose this image was built with, so the two can never
+# drift; the installer extracts it with `docker cp`.
+COPY docker-compose.oshal-local.yml ./
+COPY scripts/gen-dist-compose.js ./scripts/
+RUN node scripts/gen-dist-compose.js docker-compose.oshal-local.yml compose.dist.yml
+# config-seed.dist: the TRACKED, non-secret seed files (global-config.json, profiles/). The
+# installer copies them beside its compose as ./config-seed/; operator secrets are generated or
+# pasted at install time and are .dockerignore'd out of every build context by name.
+COPY config-seed/ ./config-seed.dist/
+
+COPY src/api/chat.html ./dist/chat.html
+
+COPY ai-lab/bot-personas/ ./ai-lab/bot-personas/
+
+RUN chmod +x /app/scripts/container-start.sh 2>/dev/null || true && \
+    chmod +x /app/scripts/bot-entrypoint.sh 2>/dev/null || true && \
+    chmod +x /app/scripts/setup-cline-auth.sh 2>/dev/null || true && \
+    chmod +x /app/scripts/swarm-bot-lifecycle.sh 2>/dev/null || true && \
+    # Argo DAG hooks (ADR-078): the WorkflowTemplate execs these DIRECTLY (command:, not
+    # `bash ...`), so the exec bit is load-bearing. Belt-and-suspenders with the git index
+    # +x — image builds go through `git archive HEAD`, which uses INDEX modes, and a file
+    # added from Windows lands 100644 unless update-index --chmod=+x was run.
+    chmod +x /app/scripts/bot-node-batch.sh 2>/dev/null || true && \
+    chmod +x /app/scripts/finalize-incident.sh 2>/dev/null || true && \
+    chmod +x /app/scripts/record-cost.sh 2>/dev/null || true
+
+RUN mkdir -p /app/workspace /app/workspace-shared /app/data /app/logs /app/output
+
+RUN npm prune --production --legacy-peer-deps
+
+EXPOSE 5000
+EXPOSE 1455
+
+ENV NODE_ENV=production
+ENV PORT=5000
+ENV SWARM_MODE=container
+ENV SWARM_REGISTRY=local
+ENV BOT_PERSONA_FILE=""
+ENV BOT_NAME=""
+ENV AGENT_ID=""
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1
+
+# Runtime build identity — declared AND consumed LAST on purpose: GIT_SHA changes every commit,
+# and both an ARG declaration and an ENV layer invalidate every layer below them on a value
+# change. Down here a per-commit build reuses every heavy layer and rebuilds in seconds.
+# Read at runtime by /api/version + the update-check cron (src/app/routes/update-check-cron.ts).
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
+# ── Image labels — LAST on purpose. LABEL layers are pure metadata; sitting at line ~77 they
+# invalidated every heavy layer below (npm ci, four vendor CLIs, tsc) on any wording change,
+# which on 2026-07-23 would have forced a full rebuild + a second multi-GB registry upload for
+# a one-line label fix. At the end, a label change rebuilds in seconds and pushes ~nothing.
+LABEL org.opencontainers.image.title="OSHAL Swarm" \
+      org.opencontainers.image.description="OSHAL — Open Swarm Harness Agent LLM. Multi-agent orchestration platform: one image, two runtimes (swarm controller + bot-node), BYOK vendor CLIs." \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.source="https://github.com/emeraldcoastsystemsgroup/oshal" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      oshal.image.role="canonical-production-hosted-cockpit" \
+      oshal.image.source_of_truth="true" \
+      oshal.image.correct_dockerfile="Dockerfile.oshal" \
+      oshal.config.name="${CONFIG_NAME}"
+
+CMD ["bash", "-c", "bash /app/scripts/setup-cline-auth.sh 2>&1 || true; node dist/app/server.js"]

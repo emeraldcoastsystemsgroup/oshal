@@ -1,0 +1,30 @@
+provider: healthchecks
+displayName: Healthchecks.io
+version: 1.0.0
+baseUrl: ${env:HEALTHCHECKS_BASE_URL:-https://healthchecks.io}/api/v3
+auth:
+  type: apiKeyHeader
+  header: X-Api-Key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: checks
+    tool: healthchecks-checks
+    method: GET
+    path: /checks
+  - name: check-flips
+    tool: healthchecks-check-flips
+    method: GET
+    path: /checks/{uuid}/flips
+  - name: badges
+    tool: healthchecks-badges
+    method: GET
+    path: /badges
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/healthchecks.io.ico

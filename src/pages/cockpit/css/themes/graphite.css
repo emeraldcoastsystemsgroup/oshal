@@ -1,0 +1,32 @@
+/* ═══ Graphite — Neutral Steel Glass ═══ */
+[data-theme="graphite"] {
+  --bg-primary: #0c0d10;
+  --bg-secondary: rgba(19, 21, 26, 0.88);
+  --bg-tertiary: rgba(31, 35, 42, 0.74);
+  --bg-card: rgba(32, 36, 44, 0.56);
+  --bg-card-hover: rgba(46, 51, 61, 0.7);
+  --border-color: rgba(255, 255, 255, 0.07);
+  --border-color-hover: rgba(255, 255, 255, 0.14);
+  --text-primary: #f3f4f6;
+  --text-secondary: #d1d5db;
+  --text-muted: #8b92a0;
+  --accent-primary: #c0cad8;
+  --accent-primary-hover: #f8fafc;
+  --accent-gradient: linear-gradient(135deg, #6b7280 0%, #94a3b8 45%, #e5e7eb 100%);
+  --accent-glow: rgba(148, 163, 184, 0.22);
+  --status-success: #4ade80;
+  --status-active: #93c5fd;
+  --status-warning: #fbbf24;
+  --status-error: #fb7185;
+  --glass-bg: rgba(255, 255, 255, 0.035);
+  --glass-bg-heavy: rgba(255, 255, 255, 0.085);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-highlight: linear-gradient(135deg, rgba(255,255,255,0.11) 0%, rgba(255,255,255,0.02) 55%, rgba(0,0,0,0) 100%);
+  --glass-blur: 22px;
+  --glass-blur-light: 13px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --panel-shadow: 0 12px 38px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+  --card-shadow: 0 3px 10px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255,255,255,0.04);
+  --depth-shadow: 0 26px 80px rgba(0, 0, 0, 0.56);
+}

@@ -1,0 +1,32 @@
+provider: huggingface
+displayName: Hugging Face
+version: 1.0.0
+baseUrl: https://huggingface.co/api
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: models
+    tool: huggingface-models
+    method: GET
+    path: /models
+  - name: datasets
+    tool: huggingface-datasets
+    method: GET
+    path: /datasets
+  - name: model
+    tool: huggingface-model
+    method: GET
+    path: /models/{repo}
+metadata:
+  description: "Browse Hugging Face Hub models and datasets, including per-repository details."
+  category: "AI"
+  icon: huggingface
+  iconTitle: Hugging Face
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,37 @@
+# SmartRecruiters API — read jobs, candidates, and public postings (X-SmartToken API key header).
+provider: smartrecruiters
+displayName: SmartRecruiters
+version: 1.0.0
+baseUrl: https://api.smartrecruiters.com
+auth:
+  type: apiKeyHeader
+  header: X-SmartToken
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: jobs
+    tool: smartrecruiters-jobs
+    method: GET
+    path: /jobs
+    query:
+      limit: '100'
+  - name: candidates
+    tool: smartrecruiters-candidates
+    method: GET
+    path: /candidates
+    query:
+      limit: '100'
+  - name: postings
+    tool: smartrecruiters-postings
+    method: GET
+    path: /postings
+    query:
+      limit: '100'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/smartrecruiters.com.ico

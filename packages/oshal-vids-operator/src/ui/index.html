@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vids Operator</title>
+<style>
+  /* Navy + emerald swarm brand. Reads a parent data-theme when embedded as a
+     cockpit surface; standalone it defaults to dark. */
+  :root {
+    --navy: #0b1220; --navy-2: #111c2e; --panel: #16233a; --line: #243349;
+    --emerald: #2ecc8f; --emerald-dim: #1f8c63; --ink: #e8eef6; --muted: #93a4bd;
+    --bad: #e0544e; --warn: #e0b341;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--navy); color: var(--ink);
+    font: 14px/1.5 Inter, system-ui, -apple-system, Segoe UI, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    background: var(--navy-2); border-bottom: 1px solid var(--line);
+  }
+  header .logo {
+    width: 22px; height: 22px; transform: rotate(45deg);
+    background: linear-gradient(135deg, var(--emerald), var(--emerald-dim));
+    border-radius: 5px;
+  }
+  header h1 { font: 600 16px Archivo, Inter, sans-serif; margin: 0; letter-spacing: .2px; }
+  header .status { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+  .dot.on { background: var(--emerald); }
+  main { display: grid; grid-template-columns: 1.4fr 1fr; gap: 0; flex: 1; min-height: 0; }
+  .left, .right { display: flex; flex-direction: column; min-height: 0; }
+  .right { border-left: 1px solid var(--line); }
+  .stage { position: relative; flex: 1; background: #000; display: flex; align-items: center; justify-content: center; min-height: 0; }
+  .stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .stage .empty { color: var(--muted); text-align: center; padding: 24px; }
+  .controls { display: flex; gap: 8px; padding: 10px 12px; background: var(--navy-2); border-top: 1px solid var(--line); align-items: center; }
+  .controls .spacer { flex: 1; }
+  button {
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 12px; cursor: pointer; font: inherit;
+  }
+  button:hover { border-color: var(--emerald-dim); }
+  button.primary { background: var(--emerald-dim); border-color: var(--emerald); color: #04130c; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .steps { height: 160px; overflow: auto; padding: 8px 12px; background: var(--navy); border-top: 1px solid var(--line); font: 12px/1.5 ui-monospace, Menlo, monospace; }
+  .steps .row { display: flex; gap: 8px; padding: 2px 0; }
+  .badge { min-width: 58px; text-align: center; border-radius: 5px; padding: 0 6px; font-size: 11px; }
+  .badge.ok { background: rgba(46,204,143,.15); color: var(--emerald); }
+  .badge.start { background: rgba(224,179,65,.15); color: var(--warn); }
+  .badge.fail { background: rgba(224,84,78,.18); color: var(--bad); }
+  .badge.skipped, .badge.info { background: var(--panel); color: var(--muted); }
+  .badge.vision { background: rgba(120,140,255,.18); color: #9fb0ff; }
+  .badge.act { background: rgba(46,204,143,.18); color: var(--emerald); }
+  .badge.goal { background: rgba(120,140,255,.2); color: #9fb0ff; }
+  /* Right column */
+  .compose { padding: 12px; border-bottom: 1px solid var(--line); background: var(--navy-2); }
+  .compose textarea { width: 100%; resize: vertical; min-height: 64px; background: var(--navy); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; }
+  .compose .opts { display: flex; gap: 8px; margin: 8px 0; }
+  .compose select, .compose input[type=text] { flex: 1; background: var(--navy); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px; font: inherit; }
+  .chat { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .msg { padding: 8px 12px; border-radius: 10px; max-width: 90%; white-space: pre-wrap; }
+  .msg.me { align-self: flex-end; background: var(--emerald-dim); color: #04130c; }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+  .chat-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--navy-2); }
+  .chat-input input { flex: 1; background: var(--navy); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; }
+  .queue { padding: 8px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); max-height: 90px; overflow: auto; }
+  .queue .q { padding: 2px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"></div>
+  <h1>Vids Operator</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">disconnected</span></div>
+</header>
+<main>
+  <section class="left">
+    <div class="stage" id="stage"><div class="empty" id="stageEmpty">Click <b>Enable screen control</b>.<br>This mirrors your REAL screen — the agent moves your real cursor and clicks for you.</div></div>
+    <div class="controls">
+      <button id="connectBtn" class="primary">Enable screen control</button>
+      <div class="spacer"></div>
+      <button id="pauseBtn" disabled>Pause</button>
+      <button id="resumeBtn" disabled>Resume</button>
+      <button id="abortBtn" disabled>Abort</button>
+    </div>
+    <div class="steps" id="steps"></div>
+  </section>
+  <section class="right">
+    <div class="compose">
+      <textarea id="prompt" placeholder="Describe the clip you want… e.g. a single dew-bead resolving on a dark reflective surface; palette: deep navy, emerald, soft white; subtle particle whoosh; no text, no logos."></textarea>
+      <div class="opts">
+        <select id="orientation"><option>Landscape</option><option>Portrait</option><option>Square</option></select>
+        <select id="insertMode"><option>Insert</option><option>Extend</option><option>none</option></select>
+      </div>
+      <div class="opts">
+        <input type="text" id="ingredient" placeholder="optional: absolute path to an input image/video" />
+        <button id="queueBtn" class="primary">Queue</button>
+      </div>
+    </div>
+    <div class="chat" id="chat">
+      <div class="msg bot">Tell me what you want and I'll operate your computer to make it happen — I see your screen, move your cursor, and click. Try: "make an 8-second clip explaining photosynthesis." Hands off the keyboard while I work; hit Pause anytime.</div>
+    </div>
+    <div class="chat-input">
+      <input type="text" id="chatInput" placeholder="Ask the Veo specialist…" />
+      <button id="sendBtn">Send</button>
+    </div>
+    <div class="queue" id="queue"></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let connected = false;
+
+function setStatus(on, text) {
+  $('dot').classList.toggle('on', on);
+  $('statusText').textContent = text;
+  connected = on;
+}
+function addStep(s) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const status = s.status || s.type;
+  let text;
+  if (status === 'act') {
+    const at = (s.x != null && s.y != null) ? ` @ (${(+s.x).toFixed(2)},${(+s.y).toFixed(2)})` : '';
+    text = `${s.action}${at}${s.reason ? ' — ' + s.reason : ''}`;
+  } else {
+    text = `${(s.intent || s.message || s.reason || s.goal || s.type || '')}${s.error ? ' — ' + s.error : ''}`;
+  }
+  row.innerHTML = `<span class="badge ${status}">${status}</span><span>${escapeHtml(text)}</span>`;
+  $('steps').appendChild(row);
+  $('steps').scrollTop = $('steps').scrollHeight;
+}
+function setFrame(image) {
+  if (!image) return;
+  $('stageEmpty').style.display = 'none';
+  let img = $('stage').querySelector('img');
+  if (!img) { img = document.createElement('img'); $('stage').appendChild(img); }
+  img.src = image;
+}
+function renderQueue(state) {
+  const items = [];
+  if (state.current) items.push(`▶ ${state.current.status}: ${trim(state.current.prompt)}`);
+  for (const j of state.queue || []) items.push(`• queued: ${trim(j.prompt)}`);
+  for (const j of (state.history || []).slice(0, 5)) items.push(`✓ ${j.status}: ${trim(j.prompt)}`);
+  $('queue').innerHTML = items.map((t) => `<div class="q">${escapeHtml(t)}</div>`).join('') || '<div class="q">no jobs yet</div>';
+  const running = Boolean(state.current);
+  $('pauseBtn').disabled = !running; $('resumeBtn').disabled = !running; $('abortBtn').disabled = !running;
+}
+const trim = (s) => (s || '').length > 60 ? s.slice(0, 57) + '…' : (s || '');
+const escapeHtml = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+function connectWS() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'state') { setStatus(m.state.connected, m.state.connected ? 'screen control on' : 'off'); renderQueue(m.state); }
+    else if (m.type === 'frame') setFrame(m.image);
+    else if (m.type === 'step' || m.type === 'log') addStep(m);
+    else if (m.type === 'goal-start') addStep({ status: 'goal', message: 'goal: ' + trim(m.goal) });
+    else if (m.type === 'goal-end') addStep({ status: m.ok ? 'ok' : 'fail', message: (m.ok ? 'done' : 'stopped') + (m.reason ? ' — ' + m.reason : '') });
+    else if (m.type === 'job-start') { addStep({ status: 'start', message: 'job: ' + trim(m.job.prompt) }); refresh(); }
+    else if (m.type === 'job-end') { addStep({ status: m.job.status === 'done' ? 'ok' : 'fail', message: 'job ' + m.job.status }); refresh(); }
+    else if (m.type === 'queued') refresh();
+  };
+  ws.onclose = () => setTimeout(connectWS, 1500);
+}
+async function refresh() { const s = await (await fetch('/api/state')).json(); setStatus(s.connected, s.connected ? 'connected' : 'disconnected'); renderQueue(s); }
+
+$('connectBtn').onclick = async () => {
+  $('connectBtn').disabled = true; $('connectBtn').textContent = 'Enabling…';
+  const r = await (await fetch('/api/connect', { method: 'POST' })).json();
+  if (r.error) { addStep({ status: 'fail', message: r.error }); $('connectBtn').textContent = 'Retry'; }
+  else { addStep({ status: 'ok', message: 'screen control enabled' }); $('connectBtn').textContent = 'Screen control on'; }
+  $('connectBtn').disabled = false; refresh();
+};
+$('queueBtn').onclick = async () => {
+  const body = { prompt: $('prompt').value, orientation: $('orientation').value, insertMode: $('insertMode').value, ingredientPath: $('ingredient').value.trim() || undefined };
+  const r = await (await fetch('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+  if (r.error) addStep({ status: 'fail', message: r.error });
+  else { addStep({ status: 'info', message: 'queued' }); $('prompt').value = ''; }
+};
+for (const [id, action] of [['pauseBtn', 'pause'], ['resumeBtn', 'resume'], ['abortBtn', 'abort']]) {
+  $(id).onclick = () => fetch('/api/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
+}
+async function send() {
+  const text = $('chatInput').value.trim(); if (!text) return;
+  $('chatInput').value = '';
+  const chat = $('chat');
+  chat.insertAdjacentHTML('beforeend', `<div class="msg me">${escapeHtml(text)}</div>`);
+  chat.scrollTop = chat.scrollHeight;
+  const r = await (await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) })).json();
+  chat.insertAdjacentHTML('beforeend', `<div class="msg bot">${escapeHtml(r.reply || '…')}</div>`);
+  chat.scrollTop = chat.scrollHeight;
+}
+$('sendBtn').onclick = send;
+$('chatInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+
+connectWS(); refresh();
+</script>
+</body>
+</html>

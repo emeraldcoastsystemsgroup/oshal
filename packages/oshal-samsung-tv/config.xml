@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Tizen TV web-app manifest for the OSHAL Home Samsung surface. Data/config file: Tizen reads
+     it at package/install time. A Samsung TV app IS a web app, so this is the analog of the Fire
+     TV AndroidManifest. allow-navigation must permit the OSHAL host because the app navigates the
+     TOP window to the OIDC-gated dashboard (Google login refuses to render inside an iframe).
+     ADR-047 Samsung surface. -->
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets"
+        id="http://oshal.agenticfederal.us/home" version="1.0.0" viewmodes="maximized">
+  <!-- application id = <packageId>.<appName>. packageId is assigned/confirmed in the Samsung
+       Seller Portal at submission; this placeholder is fine for sideload/certification. -->
+  <tizen:application id="OshalHome0.OshalHome" package="OshalHome0" required_version="6.0"/>
+  <content src="index.html"/>
+  <icon src="icon.png"/>
+  <name>OSHAL Home</name>
+  <tizen:profile name="tv"/>
+
+  <!-- 1080p TV profile. -->
+  <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>
+
+  <!-- Network + remote-key access. -->
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+
+  <!-- Allow loading remote OSHAL content + the Google OIDC login redirect (top-level). -->
+  <access origin="*" subdomains="true"/>
+  <tizen:allow-navigation>* *.agenticfederal.us accounts.google.com</tizen:allow-navigation>
+
+  <tizen:setting screen-orientation="landscape" context-menu="disable"
+                 background-support="disable" encryption="disable" hwkey-event="enable"/>
+</widget>

@@ -1,0 +1,83 @@
+provider: spotify
+displayName: Spotify
+version: 1.0.0
+baseUrl: https://api.spotify.com/v1
+auth:
+  type: oauth2
+  tokenAuth: basic
+  scopes:
+    - playlist-modify-private
+    - playlist-modify-public
+    - user-top-read
+    - user-read-currently-playing
+    - user-read-private
+rateLimit:
+  burst: 10
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: link
+  nextField: next
+resources:
+  - name: me
+    tool: spotify-me
+    method: GET
+    path: /me
+  - name: search-tracks
+    tool: spotify-search
+    method: GET
+    path: /search
+    query:
+      type: track
+      q: '{query}'
+      limit: '{limit}'
+      market: '{market}'
+  - name: now-playing
+    tool: spotify-now-playing
+    method: GET
+    path: /me/player/currently-playing
+    query:
+      market: from_token
+    emptyOk:
+      - 204
+  - name: my-playlists
+    tool: spotify-playlists
+    method: GET
+    path: /me/playlists
+    query:
+      limit: '50'
+    paginate: true
+  - name: top-tracks
+    tool: spotify-top-tracks
+    method: GET
+    path: /me/top/tracks
+    query:
+      limit: '{limit}'
+      time_range: medium_term
+  - name: create-playlist
+    tool: spotify-create-playlist
+    method: POST
+    path: /users/{userId}/playlists
+    body:
+      name: '{name}'
+      description: '{description}'
+      public: false
+    retry:
+      maxRetries: 0
+  - name: add-tracks
+    tool: spotify-add-tracks
+    method: POST
+    path: /playlists/{playlistId}/tracks
+    body:
+      uris: '{uris}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "Read the connected Spotify profile, current playback, playlists, and top tracks, with resources to create playlists and add tracks."
+  category: "Media"
+  icon: spotify
+  iconTitle: Spotify
+  iconSource: simple-icons
+  iconVerified: true

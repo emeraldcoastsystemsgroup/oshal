@@ -1,0 +1,9 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Pinned deterministic API and unit-test tooling.
+
+-r requirements.txt
+httpx==0.28.1
+pytest==8.4.1

@@ -1,0 +1,60 @@
+# docker-compose.hotswap.yml — OPT-IN full hot-swap for the swarm controller (oshal-api)
+# ---------------------------------------------------------------------------------------
+# WHY: src/pages + jarvis.html already hot-swap (bind-mounted in the base file), so cockpit
+# and surface edits go live on refresh. But the controller boots `node dist/app/server.js`,
+# so server/route/feature TS changes only go live after an image rebuild. With many bots
+# editing server TS today, layer this file to run the server via `tsx watch` straight from
+# host source — every server-side TS save restarts the controller in-place, no rebuild.
+#
+# USAGE (you restart it yourself — this file just changes how oshal-api boots):
+#   docker compose -f docker-compose.oshal-local.yml -f docker-compose.hotswap.yml up -d oshal-api
+#
+# FALL BACK to the proven baked-dist boot at any time by dropping the second -f:
+#   docker compose -f docker-compose.oshal-local.yml up -d oshal-api
+#
+# NOTES / GUARDRAILS:
+#   * We bind-mount only the pure-TS server trees. We deliberately DO NOT mount src/api —
+#     that would shadow the image's baked vite dist (src/api/dist) and 404 the chat UI.
+#   * tsx is a runtime dependency and is invoked through ./node_modules/.bin/tsx. That survives
+#     npm prune --production and avoids relying on a stale image's global npm bin contents. NOTE:
+#     the image itself ships only tsconfig.server.json, NOT tsconfig.json — this override
+#     bind-mounts tsconfig.json (below), so plain `tsx` finds the paths in the hotswap boot. We
+#     ALSO pass `--tsconfig tsconfig.server.json` explicitly (belt-and-suspenders): it pins alias
+#     resolution to the self-contained server tsconfig, so the controller still boots if that
+#     mount is ever dropped. Either way @/ resolves.
+#   * The DB-wait + migration prefix is identical to the base command and still runs from
+#     baked dist (proven). Only the long-running server swaps to `tsx watch`. A brand-new
+#     migration a bot adds still needs a rebuild (rare); everything else is live.
+#   * VALIDATED 2026-06-22: boots healthy, serves /api/health 200, wiring-audit OK. (Earlier a boot
+#     was seen crash-looping during heavy trunk-consolidation churn — DNS failures + concurrent
+#     image builds + container recreation races — NOT reproducible on a clean recreate.) If the
+#     controller ever doesn't come up, drop the override and you're back to the baked-dist boot.
+services:
+  oshal-api:
+    volumes:
+      - ./src/app:/app/src/app:ro
+      - ./src/features:/app/src/features:ro
+      - ./src/shared:/app/src/shared:ro
+      - ./src/entities:/app/src/entities:ro
+      - ./src/agent:/app/src/agent:ro
+      - ./src/swarm:/app/src/swarm:ro
+      - ./src/mcp-servers:/app/src/mcp-servers:ro
+      - ./src/types:/app/src/types:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+    command: >
+      sh -c "cp -f /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
+             cp -n /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
+             echo 'Waiting for Postgres to accept queries...';
+             for i in 1 2 3 4 5 6 7 8 9 10; do
+               node -e \"const {Pool}=require('pg');new Pool({connectionString:process.env.DATABASE_URL}).query('SELECT 1').then(()=>{process.exit(0)}).catch(()=>{process.exit(1)})\" && break;
+               echo \"  attempt $$i — waiting 2s...\"; sleep 2;
+             done;
+             if [ \"$$OSHAL_SCHEMA_BOOTSTRAP\" = \"validate-only\" ] || [ \"$$OSHAL_SKIP_RUNTIME_MIGRATIONS\" = \"true\" ]; then
+               echo 'Skipping runtime migrations before server start (validate-only/app-role profile).';
+             else
+               echo 'Running migrations before server start...';
+               RUN_MIGRATIONS=true node -e \"const{DatabaseBootstrapService}=require('./dist/features/tool-registry/services/database-bootstrap-service');const{Pool}=require('pg');const p=new Pool({connectionString:process.env.DATABASE_URL});new DatabaseBootstrapService(p).applyMigrations().then(m=>{console.log('Migrations done:',m.length);p.end()}).catch(e=>{console.error('Migration err:',e.message);p.end()})\" 2>&1;
+             fi;
+             sleep 2;
+             echo 'HOT-SWAP: starting controller via tsx watch (server TS live on save)...';
+             exec ./node_modules/.bin/tsx watch --tsconfig tsconfig.server.json src/app/server.ts"

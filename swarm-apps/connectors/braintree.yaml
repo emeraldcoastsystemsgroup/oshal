@@ -1,0 +1,42 @@
+provider: braintree
+displayName: Braintree
+version: 1.0.0
+baseUrl: https://api.braintreegateway.com
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: braintree-customers
+    method: GET
+    path: /merchants/{merchantId}/customers
+  - name: customer
+    tool: braintree-customer
+    method: GET
+    path: /merchants/{merchantId}/customers/{customerId}
+  - name: transactions
+    tool: braintree-transactions
+    method: GET
+    path: /merchants/{merchantId}/transactions
+  - name: transaction
+    tool: braintree-transaction
+    method: GET
+    path: /merchants/{merchantId}/transactions/{transactionId}
+  - name: subscriptions
+    tool: braintree-subscriptions
+    method: GET
+    path: /merchants/{merchantId}/subscriptions/{subscriptionId}
+  - name: plans
+    tool: braintree-plans
+    method: GET
+    path: /merchants/{merchantId}/plans
+metadata:
+  icon: braintree
+  iconTitle: Braintree
+  iconSource: simple-icons
+  iconVerified: true

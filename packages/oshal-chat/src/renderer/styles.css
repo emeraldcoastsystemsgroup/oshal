@@ -1,0 +1,159 @@
+:root {
+  --bg: #0b1020;
+  --panel: #141b33;
+  --panel-2: #1c2547;
+  --text: #e6ebff;
+  --muted: #8a93b8;
+  --accent: #34d3a6;
+  --accent-hover: #7cf0c8;
+  --ok: #3ddc97;
+  --err: #ff6b6b;
+  --border: #26305a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: radial-gradient(1200px 800px at 50% -10%, #16203f 0%, var(--bg) 60%);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; background: rgba(20, 27, 51, 0.6);
+  border-bottom: 1px solid var(--border); backdrop-filter: blur(8px);
+}
+.brand { font-weight: 700; letter-spacing: 0.5px; }
+.status { display: flex; align-items: center; gap: 6px; color: var(--muted); margin-left: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.dot.online { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot.offline { background: var(--err); }
+.topbar .ghost-btn { margin-left: auto; }
+
+/* Frameless window controls (no native title bar). No-drag so they stay clickable. */
+.winctl { display: flex; gap: 4px; -webkit-app-region: no-drag; }
+.winbtn { padding: 0; width: 30px; height: 26px; line-height: 24px; text-align: center;
+  border-radius: 7px; background: rgba(120, 140, 190, 0.14); color: var(--muted); font-size: 13px; }
+.winbtn:hover { background: rgba(120, 140, 190, 0.26); color: var(--text); }
+.winbtn.close:hover { background: #c0392b; color: #fff; }
+
+button { cursor: pointer; border: none; border-radius: 9px; font: inherit; padding: 8px 16px; }
+.primary-btn { background: var(--accent); color: #06281e; font-weight: 700; }
+.primary-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.ghost-btn { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.ghost-btn.small { padding: 5px 11px; font-size: 12px; }
+
+/* Frameless window: the topbar IS the title bar — draggable, padded clear of the
+   native window-controls overlay; its buttons stay clickable. */
+.topbar { -webkit-app-region: drag; padding-right: calc(100vw - env(titlebar-area-width, 100vw)); }
+.topbar button { -webkit-app-region: no-drag; }
+
+/* ============ Orb surface ============ */
+.orb-view { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 18px 16px 8px; overflow-y: auto; }
+.orb-view.hidden { display: none; }
+.canvas-wrap { width: min(46vh, 340px); height: min(46vh, 340px); flex: none; }
+#orb { width: 100%; height: 100%; display: block; cursor: pointer; }
+.orb-status { color: var(--muted); margin: 6px 0 12px; min-height: 20px; text-align: center; }
+.orb-status.err { color: var(--err); }
+
+.bubble-pair { width: 100%; max-width: 640px; min-height: 26px; }
+.you { color: var(--muted); margin-bottom: 4px; }
+.ai { color: var(--text); white-space: pre-wrap; }
+/* Rendered-markdown reply: constrained + scrollable so a long answer never
+   shoves the ask bar off screen; compact styles for the mini md renderer. */
+.ai.md { white-space: normal; max-height: 34vh; overflow-y: auto; line-height: 1.45;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; }
+.ai.md .md-gap { height: 8px; }
+.ai.md .md-h { font-weight: 700; margin: 6px 0 2px; }
+.ai.md pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; margin: 6px 0; overflow-x: auto; font-size: 12px; white-space: pre; }
+.ai.md code { background: var(--panel-2); border-radius: 4px; padding: 1px 5px; font-size: 0.92em; }
+.ai.md ul, .ai.md ol { margin: 4px 0 4px 22px; }
+.ai.md li { margin: 2px 0; }
+.ai.md table { border-collapse: collapse; margin: 6px 0; max-width: 100%; display: block; overflow-x: auto; }
+.ai.md td { border: 1px solid var(--border); padding: 4px 9px; font-size: 13px; }
+.ai.md tr:first-child td { font-weight: 700; background: var(--panel-2); }
+.ai.md a { color: var(--accent); text-decoration: none; }
+.ai.md a:hover { text-decoration: underline; }
+.ai.md hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
+
+.controls { margin: 14px 0 6px; }
+.mic {
+  display: inline-flex; align-items: center; gap: 9px; font-weight: 700; font-size: 0.96rem;
+  color: #06281e; background: var(--accent); padding: 11px 20px; border-radius: 999px;
+}
+.mic:hover { background: var(--accent-hover); transform: translateY(-1px); }
+.mic.live { background: var(--err); color: #fff; box-shadow: 0 8px 24px -8px var(--err); }
+.mic svg { width: 18px; height: 18px; fill: currentColor; }
+
+.ctlrow { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+.ctl { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; font-size: 12px; border-radius: 999px; }
+
+.typer { display: none; gap: 8px; margin-top: 12px; width: 100%; max-width: 520px; }
+.typer.show { display: flex; }
+.typer input { flex: 1; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font: inherit; }
+.typer button { background: var(--accent); color: #06281e; font-weight: 700; }
+
+/* ============ Worker activity log ============ */
+.worklog { width: 100%; max-width: 640px; margin-top: 22px; }
+.worklog-head { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px; }
+.worker-pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; }
+.worker-pill.on { background: rgba(61, 220, 151, 0.16); color: var(--ok); }
+.worker-pill.off { background: rgba(138, 147, 184, 0.16); color: var(--muted); }
+.worklog-body { display: flex; flex-direction: column; gap: 8px; }
+.work-row { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+.work-row.completed { border-left: 3px solid var(--ok); }
+.work-row.failed { border-left: 3px solid var(--err); }
+.work-row.claimed { border-left: 3px solid var(--accent); }
+.work-intent { font-weight: 700; }
+.work-tag { float: right; color: var(--muted); font-size: 12px; }
+.work-out { margin-top: 6px; color: var(--text); white-space: pre-wrap; font-size: 12.5px; max-height: 160px; overflow: auto; }
+.work-err { margin-top: 6px; color: #ffd7d7; font-size: 12.5px; }
+.muted { color: var(--muted); }
+
+/* ============ Config screen ============ */
+.settings { flex: 1; padding: 18px; overflow-y: auto; }
+.settings.hidden { display: none; }
+.settings h2 { font-size: 13px; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; }
+.settings label { display: block; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
+.settings .hint { color: var(--muted); font-weight: 400; text-transform: none; }
+.settings input[type="text"], .settings input[type="password"] {
+  width: 100%; margin-top: 4px; padding: 8px 10px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 13px;
+}
+.row { display: flex; gap: 12px; }
+.row label { flex: 1; }
+label.check { display: flex; align-items: center; gap: 8px; }
+label.check input { width: auto; margin: 0; }
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.msg { color: var(--muted); font-size: 12px; }
+.msg.ok { color: var(--ok); }
+.msg.err { color: var(--err); }
+
+.danger-box { margin: 10px 0; padding: 12px; border: 1px solid var(--err); border-radius: 10px; background: rgba(255, 107, 107, 0.07); }
+.warn-text { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.warn-text code { color: var(--text); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+
+.identity-row { display: flex; align-items: center; gap: 12px; }
+.wake-box { margin: 10px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(52, 211, 166, 0.06); }
+.wake-state-wrap { flex: 1; display: flex; align-items: center; gap: 9px; min-height: 54px; color: var(--text); }
+.wake-state-wrap small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.wake-dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--muted); }
+.wake-dot.listening { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.wake-dot.starting, .wake-dot.triggered { background: #f6c85f; box-shadow: 0 0 8px #f6c85f; }
+.wake-dot.error, .wake-dot.unavailable { background: var(--err); box-shadow: 0 0 8px var(--err); }
+.wake-actions { display: flex; align-items: center; gap: 12px; }
+.wake-actions .warn-text { margin: 0; }
+.accounts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.account { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+.acct-dot { width: 9px; height: 9px; border-radius: 50%; }
+.acct-dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.acct-dot.off { background: var(--muted); }
+.acct-label { font-weight: 600; }
+.acct-state { color: var(--muted); font-size: 12px; margin-left: auto; }
+.account .ghost-btn { margin-left: 8px; }

@@ -1,0 +1,72 @@
+{
+  "_comment": "OSHAL short-form video templates. Each template LOCKS one visual style across the whole clip (every beat appends the same `style` + `negative`), which keeps the look consistent — the fix for per-scene style drift. `beats` is the 3-shot structure for a ~10s clip (3 x 81 frames @ 25fps). `stock_segments` are reusable openers/closers any template can prepend/append. Consumed by make-template-video.py (box-side) and, once wired, the OSHAL ComfyUI provider's staged storyboard pipeline (ADR-070).",
+  "settings": { "width": 768, "height": 512, "fps": 25, "frames_per_beat": 81, "steps": 30, "cfg": 3.2, "model": "ltx-video-2b-v0.9.5.safetensors" },
+  "templates": {
+    "sports": {
+      "label": "Sports — game overview",
+      "style": "dynamic TV sports broadcast footage, stadium, dramatic floodlights, cinematic, slight motion blur, high energy",
+      "negative": "cartoon, drawing, low quality, blurry, text, watermark",
+      "beats": [
+        "wide aerial establishing shot of a packed stadium at night, floodlights blazing",
+        "athletes sprinting across the field in a fast play, crowd blurred behind",
+        "a dramatic game-winning moment, players celebrating, confetti falling, crowd roaring"
+      ]
+    },
+    "fantasy": {
+      "label": "Fantasy picks review",
+      "style": "sports broadcast analysis graphic, clean modern studio, bold team colors, dynamic camera, premium broadcast look",
+      "negative": "messy, low quality, blurry, deformed",
+      "beats": [
+        "a sleek sports analysis studio desk with glowing screens and stats",
+        "a star athlete in a heroic slow-motion pose, spotlight, bold backdrop",
+        "an energetic montage of players, bold graphic style, dynamic camera"
+      ]
+    },
+    "stick-figure": {
+      "label": "Stick figures — pencil line talking",
+      "style": "simple 2D hand-drawn pencil line animation, black ink stick figures, plain white paper background, minimal doodle, flat 2D",
+      "negative": "realistic, 3d, photo, color, detailed, shading, texture",
+      "beats": [
+        "two simple black stick figures talking and gesturing on a white background",
+        "a stick figure pointing at a simple hand-drawn bar chart on white paper",
+        "two stick figures high-fiving, simple motion lines, plain white background"
+      ]
+    },
+    "story": {
+      "label": "Story mode — cinematic",
+      "style": "cinematic film still, warm lighting, shallow depth of field, detailed, atmospheric, subtle film grain",
+      "negative": "low quality, blurry, deformed, text, watermark",
+      "beats": [
+        "a cozy cabin interior at night lit by a warm fireplace, cinematic",
+        "a lone character gazing out a rain-streaked window, moody light",
+        "a warm hopeful sunrise breaking over misty mountains, cinematic wide shot"
+      ]
+    },
+    "tech": {
+      "label": "Technology overview",
+      "style": "sleek futuristic technology product render, glowing blue holographic UI, clean minimal, dark background, premium",
+      "negative": "cluttered, low quality, blurry, hands, text",
+      "beats": [
+        "a sleek smartphone slowly rotating with glowing holographic interface elements",
+        "abstract flowing data streams and glowing network nodes, blue and cyan",
+        "a futuristic microchip on a circuit board with pulsing light, macro shot"
+      ]
+    },
+    "paper": {
+      "label": "Paper stop-motion",
+      "style": "paper cutout stop motion animation, construction paper texture, handmade, soft shadows, layered papercraft, whimsical",
+      "negative": "realistic, 3d render, photo, smooth, glossy",
+      "beats": [
+        "a paper cutout sun rising over layered paper hills, construction paper texture",
+        "a paper cutout character walking across a paper landscape, stop-motion feel",
+        "paper cutout birds flying across a paper sky, handmade craft style"
+      ]
+    }
+  },
+  "stock_segments": {
+    "opening": "a dramatic title card intro, glowing text reveal, energetic light streaks, cinematic",
+    "athlete-intro": "a star athlete walking out of a stadium tunnel into bright lights, slow-motion hero shot, dramatic",
+    "logo-sting": "a clean logo animation sting, dynamic geometric reveal, premium",
+    "outro-cta": "an end card with a glowing subscribe / follow call-to-action, energetic motion"
+  }
+}

@@ -1,0 +1,34 @@
+provider: brex
+displayName: Brex
+version: 1.0.0
+baseUrl: https://platform.brexapis.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: card-transactions
+    tool: brex-card-transactions
+    method: GET
+    path: /transactions/card
+    query:
+      limit: '{limit}'
+  - name: accounts
+    tool: brex-accounts
+    method: GET
+    path: /accounts
+  - name: users
+    tool: brex-users
+    method: GET
+    path: /users
+    query:
+      limit: '{limit}'
+metadata:
+  icon: brex
+  iconTitle: Brex
+  iconSource: simple-icons
+  iconVerified: true

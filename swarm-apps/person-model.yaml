@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — Ambient Recall (the ambient Person Model, ADR-100)
+# Framework: OSHAL (see docs/build-your-own-swarm-app.md)
+#
+# An extension over Jarvis ambient listening: it turns speaker-attributed
+# transcripts into recall-with-receipts. "How many times has Ella mentioned
+# volleyball today?" → an EXACT count + the verbatim lines + play-it-back (the
+# assistant re-speaks the quoted text; no audio is ever stored).
+#
+# Phase 1 (ADR-100): deterministic recall over the owner's own transcripts — no
+# new engine, no new bot, no LLM. The count is a SQL aggregate over a generated
+# tsvector, never a model guess. Later phases add inference (tone/intent/asks),
+# a consent ledger for heard non-users, and semantic recall.
+#
+# Storage/consent posture and the audio-clip REJECTION are recorded in
+# docs/adr/100-ambient-person-model.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: person-model
+suite: ai-knowledge   # ADR-097: primary catalog shelf — personal recall/knowledge over your own transcripts
+displayName: Ambient Recall
+description: >-
+  Ask what someone said. Turns your Jarvis ambient transcripts into recall with
+  receipts — an exact count, the verbatim quoted lines, and play-it-back that
+  re-speaks them in the assistant voice. Opt-in, owner-private, no audio stored.
+version: 1.0.0
+status: active
+
+# UI SURFACE — a ribbon item that opens the Ambient Recall page. The route is
+# baked into the core image (server.ts mounts /api/jarvis/ambient/person behind
+# requiresAuth); this app contributes the surface + its catalog shelf.
+ui:
+  static:
+    - toolName: ambient-recall
+      label: Ambient Recall
+      icon: codicon codicon-search
+      iframeUrl: /api/jarvis/ambient/person/
+      section: top

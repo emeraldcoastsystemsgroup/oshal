@@ -1,0 +1,22 @@
+# Business, GTM & competitive
+
+Positioning, go-to-market, and pitch material. The engineering-facing "why OSHAL" case lives at
+[../WHY_OSHAL.md](../WHY_OSHAL.md); the whitepaper at
+[../OSHAL-WHITEPAPER.md](../OSHAL-WHITEPAPER.md).
+
+- [catch-up-plan.md](./catch-up-plan.md) — grassroots plan to reach competitor parity on
+  "the glue" (replaces the earlier go-to-market plan; OSHAL is OSS freeware, not for sale).
+- [competitive-landscape.md](./competitive-landscape.md) — competitive landscape.
+- [competitive-claims-honest.md](./competitive-claims-honest.md) — **the
+  adversarially-verified record of which claims survive.** Two "exclusive" claims (runtime agent spawn,
+  agent cluster per step) were refuted and retired; documents what's real in our own code (the
+  self-healing red/blue loop) so nobody re-confuses it in either direction. If the site and this file
+  disagree, this file wins.
+- [oshal-capabilities-brief.md](./oshal-capabilities-brief.md) — capabilities brief.
+- [oshal-as-is-to-be-delivery.md](./oshal-as-is-to-be-delivery.md) — as-is / to-be state and
+  delivery plan.
+
+Related: [../assets/oshal/README.md](../assets/oshal/README.md) — one-pager, benchmark brief,
+demo script, sales deck outline, messaging kit. [../enterprise/](../enterprise/) — procurement
+security packet, permission-aware RAG, SCIM bridge. [../saas/](../saas/) — public self-serve
+foundation.

@@ -1,0 +1,44 @@
+provider: twitter
+displayName: X (Twitter)
+version: 1.0.0
+baseUrl: https://api.twitter.com/2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 1
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: pagination_token
+  nextField: meta.next_token
+  itemsField: data
+resources:
+  - name: me
+    tool: twitter-me
+    method: GET
+    path: /users/me
+  - name: user-tweets
+    tool: twitter-user-tweets
+    method: GET
+    path: /users/{userId}/tweets
+    query:
+      max_results: '100'
+    paginate: true
+  - name: search-recent
+    tool: twitter-search-recent
+    method: GET
+    path: /tweets/search/recent
+    query:
+      query: '{query}'
+      max_results: '100'
+    paginate: true
+metadata:
+  description: "Read the connected X (Twitter) profile, a user recent posts, and recent-search results."
+  category: "Social"
+  icon: x
+  iconTitle: X
+  iconSource: simple-icons
+  iconVerified: true

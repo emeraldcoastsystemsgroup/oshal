@@ -1,0 +1,30 @@
+provider: featurebase
+displayName: Featurebase
+version: 1.0.0
+baseUrl: https://do.featurebase.app/v2
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: posts
+    tool: featurebase-posts
+    method: GET
+    path: /posts
+  - name: boards
+    tool: featurebase-boards
+    method: GET
+    path: /boards
+  - name: changelog
+    tool: featurebase-changelog
+    method: GET
+    path: /changelog
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/do.featurebase.app.ico

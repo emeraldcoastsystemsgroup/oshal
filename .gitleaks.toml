@@ -1,0 +1,48 @@
+# gitleaks config for OSHAL — working-tree secret scanning.
+# Extends the default ruleset, then allowlists the known non-secrets that the
+# 2026-06-21 baseline triage confirmed are placeholders / fixtures / local dev
+# defaults. Goal: a REAL new secret fails CI; these proven non-secrets do not.
+title = "OSHAL gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Examples, test fixtures, and local-dev default credentials (not real secrets)"
+paths = [
+  '''node_modules/.*''',
+  '''.*\.example$''',
+  '''.*\.example\.(ya?ml|yml|json|env)$''',
+  '''.*\.env\.example$''',
+  '''tests/.*''',
+  '''.*\.spec\.ts$''',
+  '''.*\.test\.ts$''',
+  # Private release-scrubber INPUTS — the real-secret replacement table + the reverse-identity
+  # vault. Operator-local, gitignored, and DROPPED from the public baseline (build-public-baseline.sh
+  # step 2b `rm -rf scripts/release`). They never commit + never ship, but gitleaks --no-git scans the
+  # working tree regardless of .gitignore — allowlist them so the secret-scan stops crying wolf.
+  '''scripts/release/secret-replacements\.txt$''',
+  '''scripts/release/authors\.vault\.json$''',
+]
+regexes = [
+  '''AKIAIOSFODNN7EXAMPLE''',                     # AWS documentation dummy key
+  '''postgresql://(oshal:oshal|user:pass)@''',    # docker-compose dev DSNs
+  '''-u\s+admin:admin''',                          # localhost port-forward diagnostics
+  '''test-api-key-12345''',                        # test fixture
+  '''ANTHROPIC_API_KEY=\s*$''',                    # empty placeholder in env templates
+  '''replace-with-[a-z0-9-]+''',                   # self-describing placeholders ("replace-with-a-strong-...", "replace-with-at-least-16-characters", ...)
+  # Cost-evidence JSON groups spend by model, so an LLM model id lands under a "key" field and
+  # generic-api-key fires on its entropy. A model id is a public name, not a credential.
+  # NOTE: allowlist regexes match the SECRET, not the surrounding line, so anchor on the id itself.
+  '''^(claude|gpt|gemini|llama|mistral|deepseek|qwen|grok|o[1-9])[-a-z0-9._]*$''',
+  # The Claude Code CLI's registered PUBLIC OAuth client id (OAuth public client — ships inside
+  # the CLI itself; not a credential). Lives in claude-code-auth-service.ts and
+  # scripts/claude-token-refresh.js; generic-api-key fires on the scripts/ occurrence's shape
+  # (CI run 29064817013, 2026-07-09).
+  '''9d1c250a-e61b-44d9-88ed-5944d1962f5e''',
+  # Trading knob-sweep grid row ids (scripts/oshal-trading-knob-sweep.ts EGATE_BASES) — a `key:`
+  # field holding a sweep-row NAME like 'gravity-t12-c60' / 'ira-balanced-cad10-c60', which
+  # generic-api-key fires on (2026-07-19 nightly). Shape-anchored so a real credential pasted
+  # into that file still fails: rank-or-ira prefix + tNN/cadNN dial + optional -cNN core pct.
+  '''^(gravity|momentum|ensemble|ira)(-[a-z]+)*-(t\d+|cad\d+)(-c\d+)?$''',
+]

@@ -1,0 +1,741 @@
+<title>OSHAL Quant — an honest trading appliance</title>
+<style>
+  :root {
+    /* Warm "instrument housing" neutrals — biased toward the orange accent, not pure grey */
+    --bone:      #F4F1EC;
+    --bone-2:    #EAE5DD;
+    --bone-3:    #DED7CB;
+    --ink:       #1C1915;
+    --ink-2:     #4A443B;
+    --ink-3:     #7C7264;
+    --rule:      #D3CBBD;
+    --surface:   #FBF9F6;
+
+    /* Chart + signal palette — validated (validate_palette.js, light on #F4F1EC: ALL PASS) */
+    --signal:    #C2410C;   /* cost, rent, risk, killed */
+    --measured:  #0D9488;   /* owned, verified, kept */
+    --third:     #2563EB;   /* third series */
+    --signal-soft: rgba(194, 65, 12, 0.10);
+    --measured-soft: rgba(13, 148, 136, 0.10);
+
+    --shadow: 0 1px 2px rgba(28,25,21,.05), 0 8px 24px -12px rgba(28,25,21,.14);
+    --maxw: 74rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bone:    #191714;
+      --bone-2:  #221F1B;
+      --bone-3:  #2C2822;
+      --ink:     #F0EBE3;
+      --ink-2:   #BDB4A6;
+      --ink-3:   #8A8073;
+      --rule:    #35302A;
+      --surface: #1F1C18;
+      /* Dark steps SELECTED against #191714 (validate_palette.js --mode dark: ALL PASS) */
+      --signal:   #D45A18;
+      --measured: #0FA192;
+      --third:    #3B82F6;
+      --signal-soft: rgba(212, 90, 24, 0.14);
+      --measured-soft: rgba(15, 161, 146, 0.14);
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bone:    #191714; --bone-2: #221F1B; --bone-3: #2C2822;
+    --ink:     #F0EBE3; --ink-2:  #BDB4A6; --ink-3:  #8A8073;
+    --rule:    #35302A; --surface: #1F1C18;
+    --signal:  #D45A18; --measured: #0FA192; --third: #3B82F6;
+    --signal-soft: rgba(212, 90, 24, 0.14);
+    --measured-soft: rgba(15, 161, 146, 0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+  :root[data-theme="light"] {
+    --bone:    #F4F1EC; --bone-2: #EAE5DD; --bone-3: #DED7CB;
+    --ink:     #1C1915; --ink-2:  #4A443B; --ink-3:  #7C7264;
+    --rule:    #D3CBBD; --surface: #FBF9F6;
+    --signal:  #C2410C; --measured: #0D9488; --third: #2563EB;
+    --signal-soft: rgba(194, 65, 12, 0.10);
+    --measured-soft: rgba(13, 148, 136, 0.10);
+    --shadow: 0 1px 2px rgba(28,25,21,.05), 0 8px 24px -12px rgba(28,25,21,.14);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bone);
+    color: var(--ink);
+    font-family: Iowan Old Style, Palatino Linotype, Palatino, Georgia, serif;
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 1.75rem 7rem; }
+
+  /* ── The instrument voice: mono, uppercase, tracked ── */
+  .mono, .eyebrow, .tag, table th, .num, .bar-val, .kpi-val, .kpi-label, .rail {
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .eyebrow {
+    font-size: .69rem; text-transform: uppercase; letter-spacing: .16em;
+    color: var(--ink-3); font-weight: 600;
+  }
+
+  /* ── Display face: tight, heavy sans — the label on the housing ── */
+  h1, h2, h3 {
+    font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+    text-wrap: balance; margin: 0;
+  }
+  h1 { font-size: clamp(2.5rem, 6vw, 4.4rem); font-weight: 800; letter-spacing: -.035em; line-height: 1.02; }
+  h2 { font-size: clamp(1.5rem, 3vw, 2.05rem); font-weight: 800; letter-spacing: -.022em; line-height: 1.12; }
+  h3 { font-size: 1.06rem; font-weight: 700; letter-spacing: -.008em; }
+
+  p { margin: 0 0 1.05rem; max-width: 66ch; }
+  strong { font-weight: 700; }
+  a { color: var(--signal); }
+
+  /* ── Header plate ── */
+  header {
+    border-bottom: 2px solid var(--ink);
+    padding: 4.5rem 0 2.5rem;
+    margin-bottom: 3.5rem;
+  }
+  .plate {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 2rem; flex-wrap: wrap; margin-bottom: 3rem;
+  }
+  .plate .model { font-size: .72rem; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-3); }
+  .lede {
+    font-size: 1.3rem; line-height: 1.5; color: var(--ink-2);
+    max-width: 60ch; margin-top: 1.75rem;
+  }
+  .lede b { color: var(--ink); font-weight: 700; }
+
+  /* ── Sections ── */
+  section { padding: 3.25rem 0; border-bottom: 1px solid var(--rule); }
+  section:last-of-type { border-bottom: 0; }
+  .sec-head { display: flex; gap: 1.25rem; align-items: baseline; margin-bottom: 1.75rem; }
+  .rail { font-size: .72rem; color: var(--ink-3); white-space: nowrap; padding-top: .3rem; letter-spacing: .1em; }
+
+  /* ── KPI row ── */
+  .kpis {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+    margin: 2rem 0;
+  }
+  .kpi { background: var(--surface); padding: 1.15rem 1.25rem; }
+  .kpi-val { font-size: 1.85rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; color: var(--ink); }
+  .kpi-val.sig { color: var(--signal); }
+  .kpi-val.mea { color: var(--measured); }
+  .kpi-label { font-size: .66rem; text-transform: uppercase; letter-spacing: .11em; color: var(--ink-3); margin-top: .45rem; }
+  .kpi-note { font-size: .8rem; color: var(--ink-2); margin-top: .3rem; font-family: inherit; }
+
+  /* ── Bar chart (magnitude comparison) ── */
+  figure { margin: 2rem 0; }
+  figcaption { font-size: .84rem; color: var(--ink-3); margin-top: .9rem; max-width: 62ch; }
+  .bars { display: flex; flex-direction: column; gap: .8rem; }
+  .bar-row { display: grid; grid-template-columns: minmax(8.5rem, 13rem) 1fr; gap: 1rem; align-items: center; }
+  .bar-name { font-size: .88rem; color: var(--ink-2); line-height: 1.3; }
+  .bar-track { position: relative; height: 2.05rem; background: var(--bone-2); border-radius: 2px; }
+  .bar-fill {
+    height: 100%; border-radius: 0 4px 4px 0; display: flex; align-items: center;
+    justify-content: flex-end; padding-right: .6rem; min-width: 3.2rem;
+  }
+  .bar-fill.sig { background: var(--signal); }
+  .bar-fill.mea { background: var(--measured); }
+  /* Bars are saturated fills in both themes, so the value label stays light on the mark. */
+  .bar-val { font-size: .78rem; font-weight: 700; color: #FFF8F2; white-space: nowrap; }
+  .legend { display: flex; gap: 1.4rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
+  .legend-item { display: flex; align-items: center; gap: .45rem; font-size: .78rem; color: var(--ink-2); }
+  .swatch { width: .8rem; height: .8rem; border-radius: 2px; flex-shrink: 0; }
+  .swatch.sig { background: var(--signal); }
+  .swatch.mea { background: var(--measured); }
+
+  /* ── Tables (spec sheet) ── */
+  .tbl-wrap { overflow-x: auto; margin: 1.75rem 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; min-width: 34rem; }
+  th, td { text-align: left; padding: .68rem .9rem; border-bottom: 1px solid var(--rule); }
+  th {
+    font-size: .64rem; text-transform: uppercase; letter-spacing: .11em;
+    color: var(--ink-3); font-weight: 600; border-bottom: 1.5px solid var(--ink-3);
+  }
+  td.n, th.n { text-align: right; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+  tr.total td { border-top: 1.5px solid var(--ink-3); border-bottom: 0; font-weight: 700; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  /* ── Callouts ── */
+  .callout {
+    background: var(--surface); border-left: 3px solid var(--signal);
+    padding: 1.2rem 1.4rem; margin: 1.75rem 0; box-shadow: var(--shadow);
+  }
+  .callout.mea { border-left-color: var(--measured); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .eyebrow { margin-bottom: .5rem; display: block; }
+
+  /* ── Killed / verdict chips ── */
+  .chip {
+    display: inline-flex; align-items: center; gap: .4rem;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: .66rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 700;
+    padding: .18rem .5rem; border-radius: 2px; white-space: nowrap;
+  }
+  .chip.killed { background: var(--signal-soft); color: var(--signal); border: 1px solid var(--signal); }
+  .chip.kept   { background: var(--measured-soft); color: var(--measured); border: 1px solid var(--measured); }
+
+  /* ── SKU cards ── */
+  .skus { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1.25rem; margin: 2rem 0; }
+  .sku { background: var(--surface); border: 1px solid var(--rule); padding: 1.4rem; box-shadow: var(--shadow); }
+  .sku h3 { margin-bottom: .2rem; }
+  .sku .price { font-family: ui-monospace, Consolas, monospace; font-size: 1.75rem; font-weight: 700; letter-spacing: -.02em; margin: .5rem 0 .1rem; }
+  .sku .margin { font-family: ui-monospace, Consolas, monospace; font-size: .74rem; color: var(--measured); font-weight: 700; letter-spacing: .04em; }
+  .sku ul { margin: .9rem 0 0; padding-left: 1.05rem; font-size: .88rem; color: var(--ink-2); line-height: 1.55; }
+  .sku li { margin-bottom: .25rem; }
+  .sku.hero { border: 2px solid var(--ink); }
+
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 2.25rem; }
+
+  ul.clean { list-style: none; padding: 0; margin: 1rem 0; }
+  ul.clean li { padding-left: 1.5rem; position: relative; margin-bottom: .7rem; color: var(--ink-2); }
+  ul.clean li::before {
+    content: "—"; position: absolute; left: 0; color: var(--ink-3);
+    font-family: ui-monospace, Consolas, monospace;
+  }
+  ul.clean li b { color: var(--ink); }
+
+  footer { padding: 3rem 0 0; color: var(--ink-3); font-size: .82rem; }
+  footer p { max-width: 70ch; }
+
+  @media (max-width: 46rem) {
+    body { font-size: 16px; }
+    .wrap { padding: 0 1.15rem 4rem; }
+    .bar-row { grid-template-columns: 1fr; gap: .3rem; }
+    .sec-head { flex-direction: column; gap: .35rem; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="plate">
+    <div>
+      <div class="eyebrow">OSHAL — Open Swarm Harness</div>
+      <div class="model mono" style="margin-top:.4rem;">MODEL: QUANT 64 / QUANT 128 · DESIGN DOCUMENT · JULY 2026</div>
+    </div>
+    <div class="mono" style="font-size:.7rem;color:var(--ink-3);text-align:right;line-height:1.8;">
+      STATUS: NOT BUILT<br>SOFTWARE: OPEN SOURCE<br>PROTOTYPE: RUNNING LIVE
+    </div>
+  </div>
+
+  <h1>Stop renting<br>your quant lab.</h1>
+
+  <p class="lede">
+    A quiet box that runs <b>your</b> algorithms against <b>your</b> brokerage account, on hardware
+    <b>you own</b>. It replaces $1,000–$5,400 a year of rented VPS and platform subscriptions —
+    and it comes with a research lab that <b>tests your ideas to destruction before they cost you
+    money.</b>
+  </p>
+
+  <div class="kpis" style="margin-top:2.5rem;">
+    <div class="kpi">
+      <div class="kpi-val mea">+20.9%</div>
+      <div class="kpi-label">Reference strategy · 126d</div>
+      <div class="kpi-note">vs SPY +10.1% over the same window</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val mea">2.09</div>
+      <div class="kpi-label">Sharpe ratio</div>
+      <div class="kpi-note">Beats SPY at 21d, 63d and 126d</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val mea">10.2%</div>
+      <div class="kpi-label">Max drawdown</div>
+      <div class="kpi-note">vs ~25% typical for the index</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val sig">One regime</div>
+      <div class="kpi-label">The honest caveat</div>
+      <div class="kpi-note">All of it is one AI-led bull tape. Read §02.</div>
+    </div>
+  </div>
+  <p style="font-size:.86rem;color:var(--ink-3);max-width:64ch;margin-top:.9rem;">
+    Walk-forward backtest of the strategy currently armed on the author's own capital (gravity
+    rotation + SPY core, 140-symbol universe), on the corrected harness.
+    <strong>Hypothetical results have inherent limitations and do not represent actual trading.</strong>
+    It ships as a <em>worked example</em> — you are expected to write your own.
+  </p>
+</header>
+
+<!-- ────────────── WHAT YOU'RE BUYING ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">01 / THE PRODUCT</div>
+    <h2>You are buying the lab, not a strategy</h2>
+  </div>
+
+  <p>
+    We do not sell signals. We do not sell a strategy. We do not tell you what to buy — legally we
+    <em>must not</em> (see §07), and honestly we <em>cannot</em>, because nobody can.
+    <strong>What we sell is the machine that lets you find out for yourself, and the rails to run
+    the answer.</strong>
+  </p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr><th>What's in the box</th><th>What it replaces</th><th class="n">You pay now</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Backtest harness</strong> — walk-forward, over a 140-symbol universe, reusing the <em>live engine's own functions</em> so a backtest can't drift from production</td>
+          <td>QuantConnect / Composer research tiers</td>
+          <td class="n">$10–80/mo</td>
+        </tr>
+        <tr>
+          <td><strong>Execution rails + autopilot</strong> — Alpaca &amp; Schwab, paper by default, watchdog, hard kill switch</td>
+          <td>A rented trading VPS, running 24/7</td>
+          <td class="n">$60–400/mo</td>
+        </tr>
+        <tr>
+          <td><strong>A local AI that grinds research for free</strong> — thousands of backtest sweeps and signal digests, all night, at electricity cost</td>
+          <td>API bills. Our heaviest day: <strong>1,489 calls ≈ $151</strong></td>
+          <td class="n">≈$8/mo<br><span style="font-size:.75rem;color:var(--ink-3)">total, all of it</span></td>
+        </tr>
+        <tr>
+          <td><strong>Your $20 ChatGPT/Claude writes the algorithms</strong> — the subscription you already pay for becomes the strategist</td>
+          <td>Hiring a quant, or giving up</td>
+          <td class="n">$0 extra</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout mea">
+    <span class="eyebrow">The loop this creates</span>
+    <p>
+      <strong>Your subscription writes a strategy. The local model backtests it a thousand times
+      overnight for free. The rails trade it on paper. You decide if it ever goes live.</strong>
+      That loop is the entire product, and today it costs you a few hundred dollars a year in rent.
+      On the box it costs eight dollars a month in electricity, and nothing ever leaves your house.
+    </p>
+  </div>
+</section>
+
+<!-- ────────────── PROOF THE LAB WORKS ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">02 / PROOF THE LAB WORKS</div>
+    <h2>It kills ideas before they cost you money</h2>
+  </div>
+
+  <p>
+    Anyone can ship a rig that <em>confirms</em> your ideas. The only rig worth owning is one that
+    <strong>destroys them.</strong> Here is that harness doing its job on our own work — every one of
+    these was a hypothesis we <em>wanted</em> to be true, with a kill condition registered in advance:
+  </p>
+
+  <div class="callout">
+    <span class="eyebrow">Applied to our own front page, first</span>
+    <p>
+      The reference strategy beats SPY on the corrected harness — <strong>and here is what that number
+      does not tell you.</strong> The window is 548 days of <em>one regime</em>: an AI-led bull tape.
+      The alpha lives in <em>daily</em> rebalancing, which makes it slippage-sensitive. Out-of-sample
+      drawdown should be assumed worse than the 10.2% we measured. <strong>We hold our own headline to
+      the same standard we hold everything else — which is the whole point of owning the lab.</strong>
+    </p>
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>The idea</th>
+          <th>What the lab found</th>
+          <th>Money saved</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Keyword</strong> scoring of news headlines finds pops</td>
+          <td>Looked <strong>+$96 profitable</strong> in-sample. On a pre-registered clean period: <strong>−$228.</strong></td>
+          <td><span class="chip killed">Killed before live</span></td>
+        </tr>
+        <tr>
+          <td>A price-only "pop catcher" spots surges</td>
+          <td>No discrimination — <strong>21,900 signals/week</strong>. It was sampling noise, not surges.</td>
+          <td><span class="chip killed">Killed before live</span></td>
+        </tr>
+        <tr>
+          <td>An LLM can predict price <em>direction</em></td>
+          <td>Direction skill ≈ <strong>0</strong> — so the model was removed from the decision path entirely</td>
+          <td><span class="chip killed">Killed before live</span></td>
+        </tr>
+        <tr>
+          <td><em>Our own backtester was lying to us</em></td>
+          <td>A bug fed the engine <strong>time-reversed</strong> data. The lab caught it — and every prior number was voided and republished lower.</td>
+          <td><span class="chip kept">Caught it</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <span class="eyebrow">Read that last row again</span>
+    <p>
+      A backtester that flatters you is worse than useless — it is <em>expensive</em>. Ours found a bug
+      <em>in itself</em>, and the honest numbers came out lower. <strong>That is the single most
+      valuable thing a research rig can do, and it is what you are actually buying.</strong> Each idea
+      above would have gone live somewhere else. Here they died in simulation, for free — and the
+      strategy that <em>did</em> survive that process is the one on the front page.
+    </p>
+  </div>
+
+  <div class="callout mea">
+    <span class="eyebrow">And what the lab found that's still alive</span>
+    <p>
+      The keyword scorer died — but the audit that killed it found something better. An FDA-approval
+      headline landed <strong>66 minutes before an +11.9% move</strong>, and every count-and-volume
+      metric in the system missed it. <strong>One headline, read properly, was worth more than every
+      statistic we were tracking.</strong>
+    </p>
+    <p style="margin-top:.7rem;">
+      That is the open hypothesis — <em>a language model reading the news, rather than counting
+      it</em> — and it is exactly the kind of question this box exists to answer: your subscription
+      writes the reader, the local model backtests it overnight for free, and the lab tells you the
+      truth. <strong>It is not proven, and we will not sell it as if it were.</strong>
+    </p>
+  </div>
+</section>
+
+<!-- ────────────── THE THREE ENGINES ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">03 / ARCHITECTURE</div>
+    <h2>Why it fits in a box on your desk</h2>
+  </div>
+
+  <p>The work splits three ways, and only one of them is expensive.</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr><th>Engine</th><th>Job</th><th>Runs on</th><th class="n">Cost to run</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Deterministic</strong></td>
+          <td>Ranking, sizing, stops, caps, orders — <em>this is where the edge lives</em></td>
+          <td>Local CPU. <strong>No LLM at all.</strong></td>
+          <td class="n">$0</td>
+        </tr>
+        <tr>
+          <td><strong>Local LLM (20–30B)</strong></td>
+          <td>The research grind: digestion, sweeps, the recursive ticket queue</td>
+          <td>The appliance's own memory</td>
+          <td class="n">≈$8/mo<br><span style="font-size:.75rem;color:var(--ink-3)">electricity</span></td>
+        </tr>
+        <tr>
+          <td><strong>Frontier model</strong><br><span style="font-size:.78rem;color:var(--ink-3)">optional</span></td>
+          <td>Writing and revising the algorithms themselves</td>
+          <td><strong>Your own $20/mo ChatGPT or Claude</strong></td>
+          <td class="n">$0 extra</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The ticket system was built to decompose big tasks recursively and run on low memory — which is
+    exactly what makes a cheap local model viable. The heaviest day this system ever recorded
+    (<strong>1,489 model calls, ≈$151 of API-equivalent cost</strong>) becomes electricity on this box.
+  </p>
+</section>
+
+<!-- ────────────── THE WEDGE ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">04 / THE WEDGE</div>
+    <h2>They're already paying rent</h2>
+  </div>
+
+  <p>
+    Retail algo traders <em>rent</em> the ability to run a strategy around the clock. The rent never
+    stops. The appliance is bought once.
+  </p>
+
+  <figure>
+    <div class="legend">
+      <span class="legend-item"><span class="swatch sig"></span> Rented, every year, forever</span>
+      <span class="legend-item"><span class="swatch mea"></span> Owned, once</span>
+    </div>
+    <div class="bars">
+      <div class="bar-row">
+        <div class="bar-name">Serious stack<br><span style="font-size:.76rem;color:var(--ink-3)">dedicated VPS + Trade Ideas</span></div>
+        <div class="bar-track"><div class="bar-fill sig" style="width:100%"><span class="bar-val">$4,500 / yr</span></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-name">Modest stack<br><span style="font-size:.76rem;color:var(--ink-3)">VPS Lite + Composer</span></div>
+        <div class="bar-track"><div class="bar-fill sig" style="width:22.2%"><span class="bar-val">$1,000</span></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-name"><strong>Quant 64</strong><br><span style="font-size:.76rem;color:var(--ink-3)">one time, then ≈$8/mo</span></div>
+        <div class="bar-track"><div class="bar-fill mea" style="width:51.1%"><span class="bar-val">$2,299 once</span></div></div>
+      </div>
+    </div>
+    <figcaption>
+      Annual recurring spend (orange) vs. one-time purchase (teal). Payback: <strong>~6 months</strong>
+      against a serious stack, <strong>~2.3 years</strong> against a modest one — then it is free
+      forever. And it is a general-purpose AI computer, so the trading rig arguably costs nothing.
+    </figcaption>
+  </figure>
+
+  <div class="callout">
+    <span class="eyebrow">Verified white space</span>
+    <p>
+      <strong>No preloaded, self-hosted algo-trading appliance exists as of July 2026.</strong> Not
+      on the market — not even in Umbrel's app store, where the community has asked for trading bots
+      and never got them. Meanwhile the adjacent categories are all proven: home-server appliances
+      sell at $199–$1,099, self-hosted trading licences at $499–$2,999, and SoFi just
+      <em>acquired</em> Composer. Alpaca — the API we target — passed $100M ARR.
+    </p>
+  </div>
+</section>
+
+<!-- ────────────── PRODUCT ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">05 / PRODUCT</div>
+    <h2>Three ways to buy it — including not buying it</h2>
+  </div>
+
+  <div class="skus">
+    <div class="sku hero">
+      <div class="eyebrow">SKU A · the volume unit</div>
+      <h3>Quant 64</h3>
+      <div class="price">$2,299</div>
+      <div class="margin">GROSS MARGIN $892 · 38.8%</div>
+      <ul>
+        <li>Ryzen AI Max+ 395, <strong>64 GB unified</strong></li>
+        <li>20–30B model at ~100 tok/s</li>
+        <li>Runs the whole stack: trading, voice, assistant</li>
+        <li>~120 W · near-silent</li>
+      </ul>
+    </div>
+    <div class="sku">
+      <div class="eyebrow">SKU B · the enthusiast</div>
+      <h3>Quant 128</h3>
+      <div class="price">$3,299</div>
+      <div class="margin">GROSS MARGIN $1,199 · 36.3%</div>
+      <ul>
+        <li><strong>128 GB unified</strong></li>
+        <li>Adds <strong>gpt-oss-120B locally</strong></li>
+        <li>Big model grinds tickets overnight while the fast one answers you</li>
+      </ul>
+    </div>
+    <div class="sku">
+      <div class="eyebrow">SKU C · the honest one</div>
+      <h3>Certified Build</h3>
+      <div class="price">$299</div>
+      <div class="margin">GROSS MARGIN $250 · 83.6%</div>
+      <ul>
+        <li>Bring your own mini-PC</li>
+        <li>Same image, same certification, guided setup</li>
+        <li><strong>Zero inventory. Zero warranty. Hedges the memory crunch.</strong></li>
+        <li>Likely the best business we have</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout mea">
+    <span class="eyebrow">Why sell the option not to buy</span>
+    <p>
+      The software is open source and the base mini-PC is publicly priced — any customer can find it
+      in thirty seconds. So we don't pretend the box is the value. We charge for integration,
+      warranty, support and certification, and we offer the tier that ships <em>no hardware at
+      all</em>. <strong>A business that needs its users to be unable to leave isn't worth
+      building.</strong>
+    </p>
+  </div>
+</section>
+
+<!-- ────────────── ECONOMICS ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">06 / ECONOMICS</div>
+    <h2>Where the money actually is</h2>
+  </div>
+
+  <div class="two">
+    <div>
+      <h3 style="margin-bottom:.9rem;">Quant 64 — unit cost</h3>
+      <div class="tbl-wrap">
+        <table>
+          <tbody>
+            <tr><td>Base unit <span style="color:var(--ink-3);font-size:.8rem;">(less GMKtec's published 20% at 3+)</span></td><td class="n">$1,119</td></tr>
+            <tr><td>Assembly, imaging, 24 h burn-in</td><td class="n">$40</td></tr>
+            <tr><td>Packaging + risk booklet</td><td class="n">$15</td></tr>
+            <tr><td>3PL pick &amp; pack, shipping</td><td class="n">$31</td></tr>
+            <tr><td>Payment processing</td><td class="n">$67</td></tr>
+            <tr><td>Warranty reserve (2.4%)</td><td class="n">$55</td></tr>
+            <tr><td><strong>Support reserve</strong> (2 h)</td><td class="n">$80</td></tr>
+            <tr class="total"><td>Landed cost</td><td class="n">$1,407</td></tr>
+            <tr class="total"><td>Gross margin @ $2,299</td><td class="n" style="color:var(--measured)">$892 · 38.8%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h3 style="margin-bottom:.9rem;">The number that decides everything</h3>
+      <p>
+        Margin is <strong>robust to hardware price</strong> and <strong>fragile to support
+        load.</strong> People who buy a <em>trading</em> appliance will call you when the market
+        drops.
+      </p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Scenario</th><th class="n">Margin</th></tr></thead>
+          <tbody>
+            <tr><td>Base case (2 h support)</td><td class="n" style="color:var(--measured)">38.8%</td></tr>
+            <tr><td>No volume discount at all</td><td class="n">20.1%</td></tr>
+            <tr><td><strong>Support blows out to 5 h/unit</strong></td><td class="n" style="color:var(--signal)">22.7%</td></tr>
+            <tr><td>Support at 5 h <em>and</em> no discount</td><td class="n" style="color:var(--signal)">14.9%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:.9rem;color:var(--ink-2);">
+        Phase 1 exists to measure exactly one thing: <strong>does support fit in two hours?</strong>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ────────────── RISK ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">07 / RISK</div>
+    <h2>The two things that could kill it</h2>
+  </div>
+
+  <div class="callout">
+    <span class="eyebrow">Risk 1 · a component-price emergency is underway</span>
+    <p>
+      The 2026 LPDDR5X shortage is repricing this whole category <em>right now.</em> One competitor's
+      128 GB box went from <strong>$1,985 to $4,349</strong> — and our supplier's own site carries a
+      "price increase coming soon" banner. Launching a hardware business into a memory squeeze is
+      genuinely dangerous.
+    </p>
+    <p style="margin-top:.7rem;">
+      <strong>Mitigation:</strong> build-to-order only (never hold stock), 30-day quotes, and lead
+      with the $299 tier — which moves component-price risk to the customer entirely.
+    </p>
+  </div>
+
+  <div class="callout">
+    <span class="eyebrow">Risk 2 · the legal line is thin, and it shapes the product</span>
+    <p>
+      <em>CFTC v. Vartuli</em> (2d Cir. 2000): a vendor sold software that emitted buy/sell signals
+      customers followed <em>mechanically</em>. That made him an unregistered trading advisor — and
+      mechanical signal output got <strong>no First Amendment protection.</strong>
+    </p>
+    <p style="margin-top:.7rem;">
+      <strong>So the product is designed around it:</strong> we ship an <em>engine</em>, never a
+      strategy service. No signals ever leave us — we have no channel through which a trade
+      instruction could travel. No discretion, no personalisation, no cut of trades, no AUM fee.
+      Composer <em>chose</em> to register as an RIA because it supplies model portfolios and holds
+      discretion. QuantConnect and 3Commas did not, because they don't.
+      <strong>We must stay firmly on the QuantConnect side of that line — and a securities lawyer
+      signs off before a dollar changes hands.</strong>
+    </p>
+  </div>
+
+  <div class="callout mea">
+    <span class="eyebrow">The form factor is the compliance story</span>
+    <p>
+      Schwab's individual developer keys are <em>"unique to you… may not provide any third party with
+      access."</em> A vendor-<em>hosted</em> SaaS driving customer accounts needs a commercial tier and
+      approval. <strong>An appliance where the buyer registers their own app and the keys never leave
+      their own hardware fits both Alpaca's and Schwab's individual-use models exactly.</strong>
+      The box isn't just a privacy story — it is the cleanest regulatory posture available.
+    </p>
+  </div>
+</section>
+
+<!-- ────────────── PLAN ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">08 / THE PLAN</div>
+    <h2>Find out cheaply</h2>
+  </div>
+
+  <ul class="clean">
+    <li><b>Phase 0 — prove the software.</b> A real ticket answered with <em>zero cloud keys</em> on the local model. Not yet green. Until it is, there is no appliance.</li>
+    <li><b>Phase 1 — 25 units, build-to-order.</b> Sell to the rent-payers, where the ROI math is undeniable. Working capital: roughly one machine. Success isn't revenue — success is learning whether support fits in two hours.</li>
+    <li><b>Phase 2 — the $299 tier scales.</b> No inventory, no warranty, 84% margin, immune to the memory crunch. Expect most of the profit to come from the tier that ships no hardware. Let it.</li>
+    <li><b>Phase 3 — only if the support number held.</b> Stock, a second SKU, a fulfilment partner.</li>
+  </ul>
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="kpi-val">$41.7k</div>
+      <div class="kpi-label">Gross profit · prove-it</div>
+      <div class="kpi-note">25 appliances + 50 certified builds</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val">$141k</div>
+      <div class="kpi-label">Gross profit · side business</div>
+      <div class="kpi-note">100 + 200, ~2 units/week</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val mea">≈1 unit</div>
+      <div class="kpi-label">Working capital needed</div>
+      <div class="kpi-note">Build-to-order. The BYO tier needs none.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ────────────── VERDICT ────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="rail">09 / VERDICT</div>
+    <h2>The recommendation</h2>
+  </div>
+
+  <p style="font-size:1.18rem;line-height:1.6;color:var(--ink);max-width:62ch;">
+    <strong>Run Phase 1 as a 25-unit, build-to-order experiment, and lead with the $299 Certified
+    Build</strong> — no inventory, no warranty, no exposure to the memory crunch. It tests demand,
+    support load, and the legal posture for roughly the cost of one machine.
+  </p>
+  <p>
+    If the support number holds, scale it. If it doesn't, you learned the truth cheaply and the
+    open-source project is completely unharmed — because the software was always going to be free.
+  </p>
+
+  <div class="callout mea">
+    <span class="eyebrow">The moat</span>
+    <p>
+      Every competitor in this category markets an edge. In a market where the SEC is actively fining
+      firms for "AI-washing," <strong>the credible player wins by being the one who publishes what
+      didn't work.</strong> We already do. That discipline is free, it's already in the repository,
+      and a hype-driven competitor structurally cannot copy it.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <p>
+    <strong>This is a design document for a product that does not exist.</strong> Every performance
+    figure is a measured walk-forward backtest of existing software on the author's own hardware —
+    not a forecast, not an offer, and not a promise of any return. Hypothetical and simulated results
+    have inherent limitations and do not represent actual trading. Past performance does not indicate
+    future results. Nothing here is investment advice, and nothing here is legal advice — a securities
+    lawyer must review the §07 posture before anything is sold.
+  </p>
+  <p class="mono" style="margin-top:1.5rem;font-size:.7rem;letter-spacing:.1em;color:var(--ink-3);">
+    OSHAL — OPEN SWARM HARNESS AGENT LLM · SOFTWARE IS FREE AND OPEN SOURCE
+  </p>
+</footer>
+
+</div>

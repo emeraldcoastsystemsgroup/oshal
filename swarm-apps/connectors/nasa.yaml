@@ -1,0 +1,38 @@
+provider: nasa
+displayName: NASA Open APIs
+version: 1.0.0
+baseUrl: https://api.nasa.gov
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: apod
+    tool: nasa-apod
+    method: GET
+    path: /planetary/apod
+    query:
+      date: '{date}'
+  - name: neo-feed
+    tool: nasa-neo-feed
+    method: GET
+    path: /neo/rest/v1/feed
+    query:
+      start_date: '{start_date}'
+      end_date: '{end_date}'
+  - name: mars-photos
+    tool: nasa-mars-photos
+    method: GET
+    path: /mars-photos/api/v1/rovers/curiosity/photos
+    query:
+      sol: '{sol}'
+metadata:
+  icon: nasa
+  iconTitle: NASA
+  iconSource: simple-icons
+  iconVerified: true

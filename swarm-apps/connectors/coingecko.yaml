@@ -1,0 +1,42 @@
+provider: coingecko
+displayName: CoinGecko
+version: 1.0.0
+baseUrl: https://api.coingecko.com/api/v3
+auth:
+  type: apiKeyHeader
+  header: x-cg-pro-api-key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: coins-markets
+    tool: coingecko-coins-markets
+    method: GET
+    path: /coins/markets
+    query:
+      vs_currency: '{vs_currency}'
+      per_page: '{per_page}'
+  - name: coin-detail
+    tool: coingecko-coin-detail
+    method: GET
+    path: /coins/{id}
+  - name: simple-price
+    tool: coingecko-simple-price
+    method: GET
+    path: /simple/price
+    query:
+      ids: '{ids}'
+      vs_currencies: '{vs_currencies}'
+  - name: search
+    tool: coingecko-search
+    method: GET
+    path: /search
+    query:
+      query: '{query}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/coingecko.com.ico

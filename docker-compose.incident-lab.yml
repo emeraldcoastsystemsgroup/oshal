@@ -1,0 +1,208 @@
+# =============================================================================
+# OSHAL Incident Lab — Minimal 3-bot stack for overnight incident testing
+# =============================================================================
+# Bots:
+#   oshal-api              — queue manager + API (project-manager role)
+#   incident-remediation  — RCA worker (queries OpenSearch + Graph)
+#   queue-bot             — quality reviewer (approves/rejects RCA output)
+#
+# Usage:
+#   docker compose -f docker-compose.incident-lab.yml up -d
+#   (the legacy incident pump scripts are retired)
+#   tail -f logs/incident-loop-overnight.log
+# =============================================================================
+
+name: oshal-incident-lab
+
+x-bot-common: &bot-common
+  image: any-bot:latest
+  command: >
+    sh -c "cp -f /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
+           cp -f /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
+           node dist/app/server.js"
+  restart: unless-stopped
+  networks:
+    - oshal
+
+x-bot-env: &bot-env
+  SERVICE_NAME: oshal
+  SERVICE_DISPLAY_NAME: "OSHAL"
+  SERVICE_TITLE: "OSHAL Control Plane"
+  NODE_ENV: production
+  PORT: 5000
+  LOG_LEVEL: info
+  SWARM_MODE: container
+  SWARM_REGISTRY: local
+  SWARM_MESH_TRANSPORT: redis
+  CONFIG_OUTPUT_DIR: /app/output
+  SHARED_WORKSPACE_ROOT: /app/workspace-shared
+  CLINE_SHARED_WORKSPACE_ROOT: /app/workspace-shared
+  CLINE_WORKSPACE_ROOT: /app/workspace-shared
+  WORKSPACE_ROOT: /app/workspace-shared
+  MOCK_OIDC: "true"
+  LLM_PROVIDER: anthropic
+  LLM_MODEL: claude-sonnet-4-20250514
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-placeholder-not-used}
+  REDIS_URL: redis://oshal-redis:6379
+  DATABASE_URL: postgresql://oshal:oshal@oshal-db:5432/oshal
+  CHROMADB_URL: http://oshal-chromadb:8000
+  OPENSEARCH_URL: ${OPENSEARCH_URL:-https://host.docker.internal:9200}
+  OPENSEARCH_USER: ${OPENSEARCH_USER:-admin}
+  OPENSEARCH_PASS: ${OPENSEARCH_PASS:-admin}
+  GRAPH_API_URL: ${GRAPH_API_URL:-http://host.docker.internal:8800}
+  NODE_TLS_REJECT_UNAUTHORIZED: "0"
+  ENABLE_AGENT_SCHEDULER: "false"
+  SCHEDULER_POLL_INTERVAL_MS: "60000"
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+  oshal-db:
+    image: postgres:16-alpine
+    container_name: oshal-lab-db
+    command: ["postgres", "-c", "max_connections=50"]
+    environment:
+      POSTGRES_DB: oshal
+      POSTGRES_USER: oshal
+      POSTGRES_PASSWORD: oshal
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${OSHAL_PG_PORT:-35433}:5432"
+    volumes:
+      - lab_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oshal -d oshal"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal
+
+  oshal-redis:
+    image: redis:7-alpine
+    container_name: oshal-lab-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${OSHAL_REDIS_PORT:-35380}:6379"
+    volumes:
+      - lab_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal
+
+  oshal-chromadb:
+    image: chromadb/chroma:0.4.24
+    container_name: oshal-lab-chromadb
+    volumes:
+      - lab_chroma_data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/heartbeat', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal
+
+  # ── Bot 1: API / Queue Manager ───────────────────────────────────────────────
+  oshal-api:
+    <<: *bot-common
+    container_name: oshal-lab-api
+    command: >
+      sh -c "cp -f /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
+             cp -f /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
+             echo 'Waiting for Postgres...';
+             for i in 1 2 3 4 5 6 7 8 9 10; do
+               node -e \"const {Pool}=require('pg');new Pool({connectionString:process.env.DATABASE_URL}).query('SELECT 1').then(()=>{process.exit(0)}).catch(()=>{process.exit(1)})\" && break;
+               echo \"  attempt $$i — waiting 2s...\"; sleep 2;
+             done;
+             RUN_MIGRATIONS=true node -e \"const{DatabaseBootstrapService}=require('./dist/features/tool-registry/services/database-bootstrap-service');const{Pool}=require('pg');const p=new Pool({connectionString:process.env.DATABASE_URL});new DatabaseBootstrapService(p).applyMigrations().then(m=>{console.log('Migrations done:',m.length);p.end()}).catch(e=>{console.error('Migration err:',e.message);p.end()})\" 2>&1;
+             sleep 2;
+             node dist/app/server.js"
+    ports:
+      - "${OSHAL_API_PORT:-35457}:5000"
+      - "1455:1455"
+    environment:
+      <<: *bot-env
+      BOT_NAME: project-manager
+      AGENT_ID: project-manager
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/project-manager.yaml
+      RUN_MIGRATIONS: "true"
+      ENABLE_QUEUE_MANAGER: "true"
+      ENABLE_AGENT_SCHEDULER: "true"
+    volumes:
+      - lab_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - lab_api_output:/app/output
+    depends_on:
+      oshal-db:
+        condition: service_healthy
+      oshal-redis:
+        condition: service_healthy
+      oshal-chromadb:
+        condition: service_healthy
+
+  # ── Bot 2: Incident Remediation (RCA worker) ─────────────────────────────────
+  incident-remediation-bot:
+    <<: *bot-common
+    container_name: oshal-lab-incident-remediation
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: incident-remediation-bot
+      AGENT_ID: e0000000-0000-0000-0000-000000000100
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/incident-remediation-bot.yaml
+      AGENT_CAPABILITIES: "incident-investigation,root-cause-analysis,remediation-scripting,topology-analysis,log-analysis,infrastructure-inspection"
+    volumes:
+      - lab_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - lab_incident_output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ── Bot 3: Queue Bot (quality reviewer) ──────────────────────────────────────
+  queue-bot:
+    <<: *bot-common
+    container_name: oshal-lab-queue-bot
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: queue-bot
+      AGENT_ID: f0000000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/queue-bot.yaml
+      AGENT_CAPABILITIES: "quality-review,deliverable-assessment,feedback-generation"
+    volumes:
+      - lab_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - lab_queue_output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+volumes:
+  lab_db_data:
+  lab_redis_data:
+  lab_chroma_data:
+  lab_workspace:
+  lab_api_output:
+  lab_incident_output:
+  lab_queue_output:
+
+networks:
+  oshal:
+    driver: bridge

@@ -1,0 +1,38 @@
+provider: openlibrary
+displayName: Open Library
+version: 1.0.0
+baseUrl: https://openlibrary.org
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: search
+    tool: openlibrary-search
+    method: GET
+    path: /search.json
+    query:
+      q: '{q}'
+  - name: work
+    tool: openlibrary-work
+    method: GET
+    path: /works/{work_id}.json
+    query: {}
+  - name: author
+    tool: openlibrary-author
+    method: GET
+    path: /authors/{author_id}.json
+    query: {}
+  - name: isbn
+    tool: openlibrary-isbn
+    method: GET
+    path: /isbn/{isbn}.json
+    query: {}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/openlibrary.org.ico

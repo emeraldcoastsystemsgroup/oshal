@@ -1,0 +1,40 @@
+provider: customerio
+displayName: Customer.io
+version: 1.0.0
+baseUrl: https://api.customer.io/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: campaigns
+    tool: customerio-campaigns
+    method: GET
+    path: /campaigns
+  - name: segments
+    tool: customerio-segments
+    method: GET
+    path: /segments
+  - name: newsletters
+    tool: customerio-newsletters
+    method: GET
+    path: /newsletters
+  - name: broadcasts
+    tool: customerio-broadcasts
+    method: GET
+    path: /broadcasts
+  - name: messages
+    tool: customerio-messages
+    method: GET
+    path: /messages
+    query:
+      limit: null
+      start: null
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/customer.io.ico

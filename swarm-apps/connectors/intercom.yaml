@@ -1,0 +1,36 @@
+provider: intercom
+displayName: Intercom
+version: 1.0.0
+baseUrl: https://api.intercom.io
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: starting_after
+  nextField: pages.next.starting_after
+  itemsField: data
+resources:
+  - name: me
+    tool: intercom-me
+    method: GET
+    path: /me
+  - name: contacts
+    tool: intercom-contacts
+    method: GET
+    path: /contacts
+    query:
+      per_page: '100'
+    paginate: true
+metadata:
+  description: "Read the connected Intercom workspace admin identity and its contacts."
+  category: "Support"
+  icon: intercom
+  iconTitle: Intercom
+  iconSource: simple-icons
+  iconVerified: true

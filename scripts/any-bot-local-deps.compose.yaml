@@ -1,0 +1,101 @@
+# =============================================================================
+# OSHAL Local any-bot Dependency Stack
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added cross-platform local dependency stack for Postgres, Redis, and ChromaDB used by the host-run any-bot launcher
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Added Google Search MCP to the local dependency stack using Supergateway over the official stdio server
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${OSHAL_POSTGRES_DB:-oshal}
+      POSTGRES_USER: ${OSHAL_POSTGRES_USER:-oshal_user}
+      POSTGRES_PASSWORD: ${OSHAL_POSTGRES_PASSWORD:-oshal_password}
+    ports:
+      - "${OSHAL_POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${OSHAL_REDIS_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - redis_data:/data
+
+  chromadb:
+    image: chromadb/chroma:0.4.24
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+      PERSIST_DIRECTORY: /chroma/chroma
+    ports:
+      - "${OSHAL_CHROMADB_PORT:-58000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=3)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - chromadb_data:/chroma/chroma
+
+  google-search-mcp:
+    image: supercorp/supergateway:latest
+    command:
+      [
+        "--stdio",
+        "npx -y @mcp-server/google-search-mcp@latest",
+        "--port",
+        "8080",
+        "--baseUrl",
+        "http://0.0.0.0:8080",
+        "--streamableHttpPath",
+        "/mcp",
+        "--healthEndpoint",
+        "/health"
+      ]
+    environment:
+      HOME: /data
+    ports:
+      - "${OSHAL_GOOGLE_SEARCH_MCP_PORT:-58080}:8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:8080/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - google_search_mcp_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  chromadb_data:
+  google_search_mcp_data:

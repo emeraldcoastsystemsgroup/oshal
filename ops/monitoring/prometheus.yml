@@ -1,0 +1,45 @@
+# =============================================================================
+# Prometheus config — OSHAL swarm self-monitoring
+# =============================================================================
+# Scrapes cAdvisor (per-container health/cpu/mem of the oshal-local-* stack) and
+# the oshal-api /api/health endpoint. Alert rules in alert-rules.yml fire into
+# Alertmanager, which webhooks them to the swarm's own incident intake at
+# POST /api/alerts/alertmanager -> incident-rca pipeline -> self-healing.
+#
+# Runs via docker-compose.monitoring.yml on the oshal-local_oshal network, so it
+# reaches the other containers by their compose service DNS names.
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    swarm: oshal-local
+
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Per-container metrics for the whole swarm (the heart of self-monitoring)
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  # oshal-api application health. The handler returns JSON, not Prometheus text,
+  # so this is a liveness probe via the `up` metric (target reachable or not).
+  # When you add a real /metrics endpoint later, point a scrape job at it and the
+  # error-based alerts in alert-rules.yml light up automatically.
+  - job_name: oshal-api-health
+    metrics_path: /api/health
+    static_configs:
+      - targets: ['oshal-api:5000']

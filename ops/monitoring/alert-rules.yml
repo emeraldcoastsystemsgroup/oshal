@@ -1,0 +1,99 @@
+# =============================================================================
+# Prometheus alert rules — OSHAL swarm self-healing triggers
+# =============================================================================
+# These fire on the swarm's OWN container health. Each firing alert becomes an
+# incident ticket (via Alertmanager -> /api/alerts/alertmanager) that the
+# incident-rca pipeline investigates; the fix is gated at approve-or-close.
+#
+# Start: container-health signals (up/down, restart loops, resource pressure).
+# Later: error-rate signals once the bots expose a /metrics endpoint — add a
+# group here keyed on those series and nothing downstream changes.
+#
+# The `severity` label maps to ticket priority; `container` maps to the heal
+# target. `alertname` is what the ALERT_APPROVED_NAMES allowlist matches on.
+# =============================================================================
+
+groups:
+  - name: swarm-container-health
+    rules:
+      # A swarm container's cAdvisor series disappeared = container gone/down.
+      - alert: SwarmContainerDown
+        expr: |
+          absent(container_last_seen{name=~"oshal-local-.+"})
+          or (time() - max by (name) (container_last_seen{name=~"oshal-local-.+"}) > 60)
+        for: 1m
+        labels:
+          severity: critical
+          team: swarm-ops
+        annotations:
+          summary: "Swarm container {{ $labels.name }} is down or unreported"
+          description: >-
+            cAdvisor has not seen container {{ $labels.name }} for over 60s.
+            It has likely crashed or been killed. Investigate and restart.
+
+      # Container restart loop (memory of restarts climbing fast).
+      - alert: SwarmContainerRestartLoop
+        expr: |
+          increase(container_start_time_seconds{name=~"oshal-local-.+"}[10m]) > 2
+        for: 2m
+        labels:
+          severity: warning
+          team: swarm-ops
+        annotations:
+          summary: "Swarm container {{ $labels.name }} is restart-looping"
+          description: >-
+            {{ $labels.name }} restarted more than twice in 10 minutes —
+            crash loop. Root-cause the startup failure before it flaps further.
+
+      # Sustained high memory (OOM risk) on a swarm container.
+      - alert: SwarmContainerHighMemory
+        expr: |
+          (container_memory_usage_bytes{name=~"oshal-local-.+"}
+            / container_spec_memory_limit_bytes{name=~"oshal-local-.+"} > 0.92)
+          and (container_spec_memory_limit_bytes{name=~"oshal-local-.+"} > 0)
+        for: 5m
+        labels:
+          severity: warning
+          team: swarm-ops
+        annotations:
+          summary: "Swarm container {{ $labels.name }} memory > 92%"
+          description: >-
+            {{ $labels.name }} has been above 92% of its memory limit for 5m —
+            OOM-kill risk. Check for a leak or raise the limit.
+
+      # Sustained high CPU on a swarm container.
+      # NOTE: intake defaults to BACKLOG for every alert (ALERT_DEFAULT_INTAKE),
+      # so tickets park in the queue and the operator promotes backlog->approved
+      # by hand. To make ONE rule auto-flow into incident-rca anyway, add the
+      # label `intake: auto` (uncommented below as the override example).
+      - alert: SwarmContainerHighCPU
+        expr: |
+          sum by (name) (rate(container_cpu_usage_seconds_total{name=~"oshal-local-.+"}[5m])) > 0.95
+        for: 10m
+        labels:
+          severity: warning
+          team: swarm-ops
+          # intake: auto   # uncomment to auto-flow this specific rule into RCA
+        annotations:
+          summary: "Swarm container {{ $labels.name }} CPU pinned > 95%"
+          description: >-
+            {{ $labels.name }} has sustained >95% of a CPU core for 10m.
+            Likely a runaway loop or unexpected load.
+
+  - name: swarm-api-health
+    rules:
+      # The control-plane API liveness probe failed.
+      - alert: SwarmApiUnreachable
+        expr: up{job="oshal-api-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: swarm-ops
+          container: oshal-local-api
+        annotations:
+          summary: "oshal-api liveness probe failing"
+          description: >-
+            Prometheus cannot reach oshal-api /api/health for 2m. The queue
+            manager / ticket API may be down. NOTE: if THIS is what is down, the
+            ticket-based heal path cannot self-open — this alert is the signal to
+            let the external watchdog restart oshal-local-api directly.

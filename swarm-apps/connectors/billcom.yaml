@@ -1,0 +1,42 @@
+provider: billcom
+displayName: Bill.com
+version: 1.0.0
+baseUrl: https://api.bill.com/api/v2
+auth:
+  type: apiKeyHeader
+  header: sessionId
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: read-customer
+    tool: billcom-read-customer
+    method: GET
+    path: /Crud/Read/Customer.json
+    query:
+      id: '{customerId}'
+  - name: read-vendor
+    tool: billcom-read-vendor
+    method: GET
+    path: /Crud/Read/Vendor.json
+    query:
+      id: '{vendorId}'
+  - name: read-invoice
+    tool: billcom-read-invoice
+    method: GET
+    path: /Crud/Read/Invoice.json
+    query:
+      id: '{invoiceId}'
+  - name: read-bill
+    tool: billcom-read-bill
+    method: GET
+    path: /Crud/Read/Bill.json
+    query:
+      id: '{billId}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/bill.com.ico

@@ -1,0 +1,40 @@
+provider: zendesk
+displayName: Zendesk
+version: 1.0.0
+baseUrl: https://${env:ZENDESK_SUBDOMAIN:-your-subdomain}.zendesk.com/api/v2
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: tickets
+    tool: zendesk-tickets
+    method: GET
+    path: /tickets.json
+  - name: ticket
+    tool: zendesk-ticket
+    method: GET
+    path: /tickets/{id}.json
+  - name: users
+    tool: zendesk-users
+    method: GET
+    path: /users.json
+  - name: organizations
+    tool: zendesk-organizations
+    method: GET
+    path: /organizations.json
+  - name: ticket-comments
+    tool: zendesk-ticket-comments
+    method: GET
+    path: /tickets/{id}/comments.json
+metadata:
+  description: "Read Zendesk tickets with their comments, plus users and organizations."
+  category: "Support"
+  icon: zendesk
+  iconTitle: Zendesk
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,36 @@
+# Lever API — read recruiting opportunities, public postings, and users (HTTP basic, API key as username).
+provider: lever
+displayName: Lever
+version: 1.0.0
+baseUrl: https://api.lever.co/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: opportunities
+    tool: lever-opportunities
+    method: GET
+    path: /opportunities
+    query:
+      limit: '100'
+  - name: postings
+    tool: lever-postings
+    method: GET
+    path: /postings
+    query:
+      limit: '100'
+  - name: users
+    tool: lever-users
+    method: GET
+    path: /users
+    query:
+      limit: '100'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/lever.co.ico

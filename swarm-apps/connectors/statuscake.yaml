@@ -1,0 +1,35 @@
+provider: statuscake
+displayName: StatusCake
+version: 1.0.0
+baseUrl: https://api.statuscake.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: uptime
+    tool: statuscake-uptime
+    method: GET
+    path: /uptime
+    query:
+      page: '{page}'
+      limit: '{limit}'
+  - name: uptime-test
+    tool: statuscake-uptime-test
+    method: GET
+    path: /uptime/{test_id}
+  - name: pagespeed
+    tool: statuscake-pagespeed
+    method: GET
+    path: /pagespeed
+    query:
+      page: '{page}'
+      limit: '{limit}'
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/statuscake.com.ico

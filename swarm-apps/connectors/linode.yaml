@@ -1,0 +1,41 @@
+provider: linode
+displayName: Linode
+version: 1.0.0
+baseUrl: https://api.linode.com/v4
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: account
+    tool: linode-account
+    method: GET
+    path: /account
+  - name: instances
+    tool: linode-instances
+    method: GET
+    path: /linode/instances
+  - name: instance
+    tool: linode-instance
+    method: GET
+    path: /linode/instances/{linodeId}
+  - name: volumes
+    tool: linode-volumes
+    method: GET
+    path: /volumes
+  - name: domains
+    tool: linode-domains
+    method: GET
+    path: /domains
+  - name: regions
+    tool: linode-regions
+    method: GET
+    path: /regions
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/linode.com.ico

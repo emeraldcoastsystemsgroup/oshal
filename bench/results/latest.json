@@ -1,0 +1,44 @@
+{
+  "proofTier": "live",
+  "model": "openai/gpt-oss-20b:free",
+  "task": "invoice-extract-arithmetic-gate",
+  "note": "Real token/round counts from live free-model calls. Not-run legs carry a reason, never a number.",
+  "results": [
+    {
+      "runner": "vanilla (no framework)",
+      "status": "ran",
+      "passed": true,
+      "rounds": 1,
+      "llm_calls": 1,
+      "input_tokens": 312,
+      "output_tokens": 367,
+      "cost_usd": 0.0,
+      "wall_ms": 10124,
+      "reason": ""
+    },
+    {
+      "runner": "langgraph (supervisor loop)",
+      "status": "ran",
+      "passed": true,
+      "rounds": 1,
+      "llm_calls": 1,
+      "input_tokens": 312,
+      "output_tokens": 367,
+      "cost_usd": 0.0,
+      "wall_ms": 22028,
+      "reason": ""
+    },
+    {
+      "runner": "oshal (live cluster)",
+      "status": "not-run",
+      "passed": false,
+      "rounds": 0,
+      "llm_calls": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0,
+      "wall_ms": 0,
+      "reason": "wire to POST /api/swarm-execute (BotNodeClient.execute, ADR-036) with this task, then read total_input_tokens/total_output_tokens/total_cost from chat_tasks for the run. Requires the live stack + a bot pinned to the OpenRouter free model for model parity."
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+provider: gitea
+displayName: Gitea
+version: 1.0.0
+baseUrl: ${env:GITEA_BASE_URL:-https://gitea.example.com}/api/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: current-user
+    tool: gitea-current-user
+    method: GET
+    path: /user
+  - name: repos
+    tool: gitea-repos
+    method: GET
+    path: /user/repos
+  - name: repo
+    tool: gitea-repo
+    method: GET
+    path: /repos/{owner}/{repo}
+  - name: issues
+    tool: gitea-issues
+    method: GET
+    path: /repos/{owner}/{repo}/issues
+  - name: pulls
+    tool: gitea-pulls
+    method: GET
+    path: /repos/{owner}/{repo}/pulls
+  - name: orgs
+    tool: gitea-orgs
+    method: GET
+    path: /user/orgs
+metadata:
+  icon: gitea
+  iconTitle: Gitea
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,31 @@
+provider: mercury
+displayName: Mercury
+version: 1.0.0
+baseUrl: https://api.mercury.com/api/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: accounts
+    tool: mercury-accounts
+    method: GET
+    path: /accounts
+  - name: account
+    tool: mercury-account
+    method: GET
+    path: /account/{accountId}
+  - name: transactions
+    tool: mercury-transactions
+    method: GET
+    path: /account/{accountId}/transactions
+    query:
+      limit: '{limit}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/mercury.com.ico

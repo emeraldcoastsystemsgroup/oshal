@@ -1,0 +1,52 @@
+provider: opsgenie
+displayName: Opsgenie
+version: 1.0.0
+baseUrl: https://api.opsgenie.com
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: offset
+  pageSize: 20
+  nextField: paging
+  itemsField: data
+resources:
+  - name: alerts
+    tool: opsgenie-alerts
+    method: GET
+    path: /v2/alerts
+    paginate: true
+  - name: alert
+    tool: opsgenie-alert
+    method: GET
+    path: /v2/alerts/{alertId}
+  - name: incidents
+    tool: opsgenie-incidents
+    method: GET
+    path: /v1/incidents
+    paginate: true
+  - name: teams
+    tool: opsgenie-teams
+    method: GET
+    path: /v2/teams
+  - name: schedules
+    tool: opsgenie-schedules
+    method: GET
+    path: /v2/schedules
+  - name: services
+    tool: opsgenie-services
+    method: GET
+    path: /v1/services
+    paginate: true
+metadata:
+  icon: opsgenie
+  iconTitle: Opsgenie
+  iconSource: simple-icons
+  iconVerified: true

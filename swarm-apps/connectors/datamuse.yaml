@@ -1,0 +1,29 @@
+provider: datamuse
+displayName: Datamuse
+version: 1.0.0
+baseUrl: https://api.datamuse.com
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: words
+    tool: datamuse-words
+    method: GET
+    path: /words
+    query:
+      ml: '{q}'
+  - name: suggestions
+    tool: datamuse-suggestions
+    method: GET
+    path: /sug
+    query:
+      s: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/datamuse.com.ico

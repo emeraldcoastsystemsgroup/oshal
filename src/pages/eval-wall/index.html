@@ -1,0 +1,236 @@
+<!doctype html>
+<!--
+  Eval Wall — the AI Test Lab green wall (ADR-063 §eval-wall).
+  Reads /api/eval-wall/summary + /api/eval-wall/runs (read-only). Big success-rate number,
+  a tiles row (cost / latency / retries / quality / security posture), and a recent-runs table
+  colored by state. Honest nulls render as a muted dash, never a fake number.
+  Framework surface conventions: local CSS vars are overridden from the cockpit theme by the
+  theme-sync script at the bottom (the same one every in-cockpit surface uses).
+-->
+<html lang="en"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Eval Wall</title>
+<style>
+  /* Local token defaults for the standalone view; the theme-sync script below overrides
+     surfaces/text/borders from the active light/dark cockpit theme. State HUES are fixed. */
+  :root {
+    --bg:#0e0e16; --panel:#15151f; --panel2:#1b1b27; --line:#272735;
+    --text:#e6e6f0; --muted:#8b8ba3; --accent:#7c6cff; --accent2:#00d3a7;
+    --scrollbar-thumb:rgba(255,255,255,.14);
+    --pass:#00d3a7; --degraded:#ffb454; --gap:#7c6cff; --fail:#ff6b6b;
+    --radius:14px;
+    --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { font-family:var(--font); color:var(--text); background:var(--bg); min-height:100%; }
+  .wrap { max-width:1200px; margin:0 auto; padding:22px 22px 70px; }
+
+  header.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
+  .logo { width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
+    background:var(--accent2); color:var(--bg); font-weight:800; font-size:17px; }
+  h1 { font-size:20px; margin:0; }
+  h1 small { display:block; font-size:11.5px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase; margin-top:2px; }
+  .spacer { flex:1; }
+  .pill { display:inline-flex; align-items:center; gap:7px; padding:7px 12px; border-radius:999px;
+    background:var(--panel2); border:1px solid var(--line); font-size:12px; color:var(--muted); }
+
+  .hero { display:grid; grid-template-columns:auto 1fr; gap:22px; align-items:center;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:24px 26px; margin-bottom:18px; }
+  @media(max-width:640px){ .hero{grid-template-columns:1fr} }
+  .hero .big { font-size:62px; font-weight:800; line-height:1; letter-spacing:-1px; }
+  .hero .big.good { color:var(--pass); } .hero .big.warn { color:var(--degraded); } .hero .big.bad { color:var(--fail); }
+  .hero .big.na { color:var(--muted); }
+  .hero .lbl { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-top:8px; }
+  .hero .meta { font-size:12.5px; color:var(--muted); line-height:1.7; }
+
+  .tiles { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
+  @media(max-width:920px){ .tiles{grid-template-columns:repeat(2,1fr)} }
+  @media(max-width:520px){ .tiles{grid-template-columns:1fr} }
+  .tile { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:16px 16px; }
+  .tile .k { font-size:26px; font-weight:800; line-height:1; }
+  .tile .l { font-size:11px; color:var(--muted); margin-top:7px; letter-spacing:.3px; text-transform:uppercase; }
+  .tile .s { font-size:11px; color:var(--muted); margin-top:3px; }
+  .tile .k.posok { color:var(--pass); } .tile .k.posbad { color:var(--fail); }
+
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:6px 0 0; overflow:hidden; }
+  .card h2 { font-size:14px; margin:0; padding:14px 18px 10px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); font-weight:600; }
+  td.scenario { white-space:normal; max-width:340px; }
+  tbody tr:hover { background:var(--panel2); }
+  .state { display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; }
+  .state.pass { background:color-mix(in srgb,var(--pass) 20%,transparent); color:var(--pass); }
+  .state.degraded { background:color-mix(in srgb,var(--degraded) 22%,transparent); color:var(--degraded); }
+  .state.gap { background:color-mix(in srgb,var(--gap) 22%,transparent); color:var(--gap); }
+  .state.fail { background:color-mix(in srgb,var(--fail) 20%,transparent); color:var(--fail); }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .na { color:var(--muted); }
+  .empty { padding:30px 18px; color:var(--muted); font-size:13px; text-align:center; }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="logo">EW</div>
+      <h1>Eval Wall<small>AI Test Lab — green wall</small></h1>
+      <div class="spacer"></div>
+      <span class="pill" id="window">last 30 days</span>
+    </header>
+
+    <section class="hero">
+      <div>
+        <div class="big na" id="rate">—</div>
+        <div class="lbl">Success rate</div>
+      </div>
+      <div class="meta" id="heroMeta">Loading eval history…</div>
+    </section>
+
+    <section class="tiles" id="tiles"></section>
+
+    <section class="card" id="trendCard" style="display:none">
+      <h2>Success-rate trend</h2>
+      <div id="trendWrap"></div>
+    </section>
+
+    <section class="card">
+      <h2>Recent runs</h2>
+      <div id="tableWrap"><div class="empty">Loading…</div></div>
+    </section>
+  </div>
+
+<script>
+(function(){
+  // Render a numeric value or an honest muted dash when the API returned null.
+  function show(v, fmt){ return (v === null || v === undefined) ? '<span class="na">—</span>' : (fmt ? fmt(v) : String(v)); }
+  function pct(v){ return Math.round(v * 100) + '%'; }
+  function money(v){ return '$' + Number(v).toFixed(2); }
+  function ms(v){ return Math.round(v) + ' ms'; }
+  function num1(v){ return Number(v).toFixed(1); }
+  function kfmt(v){ v = Number(v); return v >= 1000 ? (v/1000).toFixed(1) + 'k' : String(Math.round(v)); }
+  // Compact "input → output" token cell; honest dash when neither was measured.
+  function tokensCell(r){
+    if ((r.inputTokens === null || r.inputTokens === undefined) && (r.outputTokens === null || r.outputTokens === undefined)) return show(null);
+    return esc(kfmt(r.inputTokens || 0)) + ' <span class="na">→</span> ' + esc(kfmt(r.outputTokens || 0));
+  }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  async function load(){
+    let sum = null, runs = [];
+    try { sum = await (await fetch('/api/eval-wall/summary', {credentials:'same-origin'})).json(); } catch(e){}
+    try { runs = (await (await fetch('/api/eval-wall/runs', {credentials:'same-origin'})).json()).runs || []; } catch(e){}
+    renderHero(sum);
+    renderTiles(sum);
+    renderTrend(sum);
+    renderTable(runs);
+  }
+
+  // Success-rate trend sparkline (SVG, no deps). Needs >=2 days of data to draw a line.
+  function renderTrend(s){
+    var card = document.getElementById('trendCard');
+    var pts = (s && s.trend) || [];
+    if (pts.length < 2){ card.style.display = 'none'; return; }
+    card.style.display = '';
+    var W = 620, H = 90, pad = 8, n = pts.length;
+    var x = function(i){ return pad + (W - 2*pad) * (n === 1 ? 0 : i/(n-1)); };
+    var y = function(v){ return pad + (H - 2*pad) * (1 - Math.max(0, Math.min(1, v))); };
+    var line = pts.map(function(p,i){ return (i?'L':'M') + x(i).toFixed(1) + ' ' + y(p.successRate).toFixed(1); }).join(' ');
+    var grid = [0, 0.5, 1].map(function(v){ return '<line x1="'+pad+'" y1="'+y(v).toFixed(1)+'" x2="'+(W-pad)+'" y2="'+y(v).toFixed(1)+'" stroke="var(--border,#2a3344)" stroke-width="0.5" stroke-dasharray="3 3"/>'; }).join('');
+    var dots = pts.map(function(p,i){
+      var c = p.successRate >= 0.85 ? 'var(--pass)' : p.successRate >= 0.6 ? 'var(--warn,#e0a800)' : 'var(--fail)';
+      return '<circle cx="'+x(i).toFixed(1)+'" cy="'+y(p.successRate).toFixed(1)+'" r="2.6" fill="'+c+'"><title>'+esc(p.date)+': '+Math.round(p.successRate*100)+'% ('+p.passed+'/'+p.total+')</title></circle>';
+    }).join('');
+    document.getElementById('trendWrap').innerHTML =
+      '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="none" style="overflow:visible">'
+      + grid
+      + '<path d="'+line+'" fill="none" stroke="var(--accent,#3fa7ff)" stroke-width="1.6" stroke-linejoin="round"/>'
+      + dots + '</svg>'
+      + '<div class="s" style="display:flex;justify-content:space-between;margin-top:4px">'
+      + '<span>'+esc(pts[0].date)+'</span><span class="na">0–100% daily success</span><span>'+esc(pts[n-1].date)+'</span></div>';
+  }
+
+  function renderHero(s){
+    var rateEl = document.getElementById('rate');
+    var metaEl = document.getElementById('heroMeta');
+    if (s && s.windowDays) document.getElementById('window').textContent = 'last ' + s.windowDays + ' days';
+    if (!s || s.successRate === null || s.successRate === undefined){
+      rateEl.textContent = '—'; rateEl.className = 'big na';
+      metaEl.textContent = s && s.totalRuns === 0 ? 'No eval runs recorded yet. Run the golden loop or seed history.' : 'Success rate unavailable.';
+      return;
+    }
+    rateEl.textContent = pct(s.successRate);
+    rateEl.className = 'big ' + (s.successRate >= 0.85 ? 'good' : s.successRate >= 0.6 ? 'warn' : 'bad');
+    var pq = posture(s);
+    metaEl.innerHTML = '<b>' + s.totalRuns + '</b> run(s) in window. Posture: '
+      + (!pq.measured ? '<span class="na">not measured</span>'
+         : pq.clean ? '<span style="color:var(--pass)">clean</span>'
+         : '<span style="color:var(--fail)">' + esc(pq.label) + '</span>') + '.';
+  }
+
+  // Unified security-posture model: prefer the LIVE Security Center read (securityPosture);
+  // fall back to the per-run posture summary; else "not measured".
+  function posture(s){
+    var sp = s && s.securityPosture;
+    if (sp && sp.measured){
+      return { measured:true, clean:sp.clean, count:sp.openFindings,
+               label: sp.openFindings + ' open (' + sp.critical + ' crit, ' + sp.high + ' high)' };
+    }
+    var ps = s && s.postureSummary;
+    if (ps && ps.totalSecurityFindings !== null && ps.totalSecurityFindings !== undefined){
+      return { measured:true, clean:ps.clean, count:ps.totalSecurityFindings,
+               label: ps.runsWithFindings + ' run(s) with findings' };
+    }
+    return { measured:false, clean:false, count:null, label:'not measured' };
+  }
+
+  function renderTiles(s){
+    var pq = posture(s);
+    var tiles = [
+      { l:'Total cost', s:'(window)', v: s ? show(s.totalCostUsd, money) : show(null) },
+      { l:'Avg latency', s:'per run', v: s ? show(s.avgLatencyMs, ms) : show(null) },
+      { l:'Avg retries', s:'per run', v: s ? show(s.avgRetries, num1) : show(null) },
+      { l:'Quality score', s:'mean final', v: s ? show(s.avgQuality, num1) : show(null) },
+      { l:'Security posture', s: !pq.measured ? 'not measured' : pq.label,
+        v: !pq.measured ? show(null) : (pq.clean ? '<span class="k posok">clean</span>' : '<span class="k posbad">' + pq.count + '</span>') },
+    ];
+    document.getElementById('tiles').innerHTML = tiles.map(function(t){
+      return '<div class="tile"><div class="k">' + t.v + '</div><div class="l">' + t.l + '</div><div class="s">' + t.s + '</div></div>';
+    }).join('');
+  }
+
+  function renderTable(runs){
+    var wrap = document.getElementById('tableWrap');
+    if (!runs.length){ wrap.innerHTML = '<div class="empty">No runs recorded yet.</div>'; return; }
+    var rows = runs.map(function(r){
+      var when = r.runAt ? new Date(r.runAt).toLocaleString() : '—';
+      var st = (r.state || 'fail').toLowerCase();
+      return '<tr>'
+        + '<td>' + esc(when) + '</td>'
+        + '<td class="scenario">' + esc(r.scenario) + '</td>'
+        + '<td><span class="state ' + st + '">' + esc(st) + '</span></td>'
+        + '<td class="num">' + show(r.finalScore) + '</td>'
+        + '<td class="num">' + show(r.heuristicScore) + '</td>'
+        + '<td class="num">' + show(r.judgeScore) + '</td>'
+        + '<td class="num">' + show(r.latencyMs, ms) + '</td>'
+        + '<td class="num">' + show(r.retries) + '</td>'
+        + '<td class="num">' + show(r.costUsd, money) + '</td>'
+        + '<td class="num">' + tokensCell(r) + '</td>'
+        + '<td class="num">' + show(r.securityFindings) + '</td>'
+        + '</tr>';
+    }).join('');
+    wrap.innerHTML = '<table><thead><tr>'
+      + '<th>When</th><th>Scenario</th><th>State</th><th class="num">Final</th><th class="num">Heur</th>'
+      + '<th class="num">Judge</th><th class="num">Latency</th><th class="num">Retries</th><th class="num">Cost</th><th class="num">Tokens</th><th class="num">Sec</th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  load();
+})();
+</script>
+
+<!-- Framework theme-sync: copy the cockpit's active theme tokens onto our locals (light/dark
+     aware, reacts to data-theme + cockpit-theme). Same script every in-cockpit surface uses. -->
+<script>(function(){const M={'--bg':'--bg-primary','--panel':'--bg-secondary','--panel2':'--bg-tertiary','--line':'--border-color','--text':'--text-primary','--muted':'--text-secondary','--accent':'--accent-primary','--accent2':'--status-success','--scrollbar-thumb':'--scrollbar-thumb'};function m(){try{const p=(window.parent&&window.parent!==window)?window.parent:null;if(!p)return;const cs=p.getComputedStyle(p.document.documentElement);for(const k in M){const v=cs.getPropertyValue(M[k]).trim();if(v)document.documentElement.style.setProperty(k,v);}}catch(e){}}m();window.addEventListener('storage',e=>{if(e.key==='cockpit-theme')setTimeout(m,30);});try{const p=window.parent;if(p&&p!==window)new MutationObserver(m).observe(p.document.documentElement,{attributes:true,attributeFilter:['data-theme']});}catch(e){}document.addEventListener('DOMContentLoaded',m);})();</script>
+</body></html>

@@ -1,0 +1,53 @@
+provider: asana
+displayName: Asana
+version: 1.0.0
+baseUrl: https://app.asana.com/api/1.0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: offset
+  nextField: next_page.offset
+  itemsField: data
+resources:
+  - name: list-tasks
+    tool: asana-list-tasks
+    method: GET
+    path: /tasks
+    query:
+      assignee: '{assignee}'
+      workspace: '{workspace}'
+      limit: '100'
+    paginate: true
+  - name: get-task
+    tool: asana-get-task
+    method: GET
+    path: /tasks/{taskId}
+  - name: list-projects
+    tool: asana-list-projects
+    method: GET
+    path: /projects
+    query:
+      workspace: '{workspace}'
+      limit: '100'
+    paginate: true
+  - name: create-task
+    tool: asana-create-task
+    method: POST
+    path: /tasks
+    body: '{data}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List Asana tasks and projects, with a resource to create tasks."
+  category: "Project management"
+  icon: asana
+  iconTitle: Asana
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,30 @@
+provider: positionstack
+displayName: Positionstack
+version: 1.0.0
+baseUrl: https://api.positionstack.com/v1
+auth:
+  type: apiKeyQuery
+  param: access_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: forward
+    tool: positionstack-forward
+    method: GET
+    path: /forward
+    query:
+      query: '{q}'
+  - name: reverse
+    tool: positionstack-reverse
+    method: GET
+    path: /reverse
+    query:
+      query: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/positionstack.com.ico

@@ -1,0 +1,66 @@
+# =============================================================================
+# OSHAL Presentron Kubernetes Integration
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial Presentron deployment scaffold
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Added oshal namespace alignment, service exposure, and oshal secret contract
+# =============================================================================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presentron
+  namespace: oshal
+  labels:
+    app: presentron
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: presentron
+  template:
+    metadata:
+      labels:
+        app: presentron
+    spec:
+      containers:
+        - name: presentron
+          image: presentron:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PRESENTRON_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oshal-secrets
+                  key: PRESENTRON_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presentron
+  namespace: oshal
+spec:
+  selector:
+    app: presentron
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

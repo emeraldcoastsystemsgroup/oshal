@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Packs</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+<style>
+  /* Short alias names kept, but DERIVED from framework theme tokens (not literal hex) so all eleven
+     themes work — not just the dark ones. Semantic status colors carry the old hex as a fallback so
+     the surface stays legible if a theme omits one. --scrollbar-thumb is a translucent overlay, left
+     as-is. */
+  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary); --accent2:var(--status-success,#00d3a7); --scrollbar-thumb:rgba(255,255,255,.14); }
+  ::-webkit-scrollbar{width:11px;height:11px}
+  ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb,rgba(255,255,255,.14));border-radius:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  html{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb,rgba(255,255,255,.14)) transparent}
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body { font-family:system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+  .page { max-width:860px; margin:0 auto; padding:26px 22px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:22px; }
+  .pack { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:14px; }
+  .pack .top { display:flex; align-items:center; gap:10px; }
+  .pack .nm { font-size:16px; font-weight:600; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:20px; border:1px solid var(--line); color:var(--muted); }
+  .badge.swarm { color:var(--accent2); border-color:var(--accent2); }
+  .badge.wrapper { color:var(--accent); border-color:var(--accent); }
+  .badge.gate { color:var(--status-warning,#ffb454); border-color:var(--status-warning,#ffb454); }
+  .pack .desc { color:var(--text-secondary,#c8c8da); font-size:13px; margin:8px 0; line-height:1.5; }
+  .pack .meta { color:var(--muted); font-size:12px; margin-bottom:12px; }
+  .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .btn { border:none; border-radius:8px; padding:9px 15px; cursor:pointer; font-size:13px; font-weight:600; text-decoration:none; display:inline-block; }
+  .btn.primary { background:var(--accent); color:#fff; }
+  .btn.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--text); }
+  .btn:disabled { opacity:.6; cursor:default; }
+  .toast { font-size:12px; color:var(--accent2); margin-left:6px; }
+  .toast.err { color:var(--status-error,#ff6b6b); }
+  .notice { color:var(--muted); padding:40px 0; text-align:center; }
+  a.btn:hover, .btn:hover { filter:brightness(1.08); }
+  .meta { color:var(--muted); font-size:12px; }
+  .flowbox { margin-top:12px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .srchead { font-size:12px; color:var(--accent2); margin-bottom:8px; }
+  .src { color:var(--muted); }
+  .fnode { font-size:13px; padding:4px 0; border-bottom:1px solid var(--line); }
+  .fnode:last-child { border-bottom:none; }
+  .fedges { margin-top:8px; }
+  .fedge { font-size:12px; color:var(--text-secondary,#c8c8da); padding:2px 0; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <h1>📦 Packs</h1>
+    <div class="sub">Swarms you scoped with codex-packer. <b>Wrapper</b> = a one-shot bot you download as a zip. <b>Swarm</b> = a multi-bot app you deploy (its own ticket type + queue + bots).</div>
+    <div id="list"><div class="notice">Loading…</div></div>
+  </div>
+<script>
+const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function load(){
+  try {
+    const r = await fetch('/api/swarm/packs'); const j = await r.json();
+    const packs = Array.isArray(j.packs) ? j.packs : [];
+    if (!packs.length) { document.getElementById('list').innerHTML = '<div class="notice">No packs yet. Scope one with codex-packer, then it shows up here.</div>'; return; }
+    document.getElementById('list').innerHTML = packs.map((p,i)=>{
+      const mode = p.mode || 'unknown';
+      const bots = Array.isArray(p.bots) ? p.bots.length : 0;
+      const gate = p.hasApprovalGates ? '<span class="badge gate">approval gates</span>' : '';
+      const deploy = mode === 'swarm' ? `<button class="btn primary" data-deploy="${esc(p.name)}" data-i="${i}">🚀 Deploy to swarm</button>` : '';
+      return `<div class="pack">
+        <div class="top"><span class="nm">${esc(p.name)}</span><span class="badge ${esc(mode)}">${esc(mode)}</span>${gate}</div>
+        <div class="desc">${esc(p.description||'')}</div>
+        <div class="meta">${bots?bots+' bots · ':''}${p.ticketType?'ticket type: '+esc(p.ticketType)+' · ':''}${p.updatedAt?new Date(p.updatedAt).toLocaleString():''}</div>
+        <div class="bar">
+          <a class="btn ghost" href="/api/swarm/packs/${encodeURIComponent(p.name)}/download">⬇ Download ZIP</a>
+          ${mode==='swarm'?`<button class="btn ghost" data-flow="${esc(p.name)}" data-i="${i}">🔀 View flow</button>`:''}
+          ${deploy}<span class="toast" id="t-${i}"></span>
+        </div><div class="flow" id="f-${i}"></div></div>`;
+    }).join('');
+    document.querySelectorAll('[data-deploy]').forEach(b=>b.onclick=()=>deploy(b.dataset.deploy, b.dataset.i, b));
+    document.querySelectorAll('[data-flow]').forEach(b=>b.onclick=()=>viewFlow(b.dataset.flow, b.dataset.i));
+  } catch (e) { document.getElementById('list').innerHTML = '<div class="notice">Couldn\'t load packs.</div>'; }
+}
+// Read-only visual representation of the generated workflow (so you can see it
+// and tell the bot what to change — the studio is a view, not a hand-editor).
+async function viewFlow(name, i){
+  const el = document.getElementById('f-'+i);
+  if (el.innerHTML) { el.innerHTML = ''; return; }   // toggle
+  el.innerHTML = '<div class="spin">Loading flow…</div>';
+  try {
+    const r = await fetch('/api/swarm/packs/'+encodeURIComponent(name)+'/workflow');
+    const j = await r.json();
+    if (!r.ok) { el.innerHTML = '<div class="meta">No workflow graph in this pack.</div>'; return; }
+    const wf = j.workflow || {};
+    const nodes = Array.isArray(wf.nodes) ? wf.nodes : Object.entries(wf.nodes||{}).map(([id,v])=>({id,...(v||{})}));
+    const edges = Array.isArray(wf.edges) ? wf.edges : (wf.transitions||[]);
+    const nrow = nodes.map(n=>`<div class="fnode"><b>${esc(n.id||n.name||'')}</b> <span class="src">${esc(n.type||n.kind||'')}</span> ${esc(n.label||n.bot||n.description||'')}</div>`).join('');
+    const erow = edges.map(e=>`<div class="fedge">${esc(e.from||e.source||'')} → ${esc(e.to||e.target||'')}${e.label||e.on?' <span class="src">['+esc(e.label||e.on)+']</span>':''}</div>`).join('');
+    el.innerHTML = '<div class="flowbox"><div class="srchead">🔀 Workflow — '+nodes.length+' nodes, '+edges.length+' edges (read-only)</div>'+
+      '<div class="fnodes">'+(nrow||'<span class="src">no nodes</span>')+'</div>'+
+      (erow?'<div class="fedges">'+erow+'</div>':'')+'</div>';
+  } catch (e) { el.innerHTML = '<div class="meta">Couldn\'t load flow.</div>'; }
+}
+async function deploy(name, i, btn){
+  if (!confirm('Deploy "'+name+'" into the swarm? This registers its bots, a new ticket type, and an isolated ticket queue.')) return;
+  const t = document.getElementById('t-'+i); btn.disabled = true; btn.textContent = 'Deploying…';
+  try {
+    const r = await fetch('/api/swarm/packs/'+encodeURIComponent(name)+'/deploy', { method:'POST' });
+    const j = await r.json();
+    if (r.ok && j.ok) {
+      t.className = 'toast'; t.innerHTML = '✓ Deployed — '+j.bots.length+' bots, ticket type "'+esc(j.ticketType)+'"'+(j.gated?' (gated)':'')+'. <a href="'+esc(j.openUrl)+'" target="_top">Open app →</a>';
+      btn.textContent = 'Deployed ✓';
+    } else { t.className='toast err'; t.textContent = 'Deploy failed: '+esc(j.error||r.status); btn.disabled=false; btn.textContent='🚀 Deploy to swarm'; }
+  } catch (e) { t.className='toast err'; t.textContent='Deploy error.'; btn.disabled=false; btn.textContent='🚀 Deploy to swarm'; }
+}
+load();
+</script>
+</body>
+</html>

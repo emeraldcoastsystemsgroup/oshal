@@ -1,0 +1,50 @@
+provider: hubspot
+displayName: HubSpot
+version: 1.0.0
+baseUrl: https://api.hubapi.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: after
+  nextField: paging.next.after
+  itemsField: results
+resources:
+  - name: list-contacts
+    tool: hubspot-list-contacts
+    method: GET
+    path: /crm/v3/objects/contacts
+    query:
+      limit: '100'
+    paginate: true
+  - name: get-contact
+    tool: hubspot-get-contact
+    method: GET
+    path: /crm/v3/objects/contacts/{contactId}
+  - name: create-contact
+    tool: hubspot-create-contact
+    method: POST
+    path: /crm/v3/objects/contacts
+    body: '{properties}'
+    retry:
+      maxRetries: 0
+  - name: search-deals
+    tool: hubspot-search-deals
+    method: POST
+    path: /crm/v3/objects/deals/search
+    body: '{search}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "Read and search HubSpot CRM contacts and deals, with a resource to create contacts."
+  category: "CRM"
+  icon: hubspot
+  iconTitle: HubSpot
+  iconSource: simple-icons
+  iconVerified: true

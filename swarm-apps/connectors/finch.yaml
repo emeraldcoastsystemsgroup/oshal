@@ -1,0 +1,33 @@
+provider: finch
+displayName: Finch
+version: 1.0.0
+baseUrl: https://api.tryfinch.com/employer
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: directory
+    tool: finch-directory
+    method: GET
+    path: /directory
+  - name: company
+    tool: finch-company
+    method: GET
+    path: /company
+  - name: individual
+    tool: finch-individual
+    method: GET
+    path: /individual/{individualId}
+  - name: employment
+    tool: finch-employment
+    method: GET
+    path: /employment/{individualId}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/tryfinch.com.ico

@@ -1,0 +1,44 @@
+provider: stripe
+displayName: Stripe
+version: 1.0.0
+baseUrl: https://api.stripe.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 25
+  perSecond: 25
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-customers
+    tool: stripe-list-customers
+    method: GET
+    path: /customers
+    query:
+      limit: '{limit}'
+      email: '{email}'
+  - name: get-customer
+    tool: stripe-get-customer
+    method: GET
+    path: /customers/{customerId}
+  - name: list-charges
+    tool: stripe-list-charges
+    method: GET
+    path: /charges
+    query:
+      limit: '{limit}'
+  - name: list-invoices
+    tool: stripe-list-invoices
+    method: GET
+    path: /invoices
+    query:
+      limit: '{limit}'
+      customer: '{customer}'
+metadata:
+  description: "Read Stripe customers, charges, and invoices for the connected account."
+  category: "Payments"
+  icon: stripe
+  iconTitle: Stripe
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Search — find anything across your swarm</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. (Same pattern as free-models.html.) -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5b8cff);
+    --ok: var(--status-success, #36d399);
+    --chip: var(--bg-tertiary);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 26px 20px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 18px; font-size: 13.5px; }
+  form.bar { display: flex; gap: 8px; }
+  input[type=search] { flex: 1; background: var(--panel2); border: 1px solid var(--line);
+    color: var(--text); border-radius: 10px; padding: 11px 14px; font: inherit; }
+  input[type=search]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--chip); color: var(--text);
+    border-radius: 10px; padding: 10px 18px; font: inherit; font-weight: 600; }
+  button.primary { background: var(--accent); color: #04122e; border-color: transparent; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 4px; }
+  .chip { border: 1px solid var(--line); background: var(--chip); color: var(--muted);
+    border-radius: 999px; padding: 3px 12px; font-size: 12.5px; cursor: pointer; user-select: none; }
+  .chip.on { border-color: var(--accent); color: var(--accent); }
+  .status { color: var(--muted); font-size: 12.5px; margin: 10px 0; min-height: 17px; }
+  .status.err { color: #ff8585; }
+  .group { margin-top: 22px; }
+  .group h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+    margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+  .group h2 .n { background: var(--chip); border: 1px solid var(--line); border-radius: 999px;
+    padding: 0 8px; font-size: 11px; }
+  .hit { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 11px 14px; margin-bottom: 8px; }
+  .hit .t { font-weight: 600; font-size: 15px; }
+  .hit .t a { color: var(--text); }
+  .hit .t a:hover { color: var(--accent); }
+  .hit .s { color: var(--muted); font-size: 13px; margin-top: 3px; overflow-wrap: anywhere; }
+  .hit .m { color: var(--muted); font-size: 11.5px; margin-top: 5px; display: flex; gap: 10px; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  kbd { background: var(--chip); border: 1px solid var(--line); border-radius: 5px;
+    padding: 1px 6px; font-size: 12px; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>Search</h1>
+  <p class="sub">One box over <strong>your own</strong> swarm data — tickets, chat history, your
+  personal data vault, and the knowledge base. Results are scoped to your account.</p>
+
+  <form class="bar" id="form">
+    <input type="search" id="q" placeholder="Search tickets, chats, knowledge…" autofocus autocomplete="off" />
+    <button type="submit" class="primary">Search</button>
+  </form>
+  <div class="chips" id="chips" title="Limit which stores are searched"></div>
+  <div class="status" id="status">Type a query and press <kbd>Enter</kbd>.</div>
+  <div id="results"></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $q = document.getElementById('q');
+  const $chips = document.getElementById('chips');
+  const $status = document.getElementById('status');
+  const $results = document.getElementById('results');
+
+  // Where a hit's "source" groups under, and what the group header reads as.
+  const GROUP_LABELS = {
+    tickets: 'Tickets', chat: 'Chat history', personal: 'Personal data', rag: 'Knowledge base',
+  };
+  const selected = new Set(); // empty = all sources
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[c]);
+  }
+
+  // Only same-origin cockpit paths are rendered as links — a result row must never become an
+  // open redirect off the deployment, even if a store ever returns an absolute URL.
+  function safeUrl(u) {
+    return (typeof u === 'string' && u.startsWith('/') && !u.startsWith('//')) ? u : null;
+  }
+
+  async function loadSources() {
+    try {
+      const r = await fetch('/api/search/sources');
+      if (!r.ok) return;
+      const { sources } = await r.json();
+      $chips.innerHTML = '';
+      for (const name of sources || []) {
+        const el = document.createElement('span');
+        el.className = 'chip';
+        el.textContent = GROUP_LABELS[name] || name;
+        el.onclick = () => {
+          if (selected.has(name)) selected.delete(name); else selected.add(name);
+          el.classList.toggle('on', selected.has(name));
+          if ($q.value.trim()) run();
+        };
+        $chips.appendChild(el);
+      }
+    } catch { /* chips are progressive enhancement — search works without them */ }
+  }
+
+  function renderGroups(hits) {
+    const groups = new Map();
+    for (const h of hits) {
+      if (!groups.has(h.source)) groups.set(h.source, []);
+      groups.get(h.source).push(h);
+    }
+    $results.innerHTML = '';
+    if (!hits.length) {
+      $results.innerHTML = '<div class="empty">No matches in your data.</div>';
+      return;
+    }
+    for (const [source, rows] of groups) {
+      const sec = document.createElement('div');
+      sec.className = 'group';
+      const rowsHtml = rows.map((h) => {
+        const url = safeUrl(h.url);
+        const title = url
+          ? '<a href="' + esc(url) + '" target="_top">' + esc(h.title) + '</a>'
+          : esc(h.title);
+        const ts = h.ts ? new Date(h.ts).toLocaleString() : '';
+        return '<div class="hit"><div class="t">' + title + '</div>'
+          + (h.snippet ? '<div class="s">' + esc(h.snippet) + '</div>' : '')
+          + '<div class="m"><span>' + esc(GROUP_LABELS[source] || source) + '</span>'
+          + (ts ? '<span>' + esc(ts) + '</span>' : '') + '</div></div>';
+      }).join('');
+      sec.innerHTML = '<h2>' + esc(GROUP_LABELS[source] || source)
+        + ' <span class="n">' + rows.length + '</span></h2>' + rowsHtml;
+      $results.appendChild(sec);
+    }
+  }
+
+  let inFlight = null;
+  async function run() {
+    const q = $q.value.trim();
+    if (!q) return;
+    $status.className = 'status';
+    $status.textContent = 'Searching…';
+    const params = new URLSearchParams({ q, limit: '30' });
+    if (selected.size) params.set('sources', [...selected].join(','));
+    const my = (inFlight = fetch('/api/search?' + params.toString()));
+    try {
+      const r = await my;
+      if (my !== inFlight) return; // a newer query superseded this one
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        $status.className = 'status err';
+        $status.textContent = body.error || ('Search failed (' + r.status + ')');
+        return;
+      }
+      const data = await r.json();
+      renderGroups(data.hits || []);
+      const counts = Object.entries(data.sourceCounts || {})
+        .map(([k, v]) => (GROUP_LABELS[k] || k) + ' ' + v).join(' · ');
+      $status.textContent = (data.hits || []).length + ' results in ' + (data.durationMs ?? '?') + ' ms'
+        + (counts ? ' — ' + counts : '');
+    } catch (e) {
+      if (my !== inFlight) return;
+      $status.className = 'status err';
+      $status.textContent = 'Search failed: ' + (e && e.message ? e.message : e);
+    }
+  }
+
+  document.getElementById('form').addEventListener('submit', (ev) => { ev.preventDefault(); run(); });
+  loadSources();
+})();
+</script>
+</body>
+</html>

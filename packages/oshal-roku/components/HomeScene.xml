@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HomeScene — the single SceneGraph scene for the OSHAL Roku surface. Three states:
+     (1) pairing panel (no token yet): a scannable login QR + the device-link code,
+     (2) JARVIS (default after auth): a scan-to-talk QR for the phone push-to-talk remote +
+         the live conversation polled from /api/jarvis/history, and
+     (3) Smart Home (secondary, toggled with the * / Options key): Scenes list + Devices grid.
+     All data comes from the OSHAL JSON API via HttpTask; the Roku holds only the host URL +
+     paired token in the registry. Surface only (ADR-047/068). -->
+<component name="HomeScene" extends="Scene" backgroundColor="0x0e0e16ff" backgroundURI="">
+  <children>
+    <!-- Header -->
+    <Label id="title" text="OSHAL · Jarvis" color="0xe6e6f0ff" translation="[60,40]"
+           font="font:LargeBoldSystemFont" />
+    <Label id="status" color="0x8b8ba3ff" translation="[62,96]" font="font:MediumSystemFont" />
+
+    <!-- (1) Pairing panel: scannable login QR + code -->
+    <Group id="pairGroup" visible="false" translation="[60,180]">
+      <Label text="Connect this TV to OSHAL" color="0xe6e6f0ff" font="font:MediumBoldSystemFont" />
+      <Label id="pairInstr" color="0x8b8ba3ff" translation="[0,56]" width="1100" wrap="true"
+             font="font:MediumSystemFont" />
+      <Rectangle color="0xffffffff" translation="[0,140]" width="360" height="360">
+        <Poster id="pairQr" translation="[14,14]" width="332" height="332" />
+      </Rectangle>
+      <Label text="Or go to the address above and enter:" color="0x8b8ba3ff"
+             translation="[420,200]" font="font:SmallSystemFont" />
+      <Label id="pairCode" color="0x7c6cffff" translation="[420,236]" font="font:LargeBoldSystemFont" />
+      <Label id="pairState" color="0x8b8ba3ff" translation="[420,330]" width="700" wrap="true"
+             font="font:SmallSystemFont" />
+    </Group>
+
+    <!-- (2) Jarvis surface (default): conversation (left) + scan-to-talk QR (right) -->
+    <Group id="jarvisGroup" visible="false">
+      <Label id="jStatus" color="0x00d3a7ff" translation="[60,170]" font="font:MediumSystemFont" />
+      <Label id="transcript" color="0xe6e6f0ff" translation="[60,220]" width="1300" maxLines="16"
+             wrap="true" lineSpacing="10" font="font:MediumSystemFont" />
+      <Label id="jEmpty" color="0x8b8ba3ff" translation="[60,260]" width="1300" wrap="true"
+             font="font:MediumSystemFont"
+             text="Scan the code with your phone, then talk — your conversation appears here." />
+      <Label text="Scan to talk" color="0x8b8ba3ff" translation="[1480,170]" font="font:SmallSystemFont" />
+      <Rectangle color="0xffffffff" translation="[1480,206]" width="340" height="340">
+        <Poster id="talkQr" translation="[14,14]" width="312" height="312" />
+      </Rectangle>
+      <Label text="Push-to-talk from your phone; answers show here." color="0x8b8ba3ff"
+             translation="[1480,560]" width="360" wrap="true" font="font:SmallSystemFont" />
+      <Label text="Press * for Smart Home devices" color="0x8b8ba3ff"
+             translation="[1480,660]" width="360" wrap="true" font="font:SmallSystemFont" />
+    </Group>
+
+    <!-- (3) Smart Home device grid (secondary; press * to toggle) -->
+    <Group id="contentGroup" visible="false">
+      <Label text="Scenes" color="0x8b8ba3ff" translation="[60,170]" font="font:SmallSystemFont" />
+      <LabelList id="scenesList" translation="[60,200]" itemSize="[360,56]"
+                 color="0xe6e6f0ff" focusedColor="0xffffffff"
+                 vertFocusAnimationStyle="floatingFocus" />
+
+      <Label text="Devices" color="0x8b8ba3ff" translation="[480,170]" font="font:SmallSystemFont" />
+      <MarkupGrid id="grid" translation="[480,200]" itemComponentName="DeviceCard"
+                  itemSize="[300,120]" itemSpacing="[16,16]" numColumns="4" numRows="4"
+                  vertFocusAnimationStyle="floatingFocus" />
+    </Group>
+
+    <!-- Toast for action feedback -->
+    <Label id="toast" color="0x00d3a7ff" translation="[60,1000]" font="font:MediumSystemFont" />
+
+    <!-- Timers: pairing poll + Jarvis conversation poll (each started only while in that state). -->
+    <Timer id="pollTimer" repeat="true" duration="5" />
+    <Timer id="jarvisTimer" repeat="true" duration="3" />
+  </children>
+  <script type="text/brightscript" uri="pkg:/components/HomeScene.brs" />
+</component>

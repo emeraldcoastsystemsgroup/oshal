@@ -1,0 +1,31 @@
+provider: elevenlabs
+displayName: ElevenLabs
+version: 1.0.0
+baseUrl: https://api.elevenlabs.io/v1
+auth:
+  type: apiKeyHeader
+  header: xi-api-key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: voices
+    tool: elevenlabs-voices
+    method: GET
+    path: /voices
+  - name: models
+    tool: elevenlabs-models
+    method: GET
+    path: /models
+  - name: user
+    tool: elevenlabs-user
+    method: GET
+    path: /user
+metadata:
+  icon: elevenlabs
+  iconTitle: ElevenLabs
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — oshal-dev (ADR-081)
+#
+# The platform's own development queue. A ticketType=oshal-dev ticket routes via
+# the generic single-bot manifest-worker dispatch straight to oshal-developer —
+# the dedicated specialist that keeps its OWN clone of this repo (/app/dev-repo,
+# configurable via OSHAL_DEV_REPO_URL) and works trunk-based under the repo's
+# guard hooks + quality gate.
+#
+# PRIVILEGED: dispatch-manifest-worker only runs oshal-dev tickets whose OWNER
+# is on OSHAL_SUPERADMIN_SUBS (hardcoded gate, not manifest-declared — a manifest
+# edit can never widen who can task the developer bot). Everyone else's tickets
+# escalate with reason 'superadmin_required'.
+#
+# OPERATOR PREREQUISITES:
+#   .env → OSHAL_SUPERADMIN_SUBS=<your sub>           (who may file oshal-dev work)
+#          OSHAL_DEV_REPO_TOKEN=<git token>           (push auth for the bot's clone)
+#          OSHAL_DEV_OWNER_SUB=<your sub>             (owner of the nightly docs ticket)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: oshal-dev
+suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: OSHAL Development
+description: >-
+  The platform develops itself: a dedicated, superadmin-gated developer bot
+  (oshal-developer) that owns platform-change tickets end-to-end — pulls its own
+  clone, implements, runs the quality gate (tsc + unit suite + change-log +
+  file caps), commits small, pushes to main, and reports with verification
+  evidence. Also runs the nightly docs-quality check and maintains a codebase
+  index graph. Recovery/redeploy stays with the ADR-077 host sidecar.
+version: 1.0.0
+status: active
+
+ticketType: oshal-dev
+
+workflow:
+  name: OSHAL Platform Development
+  # No `pipeline:` — single-bot manifest-worker dispatch (dispatchManifestWorkerTicket):
+  # the developer bot owns the whole ticket; no decompose phases, no reviewer (the
+  # persona embeds the full quality gate).
+  workerBot: oshal-developer
+  # Scheduled tickets (nightly docs check) and Jarvis-filed dev asks should run
+  # without sitting in the backlog approval gate — the superadmin ownership gate
+  # at dispatch is the real control for this ticketType.
+  autoStart: true
+
+bots:
+  - agentId: de000000-0000-0000-0000-000000000001
+    name: oshal-developer
+    persona: ai-lab/bot-personas/oshal-developer.yaml
+    role: platform/developer
+    capabilities:
+      - platform-development
+      - typescript
+      - feature-slice-design
+      - documentation-quality
+      - codebase-indexing
+      - self-hosting

@@ -1,0 +1,37 @@
+provider: pandascore
+displayName: PandaScore
+version: 1.0.0
+baseUrl: https://api.pandascore.co
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: matches
+    tool: pandascore-matches
+    method: GET
+    path: /matches
+  - name: teams
+    tool: pandascore-teams
+    method: GET
+    path: /teams
+    query:
+      search[name]: '{q}'
+  - name: players
+    tool: pandascore-players
+    method: GET
+    path: /players
+    query:
+      search[name]: '{q}'
+  - name: tournaments
+    tool: pandascore-tournaments
+    method: GET
+    path: /tournaments
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/pandascore.co.ico

@@ -1,0 +1,302 @@
+<!doctype html>
+<!--
+  OSHAL — public, surface-level technology explainer (served ungated at /technology).
+  Self-contained: no external scripts/fonts/CDNs so it renders reliably anywhere.
+  CHANGE LOG
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Initial public technology explainer deck.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OSHAL — How the technology works</title>
+<meta name="description" content="OSHAL is a vendor-neutral multi-agent platform: a swarm of specialized AI bots that each pick the best AI tool and model for the job, acting securely on your own connected accounts." />
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  /* This surface keeps its own short alias names, but DERIVES them from the framework theme rather
+     than hardcoding hex — so all eleven themes work, not just the dark ones. The palette used to be
+     literal (#0b0f1e …), which is why it only ever looked right in a dark theme. Status/brand colors
+     come from the theme too; the fallbacks after the comma keep the surface legible if a theme
+     omits one. */
+  :root{
+    --bg:var(--bg-primary); --bg2:var(--bg-secondary); --card:var(--bg-card); --card2:var(--bg-secondary);
+    --border:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted); --soft:var(--text-secondary);
+    --accent:var(--accent-primary); --accent2:var(--accent-primary-hover); --ok:var(--status-success,#00d3a7); --warn:var(--status-warning,#ffb454);
+    --grad:var(--accent-gradient,linear-gradient(120deg,#5b8bff 0%,#7c5cff 55%,#00d3a7 120%));
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:radial-gradient(1200px 700px at 80% -10%,var(--accent-glow,#1a2a5c) 0%,transparent 60%),
+               radial-gradient(900px 600px at -10% 110%,var(--accent-glow,#14224a) 0%,transparent 55%),
+               var(--bg);
+    color:var(--text);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow:hidden;
+  }
+  /* ---- deck shell ---- */
+  .deck{position:relative;height:100vh;width:100vw;overflow:hidden}
+  .slide{
+    position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;
+    padding:clamp(28px,6vw,110px);opacity:0;transform:translateY(18px) scale(.99);
+    transition:opacity .42s ease,transform .42s ease;pointer-events:none;
+    max-width:1180px;margin:0 auto;
+  }
+  .slide.active{opacity:1;transform:none;pointer-events:auto}
+  .kicker{
+    display:inline-flex;align-items:center;gap:9px;font-size:12.5px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:18px;
+  }
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--grad)}
+  h1{font-size:clamp(34px,6vw,68px);line-height:1.04;letter-spacing:-.02em;font-weight:800}
+  h2{font-size:clamp(26px,3.6vw,44px);line-height:1.08;letter-spacing:-.015em;font-weight:780;margin-bottom:18px}
+  .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:clamp(17px,2vw,23px);color:var(--soft);max-width:60ch;margin-top:18px}
+  p.body{font-size:clamp(15px,1.5vw,18px);color:var(--muted);max-width:64ch;margin-top:14px}
+  /* ---- layout helpers ---- */
+  .grid{display:grid;gap:16px;margin-top:30px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:820px){.g2,.g3,.g4{grid-template-columns:1fr 1fr}}
+  @media(max-width:540px){.g2,.g3,.g4{grid-template-columns:1fr}}
+  .card{
+    background:linear-gradient(180deg,var(--card) 0%,var(--card2) 100%);
+    border:1px solid var(--border);border-radius:16px;padding:20px 20px 18px;
+    transition:transform .2s ease,border-color .2s ease;
+  }
+  .card:hover{transform:translateY(-3px);border-color:var(--border-color-hover,#3a4a78)}
+  .card .ic{font-size:26px;margin-bottom:10px;display:block}
+  .card h3{font-size:17px;font-weight:700;margin-bottom:6px}
+  .card p{font-size:13.5px;color:var(--muted);line-height:1.5}
+  .pill{display:inline-block;font-size:12px;color:var(--soft);background:var(--bg-tertiary,#0e1530);
+    border:1px solid var(--border);border-radius:999px;padding:5px 12px;margin:5px 6px 0 0}
+  /* ---- flow diagram ---- */
+  .flow{display:flex;align-items:stretch;gap:14px;margin-top:34px;flex-wrap:wrap}
+  .flow .step{flex:1;min-width:210px;background:linear-gradient(180deg,var(--card),var(--card2));
+    border:1px solid var(--border);border-radius:16px;padding:20px}
+  .flow .step .n{font-size:12px;color:var(--accent);font-weight:700;letter-spacing:.12em}
+  .flow .step h3{font-size:18px;margin:8px 0 6px}
+  .flow .step p{font-size:13.5px;color:var(--muted)}
+  .arrow{align-self:center;color:var(--muted);font-size:22px}
+  @media(max-width:820px){.arrow{transform:rotate(90deg)}}
+  .big{font-size:clamp(40px,8vw,92px);font-weight:850;letter-spacing:-.03em;line-height:1}
+  /* ---- chrome ---- */
+  .top{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;
+    align-items:center;padding:18px 26px;z-index:20}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:.02em}
+  .brand .mark{width:30px;height:30px;border-radius:9px;background:var(--grad);
+    display:flex;align-items:center;justify-content:center;font-weight:900;color:#06122a;font-size:16px}
+  .brand small{font-weight:500;color:var(--muted);letter-spacing:.04em}
+  .nav{position:fixed;bottom:22px;left:0;right:0;display:flex;justify-content:center;
+    align-items:center;gap:16px;z-index:20}
+  .btn{background:var(--card2);border:1px solid var(--border);color:var(--text);
+    width:44px;height:44px;border-radius:12px;font-size:18px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;transition:.15s}
+  .btn:hover{border-color:var(--accent);background:var(--bg-card-hover,#22305a)}
+  .dots{display:flex;gap:9px}
+  .dots i{width:9px;height:9px;border-radius:50%;background:var(--text-muted,#33406a);cursor:pointer;transition:.2s}
+  .dots i.on{background:var(--grad);transform:scale(1.25)}
+  .count{position:fixed;bottom:30px;right:26px;color:var(--muted);font-size:13px;z-index:20}
+  .bar{position:fixed;top:0;left:0;height:3px;background:var(--grad);z-index:30;transition:width .42s ease}
+  .cta a{display:inline-block;margin-top:30px;margin-right:12px;background:var(--grad);color:#06122a;
+    font-weight:750;text-decoration:none;padding:13px 22px;border-radius:12px;font-size:15px}
+  .cta a.ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+  .note{font-size:12.5px;color:var(--text-muted,#6f80a8);margin-top:18px;max-width:62ch}
+  @media(max-width:640px){
+    body{overflow:auto}
+    .deck{height:auto;min-height:100vh;overflow:visible}
+    .slide{
+      position:relative;inset:auto;display:none;flex-direction:column;justify-content:flex-start;
+      padding:72px 18px 100px;
+      opacity:1;transform:none;pointer-events:auto;
+    }
+    .slide.active{display:flex}
+    .top{padding:12px 16px}
+    .brand small{display:none}
+    .top>div:last-child{display:none}
+    .flow .step{min-width:0;width:100%}
+    .nav{bottom:14px;gap:10px}
+    .btn{width:40px;height:40px;font-size:16px}
+    .count{bottom:22px;right:14px;font-size:12px}
+    .cta a{display:block;text-align:center;margin-right:0;margin-top:12px}
+  }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="bar" id="bar"></div>
+<header class="top">
+  <div class="brand"><span class="mark">O</span>OSHAL <small>· Open Swarm Harness</small></div>
+  <div style="color:var(--muted);font-size:13px">How the technology works</div>
+</header>
+
+<main class="deck" id="deck">
+
+  <!-- 1 — Title -->
+  <section class="slide active">
+    <span class="kicker"><span class="dot"></span> Vendor-neutral AI orchestration</span>
+    <h1>One platform.<br><span class="grad">Every AI.</span></h1>
+    <p class="lede">OSHAL is a swarm of specialized AI agents. Each one picks the best AI tool
+      and the best model for its job — then acts securely on your own connected accounts.</p>
+    <div class="cta">
+      <a href="#" onclick="go(1);return false">See how it works →</a>
+      <a class="ghost" href="/login">Sign in</a>
+    </div>
+  </section>
+
+  <!-- 2 — The problem -->
+  <section class="slide">
+    <span class="kicker"><span class="dot"></span> The problem</span>
+    <h2>AI today is <span class="grad">fragmented and locked-in</span>.</h2>
+    <p class="body">Every vendor wants you on their model for everything. But no single model is
+      best — or cheapest — at every task. Pinning a whole business to one AI stack means you
+      overpay for simple work, you can't shop for quality, and your data lives in someone else's box.</p>
+    <div class="grid g3">
+      <div class="card"><span class="ic">🔒</span><h3>Locked in</h3><p>A single-vendor stack can't route you off its own models — even when a rival is cheaper or better.</p></div>
+      <div class="card"><span class="ic">💸</span><h3>Wasteful</h3><p>Running a top-tier model on trivial tasks burns budget. One size never fits all.</p></div>
+      <div class="card"><span class="ic">🧩</span><h3>Disconnected</h3><p>Your email, files, calendar, socials and accounts don't talk to your AI.</p></div>
+    </div>
+  </section>
+
+  <!-- 3 — What OSHAL is -->
+  <section class="slide">
+    <span class="kicker"><span class="dot"></span> What OSHAL is</span>
+    <h2>A <span class="grad">swarm</span> of specialized AI workers.</h2>
+    <p class="body">Instead of one giant assistant, OSHAL runs many focused bots. A controller takes
+      a request, breaks it into phases, and dispatches each phase to the bot built for it. Bots
+      collaborate over a shared message bus — like a team, not a monolith.</p>
+    <div class="grid g3">
+      <div class="card"><span class="ic">🎛️</span><h3>The controller</h3><p>Routes work, tracks cost, enforces approvals. It orchestrates — it never calls an AI model itself.</p></div>
+      <div class="card"><span class="ic">🤖</span><h3>The bots</h3><p>Each bot owns a domain and runs its own AI engine — Claude Code, Codex, Cline, Gemini…</p></div>
+      <div class="card"><span class="ic">🔗</span><h3>The connectors</h3><p>Bots act on your real accounts through per-user, encrypted tokens you grant once.</p></div>
+    </div>
+  </section>
+
+  <!-- 4 — The differentiator -->
+  <section class="slide">
+    <span class="kicker"><span class="dot"></span> The differentiator</span>
+    <h2>Route every task to the <span class="grad">best</span> AI for it.</h2>
+    <p class="body">We call it the <b>Token Chase</b>: for any business process, OSHAL can match the
+      work to the right tool, the right model, and the right platform — optimizing cost <i>and</i>
+      quality. Because OSHAL is vendor-neutral, nothing stops it from moving you to whatever wins.</p>
+    <div class="grid g3">
+      <div class="card"><span class="ic">⚖️</span><h3>Any model</h3><p>Frontier models for hard reasoning; small, cheap, or fully-local models for routine work.</p></div>
+      <div class="card"><span class="ic">🛠️</span><h3>Any tool</h3><p>Multiple agent harnesses run side-by-side behind one interface — pick per job.</p></div>
+      <div class="card"><span class="ic">🌐</span><h3>Any platform</h3><p>Hosted vendors or your own local runtimes. The moat is neutrality, not a single brand.</p></div>
+    </div>
+  </section>
+
+  <!-- 5 — How it works (flow) -->
+  <section class="slide">
+    <span class="kicker"><span class="dot"></span> How it works</span>
+    <h2>Three layers, one clean separation.</h2>
+    <div class="flow">
+      <div class="step"><div class="n">01 · ORCHESTRATE</div><h3>Controller</h3>
+        <p>Accepts your request, splits it into phases, and dispatches each to the right bot. Captures cost and runs approval gates. No AI calls here.</p></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">02 · EXECUTE</div><h3>Bot nodes</h3>
+        <p>Each bot runs its chosen AI tool + model, does the reasoning, and calls real APIs. This is where all the intelligence — and all the cost — lives.</p></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">03 · ACT</div><h3>Your accounts</h3>
+        <p>Through connectors you authorize, bots read and act on your email, files, calendar, socials and devices — on your behalf, never beyond your scopes.</p></div>
+    </div>
+  </section>
+
+  <!-- 6 — Security / ownership -->
+  <section class="slide">
+    <span class="kicker"><span class="dot"></span> Your data, your control</span>
+    <h2>It works <span class="grad">for</span> you — on your terms.</h2>
+    <div class="grid g2">
+      <div class="card"><span class="ic">🔐</span><h3>Per-user encrypted access</h3><p>Every account you connect is stored encrypted and scoped to you. One user's tokens are never visible to another.</p></div>
+      <div class="card"><span class="ic">🏠</span><h3>Personal or shared</h3><p>Keep connections personal, or share them within a household or team — many accounts per service, each selectable.</p></div>
+      <div class="card"><span class="ic">✅</span><h3>You approve</h3><p>Nothing is published or sent without your say-so. Drafts and actions wait for a human green-light.</p></div>
+      <div class="card"><span class="ic">📊</span><h3>Accountable by design</h3><p>Every AI call is metered, so cost and usage are always attributable — no black-box spend.</p></div>
+    </div>
+  </section>
+
+  <!-- 7 — What it can do -->
+  <section class="slide">
+    <span class="kicker"><span class="dot"></span> What it can do</span>
+    <h2>Whole processes, packaged as <span class="grad">apps</span>.</h2>
+    <p class="body">Capabilities ship as bundles — each a set of connectors + the right bots + a
+      cockpit surface. Add a new capability by packing a new bundle, not by rebuilding the platform.</p>
+    <div class="grid g4">
+      <div class="card"><span class="ic">✉️</span><h3>Communications</h3><p>Triage and act on your inbox + calendar.</p></div>
+      <div class="card"><span class="ic">📣</span><h3>Social / branding</h3><p>AI-draft → you approve → publish to LinkedIn, X, Facebook.</p></div>
+      <div class="card"><span class="ic">📁</span><h3>Storage</h3><p>One browser across your file backends.</p></div>
+      <div class="card"><span class="ic">🖼️</span><h3>Presentations</h3><p>Chat your way to a finished deck.</p></div>
+      <div class="card"><span class="ic">💼</span><h3>Career</h3><p>A job-hunt assistant over your real history.</p></div>
+      <div class="card"><span class="ic">💰</span><h3>Finance</h3><p>Aggregate balances + holdings, then reason over them.</p></div>
+      <div class="card"><span class="ic">🏡</span><h3>Smart home</h3><p>One brain across your devices and ecosystems.</p></div>
+      <div class="card"><span class="ic">☁️</span><h3>DevOps / Cloud</h3><p>Operator-grade access for cloud workflows.</p></div>
+    </div>
+  </section>
+
+  <!-- 8 — Close -->
+  <section class="slide">
+    <span class="kicker"><span class="dot"></span> The takeaway</span>
+    <h2 class="big"><span class="grad">Accountable AI</span><br>for real work.</h2>
+    <p class="lede">Vendor-neutral. Cost-optimized. Built on your own accounts, with you in the loop.
+      OSHAL turns the whole AI market into one toolkit — and points it at the work you actually do.</p>
+    <div class="cta">
+      <a href="/login">Get started →</a>
+      <a class="ghost" href="/cockpit/">Open the cockpit</a>
+    </div>
+    <p class="note">Surface-level overview. Some capability bundles are live today and others are
+      in active build — the platform is designed to grow by adding bundles, not rewrites.</p>
+  </section>
+
+</main>
+
+<nav class="nav">
+  <button class="btn" onclick="go(cur-1)" aria-label="Previous">‹</button>
+  <div class="dots" id="dots"></div>
+  <button class="btn" onclick="go(cur+1)" aria-label="Next">›</button>
+</nav>
+<div class="count" id="count"></div>
+
+<script>
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var cur = 0;
+  var dotsEl = document.getElementById('dots');
+  slides.forEach(function(_, i){
+    var d = document.createElement('i');
+    d.onclick = function(){ go(i); };
+    dotsEl.appendChild(d);
+  });
+  var dots = Array.prototype.slice.call(dotsEl.children);
+
+  function go(i){
+    i = Math.max(0, Math.min(slides.length - 1, i));
+    slides[cur].classList.remove('active');
+    dots[cur].classList.remove('on');
+    cur = i;
+    slides[cur].classList.add('active');
+    dots[cur].classList.add('on');
+    document.getElementById('bar').style.width = ((cur + 1) / slides.length * 100) + '%';
+    document.getElementById('count').textContent = (cur + 1) + ' / ' + slides.length;
+  }
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { go(cur + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { go(cur - 1); e.preventDefault(); }
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(slides.length - 1);
+  });
+  // Swipe (touch) navigation.
+  var x0 = null;
+  document.addEventListener('touchstart', function(e){ x0 = e.touches[0].clientX; }, {passive:true});
+  document.addEventListener('touchend', function(e){
+    if (x0 === null) return;
+    var dx = e.changedTouches[0].clientX - x0;
+    if (Math.abs(dx) > 50) go(cur + (dx < 0 ? 1 : -1));
+    x0 = null;
+  }, {passive:true});
+  go(0);
+</script>
+</body>
+</html>

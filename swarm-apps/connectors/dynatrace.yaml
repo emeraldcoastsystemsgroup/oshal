@@ -1,0 +1,77 @@
+# Dynatrace Environment API v2 — GET-only reads over problems, entities, metric definitions/queries,
+# and events (ADR-069 reference observability connector). Authorization header carries
+# "Api-Token <token>" — paste the full value including the "Api-Token " scheme prefix (token needs the
+# problems.read / entities.read / metrics.read / events.read scopes). Per-tenant environment host via
+# DYNATRACE_BASE_URL (https://<env-id>.live.dynatrace.com/api/v2). Follow-up pages send ONLY
+# nextPageKey (cursorOnly) — Dynatrace rejects the cursor combined with the original query params.
+provider: dynatrace
+displayName: Dynatrace
+version: 1.0.0
+baseUrl: ${env:DYNATRACE_BASE_URL:-https://YOUR-ENV-ID.live.dynatrace.com/api/v2}
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: nextPageKey
+  nextField: nextPageKey
+  itemsField: problems
+  cursorOnly: true
+resources:
+  - name: problems
+    tool: dynatrace-problems
+    method: GET
+    path: /problems
+    query:
+      from: '{from}'
+      to: '{to}'
+      problemSelector: '{problemSelector}'
+    paginate: true
+  - name: problem
+    tool: dynatrace-problem
+    method: GET
+    path: /problems/{problemId}
+  - name: entities
+    tool: dynatrace-entities
+    method: GET
+    path: /entities
+    query:
+      entitySelector: '{entitySelector}'
+      from: '{from}'
+      to: '{to}'
+  - name: metrics
+    tool: dynatrace-metrics
+    method: GET
+    path: /metrics
+    query:
+      metricSelector: '{metricSelector}'
+  - name: metric-query
+    tool: dynatrace-metric-query
+    method: GET
+    path: /metrics/query
+    query:
+      metricSelector: '{metricSelector}'
+      from: '{from}'
+      to: '{to}'
+      resolution: '{resolution}'
+  - name: events
+    tool: dynatrace-events
+    method: GET
+    path: /events
+    query:
+      from: '{from}'
+      to: '{to}'
+      eventSelector: '{eventSelector}'
+metadata:
+  description: "Read Dynatrace problems, monitored entities, metric definitions and queries, and events."
+  category: "Operations"
+  icon: dynatrace
+  iconTitle: Dynatrace
+  iconSource: simple-icons
+  iconVerified: true

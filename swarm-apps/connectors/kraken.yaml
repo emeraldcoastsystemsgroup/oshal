@@ -1,0 +1,43 @@
+provider: kraken
+displayName: Kraken
+version: 1.0.0
+baseUrl: https://api.kraken.com/0
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: ticker
+    tool: kraken-ticker
+    method: GET
+    path: /public/Ticker
+    query:
+      pair: '{pair}'
+  - name: asset-pairs
+    tool: kraken-asset-pairs
+    method: GET
+    path: /public/AssetPairs
+    query:
+      pair: '{pair}'
+  - name: ohlc
+    tool: kraken-ohlc
+    method: GET
+    path: /public/OHLC
+    query:
+      pair: '{pair}'
+      interval: '{interval}'
+  - name: depth
+    tool: kraken-depth
+    method: GET
+    path: /public/Depth
+    query:
+      pair: '{pair}'
+      count: '{count}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/kraken.com.ico

@@ -1,0 +1,30 @@
+provider: typeform
+displayName: Typeform
+version: 1.0.0
+baseUrl: https://api.typeform.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-forms
+    tool: typeform-list-forms
+    method: GET
+    path: /forms
+  - name: get-form
+    tool: typeform-get-form
+    method: GET
+    path: /forms/{form_id}
+  - name: list-responses
+    tool: typeform-list-responses
+    method: GET
+    path: /responses
+metadata:
+  icon: typeform
+  iconTitle: Typeform
+  iconSource: simple-icons
+  iconVerified: true

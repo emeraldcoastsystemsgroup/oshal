@@ -1,0 +1,30 @@
+provider: fitbit
+displayName: Fitbit
+version: 1.0.0
+baseUrl: https://api.fitbit.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: fitbit-me
+    method: GET
+    path: /1/user/-/profile.json
+  - name: day-activity
+    tool: fitbit-day-activity
+    method: GET
+    path: /1/user/-/activities/date/{date}.json
+  - name: sleep
+    tool: fitbit-sleep
+    method: GET
+    path: /1.2/user/-/sleep/date/{date}.json
+metadata:
+  icon: fitbit
+  iconTitle: Fitbit
+  iconSource: simple-icons
+  iconVerified: true

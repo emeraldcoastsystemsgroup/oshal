@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oshal-test-app
+  namespace: oshal-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oshal-test-app
+  template:
+    metadata:
+      labels:
+        app: oshal-test-app
+    spec:
+      containers:
+        - name: test-app
+          image: oshal-test-app:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: APP_NAME
+              value: oshal-test-app
+            - name: NODE_ENV
+              value: production
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10

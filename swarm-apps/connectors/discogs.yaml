@@ -1,0 +1,33 @@
+provider: discogs
+displayName: Discogs
+version: 1.0.0
+baseUrl: https://api.discogs.com
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: release
+    tool: discogs-release
+    method: GET
+    path: /releases/{release_id}
+  - name: artist
+    tool: discogs-artist
+    method: GET
+    path: /artists/{artist_id}
+  - name: search
+    tool: discogs-search
+    method: GET
+    path: /database/search
+    query:
+      q: '{q}'
+metadata:
+  icon: discogs
+  iconTitle: Discogs
+  iconSource: simple-icons
+  iconVerified: true

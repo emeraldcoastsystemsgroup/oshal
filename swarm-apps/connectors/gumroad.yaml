@@ -1,0 +1,37 @@
+provider: gumroad
+displayName: Gumroad
+version: 1.0.0
+baseUrl: https://api.gumroad.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: gumroad-me
+    method: GET
+    path: /user
+  - name: products
+    tool: gumroad-products
+    method: GET
+    path: /products
+  - name: get-product
+    tool: gumroad-get-product
+    method: GET
+    path: /products/{productId}
+  - name: sales
+    tool: gumroad-sales
+    method: GET
+    path: /sales
+    query:
+      after: '{after}'
+      before: '{before}'
+metadata:
+  icon: gumroad
+  iconTitle: Gumroad
+  iconSource: simple-icons
+  iconVerified: true

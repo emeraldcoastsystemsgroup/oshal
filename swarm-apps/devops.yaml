@@ -1,0 +1,218 @@
+# DevOps + Vault Swarm — ACTIVATED (design: docs/adr/040-devops-vault-swarm.md)
+#
+# The DevOps/Vault console is LIVE (2026-07-18): a real vault-bot + a superadmin-gated console
+# surface that executes against the configured HashiCorp Vault — KV secret management PLUS the
+# credential broker (mint short-TTL scoped creds → inspect → revoke) and the postgresql dynamic
+# secrets engine. The Vault token stays in the controller env; the console is gated by
+# requireSuperAdmin (OSHAL_DEV_CONSOLE_ENABLED + the super-admin allowlist), mutations require
+# confirm:true, and privileged actions write to the governance audit trail.
+# STILL ROADMAP (ADR-040): terraform plan/drift + k8s remediation + observability workers, and
+# the per-session ephemeral-runtime isolation for multi-user tenancy (single-admin today).
+
+name: devops
+suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: DevOps + Vault
+description: >-
+  Premium privileged swarm (Private Preview). A vault-bot pulls short-lived, scoped cloud
+  credentials from your HashiCorp Vault per task, acts on your infrastructure, and wipes the
+  session when done — the controlled "real credentials → real results" loop. Not the free
+  local demo. Live: KV + credential broker + DB dynamic secrets. Architecture: docs/adr/040-devops-vault-swarm.md.
+version: 0.2.0
+status: active
+
+# Per-app skin (approved palette) — black so the ops console reads distinct.
+theme: black
+
+# vault-bot is now a REAL inline bot (registered in swarm-bot-registry-local.ts) with working KV tools —
+# it can read/write the configured HashiCorp Vault's KV secrets. The PRIVILEGED cloud-cred broker
+# (AWS-STS/kube leases injected into bot runtimes + ephemeral teardown) is the SEPARATE gated build
+# per ADR-040 (needs the ephemeral runtime + a security review first).
+bots:
+  - agentId: a0000000-0000-0000-0000-0000000000d0
+    name: vault-bot
+    persona: ai-lab/bot-personas/vault-bot.yaml
+    role: vault/credential-broker
+    capabilities:
+      - vault-kv
+      - secret-management
+
+# TOOLS — the vault-bot's KV capability over the local Vault (scripts/oshal-vault.js → Vault HTTP API;
+# VAULT_ADDR/VAULT_TOKEN come from the api env, in-container, so the token never enters a bot prompt).
+tools:
+  - name: vault_status
+    displayName: Vault Status
+    type: cli
+    category: devops
+    description: Health of the configured HashiCorp Vault (sealed?, initialized?, version, address).
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js status {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    routingTags: [vault, devops, secrets, status]
+    tags: [devops-vault]
+  - name: vault_read
+    displayName: Vault Read Secret
+    type: cli
+    category: devops
+    description: Read a KV v2 secret at secret/<path>. Input {path}.
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js read {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    inputSchema:
+      type: object
+      properties: { path: { type: string, description: "KV path under secret/, e.g. aws/prod" } }
+      required: [path]
+    routingTags: [vault, devops, secrets, read]
+    tags: [devops-vault]
+  - name: vault_write
+    displayName: Vault Write Secret
+    type: cli
+    category: devops
+    description: Write a KV v2 secret at secret/<path>. Input {path, data:{key:value}}.
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js write {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    inputSchema:
+      type: object
+      properties:
+        path: { type: string }
+        data: { type: object, description: "key/value pairs to store" }
+      required: [path, data]
+    routingTags: [vault, devops, secrets, write]
+    tags: [devops-vault]
+  - name: vault_list
+    displayName: Vault List Secrets
+    type: cli
+    category: devops
+    description: List secret keys under secret/<path>. Input {path?}.
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js list {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    inputSchema:
+      type: object
+      properties: { path: { type: string, description: "optional KV prefix (default root)" } }
+    routingTags: [vault, devops, secrets, list]
+    tags: [devops-vault]
+  # ── The BROKER: mint short-TTL SCOPED credentials, then revoke. (ADR-040 credential lifecycle.) ──
+  - name: vault_policy
+    displayName: Vault Set Scope (policy)
+    type: cli
+    category: devops
+    description: Create/update a scoped ACL policy the broker binds tokens to. Input {name, paths:[{path,capabilities}]}.
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js policy {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    inputSchema:
+      type: object
+      properties:
+        name: { type: string }
+        paths: { type: array, items: { type: object }, description: "[{path, capabilities:[read,list,...]}]" }
+      required: [name, paths]
+    routingTags: [vault, devops, broker, policy, scope]
+    tags: [devops-vault]
+  - name: vault_issue
+    displayName: Vault Issue Credential (broker)
+    type: cli
+    category: devops
+    description: >-
+      BROKER — mint a short-TTL credential. {policy, ttl?} mints a scoped child token; {engine, role}
+      mints a dynamic secret (AWS STS / DB user / ...) from a configured secrets engine. Leased + revocable.
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js issue {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    inputSchema:
+      type: object
+      properties:
+        policy: { type: string, description: "scope policy name (token mode)" }
+        ttl: { type: string, description: "e.g. 15m, 1h (token mode)" }
+        engine: { type: string, description: "secrets engine mount (dynamic mode), e.g. aws, database" }
+        role: { type: string, description: "vault role under the engine (dynamic mode)" }
+    routingTags: [vault, devops, broker, credential, issue]
+    tags: [devops-vault]
+  - name: vault_lookup
+    displayName: Vault Lookup Lease
+    type: cli
+    category: devops
+    description: Inspect an issued token's remaining TTL + policies. Input {accessor}.
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js lookup {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    inputSchema:
+      type: object
+      properties: { accessor: { type: string } }
+      required: [accessor]
+    routingTags: [vault, devops, broker, lookup]
+    tags: [devops-vault]
+  - name: vault_revoke
+    displayName: Vault Revoke Credential
+    type: cli
+    category: devops
+    description: Revoke an issued credential NOW (provably dead). Input {accessor} | {leaseId} | {token}.
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js revoke {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    inputSchema:
+      type: object
+      properties:
+        accessor: { type: string }
+        leaseId: { type: string }
+        token: { type: string }
+    routingTags: [vault, devops, broker, revoke]
+    tags: [devops-vault]
+  - name: vault_setup_db
+    displayName: Vault Mount DB Engine (admin)
+    type: cli
+    category: devops
+    description: >-
+      Admin: mount Vault's postgresql database secrets engine + a short-TTL role against the app DB, so
+      `vault_issue {engine:"database", role:"app-readonly"}` hands out REAL short-lived Postgres logins.
+      Idempotent. Input {connectionUrl?, role?, ttl?, maxTtl?}.
+    executor:
+      executorType: cli
+      cliCommand: node /app/scripts/oshal-vault.js setup-db {input}
+    defaultAuthMode: auto
+    requiresApproval: false
+    inputSchema:
+      type: object
+      properties:
+        connectionUrl: { type: string, description: "admin postgresql:// URL (default app DB)" }
+        role: { type: string, description: "vault role name (default app-readonly)" }
+        ttl: { type: string }
+        maxTtl: { type: string }
+    routingTags: [vault, devops, broker, database, setup]
+    tags: [devops-vault]
+
+ui:
+  static:
+    - toolName: devops-vault-console
+      label: DevOps + Vault
+      icon: codicon codicon-shield
+      iframeUrl: /api/devops/console
+      section: top
+
+# Trim the ribbon to the DevOps essentials: the console surface, the ticket queue
+# (remediations), settings, and operations. Hide the rest — especially echo.
+ribbon:
+  hideFrameworkItems:
+    - chat
+    - calendar
+    - addressbook
+    - dashboard
+    - echo
+    - logs
+  defaultView: devops-vault-console

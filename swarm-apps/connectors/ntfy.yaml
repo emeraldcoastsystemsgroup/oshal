@@ -1,0 +1,36 @@
+provider: ntfy
+displayName: ntfy
+version: 1.0.0
+baseUrl: https://ntfy.sh
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: health
+    tool: ntfy-health
+    method: GET
+    path: /v1/health
+  - name: topic-json
+    tool: ntfy-topic-json
+    method: GET
+    path: /{topic}/json
+    query:
+      poll: '1'
+      since: '{since}'
+  - name: topic-raw
+    tool: ntfy-topic-raw
+    method: GET
+    path: /{topic}/raw
+    query:
+      poll: '1'
+      since: '{since}'
+metadata:
+  icon: ntfy
+  iconTitle: ntfy
+  iconSource: simple-icons
+  iconVerified: true

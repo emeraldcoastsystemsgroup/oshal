@@ -1,0 +1,17 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">OSHAL mark</title>
+  <desc id="desc">A geometric swarm mark with connected runtime nodes around a central control plane.</desc>
+  <rect width="512" height="512" rx="96" fill="#0B1020"/>
+  <path d="M256 72L415.1 164V348L256 440L96.9 348V164L256 72Z" stroke="#7DD3FC" stroke-width="18" stroke-linejoin="round"/>
+  <path d="M256 126L368.4 191V321L256 386L143.6 321V191L256 126Z" stroke="#34D399" stroke-width="12" stroke-linejoin="round" opacity="0.9"/>
+  <path d="M256 126V386M143.6 191L368.4 321M368.4 191L143.6 321" stroke="#94A3B8" stroke-width="8" stroke-linecap="round" opacity="0.72"/>
+  <circle cx="256" cy="126" r="22" fill="#7DD3FC"/>
+  <circle cx="368.4" cy="191" r="22" fill="#34D399"/>
+  <circle cx="368.4" cy="321" r="22" fill="#7DD3FC"/>
+  <circle cx="256" cy="386" r="22" fill="#34D399"/>
+  <circle cx="143.6" cy="321" r="22" fill="#7DD3FC"/>
+  <circle cx="143.6" cy="191" r="22" fill="#34D399"/>
+  <circle cx="256" cy="256" r="56" fill="#E2E8F0"/>
+  <circle cx="256" cy="256" r="30" fill="#0B1020"/>
+  <path d="M239 256L253 270L281 238" stroke="#34D399" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

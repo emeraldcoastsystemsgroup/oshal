@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Files — OSHAL</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+<style>
+  /* Keep the surface's own short alias names, but DERIVE them from the framework theme rather than
+     hardcoding hex — so all eleven themes work, not just the dark ones. Semantic status colors come
+     from the theme too, with the old hex after the comma as a fallback if a theme omits one. */
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-secondary);
+    --accent: var(--accent-primary);
+    --accent2: var(--status-success, #00d3a7);
+    --danger: var(--status-error, #ff6b6b);
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; }
+  body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+  .app { display:flex; height:100vh; }
+  /* Source rail */
+  .rail { width:190px; flex:0 0 190px; border-right:1px solid var(--line); background:var(--panel); padding:14px 10px; overflow:auto; }
+  .rail h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:4px 8px 10px; }
+  .src { display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:9px; cursor:pointer; font-size:13.5px; font-weight:600; margin-bottom:4px; border:1px solid transparent; }
+  .src:hover { background:var(--panel2); }
+  .src.active { background:var(--panel2); border-color:var(--line); color:var(--accent); }
+  .src .ic { font-size:16px; }
+  /* Center column */
+  .center { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; }
+  .top { display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--line); }
+  .crumbs { font-size:13px; color:var(--muted); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .crumbs a { color:var(--accent); cursor:pointer; text-decoration:none; }
+  .crumbs a:hover { text-decoration:underline; }
+  .crumbs .sep { color:var(--line); margin:0 6px; }
+  .btn { border:none; border-radius:8px; padding:8px 13px; font-size:12.5px; font-weight:600; cursor:pointer; }
+  .btn.primary { background:var(--accent); color:#fff; } .btn.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--text); }
+  .btn.sm { padding:5px 10px; font-size:11.5px; } .btn.del { background:transparent; border:1px solid var(--line); color:var(--danger); }
+  .list { flex:1; overflow:auto; padding:12px 14px; }
+  .row { display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:10px; margin-bottom:7px; cursor:pointer; background:var(--panel); }
+  .row:hover { border-color:var(--accent); }
+  .row.sel { border-color:var(--accent); background:var(--panel2); }
+  .row .ic { font-size:17px; } .row .nm { font-weight:600; font-size:13.5px; flex:1; word-break:break-all; }
+  .row .meta { color:var(--muted); font-size:11.5px; white-space:nowrap; } .row .acts { display:flex; gap:6px; }
+  .empty { border:1px dashed var(--line); border-radius:12px; padding:26px; text-align:center; color:var(--muted); }
+  .empty a { color:var(--accent); }
+  .spin { color:var(--muted); font-size:13px; padding:8px 4px; display:block; }
+  /* Preview pane */
+  .preview { width:42%; flex:0 0 42%; border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; }
+  .preview.hidden { display:none; }
+  .pv-head { display:flex; align-items:center; gap:10px; padding:13px 16px; border-bottom:1px solid var(--line); }
+  .pv-name { font-weight:600; font-size:13.5px; flex:1; word-break:break-all; }
+  .pv-x { background:transparent; border:none; color:var(--muted); font-size:18px; cursor:pointer; line-height:1; }
+  .pv-body { flex:1; overflow:auto; padding:14px 16px; }
+  .pv-body pre { margin:0; white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; line-height:1.5; color:var(--text); }
+  .pv-body img { max-width:100%; border-radius:8px; background:#fff; }
+  .pv-none { color:var(--muted); text-align:center; padding:34px 14px; }
+  .result { margin:10px 14px 0; padding:9px 12px; border-radius:9px; font-size:12.5px; display:none; }
+  .result.ok { background:rgba(0,211,167,.1); border:1px solid var(--accent2); color:var(--accent2); display:block; }
+  .result.err { background:rgba(255,90,90,.1); border:1px solid #ff5a5a; color:#ff9a9a; display:block; }
+  input[type=file]{ display:none; }
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb,rgba(255,255,255,.14));border-radius:6px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--muted,rgba(255,255,255,.28))}
+  html{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb,rgba(255,255,255,.14)) transparent}
+  @media (max-width: 640px) {
+    .app { flex-direction: column; height: auto; min-height: 100vh; }
+    .rail { width: 100%; flex: 0 0 auto; border-right: none; border-bottom: 1px solid var(--line); padding: 10px 8px; overflow-x: auto; overflow-y: hidden; }
+    .rail h2 { margin: 2px 6px 6px; }
+    #sources { display: flex; flex-direction: row; gap: 6px; flex-wrap: wrap; }
+    .src { margin-bottom: 0; font-size: 12.5px; padding: 7px 9px; }
+    .center { flex: 1 1 auto; min-width: 0; }
+    .top { padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
+    .crumbs { font-size: 12px; }
+    .btn { font-size: 12px; padding: 7px 11px; min-height: 36px; }
+    .btn.sm { padding: 7px 10px; font-size: 12px; min-height: 36px; }
+    .list { padding: 8px 10px; }
+    .row { padding: 9px 10px; gap: 8px; }
+    .row .meta { display: none; }
+    .preview { width: 100%; flex: 0 0 auto; border-left: none; border-top: 1px solid var(--line); }
+    .preview.hidden { display: none; }
+    .pv-body pre { font-size: 11.5px; }
+    input[type=text], input[type=search], input[type=email], input[type=password] { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <h2>Storage</h2>
+      <div id="sources"><span class="spin">Loading…</span></div>
+    </aside>
+    <section class="center">
+      <div class="top">
+        <div class="crumbs" id="crumbs"></div>
+        <button class="btn ghost sm" id="refreshBtn">↻</button>
+        <button class="btn primary sm" id="uploadBtn" style="display:none">⬆ Upload</button>
+        <input type="file" id="fileInput" />
+      </div>
+      <div class="result" id="result"></div>
+      <div class="list" id="list"><span class="spin">Pick a storage source.</span></div>
+    </section>
+    <aside class="preview hidden" id="preview">
+      <div class="pv-head">
+        <span class="pv-name" id="pvName"></span>
+        <a class="btn ghost sm" id="pvDownload" href="#">Download</a>
+        <button class="pv-x" id="pvClose" title="Close">×</button>
+      </div>
+      <div class="pv-body" id="pvBody"></div>
+    </aside>
+  </div>
+<script>
+const $ = (id) => document.getElementById(id);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtSize(b){ if(b==null) return ''; if(b<1024) return b+' B'; if(b<1048576) return (b/1024).toFixed(1)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
+function crumbLabel(seg){ if(state.provider!=='google-drive') return seg; const i=seg.lastIndexOf('~'); try { return decodeURIComponent(i>=0 ? seg.slice(0,i) : seg); } catch(e){ return seg; } }
+function toast(msg, ok){ const r=$('result'); r.className='result '+(ok?'ok':'err'); r.textContent=msg; setTimeout(()=>{r.className='result';},4000); }
+
+const state = { roots: [], provider: null, path: '', entries: [], selected: null };
+
+// ---- Sources (all storage backends) ----
+async function loadRoots(){
+  const r = await fetch('/api/files/roots'); const j = await r.json().catch(()=>({}));
+  state.roots = j.roots || [];
+  if (!state.roots.length){ $('sources').innerHTML = '<div class="empty">No storage available.</div>'; return; }
+  $('sources').innerHTML = state.roots.map(s =>
+    `<div class="src" data-p="${esc(s.provider)}"><span class="ic">${s.icon||'📁'}</span><span>${esc(s.label)}</span></div>`
+  ).join('');
+  Array.from(document.querySelectorAll('.src')).forEach(el =>
+    el.addEventListener('click', ()=> openSource(el.getAttribute('data-p'))));
+  openSource(state.roots[0].provider);
+}
+
+function openSource(provider){
+  state.provider = provider;
+  Array.from(document.querySelectorAll('.src')).forEach(el =>
+    el.classList.toggle('active', el.getAttribute('data-p')===provider));
+  open('');
+}
+
+// ---- Browse a folder (drill-down) ----
+async function open(path){
+  state.path = path; closePreview();
+  renderCrumbs();
+  const src = state.roots.find(s => s.provider===state.provider);
+  $('uploadBtn').style.display = (state.provider==='dropbox' || state.provider==='google-drive') ? '' : 'none';
+  $('list').innerHTML = '<span class="spin">Loading…</span>';
+  const r = await fetch('/api/files/browse?provider='+encodeURIComponent(state.provider)+'&path='+encodeURIComponent(path));
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok){ $('list').innerHTML = '<div class="empty">Couldn’t load: '+esc((j&&j.error)||('HTTP '+r.status))+'</div>'; return; }
+  state.entries = j.entries || [];
+  renderList();
+}
+
+function renderCrumbs(){
+  const src = state.roots.find(s => s.provider===state.provider);
+  const segs = state.path ? state.path.split('/').filter(Boolean) : [];
+  let acc = '';
+  const parts = [`<a data-go="">${esc(src?src.label:'Root')}</a>`];
+  segs.forEach(seg => { acc = acc ? acc+'/'+seg : seg; parts.push('<span class="sep">/</span><a data-go="'+esc(acc)+'">'+esc(crumbLabel(seg))+'</a>'); });
+  $('crumbs').innerHTML = parts.join('');
+  Array.from($('crumbs').querySelectorAll('a')).forEach(a =>
+    a.addEventListener('click', ()=> open(a.getAttribute('data-go'))));
+}
+
+function renderList(){
+  if (!state.entries.length){
+    const hint = state.provider==='dropbox' ? 'This folder is empty — upload a file above.'
+      : state.provider==='google-drive' ? 'No Drive files available to OSHAL yet — upload one above or reconnect Google with Drive scope.'
+      : state.provider==='github' ? 'No repos/files here yet.' : 'Nothing saved here yet — swarms drop artifacts in OSHAL Storage.';
+    $('list').innerHTML = '<div class="empty">'+hint+'</div>'; return;
+  }
+  $('list').innerHTML = state.entries.map((e,i) =>
+    `<div class="row" data-i="${i}">
+       <span class="ic">${e.type==='folder'?'📂':iconFor(e.name)}</span>
+       <span class="nm">${esc(e.name)}</span>
+       <span class="meta">${e.type==='folder'?'':esc(fmtSize(e.size))}</span>
+       <span class="acts">
+         ${e.type==='file'?`<a class="btn ghost sm" href="${dlUrl(e)}" onclick="event.stopPropagation()">⬇</a>`:''}
+         ${(e.type==='file' && (state.provider==='dropbox' || state.provider==='google-drive'))?`<button class="btn del sm" data-del="${i}">✕</button>`:''}
+       </span>
+     </div>`
+  ).join('');
+  Array.from($('list').querySelectorAll('.row')).forEach(row =>
+    row.addEventListener('click', ()=> onEntry(state.entries[+row.getAttribute('data-i')])));
+  Array.from($('list').querySelectorAll('[data-del]')).forEach(b =>
+    b.addEventListener('click', (ev)=>{ ev.stopPropagation(); del(state.entries[+b.getAttribute('data-del')]); }));
+}
+
+function iconFor(name){
+  const ext = (name.split('.').pop()||'').toLowerCase();
+  if (['png','jpg','jpeg','gif','webp','svg','bmp','ico'].includes(ext)) return '🖼️';
+  if (['md','txt','json','yaml','yml','csv','log','xml','html','css'].includes(ext)) return '📄';
+  if (['js','ts','tsx','jsx','py','rb','go','rs','java','c','cpp','cs','sh','sql'].includes(ext)) return '📜';
+  if (ext==='pdf') return '📕';
+  if (['pptx','ppt'].includes(ext)) return '📊'; if (['docx','doc'].includes(ext)) return '📝'; if (['xlsx','xls'].includes(ext)) return '📈';
+  if (['zip','tar','gz','7z'].includes(ext)) return '🗜️';
+  return '📄';
+}
+function dlUrl(e){ return '/api/files/download?provider='+encodeURIComponent(state.provider)+'&path='+encodeURIComponent(e.path); }
+
+function onEntry(e){
+  if (e.type==='folder'){ open(e.path); return; }
+  preview(e);
+}
+
+// ---- Preview pane ----
+async function preview(e){
+  state.selected = e.path;
+  Array.from($('list').querySelectorAll('.row')).forEach((row,i)=> row.classList.toggle('sel', state.entries[i]===e));
+  $('preview').classList.remove('hidden');
+  $('pvName').textContent = e.name;
+  $('pvDownload').setAttribute('href', dlUrl(e));
+  $('pvBody').innerHTML = '<span class="spin">Loading preview…</span>';
+  const q = '/api/files/preview?provider='+encodeURIComponent(state.provider)+'&path='+encodeURIComponent(e.path)+(e.size!=null?'&size='+e.size:'');
+  const r = await fetch(q); const j = await r.json().catch(()=>({}));
+  if (state.selected !== e.path) return; // a newer selection won
+  if (!r.ok){ $('pvBody').innerHTML = '<div class="pv-none">Couldn’t preview: '+esc((j&&j.error)||('HTTP '+r.status))+'</div>'; return; }
+  if (j.encoding==='text'){ $('pvBody').innerHTML = '<pre>'+esc(j.content||'')+'</pre>'; }
+  else if (j.encoding==='base64'){ $('pvBody').innerHTML = '<img alt="'+esc(e.name)+'" src="data:'+esc(j.mime)+';base64,'+j.content+'" />'; }
+  else { $('pvBody').innerHTML = '<div class="pv-none">No inline preview for this file ('+esc(fmtSize(j.size))+').<br><br>Use Download to open it.</div>'; }
+}
+function closePreview(){ state.selected=null; $('preview').classList.add('hidden'); Array.from($('list').querySelectorAll('.row')).forEach(r=>r.classList.remove('sel')); }
+
+// ---- Mutations (Dropbox only) ----
+async function del(e){
+  if (!confirm('Delete '+e.name+'?')) return;
+  const r = await fetch('/api/files?provider='+encodeURIComponent(state.provider)+'&path='+encodeURIComponent(e.path), { method:'DELETE' });
+  if (r.ok){ toast('Deleted '+e.name, true); if(state.selected===e.path) closePreview(); open(state.path); }
+  else { toast('Delete failed', false); }
+}
+
+$('refreshBtn').addEventListener('click', ()=> open(state.path));
+$('pvClose').addEventListener('click', closePreview);
+$('uploadBtn').addEventListener('click', ()=> $('fileInput').click());
+$('fileInput').addEventListener('change', async (e)=>{
+  const file = e.target.files[0]; if(!file) return;
+  if (file.size > 25*1048576){ toast('File too large (25 MB max for now)', false); return; }
+  toast('Uploading '+file.name+'…', true);
+  const dir = (state.provider==='dropbox' || state.provider==='google-drive') ? state.path : '';
+  const r = await fetch('/api/files/upload?provider='+encodeURIComponent(state.provider)+'&name='+encodeURIComponent(file.name)+(dir?'&dir='+encodeURIComponent(dir):''), { method:'POST', body:file });
+  const j = await r.json().catch(()=>({}));
+  if (r.ok && j.ok){ toast('Uploaded '+j.name, true); open(state.path); }
+  else if (r.status===409){ toast(j.message||'Connect Dropbox first', false); }
+  else { toast('Upload failed: '+((j&&j.error)||('HTTP '+r.status)), false); }
+  e.target.value='';
+});
+
+loadRoots();
+</script>
+</body>
+</html>

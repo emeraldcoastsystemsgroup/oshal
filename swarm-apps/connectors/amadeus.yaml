@@ -1,0 +1,33 @@
+provider: amadeus
+displayName: Amadeus
+version: 1.0.0
+baseUrl: https://test.api.amadeus.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: flight-offers
+    tool: amadeus-flight-offers
+    method: GET
+    path: /shopping/flight-offers
+    query:
+      originLocationCode: '{origin}'
+      destinationLocationCode: '{destination}'
+      departureDate: '{departureDate}'
+      adults: '1'
+  - name: locations
+    tool: amadeus-locations
+    method: GET
+    path: /reference-data/locations
+    query:
+      keyword: '{q}'
+      subType: AIRPORT,CITY
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/test.api.amadeus.com.ico

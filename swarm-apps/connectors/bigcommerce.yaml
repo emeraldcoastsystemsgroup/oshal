@@ -1,0 +1,43 @@
+provider: bigcommerce
+displayName: BigCommerce
+version: 1.0.0
+baseUrl: https://api.bigcommerce.com/stores/${env:BIGCOMMERCE_STORE_HASH:-hash}/v3
+auth:
+  type: apiKeyHeader
+  header: X-Auth-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: bigcommerce-customers
+    method: GET
+    path: /customers
+  - name: orders
+    tool: bigcommerce-orders
+    method: GET
+    path: /orders
+  - name: order
+    tool: bigcommerce-order
+    method: GET
+    path: /orders/{order_id}
+  - name: products
+    tool: bigcommerce-products
+    method: GET
+    path: /catalog/products
+  - name: product
+    tool: bigcommerce-product
+    method: GET
+    path: /catalog/products/{product_id}
+  - name: transactions
+    tool: bigcommerce-transactions
+    method: GET
+    path: /orders/{order_id}/transactions
+metadata:
+  icon: bigcommerce
+  iconTitle: BigCommerce
+  iconSource: simple-icons
+  iconVerified: true

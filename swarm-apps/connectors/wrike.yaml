@@ -1,0 +1,29 @@
+provider: wrike
+displayName: Wrike
+version: 1.0.0
+baseUrl: https://www.wrike.com/api/v4
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: tasks
+    tool: wrike-tasks
+    method: GET
+    path: /tasks
+  - name: folders
+    tool: wrike-folders
+    method: GET
+    path: /folders
+  - name: contacts
+    tool: wrike-contacts
+    method: GET
+    path: /contacts
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/wrike.com.ico

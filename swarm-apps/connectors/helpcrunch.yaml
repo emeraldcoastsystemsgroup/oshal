@@ -1,0 +1,29 @@
+provider: helpcrunch
+displayName: HelpCrunch
+version: 1.0.0
+baseUrl: https://api.helpcrunch.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: helpcrunch-customers
+    method: GET
+    path: /customers
+  - name: chats
+    tool: helpcrunch-chats
+    method: GET
+    path: /chats
+  - name: agents
+    tool: helpcrunch-agents
+    method: GET
+    path: /agents
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/helpcrunch.com.ico

@@ -1,0 +1,70 @@
+provider: twitch
+displayName: Twitch
+version: 1.0.0
+baseUrl: https://api.twitch.tv/helix
+auth:
+  type: oauth2
+headers:
+  Client-Id: ${env:TWITCH_CLIENT_ID:-clientid}
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: users
+    tool: twitch-users
+    method: GET
+    path: /users
+    query:
+      - id
+      - login
+  - name: channels
+    tool: twitch-channels
+    method: GET
+    path: /channels
+    query:
+      - broadcaster_id
+  - name: streams
+    tool: twitch-streams
+    method: GET
+    path: /streams
+    query:
+      - user_id
+      - user_login
+      - game_id
+      - type
+      - first
+  - name: videos
+    tool: twitch-videos
+    method: GET
+    path: /videos
+    query:
+      - id
+      - user_id
+      - game_id
+      - type
+      - first
+  - name: games
+    tool: twitch-games
+    method: GET
+    path: /games
+    query:
+      - id
+      - name
+  - name: followers
+    tool: twitch-followers
+    method: GET
+    path: /channels/followers
+    query:
+      - broadcaster_id
+      - user_id
+      - first
+metadata:
+  description: "Read Twitch users, channels, live streams, videos, games, and follower counts."
+  category: "Media"
+  icon: twitch
+  iconTitle: Twitch
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,51 @@
+provider: gitlab
+displayName: GitLab
+version: 1.0.0
+baseUrl: https://gitlab.com/api/v4
+auth:
+  type: apiKeyHeader
+  header: PRIVATE-TOKEN
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: link-header
+resources:
+  - name: list-projects
+    tool: gitlab-list-projects
+    method: GET
+    path: /projects
+    query:
+      membership: 'true'
+      per_page: '100'
+    paginate: true
+  - name: get-project
+    tool: gitlab-get-project
+    method: GET
+    path: /projects/{projectId}
+  - name: list-issues
+    tool: gitlab-list-issues
+    method: GET
+    path: /projects/{projectId}/issues
+    query:
+      per_page: '100'
+    paginate: true
+  - name: create-issue
+    tool: gitlab-create-issue
+    method: POST
+    path: /projects/{projectId}/issues
+    body:
+      title: '{title}'
+      description: '{description}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List and inspect GitLab projects and their issues, with a resource to open a new issue."
+  category: "Developer tools"
+  icon: gitlab
+  iconTitle: GitLab
+  iconSource: simple-icons
+  iconVerified: true

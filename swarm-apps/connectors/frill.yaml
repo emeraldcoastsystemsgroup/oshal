@@ -1,0 +1,30 @@
+provider: frill
+displayName: Frill
+version: 1.0.0
+baseUrl: https://api.frill.co/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: ideas
+    tool: frill-ideas
+    method: GET
+    path: /ideas
+  - name: announcements
+    tool: frill-announcements
+    method: GET
+    path: /announcements
+  - name: boards
+    tool: frill-boards
+    method: GET
+    path: /boards
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/frill.co.ico

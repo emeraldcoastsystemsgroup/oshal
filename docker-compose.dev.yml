@@ -1,0 +1,87 @@
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# DATE         | AUTHOR  | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial dev compose override with hot-reload bind mounts
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added env_file so Plane/Postgres/Redis env vars load when using dev compose standalone
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixed hot-swap: mount ALL src dirs, use ts-node with nodemon for live TypeScript reload
+# =============================================================================
+#
+# Development override for docker-compose.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Features:
+#   - Bind-mounted source code for hot-reload (ALL source directories)
+#   - ts-node + nodemon for live TypeScript hot-swap without manual rebuild
+#   - Persistent editable mounts for settings and data
+#   - Development mode with NODE_ENV=development
+# =============================================================================
+
+services:
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      MOCK_OIDC: "true"
+      # Route Plane traffic over the shared Docker network used by the local Plane stack.
+      PLANE_API_URL: ${PLANE_API_URL_DOCKER_INTERNAL:-http://api:8000}
+    ports:
+      - "3456:3456"
+      - "1455:1455"
+    volumes:
+      # Hot-reload: bind-mount ALL source directories (overwrites COPY in Dockerfile)
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      # Config files needed for ts-node hot-swap
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts
+      # Persistent editable mounts for settings and data
+      - ./output:/app/output
+      # Mount host Claude CLI credentials so claude auth status works without re-login.
+      # The Claude CLI stores auth in ~/.claude.json (home level) and config in ~/.claude/ (directory).
+      # Both must be mounted so `claude auth status --json` reads the host login session.
+      # Read-only: a container must never mutate the host's Claude session/credentials.
+      - ~/.claude.json:/root/.claude.json:ro
+      - ~/.claude:/root/.claude:ro
+      # Prevent overwriting node_modules from host
+      - /app/node_modules
+    # Hot-swap: reinstall dev deps (pruned during image build), then run ts-node
+    # with nodemon watching for TypeScript changes. Code changes reflect immediately.
+    command: >
+      sh -c '
+        echo "Installing dev dependencies for hot-swap..."
+        npm install --legacy-peer-deps --prefer-offline 2>&1 | tail -3
+        echo "Starting dev server with hot-swap (nodemon + ts-node)..."
+        npx nodemon \
+          --watch src \
+          --ext ts,js,json,html,css \
+          --ignore "src/pages/chat/ui/dist/**" \
+          --ignore "src/api/dist/**" \
+          --exec "npx ts-node --project tsconfig.json -r tsconfig-paths/register src/app/server.ts" \
+          --signal SIGTERM \
+          --delay 1
+      '
+    networks:
+      - loke
+      - default
+      - plane
+      - oshal-swarm
+
+networks:
+  plane:
+    external: true
+    name: ${PLANE_DOCKER_NETWORK:-ai-lab-network}
+  oshal-swarm:
+    external: true
+    name: oshal-swarm

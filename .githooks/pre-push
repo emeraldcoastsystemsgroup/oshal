@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                                     | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Verify the COMMIT, not the working tree, before it reaches main. On 2026-07-14 a hook-rejected commit was retried after a concurrent session cleared the shared index, so it shipped ONE file: the importers of a new module landed while the module itself never did, and main did not compile for ~40 minutes. Nothing caught it because typecheck/tests were green LOCALLY — against files that were on disk but not in git. This is the only check that can catch that class.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the PUBLISH GATE as the FIRST step (this repo is now public and has no scrubber in front of it). It runs on every push, including docs-only pushes the typecheck skips, and is NOT bypassable via OSHAL_SKIP_PREPUSH_VERIFY.
+# =============================================================================
+#
+# Exports committed HEAD to a scratch tree and typechecks THAT. Rule 0a: one worktree, one index,
+# many agents — so what you have is not necessarily what you pushed.
+#
+# Skip (rare, deliberate): OSHAL_SKIP_PREPUSH_VERIFY=1 git push
+set -uo pipefail
+
+if [ "${OSHAL_SKIP_PREPUSH_VERIFY:-0}" = "1" ]; then
+  echo "pre-push: HEAD verification SKIPPED (OSHAL_SKIP_PREPUSH_VERIFY=1)" >&2
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT" || exit 0
+
+# ── PUBLISH GATE (runs FIRST, on every push) ─────────────────────────────────
+# This repo is PUBLIC and has no scrubber in front of it. The publish gate refuses
+# to push personal/employer/credential content. It runs before — and independently
+# of — the typecheck below, because a leak is most likely in a docs or comment
+# change, exactly the kind of push the typecheck skips. Not covered by
+# OSHAL_SKIP_PREPUSH_VERIFY: you may skip a slow typecheck, never the leak gate.
+if [ -f "${REPO_ROOT}/scripts/publish-gate.sh" ]; then
+  if ! bash "${REPO_ROOT}/scripts/publish-gate.sh"; then
+    echo "" >&2
+    echo "✗ pre-push BLOCKED by the publish gate — this repo is PUBLIC (see above)." >&2
+    exit 1
+  fi
+fi
+
+# Nothing to verify if there are no TS/JS sources in the push range (docs-only pushes are common
+# and this hook should not tax them).
+RANGE_FILES="$(git diff --name-only "@{push}..HEAD" 2>/dev/null || git diff --name-only HEAD~1..HEAD 2>/dev/null || true)"
+if [ -n "$RANGE_FILES" ] && ! printf '%s\n' "$RANGE_FILES" | grep -qE '\.(ts|tsx|js|mjs|cjs|json)$'; then
+  exit 0
+fi
+
+VERIFY_DIR="$(mktemp -d 2>/dev/null || echo "/tmp/oshal-prepush-$$")"
+cleanup() { rm -rf "$VERIFY_DIR" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+echo "pre-push: typechecking COMMITTED HEAD (not the working tree)…" >&2
+if ! git archive HEAD | tar -x -C "$VERIFY_DIR" 2>/dev/null; then
+  echo "pre-push: could not export HEAD — allowing push (do not block on tooling failure)." >&2
+  exit 0
+fi
+
+# node_modules is huge; symlink rather than copy. If the platform refuses, skip rather than block.
+if ! ln -s "$REPO_ROOT/node_modules" "$VERIFY_DIR/node_modules" 2>/dev/null; then
+  echo "pre-push: could not link node_modules — skipping HEAD verification." >&2
+  exit 0
+fi
+
+OUT="$(cd "$VERIFY_DIR" && timeout 600 npx tsc -p tsconfig.json --noEmit --pretty false 2>&1)"
+RC=$?
+
+if [ $RC -ne 0 ]; then
+  # A tooling failure (no tsc, timeout) must not block a push; only real type errors do.
+  if ! printf '%s' "$OUT" | grep -qE 'error TS[0-9]+'; then
+    echo "pre-push: verification could not run (rc=$RC) — allowing push." >&2
+    exit 0
+  fi
+  echo "" >&2
+  echo "✗ pre-push BLOCKED — committed HEAD does not typecheck." >&2
+  echo "" >&2
+  printf '%s\n' "$OUT" | grep -E 'error TS[0-9]+' | head -12 >&2
+  echo "" >&2
+  echo "  Your working tree may be green while HEAD is not: one worktree, one index, many agents." >&2
+  echo "  Most likely a file is on disk but never committed (a hook-rejected commit that was retried" >&2
+  echo "  after a concurrent session cleared the index ships only what you re-staged)." >&2
+  echo "" >&2
+  echo "  Fix: git status --short   → re-add the missing files, amend or commit, push again." >&2
+  echo "  Override (rare): OSHAL_SKIP_PREPUSH_VERIFY=1 git push" >&2
+  echo "" >&2
+  exit 1
+fi
+
+echo "pre-push: committed HEAD typechecks ✓" >&2
+exit 0

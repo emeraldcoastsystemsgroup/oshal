@@ -1,0 +1,45 @@
+# Swarm Application Manifest — exported
+# App: changelog-writer
+# Generated: 2026-07-12T03:10:40.214Z
+name: changelog-writer
+displayName: Changelog Writer
+description: >-
+  Draft a Keep-a-Changelog release entry from a git diff or commit list. Use when the user asks for release notes, a
+  changelog entry, or a summary of what shipped.
+version: 1.0.0
+status: inactive
+ticketType: changelog-writer
+workflow:
+  name: Changelog Writer Pipeline
+  pipeline: incident-rca
+  workerBot: changelog-writer
+bots:
+  - agentId: b0000000-0000-0000-0000-c8d73e469a14
+    name: changelog-writer
+    persona: ai-lab/bot-personas/changelog-writer.yaml
+    role: Draft a Keep-a-Changelog release entry from a git diff or commit list
+    capabilities:
+      - imported-skill
+      - changelog
+      - writer
+      - draft
+      - keep
+    selectorDescriptor: >-
+      Draft a Keep-a-Changelog release entry from a git diff or commit list. Use when the user asks for release notes, a
+      changelog entry, or a summary of what shipped.
+    routingKeywords:
+      - changelog
+      - writer
+      - draft
+      - keep
+      - release
+      - entry
+      - git
+      - diff
+source:
+  type: skill-import
+  url: https://example.test/skills/changelog-writer
+  ref: v1.0.0
+  path: docs/apps/examples/skill-import/changelog-writer
+rag:
+  collection: changelog-writer-refs

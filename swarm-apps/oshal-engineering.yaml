@@ -1,0 +1,198 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — OSHAL Engineering
+# Framework: OSHAL (see the swarm-application-manifests ADR in docs/adr/)
+#
+# The "build swarm" as a first-class application. This is the default
+# software-delivery pipeline — PM plans, developers code, reviewers
+# review, testers test, architects advise. Shipping this as a manifest
+# proves the framework: even OSHAL's own engineering experience is one
+# more app alongside Little Monsters and Intelligent Operations.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: oshal-engineering
+suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: OSHAL Engineering
+description: >-
+  The default OSHAL build swarm published as an application. Ticket
+  intake → planning → execution → testing → review → delivery. Seven bots
+  collaborate through Redis mesh; operators work through the cockpit
+  tickets + chat + task explorer surfaces.
+version: 1.0.0
+status: active
+
+bots:
+  - agentId: a0000000-0000-0000-0000-000000000001
+    name: project-manager
+    persona: ai-lab/bot-personas/project-manager.yaml
+    role: engineering/planning
+    capabilities:
+      - ticket-decomposition
+      - phase-routing
+      - complexity-scoring
+
+  - agentId: a0000000-0000-0000-0000-000000000002
+    name: code-developer
+    persona: ai-lab/bot-personas/code-developer.yaml
+    role: engineering/implementation
+    capabilities:
+      - code-writing
+      - refactoring
+      - bug-fixing
+
+  - agentId: a0000000-0000-0000-0000-000000000003
+    name: code-reviewer
+    persona: ai-lab/bot-personas/code-reviewer.yaml
+    role: engineering/review
+    capabilities:
+      - code-review
+      - security-audit
+      - quality-gates
+
+  - agentId: a0000000-0000-0000-0000-000000000004
+    name: documentation-writer
+    persona: ai-lab/bot-personas/documentation-writer.yaml
+    role: engineering/docs
+    capabilities:
+      - api-docs
+      - readme-generation
+      - adr-authoring
+
+  - agentId: a0000000-0000-0000-0000-000000000005
+    name: test-engineer
+    persona: ai-lab/bot-personas/test-engineer.yaml
+    role: engineering/testing
+    capabilities:
+      - test-authoring
+      - acceptance-validation
+      - regression-detection
+
+  - agentId: a0000000-0000-0000-0000-000000000018
+    name: architect-bot
+    persona: ai-lab/bot-personas/system-architect.yaml
+    role: engineering/architecture
+    capabilities:
+      - design-review
+      - pattern-guidance
+      - tradeoff-analysis
+
+  - agentId: f0000000-0000-0000-0000-000000000001
+    name: queue-bot
+    persona: ai-lab/bot-personas/queue-bot.yaml
+    role: engineering/quality-gate
+    capabilities:
+      - deliverable-review
+      - revision-routing
+      - consensus-review
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI SURFACES
+# The nine canonical engineering screens from AdvancedView.ENGINEERING_PAGES
+# (src/pages/cockpit/js/views/AdvancedView.js). Each was individually promoted
+# from legacy-compat to native between 2026-03-13 and 2026-03-19 and is
+# backed by real runtime APIs — not the experimental Swarm Control /
+# Workflow Studio pages the first draft of this manifest used.
+# ─────────────────────────────────────────────────────────────────────────────
+ui:
+  # Agent Config is a primary operator surface, so it sits at the top of
+  # the bottom section alongside the framework "logs" item. Everything else
+  # (Tasks, Queues, Mesh, Ops, Health, Redis, RAG, Queue Admin) is an
+  # engineering subscreen — relegated to the bottom section so the primary
+  # workflow items (tickets/chat/calendar/addressbook/dashboard) stay at
+  # the top and the subscreens overflow via scroll when needed.
+  static:
+    - toolName: eng-agent-config
+      label: Agent Config
+      icon: codicon codicon-settings-gear
+      iframeUrl: /config/
+      section: bottom
+    - toolName: eng-tasks
+      label: Tasks
+      icon: codicon codicon-list-tree
+      iframeUrl: /task-explorer/
+      section: bottom
+    - toolName: eng-queues
+      label: Queues
+      icon: codicon codicon-package
+      iframeUrl: /queue-dashboard/
+      section: bottom
+    - toolName: eng-queue-admin
+      label: Queue Admin
+      icon: codicon codicon-tools
+      iframeUrl: /queue-manager-admin/
+      section: bottom
+    - toolName: eng-mesh
+      label: Mesh
+      icon: codicon codicon-type-hierarchy-sub
+      iframeUrl: /mesh-dashboard/
+      section: bottom
+    - toolName: eng-ops
+      label: Ops
+      icon: codicon codicon-dashboard
+      iframeUrl: /ops-dashboard/
+      section: bottom
+    - toolName: eng-health
+      label: Health
+      icon: codicon codicon-pulse
+      iframeUrl: /health-dashboard/
+      section: bottom
+    - toolName: eng-redis
+      label: Redis
+      icon: codicon codicon-database
+      iframeUrl: /redis-visibility/
+      section: bottom
+    - toolName: eng-rag
+      label: RAG Center
+      icon: codicon codicon-library
+      iframeUrl: /rag-center/
+      section: bottom
+
+# No dynamic UI — tickets are their own view, not ribbon icons.
+
+routes:
+  # These routes are already mounted hardcoded in server.ts; the manifest
+  # lists them for export/transfer awareness. Phase-2 work makes them
+  # conditional on app status; today the listing is informational.
+  - module: src/app/routes/task-routes.ts
+    factory: createTaskRoutes
+    mountPath: /api/tasks
+    auth: oidc   # what server.ts ACTUALLY mounts (ADR-085 D2)
+    requiresAuth: true
+    requiresContext: true
+  - module: src/app/routes/workflow-studio-routes.ts
+    factory: createWorkflowStudioRoutes
+    mountPath: /api/workflow-studio
+    auth: oidc   # what server.ts ACTUALLY mounts (ADR-085 D2)
+    requiresAuth: true
+    requiresContext: true
+
+ticketType: build
+workflow:
+  name: Software Build Swarm
+  pipeline: swarm
+  workerBot: architect-bot
+  phases:
+    - intake
+    - planning
+    - specialist
+    - execution
+    - testing
+    - review
+    - delivery
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RIBBON VISIBILITY POLICY
+# Top section — the primary operator workflow (from the framework):
+#   tickets, chat, calendar, addressbook, dashboard
+# Bottom section — engineering surfaces:
+#   agent-config + logs are the primary config/diagnostic pair; the 8
+#   engineering subscreens (Tasks, Queues, Queue Admin, Mesh, Ops, Health,
+#   Redis, RAG) sit below them and overflow via scroll when the viewport
+#   is short.
+# Hidden — framework items not part of the engineering operator story:
+#   settings (live under agent-config now), operations (a separate ops stance).
+# ─────────────────────────────────────────────────────────────────────────────
+ribbon:
+  hideFrameworkItems:
+    - settings
+    - operations
+  defaultView: tickets

@@ -1,0 +1,94 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added native Process Lab page for scenario runs, flow trace visibility, and assessment review
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Process Lab</title>
+  <link rel="stylesheet" href="/process-lab/process-lab.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Engineering Surface</p>
+        <h1>Process Lab</h1>
+        <p>
+          Non-invasive lifecycle tracing for swarm tickets. Launch preset scenarios, watch the request
+          move through planning and approval, and review ticket history, work items, runtime traces,
+          and AI assessment in one place.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+        <button id="runAllButton" type="button" class="button-accent">Run All Presets</button>
+        <a class="top-link" href="/queue-manager-admin" target="_top" rel="noreferrer">Queue Admin</a>
+      </div>
+    </header>
+
+    <p class="status-banner" id="statusBanner">Loading Process Lab scenarios...</p>
+
+    <section class="summary-grid" aria-label="Process Lab summary">
+      <article class="metric-card">
+        <span class="metric-label">Preset Scenarios</span>
+        <strong id="metricScenarios">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Tracked Runs</span>
+        <strong id="metricRuns">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Active Runs</span>
+        <strong id="metricActiveRuns">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Needs Attention</span>
+        <strong id="metricAttention">0</strong>
+      </article>
+    </section>
+
+    <main class="content-grid">
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Preset Bench</p>
+            <h2>Scenario Launchers</h2>
+          </div>
+        </div>
+        <div class="scenario-grid" id="scenarioGrid"></div>
+      </section>
+
+      <section class="panel run-list-panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Recent Runs</p>
+            <h2>Trace Sessions</h2>
+          </div>
+        </div>
+        <div class="run-list" id="runList"></div>
+      </section>
+
+      <section class="panel run-detail-panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Selected Run</p>
+            <h2 id="detailHeading">Choose a run</h2>
+          </div>
+        </div>
+        <div id="runDetail" class="run-detail-empty">
+          Start a preset or select a recent run to inspect the trace.
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/process-lab/process-lab.js"></script>
+</body>
+</html>

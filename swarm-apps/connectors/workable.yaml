@@ -1,0 +1,34 @@
+# Workable SPI v3 — read jobs, candidates, and team members from a workspace subdomain (Bearer token).
+provider: workable
+displayName: Workable
+version: 1.0.0
+baseUrl: https://${env:WORKABLE_SUBDOMAIN:-yourco}.workable.com/spi/v3
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: jobs
+    tool: workable-jobs
+    method: GET
+    path: /jobs
+    query:
+      limit: '100'
+  - name: candidates
+    tool: workable-candidates
+    method: GET
+    path: /candidates
+    query:
+      limit: '100'
+  - name: members
+    tool: workable-members
+    method: GET
+    path: /members
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/workable.com.ico

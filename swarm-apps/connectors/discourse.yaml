@@ -1,0 +1,43 @@
+provider: discourse
+displayName: Discourse
+version: 1.0.0
+baseUrl: ${env:DISCOURSE_BASE_URL:-https://your-forum.example.com}
+auth:
+  type: apiKeyHeader
+  header: Api-Key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: latest-topics
+    tool: discourse-latest-topics
+    method: GET
+    path: /latest.json
+  - name: top-topics
+    tool: discourse-top-topics
+    method: GET
+    path: /top.json
+  - name: topic
+    tool: discourse-topic
+    method: GET
+    path: /t/{id}.json
+  - name: category-topics
+    tool: discourse-category-topics
+    method: GET
+    path: /c/{category_id}.json
+  - name: categories
+    tool: discourse-categories
+    method: GET
+    path: /categories.json
+  - name: user
+    tool: discourse-user
+    method: GET
+    path: /users/{username}.json
+metadata:
+  icon: discourse
+  iconTitle: Discourse
+  iconSource: simple-icons
+  iconVerified: true

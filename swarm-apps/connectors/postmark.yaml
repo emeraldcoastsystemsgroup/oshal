@@ -1,0 +1,49 @@
+provider: postmark
+displayName: Postmark
+version: 1.0.0
+baseUrl: https://api.postmarkapp.com
+auth:
+  type: apiKeyHeader
+  header: X-Postmark-Server-Token
+headers:
+  Accept: application/json
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: offset
+  pageSize: 50
+  itemsField: Messages
+resources:
+  - name: server
+    tool: postmark-server
+    method: GET
+    path: /server
+  - name: outbound
+    tool: postmark-outbound
+    method: GET
+    path: /messages/outbound
+    query:
+      count: '50'
+      offset: '{offset}'
+    paginate: true
+  - name: inbound
+    tool: postmark-inbound
+    method: GET
+    path: /messages/inbound
+    query:
+      count: '50'
+      offset: '{offset}'
+    paginate: true
+  - name: stats
+    tool: postmark-stats
+    method: GET
+    path: /stats/outbound
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/postmarkapp.com.ico

@@ -1,0 +1,29 @@
+provider: figma
+displayName: Figma
+version: 1.0.0
+baseUrl: https://api.figma.com/v1
+auth:
+  type: apiKeyHeader
+  header: X-Figma-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: figma-me
+    method: GET
+    path: /me
+  - name: file
+    tool: figma-file
+    method: GET
+    path: /files/{fileKey}
+metadata:
+  description: "Read the connected Figma user profile and fetch file documents by key."
+  category: "Design"
+  icon: figma
+  iconTitle: Figma
+  iconSource: simple-icons
+  iconVerified: true

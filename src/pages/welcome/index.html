@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Welcome to OSHAL</title>
+  <link rel="stylesheet" href="welcome.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="welcome-container">
+    <div class="wizard-progress">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <span class="progress-label" id="progressLabel">Step 1 of 5</span>
+    </div>
+    <div class="wizard-step" id="wizardStep"></div>
+    <div class="wizard-nav">
+      <button class="btn btn-secondary" id="btnBack" disabled>Back</button>
+      <button class="btn btn-primary" id="btnNext">Next</button>
+      <button class="btn btn-primary hidden" id="btnFinish">Go to Dashboard</button>
+    </div>
+  </div>
+  <script type="module" src="welcome.js"></script>
+</body>
+</html>

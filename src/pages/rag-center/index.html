@@ -1,0 +1,172 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added native RAG Center engineering page for knowledge inventory, metrics, and live query testing
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Added direct handoff link from RAG Center into the shared knowledge upload workspace
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Upgraded RAG Center into a richer operator surface with result inspection, document detail, and real knowledge signals
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Elevated RAG Center into a vector-ops console with runtime signals and fast document triage filters
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG Center</title>
+  <link rel="stylesheet" href="/rag-center/rag-center.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Vector Operations Console</p>
+        <h1>RAG Center</h1>
+        <p class="hero-copy">Operator-grade view into live vector health, collection coverage, uploaded knowledge, and retrieval behavior. Everything here is powered by current OSHAL APIs and current runtime state only.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+        <a class="top-link" id="openKnowledgeWorkspaceLink" href="/chat?openWorkspace=rag&source=rag-center" target="_blank" rel="noreferrer">Open Upload Workspace</a>
+        <a class="top-link" href="/cockpit/" target="_top" rel="noreferrer">Open Cockpit</a>
+      </div>
+    </header>
+
+    <p class="status-banner" id="statusBanner">Loading RAG Center...</p>
+
+    <section class="metrics-grid" aria-label="RAG Center summary">
+      <article class="metric-card">
+        <span class="metric-label">Uploaded Docs</span>
+        <strong id="metricDocuments">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Collections</span>
+        <strong id="metricCollections">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Chunks</span>
+        <strong id="metricChunks">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Shared vs Targeted</span>
+        <strong id="metricScopeMix">0 / 0</strong>
+      </article>
+    </section>
+
+    <main class="content-grid">
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Query Lab</p>
+            <h2>Test Retrieval</h2>
+          </div>
+        </div>
+        <form class="query-form" id="queryForm">
+          <label class="field">
+            <span>Query</span>
+            <input id="queryInput" type="text" placeholder="Ask what you expect the knowledge base to answer" />
+          </label>
+          <label class="field">
+            <span>Collection</span>
+            <select id="collectionSelect">
+              <option value="">All collections</option>
+            </select>
+          </label>
+          <button id="runQueryButton" type="submit">Run Query</button>
+        </form>
+        <div class="query-grid">
+          <div class="results-list" id="resultList" data-testid="rag-center-results">
+            <div class="empty-state">Run a query to inspect retrieval hits, score order, and source previews.</div>
+          </div>
+          <div class="detail-card" id="resultDetail" data-testid="rag-center-result-detail">
+            <div class="empty-state">Pick a query hit to inspect the source text, collection linkage, and retrieval metadata.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Collection Rollup</p>
+            <h2>Knowledge Scope</h2>
+          </div>
+        </div>
+        <div class="collection-list" id="collectionList" data-testid="rag-center-collections"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Selection</p>
+            <h2>Document Detail</h2>
+          </div>
+        </div>
+        <div class="detail-card" id="documentDetail" data-testid="rag-center-document-detail">
+          <div class="empty-state">Select a knowledge document to inspect ownership, source metadata, and ingestion detail.</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Operator Signals</p>
+            <h2>Vector Runtime</h2>
+          </div>
+        </div>
+        <div class="signal-grid" id="signalGrid" data-testid="rag-center-signals"></div>
+        <ul class="note-list" data-testid="rag-center-notes">
+          <li>Historical hit counts over time are not yet persisted in the runtime.</li>
+          <li>Vector-space plots or cluster maps are not exposed by the current Chroma-backed stack.</li>
+          <li>This surface stays honest: every card here is derived from current runtime data only.</li>
+        </ul>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Uploaded Documents</p>
+            <h2>Knowledge Inventory</h2>
+          </div>
+        </div>
+        <div class="filters">
+          <label class="field field-compact">
+            <span>Find document</span>
+            <input id="documentSearchInput" type="text" placeholder="title, source, metadata, task..." />
+          </label>
+          <label class="field field-compact">
+            <span>Scope</span>
+            <select id="scopeFilter">
+              <option value="all">All</option>
+              <option value="shared">General swarm knowledge</option>
+              <option value="targeted">Bot-specific knowledge</option>
+            </select>
+          </label>
+          <label class="field field-compact">
+            <span>Collection</span>
+            <select id="documentCollectionFilter">
+              <option value="all">All collections</option>
+            </select>
+          </label>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Scope</th>
+                <th>Collection</th>
+                <th>Chunks</th>
+                <th>Source</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="documentTableBody" data-testid="rag-center-documents"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/rag-center/rag-center.js"></script>
+</body>
+</html>

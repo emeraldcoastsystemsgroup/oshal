@@ -1,0 +1,11 @@
+digraph "OSHAL Per-Bot Container Swarm" {
+	graph [fontcolor="#2D3436" fontname="Sans-Serif" fontsize=15 label="OSHAL Per-Bot Container Swarm" nodesep=0.60 pad=2.0 rankdir=LR ranksep=0.75 splines=ortho]
+	node [fixedsize=true fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13 height=1.4 imagescale=true labelloc=b shape=box style=rounded width=1.4]
+	edge [color="#7B8894"]
+	subgraph "cluster_oshal-swarm network (Docker bridge)" {
+		graph [bgcolor="#E5F5FD" fontname="Sans-Serif" fontsize=12 label="oshal-swarm network (Docker bridge)" labeljust=l pencolor="#AEB6BE" rankdir=LR shape=box style=rounded]
+		subgraph "cluster_Shared Infrastructure" {
+			graph [bgcolor="#EBF3E7" fontname="Sans-Serif" fontsize=12 label="Shared Infrastructure" labeljust=l pencolor="#AEB6BE" rankdir=LR shape=box style=rounded]
+		}
+	}
+}

@@ -1,0 +1,63 @@
+provider: zoho-crm
+displayName: Zoho CRM
+version: 1.0.0
+baseUrl: https://www.zohoapis.com/crm/v5
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: leads
+    tool: zoho-crm-leads
+    method: GET
+    path: /Leads
+    query:
+      page: null
+      per_page: null
+      fields: null
+  - name: contacts
+    tool: zoho-crm-contacts
+    method: GET
+    path: /Contacts
+    query:
+      page: null
+      per_page: null
+      fields: null
+  - name: accounts
+    tool: zoho-crm-accounts
+    method: GET
+    path: /Accounts
+    query:
+      page: null
+      per_page: null
+      fields: null
+  - name: deals
+    tool: zoho-crm-deals
+    method: GET
+    path: /Deals
+    query:
+      page: null
+      per_page: null
+      fields: null
+  - name: tasks
+    tool: zoho-crm-tasks
+    method: GET
+    path: /Tasks
+    query:
+      page: null
+      per_page: null
+      fields: null
+  - name: modules
+    tool: zoho-crm-modules
+    method: GET
+    path: /settings/modules
+metadata:
+  icon: zoho
+  iconTitle: Zoho
+  iconSource: simple-icons
+  iconVerified: true

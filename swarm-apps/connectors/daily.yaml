@@ -1,0 +1,35 @@
+provider: daily
+displayName: Daily
+version: 1.0.0
+baseUrl: https://api.daily.co/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: rooms
+    tool: daily-rooms
+    method: GET
+    path: /rooms
+    query:
+      limit: '{limit}'
+      starting_after: '{starting_after}'
+  - name: room
+    tool: daily-room
+    method: GET
+    path: /rooms/{name}
+  - name: recordings
+    tool: daily-recordings
+    method: GET
+    path: /recordings
+    query:
+      limit: '{limit}'
+      starting_after: '{starting_after}'
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/daily.co.ico

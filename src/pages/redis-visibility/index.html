@@ -1,0 +1,121 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native Redis diagnostics engineering page for scheduler and work-item visibility
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redis Diagnostics</title>
+  <link rel="stylesheet" href="/redis-visibility/redis-visibility.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Engineering Surface</p>
+        <h1>Redis Diagnostics</h1>
+        <p class="hero-copy">Native OSHAL visibility for Redis-backed scheduling, work-item state, and operator drill-downs without reviving the predecessor diagnostics page.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+        <a class="top-link" href="/cockpit/" target="_top" rel="noreferrer">Open Cockpit</a>
+      </div>
+    </header>
+
+    <p class="status-banner" id="statusBanner">Loading Redis-backed runtime diagnostics...</p>
+
+    <section class="metrics-grid" aria-label="Redis diagnostics summary">
+      <article class="metric-card">
+        <span class="metric-label">Redis Status</span>
+        <strong id="metricRedisStatus">—</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Schedules</span>
+        <strong id="metricScheduleCount">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Active Work Items</span>
+        <strong id="metricWorkItems">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Recent Runs</span>
+        <strong id="metricRuns">0</strong>
+      </article>
+    </section>
+
+    <main class="content-grid">
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Scheduler Runtime</p>
+            <h2>Redis-backed State</h2>
+          </div>
+        </div>
+        <div class="summary-grid" id="redisSummary" data-testid="redis-summary"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Schedules</p>
+            <h2>Registered Jobs</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Next Run</th>
+                <th>Target</th>
+              </tr>
+            </thead>
+            <tbody id="scheduleTableBody" data-testid="redis-schedule-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Work Items</p>
+            <h2>Current Queue State</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Agent</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="workItemTableBody" data-testid="redis-work-item-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Run Correlation</p>
+            <h2>Recent Swarm Runs</h2>
+          </div>
+        </div>
+        <ul class="run-list" id="runList" data-testid="redis-run-list"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/redis-visibility/redis-visibility.js"></script>
+</body>
+</html>

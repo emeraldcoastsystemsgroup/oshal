@@ -1,0 +1,3 @@
+# Placeholder — the Dockerfile COPYs any-bot/ui-cockpit/, but the cockpit is served
+# from src/pages/cockpit at runtime (resolveExistingPath). Keeps the build self-sufficient
+# instead of relying on a stale Docker cache layer for this legacy path.

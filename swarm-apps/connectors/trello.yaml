@@ -1,0 +1,45 @@
+provider: trello
+displayName: Trello
+version: 1.0.0
+baseUrl: https://api.trello.com/1
+auth:
+  type: apiKeyQuery
+  param: token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: my-boards
+    tool: trello-my-boards
+    method: GET
+    path: /members/me/boards
+    query:
+      key: '{key}'
+  - name: get-board
+    tool: trello-get-board
+    method: GET
+    path: /boards/{id}
+    query:
+      key: '{key}'
+  - name: board-cards
+    tool: trello-board-cards
+    method: GET
+    path: /boards/{id}/cards
+    query:
+      key: '{key}'
+  - name: board-lists
+    tool: trello-board-lists
+    method: GET
+    path: /boards/{id}/lists
+    query:
+      key: '{key}'
+metadata:
+  description: "Read your Trello boards together with their lists and cards."
+  category: "Project management"
+  icon: trello
+  iconTitle: Trello
+  iconSource: simple-icons
+  iconVerified: true

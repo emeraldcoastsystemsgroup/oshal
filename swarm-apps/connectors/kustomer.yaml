@@ -1,0 +1,29 @@
+provider: kustomer
+displayName: Kustomer
+version: 1.0.0
+baseUrl: https://api.kustomerapp.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: kustomer-customers
+    method: GET
+    path: /customers
+  - name: conversations
+    tool: kustomer-conversations
+    method: GET
+    path: /conversations
+  - name: users
+    tool: kustomer-users
+    method: GET
+    path: /users
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/kustomerapp.com.ico

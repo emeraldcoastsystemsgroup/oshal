@@ -1,0 +1,31 @@
+# Instatus status pages — list pages, per-page incidents, and components (Bearer token).
+provider: instatus
+displayName: Instatus
+version: 1.0.0
+baseUrl: https://api.instatus.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: pages
+    tool: instatus-pages
+    method: GET
+    path: /pages
+  - name: incidents
+    tool: instatus-incidents
+    method: GET
+    path: '/{page_id}/incidents'
+  - name: components
+    tool: instatus-components
+    method: GET
+    path: '/{page_id}/components'
+metadata:
+  icon: instatus
+  iconTitle: Instatus
+  iconSource: simple-icons
+  iconVerified: true

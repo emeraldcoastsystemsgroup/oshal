@@ -1,0 +1,23 @@
+{
+  "displayName": "OSHAL SmartThings Connector",
+  "description": "Allows signed-in OSHAL users to connect their own SmartThings account for smart-home device and scene access.",
+  "appName": "oshal-smartthings-connector",
+  "appType": "API_ONLY",
+  "classifications": ["CONNECTED_SERVICE"],
+  "singleInstance": true,
+  "apiOnly": {},
+  "principalType": "LOCATION",
+  "oauth": {
+    "clientName": "OSHAL SmartThings Connector",
+    "scope": [
+      "r:devices:*",
+      "x:devices:*",
+      "r:scenes:*",
+      "x:scenes:*",
+      "r:locations:*"
+    ],
+    "redirectUris": [
+      "https://oshal.example.com/api/connect/smartthings/callback"
+    ]
+  }
+}

@@ -1,0 +1,160 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Mounted Docker socket into the core api-server so compatibility bot lifecycle status checks work from the containerized runtime
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Clarified core stack intent as a standalone convenience runtime so docs no longer imply it is the canonical historical 3456 operator surface
+
+name: oshal-core
+
+# NOTE:
+# - This compose file intentionally exposes a standalone/convenience OSHAL runtime on 35456.
+# - The historical/default operator-facing OSHAL app surface remains the main 3456 runtime.
+# - Redirect/auth ownership normalization back to bot-owned behavior is tracked as follow-up work.
+
+services:
+  oshal-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${OSHAL_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - oshal_db_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal-core
+
+  oshal-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${OSHAL_REDIS_PORT:-56379}:6379"
+    volumes:
+      - oshal_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal-core
+
+  oshal-chromadb:
+    image: chromadb/chroma:0.4.24
+    ports:
+      - "${OSHAL_CHROMA_PORT:-58000}:8000"
+    volumes:
+      - oshal_chroma_data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/heartbeat', timeout=3)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal-core
+
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3456
+      APP_URL: http://localhost:${OSHAL_APP_PORT:-35456}
+      MOCK_OIDC: ${MOCK_OIDC:-true}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_EXTERNAL_URL: http://localhost:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-oshal}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-oshal-swarm}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-dev-only-secret}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-only-session-secret-change-me}
+      POSTGRES_HOST: oshal-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: oshal
+      POSTGRES_USER: oshal
+      POSTGRES_PASSWORD: oshalpass
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshalpass@oshal-db:5432/oshal}
+      REDIS_URL: redis://oshal-redis:6379
+      CHROMADB_URL: http://oshal-chromadb:8000
+      OSHAL_ALLOW_LEGACY_UNOWNED: ${OSHAL_ALLOW_LEGACY_UNOWNED:-false}
+      OSHAL_DB_GUC: ${OSHAL_DB_GUC:-on}
+      OSHAL_SCHEMA_BOOTSTRAP: ${OSHAL_SCHEMA_BOOTSTRAP:-auto}
+      ENABLE_AGENT_SCHEDULER: ${ENABLE_AGENT_SCHEDULER:-false}
+      SWARM_MESH_TRANSPORT: ${SWARM_MESH_TRANSPORT:-redis}
+      GOOGLE_SEARCH_MCP_URL: ${GOOGLE_SEARCH_MCP_URL:-}
+      PRESENTRON_ENDPOINT: ${PRESENTRON_ENDPOINT:-http://presentron:8080}
+      RAG_INGESTION_ENDPOINT: ${RAG_INGESTION_ENDPOINT:-}
+      SHARED_WORKSPACE_ROOT: /app/workspace-shared
+      CLINE_SHARED_WORKSPACE_ROOT: /app/workspace-shared
+      OPENAI_CODEX_CALLBACK_PORT: 1455
+      BOT_NAME: ${BOT_NAME:-project-manager}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-5-20250929}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "${OSHAL_APP_PORT:-35456}:3456"
+      - "${OSHAL_CODEX_CALLBACK_PORT:-51455}:1455"
+    volumes:
+      - ./output:/app/output
+      - ./workspace:/app/workspace
+      - ./workspace-shared:/app/workspace-shared
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      oshal-db:
+        condition: service_healthy
+      oshal-redis:
+        condition: service_healthy
+      oshal-chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3456/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - oshal-core
+
+  presentron:
+    image: presentron:latest
+    profiles:
+      - presentron
+    ports:
+      - "8088:8080"
+    environment:
+      PRESENTRON_API_KEY: ${PRESENTRON_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - oshal-core
+
+volumes:
+  oshal_db_data:
+  oshal_redis_data:
+  oshal_chroma_data:
+
+networks:
+  oshal-core:
+    driver: bridge

@@ -1,0 +1,26 @@
+# =============================================================================
+# OSHAL Headscale Root Kustomization
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added root kustomization so Headscale Kubernetes config can include shared config files safely
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: oshal-headscale
+
+resources:
+  - kubernetes/namespace.yaml
+  - kubernetes/headscale-resources.yaml
+
+configMapGenerator:
+  - name: headscale-config
+    files:
+      - config/config.yaml
+      - config/policy.hujson
+
+generatorOptions:
+  disableNameSuffixHash: true

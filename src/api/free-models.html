@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Run for free — connect free AI tokens</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  /* Keep the surface's own short alias names, but DERIVE each from a framework theme token so all
+     eleven themes work — not just the dark one whose hex these used to match. Neutral chrome maps to
+     the neutral tokens; the semantic status colors (green success, blue link, amber warning) map to
+     the theme's status/accent tokens with the old hex kept as a fallback for legibility. */
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--status-success, #36d399);
+    --accent2: var(--accent-primary, #5b8cff);
+    --warn: var(--status-warning, #f4b740);
+    --chip: var(--bg-tertiary);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-size: 28px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 34px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .disclaimer { background: #2a2310; border: 1px solid #5a4a16; color: #f6e3b0;
+    padding: 12px 14px; border-radius: 10px; font-size: 13.5px; margin: 16px 0 8px; }
+  .tally { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0 6px; }
+  .tally .box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 16px; min-width: 120px; }
+  .tally .n { font-size: 22px; font-weight: 700; }
+  .tally .l { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .card h3 { margin: 0 0 2px; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+  .blurb { color: var(--muted); margin: 0 0 10px; font-size: 13.5px; }
+  ol.how { margin: 8px 0 12px; padding-left: 20px; color: var(--text-secondary, #cdd6ea); font-size: 13.5px; }
+  ol.how li { margin: 3px 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  input, button { font: inherit; }
+  input[type=text], input[type=password] { flex: 1 1 180px; min-width: 0; background: var(--panel2);
+    border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 8px 10px; }
+  .lbl { font-size: 12px; color: var(--muted); width: 100%; margin-top: 6px; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--chip); color: var(--text);
+    border-radius: 8px; padding: 8px 14px; font-weight: 600; }
+  button.primary { background: var(--accent); color: #062013; border-color: transparent; }
+  button.alt { background: var(--accent2); color: #04122e; border-color: transparent; }
+  button:disabled { opacity: .55; cursor: default; }
+  .link-btn { display: inline-block; background: var(--chip); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 12px; font-weight: 600; }
+  .badge { font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  .badge.on { background: #0f3a28; color: var(--accent); border: 1px solid #1d5d40; }
+  .badge.cool { background: #3a2f10; color: var(--warn); border: 1px solid #5a4a16; }
+  .msg { font-size: 12.5px; margin-top: 6px; min-height: 16px; }
+  .msg.ok { color: var(--accent); } .msg.err { color: #ff8585; }
+  .flash { border-radius: 8px; padding: 10px 14px; margin: 14px 0; font-size: 13.5px; }
+  .flash.ok { border: 1px solid var(--accent); color: var(--accent); }
+  .flash.err { border: 1px solid #ff8585; color: #ff8585; }
+  .note { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  .pill { background: var(--chip); border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 9px; font-size: 11.5px; color: var(--muted); }
+  code { background: var(--bg-tertiary, #0c1426); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12.5px; }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>Run for free</h1>
+  <p class="sub">A free default model is already available out of the box — you can run without connecting
+  anything. Connecting your <strong>own</strong> free AI tokens raises your limits: the platform rotates
+  across whatever you connect, so when one hits its free limit it rolls to the next — at no cost to you.
+  The more you connect, the more free headroom you have.</p>
+
+  <div class="disclaimer">
+    Free programs change constantly — limits, models, and endpoints move. The <strong>"Get a key"</strong>
+    link on each card is the source of truth. If a connect fails, open that link, grab the current key, and
+    (for the lower section) paste the current base URL/model from their docs.
+  </div>
+
+  <div class="disclaimer">
+    <strong>Two honest limits:</strong> free connections handle chat &amp; reasoning turns — tool-heavy bot
+    work (files, shell-outs, devices) still runs on each bot's built-in harness. And every free tier has a
+    daily cap: when a lane hits it, it cools down and rotation moves to the next (the tally below shows
+    which lane is resting). More lanes connected = more free headroom.
+  </div>
+
+  <div id="flash" class="flash" style="display:none"></div>
+
+  <div class="tally" id="tally">
+    <div class="box"><div class="n" id="t-connected">–</div><div class="l">Connected</div></div>
+    <div class="box"><div class="n" id="t-active">–</div><div class="l">Active now</div></div>
+    <div class="box"><div class="n" id="t-cool">–</div><div class="l">Cooling down</div></div>
+  </div>
+
+  <h2>One-click free tiers <span class="pill">auto-rotated</span></h2>
+  <p class="sub">These are wired into rotation directly. Connect as many as you like.</p>
+  <div class="grid" id="catalog"><div class="note">Loading providers…</div></div>
+
+  <h2>More free programs <span class="pill">connect via Bring-Your-Own-LLM</span></h2>
+  <p class="sub">Genuinely-free or free-credit programs. These connect through the Bring-Your-Own-LLM
+  connector — the base URL and model are pre-filled but editable, so you can fix them if a provider
+  has moved. (These run as your endpoint; not yet in the auto-rotation pool.)</p>
+  <div class="grid" id="more"></div>
+
+  <h2>Free, but special setup</h2>
+  <div class="grid" id="special"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+/* Escape, then turn bare provider-console paths (openrouter.ai/credits, console.groq.com/keys, …)
+   into real links so how-to steps are clickable, not copy-typed. */
+const linkify = (s) => esc(s).replace(
+  /\b((?:[a-z0-9-]+\.)+[a-z]{2,}\/[a-z0-9\/._-]+)/gi,
+  (m) => '<a href="https://' + m + '" target="_blank" rel="noopener">' + m + '</a>',
+);
+
+/* OAuth round-trip result: the OpenRouter callback redirects back here with
+   ?connected=openrouter on success or ?connect_error=<reason> on failure. */
+(function showOauthResult() {
+  const q = new URLSearchParams(window.location.search);
+  const flash = $('flash');
+  if (q.get('connected')) {
+    flash.className = 'flash ok';
+    flash.innerHTML = '✓ ' + esc(q.get('connected')) + ' connected — its free models just joined your rotation. '
+      + 'Tip: a one-time $10 credit at ' + linkify('openrouter.ai/credits')
+      + ' lifts your free allowance from 50 to 1,000 requests/day (the $10 is never spent by free models).';
+    flash.style.display = 'block';
+  } else if (q.get('connect_error')) {
+    flash.className = 'flash err';
+    flash.textContent = 'Connect failed: ' + q.get('connect_error')
+      + ' — you can paste a key on the card below instead (the "Get a key" link takes you to the right page).';
+    flash.style.display = 'block';
+  } else { return; }
+  history.replaceState(null, '', window.location.pathname);  // don't re-flash on refresh
+})();
+async function jget(url) { const r = await fetch(url, { credentials: 'same-origin' }); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }
+async function jpost(url, body) {
+  const r = await fetch(url, { method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j;
+}
+
+let connectedByProvider = {}; // providerId -> status entry (for the one-click section)
+
+async function refreshList() {
+  try {
+    const data = await jget('/api/connect/free-tier/list');
+    $('t-connected').textContent = data.summary.connected;
+    $('t-active').textContent = data.summary.active;
+    $('t-cool').textContent = data.summary.cooledDown;
+    connectedByProvider = {};
+    for (const c of data.connections) connectedByProvider[c.providerId] = c;
+    renderCatalogBadges();
+  } catch (e) { /* not signed in or transient — leave dashes */ }
+}
+
+let CATALOG = [];
+function renderCatalogBadges() {
+  for (const p of CATALOG) {
+    const el = document.querySelector('[data-badge="' + p.id + '"]');
+    if (!el) continue;
+    const c = connectedByProvider[p.id];
+    if (!c) { el.innerHTML = ''; continue; }
+    el.innerHTML = c.cooledDown
+      ? '<span class="badge cool">cooling down</span>'
+      : '<span class="badge on">connected</span>';
+  }
+}
+
+async function loadCatalog() {
+  let data;
+  try { data = await jget('/api/connect/free-tier/catalog'); }
+  catch (e) { $('catalog').innerHTML = '<div class="msg err">Could not load providers (' + esc(e.message) + '). Are you signed in?</div>'; return; }
+  CATALOG = data.providers || [];
+  $('catalog').innerHTML = CATALOG.map(catalogCard).join('');
+  for (const p of CATALOG) wireCatalogCard(p);
+  renderCatalogBadges();
+}
+
+function catalogCard(p) {
+  const how = (p.howTo || []).map((s) => '<li>' + linkify(s) + '</li>').join('');
+  const oauthBtn = p.oauth
+    ? '<button class="alt" data-oauth="' + p.id + '">Connect with ' + esc(p.label) + '</button>' : '';
+  return `<div class="card">
+    <h3>${esc(p.label)} <span data-badge="${p.id}"></span></h3>
+    <p class="blurb">${esc(p.freeBlurb || p.note || '')}</p>
+    <ol class="how">${how}</ol>
+    <a class="link-btn" href="${esc(p.keyHelpUrl)}" target="_blank" rel="noopener">Get a key ↗</a>
+    <div class="row">
+      ${oauthBtn}
+      <input type="password" placeholder="Paste API key" data-key="${p.id}" />
+      <button class="primary" data-connect="${p.id}">Connect</button>
+    </div>
+    <div class="note">Default model: <code>${esc((p.freeModels || [])[0] || '')}</code> · ${esc(p.host)}</div>
+    <div class="msg" data-msg="${p.id}"></div>
+  </div>`;
+}
+
+function wireCatalogCard(p) {
+  const oauth = document.querySelector('[data-oauth="' + p.id + '"]');
+  if (oauth) oauth.onclick = () => { window.location.href = p.oauthStartPath; };
+  const btn = document.querySelector('[data-connect="' + p.id + '"]');
+  btn.onclick = async () => {
+    const key = document.querySelector('[data-key="' + p.id + '"]').value.trim();
+    const msg = document.querySelector('[data-msg="' + p.id + '"]');
+    if (!key) { msg.className = 'msg err'; msg.textContent = 'Paste a key first (or use the Get-a-key link).'; return; }
+    btn.disabled = true; msg.className = 'msg'; msg.textContent = 'Validating against ' + p.label + '…';
+    try {
+      const r = await jpost('/api/connect/free-tier/connect', { providerId: p.id, apiKey: key });
+      msg.className = 'msg ok'; msg.textContent = 'Connected — ' + r.model + ' is live.';
+      document.querySelector('[data-key="' + p.id + '"]').value = '';
+      refreshList();
+    } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+    finally { btn.disabled = false; }
+  };
+}
+
+// ── Long tail: connect through the existing Bring-Your-Own-LLM connector ──
+const MORE = [
+  { name: 'DeepSeek', free: 'Very low cost; small signup credit. OpenAI-compatible.',
+    baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', keyUrl: 'https://platform.deepseek.com/api_keys',
+    how: ['Sign up at platform.deepseek.com.', 'Create an API key.', 'Paste it below and Connect.'] },
+  { name: 'Alibaba Qwen (Model Studio)', free: 'Free token quota for new accounts, incl. Qwen models.',
+    baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus',
+    keyUrl: 'https://bailian.console.alibabacloud.com/',
+    how: ['Open Alibaba Cloud Model Studio (Bailian) and sign up.', 'Create an API key (DashScope).', 'Paste it below and Connect.'] },
+  { name: 'Zhipu GLM (BigModel)', free: 'GLM-4-Flash is free. OpenAI-compatible.',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', keyUrl: 'https://open.bigmodel.cn/',
+    how: ['Sign up at open.bigmodel.cn (Zhipu / Z.ai).', 'Create an API key.', 'Paste it below and Connect.'] },
+  { name: 'Moonshot (Kimi)', free: 'Free trial credit. OpenAI-compatible.',
+    baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', keyUrl: 'https://platform.moonshot.cn/',
+    how: ['Sign up at platform.moonshot.cn (or .ai for international).', 'Create an API key.', 'Paste it below and Connect.'] },
+  { name: 'GitHub Models', free: 'Free for developers. The "key" is a GitHub token with the models scope.',
+    baseUrl: 'https://models.inference.ai.azure.com', model: 'gpt-4o-mini', keyUrl: 'https://github.com/marketplace/models',
+    how: ['Open github.com/marketplace/models.', 'Create a fine-grained GitHub PAT with the Models permission.', 'Paste the token below and Connect. (If it fails, the endpoint may have moved — check the docs.)'] },
+  { name: 'NVIDIA NIM', free: 'Free credits at build.nvidia.com. OpenAI-compatible.',
+    baseUrl: 'https://integrate.api.nvidia.com/v1', model: 'meta/llama-3.1-8b-instruct', keyUrl: 'https://build.nvidia.com/',
+    how: ['Sign up at build.nvidia.com.', 'Generate an API key from any model page.', 'Paste it below and Connect.'] },
+  { name: 'SambaNova', free: 'Free tier; very fast Llama. OpenAI-compatible.',
+    baseUrl: 'https://api.sambanova.ai/v1', model: 'Meta-Llama-3.1-8B-Instruct', keyUrl: 'https://cloud.sambanova.ai/',
+    how: ['Sign up at cloud.sambanova.ai.', 'Create an API key.', 'Paste it below and Connect.'] },
+  { name: 'Together AI', free: 'Some free models + signup credit. OpenAI-compatible.',
+    baseUrl: 'https://api.together.xyz/v1', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free', keyUrl: 'https://api.together.ai/',
+    how: ['Sign up at together.ai.', 'Copy your API key from settings.', 'Paste it below and Connect.'] },
+  { name: 'Fireworks AI', free: 'Signup credit. OpenAI-compatible.',
+    baseUrl: 'https://api.fireworks.ai/inference/v1', model: 'accounts/fireworks/models/llama-v3p1-8b-instruct', keyUrl: 'https://fireworks.ai/',
+    how: ['Sign up at fireworks.ai.', 'Create an API key.', 'Paste it below and Connect.'] },
+  { name: 'Cohere', free: 'Free trial keys (rate-limited, non-production).',
+    baseUrl: 'https://api.cohere.ai/compatibility/v1', model: 'command-r', keyUrl: 'https://dashboard.cohere.com/api-keys',
+    how: ['Sign up at dashboard.cohere.com.', 'Create a trial API key.', 'Paste it below and Connect.'] },
+  { name: 'Hugging Face', free: 'Free serverless inference (rate-limited). Key = HF access token.',
+    baseUrl: 'https://router.huggingface.co/v1', model: 'meta-llama/Llama-3.1-8B-Instruct', keyUrl: 'https://huggingface.co/settings/tokens',
+    how: ['Open huggingface.co/settings/tokens.', 'Create a read token.', 'Paste it below and Connect. Model availability varies by what is warm.'] },
+];
+
+function moreCard(m) {
+  const how = m.how.map((s) => '<li>' + esc(s) + '</li>').join('');
+  const id = m.name.replace(/[^a-z0-9]/gi, '');
+  return `<div class="card">
+    <h3>${esc(m.name)}</h3>
+    <p class="blurb">${esc(m.free)}</p>
+    <ol class="how">${how}</ol>
+    <a class="link-btn" href="${esc(m.keyUrl)}" target="_blank" rel="noopener">Get a key ↗</a>
+    <div class="lbl">Base URL (edit if it has moved)</div>
+    <input type="text" data-b="${id}" value="${esc(m.baseUrl)}" />
+    <div class="lbl">Model</div>
+    <input type="text" data-m="${id}" value="${esc(m.model)}" />
+    <div class="row">
+      <input type="password" placeholder="Paste API key" data-k="${id}" />
+      <button class="primary" data-byo="${id}">Connect</button>
+    </div>
+    <div class="msg" data-bm="${id}"></div>
+  </div>`;
+}
+
+function wireMore(m) {
+  const id = m.name.replace(/[^a-z0-9]/gi, '');
+  const btn = document.querySelector('[data-byo="' + id + '"]');
+  btn.onclick = async () => {
+    const baseUrl = document.querySelector('[data-b="' + id + '"]').value.trim();
+    const model = document.querySelector('[data-m="' + id + '"]').value.trim();
+    const apiKey = document.querySelector('[data-k="' + id + '"]').value.trim();
+    const msg = document.querySelector('[data-bm="' + id + '"]');
+    if (!apiKey) { msg.className = 'msg err'; msg.textContent = 'Paste a key first.'; return; }
+    btn.disabled = true; msg.className = 'msg'; msg.textContent = 'Validating against ' + m.name + '…';
+    try {
+      const r = await jpost('/api/connect/any-llm/save', { baseUrl, model, apiKey, label: m.name + ' (free)' });
+      msg.className = 'msg ok'; msg.textContent = 'Connected — ' + (r.model || model) + ' @ ' + (r.host || baseUrl) + '.';
+      document.querySelector('[data-k="' + id + '"]').value = '';
+    } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+    finally { btn.disabled = false; }
+  };
+}
+
+// ── Special-setup programs (info only) ──
+const SPECIAL = [
+  { name: 'OpenAI — free daily tokens (data sharing)',
+    body: 'OpenAI gives free daily tokens (up to several million, by model tier) if you opt into <strong>sharing your prompts and completions with OpenAI for model training</strong>. Real and ongoing — but do not use it for anything sensitive, since your traffic trains their models.',
+    steps: ['Open platform.openai.com → Settings → Organization → Data controls.', 'Enable sharing prompts/completions for training.', 'The free daily token grant appears on eligible models.', 'Then connect OpenAI as a Bring-Your-Own-LLM with base URL https://api.openai.com/v1.'],
+    link: 'https://platform.openai.com/settings/organization/data-controls', linkText: 'OpenAI data controls ↗' },
+  { name: 'Cloudflare Workers AI',
+    body: 'A free daily allocation of open-model inference. OpenAI-compatible, but the endpoint includes your account ID, so connect it via Bring-Your-Own-LLM using the URL from their docs.',
+    steps: ['Open the Workers AI docs and copy the OpenAI-compatible base URL (it contains your account ID).', 'Create an API token.', 'Connect it as a Bring-Your-Own-LLM above.'],
+    link: 'https://developers.cloudflare.com/workers-ai/', linkText: 'Workers AI docs ↗' },
+  { name: 'Run it free forever — locally',
+    body: 'Zero tokens, zero cost, fully private: run open models on your own machine with the OSHAL desktop worker (or Ollama) and point the platform at it. Best when you have the hardware and want no provider in the loop.',
+    steps: ['Install the OSHAL desktop worker or Ollama.', 'Pull an open model (e.g. Llama or Qwen).', 'Connect its local OpenAI-compatible URL as a Bring-Your-Own-LLM.'],
+    link: 'https://ollama.com/', linkText: 'Ollama ↗' },
+];
+
+function specialCard(s) {
+  const steps = s.steps.map((x) => '<li>' + esc(x) + '</li>').join('');
+  return `<div class="card">
+    <h3>${esc(s.name)}</h3>
+    <p class="blurb">${s.body}</p>
+    <ol class="how">${steps}</ol>
+    <a class="link-btn" href="${esc(s.link)}" target="_blank" rel="noopener">${esc(s.linkText)}</a>
+  </div>`;
+}
+
+// boot
+$('more').innerHTML = MORE.map(moreCard).join('');
+MORE.forEach(wireMore);
+$('special').innerHTML = SPECIAL.map(specialCard).join('');
+loadCatalog();
+refreshList();
+setInterval(refreshList, 30000);
+</script>
+</body>
+</html>

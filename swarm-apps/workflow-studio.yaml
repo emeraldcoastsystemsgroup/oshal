@@ -1,0 +1,100 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — workflow-studio ("Workflow Studio")
+#
+# Talk-to-build workflow authoring (ADR-039). Describe a process in words or voice;
+# the reason-only workflow-assistant concierge emits a single `workflow-graph` block;
+# the authenticated Workflow Studio surface validates, persists, renders, and
+# publishes it as a deterministic ticket-type queue.
+#
+# This manifest does three things:
+#   1. Registers the cockpit UI surface as a proper tool (ui.static → registerDynamicToolUI)
+#      so it appears in the ribbon and is reachable at ?app=workflow-studio.
+#   2. Registers ticketType=workflow-build → workerBot=workflow-assistant, so a TICKET about
+#      building a workflow (intake-classified, scheduled, or external) routes to the bot via
+#      the queue (dispatch-manifest-worker), not just the interactive /chat path.
+#   3. Declares the bot so it seeds/heartbeats as a real swarm participant.
+#
+# ADR-036 split: the bot reasons (cost → chat_tasks under agent 051); the authenticated
+# surface does all I/O. The bot is reason-only, so it runs INLINE on the api container
+# (concierge form, like finance-analyst / movies-concierge) — no dedicated bot-node.
+# See docs/workflow-studio.md and docs/building-a-bot.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: workflow-studio
+suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: Workflow Studio
+description: >-
+  Design workflows by conversation. Tell the workflow-assistant what process you want to
+  automate — a single worker, approval gates, parallel branches, conditional logic — and it
+  draws the graph live as you talk. Refine by talking; publish as a deterministic ticket-type
+  queue with its own ribbon icon. Works on web and mobile.
+version: 1.0.0
+status: active
+
+# Neutral slate/indigo skin so it reads distinct from the connector apps.
+theme: midnight
+
+# Ticket routing: a ticket with ticketType=workflow-build routes to workflow-assistant over the
+# queue (dispatch-manifest-worker). Interactive design uses the surface's /chat path (no ticket);
+# this ticketType is for intake-classified "build me a workflow" requests, scheduled re-designs,
+# or external/automated triggers — the same accountable bot answers either way (ADR-036).
+ticketType: workflow-build
+
+workflow:
+  name: Workflow Build
+  # No `pipeline:` — single-bot worker dispatch (defaults to manifest-worker). The persona
+  # self-gates quality, so no reviewerBot / Phase-2 review.
+  workerBot: workflow-assistant
+
+bots:
+  - agentId: a0000000-0000-0000-0000-000000000051
+    name: workflow-assistant
+    persona: ai-lab/bot-personas/workflow-assistant.yaml
+    role: Workflow Orchestration Specialist
+    capabilities:
+      - workflow-design
+      - process-architecture
+      - orchestration
+      - workflow-validation
+      - workflow-deployment
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COCKPIT UI SURFACE — one ribbon icon opens the Workflow Studio page (served by the
+# /workflow-studio route). The page is responsive (web + mobile): the "Describe Your
+# Workflow" chat panel, the WYSIWYG canvas, validation/compile, and Publish.
+# ─────────────────────────────────────────────────────────────────────────────
+ui:
+  static:
+    - toolName: workflow-studio
+      label: Workflow Studio
+      icon: codicon codicon-type-hierarchy-sub
+      iframeUrl: /workflow-studio/
+      section: bottom
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SURFACE-BRIDGE ALLOW-LIST — the ONLY oshal-surface-bridge ops the cockpit relay carries between
+# this app's bot (on the chat rail) and its surface (the surface-bridge dock in /workflow-studio/,
+# rendered by workflow-studio-bridge.js). Fail-closed: absence relays NOTHING. Drawn from the closed
+# @/shared/surface-bridge-ops vocabulary — a typo is rejected at load. See ADR-036 / the chat↔surface
+# bridge primitive. Outbound (bot→surface): render_options / propose / notify / set_content;
+# inbound (surface→bot): select / submit.
+surface:
+  ops:
+    - render_options
+    - propose
+    - notify
+    - set_content
+    - select
+    - submit
+
+ribbon:
+  hideFrameworkItems:
+    - tickets
+    - chat
+    - calendar
+    - addressbook
+    - dashboard
+    - echo
+    - logs
+    - operations
+  defaultView: workflow-studio

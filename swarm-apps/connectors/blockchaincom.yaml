@@ -1,0 +1,30 @@
+provider: blockchaincom
+displayName: Blockchain.com
+version: 1.0.0
+baseUrl: https://blockchain.info
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: rawaddr
+    tool: blockchaincom-rawaddr
+    method: GET
+    path: /rawaddr/{address}
+  - name: rawtx
+    tool: blockchaincom-rawtx
+    method: GET
+    path: /rawtx/{tx_hash}
+  - name: ticker
+    tool: blockchaincom-ticker
+    method: GET
+    path: /ticker
+metadata:
+  icon: blockchaindotcom
+  iconTitle: Blockchain.com
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,99 @@
+# CI e2e GREEN SET (the green ratchet). Files here have EVERY test passing under the
+# CI e2e env (Postgres+Redis, PLAYWRIGHT_PORT=3456, FORCE_LLM_PROVIDER=noop, MOCK_OIDC).
+# Categorized 2026-07-06: 66 green / 87 red (913 pass / 527 fail across the full suite).
+# Run via: npm run test:e2e:green. Add specs here only once they pass; never remove to hide a
+# regression. Full-suite normalization tracked in docs/BACKLOG.md.
+#
+tests/agent-memory-and-swarm-memory.spec.ts
+tests/agent-profile-bulk-config.spec.ts
+# UN-QUARANTINED 2026-07-19 (was QUARANTINED 2026-07-09, run 29043394351). Root-caused ENV,
+# not a click race: src/api/dist is gitignored and no CI step ran `npm run build:chat`, so on
+# a clean checkout /dist/chat-ui.js 404s, chat-config-modal.mjs (imports ChatApp from it)
+# never evaluates, no click handler binds, and the modal never opens ("Disconnected/Loading"
+# = ChatApp also comes from that bundle). Reproduced locally by removing src/api/dist; fixed
+# by the scripts/e2e-green.mjs preflight that builds the bundle when missing (Docker already
+# builds it — Dockerfile.oshal `npm run build:chat`). Verified 3 CI-mirror runs 13/13, 0 retries.
+tests/agent-profile-persistence.spec.ts
+tests/app-surface-clickthrough.spec.ts
+tests/app-theme-matrix.spec.ts
+tests/auto-wiring-cost-metrics.spec.ts
+# UN-QUARANTINED 2026-07-19 (same day): two real spec-env instabilities fixed — (1) RibbonNav's
+# full innerHTML re-render on ?app= profile resolve detached the first-rendered calendar button
+# mid-action (now: settle-poll on the bottom tray before locating), (2) the engineering ribbon's
+# 9 bottom items overlapped the button at 720px (now: realistic operator viewport). Sibling
+# default-cockpit case hardened with the same settle-then-click. Verified 3 consecutive
+# ZERO-RETRY CI-mirror runs, 2/2 each, on a loaded box.
+tests/calendar-app-queue-browser.spec.ts
+tests/calendar-schedule-scope.spec.ts
+tests/cline-provider-key-sync.spec.ts
+tests/cockpit-calendar-agent-visibility.spec.ts
+tests/cockpit-current-state-probe.spec.ts
+tests/config-ownership-runtime.spec.ts
+tests/config-sync-service.spec.ts
+tests/connector-token-crypto.spec.ts
+tests/content-studio-quality.spec.ts
+tests/cred-wipe.spec.ts
+tests/dispatch-routing.spec.ts
+tests/dynamic-agent-live-e2e.spec.ts
+tests/dynamic-registration-framework.spec.ts
+tests/eval-results-store.spec.ts
+tests/eval-scorer-assert.spec.ts
+tests/execution-artifact-scope.spec.ts
+tests/execution-policy-and-decomposition.spec.ts
+# UN-QUARANTINED 2026-07-19 (was QUARANTINED 2026-07-09, run 29043394351). Root-caused ENV:
+# approve is the ONLY tested path that mints a token, and mintToken → secret() fail-louds
+# when SESSION_SECRET/AUTH_SESSION_SECRET/KEYCLOAK_CLIENT_SECRET are all unset (a clean
+# checkout has no .env; ci.yml sets none) — captured body: HTTP 500 {"error":"TV pairing
+# requires SESSION_SECRET (…)"}. That is why invalid-code 404 passed (returns before mint).
+# Fixed by the playwright.config.ts webServer default: MOCK_OIDC runs get a deterministic
+# test SESSION_SECRET when none is configured (same class as the FORCE_LLM_PROVIDER=noop
+# default). Verified 3 CI-mirror runs 13/13, 0 retries + a 45/45 auth-sensitive spot-check.
+tests/firetv-tv-pairing.spec.ts
+tests/forge-builder-cta.spec.ts
+tests/gemini-harness-wiring.spec.ts
+tests/github-adapter.spec.ts
+tests/google-search-knowledge-enhancement.spec.ts
+tests/governance-audit.spec.ts
+tests/governance-rbac.spec.ts
+tests/hardening-csp.spec.ts
+tests/hardening-rate-limit.spec.ts
+tests/hardening-webhook-hmac.spec.ts
+tests/hierarchical-decomposition.spec.ts
+tests/intelligent-escalation-routing.spec.ts
+tests/live/privacy-export-delete.live.spec.ts
+tests/live/two-user-isolation.live.spec.ts
+tests/llm-execution-handler.spec.ts
+tests/openai-codex-oauth-service.spec.ts
+tests/operational-intelligence.spec.ts
+tests/optimizer-native-routing.spec.ts
+tests/orchestration-workstreams-api.spec.ts
+tests/provider-runtime-auth-guard.spec.ts
+tests/provider-runtime-selection.spec.ts
+tests/rag-query-tool.spec.ts
+tests/remote-client-chat-bridge.spec.ts
+tests/remote-client-framework.spec.ts
+tests/remote-client-live-mcp-e2e.spec.ts
+tests/security-review-fixes.spec.ts
+tests/session-140-plane-sync-and-rag.spec.ts
+tests/session-18-swarm-pipeline.spec.ts
+tests/smartthings-oauth-connector.spec.ts
+tests/storage-browse-local.spec.ts
+tests/swarm-e2e-api-validation.spec.ts
+tests/swarm-governance-validation.spec.ts
+tests/swarm-routing-candidate-normalization.spec.ts
+tests/swarm-ticket-processing.spec.ts
+# QUARANTINED 2026-07-19. Re-root-caused: NOT env/wait — a real product bug. The :112
+# workspace case is env host-path drift (fixable via SHARED_WORKSPACE_ROOT), but the :141
+# UN-QUARANTINED 2026-07-19 (same day): the timeAgo product bug is FIXED (timeAgo added to the
+# detail-renderer import) and the spec's resolveWorkspaceRoot now mirrors the server's
+# /app/workspace branch (no harness env line needed — avoids the SHARED_WORKSPACE_ROOT
+# precedence shadow over the three CLINE_WORKSPACE_ROOT specs). Verified 3 CI-mirror runs:
+# final run 5/5 clean, zero retries.
+tests/ticket-activity-rollup.spec.ts
+tests/ticket-cost-rollup-by-bot.spec.ts
+tests/token-chase-determinism-gate.spec.ts
+tests/tool-approval-workflow.spec.ts
+tests/voice-integration.spec.ts
+tests/workflow-runtime-boundary.spec.ts
+tests/workspace-bootstrap.spec.ts
+tests/swarm-apps-framework.spec.ts

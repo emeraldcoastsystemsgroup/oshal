@@ -1,0 +1,2441 @@
+# =============================================================================
+# OSHAL Swarm — Local Development (mirrors the Kubernetes deployment)
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Enabled fail-closed native GitHub issue webhook intake on the API service
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
+# =============================================================================
+# 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
+# Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
+# LLM: OpenAI Codex via local ChatGPT login (~/.codex/auth.json)
+#
+# Usage:
+#   docker compose -f docker-compose.oshal-local.yml up --build
+#   docker compose -f docker-compose.oshal-local.yml logs -f oshal-api
+# =============================================================================
+
+name: oshal-local
+
+x-codex-auth-volume: &codex-auth-volume ${CODEX_CONFIG_HOST_PATH:-~/.codex}:/root/.codex:rw
+# Mount the host claude OAuth session into containers (claude login on host)
+x-claude-auth-volume: &claude-auth-volume ${CLAUDE_CONFIG_HOST_PATH:-~/.claude}:/root/.claude:ro
+x-claude-auth-json:   &claude-auth-json   ${CLAUDE_CONFIG_HOST_JSON:-~/.claude.json}:/root/.claude.json:ro
+# Mount the host gemini OAuth session into containers (gemini auth login on host)
+x-gemini-auth-volume: &gemini-auth-volume ${GEMINI_CONFIG_HOST_PATH:-~/.gemini}:/root/.gemini:ro
+# Mount the host Google Workspace OAuth profile (node scripts/google-workspace-cli.js auth login)
+# so Calendar sync + Cloud STT/TTS can reuse the google-bot token inside the container.
+x-google-workspace-volume: &google-workspace-volume ${GOOGLE_WORKSPACE_HOST_PATH:-~/.oshal-google-workspace}:/root/.oshal-google-workspace:ro
+
+x-bot-common: &bot-common
+  image: ${OSHAL_BOT_IMAGE:-oshal-bot:latest}
+  # Bot containers use bot-entrypoint.sh which reads BOT_RUNTIME to decide:
+  #   BOT_RUNTIME=bot-node → node dist/app/bot-node-server.js (LLM execution node)
+  #   BOT_RUNTIME=swarm  → node dist/app/server.js (swarm controller)
+  # Per any-bot-swarm-separation-design.md: worker bots run the bot-node runtime,
+  # the API/PM container runs the swarm controller.
+  command: >
+    sh -c "cp -f /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
+           cp -f /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
+           exec bash /app/scripts/bot-entrypoint.sh"
+  restart: unless-stopped
+  networks:
+    - oshal
+
+# SECURITY (audit 2026-06-16, closed 2026-07-15): bot-node execution ports are INTERNAL-ONLY.
+# Worker-bot 5000s were host-published (127.0.0.1:30xx:5000), letting anything on the host
+# loopback POST /api/swarm-execute (LLM cost + brokered creds). They are now `expose:`-only —
+# the controller reaches bots via Docker service DNS (http://<container>:5000), and the
+# endpoints themselves enforce X-Service-Secret when SWARM_SERVICE_SECRET (below) is set.
+# Only the controller (oshal-api) keeps a host-published port.
+x-bot-env: &bot-env
+  SERVICE_NAME: oshal
+  SERVICE_DISPLAY_NAME: "OSHAL"
+  SERVICE_TITLE: "OSHAL Control Plane"
+  NODE_ENV: production
+  PORT: 5000
+  LOG_LEVEL: info
+  SWARM_MODE: container
+  SWARM_REGISTRY: local
+  # Default: worker bots run as first-class swarm participants (bot-node).
+  # Each bot consumes its own Redis envelopes and executes via any-bot providers.
+  # The API/PM container overrides this to 'swarm' (orchestration only).
+  BOT_RUNTIME: bot-node
+  RUNNING_IN_DOCKER: "true"
+  # Any-bot workspace must match the shared volume mount so all bots
+  # and the swarm controller read/write the same workspace directory.
+  WORKSPACE_DIR: /app/workspace-shared
+  # JWT secret for any-bot runtime auth (required in production mode)
+  JWT_SECRET: oshal-local-dev-secret-do-not-use-in-prod
+  SWARM_MESH_TRANSPORT: redis
+  CONFIG_OUTPUT_DIR: /app/output
+  # Local model serving: the `cline` harness resolves ollama through OLLAMA_HOST
+  # (cline-config-builder.ts). Points at the in-network container when the `local-llm`
+  # profile is up; harmless otherwise (only used when a bot's provider is `ollama`).
+  OLLAMA_HOST: ${OSHAL_OLLAMA_HOST:-http://oshal-ollama:11434}
+  # Default local runtime targets Claude Code (the provider that works out of the
+  # box via the mounted ~/.claude OAuth session). Codex CLI requires separate auth
+  # and is NOT a safe default. Per-bot harness overrides in the registry still
+  # take precedence; set FORCE_LLM_PROVIDER=noop for a zero-keys demo.
+  FORCE_LLM_PROVIDER: ${FORCE_LLM_PROVIDER:-claude-code}
+  FORCE_LLM_MODEL: ${FORCE_LLM_MODEL:-claude-sonnet-4-6}
+  SHARED_WORKSPACE_ROOT: /app/workspace-shared
+  CLINE_SHARED_WORKSPACE_ROOT: /app/workspace-shared
+  CLINE_WORKSPACE_ROOT: /app/workspace-shared
+  WORKSPACE_ROOT: /app/workspace-shared
+  # OSHAL_WORKSPACE_ROOT is the explicit override honored first by
+  # resolveSharedWorkspaceRoot(). Pinned to the shared volume so RALF handovers,
+  # continuation briefs, and artifact validation land on the SAME directory bots
+  # write deliverables to and code-server browses — not the old /tmp/oshal-workspace
+  # default, which was unmounted and invisible to the workspace browser.
+  OSHAL_WORKSPACE_ROOT: /app/workspace-shared
+  # ── Token Chase (ADR-046) ──
+  # Per-LLM-call frame capture. Dark unless 'true'. Writes redacted frames (secrets scrubbed)
+  # to <task-workspace>/.tokenchase/. Zero hot-path cost: capture is async + fail-open. Set
+  # TOKEN_CHASE_CAPTURE=false in .env to kill it. Owner-scoped reads via the api (/api/token-chase).
+  TOKEN_CHASE_CAPTURE: ${TOKEN_CHASE_CAPTURE:-true}
+  # ── Auth / OIDC ──
+  # Defaults to mock for zero-config local dev. To use a real IdP (Google, LinkedIn,
+  # Microsoft Entra), set these in .env: MOCK_OIDC=false + OIDC_ISSUER_URL +
+  # OIDC_CLIENT_ID + OIDC_CLIENT_SECRET + APP_URL + SESSION_SECRET.
+  MOCK_OIDC: ${MOCK_OIDC:-true}
+  OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  APP_URL: ${APP_URL:-http://localhost:35457}
+  # Per-host OIDC login origins (fixes cross-host login loop). Unset = single-host.
+  OIDC_BASE_URLS: ${OIDC_BASE_URLS:-}
+  # SESSION_SECRET (the master connector-token AES key) is deliberately NOT in the
+  # shared bot anchor — token-broker security: bots get short-lived per-user tokens
+  # from the controller, never the master key. It lives on oshal-api (the controller)
+  # only; the in-controller harness also scrubs it from each codex spawn env.
+  # Share the login cookie across *.agenticfederal.us (one sign-in for littlemonster + oshal).
+  SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
+  LM_TEACHER_EMAILS: ${LM_TEACHER_EMAILS:-}
+  # ── LLM Provider ──
+  # OpenAI Codex (local dev):
+  #   LLM_PROVIDER: openai-codex
+  #   LLM_MODEL: gpt-5.3-codex
+  # Default provider/model. claude-code works out of the box via mounted ~/.claude;
+  # override per deployment (openai-codex + gpt-5.3-codex, etc.).
+  LLM_PROVIDER: claude-code
+  LLM_MODEL: claude-sonnet-4-6
+  # Provider-runtime fallback for CLI stalls, auth failures, throttles, and embedded
+  # provider-error text. Explicit override wins; otherwise bot-node auto-picks a
+  # configured secondary CLI provider unless OSHAL_PROVIDER_AUTO_FAILOVER=false.
+  OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER: ${OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER:-}
+  OSHAL_PROVIDER_AUTO_FAILOVER: ${OSHAL_PROVIDER_AUTO_FAILOVER:-true}
+  OSHAL_PROVIDER_STALL_FALLBACK: ${OSHAL_PROVIDER_STALL_FALLBACK:-}
+  OSHAL_PROVIDER_STALL_FALLBACK_MODEL: ${OSHAL_PROVIDER_STALL_FALLBACK_MODEL:-}
+  # ANTHROPIC_API_KEY is set at runtime via the cockpit Claude Code login module.
+  # The login flow writes to ~/.claude/credentials.json and propagates via Redis.
+  # Do NOT hardcode a key here — it will poison the cline CLI auth.
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  # ── Cline CLI (primary LLM harness — ADR-005) ──
+  CLINE_CLI_PATH: cline
+  # ── Claude Code CLI (ClaudeCodeCliHarnessAdapter only — standalone subprocess) ──
+  # Uses VSCode OAuth login from ~/.claude mounted read-only into containers.
+  # For CI/K8s with a real key: set ANTHROPIC_API_KEY above.
+  # NOTE: CLAUDE_CODE_CLI_PATH must NOT be 'cline' — it's only for the standalone claude harness.
+  CLAUDE_CODE_CLI_PATH: claude
+  CLAUDE_CLI_PATH: claude
+  CLAUDE_CODE_MODEL: ${CLAUDE_CODE_MODEL:-claude-sonnet-4-6}
+  # Idle-based timeouts (operator directive 2026-07-24, extends ADR-081): the overall
+  # timeout is a 60-min runaway CEILING; "stuck" = 10 min of full silence, measurable
+  # because the claude harness now streams (stream-json). A busy run is never killed
+  # short of the ceiling; a fully-idle run dies at the silence threshold.
+  # DELIBERATELY NO KILL_ON_INACTIVITY LINE (adversarial review 2026-07-24, blocking):
+  # the kill default must ride the IMAGE, not the env — an old-image container recreated
+  # with a new-env compose would pair kill=true with the old batch-mode wrapper (no
+  # disarm coupling) and idle-kill legitimate batch runs. New images default it ON in
+  # code (ClaudeCodeProvider); set CLAUDE_CODE_KILL_ON_INACTIVITY only as a same-image
+  # operator override. The two duration knobs below are old-image-safe (inactivity only
+  # warns when the kill flag is off; the ceiling raise helps either image).
+  CLAUDE_CODE_TIMEOUT_MS: ${CLAUDE_CODE_TIMEOUT_MS:-3600000}
+  CLAUDE_CODE_INACTIVITY_TIMEOUT_MS: ${CLAUDE_CODE_INACTIVITY_TIMEOUT_MS:-600000}
+  # MCP config for claude-code harness bots (fetch + google-search servers)
+  CLAUDE_MCP_CONFIG: /app/config-seed/claude-code-mcp.json
+  # Tools pre-authorized for claude-code bots — full access for incident investigation
+  # These bots are the SWAT team: they can read anything, run any command, query any system.
+  # They write scripts and reports back for operator review — never auto-apply to production.
+  CLAUDE_ALLOWED_TOOLS: "Bash,Read,Write,Edit,MultiEdit,Glob,Grep,LS,WebFetch,WebSearch"
+  # ── OpenAI Codex CLI ──
+  CODEX_CLI_PATH: codex
+  # NOTE: gpt-5.3-codex is the API-key model name. A ChatGPT-account login
+  # (~/.codex/auth.json) does NOT support it — set CODEX_MODEL in .env to the
+  # model your plan exposes (this host's ~/.codex/config.toml uses gpt-5.5).
+  CODEX_MODEL: ${CODEX_MODEL:-gpt-5.3-codex}
+  CODEX_SANDBOX_MODE: ${CODEX_SANDBOX_MODE:-danger-full-access}
+  # Boot-storm guard: the ChatGPT-login refresh_token is single-use, so a burst of concurrent
+  # codex spawns at boot (content-topics prewarm) can race it → "refresh token was already used".
+  # The adapter serializes codex spawns until the first proves the token, then opens up. Set to
+  # "off" to restore unrestricted concurrency (default on).
+  CODEX_PRIME_GATE: ${CODEX_PRIME_GATE:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}
+  # OpenRouter (ADR-064): the platform's OWN key = tier-3 invisible fallback of
+  # resolveUserLlmConnection (free-tier-rotation.ts) on the api, and the env fallback
+  # cline-config-builder reads on bot nodes. Opt-in: unset ⇒ fallback stays off.
+  # Pinned to a :free model so the shared key can never accrue spend.
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENROUTER_FREE_MODEL: ${OPENROUTER_FREE_MODEL:-}
+  # Storyboard/portrait image engine (video-generation storyboard-image-providers.ts):
+  # codex | comfyui | vertex | openrouter — explicit, fail-closed, default codex.
+  # `openrouter` BILLS the shared OpenRouter key per image (~$0.04, gemini-2.5-flash-image);
+  # it exists because the codex ChatGPT-subscription token is rejected by /v1/images.
+  # The :free-only guard above covers the CHAT fallback only — this knob is a deliberate,
+  # separate opt-in (Portrait Studio + Video Studio storyboards ride it).
+  STORYBOARD_IMAGE_PROVIDER: ${STORYBOARD_IMAGE_PROVIDER:-}
+  OPENROUTER_IMAGE_MODEL: ${OPENROUTER_IMAGE_MODEL:-}
+  # Other free lanes (ADR-064 Plan B). All free-signup, no card. These are OPERATOR/platform keys:
+  # they feed scripts/evidence/prove-free-tier-live.ts and the Token Chase optimizer's replay lanes
+  # (optimizer-providers.ts COMPAT). A USER's own free tiers are pasted per-user in the connect UI
+  # (/api/connect/free-tier) and stored encrypted — those never come from env.
+  #   groq     https://console.groq.com/keys
+  #   cerebras https://cloud.cerebras.ai/
+  #   mistral  https://console.mistral.ai/api-keys/
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+  MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+  GOOGLE_SEARCH_MCP_URL: ${GOOGLE_SEARCH_MCP_URL:-}
+  TOOL_AUTH_AWS_CLI: ${TOOL_AUTH_AWS_CLI:-off}
+  TOOL_AUTH_KUBECTL: ${TOOL_AUTH_KUBECTL:-off}
+  TOOL_AUTH_GCLOUD: ${TOOL_AUTH_GCLOUD:-off}
+  TOOL_AUTH_DOCKER_SOCKET: ${TOOL_AUTH_DOCKER_SOCKET:-off}
+  TOOL_AUTH_GOOGLE_SEARCH: ${TOOL_AUTH_GOOGLE_SEARCH:-auto}
+  TOOL_AUTH_PLANE_MCP: ${TOOL_AUTH_PLANE_MCP:-auto}
+  TOOL_AUTH_CHROMA_MCP: ${TOOL_AUTH_CHROMA_MCP:-auto}
+  # Default cockpit profile: the clean first-run "starter" cockpit — Jarvis up
+  # front, the Bot Forge to create a first bot, and Explore Apps for the full
+  # catalog. This is presentation only; every backend route/bot/app keeps running.
+  # The full operator cockpit (all app surfaces grouped) is the "oshal-framework"
+  # profile — reach it any time with ?profile=oshal-framework, or set
+  # UI_PROFILE=oshal-framework. The engineering sandbox is ?app=issue-rca-build-swarm.
+  UI_PROFILE: ${UI_PROFILE:-oshal-starter}
+  # ── Code Server ──
+  CODE_SERVER_URL: "http://localhost:${OSHAL_CODESERVER_PORT:-8444}"
+  # AWS creds intentionally NOT seeded into the stack — sandbox does not use
+  # Bedrock/Polly/Transcribe. TOOL_AUTH_AWS_CLI is also off (above), so even
+  # if a bot tried to shell out to `aws`, the call would be blocked.
+  # ── Infrastructure ──
+  REDIS_URL: redis://oshal-redis:6379
+  DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+  CHROMADB_URL: http://oshal-chromadb:8000
+  # Graph engine (ADR-045) — per-person + per-tenant graphs as isolated ArangoDB databases.
+  ARANGO_URL: http://oshal-arangodb:8529
+  ARANGO_ROOT_USER: root
+  ARANGO_ROOT_PASSWORD: ${ARANGO_ROOT_PASSWORD:-oshal}
+  # External integrations stripped — no OpenSearch / Memgraph / NATS / AI
+  # Gateway / monitoring-platform endpoints are seeded into bots. If any bot tries
+  # to call those services, the URL is undefined and the call no-ops.
+  # SECURITY: verify outbound TLS. All internal infra here is plain HTTP (above); the only
+  # HTTPS calls are to public CA-signed endpoints (OIDC issuer, connectors, LLM providers),
+  # so enforcing verification does not break the stack. "0" would let a MITM on any outbound
+  # hop impersonate Google/Slack/etc. and harvest brokered tokens. Leave the incident-lab
+  # override in place there (it talks to a self-signed internal OpenSearch).
+  NODE_TLS_REJECT_UNAUTHORIZED: "1"
+  # SECURITY: per-user isolation (IDOR). Operator allowlist + legacy-unowned switch are read
+  # from .env and passed into the container (compose does not auto-forward .env to containers).
+  OSHAL_OPERATOR_EMAILS: ${OSHAL_OPERATOR_EMAILS:-}
+  OSHAL_OPERATOR_SUBS: ${OSHAL_OPERATOR_SUBS:-}
+  OSHAL_ALLOW_LEGACY_UNOWNED: ${OSHAL_ALLOW_LEGACY_UNOWNED:-false}
+  # SECURITY: Developer Console (ADR-077). Super-admin is a DISTINCT, more privileged role
+  # than operator and is double-gated + fail-closed: the capability must be explicitly
+  # enabled AND the caller must be on the dedicated super-admin allowlist. Both default to
+  # OFF/empty, so an untouched deployment does not expose the console to anyone.
+  OSHAL_DEV_CONSOLE_ENABLED: ${OSHAL_DEV_CONSOLE_ENABLED:-false}
+  OSHAL_SUPERADMIN_EMAILS: ${OSHAL_SUPERADMIN_EMAILS:-}
+  OSHAL_SUPERADMIN_SUBS: ${OSHAL_SUPERADMIN_SUBS:-}
+  # Dev-Node (ADR-077 Option B): the containerized api can't run the self-edit engine (no .git), so
+  # it PROXIES session requests to a host dev-node over host.docker.internal, authed by a shared
+  # secret. Both empty ⇒ the Dev panel reports the runtime unavailable. The engine runs on the host.
+  OSHAL_DEV_NODE_URL: ${OSHAL_DEV_NODE_URL:-}
+  OSHAL_DEV_NODE_SECRET: ${OSHAL_DEV_NODE_SECRET:-}
+  # RLS keystone (ON by default). The DB pool stamps oshal.current_sub/
+  # is_operator per query so Postgres row-level security can scope rows. Safe to enable
+  # standalone BEFORE applying rls-policies.sql (the GUCs are just unread until then) —
+  # keep it on, verify stability, then apply RLS permissive→enforce per RLS-RUNBOOK.md.
+  OSHAL_DB_GUC: ${OSHAL_DB_GUC:-on}
+  # Default auto preserves local/dev self-healing DDL. Hosted runtime app-role
+  # profiles should set validate-only after owner/migrator migrations run.
+  OSHAL_SCHEMA_BOOTSTRAP: ${OSHAL_SCHEMA_BOOTSTRAP:-auto}
+  # Internal service auth: the same secret on the controller + every bot, so bots authenticate
+  # to /api/tools/register (and other internal calls) via X-Service-Secret without an OIDC session.
+  SWARM_SERVICE_SECRET: ${SWARM_SERVICE_SECRET:-}
+  APPLY_EDGE_CLIENT_ID: ${APPLY_EDGE_CLIENT_ID:-oshal-chat-0ce849b6-8b95-4cf5-9223-ce22d638f1c9}
+  APPLY_EDGE_HOSTNAME: ${APPLY_EDGE_HOSTNAME:-render-node-1}
+  APPLY_FINAL_SUBMIT_AUTHORIZED: ${APPLY_FINAL_SUBMIT_AUTHORIZED:-true}
+  ENABLE_AGENT_SCHEDULER: "false"
+  SCHEDULER_POLL_INTERVAL_MS: "60000"
+  # Queue-manager poll cadence (queue-manager-service.ts). Higher = fewer idle DB polls.
+  QUEUE_POLL_INTERVAL_MS: ${QUEUE_POLL_INTERVAL_MS:-30000}
+  # ── Trading (ADR-052) ──
+  # Paper-only by default. Canonical names + the aliases the adapter resolves (incl. the
+  # single ALPACA_KEY/SECRET pair → paper book, and the ALPAKA_* spelling) are all passed
+  # through from .env so whichever the operator set reaches the container. Live stays gated.
+  BROKER_PROVIDER: ${BROKER_PROVIDER:-alpaca}
+  # Per-mode rail selection (optional): Schwab is the LIVE rail (no paper account); Alpaca stays
+  # paper + autopilot. Set BROKER_PROVIDER_LIVE=schwab to route live orders through Schwab.
+  BROKER_PROVIDER_PAPER: ${BROKER_PROVIDER_PAPER:-}
+  BROKER_PROVIDER_LIVE: ${BROKER_PROVIDER_LIVE:-}
+  ALPACA_PAPER_KEY_ID: ${ALPACA_PAPER_KEY_ID:-}
+  ALPACA_PAPER_SECRET_KEY: ${ALPACA_PAPER_SECRET_KEY:-}
+  ALPACA_LIVE_KEY_ID: ${ALPACA_LIVE_KEY_ID:-}
+  ALPACA_LIVE_SECRET_KEY: ${ALPACA_LIVE_SECRET_KEY:-}
+  ALPACA_KEY: ${ALPACA_KEY:-}
+  ALPACA_SECRET: ${ALPACA_SECRET:-}
+  ALPACA_ENDPOINT: ${ALPACA_ENDPOINT:-}
+  ALPAKA_KEY: ${ALPAKA_KEY:-}
+  ALPAKA_SECRET: ${ALPAKA_SECRET:-}
+  ALPAKA_ENDPOINT: ${ALPAKA_ENDPOINT:-}
+  TRADING_LIVE_ENABLED: ${TRADING_LIVE_ENABLED:-false}
+  # Autonomous LIVE autopilot: double opt-in (needs TRADING_LIVE_ENABLED too). CAP sizes the live book
+  # (e.g. 20000 = run a 20K book on a bigger account). LIVE_EXT allows pre/post-market live (default OFF
+  # → regular hours only). Kill switch for ALL legs: TRADING_HALT=true.
+  TRADING_AUTOPILOT_LIVE: ${TRADING_AUTOPILOT_LIVE:-}
+  TRADING_AUTOPILOT_LIVE_EXT: ${TRADING_AUTOPILOT_LIVE_EXT:-}
+  TRADING_CAPITAL_CAP_USD: ${TRADING_CAPITAL_CAP_USD:-}
+  TRADING_HALT: ${TRADING_HALT:-}
+  # Earnings blackout (evidence: 07-14 proximity study). Mode-aware: paper|live|both|true. NOTE in
+  # the armed ROTATION strategy this both refuses buys AND drops a held printing name off the
+  # leaderboard (rotation sells it) — arming is a behavior change, soak on paper first.
+  TRADING_EARNINGS_GATE: ${TRADING_EARNINGS_GATE:-false}
+  TRADING_EARNINGS_BLACKOUT_DAYS: ${TRADING_EARNINGS_BLACKOUT_DAYS:-}
+  # Extended-hours knobs — these were NOT forwarded before 2026-07-12, so they were untunable from
+  # .env and silently ran on code defaults (EXTENDED_HOURS defaulted to ON). Default is now OFF:
+  # the free Alpaca plan is IEX-only, and IEX is a venue that OPERATES 08:00-17:00 ET — it prints
+  # ZERO trades 04:00-07:59 and 17:00-19:59. Pre/post orders become limits priced off latestTrade(),
+  # so off-hours there is structurally nothing to price them against: 529 of 593 extended-hours
+  # orders never filled (17:00-20:00 = 0.0%) vs 97% in the regular session. Turning this back on
+  # requires real-time SIP (Alpaca Algo Trader Plus) — see docs/apps/trading/strategy-log.md.
+  # LIVE was never exposed (TRADING_AUTOPILOT_LIVE_EXT already defaults false); this closes PAPER.
+  TRADING_EXTENDED_HOURS: ${TRADING_EXTENDED_HOURS:-false}
+  # Buffer used to cross the wider ext-hours spread (%). NOTE: at 0.3% it is NARROWER than the
+  # measured IEX-vs-consolidated divergence tail (RGTI 0.54%), so an adverse divergence yields a
+  # non-marketable limit. Re-measure before re-enabling extended hours.
+  TRADING_EXT_LIMIT_SLIPPAGE_PCT: ${TRADING_EXT_LIMIT_SLIPPAGE_PCT:-}
+  # Max age of the trade print that may set an ext-hours limit (sec, default 120). The guard that
+  # ended the 2026-07-08 MRNA cancel/re-place loop (434 dead orders/day -> 1).
+  TRADING_EXT_QUOTE_MAX_AGE_SEC: ${TRADING_EXT_QUOTE_MAX_AGE_SEC:-}
+  # New entries placed per 5-min fire (default 8). Lower it if Schwab 429s the burst; the rest
+  # retry next fire. Per-order API cost is minimized by the cross-order account-hash cache.
+  TRADING_MAX_ORDERS_PER_RUN: ${TRADING_MAX_ORDERS_PER_RUN:-}
+  # Charles Schwab LIVE rail (per-user OAuth connector, ADR-052): approved production App Key/Secret,
+  # the exact callback registered in the Schwab portal, + optional account picker / sandbox base.
+  SCHWAB_CLIENT_ID_PRD: ${SCHWAB_CLIENT_ID_PRD:-}
+  SCHWAB_CLIENT_SECRET_PRD: ${SCHWAB_CLIENT_SECRET_PRD:-}
+  SCHWAB_CLIENT_CALL_BACK: ${SCHWAB_CLIENT_CALL_BACK:-}
+  SCHWAB_ACCOUNT_NUMBER: ${SCHWAB_ACCOUNT_NUMBER:-}
+  SCHWAB_TRADER_BASE_URL: ${SCHWAB_TRADER_BASE_URL:-}
+  # Live-book market data (quotes + price history) reads the Market Data API on the SAME Schwab
+  # connection — no separate credential. Base is overridable for the developer sandbox.
+  SCHWAB_MARKETDATA_BASE_URL: ${SCHWAB_MARKETDATA_BASE_URL:-}
+  TRADING_MAX_QTY: ${TRADING_MAX_QTY:-100}
+  TRADING_MAX_NOTIONAL_USD: ${TRADING_MAX_NOTIONAL_USD:-1000}
+  TRADING_SYMBOL_ALLOWLIST: ${TRADING_SYMBOL_ALLOWLIST:-}
+  # Operator blocklist: names the engine must NEVER buy autonomously (exits unaffected; rotation
+  # drops held ones). Born 2026-07-11 - "drop MRNA" had no enforceable home. Comma-separated.
+  TRADING_SYMBOL_BLOCKLIST: ${TRADING_SYMBOL_BLOCKLIST:-}
+  # Risk posture: active = high-turnover, downside-first (32 small names, 8% take-profit, trailing
+  # stop + short-TF breakdown exits, 5% backstop stop). conservative|balanced|aggressive|active.
+  TRADING_RISK_POSTURE: ${TRADING_RISK_POSTURE:-active}
+  # Take-profit override on the posture preset (2026-07-10 config sweep: tp 8->25 on active was the
+  # sleeve change whose edge persisted across every backtest window). Empty = posture default.
+  TRADING_TAKE_PROFIT_PCT: ${TRADING_TAKE_PROFIT_PCT:-}
+  # LIVE book posture override (paper keeps the base mandate posture; the small capped live book
+  # may need a wider per-name budget to afford whole shares). Empty = live uses the base posture.
+  TRADING_RISK_POSTURE_LIVE: ${TRADING_RISK_POSTURE_LIVE:-}
+  # Beta core (core-satellite): hold a market-index core for the beta the active sleeve can't ride.
+  # Cash-only top-up toward target %; exempt from sleeve sells. Empty/0 = off. Added 2026-06-29.
+  TRADING_CORE_SYMBOLS: ${TRADING_CORE_SYMBOLS:-}
+  TRADING_CORE_TARGET_PCT: ${TRADING_CORE_TARGET_PCT:-0}
+  # Gravity-ranked sleeve rotation (OPTIONAL, default OFF): rank the universe by gravity pull and
+  # rotate the sleeve into the top names on a cadence (instead of per-fire scan management). The
+  # protective exits still run every fire. TopN 0 = auto from the sleeve budget. Added 2026-06-30.
+  TRADING_SLEEVE_ROTATION: ${TRADING_SLEEVE_ROTATION:-false}
+  TRADING_ROTATION_EVERY_DAYS: ${TRADING_ROTATION_EVERY_DAYS:-5}
+  TRADING_ROTATION_TOPN: ${TRADING_ROTATION_TOPN:-0}
+  # Rotation tuning (defaults keep the engine sane): RANK = how the universe is ranked
+  # (gravity|momentum|ensemble|blend), WEIGHTING = how the sleeve budget is split (equal|conviction),
+  # EXT_HOURS = allow rotation to fire pre/post-market (cadence still caps it to one/day). Added 2026-06-30.
+  TRADING_ROTATION_RANK: ${TRADING_ROTATION_RANK:-blend}
+  TRADING_ROTATION_WEIGHTING: ${TRADING_ROTATION_WEIGHTING:-conviction}
+  TRADING_ROTATION_EXT_HOURS: ${TRADING_ROTATION_EXT_HOURS:-false}
+  # ENTRY GUARD: rotation refuses to BUY a name trading this far below its PRIOR-session close. The
+  # ranker scores on DAILY closes, so on a gap day it ranks a price that no longer exists — 2026-07-14
+  # it stopped IBM out at -23.8% on its Q2 revenue-miss gap and re-bought it the same fire. Refused
+  # leaders backfill from the next-best name, so a block costs no deployment. 0 = OFF. Added 2026-07-14.
+  TRADING_ROTATION_MAX_GAP_DOWN_PCT: ${TRADING_ROTATION_MAX_GAP_DOWN_PCT:-8}
+  # Intraday POP-CATCHER (default OFF): pull an unfunded name in when it surges on the 5-min bar, from the
+  # cash reserve, small tranche, capped in count. Protective stops exit it like any position. Added 2026-07-01.
+  TRADING_POP_CATCHER: ${TRADING_POP_CATCHER:-false}
+  TRADING_POP_TRANCHE_PCT: ${TRADING_POP_TRANCHE_PCT:-1}
+  TRADING_POP_MAX: ${TRADING_POP_MAX:-5}
+  TRADING_POP_THRESHOLD: ${TRADING_POP_THRESHOLD:-0.34}
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+  oshal-db:
+    # ADR-091: pgvector/pgvector:pg16 = official postgres:16 + the vector extension
+    # (RAG hybrid retrieval in-database). Same PG major, same volume. NOTE it is
+    # glibc where 16-alpine was musl — collation implementations differ, so the
+    # swap requires a one-time REINDEX DATABASE + ALTER DATABASE ... REFRESH
+    # COLLATION VERSION (done 2026-07-12); never flip back to -alpine casually.
+    image: pgvector/pgvector:pg16
+    container_name: oshal-local-db
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_DB: oshal
+      POSTGRES_USER: oshal
+      POSTGRES_PASSWORD: oshal
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:${OSHAL_PG_PORT:-55433}:5432"
+    volumes:
+      - oshal_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oshal -d oshal"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal
+
+  # ── Time-series store (TimescaleDB) — dedicated, SEPARATE from the transactional app DB so the
+  # high-volume world/sentiment/market series + personal metrics don't contend with ticket writes.
+  # Postgres-compatible (same driver/SQL), with hypertables + continuous aggregates + compression.
+  oshal-tsdb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: oshal-local-tsdb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: oshal_ts
+      POSTGRES_USER: oshal
+      POSTGRES_PASSWORD: oshal
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:${OSHAL_TSDB_PORT:-55434}:5432"
+    volumes:
+      - oshal_tsdb_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oshal -d oshal_ts"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal
+
+  # HashiCorp Vault — the credential source for the DevOps/Vault app (ADR-040). DEV MODE: auto-unsealed,
+  # in-memory, KV v2 mounted at secret/, single root token. Fine for local — PRODUCTION needs a real
+  # init/unseal, TLS, and AppRole auth (NOT this dev root token). The privileged cloud-cred broker
+  # (AWS-STS into bots, ephemeral runtime, lease teardown) is the SEPARATE gated build per ADR-040.
+  oshal-vault:
+    image: hashicorp/vault:1.18
+    container_name: oshal-local-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN:-oshal-dev-root}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    command: ["server", "-dev"]
+    ports:
+      - "127.0.0.1:${OSHAL_VAULT_PORT:-8200}:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal
+
+  oshal-redis:
+    image: redis:7-alpine
+    container_name: oshal-local-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${OSHAL_REDIS_PORT:-56380}:6379"
+    volumes:
+      - oshal_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal
+
+  oshal-chromadb:
+    image: chromadb/chroma:0.4.24
+    container_name: oshal-local-chromadb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OSHAL_CHROMA_PORT:-58001}:8000"
+    volumes:
+      - oshal_chroma_data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/heartbeat', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - oshal
+
+  # ── Local model serving (BACKLOG Plan D) — the all-local profile ───────────
+  # Ollama is a PROVIDER, not a harness: bots reach it through the `cline` harness,
+  # which resolves OLLAMA_HOST (see cline-config-builder.ts). Behind the `local-llm`
+  # profile so the default stack is unchanged — `docker compose --profile local-llm up -d`.
+  oshal-ollama:
+    profiles:
+      - local-llm
+    image: ollama/ollama:latest
+    container_name: oshal-local-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OSHAL_OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - oshal_ollama_models:/root/.ollama
+    healthcheck:
+      # `ollama list` exits non-zero until the server is accepting requests.
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - oshal
+
+  # One-shot: pull the default local model once the server is healthy, then exit.
+  # Override with OSHAL_OLLAMA_MODEL (e.g. llama3.1:8b — bigger, better, ~4.7GB).
+  oshal-ollama-pull:
+    profiles:
+      - local-llm
+    image: ollama/ollama:latest
+    container_name: oshal-local-ollama-pull
+    depends_on:
+      oshal-ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://oshal-ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "ollama pull ${OSHAL_OLLAMA_MODEL:-qwen2.5:0.5b} && echo 'model ready: ${OSHAL_OLLAMA_MODEL:-qwen2.5:0.5b}'"
+    restart: "no"
+    networks:
+      - oshal
+
+  # ── Graph engine (ADR-045) — per-person + per-tenant graphs as isolated DBs ─
+  oshal-arangodb:
+    image: arangodb:3.11
+    container_name: oshal-local-arangodb
+    ports:
+      - "127.0.0.1:${OSHAL_ARANGO_PORT:-58529}:8529"
+    environment:
+      ARANGO_ROOT_PASSWORD: ${ARANGO_ROOT_PASSWORD:-oshal}
+    volumes:
+      - oshal_arango_data:/var/lib/arangodb3
+    healthcheck:
+      test: ["CMD-SHELL", "arangosh --server.endpoint tcp://127.0.0.1:8529 --server.username root --server.password \"$${ARANGO_ROOT_PASSWORD}\" --javascript.execute-string 'db._version()' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    networks:
+      - oshal
+    restart: unless-stopped
+
+  # ── Workspace Browser (code-server on port 8443) ──────────────────────────
+  code-server:
+    image: codercom/code-server:latest
+    container_name: oshal-local-code-server
+    ports:
+      - "127.0.0.1:${OSHAL_CODESERVER_PORT:-8444}:8080"
+    environment:
+      PASSWORD: ""
+      DOCKER_USER: root
+    command: ["--auth", "none", "--bind-addr", "0.0.0.0:8080", "/app/workspace-shared"]
+    volumes:
+      # read-write so edits made in the workspace browser actually save. The
+      # service is bound to 127.0.0.1 with --auth none (local-dev stack only);
+      # do NOT expose this port or relax the bind without adding auth.
+      - oshal_workspace:/app/workspace-shared:rw
+    networks:
+      - oshal
+    restart: unless-stopped
+
+  # ── 1. API Server (project-manager — owns queue manager + migrations) ──────
+  # Deterministic, local-only speaker diarization. The service has no host port,
+  # receives audio only from oshal-api, and never mounts persistent storage.
+  speaker-diarization:
+    build:
+      context: ./services/speaker-diarization
+      dockerfile: Dockerfile
+    container_name: oshal-local-speaker-diarization
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    environment:
+      SPEAKER_SERVICE_KEY: ${SPEAKER_SERVICE_KEY:-oshal-local-speaker-service-key}
+      SPEAKER_MAX_AUDIO_BYTES: "16777216"
+      # Controller imports stop at 55s; three extra seconds tolerate recorder/container rounding.
+      SPEAKER_MAX_DURATION_SECONDS: ${SPEAKER_MAX_DURATION_SECONDS:-58}
+    networks:
+      - oshal
+
+  oshal-api:
+    <<: *bot-common
+    container_name: oshal-local-api
+    # Reach the host dev-node (ADR-077 Option B) at host.docker.internal — the api proxies
+    # super-admin self-edit sessions to the engine running on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # DNS: use Docker's embedded resolver (the host's DNS), like every bot-node container.
+    #
+    # Do NOT pin public resolvers here. A `dns: [8.8.8.8, 1.1.1.1]` override lived here from 2026-06-20
+    # (to dodge a flaky host resolver on RSS pulls) and took the LIVE TRADING DESK DOWN on 2026-07-16:
+    # with Tailscale up, 8.8.8.8/1.1.1.1 are blackholed (host `Test-NetConnection 8.8.8.8:53` = False),
+    # so every external lookup from THIS container died with EAI_AGAIN — api.schwabapi.com unresolvable →
+    # the market-session check failed → the autopilot logged "market closed" and skipped every fire
+    # (no entries AND no protective exits) for ~20 minutes of a live session. The 35 bot-nodes, which
+    # carry no dns: override, resolved fine throughout — the host resolver is healthy; the pinned public
+    # one is what breaks under a VPN. If host DNS ever does go flaky again, fix it at the host/Docker
+    # level rather than pinning an upstream that a VPN can blackhole.
+    networks:
+      oshal: {}
+    # Override command to wait for DB to accept real queries before starting the app.
+    # This is the SWARM CONTROLLER — runs dist/app/server.js, NOT the any-bot.
+    command: >
+      sh -c "cp -f /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
+             cp -n /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
+             echo 'Waiting for Postgres to accept queries...';
+             for i in 1 2 3 4 5 6 7 8 9 10; do
+               node -e \"const {Pool}=require('pg');new Pool({connectionString:process.env.DATABASE_URL}).query('SELECT 1').then(()=>{process.exit(0)}).catch(()=>{process.exit(1)})\" && break;
+               echo \"  attempt $$i — waiting 2s...\"; sleep 2;
+             done;
+             if [ \"$$OSHAL_APP_ROLE_BOOTSTRAP\" = \"true\" ]; then
+               echo 'ADR-076 app-role bootstrap: migrate + enforce core RLS + provision oshal_app as superuser, then run server as the app role...';
+               RUN_MIGRATIONS=true node -e \"const{DatabaseBootstrapService}=require('./dist/features/tool-registry/services/database-bootstrap-service');const{Pool}=require('pg');const p=new Pool({connectionString:process.env.BOOTSTRAP_DATABASE_URL});new DatabaseBootstrapService(p).applyMigrations().then(m=>{console.log('Migrations done:',m.length);p.end()}).catch(e=>{console.error('Migration err:',e.message);p.end()})\" 2>&1;
+               OSHAL_RLS_APPLY=apply-enforce DATABASE_URL=$$BOOTSTRAP_DATABASE_URL node scripts/governance/apply-rls.mjs || echo 'core RLS enforce skipped/failed (non-fatal)';
+               OSHAL_APP_DB_PASSWORD=$$(node -e \"process.stdout.write(new URL(process.env.DATABASE_URL).password||'')\") node scripts/governance/provision-app-role.mjs || echo 'app-role provision skipped/failed (non-fatal)';
+             elif [ \"$$OSHAL_SCHEMA_BOOTSTRAP\" = \"validate-only\" ] || [ \"$$OSHAL_SKIP_RUNTIME_MIGRATIONS\" = \"true\" ]; then
+               echo 'Skipping runtime migrations before server start (validate-only/app-role profile).';
+             else
+               echo 'Running migrations before server start...';
+               RUN_MIGRATIONS=true node -e \"const{DatabaseBootstrapService}=require('./dist/features/tool-registry/services/database-bootstrap-service');const{Pool}=require('pg');const p=new Pool({connectionString:process.env.DATABASE_URL});new DatabaseBootstrapService(p).applyMigrations().then(m=>{console.log('Migrations done:',m.length);p.end()}).catch(e=>{console.error('Migration err:',e.message);p.end()})\" 2>&1;
+             fi;
+             sleep 2;
+             exec node dist/app/server.js"
+    ports:
+      - "${OSHAL_API_PORT:-35457}:5000"
+      - "127.0.0.1:1455:1455"
+    environment:
+      <<: *bot-env
+      # Override: swarm controller, NOT any-bot
+      BOT_RUNTIME: swarm
+      BOT_NAME: project-manager
+      AGENT_ID: a0000000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/project-manager.yaml
+      RUN_MIGRATIONS: "true"
+      # ADR-085 app store: installed packages (deployed-apps/) may dynamic-mount their
+      # own routes and apply their own migrations. Both default OFF in the code; the
+      # local controller opts in so store installs work end-to-end.
+      APP_PACKAGE_DYNAMIC_ROUTES: "1"
+      APP_PACKAGE_MIGRATIONS: "1"
+      # ADR-091: RAG storage/retrieval in Postgres (rag_chunks — pgvector HNSW +
+      # tsvector GIN). Default in code is 'chroma'; the local stack opts in. The
+      # engine feature-detects (extension + table) and falls back to chroma when
+      # absent, and the chroma container stays up during the soak.
+      RAG_ENGINE: "pgvector"
+      # ADR-076 app-role auto-bootstrap — ON by default since 2026-07-04 (A1.2 cutover):
+      # the boot migrates + applies the core-table RLS enforce policies + provisions
+      # oshal_app as the superuser BOOTSTRAP_DATABASE_URL, then runs the server as the
+      # least-privilege DATABASE_URL (oshal_app). Every superuser step is idempotent and
+      # non-fatal, so on an already-provisioned DB (or with wrong bootstrap creds) the
+      # boot degrades gracefully to exactly the old behavior. oshal_app's password is
+      # taken from DATABASE_URL, so it always matches. Set OSHAL_APP_ROLE_BOOTSTRAP=false
+      # in .env to restore the legacy single-role boot.
+      OSHAL_APP_ROLE_BOOTSTRAP: ${OSHAL_APP_ROLE_BOOTSTRAP:-true}
+      BOOTSTRAP_DATABASE_URL: ${BOOTSTRAP_DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      # A1.2 least-privilege default (api service ONLY — worker bots keep the *bot-env
+      # anchor's superuser default until per-bot GUC wiring lands, ADR-076 Phase 2):
+      # a FRESH checkout now runs the server as oshal_app so RLS enforces out of the box.
+      # 'oshal-app-dev' is the committed DEV password (same posture as the committed
+      # oshal:oshal superuser dev creds) — the flag-ON boot sets oshal_app's password
+      # FROM this URL, and the operator .env's DATABASE_URL overrides it in prod.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal_app:oshal-app-dev@oshal-db:5432/oshal}
+      # Shared secret the OSHAL Node desktop app (remote-client) authenticates with.
+      # Must match the "Shared secret" field in the app's Config screen. Set the value
+      # in .env (REMOTE_CLIENT_SHARED_SECRET=...). Empty → only OIDC-session auth works.
+      REMOTE_CLIENT_SHARED_SECRET: ${REMOTE_CLIENT_SHARED_SECRET:-}
+      REMOTE_CLIENT_AUTH_HEADER: ${REMOTE_CLIENT_AUTH_HEADER:-x-remote-client-key}
+      ENABLE_QUEUE_MANAGER: "true"
+      ENABLE_AGENT_SCHEDULER: "true"
+      # Guest demo mode (guest-session.ts / guest-routes.ts): public `/guest` landing mints an
+      # HMAC-signed read-mostly guest identity (signed with SESSION_SECRET) so the oswarm.ai /
+      # oshal.ai site can link straight to a live demo. Default OFF in code; set
+      # ENABLE_GUEST_MODE=true in .env to enable on the hosted profile.
+      ENABLE_GUEST_MODE: ${ENABLE_GUEST_MODE:-false}
+      GUEST_SESSION_TTL_HOURS: ${GUEST_SESSION_TTL_HOURS:-12}
+      # Nightly oshal-dev docs-quality ticket (ADR-081): the owner must be a super-admin
+      # sub or the privileged-dispatch gate escalates it. Unset = no nightly ticket.
+      OSHAL_DEV_OWNER_SUB: ${OSHAL_DEV_OWNER_SUB:-}
+      OSHAL_DEV_DOCS_CRON: ${OSHAL_DEV_DOCS_CRON:-0 4 * * *}
+      # Career-Hunter native cron (replaces the retired Windows JobHunter* scheduled tasks):
+      # 04:00 shared corpus pull (scrape --all + keyword index), 12:30 per-user AI score
+      # (codex) + auto-enqueue approval tickets. jobs.db stays the operator's frozen fallback.
+      CAREER_HUNTER_CRON: ${CAREER_HUNTER_CRON:-1}
+      # Drone Ops (ADR-098/099): extra embedded sim drones on the api's fleet plane —
+      # comma-separated ids (e.g. "bravo,charlie") for hardware-free fleet demos with
+      # zero node processes. Empty (default) = just the embedded 'alpha'.
+      DRONE_EMBEDDED_SIMS: ${DRONE_EMBEDDED_SIMS:-}
+      # Spaces (ADR-111): the GPU-box reconstruction service (scripts/spatial-recon-edge)
+      # over Tailscale. Set it and ?app=spaces reconstructs the REAL uploaded video; unset
+      # (default) falls back to the local Sim synthetic-room provider. Purely additive.
+      # RECON_TOKEN: shared secret — set the SAME value on the box and every request is gated.
+      RECON_URL: ${RECON_URL:-}
+      RECON_TOKEN: ${RECON_TOKEN:-}
+      # ── Trust-default hardening (safe defaults; see docker-compose.hotswap.yml) ──
+      # Per-resource access audit. Fire-and-forget, never throws into the request
+      # path — turning it on just makes access_audit_log actually populate. Safe.
+      OSHAL_ACCESS_AUDIT: ${OSHAL_ACCESS_AUDIT:-on}
+      # Internal-mesh rate-limit backstop (closes the no-XFF gap). Generous 5000/min/IP
+      # so it only catches a runaway, not normal swarm chatter. Bump _MAX or set to
+      # off if it ever bites the swarm under load.
+      OSHAL_RATE_LIMIT_INTERNAL: ${OSHAL_RATE_LIMIT_INTERNAL:-on}
+      # Expensive-op limiter (intake/LLM): left OFF — 30/min/IP would throttle the AI
+      # Test Lab's burst intake. Flip to "on" + tune _MAX once burst profile is known.
+      OSHAL_RATE_LIMIT_EXPENSIVE: ${OSHAL_RATE_LIMIT_EXPENSIVE:-off}
+      # Webhook body-integrity HMAC for the Alertmanager receiver. Unset = inert (the
+      # bearer ALERT_WEBHOOK_TOKEN is the active gate). Needs raw-body capture before
+      # enabling — see alertmanager-routes.ts. Leave unset until Alertmanager signs.
+      ALERT_WEBHOOK_HMAC_SECRET: ${ALERT_WEBHOOK_HMAC_SECRET:-}
+      # CSP — STAGED, report-only by default. The browser does NOT block anything; it
+      # POSTs violations to the collector so we learn which inline scripts + external
+      # origins the cockpit uses. Flip OSHAL_CSP_REPORT_ONLY=off to ENFORCE — only after
+      # the report stream is clean, or it WILL break the surface. OSHAL_STRICT_CSP=off
+      # fully disables (today's behavior). Legacy-unowned default lives in *bot-env above.
+      OSHAL_STRICT_CSP: ${OSHAL_STRICT_CSP:-on}
+      OSHAL_CSP_REPORT_ONLY: ${OSHAL_CSP_REPORT_ONLY:-on}
+      OSHAL_CSP_REPORT_URI: ${OSHAL_CSP_REPORT_URI:-/api/security/csp-report}
+      # Prometheus alert intake posture. Default "backlog" => every alert opens a
+      # ticket but PARKS in the backlog; the operator promotes backlog→approved by
+      # hand, so the queue can't blow up from an alert storm. Set to "approved" to
+      # auto-flow into incident-rca instead. Per-alert `intake` labels still win.
+      ALERT_DEFAULT_INTAKE: ${ALERT_DEFAULT_INTAKE:-backlog}
+      # Personal-Intelligence Service (ADR-058) — the private, deterministic, start-param-gated vault
+      # service behind /api/personal. ON by default for the single-tenant build; per-user vault files
+      # (one sqlite per user = portable/exportable) live under the persistent output volume.
+      ENABLE_PERSONAL_INTELLIGENCE: ${ENABLE_PERSONAL_INTELLIGENCE:-true}
+      PI_STORE_ROOT: /app/output/personal-vaults
+      # Local deterministic speaker diarization (ADR-084). The sidecar is private
+      # to the compose network; raw audio is bounded and held only in memory.
+      SPEAKER_DIARIZATION_URL: ${SPEAKER_DIARIZATION_URL:-http://speaker-diarization:8080}
+      SPEAKER_SERVICE_KEY: ${SPEAKER_SERVICE_KEY:-oshal-local-speaker-service-key}
+      # ADR-100 Phase 2: ambient Person Model enrichment (ambient-analyst micro-batch). ON here; the
+      # disclosure surfaces are rewritten to match. Only consented voices enrich (own voice implicit,
+      # others need an explicit granted consent), so with no consent UI yet only the owner is modeled.
+      OSHAL_AMBIENT_ENRICH: ${OSHAL_AMBIENT_ENRICH:-1}
+      SPEAKER_PROFILE_SECRET: ${SPEAKER_PROFILE_SECRET:-oshal-local-speaker-profile-secret-do-not-use-in-prod}
+      SPEAKER_PROFILE_SECRET_PREVIOUS: ${SPEAKER_PROFILE_SECRET_PREVIOUS:-}
+      SPEAKER_DIARIZATION_TIMEOUT_MS: ${SPEAKER_DIARIZATION_TIMEOUT_MS:-45000}
+      SPEAKER_STT_TIMEOUT_MS: ${SPEAKER_STT_TIMEOUT_MS:-55000}
+      SPEAKER_MAX_ACTIVE_UPLOADS: ${SPEAKER_MAX_ACTIVE_UPLOADS:-1}
+      SPEAKER_MAX_UPLOADS_PER_OWNER_MINUTE: ${SPEAKER_MAX_UPLOADS_PER_OWNER_MINUTE:-12}
+      SPEAKER_AUDIO_RECEIPT_TTL_HOURS: ${SPEAKER_AUDIO_RECEIPT_TTL_HOURS:-48}
+      SPEAKER_AUDIO_RECEIPT_LIMIT: ${SPEAKER_AUDIO_RECEIPT_LIMIT:-10000}
+      SPEAKER_AUDIO_LEASE_SECONDS: ${SPEAKER_AUDIO_LEASE_SECONDS:-300}
+      # Time-series store (TimescaleDB) for personal metrics + the world sentiment/market series.
+      TSDB_URL: ${TSDB_URL:-postgresql://oshal:oshal@oshal-tsdb:5432/oshal_ts}
+      # World-Intelligence Service (Layer B) — shared world graph (ArangoDB) + series (TSDB). Fed by
+      # the news-aggregator/cron via /api/world (token-guarded writes). ARANGO_URL is already set above.
+      ENABLE_WORLD_INTELLIGENCE: ${ENABLE_WORLD_INTELLIGENCE:-true}
+      # World Knowledge inbound token — guards POST /api/world/contribute (the universal "send your data
+      # here"). Shared by the world_contribute tool (cli, same container) + the route. Dev default; set a
+      # real secret in prod. Without it the contribute route fail-closes (rejects all writes).
+      WORLD_INGEST_TOKEN: ${WORLD_INGEST_TOKEN:-oshal-world-knowledge-dev}
+      # Publisher FIREHOSE feeds (firehose-feeds.ts) — pulled once per pulse, entity-tagged, fanned to the
+      # names they mention (the "fluent" O(feeds) path). All optional; code carries a curated default list.
+      #   WORLD_FIREHOSE_FEEDS = "id|Name|url ; ..." or "url,url" to REPLACE the default list (drop your own here)
+      # Feed-fetch User-Agent (site + contact, per SEC EDGAR fair-access). Override to retune identity.
+      WORLD_FEED_UA: ${WORLD_FEED_UA:-}
+      WORLD_FIREHOSE_ENABLED: ${WORLD_FIREHOSE_ENABLED:-true}
+      WORLD_FIREHOSE_FEEDS: ${WORLD_FIREHOSE_FEEDS:-}
+      WORLD_FIREHOSE_LIMIT: ${WORLD_FIREHOSE_LIMIT:-6}
+      WORLD_FIREHOSE_EVERY_N_PULSES: ${WORLD_FIREHOSE_EVERY_N_PULSES:-8}
+      # Speed-read (cheap, all feeds) vs deep-dive (metered LLM). Deep-dive budget is allocated across feeds
+      # by a learned novelty signal; per-feed wall-clock budget isolates slow feeds; classify is chunked.
+      # OFF: the deep-dive classifier spawns a claude-code/codex CLI per chunk, and even ONE
+      # serialized call can't finish batch sentiment within its 120s timeout — it fails 100% to
+      # lexicon fallback (zero LLM value) while burning a heavyweight process and climbing memory,
+      # which flaps the api healthcheck. Re-enable only after sentiment moves off the agent-CLI
+      # path onto a lightweight API call (ADR-061). See memory oshal-world-deepdive-cpu-spiral.
+      WORLD_DEEPDIVE_ENABLED: ${WORLD_DEEPDIVE_ENABLED:-true}
+      WORLD_DEEPDIVE_BUDGET: ${WORLD_DEEPDIVE_BUDGET:-3}
+      WORLD_DEEPDIVE_METER: ${WORLD_DEEPDIVE_METER:-true}
+      WORLD_FEED_BUDGET_MS: ${WORLD_FEED_BUDGET_MS:-45000}
+      WORLD_CLASSIFY_CHUNK: ${WORLD_CLASSIFY_CHUNK:-8}
+      WORLD_CLASSIFY_CONCURRENCY: ${WORLD_CLASSIFY_CONCURRENCY:-1}
+      # Spread the deep-dive classify over BOTH CLIs (chunks round-robin) — 2x throughput, no single-provider
+      # bottleneck. Set to "claude" or "codex" to pin one. Optional Codex model override.
+      WORLD_CLASSIFY_PROVIDERS: ${WORLD_CLASSIFY_PROVIDERS:-codex}
+      # Token-burn controls. WORLD_CLASSIFY_DISABLED=true → no LLM at all (free lexicon; keeps every non-LLM
+      # signal). WORLD_PULSE_DEEP_SLICE = how many names get the full fan-out per pulse (the dominant LLM
+      # cost); lower = cheaper, 0 = all-lean. (Codex is the intended cheap indexer but is currently broken in
+      # the container — read-only-fs app-server; until fixed, keep claude/haiku or disable.)
+      WORLD_CLASSIFY_DISABLED: ${WORLD_CLASSIFY_DISABLED:-false}
+      WORLD_PULSE_DEEP_SLICE: ${WORLD_PULSE_DEEP_SLICE:-2}
+      WORLD_CLASSIFY_CODEX_MODEL: ${WORLD_CLASSIFY_CODEX_MODEL:-}
+      # Forward market-events calendar (earnings via Nasdaq, FOMC schedule, jobs report) on the 6h depth cycle.
+      WORLD_EVENTS_ENABLED: ${WORLD_EVENTS_ENABLED:-true}
+      WORLD_EARNINGS_DAYS: ${WORLD_EARNINGS_DAYS:-14}
+      WORLD_EARNINGS_UA: ${WORLD_EARNINGS_UA:-}
+      WORLD_FOMC_DATES: ${WORLD_FOMC_DATES:-}
+      # Informed-money flow signals (depth cycle): congress trades, insider (Form 4), short volume.
+      WORLD_FLOW_ENABLED: ${WORLD_FLOW_ENABLED:-true}
+      WORLD_POLITICAL_DAYS: ${WORLD_POLITICAL_DAYS:-90}
+      WORLD_POLITICAL_URL: ${WORLD_POLITICAL_URL:-}
+      WORLD_INSIDER_URLS: ${WORLD_INSIDER_URLS:-}
+      # Federal contract-award signal (USAspending) — "who's getting gov money".
+      WORLD_GOV_ENABLED: ${WORLD_GOV_ENABLED:-true}
+      WORLD_GOV_DAYS: ${WORLD_GOV_DAYS:-180}
+      # DevOps/Vault app (ADR-040): the vault-bot's vault_* tools talk to this Vault. DEV token by
+      # default — production uses AppRole auth, never a root token. Non-privileged KV path only here;
+      # the privileged cloud-cred broker is the separate gated build.
+      VAULT_ADDR: ${VAULT_ADDR:-http://oshal-vault:8200}
+      VAULT_TOKEN: ${VAULT_TOKEN:-oshal-dev-root}
+      # Outbound A2A gateway (BACKLOG Plan F item 3): external A2A agents as dispatch
+      # targets. The a2a-sample-agent registry entry is INERT until its endpoint env is
+      # set — with it unset the a2a harness factory throws a clean config error and the
+      # dispatcher falls back to the process-level provider (visible skip in logs).
+      # Endpoint env name is declared per-bot in the registry (a2aEndpointEnv); the
+      # bearer is per-bot A2A_OUTBOUND_TOKEN_<BOTKEY> (never in source/registry), or
+      # A2A_OUTBOUND_ALLOW_ANON=true for an unauthenticated dev sample.
+      A2A_SAMPLE_AGENT_URL: ${A2A_SAMPLE_AGENT_URL:-}
+      A2A_OUTBOUND_ENDPOINT_URL: ${A2A_OUTBOUND_ENDPOINT_URL:-}
+      A2A_OUTBOUND_TOKEN: ${A2A_OUTBOUND_TOKEN:-}
+      A2A_OUTBOUND_TOKEN_A2A_SAMPLE_AGENT: ${A2A_OUTBOUND_TOKEN_A2A_SAMPLE_AGENT:-}
+      A2A_OUTBOUND_ALLOW_ANON: ${A2A_OUTBOUND_ALLOW_ANON:-}
+      A2A_OUTBOUND_TIMEOUT_MS: ${A2A_OUTBOUND_TIMEOUT_MS:-}
+      A2A_OUTBOUND_POLL_MS: ${A2A_OUTBOUND_POLL_MS:-}
+      A2A_OUTBOUND_MODEL: ${A2A_OUTBOUND_MODEL:-}
+      # Inbound A2A gateway (ADR-109, BACKLOG Plan F): DEFAULT OFF. With
+      # A2A_GATEWAY_ENABLED unset/empty the ENTIRE inbound surface (the well-known
+      # agent card + POST /api/a2a) answers 404 and exposes nothing — flipping it to
+      # "true" here (via .env) + recreating oshal-api is the operator's single flip
+      # point. Do NOT enable until the running image contains the ADR-087 role-gate
+      # parity fix (commit 236589b8). Flip procedure + verification (migration check,
+      # card 200 probe, disabled=404 re-proof): docs/runbooks/a2a-gateway-local-enable.md
+      # Credential minting (/api/a2a/agents, operator-only) works even while disabled.
+      A2A_GATEWAY_ENABLED: ${A2A_GATEWAY_ENABLED:-}
+      # Public base URL stamped into the well-known agent card's endpoint field (behind
+      # cloudflared the request Host is tunnel-internal). Empty = derive from the request.
+      A2A_PUBLIC_BASE_URL: ${A2A_PUBLIC_BASE_URL:-}
+      # Per-agent inbound ticket ceiling per rolling hour. Empty = code default (20);
+      # garbage/zero/negative also fall back to 20 — the ceiling is never unlimited.
+      A2A_MAX_INBOUND_PER_HOUR: ${A2A_MAX_INBOUND_PER_HOUR:-}
+      # Dynamic bot insertion: /api/agents/:agentId/launch runs docker compose
+      # from inside the API container against the host Docker Desktop socket.
+      # The project root is mounted at the Docker Desktop host path so compose
+      # bind sources resolve to paths the daemon can also see.
+      COMPOSE_PROJECT_NAME: oshal-local
+      COMPOSE_PROJECT_ROOT: ${OSHAL_DOCKER_PROJECT_ROOT:-/run/desktop/mnt/host/c/Projects/open-shal-swarm-harness-agent-llm}
+      COMPOSE_FILE: ${OSHAL_DOCKER_PROJECT_ROOT:-/run/desktop/mnt/host/c/Projects/open-shal-swarm-harness-agent-llm}/docker-compose.oshal-local.yml
+      DYNAMIC_COMPOSE_FILE: ${OSHAL_DOCKER_PROJECT_ROOT:-/run/desktop/mnt/host/c/Projects/open-shal-swarm-harness-agent-llm}/docker-compose.dynamic.yml
+      OSHAL_BOT_IMAGE: ${OSHAL_BOT_IMAGE:-oshal-bot:latest}
+      # Career-Hunter app: per-user/tenant job-search store (shared corpus + per-user signal DBs).
+      # Lives under /app/output so it persists across container recreates.
+      JOBHUNTER_STORE_ROOT: /app/output/career-hunter-data
+      # Gov Capture app: per-user capture store (crm.db + capture/opportunities folders + econ),
+      # under /app/output so it persists across container recreates.
+      GOVCON_STORE_ROOT: /app/output/gov-contracting-data
+      # Gov Capture native cron (replaces the retired Windows "ECSG capture scan"): daily 06:00
+      # SAM.gov federal pull + triage + folder sync. Needs SAM_API_KEY for the pull (else the
+      # pull is a graceful no-op; sync + triage still run).
+      GOVCON_CRON: ${GOVCON_CRON:-1}
+      # SAM.gov key — durable source (Vault dev is in-memory and wiped on reboot). The engine
+      # config resolves env -> Vault -> secrets.json, so this (when set in .env) wins over Vault.
+      SAM_API_KEY: ${SAM_API_KEY:-}
+      # Capture workflow knobs read by scan.py. PROMOTE_MIN: auto-promote leads at/above this fit
+      # (default 55 = PURSUE line; cheap). DRAFT_MIN: auto-draft at/above this fit — UNSET = off;
+      # enabling it runs several model calls per opp on the Claude subscription.
+      GOVCON_PROMOTE_MIN: ${GOVCON_PROMOTE_MIN:-}
+      GOVCON_DRAFT_MIN: ${GOVCON_DRAFT_MIN:-}
+      # development mode → queue poll interval = 15s (vs 60s in production)
+      # Required for mesh:deliverable_written test to complete within 180s window
+      NODE_ENV: development
+      # Routing-failure (stale work item) threshold. The dev default is 5 min, but a single
+      # claude-code agent round can take up to its 5-10 min timeout, and under concurrent load
+      # (e.g. the AI Test Lab firing several build tickets) work items queue past 5 min and get
+      # killed with stale_routing_timeout → the ticket escalates with no deliverable. Raise it
+      # safely above the agent execution budget so genuinely-working rounds aren't reaped.
+      OSHAL_ROUTING_FAILURE_MINUTES: ${OSHAL_ROUTING_FAILURE_MINUTES:-15}
+      # Block leftover-browser-tab "loop-build-NNN" / "loop-incident-NNN" stress
+      # POSTs from saturating the queue. When set to "true", the ticket-routes
+      # POST handler returns 429 for titles matching ^loop-(build|incident|rca)-\d+$.
+      REJECT_LOOP_TICKETS: ${REJECT_LOOP_TICKETS:-false}
+      # Post-login landing surface. Default is /chat; set to an app for a
+      # single-app deployment (e.g. LANDING_PATH=/cockpit/?app=little-monsters).
+      LANDING_PATH: ${LANDING_PATH:-}
+      # Facebook connector (Utilities hub). The connector is "not configured" until
+      # FACEBOOK_APP_ID/SECRET are set. FACEBOOK_REDIRECT_URI must match the URI
+      # registered in the FB app (e.g. https://oshal.example.com/auth/facebook/callback).
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+      FACEBOOK_REDIRECT_URI: ${FACEBOOK_REDIRECT_URI:-}
+      FACEBOOK_API_VERSION: ${FACEBOOK_API_VERSION:-v21.0}
+      FACEBOOK_SCOPES: ${FACEBOOK_SCOPES:-public_profile,email}
+      # Facebook Login for Business: set the Configuration ID (replaces scope).
+      FACEBOOK_CONFIG_ID: ${FACEBOOK_CONFIG_ID:-}
+      # Facebook Pages (Business) connector 'meta-business' — SEPARATE Business app for
+      # social-media publishing (pages_manage_posts etc.). Distinct creds + callback
+      # https://<host>/api/connect/meta-business/callback, so it never collides with the
+      # login app above. Keep the pages scopes OFF FACEBOOK_SCOPES (login app 400s on them).
+      META_APPID_OSHAL_BUSINESS: ${META_APPID_OSHAL_BUSINESS:-}
+      META_APPSECRET_OSHAL_BUSINESS: ${META_APPSECRET_OSHAL_BUSINESS:-}
+      META_BUSINESS_SCOPES: ${META_BUSINESS_SCOPES:-public_profile,pages_show_list,pages_read_engagement,pages_manage_posts}
+      META_BUSINESS_REDIRECT_URI: ${META_BUSINESS_REDIRECT_URI:-}
+      # Login-for-Business apps request permissions via a Configuration (config_id), not
+      # raw scopes. Set this to the Configuration ID from Facebook Login for Business →
+      # Configurations (bundling pages_show_list/read_engagement/manage_posts).
+      META_BUSINESS_CONFIG_ID: ${META_BUSINESS_CONFIG_ID:-}
+      # LinkedIn connector (social swarm): sign-in + Share on LinkedIn (w_member_social).
+      LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-}
+      LINKEDIN_PRIMARY_CLIENT_SECRET: ${LINKEDIN_PRIMARY_CLIENT_SECRET:-}
+      LINKEDIN_REDIRECT_URI: ${LINKEDIN_REDIRECT_URI:-}
+      LINKEDIN_SCOPES: ${LINKEDIN_SCOPES:-openid,profile,email,w_member_social}
+      # Outlook / Microsoft 365 connector (email swarm). IMAP-scoped OAuth; the
+      # client SECRET must be the Azure secret VALUE (OUTLOOK_CLIENT_VALUE).
+      AZURE_EMAIL_APPLICATION_ID: ${AZURE_EMAIL_APPLICATION_ID:-${AZURE_EMAIL_APPLICCATION_ID:-}}
+      AZURE_EMAIL_CLIENT_SECRET: ${AZURE_EMAIL_CLIENT_SECRET:-}
+      OUTLOOK_CLIENT_VALUE: ${OUTLOOK_CLIENT_VALUE:-}
+      OUTLOOK_TENANT_ID: ${OUTLOOK_TENANT_ID:-common}
+      OUTLOOK_REDIRECT_URI: ${OUTLOOK_REDIRECT_URI:-}
+      OUTLOOK_SCOPES: ${OUTLOOK_SCOPES:-}
+      # X / Twitter connector (social swarm): OAuth 2.0 + PKCE. Use the OAuth 2.0
+      # Client ID/Secret, NOT the OAuth 1.0a consumer/access keys.
+      TWITTER_CLIENT_ID: ${TWITTER_CLIENT_ID:-${X_CLIENT_ID:-}}
+      TWITTER_CLIENT_SECRET: ${TWITTER_CLIENT_SECRET:-${X_CLIENT_SECRET:-${X_CLIENT_SECRECT:-}}}
+      TWITTER_REDIRECT_URI: ${TWITTER_REDIRECT_URI:-}
+      TWITTER_SCOPES: ${TWITTER_SCOPES:-tweet.read,users.read,tweet.write,offline.access}
+      # GitHub connector (storage/code): OAuth App. Callback
+      # https://<host>/api/connect/github/callback. repo = push/pull, read:user = identity.
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_SCOPES: ${GITHUB_SCOPES:-repo,read:user}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-}
+      # Push-first GitHub ticket intake. Native repository webhooks POST issue
+      # lifecycle events directly to /api/hooks/github/issues (no GitHub Action).
+      # An empty secret is fail-closed: the mounted endpoint returns 401.
+      CONNECTOR_WEBHOOKS: ${CONNECTOR_WEBHOOKS:-on}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      # Optional free REST pull is recovery/reconciliation only; no Actions runner.
+      GITHUB_TICKET_TOKEN: ${GITHUB_TICKET_TOKEN:-}
+      GITHUB_TICKET_WRITEBACK_TOKEN: ${GITHUB_TICKET_WRITEBACK_TOKEN:-}
+      GITHUB_TICKET_FEEDS: ${GITHUB_TICKET_FEEDS:-}
+      # Slack connector (Feeds app): OAuth v2 USER token. Callback
+      # https://<host>/api/connect/slack/callback. App Client ID/Secret from api.slack.com.
+      # The .env spells the id SLACK_CLINET_ID (typo) — tolerate it so it still resolves.
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-${SLACK_CLINET_ID:-}}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
+      SLACK_SCOPES: ${SLACK_SCOPES:-}
+      SLACK_REDIRECT_URI: ${SLACK_REDIRECT_URI:-}
+      # Dropbox connector (per-user file-space backend): OAuth App. Callback
+      # https://<host>/api/connect/dropbox/callback. App key/secret from the Dropbox console.
+      DROPBOX_CLIENT_ID: ${DROPBOX_CLIENT_ID:-}
+      DROPBOX_CLIENT_SECRET: ${DROPBOX_CLIENT_SECRET:-}
+      # Dropbox's own console naming (App key / App secret) — providerCreds reads these too.
+      DROPBOX_APP_KEY: ${DROPBOX_APP_KEY:-}
+      DROPBOX_APP_SECRET: ${DROPBOX_APP_SECRET:-}
+      DROPBOX_SCOPES: ${DROPBOX_SCOPES:-account_info.read files.metadata.read files.content.read files.content.write}
+      DROPBOX_REDIRECT_URI: ${DROPBOX_REDIRECT_URI:-}
+      # SmartThings connector (smart-home swarm): OAuth-In SmartApp. Callback
+      # https://<host>/api/connect/smartthings/callback.
+      SMARTTHINGS_CLIENT_ID: ${SMARTTHINGS_CLIENT_ID:-${SMARTTHINGS_OAUTH_CLIENT_ID:-}}
+      SMARTTHINGS_CLIENT_SECRET: ${SMARTTHINGS_CLIENT_SECRET:-${SMARTTHINGS_OAUTH_CLIENT_SECRET:-}}
+      SMARTTHINGS_SCOPES: ${SMARTTHINGS_SCOPES:-r:devices:* x:devices:* r:scenes:* x:scenes:* r:locations:*}
+      SMARTTHINGS_REDIRECT_URI: ${SMARTTHINGS_REDIRECT_URI:-}
+      # Google Nest (Home) connector (smart-home swarm): Device Access SDM API.
+      # Callback https://<host>/api/connect/google-home/callback. PROJECT_ID is the
+      # Device Access project GUID (console.nest.google.com), NOT the GCP project id.
+      GOOGLE_HOME_PROJECT_ID: ${GOOGLE_HOME_PROJECT_ID:-}
+      GOOGLE_HOME_CLIENT_ID: ${GOOGLE_HOME_CLIENT_ID:-}
+      GOOGLE_HOME_CLIENT_SECRET: ${GOOGLE_HOME_CLIENT_SECRET:-}
+      GOOGLE_HOME_SCOPES: ${GOOGLE_HOME_SCOPES:-https://www.googleapis.com/auth/sdm.service}
+      GOOGLE_HOME_REDIRECT_URI: ${GOOGLE_HOME_REDIRECT_URI:-}
+      # GCP (Google Cloud) connector. Client id/secret fall back to OIDC in code; the
+      # redirect MUST be passed (APP_URL is littlemonster, but the gcp app is registered
+      # on oshal) or Google returns redirect_uri_mismatch.
+      GCP_REDIRECT_URI: ${GCP_REDIRECT_URI:-}
+      GCP_CLIENT_ID: ${GCP_CLIENT_ID:-}
+      GCP_CLIENT_SECRET: ${GCP_CLIENT_SECRET:-}
+      GCP_SCOPES: ${GCP_SCOPES:-}
+      # Finance aggregation app (?app=finance, ADR-048). Plaid links the user's banks +
+      # brokerages; the finance-analyst bot reasons over a read-only aggregate. Plaid does
+      # NOT use redirect OAuth — connections are made through Plaid Link (or, on localhost,
+      # the Sandbox demo-connect path). The surface shows a setup note until both keys are
+      # set. Get free Sandbox keys instantly at dashboard.plaid.com → Team Settings → Keys.
+      PLAID_ENV: ${PLAID_ENV:-sandbox}
+      PLAID_CLIENT_ID: ${PLAID_CLIENT_ID:-}
+      PLAID_SECRET: ${PLAID_SECRET:-}
+      PLAID_SANDBOX_INSTITUTION: ${PLAID_SANDBOX_INSTITUTION:-}
+      # Finance — money movement (POST /api/finance/pay). Provider-agnostic PaymentAdapter;
+      # PAYMENT_PROVIDER picks the rail (stripe today; plaid-transfer/dwolla are siblings).
+      # An sk_test_… key targets Stripe test mode (fake banks, no real money) — get one at
+      # dashboard.stripe.com → Developers → API keys. The Pay panel stays disabled until set.
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-stripe}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      # Payments app (?app=payments) — take payments through a connected MERCHANT account.
+      # Square + PayPal are per-user OAuth connectors; the merchant connects their own
+      # account and OSHAL charges with their brokered token. Sandbox by default so the
+      # connect→charge flow is testable without real money. Register the apps under the
+      # business email (partner-app rule); callbacks /api/connect/{square,paypal}/callback.
+      SQUARE_ENV: ${SQUARE_ENV:-sandbox}
+      SQUARE_CLIENT_ID: ${SQUARE_CLIENT_ID:-}
+      SQUARE_CLIENT_SECRET: ${SQUARE_CLIENT_SECRET:-}
+      SQUARE_REDIRECT_URI: ${SQUARE_REDIRECT_URI:-}
+      PAYPAL_ENV: ${PAYPAL_ENV:-sandbox}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_REDIRECT_URI: ${PAYPAL_REDIRECT_URI:-}
+      # Spotify connector (music swarm): the Spotify concierge searches the user's Spotify,
+      # reads now-playing + playlists, and builds playlists via the Web API. App at
+      # developer.spotify.com/dashboard; callback /api/connect/spotify/callback. Play = handoff.
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
+      SPOTIFY_SCOPES: ${SPOTIFY_SCOPES:-}
+      SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI:-}
+      SPOTIFY_MARKET: ${SPOTIFY_MARKET:-from_token}
+      # Movies & TV concierge (TMDB): free key at themoviedb.org/settings/api (v3 key or v4
+      # token). Connect on /utilities (TMDB card) or set this env fallback. Region = where-to-watch.
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      # TMDB dashboard's own var names (v3 key / v4 read access token) — getOperatorTmdbKey reads these too.
+      THEMOVIEDB_API_KEY: ${THEMOVIEDB_API_KEY:-}
+      THEMOVIEDB_API_READ_ACCESS_TOKEN: ${THEMOVIEDB_API_READ_ACCESS_TOKEN:-}
+      MOVIES_REGION: ${MOVIES_REGION:-US}
+      # Travel concierge (Duffel): flights/hotels/cars search + (Duffel-only) real booking via API.
+      # Token at app.duffel.com (Settings > Access Tokens). duffel_test_ = sandbox (no real charges);
+      # duffel_live_ = real. Connect on /utilities (Duffel card) or set this env fallback; demo catalog otherwise.
+      DUFFEL_ACCESS_TOKEN: ${DUFFEL_ACCESS_TOKEN:-}
+      # Master connector-token AES key — CONTROLLER ONLY (removed from x-bot-env).
+      # The controller decrypts tokens here + hands bots short-lived per-user tokens.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      # Local invited-user login (ADR-117) — CONTROLLER ONLY (it signs with SESSION_SECRET,
+      # which bots never hold). Set LOCAL_AUTH=true AND MOCK_OIDC=false together: the api
+      # refuses to boot with both auth modes on (fail-closed, not silent precedence).
+      # SMTP is optional — without it the admin API returns copyable invite links.
+      LOCAL_AUTH: ${LOCAL_AUTH:-}
+      LOCAL_AUTH_PUBLIC_URL: ${LOCAL_AUTH_PUBLIC_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      # Per-user DEK envelope encryption for connector tokens. Default is now ON
+      # (2026-07-19): new writes upgrade to v2 DEK envelope; legacy single-key blobs
+      # still decrypt under the same SESSION_SECRET (format-aware, no re-connect needed).
+      # Break-glass: set OSHAL_ENVELOPE_CRYPTO=false. Empty here = code default (ON).
+      OSHAL_ENVELOPE_CRYPTO: ${OSHAL_ENVELOPE_CRYPTO:-}
+      # RLS request-identity strict mode. CODE default is `deny` (fail-closed: identity-less DB
+      # access is stamped anonymous non-operator; background work opts in via the
+      # runWithSystemIdentity sentinel). Warn soak COMPLETE 2026-07-20: the SQL-logging audit
+      # drove the identity-less boot/background sites from a mis-counted "2" (old audit collapsed
+      # them on a node-internal frame) through 32 to 0, so this stack now runs `deny` live.
+      # Break-glass on any starvation: OSHAL_DB_GUC_STRICT=off (or =warn to re-audit).
+      OSHAL_DB_GUC_STRICT: ${OSHAL_DB_GUC_STRICT:-deny}
+      # Kubernetes / Gardener integrations intentionally OFF in this sandbox.
+      # No KUBECONFIG, no GARDENER_*, no kube mount — the API container has
+      # no path to a real cluster and cannot leak creds.
+      # Video Studio (?app=video) — Veo generation runs via Vertex AI on the operator's
+      # google-workspace OAuth token (mounted below; the token must carry the cloud-platform
+      # scope). VERTEX_PROJECT must be a Vertex-enabled GCP project. Cost is an estimate at
+      # VERTEX_VEO_COST_PER_SEC. VIDEO_MUSIC_DIR (optional) holds <style>.mp3 background beds.
+      VERTEX_PROJECT: ${VERTEX_PROJECT:-}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-central1}
+      VERTEX_VEO_MODEL: ${VERTEX_VEO_MODEL:-veo-3.1-generate-001}
+      VERTEX_VEO_COST_PER_SEC: ${VERTEX_VEO_COST_PER_SEC:-0.40}
+      VIDEO_MUSIC_DIR: ${VIDEO_MUSIC_DIR:-}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_CLOUD_SPEECH_LOCATION: ${GOOGLE_CLOUD_SPEECH_LOCATION:-us}
+      GCP_SERVICE_ACCOUNT_EMAIL: ${GCP_SERVICE_ACCOUNT_EMAIL:-}
+      # SA key for Veo (mounted ro via config-seed). veo-client mints a token from it.
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/config-seed/vertex-service-account.json}
+      # Caption font baked by the image's ttf-dejavu apk (Alpine installs to /usr/share/fonts/dejavu).
+      VIDEO_CAPTION_FONT: ${VIDEO_CAPTION_FONT:-/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      # API must write generated persona YAML for dynamically-created agents.
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:rw
+      - ./config-seed:/app/config-seed:ro
+      - ${SWARM_APPS_DIR:-./swarm-apps}:/app/swarm-apps:ro
+      # REAL-BUILD MODE: the src/api (incl. its baked vite dist) + src/pages surfaces are served
+      # from the IMAGE, not bind-mounted from the host — so the running controller reflects the
+      # built artifact, not local edits. The Dockerfile COPYs all of these (src/api, src/pages),
+      # so nothing 404s. Re-add the ./src/api + ./src/pages/* mounts here if you want live hot-swap
+      # back for UI dev.
+      # The any-bot server tree: app surface pages (services/tools/<app>) AND the bot-node runtime
+      # modules (utils/stores/controllers/services). The image only COPYs any-bot/ui-cockpit, so
+      # without this surfaces 404 and bot-node containers crash on a missing module. Bind-mounted = live.
+      - ./any-bot/server:/app/any-bot/server:ro
+      # LIVE UI HOT-SWAP (re-enabled for UI dev): serve the cockpit + surface HTML/CSS/JS
+      # straight from the host so edits show on refresh with no image rebuild. src/pages is
+      # pure static surfaces (safe to mount wholesale). For src/api we mount ONLY jarvis.html
+      # (a single static surface) so we DON'T shadow the image's baked vite dist under src/api.
+      - ./src/pages:/app/src/pages:ro
+      - ./src/api/jarvis.html:/app/src/api/jarvis.html:ro
+      - ./src/api/jarvis-stage.js:/app/src/api/jarvis-stage.js:ro
+      - ./src/api/jarvis-stage.css:/app/src/api/jarvis-stage.css:ro
+      - ./src/api/jarvis-ambient-core.js:/app/src/api/jarvis-ambient-core.js:ro
+      - ./src/api/jarvis-ambient-ui.js:/app/src/api/jarvis-ambient-ui.js:ro
+      - ./src/api/jarvis-ambient-recognition.js:/app/src/api/jarvis-ambient-recognition.js:ro
+      - ./src/api/jarvis-ambient.js:/app/src/api/jarvis-ambient.js:ro
+      - ./src/api/jarvis-ambient.css:/app/src/api/jarvis-ambient.css:ro
+      - ./src/api/jarvis-speakers.js:/app/src/api/jarvis-speakers.js:ro
+      - ./src/api/jarvis-speakers.css:/app/src/api/jarvis-speakers.css:ro
+      - ./src/api/jarvis-speaker-capture.js:/app/src/api/jarvis-speaker-capture.js:ro
+      - ./src/api/jarvis-person-consent.js:/app/src/api/jarvis-person-consent.js:ro
+      # Mobile-responsive surface fixes — per-file mounts so we DON'T shadow the image's built
+      # src/api/dist chat bundles (ui-chat-window.js etc.), which are NOT present on the host.
+      - ./src/api/chat.html:/app/src/api/chat.html:ro
+      - ./src/api/content-studio.html:/app/src/api/content-studio.html:ro
+      - ./src/api/devops-vault.html:/app/src/api/devops-vault.html:ro
+      # (email-{inbox,my-day,social}.html mounts removed: the Email Summarizer surface
+      #  carved to the app store, ADR-085 Wave 3 — the package serves its own tools/.)
+      - ./src/api/files.html:/app/src/api/files.html:ro
+      - ./src/api/forge.html:/app/src/api/forge.html:ro
+      # (identity.html bind mount removed: Identity Hub carved to the app store, ADR-085
+      #  Wave 3 — the package serves its own tools/identity.html. The stale bind here
+      #  re-materialized src/api/identity.html as an empty dir on every api recreate,
+      #  which crashed the surface-theme-inheritance readFileSync — carve-residue fix.)
+      # (kalshi.html bind mount removed: Kalshi Prediction Markets carved to the app store,
+      #  ADR-085 Wave 3 — the package serves its own tools/kalshi.html.)
+      - ./src/api/security.html:/app/src/api/security.html:ro
+      # Spaces (ADR-111) — the surface + its self-contained WebGL splat viewer, per-file so we
+      # don't shadow the image's built src/api/dist bundles. Route is baked (spaces-routes.ts).
+      - ./src/api/spaces.html:/app/src/api/spaces.html:ro
+      - ./src/api/spaces-viewer.html:/app/src/api/spaces-viewer.html:ro
+      - ./src/api/spaces-capture.html:/app/src/api/spaces-capture.html:ro
+      - ./src/api/swarm-debug.html:/app/src/api/swarm-debug.html:ro
+      - ./src/api/technology.html:/app/src/api/technology.html:ro
+      - ./src/api/token-chase.html:/app/src/api/token-chase.html:ro
+      # (trading.html + vendor/lightweight-charts.js bind mounts removed: the trading surface
+      #  carved to the app store, ADR-085 Wave 3 — the package serves its own tools/trading.html
+      #  and tools/vendor/lightweight-charts.js from the deployed package dir.)
+      - ./src/api/utilities.html:/app/src/api/utilities.html:ro
+      # apiDir now prefers the COMPLETE src/api (bind-mounted above) over the partial dist/api
+      # (server.ts resolveExistingPath), so the old per-file dist/api html mounts that only covered
+      # the 8 public pages — and left social/storage/email/presentations/home 404ing — are gone.
+      - .:${OSHAL_DOCKER_PROJECT_ROOT:-/run/desktop/mnt/host/c/Projects/open-shal-swarm-harness-agent-llm}:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - *google-workspace-volume
+      - api-output:/app/output
+      # ADR-067 generated connector catalog. /app/output is a Docker volume for
+      # runtime state, so bind generated OpenAPI specs back into the default lazy
+      # catalog path the marketplace/spec-tool loaders already scan.
+      - ./output/connectors/imported-openapi:/app/output/connectors/imported-openapi:ro
+      # Read-only view of the home-bot's per-user store — the Smart Home surface
+      # serves the cached device index from here (no LLM call). The bot owns writes.
+      - home-data:/app/home-data:ro
+    depends_on:
+      oshal-db:
+        condition: service_healthy
+      oshal-redis:
+        condition: service_healthy
+      oshal-chromadb:
+        condition: service_healthy
+
+  # ── 2. Task Manager (QA gatekeeper) ────────────────────────────────────────
+  # (service key renamed from the legacy brand; container_name below is the stable
+  #  DNS identity the registry dispatches to, so the key rename is deploy-neutral)
+  oshal-task-manager:
+    profiles:
+      - build
+      - incident
+    <<: *bot-common
+    container_name: oshal-local-task-manager
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: task-manager
+      AGENT_ID: a0000000-0000-0000-0000-000000000006
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/task-manager.yaml
+      AGENT_CAPABILITIES: "qa,verification,testing"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - tm-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 3. Code Developer (primary implementation) ─────────────────────────────
+  code-developer:
+    profiles:
+      - build
+    <<: *bot-common
+    container_name: oshal-local-code-developer
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: code-developer
+      AGENT_ID: a0000000-0000-0000-0000-000000000002
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/code-developer.yaml
+      AGENT_CAPABILITIES: "coding,implementation,debugging,refactoring,feature-development,bug-fixing,api-design"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - codedev-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 4. DevOps Bot (infra, scripting, deployment) ──────────────────────────
+  devops-bot:
+    profiles:
+      - extras
+    <<: *bot-common
+    container_name: oshal-local-devops
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: devops-bot
+      AGENT_ID: a0000000-0000-0000-0000-000000000008
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/devops-bot.yaml
+      AGENT_CAPABILITIES: "infrastructure,cicd,kubernetes,docker,monitoring,scripting,bash,deployment"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - devops-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 4b. Self-Healing Bot (applies the fix — restarts unhealthy containers) ─
+  # Registered in swarm-apps/intelligent-processing.yaml. This is the ONLY worker
+  # with the Docker socket mounted, so its restart-container / check-container-
+  # health tools (any-bot selfHealingTools.js) actually work. AGENT_ID is the
+  # framework UUID so the swarm mesh routes remediation work here; the autonomous
+  # monitoring hook is enabled explicitly via ENABLE_SELF_HEALING_SCHEDULER.
+  # oshal-bot:latest already ships docker-cli (Dockerfile.oshal). Profile incident.
+  self-healing-bot:
+    profiles:
+      - incident
+      - extras
+    <<: *bot-common
+    container_name: oshal-local-self-healing
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: self-healing-bot
+      AGENT_ID: a0000000-0000-0000-0000-000000000030
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/self-healing-bot.yaml
+      AGENT_CAPABILITIES: "self-healing,docker,container-restart,remediation,infrastructure,monitoring"
+      ENABLE_SELF_HEALING_SCHEDULER: "true"
+      # Override the swarm-wide default (off). This is the ONLY bot authorized to
+      # use the docker tool group — matches the persona's docker: "auto". Without
+      # this the socket is mounted but restart-container stays authorization-blocked.
+      TOOL_AUTH_DOCKER_SOCKET: "auto"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - self-healing-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 5. Code Reviewer (security, quality, architecture) ────────────────────
+  code-reviewer:
+    profiles:
+      - build
+    <<: *bot-common
+    container_name: oshal-local-code-reviewer
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: code-reviewer
+      AGENT_ID: a0000000-0000-0000-0000-000000000003
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/code-reviewer.yaml
+      AGENT_CAPABILITIES: "code-review,security,quality,best-practices,architecture-review"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - reviewer-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 6. Documentation Writer (docs, READMEs, ADRs) ────────────────────────
+  documentation-writer:
+    profiles:
+      - build
+    <<: *bot-common
+    container_name: oshal-local-documentation-writer
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: documentation-writer
+      AGENT_ID: a0000000-0000-0000-0000-000000000004
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/documentation-writer.yaml
+      AGENT_CAPABILITIES: "documentation,readme,adr,jsdoc,technical-writing,handover"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - docwriter-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 7. RCA Specialist (root cause analysis, debugging) ────────────────────
+  research-bot:
+    profiles:
+      - extras
+    <<: *bot-common
+    container_name: oshal-local-research-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: research-bot
+      AGENT_ID: a0000000-0000-0000-0000-00000000000c
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/research-bot.yaml
+      AGENT_CAPABILITIES: "research,analysis,documentation,investigation,web-search,competitive-analysis"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - research-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 10. Tester Bot (QA, mandatory swarm participant) ──────────────────────
+  tester-bot:
+    profiles:
+      - extras
+    <<: *bot-common
+    container_name: oshal-local-tester-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: tester-bot
+      AGENT_ID: a0000000-0000-0000-0000-00000000000e
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/tester-bot.yaml
+      AGENT_CAPABILITIES: "testing,qa,test-standards,acceptance-criteria,test-automation"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - testerbot-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 11. Test Engineer (testing, validation) ───────────────────────────────
+  test-engineer:
+    profiles:
+      - build
+    <<: *bot-common
+    container_name: oshal-local-test-engineer
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: test-engineer
+      AGENT_ID: a0000000-0000-0000-0000-000000000005
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/test-engineer.yaml
+      AGENT_CAPABILITIES: "testing,validation,verification,test-automation,qa,acceptance-criteria"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - tester-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── 10. System Architect (design, specs, decomposition) ───────────────────
+  system-architect:
+    profiles:
+      - build
+    <<: *bot-common
+    container_name: oshal-local-system-architect
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: system-architect
+      AGENT_ID: a0000000-0000-0000-0000-000000000018
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/system-architect.yaml
+      AGENT_CAPABILITIES: "architecture,design,system-modeling,technical-specification,decomposition,research,analysis"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - architect-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+  # ── Incident Remediation Specialist ─────────────────────────────────
+  queue-bot:
+    profiles:
+      - build
+      - incident
+    <<: *bot-common
+    container_name: oshal-local-queue-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: queue-bot
+      AGENT_ID: f0000000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/queue-bot.yaml
+      AGENT_CAPABILITIES: "quality-review,deliverable-assessment,feedback-generation"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - queue-bot-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Weather Bot — local conditions + forecast owner ────────────────────────
+  # Separate from weather-analyst, which turns severe alerts into trading
+  # signals. This node uses the checked-in NWS format-weather implementation.
+  weather-bot:
+    <<: *bot-common
+    container_name: oshal-local-weather-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: weather-bot
+      AGENT_ID: a0000000-0000-0000-0000-000000000036
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/weather-bot.yaml
+      AGENT_CAPABILITIES: "current-weather,weather-forecast,local-weather-report,weather-data-formatting"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - weather-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Facebook Bot — Social Media Integration ─────────────────────────────────
+  facebook-bot:
+    profiles:
+      - social-media
+    <<: *bot-common
+    container_name: oshal-local-facebook-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: facebook-bot
+      AGENT_ID: a0000000-0000-0000-0000-000000000021
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/facebook-bot.yaml
+      AGENT_CAPABILITIES: "social-media,facebook-api,content-publishing,community-engagement,comment-management,feed-monitoring"
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+      BOT_UI_LABEL: Facebook
+      BOT_UI_URL: /api/facebook-auth/app
+      BOT_UI_ICON: "codicon codicon-globe"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - facebook-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Email Bot — Intelligent Communication (Gmail + Calendar owner) ──────────
+  # A first-class oshal-bot node: own container, heartbeat, on the mesh. It owns
+  # the email data — the toolbar surfaces it and other swarm bots talk to it for
+  # email work. Reads the per-user connector token from oshal_connections.
+  email-bot:
+    <<: *bot-common
+    container_name: oshal-local-email-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: communications-bot
+      AGENT_ID: b0000000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/email-summarizer.yaml
+      AGENT_CAPABILITIES: "email-summarization,gmail-triage,outlook-mail,calendar-digest,meeting-agenda,reply-drafting,inbox-triage,social-signals-feed,social-publishing"
+      # Run this bot on CODEX (its sandbox can shell out to run scripts/oshal-gmail.js,
+      # which claude-code-as-root cannot). ADR-037 Phase 2. Overrides the *bot-env default.
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      # Owns email: reads the per-user connector token (DATABASE_URL), decrypts
+      # it (SESSION_SECRET, from *bot-env), and calls Gmail/Calendar. The OIDC
+      # client creds power the Google refresh flow used by scripts/oshal-gmail.js.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      GOOGLE_CONNECT_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      GOOGLE_CONNECT_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      # Default mailbox so oshal-gmail.js resolves when >1 Google account is connected
+      # (single-operator). Per-user dynamic scoping uses OSHAL_USER_SUB (multi-user follow-up).
+      GMAIL_ACCOUNT: ${GMAIL_ACCOUNT:-}
+      BOT_UI_LABEL: Email
+      BOT_UI_URL: /api/email/inbox
+      BOT_UI_ICON: "codicon codicon-mail"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - email-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── OSHAL Developer — the dedicated platform-development specialist (ADR-081) ───
+  # Owns ticketType 'oshal-dev' (superadmin-gated at dispatch). Works in its OWN clone
+  # at /app/dev-repo (named volume; bot-entrypoint.sh clones/updates it from
+  # OSHAL_DEV_REPO_URL at start) — deliberately NO host-repo mount: the live tree is
+  # hot-swap-deployed, so the bot must never touch it (ADR-077's load-bearing isolation).
+  # Push auth via OSHAL_DEV_REPO_TOKEN (ephemeral credential helper, never persisted).
+  oshal-developer:
+    <<: *bot-common
+    container_name: oshal-local-oshal-developer
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: oshal-developer
+      AGENT_ID: de000000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/oshal-developer.yaml
+      AGENT_CAPABILITIES: "platform-development,typescript,feature-slice-design,documentation-quality,codebase-indexing,self-hosting"
+      # codex: the persona shells out constantly (git, npx tsc, vitest, docs-link-check).
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      # The bot's own clone of the platform repo (configurable per deployment).
+      # ADR-115: the TRUNK is this repo. The default pointed at the pre-cutover private
+      # repo, which is now a frozen reference archive — the bot's self-development work
+      # landed somewhere nothing ships from. Default to the trunk it actually develops.
+      OSHAL_DEV_REPO_URL: ${OSHAL_DEV_REPO_URL:-https://github.com/emeraldcoastsystemsgroup/oshal.git}
+      OSHAL_DEV_REPO_BRANCH: ${OSHAL_DEV_REPO_BRANCH:-main}
+      OSHAL_DEV_REPO_TOKEN: ${OSHAL_DEV_REPO_TOKEN:-}
+      # Dev runs stream for a long time legitimately: generous idle window + backstop.
+      CODEX_INACTIVITY_TIMEOUT_MS: ${OSHAL_DEV_IDLE_TIMEOUT_MS:-600000}
+      CODEX_MAX_DURATION_MS: ${OSHAL_DEV_MAX_DURATION_MS:-7200000}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - oshal-dev-repo:/app/dev-repo
+      - oshal-developer-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Jarvis Bot — the unified OSHAL Assistant as a FIRST-CLASS bot-node ──────────
+  # Runs oshal-assistant (agent …0050) in the any-bot runtime (BOT_RUNTIME=bot-node, the *bot-env
+  # default) so it executes inside the wrapper with a real agentic tool loop — NOT inline on the
+  # controller (which can't round-trip tool_use, so its tools were ghosts). The orb surface posts to
+  # this bot via BotNodeClient → http://jarvis-bot:5000/api/swarm-execute. Tools authorized in
+  # agent_tools (the full set) execute here. claude-code provider (default) via mounted ~/.claude.
+  # scripts + api-output mounted so cli tools like career_database (oshal-jobhunter.js query) resolve
+  # the user's data. See jarvis-must-be-framework-bot + ADR-050 (route-orchestrator superseded).
+  jarvis-bot:
+    <<: *bot-common
+    container_name: oshal-local-jarvis-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: oshal-assistant
+      AGENT_ID: a0000000-0000-0000-0000-000000000050
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/oshal-assistant.yaml
+      AGENT_CAPABILITIES: "intent-routing,cross-app-orchestration,answer-synthesis"
+      # CODEX (not claude-code): the any-bot claude-code provider doesn't expose OSHAL framework
+      # tools to the CLI session, so career_database stayed a ghost. Codex's sandbox CAN shell out
+      # (CODEX_SANDBOX_MODE=danger-full-access), so Jarvis runs the mounted CLIs directly —
+      # the same proven pattern as email-bot/home-bot/cloud-ops-bot. Overrides the *bot-env default.
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      # career_database tool (node scripts/oshal-jobhunter.js query) reads the user's jobs DB here.
+      JOBHUNTER_STORE_ROOT: /app/output/career-hunter-data
+      BOT_UI_LABEL: Assistant
+      BOT_UI_URL: /cockpit/?app=jarvis
+      BOT_UI_ICON: "codicon codicon-sparkle"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      # CLI tools (oshal-jobhunter.js etc.) bind-mounted so tool iterations apply without a rebuild.
+      - ./scripts:/app/scripts:ro
+      # The bot-node runtime requires the any-bot server tree (utils/stores/controllers/services);
+      # the image doesn't COPY it, so without this jarvis-bot crashes on a missing module.
+      - ./any-bot/server:/app/any-bot/server:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      # Shared output volume = same career-hunter-data store + global config the api uses.
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Eats Bot — Uber Eats concierge (real bot-node) ──────────────────────────
+  # First-class oshal-bot node so the build queue HTTP-dispatches Jarvis food tickets here
+  # (isolated, cost/audit under its agent_id) instead of in-process on the controller. CODEX so it
+  # shells out to scripts/oshal-uber.js (search/menu/order → the Uber Eats checkout deep-link),
+  # reading the per-user Uber connector token brokered at dispatch.
+  # See swarm-apps/eats.yaml + ai-lab/bot-personas/eats-concierge.yaml.
+  eats-bot:
+    <<: *bot-common
+    container_name: oshal-local-eats-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: eats-concierge
+      AGENT_ID: b0080000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/eats-concierge.yaml
+      AGENT_CAPABILITIES: "restaurant-search,menu-browse,food-order-building,uber-eats-checkout-handoff,dietary-filtering,cuisine-preferences"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      BOT_UI_LABEL: Order Food
+      BOT_UI_URL: /cockpit/?app=eats
+      BOT_UI_ICON: "codicon codicon-flame"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Rides Bot — Uber Rides concierge (real bot-node) ────────────────────────
+  # A first-class oshal-bot node (own container, heartbeat, mesh) so the build queue
+  # HTTP-dispatches Jarvis ride tickets here (isolated, cost/audit under its agent_id)
+  # instead of falling back to in-process execution on the controller. Runs on CODEX so
+  # it shells out to scripts/oshal-uber-rides.js (estimate + the device-aware booking
+  # link), reading the per-user Uber-Rides connector token brokered at dispatch.
+  # See swarm-apps/rides.yaml + ai-lab/bot-personas/rides-concierge.yaml.
+  rides-bot:
+    <<: *bot-common
+    container_name: oshal-local-rides-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: rides-concierge
+      AGENT_ID: b0090000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/rides-concierge.yaml
+      AGENT_CAPABILITIES: "ride-fare-estimate,ride-options-comparison,rideshare-trip-planning,uber-ride-handoff,ride-preference-learning"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      BOT_UI_LABEL: Rides
+      BOT_UI_URL: /cockpit/?app=rides
+      BOT_UI_ICON: "codicon codicon-rocket"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      # CLI bind-mounted so oshal-uber-rides.js iterations apply without a rebuild.
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── ADR-083 knowledge-owner nodes ────────────────────────────────────────────
+  # Every per-screen concierge is a CLASSIC any-bot node (own container, heartbeat,
+  # mesh) so the queue manager's BID_REQUEST call-out can reach it — the same
+  # promotion rides/eats got in ADR-050 (2026-06-20). Jarvis is the front-of-screen
+  # concierge everywhere; these bots exist to OWN their domain in the swarm, not to
+  # live inline on the api. All run CODEX (the first-class bot-node harness; also
+  # immune to the ~8h Claude OAuth expiry that 401-escalated task tickets).
+  # AGENT_CAPABILITIES carries the CLEANED domain tags (ADR-083 Phase 2 — no generic
+  # cross-domain tags) — it feeds the runtime identity the bid self-score uses.
+
+  shopping-bot:
+    <<: *bot-common
+    container_name: oshal-local-shopping-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: shopping-concierge
+      AGENT_ID: b0070000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/shopping-concierge.yaml
+      AGENT_CAPABILITIES: "product-search,retail-price-comparison,shopping-list-management,cross-retailer-cart-building,rollback-deal-tracking,retail-checkout-handoff,purchase-preference-memory"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  spotify-bot:
+    <<: *bot-common
+    container_name: oshal-local-spotify-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: spotify-concierge
+      AGENT_ID: b00a0000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/spotify-concierge.yaml
+      AGENT_CAPABILITIES: "spotify-music-search,spotify-playlist-building,music-recommendation,music-taste-learning,now-playing-awareness"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  travel-bot:
+    <<: *bot-common
+    container_name: oshal-local-travel-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: travel-concierge
+      AGENT_ID: b00c0000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/travel-concierge.yaml
+      AGENT_CAPABILITIES: "flight-search,hotel-search,car-search,fare-price-intelligence,fare-watch,trip-itinerary-planning,traveller-preference-learning,booking-handoff"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  movies-bot:
+    <<: *bot-common
+    container_name: oshal-local-movies-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: movies-concierge
+      AGENT_ID: b00b0000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/movies-concierge.yaml
+      AGENT_CAPABILITIES: "movie-tv-discovery,title-search,where-to-watch-streaming,watchlist-curation,movie-taste-learning,showtimes-handoff"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # (career-advisor-bot removed 2026-07-21 — Career Hunter carved to its store add-on; cb…0002 retired.)
+
+  social-writer-bot:
+    <<: *bot-common
+    container_name: oshal-local-social-writer-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: social-writer
+      AGENT_ID: a0000000-0000-0000-0000-000000000040
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/social-writer.yaml
+      AGENT_CAPABILITIES: "post-drafting,voice-matching,content-refinement,personal-branding,linkedin-post-drafting,x-post-drafting,facebook-page-post-drafting,caption-writing,hook-and-cta-crafting"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  storage-bot:
+    <<: *bot-common
+    container_name: oshal-local-storage-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: storage-assistant
+      AGENT_ID: a0000000-0000-0000-0000-000000000041
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/storage-assistant.yaml
+      AGENT_CAPABILITIES: "storage-target-config,github-repo-create,file-store-listing,storage-backend-routing,storage-management"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  deck-builder-bot:
+    <<: *bot-common
+    container_name: oshal-local-deck-builder-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: deck-builder
+      AGENT_ID: a0000000-0000-0000-0000-000000000042
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/deck-builder.yaml
+      AGENT_CAPABILITIES: "presentation-outline,slide-structure,deck-template-recommendation,pitch-deck-drafting,deck-guidance"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  finance-bot:
+    <<: *bot-common
+    container_name: oshal-local-finance-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: finance-analyst
+      AGENT_ID: a0000000-0000-0000-0000-000000000044
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/finance-analyst.yaml
+      AGENT_CAPABILITIES: "personal-finance-brief,net-worth-analysis,account-balance-aggregation,portfolio-holdings-review,spending-and-cashflow-analysis,budget-tracking"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  trading-bot:
+    <<: *bot-common
+    container_name: oshal-local-trading-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: trading-analyst
+      AGENT_ID: a0000000-0000-0000-0000-000000000046
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/trading-analyst.yaml
+      AGENT_CAPABILITIES: "market-signal-analysis,trade-decision,decision-tree-justification,portfolio-audit,autopilot-pnl,order-forensics,risk-gate-forensics"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  identity-bot:
+    <<: *bot-common
+    container_name: oshal-local-identity-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: identity-advisor
+      AGENT_ID: a0000000-0000-0000-0000-000000000045
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/identity-advisor.yaml
+      AGENT_CAPABILITIES: "connection-inventory-review,access-health-review,expired-login-detection,duplicate-account-detection,stale-connection-detection,missing-connector-suggestion,default-account-check"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # The low-confidence FALLBACK owner (ADR-083 §5): when no knowledge owner claims a
+  # task, it lands here — a general, tool-capable doer — never on project-manager (a
+  # planner). Persona everything-default.yaml (agent name: general-bot).
+  general-bot:
+    <<: *bot-common
+    container_name: oshal-local-general-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: general-bot
+      AGENT_ID: a0000000-0000-0000-0000-000000000099
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/everything-default.yaml
+      AGENT_CAPABILITIES: "general-assistance,cross-domain-synthesis,web-research,overflow-fallback"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Home Bot — Smart-home (home) bundle device controller ───────────────────
+  # A first-class oshal-bot node (own container, heartbeat, mesh). Runs on CODEX so
+  # it can shell out to scripts/oshal-smartthings.js, reading the per-user SmartThings
+  # connector token (oshal_connections) to read + command devices/scenes. Locally the
+  # local registry also runs this bot inline on oshal-api; this dedicated service is the
+  # full-node path. See swarm-apps/home.yaml + ai-lab/bot-personas/home-bot.yaml.
+  # (career-hunter bot-node removed 2026-07-21 — Career Hunter carved to its store add-on;
+  #  the career-hunter package registers cb…0001 with its own vendored engine.)
+
+  home-bot:
+    <<: *bot-common
+    container_name: oshal-local-home-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: home-bot
+      AGENT_ID: d0000000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/home-bot.yaml
+      AGENT_CAPABILITIES: "smart-home-control,smartthings,device-control,scene-execution,home-automation"
+      # CODEX: its sandbox shells out to scripts/oshal-smartthings.js (claude-code-as-root
+      # cannot auto-approve bash). Overrides the *bot-env default.
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      # Reads the per-user SmartThings token: decrypts oshal_connections (DATABASE_URL +
+      # SESSION_SECRET from *bot-env). Per-user scoping via OSHAL_USER_SUB at dispatch.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      BOT_UI_LABEL: Smart Home
+      BOT_UI_URL: /cockpit/?app=home
+      BOT_UI_ICON: "codicon codicon-home"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      # CLI tools bind-mounted so home-bot iterations (index/scenes/prefs verbs)
+      # apply without an image rebuild — mirrors the bot-personas/config-seed pattern.
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - home-output:/app/output
+      # Bot-owned per-user store (ADR-036): the home-bot OWNS + writes the device
+      # index / scenes / prefs here; the api reads it :ro for the cheap surface view.
+      - home-data:/app/home-data:rw
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Cloud-Ops Bot — DevOps/Cloud (GCP) worker ───────────────────────────────
+  # A first-class oshal-bot node. CODEX: shells out to scripts/oshal-gcp.js (the
+  # API-based gcloud replacement) with the signed-in user's GCP web-OAuth token.
+  # See swarm-apps/cloud.yaml + ai-lab/bot-personas/cloud-ops-bot.yaml.
+  cloud-ops-bot:
+    <<: *bot-common
+    container_name: oshal-local-cloud-ops-bot
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: cloud-ops-bot
+      AGENT_ID: d0000000-0000-0000-0000-000000000002
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/cloud-ops-bot.yaml
+      AGENT_CAPABILITIES: "gcp-inventory,gcp-projects,gcp-compute,gcp-enabled-apis,gcp-cost-optimization,gcp-health-audit,gcp-iam-audit"
+      FORCE_LLM_PROVIDER: openai-codex
+      FORCE_LLM_MODEL: gpt-5.5
+      # Reads the per-user GCP token (DATABASE_URL + SESSION_SECRET) and refreshes it
+      # via the GCP OAuth client creds when expired (oshal-gcp.js).
+      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      GCP_CLIENT_ID: ${GCP_CLIENT_ID:-}
+      GCP_CLIENT_SECRET: ${GCP_CLIENT_SECRET:-}
+      BOT_UI_LABEL: Cloud
+      BOT_UI_URL: /cockpit/?app=cloud
+      BOT_UI_ICON: "codicon codicon-cloud"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      # CLI tools bind-mounted so oshal-gcp.js iterations apply without an image rebuild.
+      - ./scripts:/app/scripts:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - cloud-ops-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # -- Issue-RCA standard incident bots (per swarm-apps/issue-rca.yaml) --
+  rca-specialist:
+    profiles:
+      - incident
+    <<: *bot-common
+    container_name: oshal-local-rca-specialist
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: rca-specialist
+      AGENT_ID: a0000000-0000-0000-0000-000000000016
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/rca-specialist.yaml
+      AGENT_CAPABILITIES: "debugging,investigation,root-cause,incident,analysis,troubleshooting"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - rca-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  incident-response-bot:
+    profiles:
+      - incident
+    <<: *bot-common
+    container_name: oshal-local-incident-response
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: incident-response-bot
+      AGENT_ID: a0000000-0000-0000-0000-00000000000b
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/incident-response-bot.yaml
+      AGENT_CAPABILITIES: "incident-response,triage,runbook-execution,stakeholder-communication"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - incident-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  incident-remediation-bot:
+    profiles:
+      - incident
+    <<: *bot-common
+    container_name: oshal-local-incident-remediation
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: incident-remediation-bot
+      AGENT_ID: e0000000-0000-0000-0000-000000000100
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/incident-remediation-bot.yaml
+      AGENT_CAPABILITIES: "incident-investigation,root-cause-analysis,remediation-scripting,topology-analysis,log-analysis,infrastructure-inspection"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - incident-remediation-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Cloudflare Tunnel (profile: tunnel) ─────────────────────────────────────
+  # Exposes the OSHAL api at a public domain (e.g. https://littlemonster.example.com)
+  # so real OIDC login (Google/Microsoft) works — the IdP redirects the browser to
+  # APP_URL/callback, which must be publicly reachable.
+  #
+  # Setup (one-time, in YOUR Cloudflare account — token-based tunnel):
+  #   1. Cloudflare Zero Trust → Networks → Tunnels → Create a tunnel (or reuse one).
+  #   2. Copy the tunnel token → set CLOUDFLARE_TUNNEL_TOKEN in .env.
+  #   3. Add a Public Hostname on that tunnel:
+  #        Hostname: littlemonster.example.com
+  #        Service:  HTTP  →  oshal-api:5000        (cloudflared shares the oshal network)
+  #      Cloudflare manages the DNS CNAME automatically.
+  #   4. Start it: docker compose -f docker-compose.oshal-local.yml --profile tunnel up -d cloudflared
+  cloudflared:
+    profiles:
+      - tunnel
+    image: cloudflare/cloudflared:latest
+    container_name: oshal-local-cloudflared
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    restart: unless-stopped
+    networks:
+      - oshal
+    depends_on:
+      oshal-api:
+        condition: service_healthy
+
+
+volumes:
+  # Bot-owned per-user Smart Home store (device index / scenes / prefs / history).
+  # Shared: home-bot writes (:rw), api reads for the surface (:ro).
+  home-data:
+  oshal_db_data:
+  oshal_tsdb_data:
+  oshal_redis_data:
+  oshal_chroma_data:
+  oshal_arango_data:
+  # Downloaded local models (Plan D). Survives stack recreation so a model is pulled once.
+  oshal_ollama_models:
+  oshal_workspace:
+  api-output:
+  tm-output:
+  codedev-output:
+  devops-output:
+  self-healing-output:
+  reviewer-output:
+  docwriter-output:
+  rca-output:
+  incident-output:
+  graph-output:
+  research-output:
+  testerbot-output:
+  tester-output:
+  architect-output:
+  incident-remediation-output:
+  queue-bot-output:
+  facebook-output:
+  email-output:
+  weather-output:
+  home-output:
+  # oshal-developer's own clone of the platform repo (ADR-081) — named volume so the
+  # clone survives recreates and lives on the VM's ext4 (fast npm/tsc), never the host tree.
+  oshal-dev-repo:
+  oshal-developer-output:
+  cloud-ops-output:
+
+networks:
+  oshal:
+    driver: bridge

@@ -1,0 +1,25 @@
+provider: loggly
+displayName: Loggly
+version: 1.0.0
+baseUrl: ${env:LOGGLY_BASE_URL:-https://yourcompany.loggly.com}/apiv2
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: fields
+    tool: loggly-fields
+    method: GET
+    path: /fields
+  - name: customer
+    tool: loggly-customer
+    method: GET
+    path: /customer
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/loggly.com.ico

@@ -1,0 +1,42 @@
+provider: telegram
+displayName: Telegram
+version: 1.0.0
+baseUrl: https://api.telegram.org
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: get-me
+    tool: telegram-get-me
+    method: GET
+    path: /bot{token}/getMe
+  - name: get-updates
+    tool: telegram-get-updates
+    method: GET
+    path: /bot{token}/getUpdates
+  - name: get-chat
+    tool: telegram-get-chat
+    method: GET
+    path: /bot{token}/getChat
+    query: chat_id
+  - name: get-chat-member-count
+    tool: telegram-get-chat-member-count
+    method: GET
+    path: /bot{token}/getChatMemberCount
+    query: chat_id
+  - name: get-my-commands
+    tool: telegram-get-my-commands
+    method: GET
+    path: /bot{token}/getMyCommands
+metadata:
+  description: "Poll a Telegram bot for updates and inspect its chats, member counts, and registered commands via the Bot API."
+  category: "Communications"
+  icon: telegram
+  iconTitle: Telegram
+  iconSource: simple-icons
+  iconVerified: true

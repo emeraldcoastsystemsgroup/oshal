@@ -1,0 +1,773 @@
+/*
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Reworked the cockpit right rail to host an embedded native /chat workspace instead of the placeholder welcome/input shell
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added explicit cockpit-side workspace action buttons so the embedded native chat controls are reachable in the right rail
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Tightened right-rail workspace action spacing so the chat shell feels less bulky around the embedded swarm-bot window
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Switched cockpit workspace controls to icon-first buttons for denser right-rail usability
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Restored compact rounded-rectangle workspace action icons to match prior cockpit control shape
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log attribution for governance compliance during engineering-screen retrofit work
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Added workspace-focus header styling so cockpit tool launches can expand the embedded bot workspace cleanly
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Added subtle workspace-focus emphasis for the width-toggle control
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added a draggable workspace-focus resize edge so heavy tools can be fine-tuned inside cockpit
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Deleted the .chat-expand-btn tab/FAB styles — the Jarvis orb is the sole standing assistant affordance on both desktop and mobile
+ */
+
+/* ===== Chat Panel · Apple Liquid Glass ===== */
+
+.chat-panel {
+  width: var(--panel-width-chat);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  transition: width var(--transition-normal),
+              opacity var(--transition-normal),
+              margin var(--transition-normal);
+  position: relative;
+  backdrop-filter: blur(var(--glass-blur, 20px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px));
+  box-shadow: var(--panel-shadow, 0 8px 32px rgba(0, 0, 0, 0.3));
+  overflow: hidden;
+  min-height: 0; /* Allow flex shrink */
+  /* Fill the flex parent's height at first paint. Without this the embedded
+     chat iframe's height:100% is ambiguous until a reflow (a 1px window resize),
+     which left a stray scrollbar on initial load. */
+  height: 100%;
+}
+
+.chat-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--glass-highlight, linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 50%));
+  pointer-events: none;
+  z-index: 0;
+}
+
+.chat-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.chat-panel.workspace-focus-active {
+  border-color: color-mix(in srgb, var(--accent-primary) 34%, var(--border-color));
+}
+
+.workspace-focus-resize-handle {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 0;
+  width: 18px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.16) 0%, rgba(0, 0, 0, 0) 100%);
+  cursor: ew-resize;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+  z-index: 3;
+}
+
+.workspace-focus-resize-grip {
+  width: 4px;
+  height: 88px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary) 55%, rgba(255, 255, 255, 0.32));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--accent-primary) 26%, transparent);
+}
+
+.chat-panel.workspace-focus-active #toggleWorkspaceFocusWidthBtn {
+  border-color: color-mix(in srgb, var(--accent-primary) 36%, var(--glass-border));
+}
+
+.chat-panel.workspace-focus-active .workspace-focus-resize-handle {
+  display: inline-flex;
+}
+
+.chat-panel.workspace-focus-active .workspace-focus-resize-handle:hover,
+.chat-panel.workspace-focus-active .workspace-focus-resize-handle.dragging,
+body.resizing .workspace-focus-resize-handle {
+  opacity: 1;
+}
+
+.chat-panel.workspace-focus-active .workspace-focus-resize-handle:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 100%);
+}
+
+.chat-panel.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden;
+  opacity: 0;
+  padding: 0;
+  border: none;
+  margin: 0;
+}
+
+/* The right-edge expand tab is gone: the Jarvis orb (jarvis-orb.js) is the one
+   persistent assistant affordance, and a second floating control on the same edge
+   read as a duplicate. The rail opens contextually via app.js toggleChatPanel. */
+
+/* ============================================================================
+   MOBILE (<=640px) — chat is NOT a side rail; it's a full-screen slide-up sheet.
+   Reuses the existing .collapsed toggle (app.js toggleChatPanel): collapsed =>
+   sheet slid off the bottom; open => sheet covers the screen. This is what frees
+   the main content to use the full width on a phone.
+   ========================================================================== */
+@media (max-width: 640px) {
+  .chat-panel {
+    position: fixed;
+    inset: 0;
+    width: 100% !important;
+    max-width: none;
+    height: 100%;
+    z-index: 320;
+    border-radius: 0;
+    transform: translateY(0);
+    transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* Collapsed on mobile = slid fully off the bottom (override the desktop
+     width:0/opacity:0 collapse, which would otherwise just shrink it in flow). */
+  .chat-panel.collapsed {
+    width: 100% !important;
+    min-width: 0 !important;
+    opacity: 1;
+    border: none;
+    transform: translateY(100%);
+  }
+  /* Don't let desktop workspace-focus pin a fixed sheet width on mobile. */
+  .cockpit-body.workspace-focus-mode .chat-panel {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+/* ---------- Messages ---------- */
+
+/* ---------- Chat Selectors (Bot/Ticket/Tools) ---------- */
+.chat-selectors {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-select {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239898b0' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+  transition: all var(--transition-fast);
+}
+
+.chat-select:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.chat-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.chat-toolbar {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.chat-toolbar .btn-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.chat-toolbar .btn-icon:hover {
+  color: var(--accent-primary);
+  background: var(--glass-bg-heavy);
+}
+
+.panel-title-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel-kicker {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, var(--glass-border));
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--glass-bg-heavy));
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.chat-native-frame-shell {
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-native-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+}
+
+.chat-workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.workspace-action-btn {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.workspace-action-btn:hover {
+  color: var(--text-primary);
+  background: var(--glass-bg-heavy);
+  border-color: var(--border-color-hover);
+}
+
+.workspace-action-icon {
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.workspace-action-icon i {
+  font-size: 14px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  min-height: 0; /* Critical: prevents flex child from overflowing parent */
+}
+
+.chat-welcome {
+  text-align: center;
+  padding: 20px 16px;
+  color: var(--text-secondary);
+}
+
+.chat-welcome h3 {
+  color: var(--text-primary);
+  margin: 12px 0 8px;
+}
+
+.chat-welcome .welcome-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.06));
+  backdrop-filter: blur(var(--glass-blur-light, 12px));
+  -webkit-backdrop-filter: blur(var(--glass-blur-light, 12px));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  box-shadow: var(--card-shadow, var(--shadow-sm));
+}
+
+/* ---------- Quick Actions ---------- */
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.quick-action {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-light);
+  border-top-color: var(--border-highlight);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-normal);
+}
+
+.quick-action i {
+  font-size: 16px;
+  color: var(--accent-primary);
+}
+
+.quick-action:hover {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border-color: rgba(255, 255, 255, 0.25);
+  border-top-color: rgba(255, 255, 255, 0.4);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+/* ---------- Chat Bubbles ---------- */
+
+.chat-message {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-message.user {
+  align-items: flex-end;
+}
+
+.chat-message.user .msg-bubble {
+  background: var(--accent-gradient);
+  color: white;
+  border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg);
+  padding: 12px 16px;
+  max-width: 85%;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  box-shadow: 0 4px 16px var(--accent-glow, rgba(99, 102, 241, 0.25)),
+              inset 0 1px 1px rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.bot .msg-bubble {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+  backdrop-filter: blur(20px) saturate(120%);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+  color: var(--text-primary);
+  border: 1px solid var(--border-light);
+  border-top-color: var(--border-highlight);
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px;
+  padding: 12px 16px;
+  max-width: 85%;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  box-shadow: var(--shadow-sm);
+}
+
+.msg-sender {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
+/* ---------- Typing Indicator ---------- */
+
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 10px 14px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.06));
+  backdrop-filter: blur(var(--glass-blur-light, 12px));
+  -webkit-backdrop-filter: blur(var(--glass-blur-light, 12px));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  border-radius: 16px;
+  width: fit-content;
+}
+
+.typing-indicator .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: bounce 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.typing-indicator .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator .dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.6; }
+  40% { transform: translateY(-8px); opacity: 1; }
+}
+
+/* ---------- Chat Input ---------- */
+
+.chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.chat-input-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
+  backdrop-filter: blur(24px) saturate(120%);
+  -webkit-backdrop-filter: blur(24px) saturate(120%);
+  border: 1px solid var(--border-light);
+  border-top-color: var(--border-highlight);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05),
+              var(--shadow-sm);
+  transition: all var(--transition-normal);
+}
+
+.chat-input-wrapper:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-glow, rgba(99, 102, 241, 0.2)),
+              0 0 20px var(--accent-glow, rgba(99, 102, 241, 0.1));
+}
+
+.chat-input-wrapper textarea {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  resize: none;
+  max-height: 120px;
+  line-height: 1.5;
+}
+
+/* ---------- Send Button ---------- */
+
+.send-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-gradient);
+  border: none;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: var(--transition-fast);
+  opacity: 0.5;
+}
+
+.send-btn:not(:disabled) {
+  opacity: 1;
+  animation: send-glow 2s ease-in-out infinite;
+}
+
+.send-btn:not(:disabled):hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 16px var(--accent-glow, rgba(99, 102, 241, 0.35));
+}
+
+@keyframes send-glow {
+  0%, 100% { box-shadow: 0 0 0 rgba(99, 102, 241, 0); }
+  50%      { box-shadow: 0 0 14px var(--accent-glow, rgba(99, 102, 241, 0.3)); }
+}
+
+/* ===== Test Mode · Banner & Button ===== */
+
+.test-mode-btn.active {
+  color: #22d3ee;
+  background: rgba(34, 211, 238, 0.15);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+}
+
+.test-mode-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #22d3ee;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.08) 0%, rgba(34, 211, 238, 0.02) 100%);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ─── Streaming API Request Cards ─────────────────────────── */
+.api-request-card {
+  margin: 8px 0 12px 0;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+  background: var(--glass-bg, rgba(255,255,255,0.04));
+  backdrop-filter: blur(12px);
+  transition: border-color 0.3s ease;
+}
+
+.api-request-card .codicon-loading {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.test-mode-banner.success {
+  color: #34d399;
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.08) 0%, rgba(52, 211, 153, 0.02) 100%);
+  border-color: rgba(52, 211, 153, 0.2);
+}
+
+/* ===== Rendered Message Bubbles (MessageRenderer output) ===== */
+
+.rendered-message .rendered-bubble {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+  backdrop-filter: blur(20px) saturate(120%);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+  border: 1px solid var(--border-light);
+  border-top-color: var(--border-highlight);
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px;
+  padding: 14px 16px;
+  max-width: 100%;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* ── Thinking / Reasoning blocks ── */
+.rendered-bubble .thinking-block {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: var(--font-size-xs);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, transparent 100%);
+  border: 1px solid var(--border-color);
+  transition: background var(--transition-fast);
+}
+
+.rendered-bubble .thinking-block:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ── Command execution blocks ── */
+.rendered-bubble .command-box {
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--border-color) !important;
+  overflow: hidden !important;
+  background: var(--bg-primary, #0d0f14) !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.rendered-bubble .command-box pre {
+  margin: 0;
+  padding: 10px 14px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: transparent;
+  overflow-x: auto;
+}
+
+.rendered-bubble .command-box code {
+  font-family: inherit;
+  background: none;
+  padding: 0;
+}
+
+/* ── File path display ── */
+.rendered-bubble div[style*="border-radius: 3px"] {
+  border-radius: var(--radius-sm) !important;
+  background: var(--bg-primary, rgba(0, 0, 0, 0.3)) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-secondary);
+  transition: background var(--transition-fast);
+}
+
+.rendered-bubble div[style*="border-radius: 3px"]:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* ── API request badge ── */
+.rendered-bubble .api-cost-badge {
+  background: var(--accent-gradient);
+  color: white;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px var(--accent-glow, rgba(99, 102, 241, 0.2));
+}
+
+/* ── Codicon overrides for glass theme ── */
+.rendered-bubble .codicon {
+  font-family: 'codicon';
+  color: var(--text-secondary);
+}
+
+.rendered-bubble .codicon-check {
+  color: #34d399;
+}
+
+.rendered-bubble .codicon-error {
+  color: #f87171;
+}
+
+.rendered-bubble .codicon-loading {
+  color: var(--accent-primary);
+}
+
+.rendered-bubble .codicon-terminal {
+  color: #a78bfa;
+}
+
+.rendered-bubble .codicon-file-code,
+.rendered-bubble .codicon-new-file,
+.rendered-bubble .codicon-edit {
+  color: #60a5fa;
+}
+
+.rendered-bubble .codicon-folder-opened {
+  color: #fbbf24;
+}
+
+.rendered-bubble .codicon-search {
+  color: #f472b6;
+}
+
+/* ── Code blocks inside rendered bubbles ── */
+.rendered-bubble pre {
+  background: var(--bg-primary, rgba(0, 0, 0, 0.3));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rendered-bubble code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.rendered-bubble p code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ── Markdown in rendered bubbles ── */
+.rendered-bubble strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.rendered-bubble em {
+  color: var(--text-secondary);
+}
+
+.rendered-bubble h1, .rendered-bubble h2, .rendered-bubble h3, .rendered-bubble h4 {
+  color: var(--text-primary);
+  margin: 12px 0 6px;
+  font-family: var(--font-family-display);
+}
+
+.rendered-bubble h2 { font-size: 16px; }
+.rendered-bubble h3 { font-size: 14px; }
+
+.rendered-bubble ul, .rendered-bubble ol {
+  padding-left: 20px;
+  margin: 6px 0;
+}
+
+.rendered-bubble li {
+  margin: 3px 0;
+}
+
+.rendered-bubble blockquote {
+  border-left: 3px solid var(--accent-primary);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* ── User message inside rendered (user_feedback) ── */
+.rendered-bubble .user-message {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+/* ── Command output notch ── */
+.rendered-bubble .command-output-notch {
+  background: var(--text-muted) !important;
+  border-radius: 3px 3px 6px 6px !important;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.rendered-bubble .command-output-notch:hover {
+  opacity: 1 !important;
+}
+
+/* ── Pulse animation for running commands ── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

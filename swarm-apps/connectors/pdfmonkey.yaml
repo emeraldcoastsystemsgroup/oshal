@@ -1,0 +1,25 @@
+provider: pdfmonkey
+displayName: PDFMonkey
+version: 1.0.0
+baseUrl: https://api.pdfmonkey.io/api/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-documents
+    tool: pdfmonkey-list-documents
+    method: GET
+    path: /documents
+  - name: list-document-cards
+    tool: pdfmonkey-list-document-cards
+    method: GET
+    path: /document_cards
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/pdfmonkey.io.ico

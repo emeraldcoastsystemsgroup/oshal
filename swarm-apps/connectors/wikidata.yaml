@@ -1,0 +1,35 @@
+provider: wikidata
+displayName: Wikidata
+version: 1.0.0
+baseUrl: https://www.wikidata.org/w/api.php
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: get-entities
+    tool: wikidata-get-entities
+    method: GET
+    path: /
+    query:
+      action: wbgetentities
+      ids: '{ids}'
+      format: json
+  - name: search-entities
+    tool: wikidata-search-entities
+    method: GET
+    path: /
+    query:
+      action: wbsearchentities
+      search: '{q}'
+      language: en
+      format: json
+metadata:
+  icon: wikidata
+  iconTitle: Wikidata
+  iconSource: simple-icons
+  iconVerified: true

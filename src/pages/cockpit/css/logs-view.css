@@ -1,0 +1,322 @@
+/* Logs View — searchable structured log viewer
+ * Glass-themed, consistent with operations.css design language.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com
+ */
+
+.logs-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0;
+  color: var(--text-primary, #e2e8f0);
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+}
+
+/* ── Header ───────────────────────────────────── */
+
+.logs-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.logs-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.logs-title i { margin-right: 8px; opacity: 0.7; }
+
+/* ── Filters ──────────────────────────────────── */
+
+.logs-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.logs-filter-group { display: flex; align-items: center; }
+
+.logs-input,
+.logs-select {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-primary, #e2e8f0);
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.logs-input:focus,
+.logs-select:focus {
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+.logs-search { width: 160px; }
+.logs-ticket { width: 120px; font-family: monospace; font-size: 11px; }
+.logs-select { min-width: 100px; cursor: pointer; }
+
+/* ── Range buttons ────────────────────────────── */
+
+.logs-range-group {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.logs-range-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.logs-range-btn:hover { color: rgba(255, 255, 255, 0.7); }
+.logs-range-btn.active { color: white; background: rgba(139, 92, 246, 0.25); }
+
+/* ── Action buttons ───────────────────────────── */
+
+.logs-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.logs-action-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.logs-action-btn:hover { color: white; border-color: rgba(255, 255, 255, 0.2); }
+.logs-action-btn.active { color: #a78bfa; border-color: rgba(139, 92, 246, 0.3); }
+
+/* ── Status bar ───────────────────────────────── */
+
+.logs-status {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  padding: 4px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  flex-shrink: 0;
+}
+
+/* ── Body ─────────────────────────────────────── */
+
+.logs-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.logs-loading,
+.logs-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 13px;
+}
+
+/* ── Table rows ───────────────────────────────── */
+
+.logs-table {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.logs-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.logs-row:hover { background: rgba(255, 255, 255, 0.02); }
+
+.logs-row-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 24px;
+  min-height: 28px;
+}
+
+.logs-time {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 10.5px;
+  flex-shrink: 0;
+  min-width: 85px;
+}
+
+.logs-level {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  min-width: 40px;
+  text-align: center;
+}
+
+.logs-level-debug { color: #6b7280; background: rgba(107, 114, 128, 0.12); }
+.logs-level-info  { color: #60a5fa; background: rgba(96, 165, 250, 0.12); }
+.logs-level-warn  { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+.logs-level-error { color: #ef4444; background: rgba(239, 68, 68, 0.15); }
+.logs-level-fatal { color: #ef4444; background: rgba(239, 68, 68, 0.25); font-weight: 700; }
+.logs-level-trace { color: #6b7280; background: rgba(107, 114, 128, 0.08); }
+
+.logs-module {
+  color: rgba(167, 139, 250, 0.7);
+  flex-shrink: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logs-msg {
+  color: rgba(255, 255, 255, 0.75);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Expanded detail ──────────────────────────── */
+
+.logs-row-detail {
+  display: none;
+  padding: 8px 24px 12px 120px;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.logs-row.expanded .logs-row-detail {
+  display: flex;
+}
+
+.logs-row.expanded {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.logs-detail-field {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.logs-detail-key {
+  color: rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+}
+
+.logs-detail-key::after { content: ':'; }
+
+.logs-detail-val {
+  color: rgba(255, 255, 255, 0.65);
+  word-break: break-all;
+}
+
+.logs-detail-ticket {
+  color: #60a5fa;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(96, 165, 250, 0.3);
+}
+
+.logs-detail-ticket:hover {
+  text-decoration-color: rgba(96, 165, 250, 0.7);
+}
+
+/* ── Mobile (≤640px) ──────────────────────────── */
+
+@media (max-width: 640px) {
+  /* Reduce header padding so content fits 390px */
+  .logs-header {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  /* Let filter inputs fill the row width */
+  .logs-filters {
+    width: 100%;
+  }
+
+  /* Prevent iOS auto-zoom on focus; let inputs stretch */
+  .logs-input,
+  .logs-select {
+    font-size: 16px;
+  }
+
+  .logs-search {
+    width: 100%;
+    flex: 1 1 120px;
+  }
+
+  .logs-ticket {
+    width: 100%;
+    flex: 1 1 100px;
+  }
+
+  .logs-select {
+    min-width: 80px;
+  }
+
+  /* Move actions off auto-margin so they wrap naturally */
+  .logs-actions {
+    margin-left: 0;
+  }
+
+  /* Reduce status bar side padding */
+  .logs-status {
+    padding: 4px 12px;
+  }
+
+  /* Reduce row padding and allow message to wrap */
+  .logs-row-summary {
+    padding: 6px 12px;
+    flex-wrap: wrap;
+    min-height: 36px;
+  }
+
+  .logs-msg {
+    white-space: normal;
+    word-break: break-word;
+    flex-basis: 100%;
+  }
+
+  /* Collapse the deep left indent in expanded detail */
+  .logs-row-detail {
+    padding: 8px 12px 12px 12px;
+  }
+}

@@ -1,0 +1,36 @@
+provider: lemonsqueezy
+displayName: Lemon Squeezy
+version: 1.0.0
+baseUrl: https://api.lemonsqueezy.com/v1
+auth:
+  type: oauth2
+headers:
+  Accept: application/vnd.api+json
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: stores
+    tool: lemonsqueezy-stores
+    method: GET
+    path: /stores
+  - name: products
+    tool: lemonsqueezy-products
+    method: GET
+    path: /products
+  - name: orders
+    tool: lemonsqueezy-orders
+    method: GET
+    path: /orders
+  - name: subscriptions
+    tool: lemonsqueezy-subscriptions
+    method: GET
+    path: /subscriptions
+metadata:
+  icon: lemonsqueezy
+  iconTitle: Lemon Squeezy
+  iconSource: simple-icons
+  iconVerified: true

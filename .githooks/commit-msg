@@ -1,0 +1,18 @@
+#!/bin/sh
+# ------------------------------------------------------------------------------
+# OSHAL guardrail: BAN the auto-sweep / wip-snapshot commit pattern.
+# These commits ("wip: preserve before trunk consolidation", "snapshot live-tree
+# work (auto-preserved)", "final preserve...") snapshot whatever is on disk —
+# including conflicts and half-done work — and pollute main. Commit complete,
+# named units of work instead. See CLAUDE.md RULE 0.
+# ------------------------------------------------------------------------------
+msg=$(cat "$1")
+case "$msg" in
+  *"preserve before trunk"*|*"snapshot live-tree"*|*"auto-preserved"*|*"final preserve"*|*"preserve before main"*|*"trunk consolidation"*)
+    echo "" >&2
+    echo "COMMIT BLOCKED — auto-sweep / wip-preserve commit pattern is banned." >&2
+    echo "Do not snapshot the live tree. Commit a complete, named unit of work." >&2
+    echo "(see CLAUDE.md RULE 0)" >&2
+    exit 1 ;;
+esac
+exit 0

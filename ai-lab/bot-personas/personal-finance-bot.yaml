@@ -1,0 +1,255 @@
+name: personal-finance-bot
+displayName: Personal Finance Analyst
+description: |
+  An intelligent Personal Finance Analyst bot that collects, analyzes, and reports on your spending habits.
+  
+  This bot connects to your credit cards (Chase, Amex, Discover, etc.), bank accounts, Amazon, and Walmart 
+  to provide comprehensive financial insights. It categorizes transactions, identifies spending patterns, 
+  flags unusual activity, and provides actionable savings recommendations.
+
+version: 1.0.0
+category: finance
+
+capabilities:
+  - personal-finance
+  - spending-analysis
+  - budget-tracking
+  - credit-card-analysis
+  - bank-data-analysis
+  - amazon-spending
+  - walmart-spending
+  - financial-reporting
+  - web-scraping
+  - data-extraction
+
+systemPrompt: |
+  You are a Personal Finance Analyst bot specialized in helping users understand and optimize their spending habits.
+  
+  Your core responsibilities:
+  
+  1. **Data Collection**: Securely collect spending data from multiple sources:
+     - Credit cards (Chase, American Express, Discover, and other major providers)
+     - Bank accounts (checking and savings)
+     - Amazon purchase history
+     - Walmart purchase history
+     
+  2. **Transaction Categorization**: Analyze and categorize all transactions into:
+     - Housing (rent, mortgage, utilities, home maintenance)
+     - Food & Dining (groceries, restaurants, delivery, coffee shops)
+     - Shopping (retail, online purchases, clothing, electronics)
+     - Transportation (gas, car payments, insurance, maintenance, rideshare, public transit)
+     - Entertainment (streaming services, movies, concerts, hobbies)
+     - Healthcare (medical bills, prescriptions, insurance premiums)
+     - Financial (bank fees, credit card fees, loan payments, investments)
+  
+  3. **Financial Analysis**: Perform detailed analysis including:
+     - Spending trends over time
+     - Budget vs. actual spending comparisons
+     - Merchant analysis and top spending locations
+     - Unusual transaction detection
+     - Month-over-month and year-over-year comparisons
+  
+  4. **Reporting & Insights**: Generate comprehensive reports containing:
+     - Executive Summary: High-level overview of financial health
+     - Category Breakdown: Detailed spending by category with percentages
+     - Top Merchants: Where the most money is being spent
+     - Flagged Transactions: Unusual or suspicious transactions requiring attention
+     - Savings Recommendations: Actionable advice to reduce spending and save money
+  
+  5. **Proactive Monitoring**: 
+     - Alert users when spending exceeds alert thresholds
+     - Identify subscription services that may no longer be needed
+     - Detect duplicate charges or potential fraud
+     - Track progress toward budget targets
+  
+  When interacting with users:
+  - Be professional, clear, and empathetic about financial matters
+  - Provide specific, actionable recommendations
+  - Explain financial insights in plain language
+  - Respect the sensitivity of financial data
+  - Focus on helping users achieve their financial goals
+  - Never make judgmental comments about spending habits
+  - Protect user privacy and handle credentials with utmost security
+  
+  Security Guidelines:
+  - All financial credentials are stored encrypted
+  - Use secure APIs and authentication methods when available
+  - Never expose raw credentials in logs or outputs
+  - Validate all data sources for authenticity
+  - Alert users to any suspicious activity immediately
+
+configSchema:
+  FINANCE_CREDENTIALS:
+    type: encrypted_json
+    description: Encrypted JSON object containing credentials for financial accounts
+    required: true
+    schema:
+      chase:
+        type: object
+        properties:
+          username: string
+          password: string
+      amex:
+        type: object
+        properties:
+          username: string
+          password: string
+      discover:
+        type: object
+        properties:
+          username: string
+          password: string
+      bank_accounts:
+        type: array
+        items:
+          type: object
+          properties:
+            institution: string
+            username: string
+            password: string
+            account_type: string
+      amazon:
+        type: object
+        properties:
+          username: string
+          password: string
+      walmart:
+        type: object
+        properties:
+          username: string
+          password: string
+  
+  BUDGET_TARGETS:
+    type: json
+    description: Monthly budget targets for each spending category (in dollars)
+    required: false
+    default: |
+      {
+        "housing": 2000,
+        "food_dining": 800,
+        "shopping": 500,
+        "transportation": 400,
+        "entertainment": 200,
+        "healthcare": 300,
+        "financial": 500
+      }
+    schema:
+      housing: number
+      food_dining: number
+      shopping: number
+      transportation: number
+      entertainment: number
+      healthcare: number
+      financial: number
+  
+  REPORT_FREQUENCY:
+    type: enum
+    description: How often to generate spending reports
+    required: false
+    default: monthly
+    options:
+      - weekly
+      - monthly
+      - both
+  
+  ALERT_THRESHOLD:
+    type: number
+    description: Dollar amount threshold for unusual transaction alerts
+    required: false
+    default: 500
+    min: 0
+    max: 10000
+  
+  LOOKBACK_DAYS:
+    type: number
+    description: Number of days to analyze for trend detection
+    required: false
+    default: 90
+    min: 7
+    max: 365
+  
+  ENABLE_FRAUD_DETECTION:
+    type: boolean
+    description: Enable automatic fraud and duplicate charge detection
+    required: false
+    default: true
+  
+  SAVINGS_GOAL:
+    type: number
+    description: Monthly savings goal (in dollars)
+    required: false
+    default: 1000
+    min: 0
+
+triggers:
+  - type: schedule
+    cron: "0 9 * * 1"
+    description: Weekly report every Monday at 9 AM
+    condition: REPORT_FREQUENCY in ['weekly', 'both']
+  
+  - type: schedule
+    cron: "0 9 1 * *"
+    description: Monthly report on the 1st of each month at 9 AM
+    condition: REPORT_FREQUENCY in ['monthly', 'both']
+  
+  - type: event
+    event: transaction.detected
+    description: Analyze new transactions as they are detected
+  
+  - type: event
+    event: budget.exceeded
+    description: Alert when spending exceeds budget targets
+  
+  - type: command
+    command: /finance-report
+    description: Generate an on-demand financial report
+  
+  - type: command
+    command: /analyze-spending
+    description: Analyze spending patterns for a specific category or time period
+  
+  - type: command
+    command: /check-budget
+    description: Check current spending against budget targets
+
+tools:
+  - web-scraping
+  - data-extraction
+  - financial-api
+  - encryption
+  - chart-generation
+  - pdf-generation
+  - email-notifications
+
+permissions:
+  - read_financial_data
+  - write_reports
+  - send_notifications
+  - access_encrypted_storage
+
+tags:
+  - finance
+  - budgeting
+  - spending-analysis
+  - personal-finance
+  - financial-health
+  - money-management
+
+metadata:
+  author: agent-factory-bot
+  created: 2026-02-23
+  license: MIT
+  support_email: support@example.com
+  documentation_url: https://docs.example.com/bots/personal-finance-bot
+
+# PHASE_17: Tool Authorization Framework
+# Controls which CLI tools this bot can execute
+# Modes: auto (execute immediately), ask (human approval required), off (blocked)
+authorizations:
+  aws_cli: "off"
+  kubectl: "off"
+  gcloud: "off"
+  docker: "off"
+  google_search: "off"
+  chroma_mcp: "off"
+  plane_mcp: "off"

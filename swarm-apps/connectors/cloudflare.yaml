@@ -1,0 +1,48 @@
+provider: cloudflare
+displayName: Cloudflare
+version: 1.0.0
+baseUrl: https://api.cloudflare.com/client/v4
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: page
+  pageSize: 50
+  itemsField: result
+resources:
+  - name: accounts
+    tool: cloudflare-accounts
+    method: GET
+    path: /accounts
+    paginate: true
+  - name: zones
+    tool: cloudflare-zones
+    method: GET
+    path: /zones
+    paginate: true
+  - name: zone
+    tool: cloudflare-zone
+    method: GET
+    path: /zones/{zoneId}
+  - name: dns-records
+    tool: cloudflare-dns-records
+    method: GET
+    path: /zones/{zoneId}/dns_records
+    paginate: true
+  - name: user
+    tool: cloudflare-user
+    method: GET
+    path: /user
+metadata:
+  description: "Read Cloudflare accounts, zones, and DNS records for the connected user."
+  category: "Developer tools"
+  icon: cloudflare
+  iconTitle: Cloudflare
+  iconSource: simple-icons
+  iconVerified: true

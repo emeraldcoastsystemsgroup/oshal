@@ -1,0 +1,45 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * DATE         | AUTHOR  | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation - Midnight (dark) theme for oshal
+ * =============================================================================
+ *
+ * Midnight Theme — default dark mode for oshal design system
+ * Usage: <link rel="stylesheet" href="/shared/ui/css/themes/midnight.css">
+ */
+
+:root, [data-theme="midnight"] {
+  --bg-primary: #181a20;
+  --bg-secondary: #23262f;
+  --bg-tertiary: #23262f;
+  --bg-card: rgba(24, 26, 32, 0.92);
+  --bg-card-hover: rgba(36, 38, 48, 0.98);
+
+  --border-color: #23262f;
+  --border-color-hover: #353945;
+
+  --text-primary: #f4f4f6;
+  --text-secondary: #b1b5c3;
+  --text-muted: #6e7380;
+
+  --accent-primary: #5e8fff;
+  --accent-primary-hover: #3b6eea;
+  --accent-gradient: linear-gradient(90deg, #5e8fff 0%, #3b6eea 100%);
+  --accent-glow: rgba(94, 143, 255, 0.25);
+
+  --status-success: #34c759;
+  --status-active: #5e8fff;
+  --status-warning: #ff9f0a;
+  --status-error: #ff453a;
+
+  --glass-bg: rgba(24, 26, 32, 0.85);
+  --glass-bg-heavy: rgba(24, 26, 32, 0.95);
+  --glass-border: rgba(255,255,255,0.08);
+  --glass-highlight: linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent);
+  --glass-blur: 20px;
+
+  --shadow-md: 0 2px 8px rgba(24, 26, 32, 0.18);
+  --shadow-lg: 0 8px 32px rgba(24, 26, 32, 0.28);
+}

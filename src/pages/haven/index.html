@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Haven</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0d0f;
+      --surface: #16161a;
+      --surface2: #1e1e24;
+      --border: #2a2a32;
+      --text: #e8e8f0;
+      --text-dim: #6e6e8a;
+      --haven: #a78bfa;
+      --haven-dim: #7c5cbf;
+      --user: #38bdf8;
+      --accent: #a78bfa;
+      --send-bg: #a78bfa;
+      --send-hover: #9168f5;
+      --radius: 12px;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+
+    .haven-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--haven);
+      box-shadow: 0 0 8px var(--haven);
+      animation: pulse 3s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    header .status {
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    /* ── Messages ── */
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      scroll-behavior: smooth;
+    }
+
+    #messages::-webkit-scrollbar { width: 4px; }
+    #messages::-webkit-scrollbar-track { background: transparent; }
+    #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      max-width: 720px;
+    }
+
+    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg.haven { align-self: flex-start; align-items: flex-start; }
+
+    .msg-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .msg.user .msg-label { color: var(--user); }
+    .msg.haven .msg-label { color: var(--haven); }
+
+    .msg-bubble {
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      font-size: 15px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .msg-bubble {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.haven .msg-bubble {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+
+    /* Typing indicator */
+    .typing .msg-bubble {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 16px;
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--haven);
+      animation: bounce 1.2s ease-in-out infinite;
+    }
+
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+      30% { transform: translateY(-6px); opacity: 1; }
+    }
+
+    /* ── Input area ── */
+    #input-area {
+      border-top: 1px solid var(--border);
+      padding: 16px 20px;
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      max-width: 760px;
+      margin: 0 auto;
+    }
+
+    #msg-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 15px;
+      line-height: 1.5;
+      padding: 10px 14px;
+      resize: none;
+      min-height: 44px;
+      max-height: 160px;
+      overflow-y: auto;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #msg-input:focus { border-color: var(--haven-dim); }
+    #msg-input::placeholder { color: var(--text-dim); }
+
+    #send-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      border: none;
+      background: var(--send-bg);
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    #send-btn:hover { background: var(--send-hover); }
+    #send-btn:active { transform: scale(0.95); }
+    #send-btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+
+    #send-btn svg { pointer-events: none; }
+
+    .hint {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 8px;
+    }
+
+    /* ── Empty state ── */
+    #empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 40px;
+      text-align: center;
+      color: var(--text-dim);
+    }
+
+    #empty-state .big-dot {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, var(--haven), var(--haven-dim));
+      box-shadow: 0 0 32px rgba(167,139,250,0.3);
+      margin-bottom: 8px;
+    }
+
+    #empty-state h2 {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    #empty-state p {
+      font-size: 14px;
+      max-width: 360px;
+    }
+
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 8px;
+    }
+
+    .suggestion {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 13px;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .suggestion:hover {
+      color: var(--text);
+      border-color: var(--haven-dim);
+    }
+
+    /* Error state */
+    .msg.error .msg-bubble {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+    }
+  </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+
+<header>
+  <div class="haven-dot"></div>
+  <h1>Haven</h1>
+  <span class="status" id="status-text">ready</span>
+</header>
+
+<div id="messages">
+  <div id="empty-state">
+    <div class="big-dot"></div>
+    <h2>What are we working on?</h2>
+    <p>Ideas, projects, research, finances, calendars — say anything.</p>
+    <div class="suggestions">
+      <span class="suggestion" data-msg="What should I be working on today?">What should I be working on?</span>
+      <span class="suggestion" data-msg="Summarize what's in progress for me.">What's in progress?</span>
+      <span class="suggestion" data-msg="I have an idea I want to develop.">I have an idea</span>
+      <span class="suggestion" data-msg="Help me organize my week.">Organize my week</span>
+    </div>
+  </div>
+</div>
+
+<div id="input-area">
+  <div class="input-row">
+    <textarea
+      id="msg-input"
+      placeholder="Say anything…"
+      rows="1"
+      autocomplete="off"
+      spellcheck="true"
+    ></textarea>
+    <button id="send-btn" title="Send" disabled>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 2L11 13"/>
+        <path d="M22 2L15 22 11 13 2 9l20-7z"/>
+      </svg>
+    </button>
+  </div>
+  <div class="hint">Enter to send · Shift+Enter for new line</div>
+</div>
+
+<script>
+(function() {
+  const messagesEl = document.getElementById('messages');
+  const emptyState = document.getElementById('empty-state');
+  const inputEl = document.getElementById('msg-input');
+  const sendBtn = document.getElementById('send-btn');
+  const statusText = document.getElementById('status-text');
+
+  let history = [];
+  let sending = false;
+
+  // ── Auto-resize textarea ──
+  inputEl.addEventListener('input', () => {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
+    sendBtn.disabled = inputEl.value.trim().length === 0;
+  });
+
+  // ── Keyboard submit ──
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!sending && inputEl.value.trim()) send();
+    }
+  });
+
+  sendBtn.addEventListener('click', () => { if (!sending) send(); });
+
+  // ── Suggestions ──
+  document.querySelectorAll('.suggestion').forEach(el => {
+    el.addEventListener('click', () => {
+      inputEl.value = el.dataset.msg;
+      inputEl.dispatchEvent(new Event('input'));
+      inputEl.focus();
+      send();
+    });
+  });
+
+  function hideEmpty() {
+    if (emptyState && emptyState.parentNode) {
+      emptyState.remove();
+    }
+  }
+
+  function addMessage(role, text, isError) {
+    hideEmpty();
+    const wrap = document.createElement('div');
+    wrap.className = 'msg ' + (isError ? 'error' : role);
+
+    const label = document.createElement('div');
+    label.className = 'msg-label';
+    label.textContent = role === 'user' ? 'You' : 'Haven';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    bubble.textContent = text;
+
+    wrap.appendChild(label);
+    wrap.appendChild(bubble);
+    messagesEl.appendChild(wrap);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return wrap;
+  }
+
+  function addTyping() {
+    hideEmpty();
+    const wrap = document.createElement('div');
+    wrap.className = 'msg haven typing';
+
+    const label = document.createElement('div');
+    label.className = 'msg-label';
+    label.textContent = 'Haven';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    bubble.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+
+    wrap.appendChild(label);
+    wrap.appendChild(bubble);
+    messagesEl.appendChild(wrap);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return wrap;
+  }
+
+  async function send() {
+    const text = inputEl.value.trim();
+    if (!text || sending) return;
+
+    sending = true;
+    sendBtn.disabled = true;
+    statusText.textContent = 'thinking…';
+
+    addMessage('user', text);
+    history.push({ role: 'user', content: text });
+
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+
+    const typingEl = addTyping();
+
+    try {
+      const res = await fetch('/api/haven/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          history: history.slice(0, -1), // exclude the message we just added
+        }),
+        credentials: 'include',
+      });
+
+      typingEl.remove();
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Request failed' }));
+        addMessage('haven', err.error || 'Something went wrong.', true);
+        statusText.textContent = 'error';
+      } else {
+        const data = await res.json();
+        const reply = data.reply || 'No response.';
+        addMessage('haven', reply);
+        history.push({ role: 'assistant', content: reply });
+        statusText.textContent = 'ready';
+      }
+    } catch (err) {
+      typingEl.remove();
+      addMessage('haven', 'Connection error. Is the server running?', true);
+      statusText.textContent = 'error';
+    }
+
+    // Trim history to last 20 turns to avoid token bloat
+    if (history.length > 20) history = history.slice(history.length - 20);
+
+    sending = false;
+    sendBtn.disabled = inputEl.value.trim().length === 0;
+    inputEl.focus();
+  }
+
+  // Focus on load
+  inputEl.focus();
+})();
+</script>
+</body>
+</html>

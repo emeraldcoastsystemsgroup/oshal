@@ -1,0 +1,32 @@
+/* ═══ Ocean — Deep Sea Teal Dark ═══ */
+[data-theme="ocean"] {
+  --bg-primary: #080e1a;
+  --bg-secondary: rgba(12, 20, 38, 0.85);
+  --bg-tertiary: rgba(20, 32, 56, 0.7);
+  --bg-card: rgba(16, 28, 50, 0.55);
+  --bg-card-hover: rgba(24, 40, 70, 0.65);
+  --border-color: rgba(14, 165, 233, 0.08);
+  --border-color-hover: rgba(14, 165, 233, 0.16);
+  --text-primary: #e0f2fe;
+  --text-secondary: #7dd3fc;
+  --text-muted: #38bdf8;
+  --accent-primary: #0ea5e9;
+  --accent-primary-hover: #38bdf8;
+  --accent-gradient: linear-gradient(135deg, #0ea5e9 0%, #06b6d4 50%, #2dd4bf 100%);
+  --accent-glow: rgba(14, 165, 233, 0.25);
+  --status-success: #2dd4bf;
+  --status-active: #0ea5e9;
+  --status-warning: #fbbf24;
+  --status-error: #f87171;
+  --glass-bg: rgba(14, 165, 233, 0.04);
+  --glass-bg-heavy: rgba(14, 165, 233, 0.08);
+  --glass-border: rgba(14, 165, 233, 0.1);
+  --glass-highlight: linear-gradient(135deg, rgba(14,165,233,0.12) 0%, rgba(14,165,233,0) 50%);
+  --glass-blur: 20px;
+  --glass-blur-light: 12px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(14, 165, 233, 0.15);
+  --panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(14,165,233,0.08);
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(14,165,233,0.06);
+  --depth-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}

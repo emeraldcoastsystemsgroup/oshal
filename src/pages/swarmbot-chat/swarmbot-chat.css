@@ -1,0 +1,638 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added dedicated styling for the bot-scoped swarm workspace page used by the cockpit right rail
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added auth panel styling for provider sign-in and sign-out inside the swarm-bot workspace
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added RAG and Presentron workspace modal styling for direct in-rail action parity
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added switch-framework modal styling for in-rail tool auth-mode editing
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Compacted the embedded cockpit workspace layout to remove duplicate in-frame action clutter and reduce vertical bulk
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added quick-settings form styles for in-rail selected-bot profile editing
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Made workspace modals vertically scrollable so embedded quick-settings actions remain reachable in cockpit rail height
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Updated workspace action controls to icon-first behavior and removed narrow-width vertical stacking to reduce visual bulk
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Fixed embedded rail scroll constraints, tightened modal sizing, and restored rounded-rectangle action icon geometry
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | UI compaction: icon-only close/refresh buttons, tighter modal padding and spacing
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Major layout rework: single toolbar, flat status line, maximum chat vertical space, pop-out button, borderless sections
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log attribution for governance compliance during engineering-screen retrofit work
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Applied any-bot glassmorphism treatment: glow background, glass panels, backdrop-filter, design tokens on shell/toolbar/messages/composer
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Styled the shared response-renderer blocks (rr-*) inside assistant bubbles: code/mermaid pres, oshal tables, chart figures, inline code
+ */
+
+/* ========================================================================
+   RESET & BASE
+   ======================================================================== */
+
+:root { color-scheme: dark; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 14% 18%, color-mix(in srgb, var(--accent-primary, #3b82f6) 14%, transparent), transparent 36%),
+    radial-gradient(circle at 82% 10%, color-mix(in srgb, var(--status-active, #06b6d4) 12%, transparent), transparent 30%),
+    radial-gradient(circle at 76% 88%, color-mix(in srgb, var(--accent-primary, #3b82f6) 10%, transparent), transparent 28%),
+    var(--bg-primary, linear-gradient(180deg, rgba(14, 16, 26, 0.98), rgba(10, 12, 21, 1)));
+  color: var(--text-primary, #ececf8);
+  font-family: var(--font-family-base, "Segoe UI", sans-serif);
+}
+body { padding: 0; }
+
+html[data-embedded="cockpit"],
+html[data-embedded="cockpit"] body { overflow-y: auto; }
+
+/* ========================================================================
+   SHELL — three rows: toolbar · status · chat · composer
+   ======================================================================== */
+
+.swarmbot-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  gap: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  max-width: min(1040px, 100%);
+  margin: 0 auto;
+}
+
+html[data-embedded="cockpit"] .swarmbot-shell {
+  height: 100%;
+  overflow: auto;
+  padding: 0;
+  max-width: 100%;
+}
+
+html[data-embedded="cockpit"] .swarmbot-toolbar {
+  border-radius: 0;
+}
+
+html[data-embedded="cockpit"] .swarmbot-composer {
+  border-radius: 0;
+}
+
+/* ========================================================================
+   TOOLBAR — single compact row with title, context tags, action icons
+   ======================================================================== */
+
+.swarmbot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  flex-shrink: 0;
+  min-height: 0;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.03));
+  backdrop-filter: blur(var(--glass-blur-light, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur-light, 8px));
+  border-radius: var(--radius-lg, 12px) var(--radius-lg, 12px) 0 0;
+}
+
+.swarmbot-toolbar h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.toolbar-context {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.toolbar-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill, 20px);
+  background: var(--glass-bg, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.06));
+  color: var(--text-secondary, #b3b8d6);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.auth-tag[data-tone="success"] { color: #7de1a6; }
+.auth-tag[data-tone="error"]   { color: #ff9292; }
+.auth-tag[data-tone="muted"]   { color: #9aa0c3; }
+
+.toolbar-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 8px);
+  background: var(--glass-bg, rgba(255, 255, 255, 0.04));
+  backdrop-filter: blur(var(--glass-blur-light, 8px));
+  color: var(--text-secondary, #b3b8d6);
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.15s;
+  box-shadow: var(--card-shadow, 0 1px 3px rgba(0,0,0,0.2));
+}
+.toolbar-btn:hover {
+  background: var(--glass-bg-heavy, rgba(255, 255, 255, 0.08));
+  border-color: var(--border-color-hover, rgba(255, 255, 255, 0.14));
+  color: var(--text-primary, #ececf8);
+  transform: translateY(-1px);
+  box-shadow: var(--panel-shadow, 0 4px 12px rgba(0,0,0,0.3));
+}
+.toolbar-btn i { font-size: 17px; }
+
+html[data-embedded="cockpit"] .popout-btn { display: inline-flex; }
+html:not([data-embedded="cockpit"]) .popout-btn { display: none; }
+
+/* ========================================================================
+   STATUS LINE — tiny single-line info strip
+   ======================================================================== */
+
+.swarmbot-status-line {
+  display: flex;
+  gap: 10px;
+  padding: 4px 16px;
+  font-size: 11px;
+  color: var(--text-muted, #9aa0c3);
+  border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.06));
+  background: var(--glass-bg, rgba(255, 255, 255, 0.02));
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.swarmbot-status-line #statusBanner[data-tone="error"] { color: #ff9292; }
+.swarmbot-status-line #statusBanner[data-tone="success"] { color: #7de1a6; }
+
+/* ========================================================================
+   MESSAGES — takes ALL remaining vertical space
+   ======================================================================== */
+
+.swarmbot-messages {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.01));
+}
+
+.empty-state {
+  margin: auto;
+  max-width: 460px;
+  text-align: center;
+  color: var(--text-secondary, #b3b8d6);
+}
+
+.message { display: flex; flex-direction: column; gap: 4px; }
+.message[data-role="user"] { align-items: flex-end; }
+.message-meta { color: var(--text-muted, #9aa0c3); font-size: 11px; }
+
+.message-bubble {
+  max-width: min(720px, 100%);
+  border-radius: var(--radius-lg, 14px);
+  padding: 12px 16px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  font-size: 14px;
+}
+.message[data-role="assistant"] .message-bubble {
+  background: var(--glass-bg, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  backdrop-filter: blur(var(--glass-blur-light, 4px));
+}
+.message[data-role="user"] .message-bubble {
+  background: color-mix(in srgb, var(--accent-primary, #3b82f6) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, #3b82f6) 30%, transparent);
+}
+.message[data-role="system"] .message-bubble {
+  background: color-mix(in srgb, var(--status-warning, #eab308) 12%, var(--glass-bg, transparent));
+  border: 1px solid color-mix(in srgb, var(--status-warning, #eab308) 24%, transparent);
+}
+.typing-indicator { color: var(--text-muted, #9aa0c3); font-style: italic; }
+
+/* ========================================================================
+   COMPOSER — compact bottom row
+   ======================================================================== */
+
+.swarmbot-composer {
+  display: flex;
+  flex-direction: column;        /* Send sits BELOW the input, not beside it */
+  gap: 8px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  background: linear-gradient(145deg, var(--glass-bg-heavy, rgba(255,255,255,0.04)) 0%, var(--glass-bg, rgba(255,255,255,0.02)) 100%);
+  border-radius: 0 0 var(--radius-lg, 12px) var(--radius-lg, 12px);
+  flex-shrink: 0;
+  align-items: stretch;
+}
+
+.swarmbot-composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 40px;
+  max-height: 120px;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.10));
+  outline: none;
+  border-radius: var(--radius-md, 10px);
+  padding: 10px 14px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.04));
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.swarmbot-composer textarea:focus {
+  border-color: var(--accent-primary, rgba(59, 130, 246, 0.5));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary, #3b82f6) 12%, transparent);
+}
+
+.swarmbot-composer button {
+  border: none;
+  border-radius: var(--radius-md, 10px);
+  padding: 10px 20px;
+  background: var(--accent-gradient, linear-gradient(135deg, var(--accent-primary, #3b82f6), color-mix(in srgb, var(--accent-primary, #3b82f6) 80%, #8b5cf6)));
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  align-self: flex-end;          /* compact button, below the input on the right */
+  transition: all 0.15s;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-primary, #3b82f6) 30%, transparent);
+}
+.swarmbot-composer button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent-primary, #3b82f6) 40%, transparent);
+}
+
+/* Read-aloud button on assistant chat messages */
+.message-readaloud {
+  margin-top: 6px;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  background: var(--glass-bg, rgba(255, 255, 255, 0.04));
+  color: inherit;
+  border-radius: var(--radius-sm, 8px);
+  padding: 3px 9px;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+.message-readaloud:hover { opacity: 1; background: var(--glass-bg-heavy, rgba(255, 255, 255, 0.08)); }
+
+/* ========================================================================
+   LEGACY HIDDEN ELEMENTS — kept in DOM for JS compatibility
+   ======================================================================== */
+
+.swarmbot-runtime-summary,
+.swarmbot-auth-panel,
+.swarmbot-auth-copy,
+.swarmbot-header,
+.workspace-eyebrow { display: none; }
+
+/* Preserve .auth-status-badge for JS tone toggling on .auth-tag */
+.auth-status-badge { display: none; }
+
+/* ========================================================================
+   MODALS — clean overlay with minimal chrome
+   ======================================================================== */
+
+.workspace-modal { position: fixed; inset: 0; z-index: 999; }
+.workspace-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg-primary, #0a0e17) 72%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.workspace-modal-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(680px, calc(100vw - 32px));
+  margin: 20px auto;
+  padding: 18px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.10));
+  border-radius: var(--radius-xl, 20px);
+  background:
+    var(--glass-highlight, linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 50%)),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary, #1e293b) 96%, transparent), color-mix(in srgb, var(--bg-secondary, #1e293b) 88%, transparent));
+  backdrop-filter: blur(calc(var(--glass-blur, 16px) * 1.4)) saturate(130%);
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur, 16px) * 1.4)) saturate(130%);
+  box-shadow: var(--depth-shadow, 0 18px 44px rgba(0, 0, 0, 0.4)), inset 0 1px 0 color-mix(in srgb, var(--text-primary, #fff) 6%, transparent);
+}
+
+.workspace-modal-dialog-wide {
+  width: min(1000px, calc(100vw - 32px));
+  height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-embedded="cockpit"] .workspace-modal-dialog {
+  width: min(600px, calc(100vw - 24px));
+  margin: 10px auto;
+  max-height: calc(100vh - 20px);
+  padding: 12px;
+}
+
+html[data-embedded="cockpit"] .workspace-modal-dialog-wide {
+  width: min(800px, calc(100vw - 24px));
+  height: calc(100vh - 40px);
+}
+
+html[data-embedded="cockpit"] .history-list { max-height: calc(100vh - 120px); }
+
+.workspace-modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.workspace-modal-header strong { font-size: 15px; }
+
+.modal-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.10));
+  border-radius: var(--radius-md, 8px);
+  background: var(--glass-bg, rgba(255, 255, 255, 0.04));
+  color: var(--text-secondary, #b3b8d6);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.modal-icon-btn:hover {
+  background: var(--glass-bg-heavy, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary, #ececf8);
+  transform: translateY(-1px);
+}
+
+.modal-header-actions { display: flex; gap: 4px; align-items: center; }
+
+/* ========================================================================
+   MODAL CONTENT — history, forms, results
+   ======================================================================== */
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 160px);
+  overflow: auto;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.history-item strong, .history-item span { display: block; }
+.history-item span { color: var(--text-secondary, #b3b8d6); margin-top: 2px; font-size: 12px; }
+.history-item button {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary, #ececf8);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  align-self: center;
+}
+.history-item button:hover { background: rgba(255, 255, 255, 0.08); }
+
+.service-status-row {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #b3b8d6);
+}
+.service-status-row[data-tone="success"] { color: #7de1a6; }
+.service-status-row[data-tone="error"]   { color: #ff9292; }
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.workspace-field { display: flex; flex-direction: column; gap: 3px; }
+.workspace-field span {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted, #9aa0c3);
+}
+
+.workspace-field input,
+.workspace-field select,
+.workspace-field textarea {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  font-size: 13px;
+}
+.workspace-field textarea { resize: vertical; min-height: 64px; }
+.workspace-field input[readonly] { color: var(--text-secondary, #b3b8d6); }
+.workspace-field-wide { grid-column: 1 / -1; }
+
+.workspace-checkbox-field { gap: 8px; }
+.workspace-checkbox-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.workspace-checkbox-row input[type="checkbox"] { margin-top: 2px; }
+.workspace-checkbox-row span {
+  font-size: 12px; line-height: 1.4;
+  color: var(--text-secondary, #b3b8d6);
+  text-transform: none; letter-spacing: 0;
+}
+
+.workspace-inline-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.workspace-inline-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  padding: 7px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary, #ececf8);
+  cursor: pointer;
+  font-size: 12px;
+}
+.workspace-inline-actions button:hover { background: rgba(255, 255, 255, 0.08); }
+
+.workspace-inline-actions-block {
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.workspace-result-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.workspace-result-item {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.workspace-result-item strong { display: block; font-size: 13px; }
+.workspace-result-item span { display: block; margin-top: 2px; color: var(--text-muted, #9aa0c3); font-size: 11px; }
+.workspace-result-item p { margin: 6px 0 0; white-space: pre-wrap; line-height: 1.4; font-size: 13px; }
+
+.workspace-result-pre {
+  margin: 8px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary, #ececf8);
+  font-size: 12px;
+}
+
+/* ========================================================================
+   TOOL SWITCH ROWS
+   ======================================================================== */
+
+.tool-switch-row {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tool-switch-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.tool-switch-head strong { font-size: 13px; }
+.tool-switch-head code { color: var(--text-muted, #9aa0c3); font-size: 11px; }
+.tool-switch-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tool-switch-controls select {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  font-size: 12px;
+}
+.tool-switch-state { color: var(--text-secondary, #b3b8d6); font-size: 11px; }
+
+.config-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ========================================================================
+   UTILITY
+   ======================================================================== */
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  border: 0; padding: 0; clip: rect(0,0,0,0); overflow: hidden;
+}
+
+/* ========================================================================
+   RICH RESPONSE BLOCKS (shared response renderer, rr-*)
+   ======================================================================== */
+
+.message-bubble .rr-block { margin: 8px 0; white-space: normal; }
+.message-bubble .rr-block:first-child { margin-top: 0; }
+.message-bubble .rr-block:last-child { margin-bottom: 0; }
+.message-bubble pre.rr-block {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 12.5px;
+}
+.message-bubble .rr-markdown .inline-code {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 12.5px;
+}
+.message-bubble .rr-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.message-bubble .rr-table th,
+.message-bubble .rr-table td {
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  padding: 5px 8px;
+  text-align: left;
+}
+.message-bubble .rr-table caption {
+  caption-side: top;
+  text-align: left;
+  color: var(--text-muted, #9aa0c3);
+  font-size: 12px;
+  padding-bottom: 4px;
+}
+.message-bubble figure.rr-chart { margin: 8px 0; }
+
+/* ========================================================================
+   RESPONSIVE
+   ======================================================================== */
+
+@media (max-width: 700px) {
+  .toolbar-context { display: none; }
+  .workspace-grid { grid-template-columns: 1fr; }
+  .workspace-inline-actions { flex-direction: column; }
+}

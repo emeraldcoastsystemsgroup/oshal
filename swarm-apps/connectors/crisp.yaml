@@ -1,0 +1,37 @@
+provider: crisp
+displayName: Crisp
+version: 1.0.0
+baseUrl: https://api.crisp.chat/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: conversations
+    tool: crisp-conversations
+    method: GET
+    path: /website/{website_id}/conversations/{page_number}
+  - name: conversation
+    tool: crisp-conversation
+    method: GET
+    path: /website/{website_id}/conversation/{session_id}
+  - name: conversation-messages
+    tool: crisp-conversation-messages
+    method: GET
+    path: /website/{website_id}/conversation/{session_id}/messages
+  - name: people-profiles
+    tool: crisp-people-profiles
+    method: GET
+    path: /website/{website_id}/people/profiles
+  - name: website
+    tool: crisp-website
+    method: GET
+    path: /website/{website_id}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/crisp.chat.ico

@@ -1,0 +1,31 @@
+provider: baserow
+displayName: Baserow
+version: 1.0.0
+baseUrl: https://api.baserow.io/api
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: applications
+    tool: baserow-applications
+    method: GET
+    path: /applications/
+  - name: rows
+    tool: baserow-rows
+    method: GET
+    path: /database/rows/table/{table_id}/
+  - name: fields
+    tool: baserow-fields
+    method: GET
+    path: /database/fields/table/{table_id}/
+metadata:
+  icon: baserow
+  iconTitle: Baserow
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,41 @@
+provider: buttondown
+displayName: Buttondown
+version: 1.0.0
+baseUrl: https://api.buttondown.com/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: page
+  nextField: next
+  itemsField: results
+resources:
+  - name: newsletters
+    tool: buttondown-newsletters
+    method: GET
+    path: /newsletters
+  - name: subscribers
+    tool: buttondown-subscribers
+    method: GET
+    path: /subscribers
+    paginate: true
+  - name: emails
+    tool: buttondown-emails
+    method: GET
+    path: /emails
+    paginate: true
+  - name: get-email
+    tool: buttondown-get-email
+    method: GET
+    path: /emails/{emailId}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/buttondown.com.ico

@@ -1,0 +1,32 @@
+/* ═══ Amber — Warm Brass Glass ═══ */
+[data-theme="amber"] {
+  --bg-primary: #120b06;
+  --bg-secondary: rgba(28, 18, 10, 0.88);
+  --bg-tertiary: rgba(44, 28, 16, 0.74);
+  --bg-card: rgba(52, 34, 18, 0.58);
+  --bg-card-hover: rgba(68, 44, 24, 0.72);
+  --border-color: rgba(245, 158, 11, 0.1);
+  --border-color-hover: rgba(251, 191, 36, 0.18);
+  --text-primary: #fff7ed;
+  --text-secondary: #fcd9a6;
+  --text-muted: #d1a46d;
+  --accent-primary: #f59e0b;
+  --accent-primary-hover: #fbbf24;
+  --accent-gradient: linear-gradient(135deg, #d97706 0%, #f59e0b 42%, #fb7185 100%);
+  --accent-glow: rgba(245, 158, 11, 0.26);
+  --status-success: #4ade80;
+  --status-active: #fbbf24;
+  --status-warning: #fde047;
+  --status-error: #fb7185;
+  --glass-bg: rgba(245, 158, 11, 0.045);
+  --glass-bg-heavy: rgba(245, 158, 11, 0.1);
+  --glass-border: rgba(251, 191, 36, 0.12);
+  --glass-highlight: linear-gradient(135deg, rgba(251,191,36,0.14) 0%, rgba(251,146,60,0.05) 55%, rgba(0,0,0,0) 100%);
+  --glass-blur: 22px;
+  --glass-blur-light: 13px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(251, 191, 36, 0.16);
+  --panel-shadow: 0 12px 38px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255,237,213,0.05);
+  --card-shadow: 0 3px 10px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,237,213,0.04);
+  --depth-shadow: 0 24px 72px rgba(0, 0, 0, 0.5);
+}

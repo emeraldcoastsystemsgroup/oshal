@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OSHAL Launcher</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    min-height: 100vh;
+    padding: 32px 24px;
+  }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; color: #fff; }
+  .subtitle { font-size: 13px; color: #8b949e; margin-bottom: 32px; }
+  .status-bar {
+    display: flex; align-items: center; gap: 10px;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 10px 16px; margin-bottom: 32px; font-size: 13px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: pulse 2s infinite; }
+  .dot.unknown { background: #8b949e; animation: none; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+  .section { margin-bottom: 32px; }
+  .section-title {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1px; color: #8b949e; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid #21262d;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 16px 18px; text-decoration: none; color: inherit;
+    display: flex; flex-direction: column; gap: 6px;
+    transition: border-color .15s, background .15s;
+    cursor: pointer;
+  }
+  .card:hover { border-color: #58a6ff; background: #1c2128; }
+  .card-top { display: flex; align-items: center; gap: 10px; }
+  .card-icon { font-size: 18px; flex-shrink: 0; }
+  .card-name { font-size: 14px; font-weight: 600; color: #e6edf3; }
+  .card-desc { font-size: 12px; color: #8b949e; line-height: 1.4; }
+  .card-url { font-size: 11px; color: #388bfd; font-family: monospace; margin-top: 2px; }
+  .api-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+  .api-card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 12px 14px; display: flex; align-items: flex-start; gap: 10px;
+    text-decoration: none; color: inherit; transition: border-color .15s;
+    cursor: pointer;
+  }
+  .api-card:hover { border-color: #388bfd; }
+  .method {
+    font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+    flex-shrink: 0; margin-top: 1px; font-family: monospace;
+  }
+  .get { background: rgba(59,130,246,.15); color: #60a5fa; border: 1px solid rgba(59,130,246,.3); }
+  .post { background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.3); }
+  .api-path { font-family: monospace; font-size: 12px; color: #e6edf3; line-height: 1.4; }
+  .api-desc { font-size: 11px; color: #8b949e; margin-top: 2px; }
+  .port-note {
+    background: #1c2128; border: 1px solid #388bfd33; border-radius: 8px;
+    padding: 12px 16px; font-size: 12px; color: #8b949e; margin-bottom: 24px;
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .port-note code { background: #0d1117; padding: 2px 6px; border-radius: 4px; color: #e6edf3; font-family: monospace; }
+  .open-all {
+    background: #238636; border: 1px solid #2ea043; color: #fff;
+    padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 600;
+    cursor: pointer; margin-bottom: 24px; transition: background .15s;
+  }
+  .open-all:hover { background: #2ea043; }
+</style>
+</head>
+<body>
+
+<h1>OSHAL Launcher</h1>
+<p class="subtitle">OSHAL Control Plane — Kubernetes cluster · port-forwarded on localhost:3456</p>
+
+<div class="status-bar">
+  <div class="dot unknown" id="statusDot"></div>
+  <span id="statusText">Checking API...</span>
+</div>
+
+<div class="port-note">
+  <span>&#9432;</span>
+  <div>
+    Ensure port-forward is running:
+    <code>kubectl --context=&lt;your-context&gt; port-forward -n oshal svc/oshal-api 3456:3456</code>
+    &nbsp; and &nbsp;
+    <code>kubectl --context=&lt;your-context&gt; port-forward -n oshal svc/oshal-api 8443:8443</code>
+    for code-server.
+  </div>
+</div>
+
+<button class="open-all" onclick="openAll()">Open All UI Pages</button>
+
+<!-- ── UI Pages ─────────────────────────────────────────────────────────── -->
+<div class="section">
+  <div class="section-title">UI Pages</div>
+  <div class="grid" id="uiGrid"></div>
+</div>
+
+<!-- ── System API ─────────────────────────────────────────────────────── -->
+<div class="section">
+  <div class="section-title">System API</div>
+  <div class="api-grid" id="systemGrid"></div>
+</div>
+
+<script>
+const BASE = 'http://localhost:3456';
+const CODE_SERVER = 'http://localhost:8443';
+
+const UI_PAGES = [
+  { icon: '🚀', name: 'Cockpit',           path: '/cockpit',             desc: 'Main OSHAL operator cockpit — tickets, bots, insights' },
+  { icon: '📋', name: 'Queue Dashboard',   path: '/queue-dashboard',     desc: 'Queue manager status and ticket pipeline view' },
+  { icon: '⚙️', name: 'Queue Manager Admin', path: '/queue-manager-admin', desc: 'Admin controls for the queue manager' },
+  { icon: '🤖', name: 'Swarm Control',     path: '/swarm-control',       desc: 'Bot swarm orchestration and agent management' },
+  { icon: '💬', name: 'Swarmbot Chat',     path: '/swarmbot-chat',       desc: 'Chat interface for swarm bots' },
+  { icon: '📊', name: 'Ops Dashboard',     path: '/ops-dashboard',       desc: 'Operations monitoring dashboard' },
+  { icon: '🔗', name: 'Mesh Dashboard',    path: '/mesh-dashboard',      desc: 'Service mesh topology and health' },
+  { icon: '🏥', name: 'Health Dashboard',  path: '/health-dashboard',    desc: 'System health and uptime overview' },
+  { icon: '👤', name: 'User Dashboard',    path: '/user-dashboard',      desc: 'User activity and personal overview' },
+  { icon: '🔴', name: 'Redis Visibility',  path: '/redis-visibility',    desc: 'Redis queue inspection and key browser' },
+  { icon: '🧠', name: 'RAG Center',        path: '/rag-center',          desc: 'Retrieval-augmented generation document store' },
+  { icon: '🔬', name: 'Process Lab',       path: '/process-lab',         desc: 'Process experimentation and workflow testing' },
+  { icon: '🎨', name: 'Workflow Studio',   path: '/workflow-studio',     desc: 'Visual workflow designer' },
+  { icon: '🗂️', name: 'Task Explorer',     path: '/task-explorer',       desc: 'Task history and output explorer' },
+  { icon: '🔧', name: 'Config Admin',      path: '/config-admin',        desc: 'System configuration administration' },
+  { icon: '🏠', name: 'Welcome',           path: '/welcome',             desc: 'Welcome page and onboarding' },
+  { icon: '🌴', name: 'Haven',             path: '/haven',               desc: 'Haven environment' },
+  { icon: '💻', name: 'Code Server',       path: '/',                    desc: 'VS Code in the browser (port 8443)', base: CODE_SERVER },
+];
+
+const SYSTEM_APIS = [
+  { method: 'GET',  path: '/api/health',                        desc: 'Server health + uptime + stream stats' },
+  { method: 'GET',  path: '/api/status',                        desc: 'Output dir, write mode, encryption status' },
+  { method: 'GET',  path: '/api/tickets',                       desc: 'All tickets in the queue' },
+  { method: 'GET',  path: '/api/v1/bots',                       desc: 'Registered bot registry' },
+  { method: 'GET',  path: '/api/swarm/bots',                    desc: 'Swarm bot status and capabilities' },
+  { method: 'GET',  path: '/api/logs',                          desc: 'Recent system logs' },
+  { method: 'GET',  path: '/api/config',                        desc: 'Runtime configuration' },
+];
+
+function buildUiCards() {
+  const grid = document.getElementById('uiGrid');
+  UI_PAGES.forEach(p => {
+    const base = p.base || BASE;
+    const url = base + p.path;
+    const card = document.createElement('a');
+    card.className = 'card';
+    card.href = url;
+    card.target = '_blank';
+    card.rel = 'noopener';
+    card.innerHTML = `
+      <div class="card-top">
+        <span class="card-icon">${p.icon}</span>
+        <span class="card-name">${p.name}</span>
+      </div>
+      <div class="card-desc">${p.desc}</div>
+      <div class="card-url">${url}</div>`;
+    grid.appendChild(card);
+  });
+}
+
+function buildApiCards(apis, gridId) {
+  const grid = document.getElementById(gridId);
+  apis.forEach(a => {
+    const url = BASE + a.path;
+    const card = document.createElement('div');
+    card.className = 'api-card';
+    card.innerHTML = `
+      <span class="method ${a.method.toLowerCase()}">${a.method}</span>
+      <div>
+        <div class="api-path">${a.path}</div>
+        <div class="api-desc">${a.desc}</div>
+      </div>`;
+    card.onclick = () => {
+      if (a.method === 'GET') {
+        window.open(url, '_blank');
+      } else {
+        const body = a.body || '{}';
+        // POST: copy curl command to clipboard
+        const cmd = `curl -s -X POST ${url} -H "Content-Type: application/json" -d '${body}' | python3 -m json.tool`;
+        navigator.clipboard.writeText(cmd).then(() => {
+          card.style.borderColor = '#3fb950';
+          setTimeout(() => card.style.borderColor = '', 1500);
+          const note = document.createElement('div');
+          note.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#238636;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;z-index:999';
+          note.textContent = 'curl command copied to clipboard';
+          document.body.appendChild(note);
+          setTimeout(() => note.remove(), 2500);
+        });
+      }
+    };
+    grid.appendChild(card);
+  });
+}
+
+function openAll() {
+  UI_PAGES.forEach((p, i) => {
+    const base = p.base || BASE;
+    setTimeout(() => window.open(base + p.path, '_blank'), i * 150);
+  });
+}
+
+async function checkHealth() {
+  try {
+    const r = await fetch(`${BASE}/api/health`);
+    const d = await r.json();
+    document.getElementById('statusDot').className = 'dot';
+    document.getElementById('statusText').textContent =
+      `API online — uptime ${Math.round(d.uptime)}s · streams: ${d.streaming?.clientCount ?? 0} clients`;
+  } catch {
+    document.getElementById('statusDot').className = 'dot unknown';
+    document.getElementById('statusText').textContent = 'API unreachable — start port-forward first';
+  }
+}
+
+buildUiCards();
+buildApiCards(SYSTEM_APIS, 'systemGrid');
+checkHealth();
+setInterval(checkHealth, 10000);
+</script>
+</body>
+</html>

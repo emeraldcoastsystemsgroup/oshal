@@ -1,0 +1,28 @@
+provider: neverbounce
+displayName: NeverBounce
+version: 1.0.0
+baseUrl: https://api.neverbounce.com/v4
+auth:
+  type: apiKeyQuery
+  param: key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: single-check
+    tool: neverbounce-single-check
+    method: GET
+    path: /single/check
+    query:
+      email: '{email}'
+  - name: account-info
+    tool: neverbounce-account-info
+    method: GET
+    path: /account/info
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/neverbounce.com.ico

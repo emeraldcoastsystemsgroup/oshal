@@ -1,0 +1,41 @@
+provider: google-drive
+credProvider: google
+displayName: Google Drive
+version: 1.0.0
+baseUrl: https://www.googleapis.com/drive/v3
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: pageToken
+  nextField: nextPageToken
+  itemsField: files
+resources:
+  - name: list-files
+    tool: gdrive-list-files
+    method: GET
+    path: /files
+    query:
+      q: '{query}'
+      pageSize: '100'
+      fields: nextPageToken,files(id,name,mimeType,modifiedTime)
+    paginate: true
+  - name: get-file
+    tool: gdrive-get-file
+    method: GET
+    path: /files/{fileId}
+    query:
+      fields: id,name,mimeType,modifiedTime,size,webViewLink
+metadata:
+  description: "List and inspect file metadata in the connected Google Drive."
+  category: "Files"
+  icon: googledrive
+  iconTitle: Google Drive
+  iconSource: simple-icons
+  iconVerified: true

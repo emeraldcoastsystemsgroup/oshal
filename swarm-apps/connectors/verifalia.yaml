@@ -1,0 +1,25 @@
+provider: verifalia
+displayName: Verifalia
+version: 1.0.0
+baseUrl: https://api.verifalia.com/v2.5
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: email-validations
+    tool: verifalia-email-validations
+    method: GET
+    path: /email-validations
+  - name: credits-balance
+    tool: verifalia-credits-balance
+    method: GET
+    path: /credits/balance
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/verifalia.com.ico

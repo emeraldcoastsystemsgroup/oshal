@@ -1,0 +1,36 @@
+provider: coinbase
+displayName: Coinbase
+version: 1.0.0
+baseUrl: https://api.coinbase.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: starting_after
+  nextField: pagination.next_starting_after
+  itemsField: data
+resources:
+  - name: me
+    tool: coinbase-me
+    method: GET
+    path: /v2/user
+  - name: accounts
+    tool: coinbase-accounts
+    method: GET
+    path: /v2/accounts
+    query:
+      limit: '100'
+    paginate: true
+metadata:
+  description: "Read the connected Coinbase user profile and account balances."
+  category: "Finance"
+  icon: coinbase
+  iconTitle: Coinbase
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,238 @@
+# =============================================================================
+# OSHAL Containerized Stack
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added API server and loke namespace for identity services
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Added KEYCLOAK_EXTERNAL_URL for browser-facing OIDC redirects
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed extra_hosts after HTTP request patching handled container DNS
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Added Cline CLI and Claude Code provider env vars to api-server
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log attribution/timestamps and renamed header to OSHAL
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | Exposed OpenAI Codex callback port 1455 and configured callback listener env var for OAuth redirect compatibility
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Enabled debug log-level override and mounted host workspace directory for task-folder visibility and persistence
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | Added separate shared workspace mount to support future hive-mode multi-agent shared spaces
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | Routed api-server Postgres env to the compose postgres service and gated startup on DB health for tool-registry bootstrap
+# 10 | maintainer@emeraldcoastsystemsgroup.com   | Added Redis service and api-server REDIS_URL wiring for self-scheduling runtime
+# 11 | maintainer@emeraldcoastsystemsgroup.com   | Added BOT_NAME=project-manager to API server so QueueManagerService starts polling for approved tickets
+# 12 | maintainer@emeraldcoastsystemsgroup.com   | Fixed CHROMADB_URL to point to oshal-swarm-chromadb (swarm network container) instead of unreachable 'chromadb' hostname
+# 13 | maintainer@emeraldcoastsystemsgroup.com   | Added hosted google-search-mcp service and explicit GOOGLE_SEARCH_MCP_URL wiring for the main container stack
+# 14 | maintainer@emeraldcoastsystemsgroup.com   | Mounted Docker socket into api-server so compatibility bot lifecycle status checks work from the containerized runtime
+# =============================================================================
+#
+# Services:
+#   - api-server  → API configuration server with OIDC authentication
+#   - keycloak    → Identity provider (OIDC/OAuth2)
+#   - postgres    → Keycloak database
+#
+# Namespaces:
+#   - loke        → Identity and authentication services (Keycloak + PostgreSQL)
+#   - default     → Application services (API server)
+#
+# Usage:
+#   docker compose up --build     # Build and start all services
+#   docker compose up -d          # Start services in background
+#   docker compose down           # Stop services
+#   docker compose down -v        # Stop + remove data volumes
+#   docker compose logs -f        # Follow logs for all services
+#   docker compose logs -f api-server  # Follow API server logs only
+#
+# Endpoints:
+#   - API Server:      http://localhost:3456
+#   - Keycloak Admin:  http://localhost:8080/admin (admin / admin)
+#   - Keycloak Realm:  oshal
+#   - Keycloak Client: oshal-swarm
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Namespace: loke (Identity & Authentication Services)
+  # ---------------------------------------------------------------------------
+  
+  postgres:
+    image: postgres:16-alpine
+    container_name: oshal-keycloak-db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_db_password
+    volumes:
+      - keycloak_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - loke
+    labels:
+      namespace: loke
+      service: identity-database
+      description: "PostgreSQL database for Keycloak identity provider"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: oshal-keycloak
+    command: start-dev --import-realm
+    environment:
+      # Admin credentials (dev only!)
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Database
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_db_password
+      # Hostname
+      KC_HOSTNAME: localhost
+      KC_HTTP_PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo ok >&3 && cat <&3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - loke
+    labels:
+      namespace: loke
+      service: identity-provider
+      description: "Keycloak OIDC/OAuth2 identity provider"
+
+  # ---------------------------------------------------------------------------
+  # Namespace: default (Application Services)
+  # ---------------------------------------------------------------------------
+
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oshal-api-server
+    env_file:
+      - .env
+    environment:
+      # Override .env values for container networking
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_EXTERNAL_URL: http://localhost:8080
+      APP_URL: http://localhost:3456
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_db_password
+      # Swarm ticket database — use the shared swarm Postgres service over Docker networking
+      DATABASE_URL: postgresql://oshal:oshalpass@oshal-swarm-db:5432/oshal
+      PRESENTRON_ENDPOINT: ${PRESENTRON_ENDPOINT:-http://host.docker.internal:5050}
+      PLANE_API_URL: ${PLANE_API_URL:-http://host.docker.internal:80}
+      CHROMADB_URL: http://oshal-swarm-chromadb:8000
+      REDIS_URL: redis://oshal-swarm-redis:6379
+      OPENAI_CODEX_CALLBACK_PORT: 1455
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      SHARED_WORKSPACE_ROOT: /app/workspace-shared
+      CLINE_SHARED_WORKSPACE_ROOT: /app/workspace-shared
+      # LLM provider — uses openai-codex OAuth when available, falls back to claude-code
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai-codex}
+      LLM_MODEL: ${LLM_MODEL:-gpt-5.3-codex}
+      CLINE_MODEL: ${CLINE_MODEL:-gpt-5.3-codex}
+      # Haven LLM mode: set HAVEN_FAST_MODE=fast to call Anthropic Messages API directly (~1-3s).
+      # Requires ANTHROPIC_API_KEY to be set (real key, not placeholder).
+      # Default (empty): uses cline CLI subprocess — same OpenAI Codex login module as the swarm (~30-60s).
+      HAVEN_FAST_MODE: ${HAVEN_FAST_MODE:-}
+      # Haven chat model — used in fast mode (HAVEN_FAST_MODE=fast). Default: claude-3-5-haiku-20241022
+      HAVEN_MODEL: ${HAVEN_MODEL:-claude-3-5-haiku-20241022}
+      SWARM_MODE: ${SWARM_MODE:-single}
+      # Queue manager identity — enables ticket polling and decomposition
+      BOT_NAME: project-manager
+    ports:
+      - "3456:3456"
+      - "1455:1455"
+    volumes:
+      - ./output:/app/output
+      - ./workspace:/app/workspace
+      - ./workspace-shared:/app/workspace-shared
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3456/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - loke          # Access to identity services
+      - oshal-swarm    # Access to swarm services (Redis, etc.)
+    labels:
+      namespace: default
+      service: api-server
+      description: "API configuration server with OIDC authentication"
+
+  presentron:
+    image: presentron:latest
+    container_name: presentron
+    profiles:
+      - presentron
+    ports:
+      - "8080:8080"
+    environment:
+      - PRESENTRON_API_KEY=${PRESENTRON_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  chromadb:
+    image: chromadb/chroma:0.4.24
+    container_name: oshal-chromadb
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - loke
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=3)"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+
+volumes:
+  keycloak_pgdata:
+  chroma_data:
+  redis_data:
+
+networks:
+  loke:
+    driver: bridge
+    labels:
+      namespace: loke
+      purpose: "Identity and authentication services"
+      description: "Isolated network for Keycloak and PostgreSQL"
+  oshal-swarm:
+    external: true
+    name: oshal-swarm

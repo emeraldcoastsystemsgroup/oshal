@@ -1,0 +1,57 @@
+provider: mailchimp
+displayName: Mailchimp
+version: 1.0.0
+baseUrl: https://${env:MAILCHIMP_DC:-us1}.api.mailchimp.com/3.0
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: lists
+    tool: mailchimp-lists
+    method: GET
+    path: /lists
+    query:
+      count: null
+      offset: null
+  - name: members
+    tool: mailchimp-members
+    method: GET
+    path: /lists/{list_id}/members
+    query:
+      count: null
+      offset: null
+      status: null
+  - name: campaigns
+    tool: mailchimp-campaigns
+    method: GET
+    path: /campaigns
+    query:
+      count: null
+      offset: null
+      status: null
+  - name: reports
+    tool: mailchimp-reports
+    method: GET
+    path: /reports
+    query:
+      count: null
+      offset: null
+  - name: automations
+    tool: mailchimp-automations
+    method: GET
+    path: /automations
+    query:
+      count: null
+      offset: null
+metadata:
+  description: "Read Mailchimp audiences, list members, campaigns, reports, and automations."
+  category: "Marketing"
+  icon: mailchimp
+  iconTitle: MailChimp
+  iconSource: simple-icons
+  iconVerified: true

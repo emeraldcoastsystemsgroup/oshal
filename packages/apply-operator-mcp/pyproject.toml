@@ -1,0 +1,19 @@
+[project]
+name = "apply-operator-mcp"
+version = "0.1.0"
+description = "Browser-control MCP server: OS-level form-fill + screenshot primitives for the apply-operator bot on a worker desktop."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "mcp[cli]>=1.4.1",
+  "fastmcp>=0.2.0",
+  "pywinauto>=0.6.8",
+]
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Single-file server module (same shape as unreal-mcp).
+py-modules = ["browser_control_server"]

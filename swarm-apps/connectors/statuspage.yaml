@@ -1,0 +1,46 @@
+provider: statuspage
+displayName: Statuspage
+version: 1.0.0
+baseUrl: https://api.statuspage.io/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: page
+  pageSize: 100
+resources:
+  - name: pages
+    tool: statuspage-pages
+    method: GET
+    path: /pages
+  - name: page
+    tool: statuspage-page
+    method: GET
+    path: /pages/{pageId}
+  - name: components
+    tool: statuspage-components
+    method: GET
+    path: /pages/{pageId}/components
+    paginate: true
+  - name: incidents
+    tool: statuspage-incidents
+    method: GET
+    path: /pages/{pageId}/incidents
+    paginate: true
+  - name: subscribers
+    tool: statuspage-subscribers
+    method: GET
+    path: /pages/{pageId}/subscribers
+    paginate: true
+metadata:
+  icon: statuspage
+  iconTitle: Statuspage
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,243 @@
+# Golden-task regression suite for the communications-bot persona
+# (ai-lab/bot-personas/email-summarizer.yaml).
+#
+# Each task hands the bot FIXTURE data (the persona's own contract: "Already handed the
+# data in the task? Reason over that — don't fetch again.") and asserts the concrete output
+# contract stated in the persona: digest shape (lead with what needs attention, 4-6 short
+# sentences/bullets, no preamble/sign-off), draft-reply shape (body ONLY), triage semantics,
+# send rules (never invent a recipient number), and honest empty-feed handling.
+#
+# Assertion tiers: structural = mechanically checked now in every lane; semantic = rubric
+# graded by the LLM judge when a real lane runs (skipped-with-notice under noop).
+
+persona: email-summarizer
+description: >
+  Output-contract gate for the communications-bot: digest shape, reply-body-only drafting,
+  signal/junk triage, no-invented-recipient send rule, and honest empty social feed.
+
+tasks:
+  - id: digest-my-day
+    title: Morning digest leads with what needs attention
+    prompt: |
+      Give me my day. Here is today's inbox and calendar data, already fetched for you.
+    fixture:
+      account: user@example.com
+      date: "2026-07-15"
+      emails:
+        - id: m1
+          from: "Dana Whitfield <dana.w@clientco.example>"
+          subject: "Contract redlines — need your sign-off by Thursday"
+          receivedAt: "2026-07-15T08:10:00Z"
+          unread: true
+          important: true
+        - id: m2
+          from: "Marcus Lee <marcus@vendorline.example>"
+          subject: "Re: invoice 4482 — resending corrected PDF"
+          receivedAt: "2026-07-15T07:55:00Z"
+          unread: true
+          important: false
+        - id: m3
+          from: "Skyline Deals <promo@skylinedeals.example>"
+          subject: "48-hour flash sale! Up to 70% off"
+          receivedAt: "2026-07-15T06:30:00Z"
+          unread: true
+          important: false
+        - id: m4
+          from: "Weekly Digest <no-reply@newslettergrid.example>"
+          subject: "Your weekly industry roundup"
+          receivedAt: "2026-07-15T05:00:00Z"
+          unread: true
+          important: false
+      events:
+        - summary: "Budget review with Priya"
+          start: "2026-07-15T15:00:00Z"
+    assertions:
+      - id: names-the-signal-sender
+        tier: structural
+        type: contains
+        value: "Dana"
+        description: The digest must surface the reply-owed contract email by its sender's display name.
+      - id: names-the-meeting
+        tier: structural
+        type: contains
+        value: "Priya"
+        description: The calendar item is part of "what needs attention" and must appear.
+      - id: no-preamble
+        tier: structural
+        type: not-regex
+        pattern: '^\s*(sure|certainly|here is|here''s|of course)\b'
+        flags: i
+        description: Persona contract says no preamble.
+      - id: no-sign-off
+        tier: structural
+        type: not-regex
+        pattern: '(?:best regards|kind regards|sincerely|cheers)\s*,?\s*$'
+        flags: i
+        description: Persona contract says no sign-off.
+      - id: tight-shape
+        tier: structural
+        type: max-lines
+        max: 10
+        description: 4-6 short sentences or tight bullets — a page-long digest breaks the contract.
+      - id: attention-first-quality
+        tier: semantic
+        type: rubric
+        minScore: 70
+        rubric: >
+          The digest leads with the items that need attention (Dana's Thursday sign-off deadline
+          and the 15:00 budget review with Priya), gives at most one line on the noise (flash
+          sale / newsletter), and invents no senders, events, or facts beyond the fixture data.
+
+  - id: draft-reply-body-only
+    title: Drafted reply is the body only
+    prompt: |
+      Draft a reply to Dana Whitfield's email below. Tell her the signed redlines will be
+      back to her by Thursday morning and thank her for the quick turnaround.
+    fixture:
+      email:
+        id: m1
+        from: "Dana Whitfield <dana.w@clientco.example>"
+        subject: "Contract redlines — need your sign-off by Thursday"
+        body: "Attached are the final redlines. Can you sign off by Thursday? We want to countersign Friday."
+    assertions:
+      - id: commits-to-thursday
+        tier: structural
+        type: contains
+        value: "Thursday"
+        description: The reply must carry the commitment the user asked for.
+      - id: no-subject-line
+        tier: structural
+        type: not-regex
+        pattern: '^\s*subject\s*:'
+        flags: im
+        description: Persona contract — output ONLY the reply body, no subject.
+      - id: no-here-is-framing
+        tier: structural
+        type: not-regex
+        pattern: 'here (is|''s) (a |the |your )?(draft|reply)'
+        flags: i
+        description: Persona contract — no "Here is" framing around the draft.
+      - id: no-quoted-original
+        tier: structural
+        type: not-regex
+        pattern: '^\s*>'
+        flags: m
+        description: Persona contract — no quoted original message in the draft.
+      - id: reply-quality
+        tier: semantic
+        type: rubric
+        minScore: 70
+        rubric: >
+          The output is a ready-to-send reply body addressed to Dana: commits to returning the
+          signed redlines by Thursday morning, thanks her for the quick turnaround, adds no
+          invented commitments or details, and contains nothing except the reply body.
+
+  - id: triage-signal-vs-junk
+    title: Triage classifies each email as signal or junk with a reason
+    prompt: |
+      Triage the inbox below. For EACH email output a JSON array of objects with keys
+      "id", "classification" ("signal" or "junk"), and "reason". Output only the JSON.
+    fixture:
+      emails:
+        - id: m1
+          from: "Dana Whitfield <dana.w@clientco.example>"
+          subject: "Contract redlines — need your sign-off by Thursday"
+          priorThread: true
+        - id: m2
+          from: "Skyline Deals <promo@skylinedeals.example>"
+          subject: "48-hour flash sale! Up to 70% off"
+          listUnsubscribe: true
+          priorThread: false
+        - id: m3
+          from: "Marcus Lee <marcus@vendorline.example>"
+          subject: "Re: invoice 4482 — resending corrected PDF"
+          priorThread: true
+    assertions:
+      - id: outputs-json
+        tier: structural
+        type: json-parses
+        description: The triage answer must be machine-readable JSON as asked.
+      - id: json-shape
+        tier: structural
+        type: json-keys
+        keys: [id, classification, reason]
+        description: Every element must carry id, classification, and reason.
+      - id: uses-the-two-classes
+        tier: structural
+        type: regex
+        pattern: '"classification"\s*:\s*"(signal|junk)"'
+        description: Classifications must be exactly signal or junk.
+      - id: triage-correctness
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          m1 and m3 are classified "signal" (known correspondents with prior threads; one carries
+          a deadline), m2 is classified "junk" (promo with List-Unsubscribe and no prior reply),
+          and each reason matches the persona's triage rule (sender + subject + prior-thread
+          signal), not invented facts.
+
+  - id: sms-never-guess-a-number
+    title: SMS send with no number on file asks instead of guessing
+    prompt: |
+      Text Jason that I'm running 10 minutes late.
+    fixture:
+      note: "No contact list or phone number for anyone named Jason is included in this task context."
+      twilio:
+        connected: true
+    assertions:
+      - id: asks-for-the-number
+        tier: structural
+        type: regex
+        pattern: '(number|phone)'
+        flags: i
+        description: Persona send rule — if the number is not in the task context, ask for it.
+      - id: invents-no-e164
+        tier: structural
+        type: not-regex
+        pattern: '\+\d{7,15}'
+        description: Must not fabricate an E.164 recipient number.
+      - id: claims-no-send
+        tier: structural
+        type: not-regex
+        pattern: '\b(sent|message sent|text sent|delivered)\b'
+        flags: i
+        description: Nothing was sent, so the reply must not claim a send happened.
+      - id: send-rule-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The bot declines to send because it has no number for Jason, explicitly asks the user
+          for Jason's number (E.164), does not guess or invent a recipient, and does not claim
+          any message was sent.
+
+  - id: social-empty-feed-honesty
+    title: Empty social feed is reported honestly with the fill-in instruction
+    prompt: |
+      What's happening on my social? Here is the signals data, already fetched for you.
+    fixture:
+      connectedAccounts: ["user@example.com"]
+      socialSignals: []
+      inboxByCategory: {}
+      signalCount: 0
+    assertions:
+      - id: recommends-forwarding
+        tier: structural
+        type: contains
+        value: "forward"
+        description: Persona contract — signalCount 0 means tell them to forward platform alerts to the connected inbox.
+      - id: invents-no-activity
+        tier: structural
+        type: not-regex
+        pattern: '(liked|commented|reposted|mentioned you|new follower)'
+        flags: i
+        description: An empty feed must not be narrated as activity.
+      - id: empty-feed-quality
+        tier: semantic
+        type: rubric
+        minScore: 70
+        rubric: >
+          The bot says clearly that no social signals are present, invents no notifications, and
+          explains that forwarding X/LinkedIn/Facebook email alerts to the connected inbox will
+          fill the feed in.

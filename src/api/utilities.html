@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OSHAL — Utilities & Connectors</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     matters — without it the surface would have no colors at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  /* This surface keeps its own short alias names, but DERIVES them from the framework theme rather
+     than hardcoding hex — so all eleven themes work, not just the dark ones. The palette used to be
+     literal (#0b0f1e …), which is why it only ever looked right in the dark themes. Semantic status
+     colors come from the theme too; the fallbacks after the comma keep the surface legible if a
+     theme omits one. */
+  :root {
+    --bg: var(--bg-primary);
+    --card: var(--bg-card);
+    --card2: var(--bg-tertiary);
+    --border: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-secondary);
+    --accent: var(--accent-primary, #8b5cf6);
+    --ok: var(--status-success, #34d399);
+    --err: var(--status-error, #ef4444);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, -apple-system, sans-serif; padding: 28px 18px; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 22px; line-height: 1.5; }
+  .banner { padding: 11px 14px; border-radius: 10px; margin-bottom: 16px; font-size: 13px; display: none; }
+  .banner.ok { background: rgba(52,211,153,0.12); border: 1px solid var(--ok); color: var(--ok); }
+  .banner.err { background: rgba(239,68,68,0.12); border: 1px solid var(--err); color: var(--err); }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; }
+  .summary-tile { min-height: 76px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .summary-value { font-size: 24px; font-weight: 800; line-height: 1; }
+  .summary-label { margin-top: 7px; color: var(--muted); font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+  .filterbar { display: grid; grid-template-columns: 1fr 170px; gap: 10px; margin: 4px 0 16px; }
+  .search { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card2); color: var(--text); font: inherit; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; margin-bottom: 12px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .ico { width: 40px; height: 40px; border-radius: 8px; background: var(--card2); display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
+  .info { flex: 1; min-width: 180px; }
+  .name { font-weight: 700; font-size: 15px; }
+  .meta { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .meta.connected { color: var(--ok); }
+  .btn { font: inherit; font-size: 13px; font-weight: 700; border: none; border-radius: 9px; padding: 9px 18px; cursor: pointer; }
+  .btn.connect { background: var(--accent); color: #fff; }
+  .btn.disconnect { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .soon { margin-top: 26px; }
+  .soon h2 { font-size: 14px; color: var(--muted); margin-bottom: 10px; }
+  .soon-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { background: var(--card); border: 1px dashed var(--border); border-radius: 999px; padding: 6px 14px; font-size: 12.5px; color: var(--muted); }
+  .tbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tlabel { font-size: 12.5px; color: var(--muted); }
+  .tsel { padding: 8px 10px; border-radius: 9px; border: 1px solid var(--border); background: var(--card2); color: var(--text); font: inherit; }
+  .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .owner { font-size: 11.5px; color: var(--muted); }
+  .card.col { flex-direction: column; align-items: stretch; gap: 10px; }
+  .cardhead { display: flex; align-items: center; gap: 14px; }
+  .statuspill { border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 800; padding: 5px 9px; white-space: nowrap; }
+  .statuspill.ok { border-color: rgba(52,211,153,.45); color: var(--ok); background: rgba(52,211,153,.08); }
+  .statuspill.warn { border-color: rgba(251,191,36,.5); color: #fbbf24; background: rgba(251,191,36,.08); }
+  .conn { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 12px; background: var(--card2); border-radius: 9px; }
+  .connmeta { font-size: 12.5px; color: var(--text); }
+  .connacts { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .lnk { color: var(--accent); cursor: pointer; }
+  .tag { color: var(--ok); }
+  .tokrow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; width: 100%; }
+  .tokin { flex: 1; min-width: 200px; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border); background: var(--card2); color: var(--text); font: inherit; }
+  .cat { font-size: 12.5px; color: var(--muted); margin: 20px 0 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .cat:first-child { margin-top: 6px; }
+  a.back { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .tabs { display: flex; gap: 4px; margin: 24px 0 18px; border-bottom: 1px solid var(--border); }
+  .tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 700; padding: 10px 18px; cursor: pointer; margin-bottom: -1px; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .llm-intro { color: var(--muted); font-size: 13px; margin: 0 0 16px; line-height: 1.5; }
+  .addmore { color: var(--accent); cursor: pointer; font-size: 13px; font-weight: 700; display: inline-block; margin: 12px 0 4px; }
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb,rgba(255,255,255,.14));border-radius:6px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--muted,rgba(255,255,255,.28))}
+  html{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb,rgba(255,255,255,.14)) transparent}
+
+  @media (max-width: 640px) {
+    body { padding: 16px 12px; }
+    /* Card rows: stack icon + info + action vertically so nothing clips */
+    .card { flex-direction: column; align-items: stretch; }
+    /* Household / tenant toolbar: wrap onto two lines */
+    .tbar { flex-wrap: wrap; }
+    .tsel { width: 100%; }
+    /* Connection rows: stack label and action links on separate lines */
+    .conn { flex-direction: column; align-items: flex-start; gap: 6px; }
+    .connacts { white-space: normal; }
+    /* Token input rows: each input goes full-width, buttons stay comfortable */
+    .tokrow { flex-direction: column; }
+    .tokin { width: 100%; min-width: 0; font-size: 16px; }
+    /* Prevent iOS zoom on any other text input / select in the page */
+    input, select, textarea { font-size: 16px; }
+    /* Buttons should be easy to tap */
+    .btn { padding: 11px 16px; width: 100%; text-align: center; }
+    .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .filterbar { grid-template-columns: 1fr; }
+    .statuspill { align-self: flex-start; }
+    /* LLM head row: allow wrapping so the Configure link doesn't get hidden */
+    .card > div[style*="display:flex"] { flex-wrap: wrap; }
+    /* Category labels don't need large top margin on mobile */
+    .cat { margin-top: 14px; }
+    /* Chip row already wraps; ensure chips don't overflow */
+    .chip { flex-shrink: 0; }
+  }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/cockpit/" target="_top">&larr; Cockpit</a>
+  <h1 style="margin-top:10px;">&#128268; Utilities &amp; Connectors</h1>
+  <p class="sub">Connect your accounts so OSHAL bots can act for you. Each connection is a separate, explicit consent — it never changes how you sign in. Tokens are encrypted at rest and scoped to read-only where possible.</p>
+
+  <div id="banner" class="banner"></div>
+
+  <h2 style="font-size:14px;color:var(--muted);margin:6px 0 10px;">Your account</h2>
+  <div class="card">
+    <div class="ico">&#128100;</div>
+    <div class="info">
+      <div class="name" id="acctName">Checking…</div>
+      <div class="meta" id="acctMeta"></div>
+    </div>
+    <span id="acctAction"></span>
+  </div>
+
+  <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">Bot LLM access</h2>
+  <div class="card" style="flex-direction:column;align-items:stretch;gap:12px;">
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div class="ico">&#129302;</div>
+      <div class="info">
+        <div class="name">Claude Code (Anthropic)</div>
+        <div class="meta" id="ccStatus">Checking…</div>
+      </div>
+      <span id="ccActions"></span>
+    </div>
+    <div id="ccCode" style="display:none;">
+      <div class="meta" style="margin-bottom:6px;">After you authorize, Anthropic shows a code. Paste it here:</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input id="ccCodeInput" placeholder="Paste the authorization code" style="flex:1;min-width:200px;padding:9px 12px;border-radius:9px;border:1px solid var(--border);background:var(--card2);color:var(--text);font:inherit;">
+        <button class="btn connect" onclick="submitClaudeCode()">Submit code</button>
+      </div>
+      <div class="meta" id="ccCodeMsg" style="margin-top:6px;"></div>
+    </div>
+  </div>
+
+  <!-- OpenAI Codex — same auth.json import as the first-run /welcome wizard (one shared mechanism). -->
+  <div class="card" style="flex-direction:column;align-items:stretch;gap:12px;">
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div class="ico">&#129504;</div>
+      <div class="info">
+        <div class="name">OpenAI Codex (ChatGPT)</div>
+        <div class="meta" id="cxStatus">Checking…</div>
+      </div>
+      <span id="cxActions"></span>
+    </div>
+    <div id="cxImport" style="display:none;">
+      <div class="meta" style="margin-bottom:6px;">The "Sign in" redirect only completes if the Codex CLI is running on THIS computer. Instead, import the file the CLI already wrote (after you run <code>codex login</code> once): <code>~/.codex/auth.json</code> &nbsp;(Windows: <code>C:\Users\&lt;you&gt;\.codex\auth.json</code>).</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input type="file" id="cxFile" accept="application/json,.json" />
+        <button class="btn connect" onclick="importCodex()">Import credentials</button>
+      </div>
+      <textarea id="cxJson" rows="2" placeholder="…or paste auth.json contents" style="margin-top:6px;width:100%;box-sizing:border-box;padding:9px 12px;border-radius:9px;border:1px solid var(--border);background:var(--card2);color:var(--text);font:inherit;"></textarea>
+      <div class="meta" id="cxMsg" style="margin-top:6px;"></div>
+    </div>
+  </div>
+
+  <!-- Gemini (Google) — status-only tile. The Google sign-in is the vendor's OWN CLI login and
+       must run on the HOST (the browser callback returns to the machine the CLI runs on), so this
+       tile shows the exact host-side steps and polls /api/gemini/auth/status until the login
+       lands. We never broker Google OAuth ourselves (operator doctrine; see connect-ai.ps1). -->
+  <div class="card" style="flex-direction:column;align-items:stretch;gap:12px;">
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div class="ico">&#10024;</div>
+      <div class="info">
+        <div class="name">Gemini (Google)</div>
+        <div class="meta" id="gmStatus">Checking…</div>
+      </div>
+      <span id="gmActions"></span>
+    </div>
+    <div id="gmHelp" style="display:none;">
+      <div class="meta" style="background:var(--card2);border-radius:9px;padding:9px 12px;line-height:1.6;">
+        The Google sign-in runs on <strong>the host PC</strong> (the computer running the swarm) — the
+        browser hands the credential back to the machine the CLI runs on, so it can't happen from
+        this page. Either:
+        <br>&bull; Double-click <code>Connect-AI.bat</code> in your OSHAL install folder, or
+        <br>&bull; Open a terminal on the host and run <code>gemini</code> once — choose
+        <em>Login with Google</em> and finish in the browser. That writes
+        <code>~/.gemini/oauth_creds.json</code>, which the bots read.
+        <br>&bull; Or paste a <code>GEMINI_API_KEY</code> (AI Studio) into <code>.env</code> and restart.
+        <br><span id="gmPollNote">This tile flips to Connected automatically once the login lands.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Free model lanes (ADR-064). Same standing as Claude/Codex above: this is where a user
+       brings AI to the platform. The backend (/api/connect/free-tier) does catalog + validate-on-
+       connect + rotation + cooldown; this is the surface. -->
+  <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">
+    Free model lanes <span style="font-weight:400;font-size:12px;">— no credit card; connect as many as you like and OSHAL rotates across them</span>
+  </h2>
+  <div class="card" style="flex-direction:column;align-items:stretch;gap:10px;">
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+      <div class="ico">&#127873;</div>
+      <div class="info">
+        <div class="name">Run on free tokens</div>
+        <div class="meta" id="ftSummary">Checking…</div>
+      </div>
+      <span><a class="back" href="/free-models" target="_top">Full walkthrough &rarr;</a></span>
+    </div>
+    <!-- Honest scope: free lanes drive reasoning turns (chat/Jarvis). Tool-running bot work still
+         runs on the bot's own harness login above — see BACKLOG "BYO / free-tier connections
+         bypass the agentic loop". Don't oversell the free path here. -->
+    <div class="meta" style="background:var(--card2);border-radius:9px;padding:9px 12px;">
+      These power your <strong>chat and Jarvis</strong> turns. Tool-running bot work (tickets, file and
+      shell actions) still runs on the harness logins above.
+    </div>
+    <div id="freeTierCards"><p class="sub" style="margin:0;">Loading free providers…</p></div>
+  </div>
+
+  <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">LLM providers <span style="font-weight:400;font-size:12px;">— embedded in any-bot, run under the Cline wrapper</span></h2>
+  <div class="card" style="flex-direction:column;align-items:stretch;gap:8px;">
+    <div class="meta" id="llmNote" style="margin-bottom:4px;"></div>
+    <div id="llmProviders"><p class="sub">Loading providers…</p></div>
+  </div>
+
+  <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">Your accounts</h2>
+  <!-- Connect personally or on behalf of a household everyone in it can share (ADR-042). -->
+  <div id="tenantBar" class="tbar">
+    <span class="tlabel">Connecting as</span>
+    <select id="tenantSel" class="tsel" onchange="onTenantChange()"><option value="personal">Personal (just me)</option></select>
+    <button class="btn ghost" onclick="newHousehold()">+ New household</button>
+  </div>
+  <div id="connectorSummary" class="summary-grid"></div>
+  <div class="filterbar">
+    <input id="connectorSearch" class="search" placeholder="Search connectors" oninput="renderConnectorList()" />
+    <select id="connectorFilter" class="tsel" onchange="renderConnectorList()">
+      <option value="all">All status</option>
+      <option value="connected">Connected</option>
+      <option value="available">Ready</option>
+      <option value="needs_setup">Needs setup</option>
+    </select>
+  </div>
+  <div id="list"><p class="sub">Loading…</p></div>
+
+  <div class="soon">
+    <h2>More providers planned</h2>
+    <div class="soon-row">
+      <span class="chip">Yahoo Mail</span><span class="chip">Instagram</span>
+      <span class="chip">Mastodon</span><span class="chip">Databricks</span>
+    </div>
+  </div>
+</div>
+
+<script>
+function icon(id) { return ({ google:'🟢', gcp:'☁️', facebook:'🔵', 'meta-business':'📘', linkedin:'💼', outlook:'📧', twitter:'𝕏', github:'🐙', dropbox:'📦', smartthings:'🏠', 'google-home':'🌡️', 'any-llm':'🧠', slack:'💬', spotify:'🎵', tmdb:'🎬', duffel:'✈️' })[id] || '🔌'; }
+
+// Hub sections, in display order. Connectors are grouped by their `category`.
+var CAT_ORDER = [
+  ['llm', 'Bring Your Own LLM'],
+  ['identity', 'Sign-in & Identity'],
+  ['social', 'Social Media'],
+  ['communication', 'Messaging'],
+  ['email', 'Email & Calendar'],
+  ['storage', 'Storage'],
+  ['iot', 'IoT'],
+  ['devops', 'DevOps & Cloud'],
+  ['shopping', 'Shopping'],
+  ['food', 'Food Delivery'],
+  ['transportation', 'Transportation'],
+  ['music', 'Music'],
+  ['media', 'Movies & TV'],
+  ['travel', 'Travel'],
+  ['finance', 'Trading & Brokerage'],
+  ['other', 'Other'],
+];
+
+var ALL_CONNECTORS = [];
+
+function providerReady(p) {
+  return !!(p.connected || p.configured || p.auth === 'token' || p.platformDefault);
+}
+
+function connectorStatusPill(p) {
+  var conns = (p.connections || []).length;
+  if (conns) return '<span class="statuspill ok">' + conns + ' connected</span>';
+  if (providerReady(p)) return '<span class="statuspill">ready</span>';
+  return '<span class="statuspill warn">needs setup</span>';
+}
+
+function cardHtml(p) {
+  var conns = p.connections || [];
+  var body = '';
+  // One row per connected account — label · email · owner · default — with per-account actions.
+  conns.forEach(function(c) {
+    var owner = c.tenantId ? '🏠 ' + esc(tenantName(c.tenantId)) : 'Personal';
+    var nm = esc(c.label || c.account || 'account');
+    var sub = (c.account && c.account !== c.label) ? ' · ' + esc(c.account) : '';
+    body += '<div class="conn"><span class="connmeta">✓ <b>' + nm + '</b>' + sub + ' · ' + owner +
+      (c.isDefault ? ' · <span class="tag">default</span>' : '') + '</span><span class="connacts">' +
+      '<a class="lnk" onclick="renameConn(\'' + c.connectionId + '\')">rename</a>' +
+      (c.isDefault ? '' : ' · <a class="lnk" onclick="makeDefault(\'' + c.connectionId + '\')">make default</a>') +
+      (c.tenantId ? '' : ' · <a class="lnk" onclick="disconnectConn(\'' + c.connectionId + '\')">disconnect</a>') +
+      '</span></div>';
+  });
+  // Slack, once connected, gets a launcher into its Feeds surface (trends, hot areas, live stream).
+  if (p.id === 'slack' && conns.length) {
+    body += '<div class="tokrow"><button class="btn ghost" onclick="openFeed()">Open Slack Feed →</button>' +
+      '<span class="meta" style="align-self:center;">Trends, hot areas & live stream · settings live in the surface</span></div>';
+  }
+  // (The Spotify "Open Music" launcher left with the spotify carve, ADR-085 Wave 2 #2 —
+  //  same rule as TMDB below: connector pages must not deep-link apps that may not be
+  //  installed. Spotify stays a platform connector.)
+  // (The TMDB "Open Movies & TV" launcher left with the movies carve, ADR-085 Wave 2 #1 —
+  //  the installed package's own ribbon tile is the way in; a hardcoded /api/movies link here
+  //  would 404 whenever the package isn't installed. TMDB stays a platform connector.)
+  // Duffel, once connected, gets a launcher into the Travel surface (real flight search + price read).
+  if (p.id === 'duffel' && conns.length) {
+    body += '<div class="tokrow"><button class="btn ghost" onclick="openTravel()">Open Travel →</button>' +
+      '<span class="meta" style="align-self:center;">Real flight search, an honest price read & fare watches · booking opens externally</span></div>';
+  }
+  if (p.auth === 'llm') {
+    // The "any API, any LLM" connector — paste any OpenAI-compatible endpoint. This is
+    // the vendor-neutral selling point: one connector for OpenAI, Groq, Together, a
+    // private vLLM, anything that speaks /chat/completions.
+    body += '<div class="meta">Paste any OpenAI-compatible endpoint — base URL + key + model. The key is encrypted; the connection is validated against the live endpoint before it saves.</div>' +
+      '<div class="tokrow"><input id="bl-label" class="tokin" placeholder="Label (e.g. my OpenAI) — optional" /></div>' +
+      '<div class="tokrow"><input id="bl-url" class="tokin" placeholder="Base URL (e.g. https://api.openai.com/v1)" /></div>' +
+      '<div class="tokrow"><input id="bl-model" class="tokin" list="bl-models" placeholder="Model — type or click List models, then pick ▾" /><datalist id="bl-models"></datalist>' +
+      '<button class="btn ghost" onclick="byoModels()">List models</button></div>' +
+      '<div class="tokrow"><input id="bl-key" class="tokin" type="password" placeholder="' + (conns.length ? 'API key — leave blank to keep existing' : 'API key') + '" /></div>' +
+      '<div class="tokrow"><button class="btn connect" onclick="saveByoLlm()">Save &amp; validate</button>' +
+      '<button class="btn ghost" onclick="testByoLlm()">Test</button>' +
+      '<span id="bl-msg" class="meta" style="align-self:center;"></span></div>';
+    return '<div class="card col"><div class="cardhead"><div class="ico">' + icon(p.id) + '</div>' +
+      '<div class="info"><div class="name">' + esc(p.label) + '</div></div>' + connectorStatusPill(p) + '</div>' + body + '</div>';
+  }
+  // Connect / add-another affordance.
+  var addLabel = conns.length ? 'Add account' : 'Connect';
+  if (p.configured && p.auth !== 'token') {
+    body += '<div class="tokrow"><input id="lbl-' + p.id + '" class="tokin" placeholder="Label (e.g. work email) — optional" />' +
+      '<button class="btn connect" onclick="connectProvider(\'' + p.id + '\')">' + addLabel + '</button></div>';
+  } else if (p.auth === 'token' || p.tokenFallback) {
+    var help = p.tokenHelpUrl ? ' (<a target="_top" href="' + esc(p.tokenHelpUrl) + '">get a token</a>)' : '';
+    // A shared platform key already serves everyone (env), so a personal token is OPTIONAL —
+    // say so plainly instead of making the card read like a required setup step.
+    if (p.platformDefault) {
+      body += '<div class="meta connected">Optional — a shared key is already active, so this works for everyone with nothing to do. Paste your own token only to use your own quota.</div>';
+    }
+    // Two-value (HTTP Basic) token connectors also need an account id — e.g. Jira wants the
+    // Atlassian email, Twilio the Account SID, alongside the token. TWO_FIELD_TOKEN maps
+    // provider id -> field label. type=text: the account id is not always an email (Twilio SID).
+    var emailLabel = TWO_FIELD_TOKEN[p.id];
+    var emailInput = emailLabel
+      ? '<input id="email-' + p.id + '" class="tokin" type="text" placeholder="' + esc(emailLabel) + '" />'
+      : '';
+    // MULTILINE_TOKEN providers (Kalshi: a multi-line PEM private key) get a <textarea> on its
+    // own row instead of the single-line type=password <input>. A single-line input truncates
+    // or mangles a pasted multi-line secret at the first line break in some browsers — the same
+    // "paste a blob" pattern already used for cxJson below, not a new one.
+    var isMultiline = MULTILINE_TOKEN[p.id];
+    var tokPlaceholder = isMultiline ? 'Paste the full private key (PEM) — every line, BEGIN through END' : (emailLabel ? 'API token' : 'Personal Access Token');
+    var tokField = isMultiline
+      ? '<textarea id="tok-' + p.id + '" class="tokin" rows="6" style="width:100%;box-sizing:border-box;font-family:monospace;font-size:11px;" placeholder="' + esc(tokPlaceholder) + '"></textarea>'
+      : '<input id="tok-' + p.id + '" class="tokin" type="password" placeholder="' + esc(tokPlaceholder) + '" />';
+    body += '<div class="meta">' + (p.platformDefault ? 'Use your own token' : (emailLabel ? 'Connect with your account id + API token' : 'Paste a Personal Access Token')) + help + '</div>' +
+      '<div class="tokrow"><input id="lbl-' + p.id + '" class="tokin" placeholder="Label — optional" />' +
+      emailInput +
+      (isMultiline ? '' : tokField) +
+      '<button class="btn connect" onclick="saveToken(\'' + p.id + '\')">Save</button></div>' +
+      (isMultiline ? '<div class="tokrow" style="margin-top:6px;">' + tokField + '</div>' : '');
+  } else if (!p.configured) {
+    body += '<div class="meta">Not configured — needs an OAuth client + the redirect URI registered.</div>';
+  }
+  return '<div class="card col"><div class="cardhead"><div class="ico">' + icon(p.id) + '</div>' +
+    '<div class="info"><div class="name">' + esc(p.label) + '</div></div>' + connectorStatusPill(p) + '</div>' + body + '</div>';
+}
+
+function openFeed() { (window.top || window).location.href = '/feeds'; }
+function openTravel() { (window.top || window).location.href = '/api/travel/app'; }
+
+function connectProvider(id) {
+  var el = document.getElementById('lbl-' + id);
+  var lbl = (el && el.value || '').trim();
+  var url = '/api/connect/' + id + '/start?tenant=' + encodeURIComponent(SELECTED_TENANT) +
+    (lbl ? '&label=' + encodeURIComponent(lbl) : '');
+  window.top.location.href = url;
+}
+
+async function renameConn(id) {
+  var label = (prompt('New label for this connection (e.g. work email):') || '').trim();
+  if (!label) return;
+  try {
+    var r = await (await fetch('/api/connect/connection/' + id + '/label', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: label })
+    })).json();
+    if (!r || !r.success) throw new Error((r && r.error) || 'rename failed');
+    load();
+  } catch (e) { alert('Could not rename: ' + e.message); }
+}
+
+async function makeDefault(id) {
+  try {
+    await fetch('/api/connect/connection/' + id + '/label', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ makeDefault: true })
+    });
+    load();
+  } catch (e) { alert('Could not set default: ' + e.message); }
+}
+
+async function disconnectConn(id) {
+  if (!confirm('Disconnect this account? Bots will lose access to it.')) return;
+  try { await fetch('/api/connect/connection/' + id, { method: 'DELETE', credentials: 'include' }); load(); }
+  catch (e) { alert('Could not disconnect: ' + e.message); }
+}
+
+// Token connectors needing a second (account-id) field — provider id -> field label.
+// kalshi: the "token" field takes the downloaded RSA private-key PEM (paste the whole file;
+// the backend rebuilds the newlines), the second field takes the API Key ID.
+var TWO_FIELD_TOKEN = { jira: 'Atlassian account email', twilio: 'Twilio Account SID', kalshi: 'Kalshi API Key ID' };
+// Providers whose "token" is itself multi-line (a PEM key, not a short string) — these get a
+// <textarea> instead of the single-line type=password <input>, which some browsers truncate
+// or mangle a multi-line paste into (confirmed 2026-07-13: reproduces "missing BEGIN/END
+// markers" when a pasted PEM is cut at the first line break).
+var MULTILINE_TOKEN = { kalshi: true };
+
+async function saveToken(id) {
+  var el = document.getElementById('tok-' + id);
+  var token = (el && el.value || '').trim();
+  if (!token) { alert('Paste a token first.'); return; }
+  var lblEl = document.getElementById('lbl-' + id);
+  var label = (lblEl && lblEl.value || '').trim();
+  // Two-value (Basic) connectors also send an email; the backend stores "email:token".
+  var emEl = document.getElementById('email-' + id);
+  var email = (emEl && emEl.value || '').trim();
+  if (TWO_FIELD_TOKEN[id] && !email) { alert('Enter your ' + TWO_FIELD_TOKEN[id] + ' first.'); return; }
+  try {
+    var r = await (await fetch('/api/connect/' + id + '/token', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token, email: email, tenant: SELECTED_TENANT, label: label })
+    })).json();
+    if (!r || !r.success) throw new Error((r && r.error) || 'save failed');
+    load();
+  } catch (e) { alert('Could not save token: ' + e.message); }
+}
+
+// ── Bring Your Own LLM (any API, any LLM) — paste an OpenAI-compatible endpoint ──
+function byoFields() {
+  return {
+    label: (document.getElementById('bl-label') || {}).value || '',
+    baseUrl: ((document.getElementById('bl-url') || {}).value || '').trim(),
+    model: ((document.getElementById('bl-model') || {}).value || '').trim(),
+    apiKey: ((document.getElementById('bl-key') || {}).value || '').trim(),
+  };
+}
+function byoMsg(t) { var m = document.getElementById('bl-msg'); if (m) m.textContent = t; }
+
+async function saveByoLlm() {
+  var f = byoFields();
+  if (!f.baseUrl || !f.model) { byoMsg('Base URL and model are required.'); return; }
+  byoMsg('Validating against the endpoint…');
+  try {
+    var r = await (await fetch('/api/connect/any-llm/save', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: f.label, baseUrl: f.baseUrl, model: f.model, apiKey: f.apiKey, tenant: SELECTED_TENANT }),
+    })).json();
+    if (!r || !r.success) throw new Error((r && r.error) || 'save failed');
+    byoMsg('Saved ✓ — ' + r.model + ' @ ' + r.host);
+    load();
+  } catch (e) { byoMsg('Could not save: ' + e.message); }
+}
+
+async function testByoLlm() {
+  var f = byoFields();
+  byoMsg('Testing…');
+  try {
+    var r = await (await fetch('/api/connect/any-llm/test', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: f.baseUrl, model: f.model, apiKey: f.apiKey }),
+    })).json();
+    if (!r || !r.success) throw new Error((r && r.error) || 'test failed');
+    byoMsg('✓ ' + (r.reply || '(empty reply)') + ' · ' + r.ms + 'ms · ' + r.model);
+  } catch (e) { byoMsg('Test failed: ' + e.message); }
+}
+
+async function byoModels() {
+  var f = byoFields();
+  if (!f.baseUrl) { byoMsg('Enter the base URL first.'); return; }
+  byoMsg('Listing models…');
+  try {
+    var q = '?baseUrl=' + encodeURIComponent(f.baseUrl) + (f.apiKey ? '&apiKey=' + encodeURIComponent(f.apiKey) : '');
+    var r = await (await fetch('/api/connect/any-llm/models' + q, { credentials: 'include' })).json();
+    if (!r || !r.models) throw new Error((r && r.error) || 'no models');
+    // Populate the Model field's dropdown so the user picks instead of typing blind.
+    var dl = document.getElementById('bl-models');
+    if (dl) dl.innerHTML = r.models.map(function (m) { return '<option value="' + esc(m) + '"></option>'; }).join('');
+    var modelEl = document.getElementById('bl-model');
+    if (modelEl && !modelEl.value && r.models.length) modelEl.value = r.models[0];
+    byoMsg(r.models.length
+      ? r.models.length + ' models loaded — click the Model field ▾ to pick (or type one)'
+      : 'Endpoint listed no models — type the model name in the field.');
+  } catch (e) { byoMsg('Could not list models: ' + e.message); }
+}
+
+function showBanner() {
+  var p = new URLSearchParams(location.search);
+  var b = document.getElementById('banner');
+  if (p.get('connected')) { b.className = 'banner ok'; b.style.display = 'block'; b.textContent = '✓ Connected ' + p.get('connected') + '.'; }
+  else if (p.get('error')) { b.className = 'banner err'; b.style.display = 'block'; b.textContent = 'Could not connect: ' + p.get('error'); }
+}
+
+async function load() {
+  var list = document.getElementById('list');
+  try {
+    var data = await (await fetch('/api/connect/list', { credentials: 'include' })).json();
+    ALL_CONNECTORS = data.providers || [];
+    renderConnectorSummary();
+    renderConnectorList();
+  } catch (e) { list.innerHTML = '<p class="sub">Could not load connectors.</p>'; }
+}
+
+function renderConnectorSummary() {
+  var box = document.getElementById('connectorSummary');
+  if (!box) return;
+  var rows = ALL_CONNECTORS || [];
+  var connectedProviders = rows.filter(function(p) { return !!p.connected; }).length;
+  var accounts = rows.reduce(function(sum, p) { return sum + ((p.connections || []).length); }, 0);
+  var ready = rows.filter(providerReady).length;
+  var needsSetup = rows.filter(function(p) { return !providerReady(p); }).length;
+  box.innerHTML = [
+    summaryTile(accounts, 'accounts'),
+    summaryTile(connectedProviders, 'connected'),
+    summaryTile(ready, 'ready'),
+    summaryTile(needsSetup, 'needs setup'),
+  ].join('');
+}
+
+function summaryTile(value, label) {
+  return '<div class="summary-tile"><div class="summary-value">' + value + '</div><div class="summary-label">' + label + '</div></div>';
+}
+
+function renderConnectorList() {
+  var list = document.getElementById('list');
+  if (!list) return;
+  var qEl = document.getElementById('connectorSearch');
+  var fEl = document.getElementById('connectorFilter');
+  var query = ((qEl && qEl.value) || '').trim().toLowerCase();
+  var filter = (fEl && fEl.value) || 'all';
+  var rows = (ALL_CONNECTORS || []).filter(function(p) {
+    var searchable = [p.id, p.label, p.category, (p.connections || []).map(function(c) { return [c.label, c.account].join(' '); }).join(' ')].join(' ').toLowerCase();
+    if (query && searchable.indexOf(query) < 0) return false;
+    if (filter === 'connected') return !!p.connected;
+    if (filter === 'available') return providerReady(p);
+    if (filter === 'needs_setup') return !providerReady(p);
+    return true;
+  });
+  var byCat = {};
+  rows.forEach(function(p) { var k = p.category || 'other'; (byCat[k] = byCat[k] || []).push(p); });
+  var html = '';
+  CAT_ORDER.forEach(function(c) {
+    var items = byCat[c[0]];
+    if (!items || !items.length) return;
+    html += '<div class="cat">' + c[1] + '</div>' + items.map(cardHtml).join('');
+  });
+  list.innerHTML = html || '<p class="sub">No connectors match.</p>';
+}
+
+async function disconnect(id) {
+  if (!confirm('Disconnect ' + id + '? Bots will lose access to that account.')) return;
+  try { await fetch('/api/connect/' + id, { method: 'DELETE', credentials: 'include' }); load(); }
+  catch (e) { alert('Could not disconnect: ' + e.message); }
+}
+
+// ── Households (ADR-042): connect personally or on behalf of a shared household ──
+var TENANTS = [];
+var SELECTED_TENANT = 'personal';
+function tenantName(id) { var t = TENANTS.find(function(x){ return x.tenant_id === id; }); return t ? (t.name || 'Household') : 'Household'; }
+function onTenantChange() { var s = document.getElementById('tenantSel'); SELECTED_TENANT = s ? s.value : 'personal'; }
+async function loadTenants() {
+  try {
+    var data = await (await fetch('/api/tenants', { credentials: 'include' })).json();
+    TENANTS = data.tenants || [];
+  } catch (e) { TENANTS = []; }
+  var sel = document.getElementById('tenantSel');
+  if (!sel) return;
+  var opts = '<option value="personal">Personal (just me)</option>';
+  TENANTS.forEach(function(t) { opts += '<option value="' + esc(t.tenant_id) + '">' + esc(t.name || 'Household') + ' (' + esc(t.role) + ')</option>'; });
+  sel.innerHTML = opts;
+  sel.value = SELECTED_TENANT;
+}
+async function newHousehold() {
+  var name = (prompt('Name this household (everyone you add can control its connected devices):') || '').trim();
+  if (!name) return;
+  try {
+    var r = await (await fetch('/api/tenants', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name })
+    })).json();
+    if (!r || !r.tenant) throw new Error((r && r.error) || 'create failed');
+    SELECTED_TENANT = r.tenant.tenant_id;
+    await loadTenants();
+    load();
+  } catch (e) { alert('Could not create household: ' + e.message); }
+}
+
+function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+// ── Claude Code (Anthropic) — uses the PKCE/paste-code flow, like VS Code ──
+async function loadClaude() {
+  var statusEl = document.getElementById('ccStatus');
+  var actions = document.getElementById('ccActions');
+  try {
+    var s = await (await fetch('/api/claude-code/auth/status', { credentials: 'include' })).json();
+    if (s && s.authenticated) {
+      statusEl.className = 'meta connected';
+      statusEl.textContent = 'Connected — bots can run on Claude.';
+      // Shared, host-mounted platform credential — NOT this user's to sign out (doing so
+      // would knock every tenant's bots offline). Grayed out; only the operator manages it.
+      actions.innerHTML = '<button class="btn" disabled title="Shared platform credential, managed by the operator. To run bots on your own account, add a key under \'LLM providers\' below." style="opacity:0.4;cursor:not-allowed;">Sign out (shared)</button>';
+      document.getElementById('ccCode').style.display = 'none';
+    } else {
+      statusEl.className = 'meta';
+      statusEl.textContent = 'Not connected — claude-code bots (task-manager, etc.) can\'t run until this is authorized.';
+      actions.innerHTML = '<button class="btn connect" onclick="connectClaude()">Connect</button>';
+    }
+  } catch (e) { statusEl.textContent = 'Status unavailable.'; }
+}
+
+async function connectClaude() {
+  try {
+    var r = await (await fetch('/api/claude-code/auth/start', { credentials: 'include' })).json();
+    if (!r || !r.success) throw new Error((r && r.error) || 'could not start');
+    if (r.pendingAuthUrl) window.open(r.pendingAuthUrl, '_blank', 'noopener');
+    // Reveal the paste-code box (hosted apps complete via the manual code, like VS Code).
+    document.getElementById('ccCode').style.display = 'block';
+    document.getElementById('ccCodeInput').focus();
+  } catch (e) { alert('Could not start Claude Code login: ' + e.message); }
+}
+
+async function submitClaudeCode() {
+  var code = document.getElementById('ccCodeInput').value.trim();
+  var msg = document.getElementById('ccCodeMsg');
+  if (!code) { msg.textContent = 'Paste the code first.'; return; }
+  msg.textContent = 'Submitting…';
+  try {
+    var r = await (await fetch('/api/claude-code/auth/submit-code', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code })
+    })).json();
+    if (!r || !r.success) throw new Error((r && r.error) || 'submit failed');
+    msg.textContent = 'Connected ✓';
+    document.getElementById('ccCodeInput').value = '';
+    loadClaude();
+  } catch (e) { msg.textContent = 'Could not connect: ' + e.message; }
+}
+
+async function signoutClaude() {
+  if (!confirm('Sign out of Claude Code? claude-code bots will stop working until you reconnect.')) return;
+  try { await fetch('/api/claude-code/auth/signout', { method: 'POST', credentials: 'include' }); loadClaude(); }
+  catch (e) { alert('Could not sign out: ' + e.message); }
+}
+
+// ── OpenAI Codex — the SAME auth.json import the /welcome wizard uses (one mechanism, two surfaces) ──
+async function loadCodex() {
+  var statusEl = document.getElementById('cxStatus');
+  var actions = document.getElementById('cxActions');
+  if (!statusEl || !actions) return;
+  try {
+    var s = await (await fetch('/api/openai-codex/oauth/status', { credentials: 'include' })).json();
+    if (s && s.authenticated) {
+      statusEl.className = 'meta connected';
+      statusEl.textContent = 'Connected — bots can run on Codex.';
+      actions.innerHTML = '<button class="btn" onclick="toggleCodexImport()">Re-import</button> <button class="btn disconnect" onclick="signoutCodex()">Sign out</button>';
+    } else {
+      statusEl.className = 'meta';
+      statusEl.textContent = 'Not connected — import your Codex auth.json to run bots on Codex.';
+      actions.innerHTML = '<button class="btn connect" onclick="toggleCodexImport()">Connect</button>';
+    }
+  } catch (e) { statusEl.textContent = 'Status unavailable.'; }
+}
+
+function toggleCodexImport() {
+  var box = document.getElementById('cxImport');
+  if (box) box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
+}
+
+async function importCodex() {
+  var msg = document.getElementById('cxMsg');
+  var fileEl = document.getElementById('cxFile');
+  // Shared import seam with /welcome: POST /api/openai-codex/oauth/import { authJson }.
+  function send(text) {
+    if (!text) { msg.textContent = 'Choose your auth.json or paste its contents.'; return; }
+    msg.textContent = 'Importing…';
+    fetch('/api/openai-codex/oauth/import', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ authJson: text }) })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r || !r.success) throw new Error((r && r.error) || 'import failed');
+        msg.textContent = 'Connected ✓';
+        document.getElementById('cxJson').value = '';
+        document.getElementById('cxImport').style.display = 'none';
+        loadCodex();
+      })
+      .catch(function (e) { msg.textContent = 'Could not import: ' + e.message; });
+  }
+  if (fileEl && fileEl.files && fileEl.files[0]) {
+    var rd = new FileReader();
+    rd.onload = function () { send(String(rd.result || '').trim()); };
+    rd.onerror = function () { msg.textContent = 'Could not read that file.'; };
+    rd.readAsText(fileEl.files[0]);
+  } else {
+    send(document.getElementById('cxJson').value.trim());
+  }
+}
+
+async function signoutCodex() {
+  if (!confirm('Sign out of Codex? codex bots will stop working until you reconnect.')) return;
+  try { await fetch('/api/openai-codex/oauth/signout', { method: 'POST', credentials: 'include' }); loadCodex(); }
+  catch (e) { alert('Could not sign out: ' + e.message); }
+}
+
+// ── Gemini (Google) — host-side CLI login, status-only here (we never broker Google OAuth) ──
+// While disconnected, poll the status route so the tile flips to Connected on its own after
+// the operator finishes `gemini` login on the host (the mounted oauth_creds.json appears).
+var GM_POLL = null;
+var GM_POLL_MS = 8000;
+
+async function loadGemini() {
+  var statusEl = document.getElementById('gmStatus');
+  var actions = document.getElementById('gmActions');
+  if (!statusEl || !actions) return;
+  try {
+    var s = await (await fetch('/api/gemini/auth/status', { credentials: 'include' })).json();
+    if (s && s.connected) {
+      statusEl.className = 'meta connected';
+      statusEl.textContent = s.method === 'api-key'
+        ? 'Connected via API key — bots can run on Gemini.'
+        : 'Connected — bots can run on Gemini (Google login).';
+      // Shared, host-mounted platform credential (like Claude Code above) — nothing for a
+      // tenant to sign out of here; the operator manages it on the host.
+      actions.innerHTML = '';
+      var help = document.getElementById('gmHelp');
+      if (help) help.style.display = 'none';
+      stopGeminiPoll();
+    } else {
+      statusEl.className = 'meta';
+      statusEl.textContent = s && s.reason === 'expired'
+        ? 'Session expired — sign in again on the host to reconnect gemini bots.'
+        : 'Not connected — gemini bots can\'t run until you sign in on the host.';
+      actions.innerHTML = '<button class="btn connect" onclick="showGeminiHelp()">How to connect</button>';
+      startGeminiPoll();
+    }
+  } catch (e) { statusEl.textContent = 'Status unavailable.'; }
+}
+
+function showGeminiHelp() {
+  var help = document.getElementById('gmHelp');
+  if (help) help.style.display = 'block';
+  var note = document.getElementById('gmPollNote');
+  if (note) note.textContent = 'Watching for the login… this tile flips to Connected automatically (checked every ' + Math.round(GM_POLL_MS / 1000) + 's).';
+  startGeminiPoll();
+}
+
+function startGeminiPoll() {
+  if (GM_POLL) return;
+  GM_POLL = setInterval(loadGemini, GM_POLL_MS);
+}
+
+function stopGeminiPoll() {
+  if (!GM_POLL) return;
+  clearInterval(GM_POLL);
+  GM_POLL = null;
+}
+
+// ── Your account (sign in / out) — unified here with connections ──
+async function loadAccount() {
+  var nameEl = document.getElementById('acctName');
+  var metaEl = document.getElementById('acctMeta');
+  var action = document.getElementById('acctAction');
+  try {
+    var a = await (await fetch('/api/auth/user', { credentials: 'include' })).json();
+    if (a && a.authenticated && a.user) {
+      var u = a.user;
+      nameEl.textContent = u.name || u.email || u.preferred_username || 'Signed in';
+      metaEl.className = 'meta connected';
+      metaEl.textContent = (u.email && u.email !== nameEl.textContent ? u.email + ' · ' : '') + 'Signed in';
+      action.innerHTML = '<a class="btn disconnect" target="_top" href="/logout">Sign out</a>';
+    } else {
+      nameEl.textContent = 'Not signed in';
+      metaEl.textContent = 'Sign in to use your classes, connections, and bots.';
+      action.innerHTML = '<a class="btn connect" target="_top" href="/login">Sign in</a>';
+    }
+  } catch (e) { nameEl.textContent = 'Account status unavailable.'; }
+}
+
+// ── LLM providers (embedded in any-bot, run under the Cline wrapper) ──
+// State holds the last /access response so saves can rebuild the full
+// providerModelPreferences map and know whether a default is already set.
+var LLM_STATE = { providers: [], hasActive: false };
+
+async function loadLlmProviders() {
+  var box = document.getElementById('llmProviders');
+  try {
+    var d = await (await fetch('/api/providers/access', { credentials: 'include' })).json();
+    document.getElementById('llmNote').textContent = d.runtimeNote || '';
+    LLM_STATE = { providers: d.providers || [], hasActive: !!d.hasActive };
+    box.innerHTML = LLM_STATE.providers.map(renderLlmRow).join('') || '<p class="sub">No providers.</p>';
+  } catch (e) { box.innerHTML = '<p class="sub">Could not load providers.</p>'; }
+}
+
+// Build the model <select> for a provider, defaulting to its saved/default model.
+function llmModelOptions(p) {
+  var sel = p.selectedModel || p.defaultModelId || '';
+  return (p.models || []).map(function (m) {
+    return '<option value="' + esc(m.id) + '"' + (m.id === sel ? ' selected' : '') + '>' + esc(m.name) + '</option>';
+  }).join('') || '<option value="">(no models listed)</option>';
+}
+
+function renderLlmRow(p) {
+  var badge = p.kind === 'local' ? '🖥️ local' : (p.kind === 'oauth' ? '🔐 login' : '🔑 key');
+  var status = p.active
+    ? '<span class="tag" style="font-weight:700;">★ default</span>'
+    : (p.configured
+      ? '<span style="color:var(--ok)">✓ configured</span>'
+      : '<span style="color:var(--muted)">not set</span>');
+  var head = '<div style="display:flex;align-items:center;gap:10px;">'
+    + '<span style="flex:1;font-weight:600;">' + esc(p.label) + '</span>'
+    + '<span class="meta" style="font-size:11.5px;">' + badge + '</span>'
+    + '<span style="font-size:12px;min-width:80px;text-align:right;">' + status + '</span>'
+    + '<span class="lnk" style="font-size:12px;" onclick="toggleLlm(\'' + p.id + '\')">Configure ▾</span></div>';
+
+  var keyField = p.kind === 'api-key'
+    ? '<input id="llmkey-' + p.id + '" class="tokin" type="password" placeholder="' + (p.configured ? 'Key on file — leave blank to keep' : 'Paste API key') + '" />'
+    : (p.kind === 'oauth'
+      ? '<span class="meta" style="flex:1;min-width:200px;">Sign in via the Claude Code / Codex login above — no key needed here.</span>'
+      : '<span class="meta" style="flex:1;min-width:200px;">Local runtime — no key needed.</span>');
+
+  var activate = p.active
+    ? '<span class="tag" style="align-self:center;">Current default ★</span>'
+    : '<button class="btn ghost" onclick="saveLlm(\'' + p.id + '\', true)">Use as default</button>';
+
+  var body = '<div id="llmbody-' + p.id + '" style="display:none;margin-top:10px;">'
+    + '<div class="tokrow">' + keyField + '</div>'
+    + '<div class="tokrow"><select id="llmmodel-' + p.id + '" class="tsel" style="flex:1;min-width:200px;">' + llmModelOptions(p) + '</select></div>'
+    + '<div class="tokrow"><button class="btn connect" onclick="saveLlm(\'' + p.id + '\', false)">Save</button>' + activate
+    + '<span id="llmmsg-' + p.id + '" class="meta" style="align-self:center;"></span></div></div>';
+
+  return '<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;">' + head + body + '</div>';
+}
+
+function toggleLlm(id) {
+  var b = document.getElementById('llmbody-' + id);
+  if (b) b.style.display = b.style.display === 'none' ? 'block' : 'none';
+}
+
+// Save a provider's key + model. activate=true (or no default yet) makes it the
+// active provider bots run on; otherwise the key is stored without hijacking the default.
+async function saveLlm(id, activate) {
+  var p = LLM_STATE.providers.find(function (x) { return x.id === id; });
+  if (!p) return;
+  var msg = document.getElementById('llmmsg-' + id);
+  var keyEl = document.getElementById('llmkey-' + id);
+  var modelEl = document.getElementById('llmmodel-' + id);
+  var key = keyEl ? keyEl.value.trim() : '';
+  var model = modelEl ? modelEl.value : (p.defaultModelId || '');
+  if (msg) msg.textContent = 'Saving…';
+
+  // Rebuild the full provider→model map so we never drop other providers' choices.
+  var prefs = {};
+  LLM_STATE.providers.forEach(function (x) {
+    var sel = (x.id === id) ? model : x.selectedModel;
+    if (sel) prefs[x.id] = sel;
+  });
+
+  var payload = { providerModelPreferences: prefs };
+  if (key && p.secretKey) payload[p.secretKey] = key;
+  // First provider ever configured becomes the default; "Use as default" forces it.
+  if (activate || !LLM_STATE.hasActive) {
+    payload.actModeApiProvider = id;
+    payload.planModeApiProvider = id;
+    payload.actModeApiModelId = model;
+    payload.planModeApiModelId = model;
+    payload.mode = 'act';
+  }
+
+  try {
+    var r = await (await fetch('/api/config', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })).json();
+    if (!r || r.success === false) throw new Error((r && r.error) || 'save failed');
+    if (msg) msg.textContent = 'Saved ✓';
+    loadLlmProviders();
+  } catch (e) { if (msg) msg.textContent = 'Could not save: ' + e.message; }
+}
+
+// ── Free model lanes (ADR-064) — catalog + connect + rotation state ──
+// Backend does the work: /catalog (label, howTo, keyHelpUrl, oauth, freeModels), /list
+// (connected + cooledDown per connection), /connect (validate-on-save round-trip), DELETE.
+var FT_CATALOG = [];
+var FT_CONNECTED = {};   // providerId -> { connectionId, cooledDown }
+
+function ftEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+
+async function loadFreeTier() {
+  var host = document.getElementById('freeTierCards');
+  if (!host) return;
+  try {
+    var cat = await (await fetch('/api/connect/free-tier/catalog', { credentials: 'include' })).json();
+    FT_CATALOG = (cat && cat.providers) || [];
+  } catch (e) {
+    host.innerHTML = '<p class="sub" style="margin:0;">Could not load free providers.</p>';
+    return;
+  }
+  await refreshFreeTierState();
+  renderFreeTier();
+}
+
+async function refreshFreeTierState() {
+  FT_CONNECTED = {};
+  var sum = document.getElementById('ftSummary');
+  try {
+    var data = await (await fetch('/api/connect/free-tier/list', { credentials: 'include' })).json();
+    for (var i = 0; i < (data.connections || []).length; i++) {
+      var c = data.connections[i];
+      FT_CONNECTED[c.providerId] = c;
+    }
+    var s = data.summary || { connected: 0, active: 0, cooledDown: 0 };
+    if (sum) {
+      if (s.connected > 0) {
+        sum.className = 'meta connected';
+        sum.textContent = s.connected + ' connected · ' + s.active + ' active'
+          + (s.cooledDown ? ' · ' + s.cooledDown + ' cooling down' : '');
+      } else {
+        sum.className = 'meta';
+        sum.textContent = 'None connected — a free default is already available, but connecting your own raises your limits.';
+      }
+    }
+  } catch (e) { if (sum) sum.textContent = 'Status unavailable.'; }
+}
+
+function renderFreeTier() {
+  var host = document.getElementById('freeTierCards');
+  if (!host) return;
+  host.innerHTML = FT_CATALOG.map(function (p) {
+    var c = FT_CONNECTED[p.id];
+    var pill = !c ? ''
+      : (c.cooledDown
+        ? '<span class="statuspill warn">cooling down</span>'
+        : '<span class="statuspill ok">connected</span>');
+    var action = c
+      ? '<button class="btn disconnect" data-ftdis="' + p.id + '">Disconnect</button>'
+      : (p.oauth
+        ? '<button class="btn connect" data-ftoauth="' + p.id + '">Connect</button>'
+        : '<button class="btn connect" data-ftopen="' + p.id + '">Connect</button>');
+    return '<div class="conn" style="flex-direction:column;align-items:stretch;gap:8px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">'
+      +   '<div><span class="connmeta"><strong>' + ftEsc(p.label) + '</strong></span> ' + pill
+      +     '<div class="meta">' + ftEsc(p.freeBlurb || p.note || '') + '</div></div>'
+      +   '<span style="display:flex;gap:8px;align-items:center;">'
+      +     '<a class="back" href="' + ftEsc(p.keyHelpUrl) + '" target="_blank" rel="noopener">Get a key &#8599;</a>'
+      +     action
+      +   '</span>'
+      + '</div>'
+      + '<div id="ftPaste-' + p.id + '" style="display:none;">'
+      +   '<div class="tokrow">'
+      +     '<input type="password" class="tokin" id="ftKey-' + p.id + '" placeholder="Paste your ' + ftEsc(p.label) + ' API key" />'
+      +     '<button class="btn connect" data-ftsave="' + p.id + '">Save</button>'
+      +   '</div>'
+      +   '<div class="meta" style="margin-top:6px;">Default model: <code>' + ftEsc((p.freeModels || [])[0] || '') + '</code></div>'
+      + '</div>'
+      + '<div class="meta" id="ftMsg-' + p.id + '"></div>'
+      + '</div>';
+  }).join('');
+  wireFreeTier();
+}
+
+function wireFreeTier() {
+  document.querySelectorAll('[data-ftopen]').forEach(function (b) {
+    b.onclick = function () {
+      var box = document.getElementById('ftPaste-' + b.getAttribute('data-ftopen'));
+      if (box) { box.style.display = 'block'; var i = box.querySelector('input'); if (i) i.focus(); }
+    };
+  });
+  document.querySelectorAll('[data-ftoauth]').forEach(function (b) {
+    b.onclick = function () {
+      var id = b.getAttribute('data-ftoauth');
+      var p = FT_CATALOG.filter(function (x) { return x.id === id; })[0];
+      // One-click PKCE (OpenRouter). ?return brings the user back HERE (allowlisted server-side),
+      // and top-level nav because this page is iframed under Settings.
+      if (p && p.oauthStartPath) window.top.location.href = p.oauthStartPath + '?return=/utilities';
+    };
+  });
+  document.querySelectorAll('[data-ftsave]').forEach(function (b) {
+    b.onclick = async function () {
+      var id = b.getAttribute('data-ftsave');
+      var key = (document.getElementById('ftKey-' + id).value || '').trim();
+      var msg = document.getElementById('ftMsg-' + id);
+      if (!key) { msg.textContent = 'Paste a key first.'; return; }
+      b.disabled = true;
+      msg.textContent = 'Validating with a real test call…';
+      try {
+        var r = await (await fetch('/api/connect/free-tier/connect', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providerId: id, apiKey: key })
+        })).json();
+        if (!r || !r.success) throw new Error((r && r.error) || 'could not connect');
+        msg.textContent = '';
+        await refreshFreeTierState();
+        renderFreeTier();
+      } catch (e) {
+        msg.textContent = 'Could not connect: ' + e.message;
+        b.disabled = false;
+      }
+    };
+  });
+  document.querySelectorAll('[data-ftdis]').forEach(function (b) {
+    b.onclick = async function () {
+      var id = b.getAttribute('data-ftdis');
+      var c = FT_CONNECTED[id];
+      if (!c || !confirm('Disconnect ' + id + '? It will drop out of the free rotation.')) return;
+      try {
+        await fetch('/api/connect/free-tier/' + encodeURIComponent(c.connectionId), {
+          method: 'DELETE', credentials: 'include'
+        });
+        await refreshFreeTierState();
+        renderFreeTier();
+      } catch (e) { alert('Could not disconnect: ' + e.message); }
+    };
+  });
+}
+
+showBanner();
+loadAccount();
+loadTenants().then(load);
+loadClaude();
+loadCodex();
+loadGemini();
+loadFreeTier();
+loadLlmProviders();
+</script>
+</body>
+</html>

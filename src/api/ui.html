@@ -1,0 +1,923 @@
+<!--
+  CHANGE LOG
+  =============================================================================
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  =============================================================================
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of API configuration UI shell
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Added provider-specific configuration fields and model selectors
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Added API-key auth section and OIDC login/logout status controls
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Added per-user config support via session-backed auth flows
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Added global process/global shim before chat bundle initialization
+  6 | maintainer@emeraldcoastsystemsgroup.com   | Updated login/logout links to /login and /logout; switched auth status UI to /api/user session checks
+  7 | maintainer@emeraldcoastsystemsgroup.com   | Loaded chat-ui bundle as ES module to prevent browser syntax errors on exported module output
+  8 | maintainer@emeraldcoastsystemsgroup.com   | Added explicit return-to-chat action for settings flow when opened in same tab or popup
+  9 | maintainer@emeraldcoastsystemsgroup.com   | Replaced placeholder stylesheet with full glass-themed configuration UI styling for popup usability
+  10 | maintainer@emeraldcoastsystemsgroup.com   | Added embedded-mode rendering so the API configuration page can be hosted cleanly inside the standalone chat modal
+  11 | maintainer@emeraldcoastsystemsgroup.com   | Added cockpit theme chooser and embedded theme synchronization for /ui iframe parity
+  12 | maintainer@emeraldcoastsystemsgroup.com   | Fixed embedded /ui iframe theme surface to avoid white fallback background in tools configuration modal
+  13 | maintainer@emeraldcoastsystemsgroup.com   | Added embedded-to-parent theme cascade and converted API auth block styling to theme variables for modal parity
+  14 | maintainer@emeraldcoastsystemsgroup.com   | Relaxed embedded parent theme synchronization guard with explicit error logging to support iframe contexts without referrer metadata
+  15 | maintainer@emeraldcoastsystemsgroup.com   | Added hideTheme embed support so standalone chat can enforce a single top-level theme control
+  16 | maintainer@emeraldcoastsystemsgroup.com   | Added gray, black, and light-blue themes to the direct /ui selector and embedded iframe theme registry
+  17 | maintainer@emeraldcoastsystemsgroup.com   | Added aurora, graphite, and amber premium glass themes to the direct /ui selector and embedded iframe theme registry
+  18 | maintainer@emeraldcoastsystemsgroup.com   | Flattened embedded /ui chrome and added viewport-aware height reporting so the panel fits the tools modal cleanly
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSHAL Provider Runtime</title>
+  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/forest.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/gray.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/black.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/amber.css">
+  <style>
+    :root {
+      --bg-primary: #0a0a12;
+      --bg-secondary: rgba(18, 18, 30, 0.86);
+      --bg-tertiary: rgba(30, 30, 52, 0.72);
+      --bg-input: rgba(255, 255, 255, 0.07);
+      --text-primary: #eeeef5;
+      --text-secondary: #b3b3cb;
+      --text-muted: #7a7a95;
+      --border-color: rgba(255, 255, 255, 0.12);
+      --border-strong: rgba(255, 255, 255, 0.22);
+      --accent-primary: #7c7cff;
+      --accent-gradient: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+      --radius-sm: 10px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --shadow-panel: 0 18px 48px rgba(0, 0, 0, 0.42);
+      --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.24);
+      --status-success: #34d399;
+      --status-error: #f87171;
+      --status-warning: #fbbf24;
+      --status-info: #60a5fa;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 24px;
+      color: var(--text-primary);
+      background:
+        radial-gradient(circle at 10% 18%, color-mix(in srgb, var(--accent-primary) 16%, transparent), transparent 42%),
+        radial-gradient(circle at 82% 8%, color-mix(in srgb, var(--accent-primary) 12%, transparent), transparent 38%),
+        radial-gradient(circle at 72% 92%, rgba(96, 165, 250, 0.12), transparent 35%),
+        var(--bg-primary);
+      font-family: 'Plus Jakarta Sans', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.5;
+    }
+
+    html,
+    body {
+      background-color: var(--bg-primary);
+    }
+
+    html.embedded-ui,
+    body.embedded-ui {
+      min-height: auto;
+      padding: 0;
+      background:
+        linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--bg-secondary) 96%, transparent),
+          color-mix(in srgb, var(--bg-card, var(--bg-tertiary)) 92%, transparent)
+        );
+      background-color: color-mix(in srgb, var(--bg-secondary) 96%, transparent);
+    }
+
+    .container {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      border-radius: var(--radius-lg);
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      box-shadow: var(--shadow-panel);
+      backdrop-filter: blur(28px) saturate(130%);
+      -webkit-backdrop-filter: blur(28px) saturate(130%);
+      padding: 24px;
+    }
+
+    .embedded-ui .container {
+      width: 100%;
+      margin: 0;
+      padding: 8px 8px 10px;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      background:
+        linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--bg-secondary) 96%, transparent),
+          color-mix(in srgb, var(--bg-card, var(--bg-tertiary)) 92%, transparent)
+        );
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
+    .embedded-ui .theme-toolbar {
+      justify-content: flex-start;
+      margin-bottom: 6px;
+    }
+
+    .embedded-ui .mode-toggle {
+      margin-top: 0;
+      margin-bottom: 10px;
+      background: color-mix(in srgb, var(--glass-bg-heavy, rgba(255, 255, 255, 0.08)) 78%, transparent);
+      border-color: color-mix(in srgb, var(--glass-border, var(--border-color)) 70%, transparent);
+      box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+    }
+
+    .embedded-ui .config-section,
+    .embedded-ui .api-keys-section,
+    .embedded-ui .oidc-auth-section,
+    .embedded-ui .output {
+      margin-bottom: 10px;
+      border-radius: 14px;
+      background: linear-gradient(
+        145deg,
+        color-mix(in srgb, var(--glass-bg-heavy, rgba(255, 255, 255, 0.08)) 78%, transparent),
+        color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.04)) 90%, transparent)
+      );
+      border-color: color-mix(in srgb, var(--glass-border, var(--border-color)) 78%, transparent);
+      box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+    }
+
+    .embedded-ui .config-section,
+    .embedded-ui .api-keys-section {
+      padding: 14px;
+    }
+
+    .embedded-ui .oidc-auth-section {
+      padding: 10px 12px;
+    }
+
+    .embedded-ui .section-title {
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+
+    .embedded-ui .form-group {
+      margin-bottom: 12px;
+    }
+
+    .embedded-ui .provider-config-section {
+      margin-top: 8px;
+      padding-top: 8px;
+    }
+
+    .embedded-ui .advanced-settings {
+      gap: 10px;
+    }
+
+    .embedded-ui .actions {
+      display: none;
+    }
+
+    .embedded-ui .actions button,
+    .embedded-ui .api-key-auth-toggle,
+    .embedded-ui .oidc-auth-btn {
+      box-shadow: none;
+    }
+
+    .embedded-ui h1,
+    .embedded-ui .subtitle,
+    .embedded-ui #returnToChatBtn,
+    .embedded-ui .output,
+    .embedded-ui #chat-root {
+      display: none;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: clamp(22px, 2.4vw, 30px);
+      letter-spacing: -0.02em;
+      font-weight: 700;
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .theme-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .theme-toolbar label {
+      margin: 0;
+      font-size: 11px;
+    }
+
+    .theme-toolbar select {
+      width: auto;
+      min-width: 150px;
+    }
+
+    .hide-theme-toolbar .theme-toolbar {
+      display: none !important;
+    }
+
+    .mode-toggle {
+      display: inline-flex;
+      gap: 8px;
+      margin: 10px 0 20px;
+      padding: 4px;
+      border-radius: var(--radius-md);
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+    }
+
+    .mode-btn {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text-secondary);
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 150ms ease;
+    }
+
+    .mode-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-primary);
+    }
+
+    .mode-btn.active {
+      background: var(--accent-gradient);
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.18);
+      box-shadow: 0 4px 14px var(--accent-glow);
+    }
+
+    .config-section {
+      display: none;
+      border: 1px solid var(--glass-border, var(--border-color));
+      border-radius: var(--radius-md);
+      padding: 18px;
+      background: linear-gradient(145deg, var(--glass-bg-heavy, rgba(255, 255, 255, 0.08)), var(--glass-bg, rgba(255, 255, 255, 0.04)));
+      margin-bottom: 20px;
+      box-shadow: var(--shadow-card);
+    }
+
+    .config-section.active {
+      display: block;
+    }
+
+    .section-title {
+      margin: 0 0 16px;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-color);
+      background: var(--bg-input);
+      color: var(--text-primary);
+      font-size: 13px;
+      transition: border-color 140ms ease, box-shadow 140ms ease;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    select option {
+      background: #1a1a2b;
+      color: var(--text-primary);
+    }
+
+    button {
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      padding: 9px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      background: var(--accent-gradient);
+      transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+      box-shadow: 0 4px 14px var(--accent-glow);
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button.secondary {
+      background: transparent;
+      color: var(--text-secondary);
+      border-color: var(--border-strong);
+      box-shadow: none;
+    }
+
+    button.secondary:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .provider-info {
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .provider-config-section {
+      margin-top: 10px;
+      border-top: 1px dashed var(--glass-border, var(--border-color));
+      padding-top: 10px;
+    }
+
+    .api-keys-section {
+      border: 1px solid var(--glass-border, var(--border-color));
+      border-radius: var(--radius-md);
+      padding: 18px;
+      background: linear-gradient(145deg, var(--glass-bg-heavy, rgba(255, 255, 255, 0.08)), var(--glass-bg, rgba(255, 255, 255, 0.04)));
+      margin-bottom: 20px;
+      box-shadow: var(--shadow-card);
+    }
+
+    .advanced-settings {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+
+    .actions > div {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .output {
+      border: 1px solid var(--glass-border, var(--border-color));
+      border-radius: var(--radius-md);
+      background: linear-gradient(145deg, var(--glass-bg-heavy, rgba(255, 255, 255, 0.08)), var(--glass-bg, rgba(255, 255, 255, 0.04)));
+      overflow: hidden;
+    }
+
+    .output pre {
+      margin: 0;
+      padding: 14px;
+      color: #d9d9f0;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      max-height: 260px;
+      overflow: auto;
+    }
+
+    .oidc-auth-section {
+      margin-bottom: 20px;
+      padding: 12px;
+      background: linear-gradient(145deg, var(--glass-bg-heavy, rgba(255, 255, 255, 0.08)), var(--glass-bg, rgba(255, 255, 255, 0.04)));
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--glass-border, var(--border-color));
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .oidc-auth-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .oidc-user-info {
+      color: var(--status-success);
+      font-size: 13px;
+      margin-left: 8px;
+    }
+
+    .oidc-status {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-left: 8px;
+    }
+
+    .oidc-auth-btn {
+      padding: 8px 16px;
+      background: var(--accent-gradient);
+      border: none;
+      color: white;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .oidc-auth-btn:hover {
+      filter: brightness(1.08);
+    }
+
+    .oidc-auth-btn.secondary {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-strong);
+    }
+
+    .oidc-auth-btn.secondary:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .api-key-auth-section {
+      margin-bottom: 20px;
+      padding: 12px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-color);
+    }
+
+    .api-key-auth-label {
+      color: var(--text-secondary);
+      font-size: 12px;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .api-key-auth-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .api-key-auth-input {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 13px;
+    }
+
+    .api-key-auth-toggle {
+      padding: 8px 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 13px;
+      box-shadow: none;
+    }
+
+    .api-key-auth-status {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    #chat-root {
+      margin-top: 18px;
+      border-top: 1px dashed var(--border-color);
+      padding-top: 14px;
+    }
+
+    @media (max-width: 860px) {
+      body {
+        padding: 10px;
+      }
+
+      .container {
+        padding: 14px;
+      }
+
+      .embedded-ui .container {
+        padding: 14px;
+      }
+
+      .advanced-settings {
+        grid-template-columns: 1fr;
+      }
+
+      .actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .actions > div {
+        width: 100%;
+      }
+
+      .actions button {
+        flex: 1;
+      }
+    }
+  </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 Cline API Configuration</h1>
+    <p class="subtitle">Configure API providers, models, and settings for Plan and Act modes</p>
+    <div class="theme-toolbar">
+      <label for="themeSelect">Theme</label>
+      <select id="themeSelect" title="Theme">
+        <option value="midnight">Midnight</option>
+        <option value="daylight">Daylight</option>
+        <option value="ocean">Ocean</option>
+        <option value="sakura">Sakura</option>
+        <option value="forest">Forest</option>
+        <option value="gray">Gray</option>
+        <option value="black">Black</option>
+        <option value="light-blue">Light Blue</option>
+        <option value="aurora">Aurora</option>
+        <option value="graphite">Graphite</option>
+        <option value="amber">Amber</option>
+      </select>
+    </div>
+    <div style="margin-bottom: 16px;">
+      <button id="returnToChatBtn" class="secondary" type="button" onclick="returnToChat()">← Back to Chat</button>
+    </div>
+
+    <!-- OIDC Authentication Section -->
+    <div class="oidc-auth-section" id="oidc-auth-section">
+      <div class="oidc-auth-row">
+        <span id="oidc-status" class="oidc-status">Checking authentication...</span>
+        <span id="oidc-user-info" class="oidc-user-info"></span>
+        <button id="oidc-login-btn" class="oidc-auth-btn" style="display:none;" onclick="window.location.href='/login'">🔐 Login</button>
+        <button id="oidc-logout-btn" class="oidc-auth-btn secondary" style="display:none;" onclick="window.location.href='/logout'">🚪 Logout</button>
+      </div>
+    </div>
+
+    <!-- Authentication (API Key) -->
+    <div class="form-group api-key-auth-section" id="auth-section">
+      <label for="auth-api-key" class="api-key-auth-label">🔑 API Key (optional — required when server has AUTH_API_KEY set)</label>
+      <div class="api-key-auth-row">
+        <input type="password" id="auth-api-key" class="api-key-auth-input" placeholder="Enter API key for server authentication">
+        <button type="button" onclick="toggleAuthKeyVisibility()" id="auth-toggle-btn" class="api-key-auth-toggle">👁️</button>
+        <span id="auth-status" class="api-key-auth-status">Not set</span>
+      </div>
+    </div>
+
+    <!-- ...rest of the UI unchanged... -->
+    <!-- Mode Toggle -->
+    <div class="mode-toggle">
+      <button class="mode-btn active" data-mode="plan">📋 Plan Mode</button>
+      <button class="mode-btn" data-mode="act">⚡ Act Mode</button>
+    </div>
+
+    <!-- Plan Mode Configuration -->
+    <div class="config-section active" id="plan-config">
+      <h2 class="section-title">Plan Mode Configuration</h2>
+      <!-- ...existing content... -->
+      <div class="form-group">
+        <label for="plan-provider">API Provider</label>
+<select id="plan-provider">
+  <option value="">Select Provider...</option>
+</select>
+<script>
+  // Dynamically populate provider dropdown from PROVIDER_CONFIG
+  document.addEventListener('DOMContentLoaded', function() {
+    const providerSelect = document.getElementById('plan-provider');
+    if (providerSelect && window.PROVIDER_CONFIG) {
+      Object.keys(window.PROVIDER_CONFIG).forEach(key => {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = window.PROVIDER_DISPLAY_NAMES?.[key] || key.charAt(0).toUpperCase() + key.slice(1);
+        providerSelect.appendChild(option);
+      });
+    }
+  });
+</script>
+        <div class="provider-info" id="plan-provider-info"></div>
+      </div>
+      <div class="form-group">
+        <label for="plan-model">Model</label>
+        <select id="plan-model">
+          <option value="">Select provider first...</option>
+        </select>
+      </div>
+      <div class="provider-config-section" id="plan-provider-config"></div>
+    </div>
+
+    <!-- Act Mode Configuration -->
+    <div class="config-section" id="act-config">
+      <h2 class="section-title">Act Mode Configuration</h2>
+      <!-- ...existing content... -->
+      <div class="form-group">
+        <label for="act-provider">API Provider</label>
+<select id="act-provider">
+  <option value="">Select Provider...</option>
+</select>
+<script>
+  // Dynamically populate act-provider dropdown from PROVIDER_CONFIG
+  document.addEventListener('DOMContentLoaded', function() {
+    const providerSelect = document.getElementById('act-provider');
+    if (providerSelect && window.PROVIDER_CONFIG) {
+      Object.keys(window.PROVIDER_CONFIG).forEach(key => {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = window.PROVIDER_DISPLAY_NAMES?.[key] || key.charAt(0).toUpperCase() + key.slice(1);
+        providerSelect.appendChild(option);
+      });
+    }
+  });
+</script>
+        <div class="provider-info" id="act-provider-info"></div>
+      </div>
+      <div class="form-group">
+        <label for="act-model">Model</label>
+        <select id="act-model">
+          <option value="">Select provider first...</option>
+        </select>
+      </div>
+      <div class="provider-config-section" id="act-provider-config"></div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="api-keys-section">
+      <h2 class="section-title">⚙️ Advanced Settings</h2>
+      <div class="advanced-settings">
+        <div class="form-group">
+          <label for="max-tokens">Max Tokens</label>
+          <input type="number" id="max-tokens" placeholder="8192" value="8192">
+        </div>
+        <div class="form-group">
+          <label for="temperature">Temperature</label>
+          <input type="number" id="temperature" step="0.1" min="0" max="2" placeholder="0.7" value="0.7">
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <div>
+        <button onclick="saveConfiguration()">💾 Save Configuration</button>
+        <button class="secondary" onclick="loadConfiguration()">📂 Load Configuration</button>
+      </div>
+      <div>
+        <button class="secondary" onclick="clearConfiguration()">🗑️ Clear All</button>
+      </div>
+    </div>
+
+    <!-- Output -->
+    <div class="output" id="output">
+      <pre>Ready to configure...</pre>
+    </div>
+
+    <!-- Chat UI Mount Point -->
+    <div id="chat-root"></div>
+  </div>
+
+  <script>
+    // Global shims for React bundle (fixes "process is not defined" errors)
+    window.process = window.process || { env: { NODE_ENV: 'production' } };
+    window.global = window.global || window;
+  </script>
+  <script src="ui-logic.js"></script>
+  <script type="module" src="dist/chat-ui.js"></script>
+  <script type="module" src="dist/ui-chat-window.js"></script>
+  <script>
+    /**
+     * @description Checks OIDC authentication status from server session and updates UI.
+     * Uses /api/user so status reflects actual authenticated cookies rather than localStorage.
+     */
+    async function updateOidcAuthUI() {
+      const statusEl = document.getElementById('oidc-status');
+      const userInfoEl = document.getElementById('oidc-user-info');
+      const loginBtn = document.getElementById('oidc-login-btn');
+      const logoutBtn = document.getElementById('oidc-logout-btn');
+
+      try {
+        const response = await fetch('/api/user', { credentials: 'include' });
+        if (response.ok) {
+          const data = await response.json();
+          const user = data.user || {};
+          statusEl.textContent = '✅ Logged in';
+          userInfoEl.textContent = user.name ? `${user.name} (${user.email || ''})` : (user.preferred_username || '');
+          loginBtn.style.display = 'none';
+          logoutBtn.style.display = '';
+          return;
+        }
+      } catch (error) {
+        console.warn('OIDC status check failed', error);
+      }
+
+      statusEl.textContent = '🔒 Logged out';
+      userInfoEl.textContent = '';
+      loginBtn.style.display = '';
+      logoutBtn.style.display = 'none';
+    }
+
+    function initializeEmbeddedMode() {
+      const searchParams = new URLSearchParams(window.location.search);
+      if (searchParams.get('embed') !== '1') {
+        return;
+      }
+
+      document.body.classList.add('embedded-ui');
+      document.documentElement.classList.add('embedded-ui');
+      document.title = 'Embedded API Configuration';
+    }
+
+    function shouldHideThemeToolbar() {
+      const searchParams = new URLSearchParams(window.location.search);
+      return searchParams.get('hideTheme') === '1';
+    }
+
+    function getInitialTheme() {
+      const searchParams = new URLSearchParams(window.location.search);
+      const fromQuery = searchParams.get('theme');
+      if (fromQuery) {
+        return fromQuery;
+      }
+      return localStorage.getItem('cockpit-theme') || 'midnight';
+    }
+
+    function applyTheme(theme) {
+      const nextTheme = theme || 'midnight';
+      document.documentElement.setAttribute('data-theme', nextTheme);
+      localStorage.setItem('cockpit-theme', nextTheme);
+      const select = document.getElementById('themeSelect');
+      if (select && select.value !== nextTheme) {
+        select.value = nextTheme;
+      }
+    }
+
+    function isEmbeddedMode() {
+      const searchParams = new URLSearchParams(window.location.search);
+      return searchParams.get('embed') === '1';
+    }
+
+    function notifyParentThemeChange(theme) {
+      if (!isEmbeddedMode() || window.parent === window) {
+        return;
+      }
+
+      window.parent.postMessage(
+        { source: 'oshal-api-config', eventType: 'theme-changed', theme },
+        window.location.origin,
+      );
+
+      try {
+        const parentApplyTheme = window.parent.applyTheme;
+        if (typeof parentApplyTheme === 'function') {
+          parentApplyTheme(theme, false);
+          return;
+        }
+        window.parent.document.documentElement.setAttribute('data-theme', theme);
+        const parentThemeSelect = window.parent.document.getElementById('themeSelect');
+        if (parentThemeSelect && parentThemeSelect.value !== theme) {
+          parentThemeSelect.value = theme;
+        }
+        window.parent.localStorage.setItem('cockpit-theme', theme);
+      } catch (error) {
+        console.error('Failed to synchronize theme with parent tools modal', error);
+      }
+    }
+
+    function handleThemeMessage(event) {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      const detail = event.data;
+      if (!detail || detail.source !== 'oshal-chat-tools-config' || detail.eventType !== 'theme-changed') {
+        return;
+      }
+
+      applyTheme(detail.theme);
+    }
+
+    function publishEmbeddedSize() {
+      if (!isEmbeddedMode() || window.parent === window) {
+        return;
+      }
+
+      const bodyHeight = document.body ? Math.ceil(document.body.scrollHeight) : 0;
+      const documentHeight = document.documentElement ? Math.ceil(document.documentElement.scrollHeight) : 0;
+      const height = Math.max(bodyHeight, documentHeight);
+
+      if (!height) {
+        return;
+      }
+
+      window.parent.postMessage(
+        { source: 'oshal-api-config', eventType: 'content-height-changed', height },
+        window.location.origin,
+      );
+    }
+
+    function initializeThemeChooser() {
+      const select = document.getElementById('themeSelect');
+      applyTheme(getInitialTheme());
+      if (select) {
+        select.addEventListener('change', () => {
+          applyTheme(select.value);
+          notifyParentThemeChange(select.value);
+          publishEmbeddedSize();
+        });
+      }
+      window.addEventListener('message', handleThemeMessage);
+    }
+
+    function initializeEmbeddedSizing() {
+      if (!isEmbeddedMode()) {
+        return;
+      }
+
+      if (window.ResizeObserver) {
+        const resizeObserver = new ResizeObserver(() => publishEmbeddedSize());
+        resizeObserver.observe(document.body);
+      }
+
+      window.addEventListener('resize', publishEmbeddedSize);
+      window.setTimeout(publishEmbeddedSize, 0);
+      window.setTimeout(publishEmbeddedSize, 250);
+      window.setTimeout(publishEmbeddedSize, 1000);
+    }
+
+    // Run on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      initializeEmbeddedMode();
+      if (shouldHideThemeToolbar()) {
+        document.body.classList.add('hide-theme-toolbar');
+      }
+      initializeThemeChooser();
+      initializeEmbeddedSizing();
+      void updateOidcAuthUI();
+    });
+    window.addEventListener('focus', () => { void updateOidcAuthUI(); });
+
+    /**
+     * @description Returns to standalone chat. Closes popup windows when possible,
+     * otherwise navigates current tab back to /chat.
+     */
+    function returnToChat() {
+      if (window.opener && !window.opener.closed) {
+        window.close();
+        return;
+      }
+      window.location.href = '/chat';
+    }
+  </script>
+</body>
+</html>

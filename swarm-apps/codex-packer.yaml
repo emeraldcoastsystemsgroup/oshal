@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — codex-packer
+#
+# codex-packer is a chat persona that interviews the operator (8 questions) and
+# emits a single-purpose packed bot (persona YAML + app manifest into
+# deployed-apps/ + optional kb/ corpus), staged for the operator's ONE-CLICK
+# injection in the Forge surface (which calls POST /api/swarm/apps/load —
+# the bot never calls it itself).
+#
+# Pattern: the codex pack from scripts/codex-harness/ —
+# one bot, one ticket, full quality contract embedded in the persona.
+# No multi-bot agentic flow.
+#
+# This app is itself a chat surface, not a ticket pipeline. The codex-packer
+# bot runs inline in the api container (container: oshal-api in the registry).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: codex-packer
+suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: Bot Forge
+description: >-
+  The bot factory. Describe a task you want automated; the Forge agent interviews
+  you (task / inputs / outputs / success criteria / corpus / external services /
+  trigger & side effects / PII + tool whitelist) and packs a fully-encapsulated
+  single-purpose bot — persona + app manifest + tools + knowledge — staged for
+  your one-click Inject. No redeploy. It appears in the gallery and at
+  /cockpit/?app=<your-new-bot> immediately, live on your connectors.
+version: 1.1.0
+status: active
+
+# The right-rail chat agent IS the packer — it interviews + emits + injects while the
+# Forge surface (below) shows the resulting bots going live in the swarm.
+chatBot: codex-packer
+
+bots:
+  - agentId: a0000000-0000-0000-0000-000000000030
+    name: codex-packer
+    persona: ai-lab/bot-personas/codex-packer.yaml
+    role: bot-authoring/factory
+    capabilities:
+      - bot-authoring
+      - persona-design
+      - manifest-emission
+      - interview-driven-spec
+      - codex-packing
+    selectorDescriptor: >-
+      Select this bot when the user wants to build, pack, or inject a new bot or
+      swarm app from an interview. Use codex-packer for "create a bot", "build a
+      swarm", "turn this process into an app", manifest emission, persona design,
+      and pack deployment requests.
+    routingKeywords:
+      - codex-packer
+      - bot forge
+      - create a bot
+      - build a swarm
+      - pack an app
+      - manifest emission
+      - persona design
+      - interview-driven spec
+      - swarm app injection
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI SURFACE — the Forge front door: gallery + lifecycle over the live swarm
+# (served by createForgeRoutes at GET /api/forge; calls the /api/swarm/apps API).
+# ─────────────────────────────────────────────────────────────────────────────
+ui:
+  static:
+    - toolName: forge
+      label: Forge
+      icon: codicon codicon-tools
+      iframeUrl: /api/forge
+      section: top
+
+# Focused chrome: the packer chat lives in the right rail, the Forge is the view.
+ribbon:
+  hideFrameworkItems:
+    - chat
+    - calendar
+    - addressbook
+    - dashboard
+    - logs
+    - operations
+  defaultView: forge

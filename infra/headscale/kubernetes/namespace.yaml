@@ -1,0 +1,13 @@
+# =============================================================================
+# OSHAL Headscale Kubernetes Namespace
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added dedicated Kubernetes namespace for Headscale lab deployment
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oshal-headscale

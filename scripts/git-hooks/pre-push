@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Trunk-discipline reminder on push (see CLAUDE.md RULE 0). Non-blocking — warns when pushing a
+# non-main branch but never rejects the push (so in-flight branch work is not broken).
+remote="$1"
+while read -r local_ref _ _ _; do
+  case "$local_ref" in
+    refs/heads/main) : ;;  # the happy path
+    refs/heads/*)
+      printf '\n\033[33m[trunk-rule] Pushing %s (not main) to %s.\033[0m\n' "${local_ref#refs/heads/}" "$remote"
+      printf '\033[33m            Prefer committing to main directly (CLAUDE.md RULE 0). Allowing this push.\033[0m\n\n'
+      ;;
+  esac
+done
+exit 0

@@ -1,0 +1,294 @@
+/* ===== Ribbon Navigation — 48px vertical strip ===== */
+
+/* Hamburger (mobile only) + drawer backdrop default to hidden on desktop. */
+.mobile-menu-btn { display: none; }
+.ribbon-backdrop { display: none; }
+
+/* The ribbon host is a plain div in the markup; make it a full-height flex column
+   so the nav inside it is bounded by the cockpit body height instead of growing
+   with its content. Without this the middle tray can never overflow → no scroll. */
+#ribbonContainer {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-height: 0;
+  flex-shrink: 0;
+}
+
+.ribbon-nav {
+  width: 48px;
+  min-width: 48px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg-secondary);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--panel-shadow);
+  padding: 8px 0;
+  gap: 2px;
+  z-index: 50;
+  transition: width 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.ribbon-nav::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--glass-highlight);
+  pointer-events: none;
+  border-radius: var(--radius-md);
+}
+
+.ribbon-nav:hover {
+  width: 160px;
+}
+
+.ribbon-nav:hover .ribbon-label {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* Ribbon sections */
+.ribbon-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  width: 100%;
+}
+
+/* Pinned front-door tray (e.g. Jarvis) — stays at the top, never scrolls.
+   Tinted with --bg-tertiary (like the pinned bottom tray) so the un-tinted
+   middle visually reads as a separate, scrollable region — without the tint
+   the tiny middle tray gave no hint that it scrolls at all. The negative
+   top margin bleeds the band through the nav's own padding to the top edge
+   (the nav's overflow:hidden clips it to the rounded corner). */
+.ribbon-home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  flex-shrink: 0;
+  margin-top: -8px;
+  padding-top: 8px;
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+}
+
+/* Scrollable middle tray — grouped app surfaces. Takes the slack between the
+   pinned home tray and the pinned bottom tray, and scrolls (mouse wheel /
+   trackpad) when the grouped list is taller than the rail. A thin themed
+   scrollbar stays visible as the affordance — a fully hidden scrollbar made
+   the (often short) middle tray look static; min-height:0 lets it actually
+   overflow inside the flex column instead of pushing the bottom tray
+   off-screen. */
+.ribbon-scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;                            /* Firefox */
+  scrollbar-color: var(--border-color) transparent; /* Firefox */
+  overscroll-behavior: contain; /* don't chain the wheel to the page */
+}
+.ribbon-scroll::-webkit-scrollbar { width: 4px; height: 0; } /* WebKit/Blink */
+.ribbon-scroll::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 2px; }
+.ribbon-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Group header inside the scrollable tray. Collapsed rail: the header shrinks
+   to a thin divider (its top border + a sliver of spacing) — it used to keep
+   its full text height with transparent text, which read as random blank
+   holes between the icons. On hover-expand it grows back to full height and
+   the text fades in. The text is hidden via transparent colour, not opacity,
+   because opacity would fade the border (the separator) away too. */
+.ribbon-group-label {
+  width: calc(100% - 8px);
+  box-sizing: border-box;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: transparent;
+  max-height: 5px;
+  padding: 0 12px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-color);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+              max-height 200ms cubic-bezier(0.16, 1, 0.3, 1),
+              padding 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.ribbon-nav:hover .ribbon-group-label {
+  color: var(--text-secondary);
+  max-height: 28px;
+  padding: 8px 12px 4px;
+}
+/* No double divider directly under the pinned home tray. */
+.ribbon-scroll > .ribbon-group-label:first-child { border-top: none; margin-top: 0; }
+
+/* Pinned base-essentials tray. Same --bg-tertiary tint as the home tray so
+   both fixed regions read as one system and the scrollable middle stands out
+   between them; the negative bottom margin bleeds the band to the nav's
+   bottom edge. */
+.ribbon-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+  margin-top: 4px;
+  margin-bottom: -8px;
+  padding-bottom: 8px;
+  background: var(--bg-tertiary);
+}
+
+/* Ribbon button */
+.ribbon-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 8px);
+  height: 40px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ribbon-btn:hover {
+  background: var(--glass-bg-heavy);
+  color: var(--text-primary);
+}
+
+.ribbon-btn.active {
+  background: var(--glass-bg-heavy);
+  color: var(--accent-primary);
+}
+
+.ribbon-btn.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  background: var(--accent-primary);
+  border-radius: 0 2px 2px 0;
+}
+
+.ribbon-btn i {
+  font-size: 20px;
+  min-width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.ribbon-label {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: all 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+/* Ribbon tooltip (for non-hover expand mode) */
+.ribbon-btn[title]::after {
+  content: none; /* Rely on hover expand labels */
+}
+
+/* Notification badge on ribbon button */
+.ribbon-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--status-error);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+/* ===== Mobile: ribbon becomes a slide-in drawer behind a hamburger ===== */
+@media (max-width: 640px) {
+  .mobile-menu-btn { display: inline-flex; }
+
+  .ribbon-nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 240px;
+    min-width: 240px;
+    transform: translateX(-110%);
+    transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 300;
+    border-radius: 0;
+    align-items: stretch;
+    padding-top: 16px;
+    box-shadow: 8px 0 30px rgba(0, 0, 0, 0.45);
+  }
+  .ribbon-nav.mobile-open { transform: translateX(0); }
+  /* No hover-expand on touch; keep full width + always-visible labels. */
+  .ribbon-nav:hover { width: 240px; }
+  .ribbon-nav .ribbon-label {
+    opacity: 1 !important;
+    transform: none !important;
+    font-size: 14px;
+  }
+  .ribbon-btn { width: 100%; height: 46px; min-height: 46px; padding: 0 18px; }
+  /* Drawer uses 16px top padding — bleed the pinned home tray's tint to match. */
+  .ribbon-home { margin-top: -16px; padding-top: 16px; }
+  /* No hover on touch: keep group headers at full height with visible text
+     (they'd otherwise stay stuck in the collapsed thin-divider state). */
+  .ribbon-group-label {
+    color: var(--text-secondary);
+    max-height: 28px;
+    padding: 8px 18px 4px;
+    font-size: 11px;
+  }
+
+  .ribbon-backdrop.show {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 290;
+  }
+}

@@ -1,0 +1,32 @@
+# Clockify — time-tracking workspaces, projects, and current user via X-Api-Key header.
+provider: clockify
+displayName: Clockify
+version: 1.0.0
+baseUrl: https://api.clockify.me/api/v1
+auth:
+  type: apiKeyHeader
+  header: X-Api-Key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: workspaces
+    tool: clockify-workspaces
+    method: GET
+    path: /workspaces
+  - name: projects
+    tool: clockify-projects
+    method: GET
+    path: '/workspaces/{workspaceId}/projects'
+  - name: user
+    tool: clockify-user
+    method: GET
+    path: /user
+metadata:
+  icon: clockify
+  iconTitle: Clockify
+  iconSource: simple-icons
+  iconVerified: true

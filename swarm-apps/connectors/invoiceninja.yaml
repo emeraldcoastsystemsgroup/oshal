@@ -1,0 +1,32 @@
+# Invoice Ninja — invoices, clients, and payments via X-Api-Token header (self-hosted base URL overridable).
+provider: invoiceninja
+displayName: Invoice Ninja
+version: 1.0.0
+baseUrl: ${env:INVOICENINJA_BASE_URL:-https://invoicing.co}/api/v1
+auth:
+  type: apiKeyHeader
+  header: X-Api-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: invoices
+    tool: invoiceninja-invoices
+    method: GET
+    path: /invoices
+  - name: clients
+    tool: invoiceninja-clients
+    method: GET
+    path: /clients
+  - name: payments
+    tool: invoiceninja-payments
+    method: GET
+    path: /payments
+metadata:
+  icon: invoiceninja
+  iconTitle: Invoice Ninja
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,33 @@
+provider: giphy
+displayName: Giphy
+version: 1.0.0
+baseUrl: https://api.giphy.com/v1
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: search
+    tool: giphy-search
+    method: GET
+    path: /gifs/search
+    query:
+      q: '{q}'
+  - name: trending
+    tool: giphy-trending
+    method: GET
+    path: /gifs/trending
+  - name: gif
+    tool: giphy-gif
+    method: GET
+    path: /gifs/{gif_id}
+metadata:
+  icon: giphy
+  iconTitle: GIPHY
+  iconSource: simple-icons
+  iconVerified: true

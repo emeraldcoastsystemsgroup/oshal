@@ -1,0 +1,36 @@
+{
+  "name": "@oshal/swarm-cli",
+  "version": "1.0.0",
+  "description": "Talk to Jarvis — the whole OSHAL swarm — from your terminal. The chat window, headless.",
+  "license": "MIT",
+  "private": true,
+  "bin": {
+    "swarm-cli": "./bin/swarm-cli.js"
+  },
+  "files": [
+    "bin/",
+    "completions/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "keywords": [
+    "oshal",
+    "swarm",
+    "cli",
+    "agent",
+    "orchestration",
+    "jarvis",
+    "headless"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emeraldcoastsystemsgroup/open-shal.git",
+    "directory": "packages/swarm-cli"
+  },
+  "scripts": {
+    "test": "vitest run --root ../.. tests/unit/swarm-cli.spec.ts"
+  }
+}

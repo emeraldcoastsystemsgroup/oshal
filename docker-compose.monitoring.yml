@@ -1,0 +1,85 @@
+# =============================================================================
+# OSHAL swarm self-monitoring overlay — Prometheus + Alertmanager + cAdvisor
+# =============================================================================
+# Adds the observability/alerting half of the self-healing loop. Joins the
+# existing oshal-local network so it can scrape the swarm containers and POST
+# alerts to oshal-api.
+#
+# Bring up AFTER the main stack:
+#   docker compose -f docker-compose.oshal-local.yml up -d
+#   docker compose -f docker-compose.monitoring.yml up -d
+#
+# UIs:
+#   Prometheus   -> http://localhost:9090   (Status > Targets, Alerts)
+#   Alertmanager -> http://localhost:9093
+#   cAdvisor     -> http://localhost:8080
+#
+# The loop: cAdvisor -> Prometheus (alert-rules.yml) -> Alertmanager
+#           -> POST oshal-api:5000/api/alerts/alertmanager -> incident ticket
+#           -> incident-rca pipeline -> propose fix -> approve/close gate.
+# =============================================================================
+
+name: oshal-monitoring
+
+services:
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: oshal-local-cadvisor
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "${CADVISOR_PORT:-8080}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - oshal
+
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: oshal-local-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./ops/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/monitoring/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - mon_prometheus_data:/prometheus
+    depends_on:
+      - cadvisor
+    networks:
+      - oshal
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: oshal-local-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./ops/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - mon_alertmanager_data:/alertmanager
+    depends_on:
+      - prometheus
+    networks:
+      - oshal
+
+volumes:
+  mon_prometheus_data:
+  mon_alertmanager_data:
+
+# Join the network created by docker-compose.oshal-local.yml (project name
+# "oshal-local" + network "oshal" => "oshal-local_oshal").
+networks:
+  oshal:
+    external: true
+    name: oshal-local_oshal

@@ -1,0 +1,43 @@
+provider: flickr
+displayName: Flickr
+version: 1.0.0
+baseUrl: https://api.flickr.com/services/rest
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: photos-search
+    tool: flickr-photos-search
+    method: GET
+    path: /
+    query:
+      method: flickr.photos.search
+      format: json
+      text: '{q}'
+  - name: photo-info
+    tool: flickr-photo-info
+    method: GET
+    path: /
+    query:
+      method: flickr.photos.getInfo
+      format: json
+      photo_id: '{photo_id}'
+  - name: people-info
+    tool: flickr-people-info
+    method: GET
+    path: /
+    query:
+      method: flickr.people.getInfo
+      format: json
+      user_id: '{user_id}'
+metadata:
+  icon: flickr
+  iconTitle: Flickr
+  iconSource: simple-icons
+  iconVerified: true

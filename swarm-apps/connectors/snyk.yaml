@@ -1,0 +1,49 @@
+provider: snyk
+displayName: Snyk
+version: 1.0.0
+baseUrl: https://api.snyk.io/rest
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: orgs
+    tool: snyk-orgs
+    method: GET
+    path: /orgs
+    query:
+      version: '{version}'
+  - name: org
+    tool: snyk-org
+    method: GET
+    path: /orgs/{orgId}
+    query:
+      version: '{version}'
+  - name: projects
+    tool: snyk-projects
+    method: GET
+    path: /orgs/{orgId}/projects
+    query:
+      version: '{version}'
+  - name: project
+    tool: snyk-project
+    method: GET
+    path: /orgs/{orgId}/projects/{projectId}
+    query:
+      version: '{version}'
+  - name: issues
+    tool: snyk-issues
+    method: GET
+    path: /orgs/{orgId}/issues
+    query:
+      version: '{version}'
+metadata:
+  icon: snyk
+  iconTitle: Snyk
+  iconSource: simple-icons
+  iconVerified: true

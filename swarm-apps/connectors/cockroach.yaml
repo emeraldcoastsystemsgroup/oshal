@@ -1,0 +1,31 @@
+provider: cockroach
+displayName: CockroachDB Cloud
+version: 1.0.0
+baseUrl: https://cockroachlabs.cloud/api/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: clusters
+    tool: cockroach-clusters
+    method: GET
+    path: /clusters
+  - name: cluster
+    tool: cockroach-cluster
+    method: GET
+    path: /clusters/{cluster_id}
+  - name: backups
+    tool: cockroach-backups
+    method: GET
+    path: /clusters/{cluster_id}/backups
+metadata:
+  icon: cockroachlabs
+  iconTitle: Cockroach Labs
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,26 @@
+# Breezy HR API v3 — read accessible companies and a company's open positions (Bearer access token).
+provider: breezy
+displayName: Breezy HR
+version: 1.0.0
+baseUrl: https://api.breezy.hr/v3
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: companies
+    tool: breezy-companies
+    method: GET
+    path: /companies
+  - name: positions
+    tool: breezy-positions
+    method: GET
+    path: '/company/{company_id}/positions'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/breezy.hr.ico

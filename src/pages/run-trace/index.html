@@ -1,0 +1,139 @@
+<!doctype html>
+<!--
+  Run Trace — cockpit tool surface (bind-mounted; served by GET /api/trace/app).
+  A read-only view over the run-trace read-model: enter a ticket id (or pass ?ticketId=)
+  and see one waterfall — ticket -> phases -> bot executions -> per-LLM-call cost. It only
+  fetches /api/trace/<id> (auth-gated, caller-scoped); it never writes.
+  Author: maintainer@emeraldcoastsystemsgroup.com
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Run Trace</title>
+<style>
+  :root{--bg:#fff;--fg:#111827;--mut:#6b7280;--line:#e5e7eb;--card:#f9fafb;--acc:#6366f1}
+  @media (prefers-color-scheme:dark){:root{--bg:#0b0f19;--fg:#e5e7eb;--mut:#9ca3af;--line:#1f2937;--card:#111827}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 20px}
+  form{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+  input{flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit}
+  button{padding:9px 16px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  .totals{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px}
+  .tot{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:130px}
+  .tot .k{display:block;color:var(--mut);font-size:12px}
+  .tot .v{display:block;font-size:18px;font-weight:600}
+  .chart{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .row{display:grid;grid-template-columns:220px 1fr 190px;align-items:center;gap:12px;padding:6px 14px;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:0}
+  .row.phase{background:var(--card)}
+  .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .lane{position:relative;height:18px}
+  .bar{position:absolute;top:2px;height:14px;border-radius:3px;min-width:2px;opacity:.85}
+  .mt{color:var(--mut);font-size:12px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .msg{padding:24px;color:var(--mut);text-align:center}
+  .foot{color:var(--mut);font-size:12px;margin-top:16px}
+  code{font-size:12px}
+  @media (max-width:640px){.row{grid-template-columns:140px 1fr}.mt{display:none}}
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<main class="wrap">
+  <h1>Run Trace</h1>
+  <p class="sub">One waterfall per ticket: phases, bot executions, and per-LLM-call cost — assembled from persisted data, never a live re-run.</p>
+  <form id="f">
+    <input id="tid" placeholder="Ticket id (UUID)" autocomplete="off" spellcheck="false" />
+    <button type="submit">Trace</button>
+  </form>
+  <div id="out"><p class="msg">Enter a ticket id to load its trace.</p></div>
+  <p class="foot">Read-only. You can trace tickets you own; operators can trace any ticket.</p>
+</main>
+<script>
+  var KIND_COLOR = { phase: '#6366f1', bot: '#0ea5e9', 'llm-call': '#22c55e' };
+
+  function esc(s){ return String(s).replace(/[&<>"']/g, function(c){
+    return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]; }); }
+
+  function fmtMs(ms){
+    if (ms == null || !isFinite(ms) || ms < 0) return '—';
+    if (ms < 1000) return Math.round(ms) + 'ms';
+    if (ms < 60000) return (ms/1000).toFixed(1) + 's';
+    return (ms/60000).toFixed(1) + 'm';
+  }
+
+  function timeWindow(spans){
+    var t = [];
+    spans.forEach(function(s){ t.push(Date.parse(s.startedAt)); if (s.endedAt) t.push(Date.parse(s.endedAt)); });
+    t = t.filter(isFinite);
+    if (!t.length) return { min: 0, span: 1 };
+    var min = Math.min.apply(null, t), max = Math.max.apply(null, t);
+    return { min: min, span: Math.max(1, max - min) };
+  }
+
+  function clampPct(p){ return !isFinite(p) ? 0 : Math.min(100, Math.max(0, p)); }
+
+  function rowHtml(s, win){
+    var start = Date.parse(s.startedAt);
+    var end = s.endedAt ? Date.parse(s.endedAt) : start;
+    var left = clampPct((start - win.min) / win.span * 100);
+    var width = Math.max(0.6, clampPct((end - start) / win.span * 100));
+    var color = KIND_COLOR[s.kind] || '#888';
+    var meta = [
+      s.durationMs != null ? fmtMs(s.durationMs) : null,
+      (s.costUsd && s.costUsd > 0) ? '$' + s.costUsd.toFixed(6) : null,
+      (s.tokens && s.tokens > 0) ? s.tokens.toLocaleString() + ' tok' : null,
+      s.model ? esc(s.model) : null
+    ].filter(Boolean).join(' · ');
+    return '<div class="row ' + s.kind + '">' +
+      '<div class="lab" title="' + esc(s.label) + '"><span class="dot" style="background:' + color + '"></span>' + esc(s.label) + '</div>' +
+      '<div class="lane"><div class="bar" style="left:' + left.toFixed(3) + '%;width:' + width.toFixed(3) + '%;background:' + color + '"></div></div>' +
+      '<div class="mt">' + (meta || '&nbsp;') + '</div></div>';
+  }
+
+  function render(trace){
+    var win = timeWindow(trace.spans);
+    var tot = trace.totals;
+    var head = '<div class="totals">' +
+      '<div class="tot"><span class="k">Total cost</span><span class="v">$' + tot.costUsd.toFixed(6) + '</span></div>' +
+      '<div class="tot"><span class="k">Tokens</span><span class="v">' + tot.tokens.toLocaleString() + '</span></div>' +
+      '<div class="tot"><span class="k">LLM calls</span><span class="v">' + tot.llmCalls + '</span></div>' +
+      '<div class="tot"><span class="k">Wall time</span><span class="v">' + fmtMs(tot.wallMs) + '</span></div></div>';
+    var body = trace.spans.length
+      ? '<div class="chart">' + trace.spans.map(function(s){ return rowHtml(s, win); }).join('') + '</div>'
+      : '<p class="msg">No spans recorded for this ticket yet.</p>';
+    var meta = '<p class="sub">' + esc(trace.ticket.type) + ' · ' + esc(trace.ticket.status) +
+      ' · <code>' + esc(trace.ticket.id) + '</code></p>';
+    document.getElementById('out').innerHTML = meta + head + body;
+  }
+
+  function load(id){
+    var out = document.getElementById('out');
+    if (!id) { out.innerHTML = '<p class="msg">Enter a ticket id to load its trace.</p>'; return; }
+    out.innerHTML = '<p class="msg">Loading…</p>';
+    fetch('/api/trace/' + encodeURIComponent(id), { headers: { 'Accept': 'application/json' } })
+      .then(function(r){
+        if (r.status === 404) throw new Error('No trace is available for that ticket (missing, or not yours).');
+        if (!r.ok) throw new Error('Request failed (' + r.status + ').');
+        return r.json();
+      })
+      .then(function(j){ if (!j.success || !j.trace) throw new Error('No trace returned.'); render(j.trace); })
+      .catch(function(e){ out.innerHTML = '<p class="msg">' + esc(e.message) + '</p>'; });
+  }
+
+  document.getElementById('f').addEventListener('submit', function(e){
+    e.preventDefault();
+    var id = document.getElementById('tid').value.trim();
+    history.replaceState(null, '', '?ticketId=' + encodeURIComponent(id));
+    load(id);
+  });
+
+  var initial = new URLSearchParams(location.search).get('ticketId');
+  if (initial) { document.getElementById('tid').value = initial; load(initial); }
+</script>
+</body>
+</html>

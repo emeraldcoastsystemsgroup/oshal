@@ -1,0 +1,35 @@
+provider: zerobounce
+displayName: ZeroBounce
+version: 1.0.0
+baseUrl: https://api.zerobounce.net/v2
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: validate
+    tool: zerobounce-validate
+    method: GET
+    path: /validate
+    query:
+      email: '{email}'
+  - name: getcredits
+    tool: zerobounce-getcredits
+    method: GET
+    path: /getcredits
+  - name: getapiusage
+    tool: zerobounce-getapiusage
+    method: GET
+    path: /getapiusage
+    query:
+      start_date: '{start_date}'
+      end_date: '{end_date}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/zerobounce.net.ico

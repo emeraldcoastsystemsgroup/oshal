@@ -1,0 +1,26 @@
+provider: coda
+displayName: Coda
+version: 1.0.0
+baseUrl: https://coda.io/apis/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: docs
+    tool: coda-docs
+    method: GET
+    path: /docs
+  - name: doc-tables
+    tool: coda-doc-tables
+    method: GET
+    path: /docs/{docId}/tables
+metadata:
+  icon: coda
+  iconTitle: Coda
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,33 @@
+provider: tumblr
+displayName: Tumblr
+version: 1.0.0
+baseUrl: https://api.tumblr.com/v2
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: blog-info
+    tool: tumblr-blog-info
+    method: GET
+    path: /blog/{blog-identifier}/info
+  - name: blog-posts
+    tool: tumblr-blog-posts
+    method: GET
+    path: /blog/{blog-identifier}/posts
+  - name: tagged
+    tool: tumblr-tagged
+    method: GET
+    path: /tagged
+    query:
+      tag: '{tag}'
+metadata:
+  icon: tumblr
+  iconTitle: Tumblr
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,74 @@
+# Finnhub — the CONSENSUS/SURPRISE feed (ADR-096 fundamental overlay).
+#
+# WHY THIS CONNECTOR EXISTS: the platform already ingests the forward event CALENDAR (earnings,
+# FOMC, jobs — world_events). What it has never had is the other half of a fundamental surprise:
+# what the market EXPECTED and what the number ACTUALLY was. Without both you cannot say "came in
+# below consensus" — you can only say "the stock moved", which is circular. Finnhub's free tier
+# serves exactly that pair (`/stock/earnings` → actual + estimate + surprise + surprisePercent),
+# which is the deterministic input the event-overlay framework needs.
+#
+# REGISTRATION (human, one time — partner-app rule, docs/partner-app-registration.md):
+#   1. Sign up at https://finnhub.io/register with maintainer@emeraldcoastsystemsgroup.com
+#      (business email — NEVER a personal address; that account owns the key + all alerts).
+#   2. Copy the API key from the dashboard.
+#   3. Paste it into the Finnhub card on /utilities (stored per-user, AES-256-GCM encrypted).
+#      Do NOT put it in .env — that is shared plaintext across every container.
+# Free tier: 60 calls/minute, no card required. Rate limits below are set under that.
+provider: finnhub
+displayName: Finnhub
+version: 1.0.0
+baseUrl: https://finnhub.io/api/v1
+auth:
+  type: apiKeyQuery
+  param: token
+rateLimit:
+  burst: 30
+  perSecond: 1
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  # THE ONE THAT MATTERS: historical quarterly EPS — actual vs estimate, with the surprise already
+  # computed. This is the deterministic "was the report bullish or bearish vs expectations" score.
+  - name: earnings-surprise
+    tool: finnhub-earnings-surprise
+    method: GET
+    path: /stock/earnings
+    query:
+      symbol: '{symbol}'
+    safety:
+      action: read
+  # Forward calendar WITH consensus estimates (epsEstimate/revenueEstimate) — the pre-event view.
+  - name: earnings-calendar
+    tool: finnhub-earnings-calendar
+    method: GET
+    path: /calendar/earnings
+    query:
+      from: '{from}'
+      to: '{to}'
+    safety:
+      action: read
+  # Macro releases (actual vs estimate vs prior) — the jobs/CPI/Fed half of the same idea.
+  - name: economic-calendar
+    tool: finnhub-economic-calendar
+    method: GET
+    path: /calendar/economic
+    safety:
+      action: read
+  # Company basic financials — context for the analyst, not a trading signal on its own.
+  - name: company-metrics
+    tool: finnhub-company-metrics
+    method: GET
+    path: /stock/metric
+    query:
+      symbol: '{symbol}'
+      metric: all
+    safety:
+      action: read
+metadata:
+  description: Earnings actual-vs-consensus surprises, forward earnings + economic calendars with estimates. The consensus half of the fundamental event overlay.
+  tags: [finance, market-data, fundamentals, events]
+  website: https://finnhub.io
+  icon: finnhub
+  iconTitle: Finnhub
+  iconSource: favicon-fallback

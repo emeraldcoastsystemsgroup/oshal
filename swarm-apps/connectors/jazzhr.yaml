@@ -1,0 +1,34 @@
+provider: jazzhr
+displayName: JazzHR
+version: 1.0.0
+baseUrl: https://api.resumatorapi.com/v1
+auth:
+  type: apiKeyQuery
+  param: apikey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: jobs
+    tool: jazzhr-jobs
+    method: GET
+    path: /jobs
+    query:
+      page: null
+  - name: applicants
+    tool: jazzhr-applicants
+    method: GET
+    path: /applicants
+    query:
+      page: null
+  - name: users
+    tool: jazzhr-users
+    method: GET
+    path: /users
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/resumatorapi.com.ico

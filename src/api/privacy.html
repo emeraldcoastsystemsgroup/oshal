@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OSHAL — Privacy Policy</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 760px; margin: 48px auto; padding: 0 20px; color: #1a2238; line-height: 1.65; }
+  h1 { font-size: 26px; } h2 { font-size: 18px; margin-top: 28px; }
+  .updated { color: #6b7280; font-size: 14px; }
+  a { color: #6d28d9; }
+  code { background: #eef; padding: 1px 6px; border-radius: 4px; font-size: 0.92em; }
+</style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <h1>Privacy Policy</h1>
+  <p class="updated">OSHAL platform, operated by Emerald Coast Systems Group / Agentic Federal. Last updated 2026-06-14.</p>
+
+  <p>This policy explains what data the OSHAL platform (including the Little Monsters education app and the connectors hub) collects, how it is used, and how to delete it. We collect only what is needed to run the features you use, and we do not sell personal data.</p>
+
+  <h2>What we collect</h2>
+  <ul>
+    <li><strong>Account identity.</strong> When you sign in (Google or another OpenID Connect provider), we receive and store your name, email address, and a stable user identifier — used to create your account and scope your data to you.</li>
+    <li><strong>Connected accounts.</strong> If you explicitly connect an external account (e.g. Google, Facebook) in <em>Settings → Connections</em>, we store an OAuth access/refresh token (<strong>encrypted at rest</strong>) plus that account's email and id. These are used <em>only</em> to perform the feature you connected — for example, reading your Gmail/Calendar to produce a digest. We request read-only scopes where possible.</li>
+    <li><strong>App content.</strong> Data you create in the apps — e.g. classes, uploaded documents, lectures, study progress in Little Monsters.</li>
+    <li><strong>Operational logs.</strong> Standard request/error logs for reliability and security. We never log tokens or secrets.</li>
+  </ul>
+
+  <h2>How we use it</h2>
+  <p>To provide and operate the features you use, secure your account, and improve reliability. We do not sell your data or use it for advertising.</p>
+
+  <h2>Third parties</h2>
+  <ul>
+    <li><strong>Identity providers</strong> (Google, Facebook, etc.) — for sign-in and account connections, governed by their own policies.</li>
+    <li><strong>AI providers</strong> (e.g. Anthropic, Google) — content you submit to an AI feature (a tutor question, a lecture transcript, a document to summarize) is sent to the LLM provider to fulfill that request.</li>
+  </ul>
+  <p>We do not share your personal data with third parties except as needed to provide these features or as required by law.</p>
+
+  <h2>Storage &amp; security</h2>
+  <p>OAuth tokens are encrypted at rest. Access to your data is scoped to your authenticated identity. The platform runs on access-controlled infrastructure.</p>
+
+  <h2>Deleting your data</h2>
+  <p>You can remove a connected account anytime in <strong>Settings → Connections → Disconnect</strong>, which deletes the stored token. To remove a Facebook connection you can also remove the app from <a href="https://www.facebook.com/settings?tab=applications">Facebook → Settings → Apps and Websites</a> — Facebook then calls our deletion endpoint automatically. To request deletion of your account and associated data, contact us below.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or deletion requests: <a href="mailto:maintainer@emeraldcoastsystemsgroup.com">maintainer@emeraldcoastsystemsgroup.com</a>.</p>
+
+  <p class="updated">This is a beta service; this policy may be updated as features change. <a href="/terms">Terms of Service</a>.</p>
+</body>
+</html>

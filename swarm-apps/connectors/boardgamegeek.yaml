@@ -1,0 +1,36 @@
+provider: boardgamegeek
+displayName: BoardGameGeek
+version: 1.0.0
+baseUrl: https://boardgamegeek.com/xmlapi2
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: thing
+    tool: boardgamegeek-thing
+    method: GET
+    path: /thing
+    query:
+      id: '{q}'
+  - name: search
+    tool: boardgamegeek-search
+    method: GET
+    path: /search
+    query:
+      query: '{q}'
+  - name: hot
+    tool: boardgamegeek-hot
+    method: GET
+    path: /hot
+    query:
+      type: boardgame
+metadata:
+  icon: boardgamegeek
+  iconTitle: BoardGameGeek
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,35 @@
+provider: bitbucket
+displayName: Bitbucket
+version: 1.0.0
+baseUrl: https://api.bitbucket.org/2.0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: link
+  nextField: next
+  itemsField: values
+resources:
+  - name: me
+    tool: bitbucket-me
+    method: GET
+    path: /user
+  - name: repositories
+    tool: bitbucket-repositories
+    method: GET
+    path: /repositories
+    query:
+      role: member
+    paginate: true
+metadata:
+  description: "Read the connected Bitbucket account profile and its repositories."
+  category: "Developer tools"
+  icon: bitbucket
+  iconTitle: Bitbucket
+  iconSource: simple-icons
+  iconVerified: true

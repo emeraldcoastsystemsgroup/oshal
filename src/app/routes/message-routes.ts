@@ -1,0 +1,286 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — message send + history routes
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Defaulted chat sends to the shared standalone chat agent for Layer-1 prompt/tool-switch context
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log header to governance-compliant timestamp and author format
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Routed direct project-manager ticket intake through the canonical internal ticket system before orchestration so PM chat creates real tickets instead of markdown-only artifacts
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read ticketId from request body and pass to processMessage options — activates linkTicketIfRequested so incident pipeline tasks get ticket_task_links rows for cost rollup
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Object-level authorization (IDOR fix): GET /:taskId/messages and the send handlers now check the caller may access the task before reading its history or posting to it. A task's owner is its ticket's owner (resolveTaskOwner); the check fails SAFE — unresolved/unowned tasks (incl. brand-new conversations) are allowed, only a clearly-different owner is denied (404). Previously any authenticated user could read another user's chat history or inject into their thread by supplying its taskId.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Split message read/write guards so history reads fail closed when RLS hides another user's task.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Chat-path token broker list += 'twilio' so the communications-bot's phone/text leg (scripts/oshal-twilio.js) receives the caller's own SID:AuthToken secret in conversational threads.
+ */
+
+import { Router, type Request, type Response } from 'express';
+import { createChildLogger } from '@/shared/logger';
+import { DEFAULT_CHAT_AGENT_ID, resolveProjectManagerTicketExecutionContext } from '@/features/chat-orchestration';
+import { resolveBotCreds } from './connector-token-broker';
+import { canAccessResource, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { connectorProvidersForManifestWorker } from '@/app/manifest-worker-connector-scope';
+import type { AppContext } from '../composition-root';
+
+const logger = createChildLogger({ module: 'message-routes' });
+
+/**
+ * @description Object-level authorization for posting to a task thread. Existing
+ * tasks must be visible to and owned by the caller. Missing/unresolved task ids
+ * are allowed so the orchestrator can create a brand-new chat thread.
+ */
+async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
+  if (hasValidServiceSecret(req)) {
+    return true;
+  }
+  const task = await ctx.taskStore.get(taskId).catch(() => null);
+  if (task) {
+    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
+    return canAccessResource(req, owner);
+  }
+  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
+  return owner ? canAccessResource(req, owner) : true;
+}
+
+/**
+ * @description Object-level authorization for reading message history. Unlike
+ * write/new-thread checks, history reads fail closed when the task row is not
+ * visible under RLS and no ticket owner can be resolved.
+ */
+async function callerMayReadMessages(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
+  if (hasValidServiceSecret(req)) {
+    return true;
+  }
+  const task = await ctx.taskStore.get(taskId).catch(() => null);
+  if (task) {
+    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
+    return canAccessResource(req, owner);
+  }
+  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
+  return owner ? canAccessResource(req, owner) : false;
+}
+
+/**
+ * @description Creates Express router for message endpoints.
+ *
+ * @param ctx - Application context with wired dependencies
+ * @returns Express Router with message routes mounted
+ */
+export function createMessageRoutes(ctx: AppContext): Router {
+  const router = Router();
+
+  router.post('/send-message', handleSendMessage(ctx));
+  router.post('/tasks/:taskId/messages', handleSendMessage(ctx));
+  router.get('/:taskId/messages', handleGetMessages(ctx));
+
+  logger.info('Message routes registered');
+  return router;
+}
+
+/**
+ * @description Handler: Send a message to be processed by the orchestrator.
+ * @param ctx - Application context
+ * @returns Express request handler
+ */
+function handleSendMessage(ctx: AppContext) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const startTime = Date.now();
+    const {
+      text,
+      agenticMode,
+      source,
+      agentId,
+      chatOnly,
+      ticketId: bodyTicketId,
+    } = req.body;
+    // Accept taskId from URL param (POST /api/tasks/:taskId/messages) or body (POST /api/send-message)
+    const taskId = req.params.taskId || req.body.taskId;
+
+    logger.info({ taskId, textLength: text?.length, agenticMode, source }, 'POST /api/send-message');
+
+    if (!taskId || !text) {
+      res.status(400).json({ error: 'taskId and text are required' });
+      return;
+    }
+
+    // IDOR guard: don't let a caller post into another user's existing task thread.
+    if (!(await callerMayAccessTask(ctx, req, taskId))) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+
+    let executionContext = {
+      taskId,
+      taskIdUsed: taskId,
+      ticketCreated: false,
+      ticketId: null as string | null,
+      ticketStatus: null as string | null,
+      ticketTitle: null as string | null,
+    };
+
+    try {
+      const requestedAgentId = typeof agentId === 'string' && agentId.trim().length > 0
+        ? agentId.trim()
+        : '';
+      const resolvedAgentId = await resolveMessageAgentId(ctx, taskId, requestedAgentId);
+      const resolvedContext = await resolveProjectManagerTicketExecutionContext(
+        {
+          taskStore: ctx.taskStore,
+          ticketService: ctx.ticketService,
+        },
+        {
+          requestedTaskId: taskId,
+          resolvedAgentId,
+          source: source ?? 'api',
+          text,
+          chatOnly: chatOnly === true,
+        },
+      );
+      executionContext = {
+        taskId,
+        taskIdUsed: resolvedContext.taskId,
+        ticketCreated: resolvedContext.ticketCreated,
+        ticketId: resolvedContext.ticketId ?? null,
+        ticketStatus: resolvedContext.ticketStatus ?? null,
+        ticketTitle: resolvedContext.ticketTitle ?? null,
+      };
+
+      // Token broker: scope to the authenticated caller + hand the bot its short-lived
+      // per-user tokens (so the chat path's bot tools never need SESSION_SECRET).
+      // Resolve the acting user from the OIDC session OR a trusted service-secret call
+      // (x-oshal-user-sub) OR an explicit body field. Without this, controller-dispatched
+      // worker tasks (service-secret, no OIDC session) lose user context and every
+      // user-scoped tool the worker calls — trading, career, gmail — returns 401.
+      const callerSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub
+        ?? getTrustedServiceUserSub(req)
+        ?? (typeof (req.body as { userSub?: unknown })?.userSub === 'string' ? String((req.body as { userSub?: string }).userSub) : undefined);
+      // gcp: brokers the caller's Google Cloud token to cloud-ops-bot so scripts/oshal-gcp.js
+      // + the private scripts/oshal-gcp-diag.js diagnostics work without SESSION_SECRET on the bot.
+      const brokerProviders = source === 'dispatch-manifest-worker'
+        ? connectorProvidersForManifestWorker(resolvedAgentId)
+        : ['google', 'twitter', 'smartthings', 'gcp', 'twilio'];
+      const creds = brokerProviders.length > 0
+        ? await resolveBotCreds(ctx.pool, callerSub, [...brokerProviders])
+        : {};
+
+      const result = await ctx.orchestrator.processMessage(resolvedContext.taskId, text, {
+        agenticMode: agenticMode ?? true,
+        autoApprove: false,
+        source: resolvedContext.source,
+        agentId: resolvedAgentId,
+        ticketContext: resolvedContext.ticketContext,
+        // The generic message endpoint IS the conversational chat path (cockpit chat panel), so
+        // default to 'chat' — this opens a workflow-less chat-ticket for each new thread (ADR: direct
+        // bot chat → Chat queue). Callers doing task-mode work pass interactionMode:'task' to opt out.
+        interactionMode: req.body.interactionMode ?? 'chat',
+        ticketId: resolvedContext.ticketId ?? (typeof bodyTicketId === 'string' ? bodyTicketId : undefined),
+        // Scope the bot's per-user data access (e.g. Gmail) to the authenticated caller.
+        userSub: callerSub,
+        creds,
+      } as any);
+
+      const durationMs = Date.now() - startTime;
+      logger.info(
+        {
+          taskId: executionContext.taskId,
+          requestedTaskId: taskId,
+          durationMs,
+          success: result.success,
+          agentId: resolvedAgentId,
+          ticketCreated: executionContext.ticketCreated,
+          ticketId: executionContext.ticketId,
+        },
+        'Message processed',
+      );
+      res.json({
+        ...result,
+        taskId: executionContext.taskIdUsed,
+        taskIdUsed: executionContext.taskIdUsed,
+        requestedTaskId: taskId,
+        agentId: resolvedAgentId,
+        ticketCreated: executionContext.ticketCreated,
+        ticketId: executionContext.ticketId ?? null,
+        ticketStatus: executionContext.ticketStatus ?? null,
+        ticketTitle: executionContext.ticketTitle ?? null,
+      });
+    } catch (error) {
+      logger.error({ err: error, taskId, durationMs: Date.now() - startTime }, 'Failed to process message');
+      if (executionContext.ticketCreated && executionContext.ticketId) {
+        res.status(202).json({
+          success: false,
+          partialSuccess: true,
+          error: 'Ticket created, but the assistant reply failed.',
+          taskId: executionContext.taskIdUsed,
+          taskIdUsed: executionContext.taskIdUsed,
+          requestedTaskId: taskId,
+          ticketCreated: true,
+          ticketId: executionContext.ticketId,
+          ticketStatus: executionContext.ticketStatus,
+          ticketTitle: executionContext.ticketTitle,
+        });
+        return;
+      }
+      res.status(500).json({ error: 'Failed to process message' });
+    }
+  };
+}
+
+/**
+ * @description Resolve the effective agent id for message processing.
+ * Priority order:
+ * 1. Explicit request agent id
+ * 2. Existing task agent id
+ * 3. Default shared chat agent id
+ *
+ * @param ctx - Application context
+ * @param taskId - Task identifier
+ * @param requestedAgentId - Agent id from request payload
+ * @returns Effective agent id for orchestrator processing
+ */
+async function resolveMessageAgentId(ctx: AppContext, taskId: string, requestedAgentId: string): Promise<string> {
+  if (requestedAgentId) {
+    return requestedAgentId;
+  }
+
+  try {
+    const task = await ctx.taskStore.get(taskId);
+    const taskAgentId = typeof task?.agentId === 'string' ? task.agentId.trim() : '';
+    if (taskAgentId) {
+      return taskAgentId;
+    }
+  } catch (error) {
+    logger.warn({ err: error, taskId }, 'Failed to resolve task agent id; using default chat agent');
+  }
+
+  return DEFAULT_CHAT_AGENT_ID;
+}
+
+/**
+ * @description Handler: Get message history for a task.
+ * @param ctx - Application context
+ * @returns Express request handler
+ */
+function handleGetMessages(ctx: AppContext) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const taskId = req.params.taskId as string;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+
+    logger.info({ taskId, limit }, 'GET /api/:taskId/messages');
+
+    // IDOR guard: a caller may only read the history of a task they own (or an operator).
+    if (!(await callerMayReadMessages(ctx, req, taskId))) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+
+    try {
+      const messages = limit
+        ? await ctx.messageStore.getRecent(taskId, limit)
+        : await ctx.messageStore.getByTask(taskId);
+
+      res.json({ messages, count: messages.length });
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to get messages');
+      res.status(500).json({ error: 'Failed to get messages' });
+    }
+  };
+}

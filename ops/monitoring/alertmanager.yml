@@ -1,0 +1,37 @@
+# =============================================================================
+# Alertmanager config — routes swarm self-monitoring alerts into the RCA pipeline
+# =============================================================================
+# Every firing alert is webhooked to the swarm's own incident intake:
+#   POST http://oshal-api:5000/api/alerts/alertmanager
+# which opens an incident ticket -> incident-rca -> propose fix -> approve/close.
+#
+# Auth: if ALERT_WEBHOOK_TOKEN is set on oshal-api, put the same value in the
+# Authorization header below (uncomment the http_config block). Internal network
+# only by default, so the token is optional but recommended.
+# =============================================================================
+
+route:
+  receiver: oshal-incident-intake
+  # Group everything by alert + target so one ticket opens per distinct problem.
+  group_by: ['alertname', 'container', 'name']
+  group_wait: 30s
+  group_interval: 5m
+  # Re-send while still firing every 4h (the dedupe in the webhook prevents
+  # duplicate tickets; this just keeps the alert state fresh).
+  repeat_interval: 4h
+
+receivers:
+  - name: oshal-incident-intake
+    webhook_configs:
+      - url: 'http://oshal-api:5000/api/alerts/alertmanager'
+        send_resolved: true
+        # http_config:
+        #   authorization:
+        #     type: Bearer
+        #     credentials: 'PUT-ALERT_WEBHOOK_TOKEN-HERE'
+
+inhibit_rules:
+  # If the whole container is down, suppress the noisier CPU/mem alerts for it.
+  - source_matchers: ['alertname = SwarmContainerDown']
+    target_matchers: ['alertname =~ "SwarmContainerHigh.*"']
+    equal: ['name']

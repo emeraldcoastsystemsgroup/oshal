@@ -1,0 +1,30 @@
+provider: assemblyai
+displayName: AssemblyAI
+version: 1.0.0
+baseUrl: https://api.assemblyai.com/v2
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: transcripts
+    tool: assemblyai-transcripts
+    method: GET
+    path: /transcript
+  - name: transcript
+    tool: assemblyai-transcript
+    method: GET
+    path: /transcript/{transcript_id}
+  - name: transcript-sentences
+    tool: assemblyai-transcript-sentences
+    method: GET
+    path: /transcript/{transcript_id}/sentences
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/assemblyai.com.ico

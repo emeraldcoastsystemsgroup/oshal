@@ -1,0 +1,95 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Initial swarm control page — bot dropdown, chat, settings button, propagate auth
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Added selected-bot telemetry cards so swarm operators can see model, token, and estimated cost rollups while chatting
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Swarm Control</title>
+  <link rel="stylesheet" href="/swarm-control/swarm-control.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="swarm-shell">
+
+    <!-- Top bar: bot selector + actions -->
+    <header class="swarm-header">
+      <div class="header-left">
+        <h1>Swarm Control</h1>
+        <select id="botSelector" class="bot-selector">
+          <option value="" disabled selected>Loading bots...</option>
+        </select>
+        <span id="botAuthStatus" class="auth-badge auth-unknown">--</span>
+      </div>
+      <div class="header-actions">
+        <button id="toggleStatusBtn" type="button" class="action-btn" disabled title="Enable/disable selected bot">Toggle Status</button>
+        <button id="settingsBtn" type="button" class="action-btn" disabled title="Open bot settings in new window">Settings</button>
+        <button id="propagateBtn" type="button" class="action-btn action-propagate" title="Propagate Claude Code auth to all bots">Propagate Auth</button>
+        <a class="action-btn" href="/cockpit/" target="_top" rel="noreferrer">Cockpit</a>
+      </div>
+    </header>
+
+    <!-- Propagation status bar (hidden until propagation runs) -->
+    <div id="propagateStatus" class="propagate-status" style="display:none;">
+      <span id="propagateMessage"></span>
+    </div>
+
+    <section class="bot-telemetry" aria-label="Selected bot telemetry">
+      <div class="telemetry-head">
+        <div>
+          <p class="telemetry-eyebrow">Selected Bot</p>
+          <h2 id="telemetryBotName">Awaiting selection</h2>
+        </div>
+        <div class="telemetry-meta" id="telemetryUpdatedAt">No telemetry yet</div>
+      </div>
+      <div class="telemetry-grid">
+        <article class="telemetry-card">
+          <span class="telemetry-label">Status</span>
+          <strong id="telemetryStatus">—</strong>
+        </article>
+        <article class="telemetry-card">
+          <span class="telemetry-label">Latest Model</span>
+          <strong id="telemetryModel">—</strong>
+        </article>
+        <article class="telemetry-card">
+          <span class="telemetry-label">Tracked Tokens</span>
+          <strong id="telemetryTokens">0</strong>
+        </article>
+        <article class="telemetry-card">
+          <span class="telemetry-label">Estimated Cost</span>
+          <strong id="telemetryCost">$0.000000</strong>
+        </article>
+        <article class="telemetry-card">
+          <span class="telemetry-label">Requests</span>
+          <strong id="telemetryRequests">0</strong>
+        </article>
+      </div>
+      <div class="telemetry-models">
+        <span class="telemetry-label">Usage By Model</span>
+        <div id="telemetryModelChips" class="model-chip-row">
+          <span class="model-chip">No model telemetry yet</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Chat area -->
+    <div class="chat-container">
+      <div id="chatMessages" class="chat-messages">
+        <div class="chat-empty">Select a bot to start chatting.</div>
+      </div>
+      <form id="chatForm" class="chat-input-form">
+        <textarea id="chatInput" class="chat-input" placeholder="Type a message..." rows="2" disabled></textarea>
+        <button type="submit" id="sendBtn" class="send-btn" disabled>Send</button>
+      </form>
+    </div>
+
+  </div>
+  <script src="/swarm-control/swarm-control.js"></script>
+</body>
+</html>

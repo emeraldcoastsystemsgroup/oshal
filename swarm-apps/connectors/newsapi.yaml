@@ -1,0 +1,34 @@
+provider: newsapi
+displayName: NewsAPI
+version: 1.0.0
+baseUrl: https://newsapi.org/v2
+auth:
+  type: apiKeyQuery
+  param: apiKey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: top-headlines
+    tool: newsapi-top-headlines
+    method: GET
+    path: /top-headlines
+    query:
+      q: '{q}'
+  - name: everything
+    tool: newsapi-everything
+    method: GET
+    path: /everything
+    query:
+      q: '{q}'
+  - name: sources
+    tool: newsapi-sources
+    method: GET
+    path: /sources
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/newsapi.org.ico

@@ -1,0 +1,37 @@
+# Wistia Data API — Bearer access token; list medias and projects, and fetch a single media.
+provider: wistia
+displayName: Wistia
+version: 1.0.0
+baseUrl: https://api.wistia.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: medias
+    tool: wistia-medias
+    method: GET
+    path: /medias.json
+    query:
+      page: "{page}"
+      per_page: "{per_page}"
+  - name: projects
+    tool: wistia-projects
+    method: GET
+    path: /projects.json
+    query:
+      page: "{page}"
+      per_page: "{per_page}"
+  - name: media
+    tool: wistia-media
+    method: GET
+    path: "/medias/{hashed_id}.json"
+metadata:
+  icon: wistia
+  iconTitle: Wistia
+  iconSource: simple-icons
+  iconVerified: true

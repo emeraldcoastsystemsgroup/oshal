@@ -1,0 +1,28 @@
+provider: bouncer
+displayName: Bouncer
+version: 1.0.0
+baseUrl: https://api.usebouncer.com/v1.1
+auth:
+  type: apiKeyHeader
+  header: x-api-key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: email-verify
+    tool: bouncer-email-verify
+    method: GET
+    path: /email/verify
+    query:
+      email: '{email}'
+  - name: me-credits
+    tool: bouncer-me-credits
+    method: GET
+    path: /me/credits
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/usebouncer.com.ico

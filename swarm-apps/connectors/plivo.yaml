@@ -1,0 +1,35 @@
+provider: plivo
+displayName: Plivo
+version: 1.0.0
+baseUrl: ${env:PLIVO_BASE_URL:-https://api.plivo.com/v1}
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: account
+    tool: plivo-account
+    method: GET
+    path: /Account/{authId}/
+  - name: messages
+    tool: plivo-messages
+    method: GET
+    path: /Account/{authId}/Message/
+    query:
+      limit: '{limit}'
+      offset: '{offset}'
+  - name: numbers
+    tool: plivo-numbers
+    method: GET
+    path: /Account/{authId}/Number/
+    query:
+      limit: '{limit}'
+      offset: '{offset}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/plivo.com.ico

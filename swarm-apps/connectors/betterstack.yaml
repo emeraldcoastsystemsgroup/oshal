@@ -1,0 +1,55 @@
+provider: betterstack
+displayName: BetterStack Uptime
+version: 1.0.0
+baseUrl: https://uptime.betterstack.com/api/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: monitors
+    tool: betterstack-monitors
+    method: GET
+    path: /monitors
+    query:
+      - page
+      - per_page
+  - name: incidents
+    tool: betterstack-incidents
+    method: GET
+    path: /incidents
+    query:
+      - page
+      - per_page
+      - from
+      - to
+  - name: heartbeats
+    tool: betterstack-heartbeats
+    method: GET
+    path: /heartbeats
+    query:
+      - page
+      - per_page
+  - name: monitor-groups
+    tool: betterstack-monitor-groups
+    method: GET
+    path: /monitor-groups
+    query:
+      - page
+      - per_page
+  - name: status-pages
+    tool: betterstack-status-pages
+    method: GET
+    path: /status-pages
+    query:
+      - page
+      - per_page
+metadata:
+  icon: betterstack
+  iconTitle: Better Stack
+  iconSource: simple-icons
+  iconVerified: true

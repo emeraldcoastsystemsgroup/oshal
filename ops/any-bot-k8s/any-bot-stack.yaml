@@ -1,0 +1,847 @@
+# =============================================================================
+# OSHAL any-bot Kubernetes Stack
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added any-bot stack manifests for redis, api, ui, gateway, and secure overlay-network edge access
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Hardened gateway networking, disabled optional MCP dependencies by default, and aligned runtime settings with any-bot container expectations
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Added in-cluster ChromaDB deployment/service and canonical CHROMADB_URL wiring so the configured chromadb host resolves correctly
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Repointed the stack to the converted OSHAL root runtime, added Postgres, and aligned ports/env/probes with the current server build
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Renamed the Postgres network policy so the rendered manifest no longer contains duplicate policy resource names
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | Added in-cluster Google Search MCP service and wired the canonical MCP URL into any-bot config
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: any-bot-config
+data:
+  NODE_ENV: "production"
+  PORT: "3456"
+  OPENAI_CODEX_CALLBACK_PORT: "1455"
+  APP_URL: "http://localhost:3456"
+  LOG_LEVEL: "info"
+  MOCK_OIDC: "true"
+  CONFIG_OUTPUT_DIR: "/app/output"
+  WORKSPACE_ROOT: "/app/workspace"
+  CLINE_WORKSPACE_ROOT: "/app/workspace"
+  SHARED_WORKSPACE_ROOT: "/app/workspace-shared"
+  CLINE_SHARED_WORKSPACE_ROOT: "/app/workspace-shared"
+  LLM_PROVIDER: "noop"
+  LLM_MODEL: "claude-sonnet-4-5-20250929"
+  SWARM_MODE: "single"
+  ENABLE_AGENT_SCHEDULER: "true"
+  SCHEDULER_POLL_INTERVAL_MS: "15000"
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  CHROMADB_URL: "http://chromadb:8000"
+  CHROMADB_HOST: "chromadb"
+  CHROMADB_PORT: "8000"
+  GOOGLE_SEARCH_MCP_URL: "http://google-search-mcp:8080/mcp"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: any-bot-ui-nginx
+data:
+  default.conf: |
+    map $http_upgrade $connection_upgrade {
+      default upgrade;
+      '' close;
+    }
+
+    server {
+      listen 8080;
+      server_name _;
+      client_max_body_size 50m;
+
+      location / {
+        proxy_pass http://any-bot-api:3456;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: any-bot-gateway-config
+data:
+  TS_HOSTNAME: "any-bot-gateway"
+  TS_AUTH_ONCE: "true"
+  TS_KUBE_SECRET: ""
+  TS_USERSPACE: "true"
+  TS_DEST_IP: "127.0.0.1"
+  TS_LOCAL_ADDR_PORT: "[::]:9002"
+  TS_ENABLE_HEALTH_CHECK: "true"
+  TS_EXTRA_ARGS: "--login-server=https://headscale.example.com --accept-routes=false --advertise-tags=tag:any-bot-gateway"
+  default.conf: |
+    map $http_upgrade $connection_upgrade {
+      default upgrade;
+      '' close;
+    }
+
+    server {
+      listen 80;
+      server_name _;
+      client_max_body_size 50m;
+
+      location / {
+        proxy_pass http://any-bot-ui;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+      }
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chromadb-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: google-search-mcp-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: any-bot-output
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: any-bot-workspace
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: any-bot-workspace-shared
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: any-bot-gateway-state
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: any-bot-secrets
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: any-bot-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: any-bot-secrets
+                  key: POSTGRES_PASSWORD
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: any-bot-secrets
+                  key: REDIS_URL
+          ports:
+            - containerPort: 6379
+          command:
+            - sh
+            - -c
+            - exec redis-server --appendonly yes
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 15
+            periodSeconds: 15
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chromadb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chromadb
+  template:
+    metadata:
+      labels:
+        app: chromadb
+    spec:
+      containers:
+        - name: chromadb
+          image: chromadb/chroma:0.4.24
+          env:
+            - name: IS_PERSISTENT
+              value: "TRUE"
+            - name: PERSIST_DIRECTORY
+              value: /chroma/chroma
+            - name: ANONYMIZED_TELEMETRY
+              value: "FALSE"
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: data
+              mountPath: /chroma/chroma
+          readinessProbe:
+            httpGet:
+              path: /api/v1/heartbeat
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/heartbeat
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: chromadb-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chromadb
+spec:
+  selector:
+    app: chromadb
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: google-search-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: google-search-mcp
+  template:
+    metadata:
+      labels:
+        app: google-search-mcp
+    spec:
+      containers:
+        - name: google-search-mcp
+          image: supercorp/supergateway:latest
+          args:
+            - --stdio
+            - npx -y @mcp-server/google-search-mcp@latest
+            - --port
+            - "8080"
+            - --baseUrl
+            - http://0.0.0.0:8080
+            - --streamableHttpPath
+            - /mcp
+            - --healthEndpoint
+            - /health
+          env:
+            - name: HOME
+              value: /data
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: google-search-mcp-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: google-search-mcp
+spec:
+  selector:
+    app: google-search-mcp
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: any-bot-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: any-bot-api
+  template:
+    metadata:
+      labels:
+        app: any-bot-api
+    spec:
+      initContainers:
+        - name: wait-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done
+        - name: wait-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z redis 6379; do echo waiting for redis; sleep 2; done
+        - name: wait-chromadb
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z chromadb 8000; do echo waiting for chromadb; sleep 2; done
+      containers:
+        - name: any-bot-api
+          image: oshal-api-server:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: any-bot-config
+            - secretRef:
+                name: any-bot-secrets
+          ports:
+            - containerPort: 3456
+            - containerPort: 1455
+          volumeMounts:
+            - name: output
+              mountPath: /app/output
+            - name: workspace
+              mountPath: /app/workspace
+            - name: workspace-shared
+              mountPath: /app/workspace-shared
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3456
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3456
+            failureThreshold: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3456
+            initialDelaySeconds: 30
+            periodSeconds: 15
+      volumes:
+        - name: output
+          persistentVolumeClaim:
+            claimName: any-bot-output
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: any-bot-workspace
+        - name: workspace-shared
+          persistentVolumeClaim:
+            claimName: any-bot-workspace-shared
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: any-bot-api
+spec:
+  selector:
+    app: any-bot-api
+  ports:
+    - name: http
+      port: 3456
+      targetPort: 3456
+    - name: callback
+      port: 1455
+      targetPort: 1455
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: any-bot-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: any-bot-ui
+  template:
+    metadata:
+      labels:
+        app: any-bot-ui
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+      volumes:
+        - name: config
+          configMap:
+            name: any-bot-ui-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: any-bot-ui
+spec:
+  selector:
+    app: any-bot-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: any-bot-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: any-bot-gateway
+  template:
+    metadata:
+      labels:
+        app: any-bot-gateway
+    spec:
+      containers:
+        - name: gateway-proxy
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: gateway-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 15
+        - name: tailscale
+          image: tailscale/tailscale:stable
+          env:
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: headscale-gateway-secrets
+                  key: TS_AUTHKEY
+            - name: TS_AUTH_ONCE
+              valueFrom:
+                configMapKeyRef:
+                  name: any-bot-gateway-config
+                  key: TS_AUTH_ONCE
+            - name: TS_STATE_DIR
+              value: /var/lib/tailscale
+            - name: TS_KUBE_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: any-bot-gateway-config
+                  key: TS_KUBE_SECRET
+            - name: TS_USERSPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: any-bot-gateway-config
+                  key: TS_USERSPACE
+            - name: TS_DEST_IP
+              valueFrom:
+                configMapKeyRef:
+                  name: any-bot-gateway-config
+                  key: TS_DEST_IP
+            - name: TS_HOSTNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: any-bot-gateway-config
+                  key: TS_HOSTNAME
+            - name: TS_EXTRA_ARGS
+              valueFrom:
+                configMapKeyRef:
+                  name: any-bot-gateway-config
+                  key: TS_EXTRA_ARGS
+            - name: TS_LOCAL_ADDR_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: any-bot-gateway-config
+                  key: TS_LOCAL_ADDR_PORT
+            - name: TS_ENABLE_HEALTH_CHECK
+              valueFrom:
+                configMapKeyRef:
+                  name: any-bot-gateway-config
+                  key: TS_ENABLE_HEALTH_CHECK
+          ports:
+            - containerPort: 9002
+              name: tailscale-health
+          volumeMounts:
+            - name: tailscale-state
+              mountPath: /var/lib/tailscale
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9002
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: gateway-config
+          configMap:
+            name: any-bot-gateway-config
+        - name: tailscale-state
+          persistentVolumeClaim:
+            claimName: any-bot-gateway-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: any-bot-gateway
+spec:
+  selector:
+    app: any-bot-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: any-bot-api
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: any-bot-api
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chromadb-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: chromadb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: any-bot-api
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: google-search-mcp-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: google-search-mcp
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: any-bot-api
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: any-bot-api-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: any-bot-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: any-bot-ui
+        - podSelector:
+            matchLabels:
+              app: any-bot-gateway
+      ports:
+        - protocol: TCP
+          port: 3456
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: any-bot-ui-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: any-bot-ui
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: any-bot-gateway
+      ports:
+        - protocol: TCP
+          port: 8080

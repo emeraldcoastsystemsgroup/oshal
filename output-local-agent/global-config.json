@@ -1,0 +1,7 @@
+{
+  "mode": "act",
+  "actModeApiProvider": "claude-code",
+  "actModeApiModelId": "claude-sonnet-4-5-20250929",
+  "planModeApiProvider": "claude-code",
+  "planModeApiModelId": "claude-sonnet-4-5-20250929"
+}

@@ -1,0 +1,36 @@
+provider: apivideo
+displayName: api.video
+version: 1.0.0
+baseUrl: https://ws.api.video
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: videos
+    tool: apivideo-videos
+    method: GET
+    path: /videos
+    query:
+      currentPage: '{currentPage}'
+      pageSize: '{pageSize}'
+  - name: video
+    tool: apivideo-video
+    method: GET
+    path: /videos/{videoId}
+  - name: live-streams
+    tool: apivideo-live-streams
+    method: GET
+    path: /live-streams
+    query:
+      currentPage: '{currentPage}'
+      pageSize: '{pageSize}'
+metadata:
+  icon: xiaohongshu
+  iconTitle: Xiaohongshu
+  iconSource: simple-icons
+  iconVerified: true

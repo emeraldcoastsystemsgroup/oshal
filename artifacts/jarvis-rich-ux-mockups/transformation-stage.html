@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis Cloud Transformation Stage</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070810;
+      --panel: rgba(15, 16, 29, 0.92);
+      --panel-soft: rgba(22, 24, 42, 0.72);
+      --line: rgba(255, 255, 255, 0.10);
+      --line-strong: rgba(255, 255, 255, 0.18);
+      --text: #f4f4fb;
+      --muted: #a4a6bf;
+      --faint: #62657f;
+      --accent: #8985ff;
+      --accent-2: #b36cff;
+      --sky: #62c8ff;
+      --sun: #ffd770;
+      --ok: #48d7a5;
+      --warn: #ffc85e;
+      --danger: #ff7088;
+      --font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
+    body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font); }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible { outline: 3px solid rgba(137,133,255,.42); outline-offset: 3px; }
+
+    .app { width: 100%; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+    .topbar {
+      height: 64px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 20px;
+      padding: 0 22px; border-bottom: 1px solid rgba(255,255,255,.055); background: rgba(7,8,16,.68);
+      backdrop-filter: blur(22px); position: relative; z-index: 30;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand-orb {
+      width: 34px; height: 34px; border-radius: 50%; position: relative;
+      background: radial-gradient(circle at 34% 29%, #fff 0 4%, #c3c1ff 8%, var(--accent) 25%, #392886 54%, #090912 75%);
+      box-shadow: 0 0 24px rgba(137,133,255,.32), inset 0 0 12px rgba(255,255,255,.18);
+    }
+    .brand-orb::after { content: ""; position: absolute; width: 9px; height: 9px; border-radius: 50%; left: 13px; top: 13px; background: #020205; box-shadow: inset 0 0 0 2px rgba(255,255,255,.13); }
+    .brand strong { display: block; font-size: 13px; }
+    .brand span { display: block; color: var(--faint); font-size: 9.5px; margin-top: 2px; }
+    .top-actions { display: flex; align-items: center; gap: 8px; }
+    .top-button {
+      height: 36px; border: 1px solid var(--line); background: rgba(255,255,255,.035); border-radius: 11px;
+      padding: 0 12px; cursor: pointer; font-size: 11px; font-weight: 720; color: var(--muted); display: inline-flex; align-items: center; gap: 7px;
+    }
+    .top-button:hover { color: var(--text); border-color: rgba(137,133,255,.48); }
+    .top-button.active { color: #ddd; background: rgba(137,133,255,.12); border-color: rgba(137,133,255,.32); }
+    .count { min-width: 19px; height: 19px; border-radius: 999px; display: inline-grid; place-items: center; background: var(--accent); color: white; font-size: 9px; }
+
+    .stage {
+      flex: 1; min-height: 0; position: relative; overflow: hidden; isolation: isolate;
+      background:
+        radial-gradient(circle at 50% 45%, rgba(96, 75, 242, .06), transparent 29rem),
+        radial-gradient(circle at 16% 84%, rgba(48, 161, 255, .035), transparent 25rem),
+        var(--bg);
+    }
+    #cloudField { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+    .vignette { position: absolute; inset: 0; pointer-events: none; z-index: 10; box-shadow: inset 0 0 150px 50px rgba(0,0,0,.58); }
+    .prototype-label { position: absolute; left: 22px; top: 17px; color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; z-index: 12; }
+    .prototype-label b { color: var(--warn); }
+
+    .core {
+      position: absolute; left: 50%; top: 44%; width: clamp(90px, 10vw, 142px); aspect-ratio: 1; transform: translate(-50%,-50%);
+      border-radius: 50%; z-index: 5; transition: opacity .75s ease, transform .9s cubic-bezier(.2,.8,.2,1), filter .9s ease;
+    }
+    .core::before {
+      content: ""; position: absolute; inset: 0; border-radius: 50%;
+      background: radial-gradient(circle at 35% 29%, #fff 0 3%, #c5c3ff 9%, var(--accent) 28%, #42309c 51%, #0a0a15 73%);
+      box-shadow: 0 0 80px rgba(123,105,255,.42), 0 0 0 1px rgba(255,255,255,.14), inset 0 0 24px rgba(255,255,255,.18);
+    }
+    .core::after { content: ""; position: absolute; width: 25%; aspect-ratio: 1; border-radius: 50%; left: 38%; top: 38%; background: #020206; box-shadow: inset 0 0 0 3px rgba(255,255,255,.14); }
+    .core-ring { position: absolute; inset: -18%; border-radius: 50%; border: 1px solid rgba(137,133,255,.24); animation: breathe 3.8s ease-in-out infinite; }
+    .core-ring::before, .core-ring::after { content: ""; position: absolute; inset: -18%; border-radius: 50%; border: 1px solid rgba(137,133,255,.10); }
+    .core-ring::after { inset: 14%; border-color: rgba(255,255,255,.12); animation: turn 8s linear infinite; border-left-color: transparent; }
+    @keyframes breathe { 0%,100% { transform: scale(.96); opacity: .45; } 50% { transform: scale(1.08); opacity: 1; } }
+    @keyframes turn { to { transform: rotate(360deg); } }
+
+    .idle-copy {
+      position: absolute; left: 50%; top: calc(44% + clamp(78px, 8vw, 112px)); width: min(520px, calc(100% - 36px)); transform: translateX(-50%);
+      text-align: center; z-index: 7; transition: opacity .45s ease, transform .55s ease, filter .55s ease;
+    }
+    .idle-copy h1 { font-size: clamp(19px, 2.2vw, 28px); margin: 0 0 6px; letter-spacing: -.035em; }
+    .idle-copy p { margin: 0; color: var(--faint); font-size: 11px; }
+
+    .state-label {
+      position: absolute; left: 50%; top: 17%; transform: translateX(-50%); z-index: 9; opacity: 0;
+      color: var(--muted); font-size: 10px; font-weight: 780; letter-spacing: .12em; text-transform: uppercase; transition: opacity .35s ease;
+    }
+    .state-label::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 1px; box-shadow: 0 0 9px var(--accent); }
+
+    .answer-visual {
+      --archive-x: 42vw; --archive-y: -38vh;
+      position: absolute; left: 50%; top: 45%; width: min(940px, calc(100% - 72px)); height: min(520px, calc(100% - 185px));
+      transform: translate(-50%,-50%) scale(.72); transform-origin: center; opacity: 0; filter: blur(24px); z-index: 6;
+      transition: transform 1s cubic-bezier(.2,.86,.2,1), opacity .65s ease, filter .85s ease; pointer-events: none;
+    }
+    .visual { position: absolute; inset: 0; opacity: 0; visibility: hidden; }
+    .visual.active { opacity: 1; visibility: visible; }
+    .visual-kicker { color: var(--accent); font-size: 10px; font-weight: 850; letter-spacing: .13em; text-transform: uppercase; }
+    .visual-title { font-size: clamp(24px, 3.4vw, 48px); line-height: 1.05; letter-spacing: -.055em; margin: 8px 0 0; max-width: 760px; }
+    .visual-part { opacity: .18; transform: translateY(7px) scale(.985); filter: saturate(.55); transition: opacity .5s ease, transform .55s ease, filter .55s ease; }
+    .visual-part.current, .visual-part.revealed { opacity: 1; transform: none; filter: none; }
+    .visual-part.current { filter: drop-shadow(0 0 18px rgba(137,133,255,.16)); }
+
+    .weather-layout { height: 100%; display: grid; grid-template-columns: .9fr 1.25fr; gap: clamp(25px, 5vw, 70px); align-items: center; }
+    .weather-primary { position: relative; padding-left: 8%; }
+    .weather-temp { font-size: clamp(88px, 14vw, 170px); line-height: .78; letter-spacing: -.09em; font-weight: 590; margin-top: 28px; }
+    .weather-condition { font-size: clamp(15px, 1.7vw, 22px); font-weight: 720; margin-top: 25px; }
+    .weather-detail { color: var(--muted); font-size: 11px; margin-top: 7px; }
+    .weather-art { position: absolute; width: 185px; height: 115px; right: -34px; top: 22px; }
+    .sun { position: absolute; width: 82px; height: 82px; right: 4px; top: 0; border-radius: 50%; background: var(--sun); box-shadow: 0 0 50px rgba(255,215,112,.33); }
+    .weather-cloud { position: absolute; width: 146px; height: 47px; left: 0; bottom: 7px; border-radius: 999px; background: linear-gradient(180deg, rgba(232,235,255,.78), rgba(139,143,190,.5)); filter: blur(.2px); }
+    .weather-cloud::before, .weather-cloud::after { content: ""; position: absolute; border-radius: 50%; background: inherit; }
+    .weather-cloud::before { width: 63px; height: 63px; left: 28px; bottom: 10px; }
+    .weather-cloud::after { width: 48px; height: 48px; right: 22px; bottom: 7px; }
+    .weather-secondary { display: grid; gap: 25px; }
+    .weather-window { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .time-window { padding: 13px; border-left: 1px solid var(--line-strong); }
+    .time-window:first-child { border-left-color: var(--ok); }
+    .time-window:nth-child(2) { border-left-color: var(--warn); }
+    .time-window:nth-child(3) { border-left-color: var(--danger); }
+    .time-window span { display: block; color: var(--faint); font-size: 9px; font-weight: 780; text-transform: uppercase; letter-spacing: .08em; }
+    .time-window strong { display: block; font-size: 12px; margin-top: 7px; }
+    .time-window small { display: block; color: var(--muted); font-size: 9px; margin-top: 4px; }
+    .weather-chart { height: 150px; position: relative; border-bottom: 1px solid var(--line); }
+    .weather-chart svg { width: 100%; height: 100%; overflow: visible; }
+    .chart-labels { position: absolute; left: 0; right: 0; bottom: -22px; display: grid; grid-template-columns: repeat(7,1fr); color: var(--faint); font-size: 8px; text-align: center; }
+    .storm-callout { display: flex; align-items: center; justify-content: space-between; gap: 20px; color: var(--muted); font-size: 11px; }
+    .storm-callout strong { color: var(--warn); font-size: 13px; }
+
+    .briefing-layout { height: 100%; display: grid; grid-template-columns: 1.05fr .95fr; gap: clamp(28px, 6vw, 80px); align-items: center; }
+    .briefing-number { display: flex; gap: 14px; align-items: flex-end; margin-top: 32px; }
+    .briefing-number strong { font-size: clamp(76px, 12vw, 146px); line-height: .76; letter-spacing: -.08em; font-weight: 620; color: var(--warn); }
+    .briefing-number span { color: var(--muted); font-size: 12px; max-width: 150px; padding-bottom: 5px; }
+    .brief-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 42px; }
+    .brief-metric { border-top: 1px solid var(--line-strong); padding-top: 10px; }
+    .brief-metric small { color: var(--faint); text-transform: uppercase; letter-spacing: .08em; font-size: 8px; }
+    .brief-metric b { display: block; font-size: 19px; margin-top: 7px; }
+    .brief-timeline { display: grid; gap: 3px; }
+    .brief-event { display: grid; grid-template-columns: 60px 14px 1fr; min-height: 64px; color: var(--muted); font-size: 10px; }
+    .brief-event time { color: var(--faint); }
+    .brief-rail { position: relative; }
+    .brief-rail::before { content: ""; position: absolute; left: 5px; top: 10px; bottom: -10px; width: 1px; background: var(--line); }
+    .brief-event:last-child .brief-rail::before { display: none; }
+    .brief-rail i { position: absolute; left: 1px; top: 5px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px rgba(137,133,255,.09); }
+    .brief-event.conflict .brief-rail i { background: var(--warn); box-shadow: 0 0 0 5px rgba(255,200,94,.1); }
+    .brief-event strong { display: block; color: var(--text); font-size: 12px; }
+    .brief-event small { display: block; margin-top: 4px; color: var(--muted); }
+    .brief-resolution { margin-top: 8px; padding: 12px 14px; border-left: 2px solid var(--warn); color: var(--muted); font-size: 10px; background: rgba(255,200,94,.035); }
+    .brief-resolution b { color: var(--text); }
+
+    .explore-layout { height: 100%; position: relative; display: flex; align-items: flex-end; }
+    .photo-stage { position: absolute; inset: 0; overflow: hidden; border-radius: 40% 16% 34% 18% / 28% 38% 20% 42%; opacity: .16; transform: scale(.88); transition: opacity .8s ease, transform 1s cubic-bezier(.2,.8,.2,1), border-radius 1.2s ease; }
+    .photo-stage::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(7,8,16,.08), rgba(7,8,16,.45) 58%, rgba(7,8,16,.86)), url("https://images.unsplash.com/photo-1494522358652-f30e61a60313?auto=format&fit=crop&w=1600&q=84") center/cover; }
+    .photo-stage.revealed, .photo-stage.current { opacity: .78; transform: scale(1); border-radius: 22px; }
+    .explore-copy { position: relative; z-index: 2; width: 54%; margin: 0 0 6% 4%; padding: 20px; text-shadow: 0 2px 20px rgba(0,0,0,.76); }
+    .explore-copy .visual-title { font-size: clamp(30px, 4vw, 56px); }
+    .explore-plan { position: absolute; z-index: 3; width: 310px; right: 2%; top: 16%; display: grid; gap: 11px; }
+    .explore-stop { display: grid; grid-template-columns: 46px 1fr; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(7,8,16,.48); backdrop-filter: blur(18px); }
+    .explore-stop time { color: var(--faint); font-size: 9px; }
+    .explore-stop strong { font-size: 11px; }
+    .explore-stop small { display: block; color: var(--muted); font-size: 9px; margin-top: 3px; }
+    .explore-budget { display: flex; gap: 18px; margin-top: 20px; color: var(--muted); font-size: 10px; }
+    .explore-budget b { color: var(--text); font-size: 14px; }
+
+    .caption-zone {
+      position: absolute; left: 50%; bottom: 94px; width: min(720px, calc(100% - 40px)); transform: translateX(-50%); z-index: 13;
+      text-align: center; opacity: 0; transition: opacity .35s ease, transform .45s ease;
+    }
+    .caption { min-height: 27px; color: rgba(244,244,251,.88); font-size: clamp(12px, 1.5vw, 16px); line-height: 1.55; }
+    .caption-progress { width: 190px; height: 2px; margin: 10px auto 0; background: rgba(255,255,255,.08); border-radius: 999px; overflow: hidden; }
+    .caption-progress i { display: block; height: 100%; width: 0; background: linear-gradient(90deg,var(--accent),var(--accent-2)); transition: width .45s ease; }
+    .saved-note { color: var(--faint); font-size: 9px; margin-top: 8px; opacity: 0; transition: opacity .3s ease; }
+
+    .prompt-dock {
+      position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 16; width: min(780px, calc(100% - 30px));
+      display: flex; align-items: center; justify-content: center; gap: 7px; padding: 7px; border: 1px solid var(--line);
+      background: rgba(15,16,29,.75); backdrop-filter: blur(24px) saturate(135%); border-radius: 18px;
+      box-shadow: 0 16px 46px rgba(0,0,0,.34); transition: opacity .3s ease, transform .35s ease;
+    }
+    .prompt-label { color: var(--faint); font-size: 9px; font-weight: 750; text-transform: uppercase; letter-spacing: .08em; padding: 0 8px; }
+    .prompt-button { flex: 1; min-width: 0; height: 42px; border: 1px solid transparent; background: transparent; border-radius: 12px; cursor: pointer; color: var(--muted); font-size: 11px; font-weight: 710; white-space: nowrap; }
+    .prompt-button:hover { color: var(--text); background: rgba(255,255,255,.04); border-color: var(--line); }
+    .prompt-button[aria-pressed="true"] { color: white; background: rgba(137,133,255,.16); border-color: rgba(137,133,255,.28); }
+    .prompt-button .icon { margin-right: 5px; }
+
+    .stage[data-state="gathering"] .core { transform: translate(-50%,-50%) scale(.63) rotate(12deg); filter: brightness(1.4); }
+    .stage[data-state="gathering"] .idle-copy { opacity: 0; transform: translateX(-50%) translateY(12px); filter: blur(8px); }
+    .stage[data-state="gathering"] .state-label { opacity: 1; }
+    .stage[data-state="speaking"] .core, .stage[data-state="holding"] .core { opacity: 0; transform: translate(-50%,-50%) scale(.18); filter: blur(18px); }
+    .stage[data-state="speaking"] .idle-copy, .stage[data-state="holding"] .idle-copy { opacity: 0; transform: translateX(-50%) translateY(12px); filter: blur(8px); }
+    .stage[data-state="speaking"] .answer-visual, .stage[data-state="holding"] .answer-visual { opacity: 1; transform: translate(-50%,-50%) scale(1); filter: blur(0); }
+    .stage[data-state="speaking"] .caption-zone, .stage[data-state="holding"] .caption-zone { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .stage[data-state="holding"] .saved-note { opacity: 1; }
+    .stage[data-state="archiving"] .core, .stage[data-state="archiving"] .idle-copy { opacity: 0; }
+    .stage[data-state="archiving"] .answer-visual { opacity: 0; transform: translate(calc(-50% + var(--archive-x)), calc(-50% + var(--archive-y))) scale(.08); filter: blur(20px); transition-duration: .9s; }
+    .stage[data-state="archiving"] .caption-zone { opacity: 0; transform: translateX(-50%) translateY(12px); }
+    .stage[data-state="gathering"] .prompt-dock, .stage[data-state="speaking"] .prompt-dock, .stage[data-state="archiving"] .prompt-dock { opacity: .38; transform: translateX(-50%) translateY(4px); pointer-events: none; }
+
+    .drawer-backdrop { position: fixed; inset: 64px 0 0; background: rgba(0,0,0,.3); backdrop-filter: blur(3px); z-index: 39; opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+    .discussion {
+      position: fixed; right: 0; top: 64px; bottom: 0; width: min(440px, 100vw); z-index: 40; display: flex; flex-direction: column;
+      background: rgba(11,12,22,.97); border-left: 1px solid var(--line); box-shadow: -28px 0 70px rgba(0,0,0,.42);
+      transform: translateX(100%); transition: transform .34s cubic-bezier(.2,.8,.2,1);
+    }
+    .discussion.open { transform: translateX(0); }
+    .drawer-head { height: 70px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--line); }
+    .drawer-head span { color: var(--faint); display: block; font-size: 9px; margin-top: 3px; }
+    .close-button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.035); cursor: pointer; color: var(--muted); }
+    .thread { flex: 1; min-height: 0; overflow-y: auto; padding: 18px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.12) transparent; }
+    .thread-day { color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .1em; font-weight: 800; margin: 7px 0 14px; }
+    .thread-pair { display: grid; gap: 9px; margin-bottom: 25px; }
+    .thread-user { justify-self: end; max-width: 82%; border: 1px solid rgba(137,133,255,.2); background: rgba(137,133,255,.1); border-radius: 14px 14px 4px 14px; padding: 10px 12px; font-size: 11px; color: #dadaff; }
+    .thread-answer { border-left: 2px solid var(--accent); padding: 3px 0 4px 13px; }
+    .thread-answer h3 { font-size: 12px; margin: 0 0 7px; }
+    .thread-answer p { color: var(--muted); font-size: 10.5px; line-height: 1.55; margin: 0; }
+    .thread-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; color: var(--faint); font-size: 9px; }
+    .replay { border: 1px solid var(--line); background: rgba(255,255,255,.035); color: var(--muted); border-radius: 9px; padding: 6px 9px; cursor: pointer; font-size: 9px; font-weight: 720; }
+    .replay:hover { color: var(--text); border-color: var(--accent); }
+    .drawer-compose { flex: none; padding: 13px; border-top: 1px solid var(--line); }
+    .drawer-compose form { display: flex; gap: 8px; border: 1px solid var(--line); border-radius: 13px; padding: 7px; background: rgba(255,255,255,.025); }
+    .drawer-compose input { flex: 1; min-width: 0; background: transparent; color: var(--text); border: 0; outline: 0; padding: 0 8px; font-size: 11px; }
+    .drawer-compose button { border: 0; border-radius: 9px; background: var(--accent); color: white; padding: 8px 11px; font-size: 10px; font-weight: 750; cursor: pointer; }
+
+    .toast { position: fixed; left: 50%; top: 84px; transform: translate(-50%,-12px); z-index: 60; opacity: 0; pointer-events: none; transition: .2s ease; padding: 9px 13px; background: #f2f1ff; color: #17162b; border-radius: 10px; font-size: 10px; font-weight: 750; box-shadow: 0 14px 40px rgba(0,0,0,.3); }
+    .toast.show { opacity: 1; transform: translate(-50%,0); }
+
+    @media (max-width: 800px) {
+      .topbar { padding: 0 14px; }
+      .brand span { display: none; }
+      .top-button .button-label { display: none; }
+      .answer-visual { width: calc(100% - 30px); height: calc(100% - 175px); top: 43%; }
+      .weather-layout, .briefing-layout { grid-template-columns: 1fr; gap: 22px; align-content: center; }
+      .weather-primary { padding-left: 0; display: grid; grid-template-columns: 1fr 1fr; align-items: end; }
+      .weather-primary .visual-kicker, .weather-primary .visual-title { grid-column: 1 / -1; }
+      .weather-temp { font-size: 82px; margin-top: 20px; }
+      .weather-art { right: 5%; top: 45px; transform: scale(.78); transform-origin: right top; }
+      .weather-window { gap: 4px; }
+      .time-window { padding: 9px; }
+      .weather-chart { height: 90px; }
+      .briefing-number { margin-top: 22px; }
+      .briefing-number strong { font-size: 78px; }
+      .brief-metrics { margin-top: 25px; gap: 10px; }
+      .brief-event { min-height: 51px; }
+      .explore-copy { width: 75%; margin: 0 0 5% 2%; }
+      .explore-plan { width: 250px; right: 2%; top: 12%; }
+      .prompt-label { display: none; }
+      .prompt-button { font-size: 10px; padding: 0 6px; }
+    }
+
+    @media (max-width: 520px) {
+      .top-button { padding: 0 10px; }
+      .answer-visual { top: 42%; height: calc(100% - 190px); }
+      .visual-title { font-size: 25px; }
+      .weather-primary { display: block; }
+      .weather-temp { font-size: 75px; }
+      .weather-art { width: 145px; right: -2%; }
+      .weather-window { grid-template-columns: 1fr 1fr 1fr; }
+      .time-window strong { font-size: 10px; }
+      .time-window small { display: none; }
+      .storm-callout { font-size: 9px; }
+      .briefing-layout { gap: 14px; }
+      .briefing-number strong { font-size: 64px; }
+      .briefing-number span { font-size: 10px; }
+      .brief-metrics { margin-top: 16px; }
+      .brief-metric b { font-size: 15px; }
+      .brief-event { min-height: 45px; grid-template-columns: 53px 13px 1fr; }
+      .brief-event small { display: none; }
+      .photo-stage { inset: 6% 0 20%; }
+      .explore-copy { width: 94%; margin-left: 0; padding: 14px; }
+      .explore-plan { top: 12%; left: 5%; right: 5%; width: auto; grid-template-columns: 1fr 1fr; }
+      .explore-stop { padding: 9px; grid-template-columns: 36px 1fr; }
+      .explore-stop:last-child { display: none; }
+      .prompt-dock { bottom: 12px; }
+      .prompt-button .icon { display: block; margin: 0 0 2px; }
+      .caption-zone { bottom: 78px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><div class="brand-orb" aria-hidden="true"></div><div><strong>Jarvis</strong><span>Ambient answer-stage prototype</span></div></div>
+      <div class="top-actions">
+        <button class="top-button" id="soundToggle" type="button" aria-pressed="false"><span aria-hidden="true">◖</span><span class="button-label">Voice off</span></button>
+        <button class="top-button" id="discussionToggle" type="button" aria-expanded="false"><span aria-hidden="true">☰</span><span class="button-label">Discussion</span><span class="count" id="threadCount">3</span></button>
+      </div>
+    </header>
+
+    <main class="stage" id="stage" data-state="idle" aria-label="Jarvis transformation stage">
+      <canvas id="cloudField" aria-hidden="true"></canvas>
+      <div class="vignette" aria-hidden="true"></div>
+      <div class="prototype-label"><b>Prototype</b> · center stage never scrolls</div>
+      <div class="state-label" id="stateLabel">Gathering the answer</div>
+
+      <div class="core" aria-hidden="true"><div class="core-ring"></div></div>
+      <div class="idle-copy"><h1>The cloud is Jarvis.</h1><p>Ask once. The answer materializes here, then returns to the discussion.</p></div>
+
+      <section class="answer-visual" id="answerVisual" aria-live="off">
+        <article class="visual" data-scenario="weather">
+          <div class="weather-layout">
+            <div class="weather-primary visual-part" data-step="0">
+              <div class="visual-kicker">Chicago · Now</div><h2 class="visual-title">Warm, humid, and changing later</h2>
+              <div class="weather-temp">84°</div><div class="weather-condition">Partly cloudy</div><div class="weather-detail">Feels like 91° · High 88° · Low 72°</div>
+              <div class="weather-art" aria-hidden="true"><div class="sun"></div><div class="weather-cloud"></div></div>
+            </div>
+            <div class="weather-secondary">
+              <div class="weather-window visual-part" data-step="1">
+                <div class="time-window"><span>Now–12 PM</span><strong>Best outside</strong><small>12–18% rain</small></div>
+                <div class="time-window"><span>12–3 PM</span><strong>Hot & humid</strong><small>18–42% rain</small></div>
+                <div class="time-window"><span>3–7 PM</span><strong>Stay flexible</strong><small>58–68% rain</small></div>
+              </div>
+              <div class="weather-chart visual-part" data-step="2">
+                <svg viewBox="0 0 600 150" role="img" aria-label="Temperature falls after 2 PM while rain likelihood rises sharply around 4 PM">
+                  <path d="M18 105 L112 78 L206 48 L300 65 L394 100 L488 124 L582 136" fill="none" stroke="#ffd770" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M18 136 L112 124 L206 106 L300 42 L394 55 L488 98 L582 120" fill="none" stroke="#62c8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                  <g fill="#ffd770"><circle cx="18" cy="105" r="4"/><circle cx="112" cy="78" r="4"/><circle cx="206" cy="48" r="4"/><circle cx="300" cy="65" r="4"/><circle cx="394" cy="100" r="4"/><circle cx="488" cy="124" r="4"/><circle cx="582" cy="136" r="4"/></g>
+                  <g fill="#62c8ff"><circle cx="18" cy="136" r="4"/><circle cx="112" cy="124" r="4"/><circle cx="206" cy="106" r="4"/><circle cx="300" cy="42" r="4"/><circle cx="394" cy="55" r="4"/><circle cx="488" cy="98" r="4"/><circle cx="582" cy="120" r="4"/></g>
+                </svg>
+                <div class="chart-labels"><span>10a</span><span>12p</span><span>2p</span><span>4p</span><span>6p</span><span>8p</span><span>10p</span></div>
+              </div>
+              <div class="storm-callout visual-part" data-step="2"><span>Rain risk rises with the blue line</span><strong>Storms most likely after 3 PM</strong></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="visual" data-scenario="briefing">
+          <div class="briefing-layout">
+            <div>
+              <div class="visual-part" data-step="0"><div class="visual-kicker">Thursday · July 9</div><h2 class="visual-title">A focused day with one conflict</h2><div class="briefing-number"><strong>1</strong><span>schedule conflict needs your decision</span></div></div>
+              <div class="brief-metrics visual-part" data-step="1">
+                <div class="brief-metric"><small>Meetings</small><b>4</b></div><div class="brief-metric"><small>Focus time</small><b>2h 10m</b></div><div class="brief-metric"><small>Urgent email</small><b style="color:var(--warn)">1</b></div>
+              </div>
+            </div>
+            <div>
+              <div class="brief-timeline visual-part" data-step="1">
+                <div class="brief-event"><time>9:30 AM</time><div class="brief-rail"><i></i></div><div><strong>Platform stand-up</strong><small>Engineering · 25 minutes</small></div></div>
+                <div class="brief-event"><time>11:00 AM</time><div class="brief-rail"><i></i></div><div><strong>Proposal focus block</strong><small>Protected · 45 minutes</small></div></div>
+                <div class="brief-event conflict"><time>1:00 PM</time><div class="brief-rail"><i></i></div><div><strong>Architecture review</strong><small>Overlaps the customer call by 15 minutes</small></div></div>
+                <div class="brief-event"><time>1:45 PM</time><div class="brief-rail"><i></i></div><div><strong>Customer call</strong><small>Prep brief is ready</small></div></div>
+              </div>
+              <div class="brief-resolution visual-part" data-step="2"><b>Suggested move:</b> end the architecture review at 1:40 and keep the customer call unchanged.</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="visual" data-scenario="explore">
+          <div class="explore-layout">
+            <div class="photo-stage visual-part" data-step="0" role="img" aria-label="Chicago architecture and river scene"></div>
+            <div class="explore-copy visual-part" data-step="0"><div class="visual-kicker">Weekend · Chicago</div><h2 class="visual-title">River views, architecture, and neighborhood food</h2><div class="explore-budget"><span><b>$235</b><br/>estimated for two</span><span><b>5.8 mi</b><br/>walking over two days</span></div></div>
+            <div class="explore-plan visual-part" data-step="1">
+              <div class="explore-stop"><time>10:30</time><div><strong>Riverwalk coffee</strong><small>Easy start · 45 min</small></div></div>
+              <div class="explore-stop"><time>12:00</time><div><strong>Architecture cruise</strong><small>Main anchor · book ahead</small></div></div>
+              <div class="explore-stop"><time>3:00</time><div><strong>Loop design walk</strong><small>Indoor swaps nearby</small></div></div>
+              <div class="explore-stop"><time>6:30</time><div><strong>West Loop dinner</strong><small>Three saved options</small></div></div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <div class="caption-zone" id="captionZone"><div class="caption" id="caption" role="status" aria-live="polite"></div><div class="caption-progress"><i id="captionProgress"></i></div><div class="saved-note">Saved to the full discussion · replay it any time</div></div>
+
+      <nav class="prompt-dock" aria-label="Run a prototype answer">
+        <span class="prompt-label">Try the morph</span>
+        <button class="prompt-button" type="button" data-run="weather"><span class="icon">◒</span>Weather today</button>
+        <button class="prompt-button" type="button" data-run="briefing"><span class="icon">◷</span>My morning</button>
+        <button class="prompt-button" type="button" data-run="explore"><span class="icon">◇</span>Plan a weekend</button>
+      </nav>
+    </main>
+
+    <div class="drawer-backdrop" id="drawerBackdrop"></div>
+    <aside class="discussion" id="discussion" aria-label="Full discussion" aria-hidden="true" inert>
+      <div class="drawer-head"><div><strong>Full discussion</strong><span>Durable text and replayable visuals</span></div><button class="close-button" id="discussionClose" type="button" aria-label="Close discussion">×</button></div>
+      <div class="thread" id="thread"></div>
+      <div class="drawer-compose"><form id="drawerForm"><input id="drawerInput" aria-label="Ask Jarvis" placeholder="Continue the discussion…"/><button type="submit">Ask</button></form></div>
+    </aside>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <script>
+    const scenarios = {
+      weather: {
+        prompt: "What’s the weather today?", title: "Warm, humid, and changing later", meta: "Weather visual · just now",
+        summary: "It’s 84 degrees and humid. Your best outdoor window is before 2 PM; storms are most likely after 3.",
+        captions: ["It’s 84 degrees and humid in Chicago.", "Your best outdoor window is before 2 PM.", "Storms become much more likely after 3."]
+      },
+      briefing: {
+        prompt: "Give me my morning briefing.", title: "A focused day with one conflict", meta: "Morning briefing · just now",
+        summary: "You have four meetings, one urgent email, and one schedule conflict. I’d protect the customer call and shorten the architecture review.",
+        captions: ["Your day is focused, but one conflict needs a decision.", "You have four meetings, two hours of focus time, and one urgent email.", "I’d end the architecture review at 1:40 and keep the customer call unchanged."]
+      },
+      explore: {
+        prompt: "Plan a relaxed Chicago weekend with food and architecture.", title: "River views, architecture, and neighborhood food", meta: "Weekend visual · just now",
+        summary: "I built a relaxed two-day plan around the river, architecture, and West Loop dining, with indoor alternatives if the weather turns.",
+        captions: ["I built the weekend around one strong visual anchor: Chicago from the river.", "The pace stays relaxed—two main stops, good food, and room to wander.", "The full itinerary and alternatives are saved in the discussion."]
+      }
+    };
+
+    const stage = document.getElementById("stage");
+    const visualHost = document.getElementById("answerVisual");
+    const caption = document.getElementById("caption");
+    const captionProgress = document.getElementById("captionProgress");
+    const stateLabel = document.getElementById("stateLabel");
+    const discussion = document.getElementById("discussion");
+    const drawerBackdrop = document.getElementById("drawerBackdrop");
+    const discussionToggle = document.getElementById("discussionToggle");
+    const soundToggle = document.getElementById("soundToggle");
+    const thread = document.getElementById("thread");
+    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let soundOn = false, running = false, runToken = 0, currentScenario = null, toastTimer;
+    const history = ["briefing", "explore", "weather"];
+
+    function delay(ms, token) { return new Promise((resolve) => setTimeout(() => resolve(token === runToken), reduceMotion ? Math.min(ms, 80) : ms)); }
+    function setState(value) { stage.dataset.state = value; setCloudState(value); }
+    function setActiveVisual(id) {
+      document.querySelectorAll(".visual").forEach((item) => item.classList.toggle("active", item.dataset.scenario === id));
+      document.querySelectorAll(".visual-part").forEach((item) => item.classList.remove("current", "revealed"));
+    }
+    function revealStep(step) {
+      const active = document.querySelector(`.visual[data-scenario="${currentScenario}"]`); if (!active) return;
+      active.querySelectorAll(".visual-part").forEach((item) => {
+        const own = Number(item.dataset.step || 0); item.classList.toggle("revealed", own < step); item.classList.toggle("current", own === step);
+      });
+      captionProgress.style.width = `${((step + 1) / scenarios[currentScenario].captions.length) * 100}%`;
+    }
+    function setPromptPressed(id) { document.querySelectorAll("[data-run]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.run === id && running))); }
+    function stopVoice() { if ("speechSynthesis" in window) try { speechSynthesis.cancel(); } catch (_) {} }
+    function speak(text) {
+      if (!soundOn || !("speechSynthesis" in window)) return;
+      try { const utterance = new SpeechSynthesisUtterance(text); utterance.rate = 1.02; speechSynthesis.speak(utterance); } catch (_) {}
+    }
+
+    async function runAnswer(id) {
+      if (!scenarios[id]) return; const token = ++runToken; running = true; currentScenario = id; stopVoice();
+      closeDiscussion(); setPromptPressed(id); setActiveVisual(id); caption.textContent = ""; captionProgress.style.width = "0";
+      stateLabel.textContent = "Gathering the answer"; setState("gathering");
+      if (!(await delay(1150, token))) return;
+      setState("speaking"); stateLabel.textContent = ""; speak(scenarios[id].summary);
+      for (let step = 0; step < scenarios[id].captions.length; step++) {
+        if (token !== runToken) return; revealStep(step); caption.textContent = scenarios[id].captions[step];
+        if (!(await delay(step === 0 ? 1900 : 2200, token))) return;
+      }
+      setState("holding"); caption.textContent = ""; saveHistory(id);
+      if (!(await delay(1900, token))) return;
+      computeArchiveVector(); setState("archiving");
+      if (!(await delay(900, token))) return;
+      finishToIdle(token);
+    }
+
+    function finishToIdle(token) {
+      if (token !== runToken) return; running = false; currentScenario = null; setState("idle"); caption.textContent = ""; captionProgress.style.width = "0"; setPromptPressed(null);
+      document.querySelectorAll(".visual-part").forEach((item) => item.classList.remove("current", "revealed"));
+    }
+    function computeArchiveVector() {
+      const from = visualHost.getBoundingClientRect(), to = discussionToggle.getBoundingClientRect();
+      visualHost.style.setProperty("--archive-x", `${to.left + to.width / 2 - (from.left + from.width / 2)}px`);
+      visualHost.style.setProperty("--archive-y", `${to.top + to.height / 2 - (from.top + from.height / 2)}px`);
+    }
+
+    function saveHistory(id) {
+      const index = history.indexOf(id); if (index >= 0) history.splice(index, 1); history.unshift(id); renderThread();
+    }
+    function renderThread() {
+      document.getElementById("threadCount").textContent = String(history.length);
+      thread.innerHTML = `<div class="thread-day">Today</div>` + history.map((id, index) => {
+        const item = scenarios[id]; return `<article class="thread-pair"><div class="thread-user">${escapeHtml(item.prompt)}</div><div class="thread-answer"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.summary)}</p><div class="thread-meta"><span>${escapeHtml(index ? item.meta.replace("just now", `${index + 1}h ago`) : item.meta)}</span><button class="replay" type="button" data-replay="${id}">Rematerialize</button></div></div></article>`;
+      }).join("");
+    }
+    function escapeHtml(value) { return String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+    function openDiscussion() { discussion.classList.add("open"); drawerBackdrop.classList.add("open"); discussion.removeAttribute("inert"); discussion.setAttribute("aria-hidden","false"); discussionToggle.setAttribute("aria-expanded","true"); setTimeout(() => document.getElementById("discussionClose").focus(), 50); }
+    function closeDiscussion() { discussion.classList.remove("open"); drawerBackdrop.classList.remove("open"); discussion.setAttribute("inert",""); discussion.setAttribute("aria-hidden","true"); discussionToggle.setAttribute("aria-expanded","false"); }
+    function showToast(text) { const toast = document.getElementById("toast"); toast.textContent = text; toast.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove("show"), 1800); }
+
+    document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => runAnswer(button.dataset.run)));
+    discussionToggle.addEventListener("click", () => discussion.classList.contains("open") ? closeDiscussion() : openDiscussion());
+    document.getElementById("discussionClose").addEventListener("click", () => { closeDiscussion(); discussionToggle.focus(); });
+    drawerBackdrop.addEventListener("click", closeDiscussion);
+    thread.addEventListener("click", (event) => { const button = event.target.closest("[data-replay]"); if (button) runAnswer(button.dataset.replay); });
+    soundToggle.addEventListener("click", () => { soundOn = !soundOn; soundToggle.classList.toggle("active",soundOn); soundToggle.setAttribute("aria-pressed",String(soundOn)); soundToggle.querySelector(".button-label").textContent = soundOn ? "Voice on" : "Voice off"; if (!soundOn) stopVoice(); showToast(soundOn ? "Voice narration on" : "Voice narration off"); });
+    document.getElementById("drawerForm").addEventListener("submit", (event) => { event.preventDefault(); const value = document.getElementById("drawerInput").value.trim(); if (value) { showToast("Prototype: Jarvis would answer on the center stage"); document.getElementById("drawerInput").value = ""; closeDiscussion(); } });
+    addEventListener("keydown", (event) => { if (event.key === "Escape" && discussion.classList.contains("open")) { closeDiscussion(); discussionToggle.focus(); } });
+
+    /* Particle cloud: the same material rearranges from ambient cloud to answer outline to archive. */
+    const canvas = document.getElementById("cloudField"), ctx = canvas.getContext("2d");
+    const particles = []; let W = 0, H = 0, dpr = 1, cloudState = "idle", time = 0;
+    const particleCount = reduceMotion ? 170 : 470;
+    function resize() {
+      const rect = canvas.getBoundingClientRect(); dpr = Math.min(devicePixelRatio || 1, 2); W = rect.width; H = rect.height;
+      canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); ctx.setTransform(dpr,0,0,dpr,0,0); buildTargets();
+    }
+    function gaussian() { return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3)/3; }
+    function ensureParticles() { while (particles.length < particleCount) particles.push({x:W/2,y:H/2,tx:W/2,ty:H/2,baseX:W/2,baseY:H/2,phase:Math.random()*6.28,size:.5+Math.random()*1.8,alpha:.16+Math.random()*.65,hue:Math.random()>.78?195:252}); }
+    function idleTarget(index) {
+      const cx=W*.5,cy=H*.43,rx=Math.min(W*.34,430),ry=Math.min(H*.25,190); const angle=(index/particleCount)*Math.PI*8 + (index%9)*.23;
+      const radius=.16+Math.pow(Math.random(),.72)*.84; return {x:cx+Math.cos(angle)*rx*radius+gaussian()*58,y:cy+Math.sin(angle)*ry*radius+gaussian()*34};
+    }
+    function answerTarget(index) {
+      const cx=W*.5,cy=H*.44,ww=Math.min(W*.78,980),hh=Math.min(H*.58,530); const perimeter=2*(ww+hh),d=(index/particleCount)*perimeter;
+      let x,y;if(d<ww){x=cx-ww/2+d;y=cy-hh/2}else if(d<ww+hh){x=cx+ww/2;y=cy-hh/2+(d-ww)}else if(d<2*ww+hh){x=cx+ww/2-(d-ww-hh);y=cy+hh/2}else{x=cx-ww/2;y=cy+hh/2-(d-2*ww-hh)}
+      const inset=(index%5)*3; return {x:x+(x<cx?inset:-inset)+gaussian()*5,y:y+(y<cy?inset:-inset)+gaussian()*5};
+    }
+    function gatherTarget(index) { const cx=W*.5,cy=H*.43,a=index*.29,r=22+(index%80)*1.2;return{x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r*.56}; }
+    function archiveTarget(index) { return {x:W-46+gaussian()*18,y:20+gaussian()*14}; }
+    function buildTargets() {
+      ensureParticles(); particles.forEach((p,index)=>{let target=cloudState==="gathering"?gatherTarget(index):(cloudState==="speaking"||cloudState==="holding")?answerTarget(index):cloudState==="archiving"?archiveTarget(index):idleTarget(index);p.baseX=p.tx=target.x;p.baseY=p.ty=target.y;if(!Number.isFinite(p.x)){p.x=W/2;p.y=H/2;}});
+    }
+    function setCloudState(value) { cloudState=value;buildTargets(); }
+    function drawCloud() {
+      time+=.012;ctx.clearRect(0,0,W,H);const glow=ctx.createRadialGradient(W*.5,H*.43,20,W*.5,H*.43,Math.min(W*.35,440));glow.addColorStop(0,"rgba(110,91,255,.075)");glow.addColorStop(1,"rgba(110,91,255,0)");ctx.fillStyle=glow;ctx.fillRect(0,0,W,H);
+      const ease=cloudState==="gathering"?.085:cloudState==="archiving"?.105:.048;
+      particles.forEach((p,index)=>{const drift=(cloudState==="idle"?1:cloudState==="speaking"||cloudState==="holding"?.35:0);p.tx=p.baseX+Math.cos(time*(.7+(index%7)*.04)+p.phase)*8*drift;p.ty=p.baseY+Math.sin(time*(.8+(index%5)*.05)+p.phase)*5*drift;p.x+=(p.tx-p.x)*ease;p.y+=(p.ty-p.y)*ease;const arch=cloudState==="archiving"?Math.max(.04,1-Math.min(1,Math.hypot(p.x-(W-46),p.y-20)/300)):.85;ctx.beginPath();ctx.fillStyle=`hsla(${p.hue},90%,${p.hue===195?72:74}%,${p.alpha*arch})`;ctx.shadowBlur=p.size>1.5?8:3;ctx.shadowColor=p.hue===195?"rgba(80,190,255,.5)":"rgba(126,110,255,.55)";ctx.arc(p.x,p.y,p.size,0,Math.PI*2);ctx.fill();});ctx.shadowBlur=0;requestAnimationFrame(drawCloud);
+    }
+    addEventListener("resize",resize);resize();drawCloud();renderThread();
+  </script>
+</body>
+</html>

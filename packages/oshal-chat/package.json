@@ -1,0 +1,54 @@
+{
+  "name": "@oshal/chat",
+  "version": "0.2.0",
+  "description": "Local desktop node that joins the OSHAL swarm as an A2A remote client: a Jarvis-style orb you talk to, that also runs swarm-dispatched tasks locally with your own signed-in CLIs (codex/claude/gcloud/aws).",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "dist/main/main.js",
+  "bin": {
+    "oshal-chat": "bin/oshal-chat.js"
+  },
+  "files": [
+    "dist/**/*",
+    "src/renderer/**/*",
+    "bin/**/*",
+    "scripts/**/*"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "setup": "node scripts/setup-clis.js",
+    "postinstall": "node scripts/setup-clis.js",
+    "prepack": "npm run build",
+    "start": "npm run build && node scripts/start-electron.js .",
+    "dev": "npm run build && node scripts/start-electron.js . --enable-logging",
+    "dist": "npm run build && electron-builder",
+    "test:remote": "node scripts/test-remote-control.mjs",
+    "test:wake": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-background-wake.ps1"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.4.0",
+    "electron": "^31.0.0"
+  },
+  "build": {
+    "appId": "us.agenticfederal.oshal.node",
+    "productName": "OSHAL Node",
+    "files": [
+      "dist/**/*",
+      "src/renderer/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "OSHAL uses the microphone only after you enable voice or background wake word. Raw wake audio is not stored."
+      }
+    }
+  },
+  "author": "maintainer@emeraldcoastsystemsgroup.com"
+}

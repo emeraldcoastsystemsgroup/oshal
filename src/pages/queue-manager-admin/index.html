@@ -1,0 +1,212 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added native OSHAL Queue Manager Admin engineering page with real process-flow telemetry
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Queue Manager Admin</title>
+  <link rel="stylesheet" href="/queue-manager-admin/queue-manager-admin.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Engineering Surface</p>
+        <h1>Queue Manager Admin</h1>
+        <p class="hero-copy">Native OSHAL queue flow visibility across ticket intake, routing, dispatch, execution, and completion using live runtime APIs.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+        <a class="top-link" href="/cockpit/" target="_top" rel="noreferrer">Open Cockpit</a>
+      </div>
+    </header>
+
+    <p class="status-banner" id="statusBanner">Loading queue manager flow...</p>
+
+    <section class="metrics-grid" aria-label="Queue manager summary">
+      <article class="metric-card">
+        <span class="metric-label">Scheduler</span>
+        <strong id="metricScheduler">—</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Active Tickets</span>
+        <strong id="metricTickets">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Dispatches</span>
+        <strong id="metricDispatches">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">In-Flight Runs</span>
+        <strong id="metricRuns">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Estimated Cost</span>
+        <strong id="metricCost">$0.000000</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Tracked Tokens</span>
+        <strong id="metricTokens">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Active Models</span>
+        <strong id="metricModels">0</strong>
+      </article>
+    </section>
+
+    <main class="content-grid">
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Process Flow</p>
+            <h2>Queue Lifecycle Snapshot</h2>
+          </div>
+        </div>
+        <div class="flow-grid" id="flowGrid" data-testid="qa-flow-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Agent Load</p>
+            <h2>Queue Agents</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Status</th>
+                <th>Load</th>
+                <th>Tickets</th>
+                <th>Model</th>
+                <th>Tokens</th>
+                <th>Est. Cost</th>
+              </tr>
+            </thead>
+            <tbody id="agentTableBody" data-testid="qa-agent-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Dispatch Queue</p>
+            <h2>Active Dispatches</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticket</th>
+                <th>Agent</th>
+                <th>Model</th>
+                <th>Tokens</th>
+                <th>Est. Cost</th>
+                <th>Status</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="dispatchTableBody" data-testid="qa-dispatch-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Model Usage</p>
+            <h2>Swarm Usage By Model</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Requests</th>
+                <th>Tokens</th>
+                <th>Est. Cost</th>
+                <th>Agents</th>
+              </tr>
+            </thead>
+            <tbody id="modelTableBody" data-testid="qa-model-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Project Usage</p>
+            <h2>Estimated Cost By Project</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Tickets</th>
+                <th>Requests</th>
+                <th>Tokens</th>
+                <th>Est. Cost</th>
+                <th>Top Model</th>
+              </tr>
+            </thead>
+            <tbody id="projectTableBody" data-testid="qa-project-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Ticket Usage</p>
+            <h2>Estimated Cost By Ticket</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticket</th>
+                <th>Project</th>
+                <th>Agent</th>
+                <th>Model</th>
+                <th>Requests</th>
+                <th>Tokens</th>
+                <th>Est. Cost</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="ticketTableBody" data-testid="qa-ticket-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Execution Correlation</p>
+            <h2>Recent Swarm Runs</h2>
+          </div>
+        </div>
+        <ul class="run-list" id="runList" data-testid="qa-run-list"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/queue-manager-admin/queue-manager-admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,157 @@
+{
+  "realm": "oshal",
+  "enabled": true,
+  "displayName": "OSHAL Swarm",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "sslRequired": "none",
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "defaultSignatureAlgorithm": "RS256",
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Full administrative access to the swarm",
+        "composite": false
+      },
+      {
+        "name": "operator",
+        "description": "Can execute swarm operations and manage configurations",
+        "composite": false
+      },
+      {
+        "name": "viewer",
+        "description": "Read-only access to swarm status and configurations",
+        "composite": false
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "oshal-swarm",
+      "name": "OSHAL Swarm Application",
+      "description": "OAuth2/OIDC client for the OSHAL swarm system",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "changeme",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "http://localhost:3456",
+      "baseUrl": "/",
+      "redirectUris": [
+        "http://localhost:3456/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3456"
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_roles",
+            "jsonType.label": "String",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev-admin",
+      "email": "admin@oshal.local",
+      "firstName": "Dev",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "admin",
+        "default-roles-oshal"
+      ]
+    },
+    {
+      "username": "dev-operator",
+      "email": "operator@oshal.local",
+      "firstName": "Dev",
+      "lastName": "Operator",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "operator123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "operator",
+        "default-roles-oshal"
+      ]
+    },
+    {
+      "username": "dev-viewer",
+      "email": "viewer@oshal.local",
+      "firstName": "Dev",
+      "lastName": "Viewer",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "viewer123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "viewer",
+        "default-roles-oshal"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the OSHAL home.html fallback palette so the native chrome matches the surface. -->
+    <color name="oshal_bg">#0E0E16</color>
+    <color name="oshal_panel">#15151F</color>
+    <color name="oshal_text">#E6E6F0</color>
+    <color name="oshal_muted">#8B8BA3</color>
+    <color name="oshal_accent">#7C6CFF</color>
+    <color name="oshal_accent2">#00D3A7</color>
+</resources>

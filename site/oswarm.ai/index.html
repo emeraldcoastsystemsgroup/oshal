@@ -1,0 +1,1879 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>open swarm oshal — agent swarms on infrastructure you own</title>
+<meta name="description" content="oshal is an open-source orchestration platform for agentic AI. Run swarms of AI agents — any harness, any model, your own keys — from a laptop to a Kubernetes cluster. AGPL-3.0 open source, self-hosted, human-approved.">
+<link rel="canonical" href="https://oshal.ai/">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230B1020'/%3E%3Ccircle cx='16' cy='16' r='3.5' fill='%237DD3FC'/%3E%3Ccircle cx='16' cy='16' r='8' stroke='%237DD3FC' stroke-opacity='.45' fill='none'/%3E%3Ccircle cx='26' cy='8' r='2.2' fill='%2334D399'/%3E%3Ccircle cx='6' cy='10' r='2.2' fill='%2334D399'/%3E%3Ccircle cx='23' cy='25' r='2.2' fill='%2334D399'/%3E%3C/svg%3E">
+<meta property="og:title" content="open swarm oshal — agent swarms on infrastructure you own">
+<meta property="og:description" content="Open-source agent orchestration that scales from a laptop to a Kubernetes cluster. Any harness, any model, your keys, your data.">
+<meta property="og:url" content="https://oshal.ai/">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --night: #0B1020;
+    --panel: #111A2E;
+    --panel-2: #0E1526;
+    --hairline: rgba(148, 163, 184, 0.16);
+    --hairline-strong: rgba(148, 163, 184, 0.28);
+    --cyan: #7DD3FC;
+    --cyan-deep: #38BDF8;
+    --green: #34D399;
+    --amber: #FBBF24;
+    --slate: #94A3B8;
+    --body: #B7C3D6;
+    --white: #F8FAFC;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace;
+    --sans: system-ui, "Segoe UI Variable Display", "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --w: 1120px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .core-pulse { animation: none; }
+  }
+
+  body {
+    background: var(--night);
+    color: var(--body);
+    font-family: var(--sans);
+    font-size: 1rem;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  ::selection { background: rgba(125, 211, 252, 0.28); color: var(--white); }
+
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  .wrap { max-width: var(--w); margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- status strip ---------- */
+  .statusbar {
+    border-bottom: 1px solid var(--hairline);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    color: var(--slate);
+  }
+  .statusbar .wrap {
+    display: flex; justify-content: space-between; align-items: center;
+    height: 34px; gap: 16px;
+  }
+  .statusbar .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); margin-right: 7px; vertical-align: 1px;
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.7);
+  }
+  .statusbar .right span + span::before { content: "·"; margin: 0 10px; color: var(--hairline-strong); }
+  @media (max-width: 720px) { .statusbar .right span:nth-child(2) { display: none; } }
+
+  /* ---------- nav ---------- */
+  nav.top {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(11, 16, 32, 0.86);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  nav.top .wrap {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 64px; gap: 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 11px; color: var(--white); }
+  .brand:hover { text-decoration: none; }
+  .brand svg { display: block; }
+  .brand .word {
+    font-weight: 750; letter-spacing: -0.02em; font-size: 1.06rem; white-space: nowrap;
+  }
+  .brand .word em { font-style: normal; color: var(--cyan); }
+  .navlinks { display: flex; align-items: center; gap: 26px; font-size: 0.9rem; }
+  .navlinks a { white-space: nowrap; flex-shrink: 0; }
+  .navlinks a { color: var(--slate); }
+  .navlinks a:hover { color: var(--white); text-decoration: none; }
+  @media (max-width: 1360px) { .navlinks { gap: 16px; } }
+  @media (max-width: 1240px) { .navlinks a.hide-m { display: none; } }
+  @media (max-width: 720px) {
+    .wrap { padding-inline: 16px; }
+    .statusbar .wrap { gap: 8px; }
+    .statusbar .right span:first-child { display: none; }
+    nav.top .wrap { gap: 12px; }
+    .navlinks { gap: 0; }
+    .navlinks > a:not(.primary) { display: none; }
+    .navlinks .btn { padding-inline: 14px; }
+  }
+  @media (max-width: 360px) {
+    .brand { gap: 8px; }
+    .brand svg { width: 27px; height: 27px; }
+    .brand .word { font-size: 0.98rem; }
+    .navlinks .btn { padding-inline: 11px; }
+  }
+
+  /* mobile menu — hamburger appears ≤720px where the inline nav links collapse */
+  .menu-btn {
+    display: none; align-items: center; justify-content: center;
+    width: 44px; height: 44px; margin-left: 10px; flex-shrink: 0;
+    background: transparent; border: 1px solid var(--hairline-strong);
+    border-radius: 6px; color: var(--white); cursor: pointer;
+  }
+  .menu-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+  .mobile-menu {
+    display: none; border-top: 1px solid var(--hairline);
+    background: rgba(11, 16, 32, 0.97);
+  }
+  .mobile-menu a {
+    display: flex; align-items: center; min-height: 48px;
+    padding: 0 24px; color: var(--body); font-size: 0.95rem;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .mobile-menu a:last-child { border-bottom: none; }
+  .mobile-menu a:hover { color: var(--white); text-decoration: none; }
+  @media (max-width: 720px) {
+    .menu-btn { display: inline-flex; }
+    .mobile-menu.open { display: block; }
+  }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+    min-height: 44px;
+    font-family: var(--mono); font-size: 0.84rem; font-weight: 500;
+    padding: 10px 18px; border-radius: 6px;
+    border: 1px solid var(--hairline-strong);
+    color: var(--white); background: transparent;
+    white-space: nowrap; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--cyan); color: var(--cyan); text-decoration: none; }
+  .btn.primary {
+    background: var(--cyan); border-color: var(--cyan); color: #06121F; font-weight: 700;
+  }
+  .btn.primary:hover { background: var(--cyan-deep); border-color: var(--cyan-deep); color: #06121F; }
+
+  /* ---------- hero ---------- */
+  header.hero { position: relative; border-bottom: 1px solid var(--hairline); overflow: hidden; }
+  #swarm-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    display: block; opacity: 0.9; pointer-events: none;
+  }
+  .hero-inner {
+    position: relative; z-index: 2;
+    padding: 104px 0 96px;
+    display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: 56px; align-items: center;
+  }
+  @media (max-width: 960px) { .hero-inner { grid-template-columns: 1fr; padding: 72px 0 64px; } }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--slate);
+  }
+  .eyebrow b { color: var(--green); font-weight: 500; }
+
+  h1 {
+    margin: 22px 0 24px;
+    font-size: clamp(2.5rem, 5.6vw, 4.15rem);
+    line-height: 1.04; font-weight: 800; letter-spacing: -0.035em;
+    color: var(--white); text-wrap: balance;
+  }
+  h1 .own { color: var(--cyan); }
+  .hero-sub {
+    max-width: 34em; font-size: 1.11rem; line-height: 1.7; color: var(--body);
+  }
+  .hero-sub strong { color: var(--white); font-weight: 600; }
+  .hero-ctas { display: flex; gap: 14px; margin-top: 34px; flex-wrap: wrap; }
+
+  .harness-row {
+    margin-top: 40px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 0.74rem; color: var(--slate);
+  }
+  .harness-row .chip {
+    border: 1px solid var(--hairline); border-radius: 99px;
+    padding: 5px 12px; color: var(--body); background: rgba(17, 26, 46, 0.6);
+  }
+  .harness-row .chip.you { border-style: dashed; color: var(--cyan); }
+
+  /* terminal */
+  .term {
+    background: rgba(10, 15, 29, 0.92);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 10px;
+    font-family: var(--mono); font-size: 0.83rem; line-height: 1.85;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+  }
+  .term .bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 16px; border-bottom: 1px solid var(--hairline);
+    color: var(--slate); font-size: 0.72rem; letter-spacing: 0.06em;
+  }
+  .term .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--hairline-strong); display: inline-block; }
+  .term pre { padding: 18px 20px 22px; overflow-x: auto; }
+  .term .p { color: var(--slate); user-select: none; }
+  .term .c { color: var(--white); }
+  .term .ok { color: var(--green); }
+  .term .arr { color: var(--cyan); }
+  .term .dim { color: var(--slate); }
+
+  /* ---------- stats strip ---------- */
+  .stats { border-bottom: 1px solid var(--hairline); background: var(--panel-2); }
+  .stats .wrap {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    padding: 0;
+  }
+  .stat {
+    padding: 28px 24px; border-left: 1px solid var(--hairline);
+  }
+  .stat:first-child { border-left: none; }
+  .stat .n {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-size: 1.7rem; font-weight: 600; color: var(--white); letter-spacing: -0.02em;
+  }
+  .stat .n em { font-style: normal; color: var(--cyan); }
+  .stat .l {
+    margin-top: 4px; font-family: var(--mono); font-size: 0.7rem;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--slate);
+  }
+  @media (max-width: 960px) {
+    .stats .wrap { grid-template-columns: repeat(2, 1fr); }
+    .stat { border-left: none; border-top: 1px solid var(--hairline); }
+    .stat:nth-child(even) { border-left: 1px solid var(--hairline); }
+    .stat:nth-child(-n+2) { border-top: none; }
+    .stat:last-child { display: none; }
+  }
+
+  /* ---------- sections ---------- */
+  section { padding: 96px 0 30px; }
+  .route {
+    display: flex; align-items: center; gap: 16px; margin-bottom: 44px;
+  }
+  .route::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+  .route span {
+    font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.12em;
+    color: var(--cyan);
+  }
+  .route span::before { content: "── "; color: var(--hairline-strong); letter-spacing: 0; }
+
+  h2 {
+    font-size: clamp(1.75rem, 3.4vw, 2.5rem); font-weight: 750;
+    letter-spacing: -0.025em; line-height: 1.12; color: var(--white);
+    max-width: 21em; text-wrap: balance;
+  }
+  .lede { margin-top: 18px; max-width: 40em; font-size: 1.06rem; color: var(--body); }
+  .lede strong { color: var(--white); font-weight: 600; }
+
+  /* gap section — two columns */
+  .gap-grid {
+    margin-top: 52px; display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+    background: var(--hairline); border: 1px solid var(--hairline); border-radius: 10px;
+    overflow: hidden;
+  }
+  @media (max-width: 820px) { .gap-grid { grid-template-columns: 1fr; } }
+  .gap-cell { background: var(--panel-2); padding: 34px 34px 38px; }
+  .gap-cell.win { background: var(--panel); }
+  .gap-cell h3 {
+    font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.14em;
+    text-transform: uppercase; font-weight: 500; margin-bottom: 18px;
+  }
+  .gap-cell.lose h3 { color: var(--slate); }
+  .gap-cell.win h3 { color: var(--green); }
+  .gap-cell ul { list-style: none; display: grid; gap: 12px; }
+  .gap-cell li { padding-left: 22px; position: relative; font-size: 0.96rem; }
+  .gap-cell.lose li::before { content: "×"; position: absolute; left: 0; color: var(--slate); font-family: var(--mono); }
+  .gap-cell.win li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-family: var(--mono); }
+  .gap-cell.win li strong { color: var(--white); font-weight: 600; }
+
+  /* pillars */
+  .pillars {
+    margin-top: 52px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px;
+  }
+  @media (max-width: 960px) { .pillars { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px) { .pillars { grid-template-columns: 1fr; } }
+  .pillar {
+    background: var(--panel-2); border: 1px solid var(--hairline); border-radius: 10px;
+    padding: 28px 26px 30px; display: flex; flex-direction: column; gap: 12px;
+    transition: border-color 160ms ease;
+  }
+  .pillar:hover { border-color: rgba(125, 211, 252, 0.45); }
+  .pillar .glyph { color: var(--cyan); height: 26px; }
+  .pillar h3 { color: var(--white); font-size: 1.04rem; font-weight: 650; letter-spacing: -0.01em; }
+  .pillar p { font-size: 0.93rem; line-height: 1.62; color: var(--body); }
+  .pillar p code {
+    font-family: var(--mono); font-size: 0.84em; color: var(--cyan);
+    background: rgba(125, 211, 252, 0.08); padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* ---------- architecture diagram ---------- */
+  .arch {
+    margin-top: 52px; border: 1px solid var(--hairline); border-radius: 12px;
+    background: var(--panel-2); padding: 36px; overflow-x: auto;
+  }
+  .arch-inner { min-width: 720px; display: grid; gap: 0; }
+  .plane {
+    border: 1px solid var(--hairline-strong); border-radius: 8px;
+    background: var(--panel); padding: 20px 24px;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 20px; flex-wrap: wrap;
+  }
+  .plane .t { color: var(--white); font-weight: 650; font-size: 0.98rem; }
+  .plane .t small {
+    display: block; font-weight: 400; color: var(--slate); font-size: 0.84rem; margin-top: 3px;
+  }
+  .plane .badge {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.1em;
+    color: var(--cyan); border: 1px solid rgba(125, 211, 252, 0.35);
+    border-radius: 99px; padding: 4px 12px; white-space: nowrap;
+  }
+  .meshbar {
+    margin: 0 40px; padding: 10px 0; text-align: center; position: relative;
+  }
+  .meshbar::before, .meshbar::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 1px;
+    background: repeating-linear-gradient(to bottom, var(--hairline-strong) 0 4px, transparent 4px 8px);
+  }
+  .meshbar::before { left: 18%; }
+  .meshbar::after { right: 18%; }
+  .meshbar span {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--green);
+  }
+  .nodes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .node {
+    border: 1px solid var(--hairline); border-radius: 8px; background: var(--panel);
+    padding: 16px 18px; font-family: var(--mono); font-size: 0.76rem; line-height: 1.7;
+  }
+  .node .k { color: var(--slate); }
+  .node .h { color: var(--white); }
+  .node .v { color: var(--cyan); }
+  .node .live { color: var(--green); }
+  .arch-side {
+    margin-top: 14px; display: flex; gap: 14px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 0.74rem; color: var(--slate);
+  }
+  .arch-side span {
+    border: 1px dashed var(--hairline-strong); border-radius: 6px; padding: 8px 14px;
+  }
+  .arch-side b { color: var(--body); font-weight: 500; }
+  .arch-caption {
+    margin-top: 26px; font-size: 0.95rem; color: var(--body); max-width: 46em;
+  }
+  .arch-caption strong { color: var(--white); font-weight: 600; }
+
+  /* ---------- scale ---------- */
+  .scale-grid { margin-top: 52px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; }
+  @media (max-width: 1040px) { .scale-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .scale-grid { grid-template-columns: 1fr; } }
+  .stage {
+    border: 1px solid var(--hairline); border-radius: 10px; background: var(--panel-2);
+    padding: 28px 26px 30px;
+  }
+  .stage .tag {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.14em;
+    text-transform: uppercase; padding: 4px 11px; border-radius: 99px; display: inline-block;
+  }
+  .tag.built { color: var(--green); border: 1px solid rgba(52, 211, 153, 0.4); }
+  .tag.partial { color: var(--cyan); border: 1px solid rgba(125, 211, 252, 0.4); }
+  .tag.road { color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.4); }
+  .stage h3 { color: var(--white); font-size: 1.15rem; font-weight: 700; margin: 16px 0 10px; letter-spacing: -0.015em; }
+  .stage p { font-size: 0.93rem; color: var(--body); }
+  .stage code { font-family: var(--mono); font-size: 0.85em; color: var(--cyan); }
+  .stage-add { font-family: var(--mono); font-size: 0.76rem; color: var(--cyan); margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--hairline); letter-spacing: 0.01em; }
+
+  /* ---------- security ---------- */
+  .sec-grid { margin-top: 52px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px 44px; }
+  @media (max-width: 820px) { .sec-grid { grid-template-columns: 1fr; } }
+  .sec-item { display: grid; grid-template-columns: 30px 1fr; gap: 16px; align-items: start; }
+  .sec-item .glyph { color: var(--green); padding-top: 3px; }
+  .sec-item h3 { color: var(--white); font-size: 1rem; font-weight: 650; margin-bottom: 6px; }
+  .sec-item p { font-size: 0.92rem; color: var(--body); }
+  .sec-item p code { font-family: var(--mono); font-size: 0.85em; color: var(--cyan); }
+
+  /* ---------- developers ---------- */
+  .dev-grid {
+    margin-top: 52px; display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
+    gap: 44px; align-items: start;
+  }
+  @media (max-width: 900px) { .dev-grid { grid-template-columns: 1fr; } }
+  .dev-steps { display: grid; gap: 0; }
+  .dev-step {
+    padding: 24px 0; border-top: 1px solid var(--hairline);
+    display: grid; grid-template-columns: 120px 1fr; gap: 20px;
+  }
+  .dev-step:last-child { border-bottom: 1px solid var(--hairline); }
+  @media (max-width: 560px) { .dev-step { grid-template-columns: 1fr; gap: 8px; } }
+  .dev-step .verb {
+    font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--cyan); padding-top: 3px;
+  }
+  .dev-step h3 { color: var(--white); font-size: 1rem; font-weight: 650; margin-bottom: 6px; }
+  .dev-step p { font-size: 0.92rem; color: var(--body); }
+  .dev-step p code { font-family: var(--mono); font-size: 0.85em; color: var(--cyan); }
+
+  .codecard {
+    background: rgba(10, 15, 29, 0.92); border: 1px solid var(--hairline-strong);
+    border-radius: 10px; overflow: hidden; position: sticky; top: 88px;
+  }
+  .codecard .bar {
+    padding: 11px 16px; border-bottom: 1px solid var(--hairline);
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--slate);
+  }
+  .codecard pre {
+    padding: 18px 20px 22px; font-family: var(--mono); font-size: 0.8rem;
+    line-height: 1.8; overflow-x: auto;
+  }
+  .y-k { color: var(--cyan); }
+  .y-s { color: var(--body); }
+  .y-c { color: var(--slate); font-style: italic; }
+  .y-g { color: var(--green); }
+
+  /* ---------- mission ---------- */
+  .mission-block { margin-top: 52px; display: grid; gap: 64px; }
+  .mvv { display: grid; grid-template-columns: 200px 1fr; gap: 32px; align-items: start; }
+  @media (max-width: 720px) { .mvv { grid-template-columns: 1fr; gap: 12px; } }
+  .mvv .label {
+    font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--cyan); padding-top: 10px;
+  }
+  .mvv .statement {
+    font-size: clamp(1.3rem, 2.5vw, 1.85rem); font-weight: 650; line-height: 1.4;
+    letter-spacing: -0.02em; color: var(--white); text-wrap: balance; max-width: 24em;
+  }
+  .mvv .statement em { font-style: normal; color: var(--cyan); }
+
+  .values { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; }
+  @media (max-width: 820px) { .values { grid-template-columns: 1fr; } }
+  .value { background: var(--panel-2); padding: 30px 32px 34px; }
+  .value:first-child { grid-column: 1 / -1; background: var(--panel); }
+  .value h3 { color: var(--white); font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 8px; }
+  .value h3::before { content: "— "; color: var(--green); }
+  .value p { font-size: 0.94rem; color: var(--body); max-width: 52em; }
+
+  /* ---------- day one (home) ---------- */
+  .day-grid {
+    margin-top: 52px; display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
+    gap: 44px; align-items: start;
+  }
+  @media (max-width: 900px) { .day-grid { grid-template-columns: 1fr; } }
+  .apps-label { margin-top: 56px; }
+  .day-apps { margin-top: 20px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 960px) { .day-apps { grid-template-columns: repeat(2, 1fr); } }
+  .day-app { border: 1px solid var(--hairline); border-radius: 8px; background: var(--panel-2); padding: 16px 18px; }
+  .day-app b { display: block; color: var(--white); font-weight: 650; font-size: 0.92rem; margin-bottom: 3px; }
+  .day-app span { font-size: 0.8rem; color: var(--slate); line-height: 1.5; display: block; }
+  .day-app.more { border-style: dashed; border-color: var(--hairline-strong); background: transparent; display: flex; align-items: center; }
+  .day-app.more span { font-family: var(--mono); font-size: 0.76rem; color: var(--cyan); }
+
+  .spotlights { margin-top: 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 860px) { .spotlights { grid-template-columns: 1fr; } }
+  .spotlight--wide { grid-column: 1 / -1; }
+  .spotlight { border: 1px solid var(--hairline); border-radius: 10px; background: var(--panel-2); padding: 24px 26px; }
+  .spotlight .mono-tag {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--cyan); display: block; margin-bottom: 12px;
+  }
+  .spotlight p { font-size: 0.92rem; color: var(--body); }
+  .spotlight p strong { color: var(--white); font-weight: 600; }
+  .spotlight .fine { margin-top: 12px; font-family: var(--mono); font-size: 0.7rem; line-height: 1.6; color: var(--slate); }
+
+  /* ---------- the glue ---------- */
+  .glue-flow {
+    margin-top: 52px; display: grid; grid-template-columns: 1fr auto 1.25fr auto 1fr;
+    gap: 16px; align-items: stretch;
+  }
+  @media (max-width: 900px) {
+    .glue-flow { grid-template-columns: 1fr; }
+    .glue-arrow { transform: rotate(90deg); justify-self: center; }
+  }
+  .glue-node { border: 1px solid var(--hairline-strong); border-radius: 10px; background: var(--panel); padding: 22px 24px; }
+  .glue-node.swarm { border-color: rgba(125, 211, 252, 0.45); background: var(--panel-2); }
+  .glue-node .mono-tag {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--slate); display: block; margin-bottom: 10px;
+  }
+  .glue-node.swarm .mono-tag { color: var(--cyan); }
+  .glue-node h3 { color: var(--white); font-size: 0.98rem; font-weight: 650; margin-bottom: 8px; }
+  .glue-node p { font-size: 0.88rem; color: var(--body); }
+  .glue-arrow { align-self: center; color: var(--cyan); font-family: var(--mono); font-size: 1.25rem; }
+  .glue-swap { margin-top: 24px; border: 1px dashed var(--hairline-strong); border-radius: 10px; padding: 26px 30px; background: var(--panel-2); }
+  .glue-swap p { font-size: 0.96rem; max-width: 58em; }
+  .glue-swap p strong { color: var(--white); font-weight: 600; }
+  .glue-swap .chips { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 10px; font-family: var(--mono); font-size: 0.74rem; }
+  .glue-swap .chips span { border: 1px solid var(--hairline); border-radius: 99px; padding: 5px 12px; color: var(--body); }
+
+  /* ---------- cockpit shots ---------- */
+  .shots { margin-top: 52px; display: grid; grid-template-columns: 1fr; gap: 22px; }
+  .shot { margin: 0; border: 1px solid var(--hairline-strong); border-radius: 10px; overflow: hidden; background: var(--panel-2); }
+  .shot img { width: 100%; height: auto; display: block; }
+  .shot figcaption { padding: 14px 18px; font-family: var(--mono); font-size: 0.74rem; line-height: 1.6; color: var(--slate); border-top: 1px solid var(--hairline); }
+  .shot figcaption b { color: var(--body); font-weight: 500; }
+
+  /* ---------- builder note ---------- */
+  .builder { margin-top: 22px; border: 1px solid var(--hairline-strong); border-left: 3px solid var(--green); border-radius: 10px; background: var(--panel); padding: 30px 34px; }
+  .builder .eyebrow { margin-bottom: 14px; }
+  .builder .note-body + .note-body { margin-top: 14px; }
+  .builder .note-body { font-size: 1rem; color: var(--body); max-width: 56em; }
+  .builder .note-body strong { color: var(--white); font-weight: 600; }
+
+  /* ---------- get it on your phone ---------- */
+  .phone-steps { margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .phone-steps { grid-template-columns: 1fr; } }
+  .phone-step {
+    border: 1px solid var(--hairline); border-radius: 8px; background: var(--panel-2);
+    padding: 16px 18px; font-size: 0.92rem; line-height: 1.6;
+  }
+  .phone-step b { display: block; color: var(--white); font-weight: 650; margin-bottom: 6px; }
+  .phone-step span { color: var(--body); }
+  .phone-step.hidden { display: none; }
+
+  /* ---------- honest roadmap ---------- */
+  .honest { margin-top: 52px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  @media (max-width: 820px) { .honest { grid-template-columns: 1fr; } }
+  .honest-col { border: 1px solid var(--hairline); border-radius: 10px; background: var(--panel-2); padding: 30px 30px 34px; }
+  .honest-col h3 {
+    font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.14em; text-transform: uppercase;
+    font-weight: 500; margin-bottom: 20px;
+  }
+  .honest-col.built h3 { color: var(--green); }
+  .honest-col.road h3 { color: var(--amber); }
+  .honest-col ul { list-style: none; display: grid; gap: 11px; }
+  .honest-col li { position: relative; padding-left: 22px; font-size: 0.94rem; }
+  .honest-col.built li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-family: var(--mono); }
+  .honest-col.road li::before { content: "→"; position: absolute; left: 0; color: var(--amber); font-family: var(--mono); }
+  .honest-col li strong { color: var(--white); font-weight: 600; }
+  .honest-col li code { font-family: var(--mono); font-size: 0.85em; color: var(--cyan); }
+  .cta-note {
+    margin-top: 18px; font-family: var(--mono); font-size: 0.74rem; line-height: 1.7;
+    color: var(--slate); max-width: 44em;
+  }
+  .cta-note b { color: var(--body); font-weight: 500; }
+  .honest-note { margin-top: 24px; font-size: 0.9rem; color: var(--slate); max-width: 52em; }
+  .honest-note strong { color: var(--body); font-weight: 600; }
+
+  /* ---------- requests and defects ---------- */
+  #requests { padding-top: 64px; }
+  .request-shell {
+    border: 1px solid var(--hairline-strong); border-radius: 14px;
+    background: linear-gradient(145deg, rgba(17, 26, 46, 0.94), rgba(14, 21, 38, 0.9));
+    padding: 42px;
+  }
+  .request-head {
+    display: flex; justify-content: space-between; align-items: end;
+    gap: 28px; margin-bottom: 26px;
+  }
+  .request-head h2 { font-size: clamp(1.65rem, 3vw, 2.35rem); }
+  .request-head .lede { max-width: 48em; }
+  .request-live {
+    flex: 0 0 auto; border: 1px solid rgba(52, 211, 153, 0.3); border-radius: 99px;
+    padding: 7px 12px; color: var(--green); font-family: var(--mono);
+    font-size: 0.72rem; letter-spacing: 0.08em; white-space: nowrap;
+  }
+  .request-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .request-card {
+    border: 1px solid var(--hairline); border-radius: 10px;
+    background: rgba(11, 16, 32, 0.66); padding: 24px;
+  }
+  .request-card .kicker {
+    color: var(--cyan); font-family: var(--mono); font-size: 0.72rem;
+    letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .request-card h3 { margin-top: 7px; color: var(--white); font-size: 1.15rem; }
+  .request-card p { margin-top: 10px; color: var(--slate); font-size: 0.92rem; }
+  .request-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+  .request-actions .btn { min-height: 44px; justify-content: center; }
+  .request-policy {
+    margin-top: 18px; padding: 18px 20px; border-left: 3px solid var(--green);
+    background: rgba(52, 211, 153, 0.06); color: var(--body); font-size: 0.9rem;
+  }
+  .request-policy strong { color: var(--white); }
+  .request-access { margin-top: 12px; color: var(--slate); font-family: var(--mono); font-size: 0.72rem; }
+  @media (max-width: 780px) {
+    #requests { padding-top: 44px; }
+    .request-shell { padding: 30px 22px; }
+    .request-head { display: block; }
+    .request-live { display: inline-flex; margin-top: 18px; }
+    .request-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 520px) {
+    .request-shell { padding: 26px 18px; }
+    .request-card { padding: 20px 16px; }
+    .request-actions { display: grid; grid-template-columns: 1fr; }
+    .request-actions .btn { width: 100%; min-height: 46px; }
+  }
+
+  /* ---------- get started / footer ---------- */
+  .cta-final {
+    margin-top: 52px; border: 1px solid var(--hairline-strong); border-radius: 14px;
+    background: linear-gradient(160deg, var(--panel) 0%, var(--panel-2) 70%);
+    padding: 56px 48px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: 44px; align-items: center;
+  }
+  @media (max-width: 900px) { .cta-final { grid-template-columns: 1fr; padding: 40px 28px; } }
+  .cta-final h2 { font-size: clamp(1.6rem, 3vw, 2.2rem); }
+  .cta-final .lede { margin-top: 14px; font-size: 1rem; }
+
+  footer {
+    margin-top: 110px; border-top: 1px solid var(--hairline);
+    padding: 44px 0 56px;
+  }
+  footer .wrap {
+    display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.06em; color: var(--slate);
+  }
+  footer a { color: var(--slate); }
+  footer a:hover { color: var(--cyan); }
+  footer .cols { display: flex; gap: 28px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<!-- status strip -->
+<div class="statusbar">
+  <div class="wrap">
+    <span><span class="dot"></span>oshal.ai</span>
+    <span class="right">
+      <span>AGPL-3.0</span>
+      <span>OPEN SOURCE</span>
+      <span>SELF-HOSTED</span>
+    </span>
+  </div>
+</div>
+
+<!-- nav -->
+<nav class="top" aria-label="Primary">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="oshal home">
+      <svg width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">
+        <circle cx="15" cy="15" r="3.4" fill="#7DD3FC"/>
+        <circle cx="15" cy="15" r="7.5" stroke="#7DD3FC" stroke-opacity="0.45" stroke-width="1"/>
+        <circle cx="25" cy="8" r="2.1" fill="#34D399"/>
+        <circle cx="5.5" cy="10" r="2.1" fill="#34D399"/>
+        <circle cx="22" cy="24.5" r="2.1" fill="#34D399"/>
+        <path d="M17.8 12.6 23.4 9.3M12 13 7.4 10.9M17.3 17.6l3.4 5.2" stroke="#94A3B8" stroke-opacity="0.6" stroke-width="1"/>
+      </svg>
+      <span class="word">oshal</span>
+    </a>
+    <div class="navlinks">
+      <a href="#platform">Platform</a>
+      <a href="#compare">Compare</a>
+      <a href="#architecture" class="hide-m">Architecture</a>
+      <a href="#security">Security</a>
+      <a href="#developers">Developers</a>
+      <a href="#requests" class="hide-m">Requests</a>
+      <a href="#mission" class="hide-m">Mission</a>
+      <a href="https://oshal.agenticfederal.us/login" class="hide-m">Sign in</a>
+      <a class="btn primary" href="#get-started">Install</a>
+      <a class="btn" href="https://oshal.agenticfederal.us/guest">Live demo</a>
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+  <div class="mobile-menu" id="mobile-menu">
+    <a href="#platform">Platform</a>
+    <a href="#compare">Compare</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#security">Security</a>
+    <a href="#developers">Developers</a>
+    <a href="#requests">Requests</a>
+    <a href="#mission">Mission</a>
+    <a href="https://oshal.agenticfederal.us/guest">Live demo</a>
+    <a href="https://oshal.agenticfederal.us/login">Sign in</a>
+  </div>
+</nav>
+
+<!-- hero -->
+<header class="hero" id="top">
+  <canvas id="swarm-canvas" aria-hidden="true"></canvas>
+  <div class="wrap hero-inner">
+    <div>
+      <p class="eyebrow"><b>●</b>&nbsp; Open-source agent orchestration</p>
+      <h1>Run the swarm.<br><span class="own">Own the stack.</span></h1>
+      <p class="hero-sub">
+        oshal is an open-source platform for running <strong>swarms of AI agents on
+        infrastructure you control</strong> — one platform that scales from a laptop to a
+        Kubernetes cluster. Bring any agent harness, any model, your own keys.
+        Your data stays home.
+      </p>
+      <div class="hero-ctas">
+        <a class="btn primary" href="#get-started">Install the swarm</a>
+        <a class="btn" href="https://oshal.agenticfederal.us/guest">Try the live demo</a>
+        <a class="btn" href="#today">See what's built</a>
+      </div>
+      <p class="cta-note">
+        <b>No account needed</b> — the demo drops you into a live hosted swarm as a read-only guest.
+        Have an account? <a href="https://oshal.agenticfederal.us/login">Sign in / sign up</a>.
+      </p>
+      <div class="harness-row">
+        <span>RUNS</span>
+        <span class="chip">Cline</span>
+        <span class="chip">Claude Code</span>
+        <span class="chip">Codex</span>
+        <span class="chip">Gemini</span>
+        <span class="chip you">+ your harness</span>
+      </div>
+    </div>
+    <div class="term" role="img" aria-label="Terminal showing oshal starting with one command">
+      <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;openswarm — local</div>
+      <pre><span class="p">$</span> <span class="c">docker compose up -d</span>
+<span class="ok">✔</span> <span class="c">controller</span> <span class="dim">healthy — orchestrates, never calls an LLM</span>
+<span class="ok">✔</span> <span class="c">postgres · redis · chromadb</span> <span class="dim">healthy</span>
+<span class="ok">✔</span> <span class="c">12 bot nodes</span> <span class="dim">joined the mesh</span>
+<span class="arr">→</span> <span class="c">cockpit ready</span> <span class="dim">at</span> <span class="arr">http://localhost:35457</span></pre>
+    </div>
+  </div>
+</header>
+
+<!-- stats -->
+<div class="stats">
+  <div class="wrap">
+    <div class="stat"><div class="n">6</div><div class="l">Agent harnesses</div></div>
+    <div class="stat"><div class="n">42</div><div class="l">Model providers</div></div>
+    <div class="stat"><div class="n">308</div><div class="l">Connectors in catalog</div></div>
+    <div class="stat"><div class="n">40</div><div class="l">App packages in the store</div></div>
+    <div class="stat"><div class="n">AGPL-3.0</div><div class="l">Open source, forever</div></div>
+  </div>
+</div>
+
+<!-- requests and defects -->
+<section id="requests" aria-labelledby="requests-title">
+  <div class="wrap">
+    <div class="request-shell">
+      <div class="request-head">
+        <div>
+          <p class="eyebrow"><b>Live GitHub intake</b>&nbsp; /requests</p>
+          <h2 id="requests-title">Ask for what is missing. Keep defects visible.</h2>
+          <p class="lede">
+            Signed GitHub issue events enter the oshal backlog in seconds. Choose the queue that owns
+            the change; no GitHub Action or paid runner is required.
+          </p>
+        </div>
+        <span class="request-live">QUEUE ONLINE</span>
+      </div>
+      <div class="request-grid">
+        <article class="request-card">
+          <span class="kicker">Application queue</span>
+          <h3>Apps, packages, and mobile UX</h3>
+          <p>Use this for an installed application, its responsive surface, or application-specific behavior.</p>
+          <div class="request-actions">
+            <a class="btn primary" href="https://github.com/emeraldcoastsystemsgroup/oshal-apps/issues/new?labels=enhancement&amp;title=%5BRequest%5D%20">Request an app feature</a>
+            <a class="btn" href="https://github.com/emeraldcoastsystemsgroup/oshal-apps/issues/new?labels=bug%2Cdefect&amp;title=%5BDefect%5D%20">Report an app defect</a>
+          </div>
+        </article>
+        <article class="request-card">
+          <span class="kicker">Core queue</span>
+          <h3>Platform, cockpit, and orchestration</h3>
+          <p>Use this for the platform core — orchestration, cockpit, and security.</p>
+          <div class="request-actions">
+            <a class="btn primary" href="https://github.com/emeraldcoastsystemsgroup/oshal/issues/new?labels=enhancement&amp;title=%5BRequest%5D%20">Request a core feature</a>
+            <a class="btn" href="https://github.com/emeraldcoastsystemsgroup/oshal/issues/new?labels=bug%2Cdefect&amp;title=%5BDefect%5D%20">Report a core defect</a>
+          </div>
+        </article>
+      </div>
+      <div class="request-policy">
+        <strong>Lifecycle:</strong> new issues enter backlog. A <code>bug</code> or <code>defect</code>
+        remains open for human verification. Only a non-defect request explicitly accepted as
+        <code>code-write</code> can close when its configured release PR lands; internal completion alone never closes GitHub.
+      </div>
+      <p class="request-access">
+        The request queues are public — open an issue on
+        <a href="https://github.com/emeraldcoastsystemsgroup/oshal/issues/new">the platform repo</a> or
+        <a href="https://github.com/emeraldcoastsystemsgroup/oshal-apps/issues/new">the app store repo</a>.
+        Do not report security vulnerabilities in an issue; email maintainer@emeraldcoastsystemsgroup.com.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- the gap -->
+<section id="gap">
+  <div class="wrap">
+    <div class="route"><span>/the-gap</span></div>
+    <h2>Agentic AI shouldn't force a choice between capability and control.</h2>
+    <p class="lede">
+      Hosted agent platforms are powerful — and they come with their models, their cloud,
+      and their data terms. oshal closes that gap for businesses and individuals alike:
+      <strong>the same swarm-scale automation, on hardware and accounts you own.</strong>
+    </p>
+    <div class="gap-grid">
+      <div class="gap-cell lose">
+        <h3>Hosted agent platforms</h3>
+        <ul>
+          <li>Their model, or nothing — routing you elsewhere is against their margin</li>
+          <li>Your tokens and data held in their cloud</li>
+          <li>Integrations live in their walled garden</li>
+          <li>Pricing, quotas, and deprecations you don't control</li>
+          <li>Regulated data can't legally live there at all</li>
+        </ul>
+      </div>
+      <div class="gap-cell win">
+        <h3>open swarm oshal</h3>
+        <ul>
+          <li><strong>Any harness, any model</strong> — vendors compete for every call</li>
+          <li><strong>Your keys, encrypted per user</strong>, on your machine</li>
+          <li><strong>Connectors run on your accounts</strong>, tokens never leave home</li>
+          <li><strong>AGPL-3.0 open source</strong> — fork it, audit it, keep it</li>
+          <li><strong>Self-hosted end to end</strong> — laptop, server, or your own cluster</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- day one: home -->
+<section id="day-one">
+  <div class="wrap">
+    <div class="route"><span>/day-one</span></div>
+    <h2>At home: ten minutes to a private swarm that knows your stuff.</h2>
+    <p class="lede">
+      Point it at your life and it connects immediately — lights, thermostats, calendars,
+      inboxes, files, money — into <strong>one encrypted store on your own hardware.</strong>
+      Then wire anything to anything: a signal from one connector can drive actions across
+      all the rest, and none of it leaves your house.
+    </p>
+    <div class="day-grid">
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;automations/millionaire-alarm.yaml</div>
+        <pre><span class="y-c"># a cross-domain rule: money watches, house celebrates</span>
+<span class="y-k">when:</span>
+  <span class="y-k">finance.net-worth:</span> <span class="y-g">above $1,000,000</span>   <span class="y-c"># your own bank link</span>
+<span class="y-k">then:</span>
+  <span class="y-s">-</span> <span class="y-k">home.lights:</span> <span class="y-s">flash</span>              <span class="y-c"># every room, on and off</span>
+  <span class="y-s">-</span> <span class="y-k">notify.text:</span> <span class="y-s">"go look at the app"</span>
+  <span class="y-s">-</span> <span class="y-k">notify.call:</span> <span class="y-s">voice announcement</span>
+  <span class="y-s">-</span> <span class="y-k">notify.email:</span> <span class="y-s">milestone recap</span></pre>
+      </div>
+      <div class="dev-steps">
+        <div class="dev-step">
+          <span class="verb">Connect</span>
+          <div>
+            <h3>Your accounts, your OAuth</h3>
+            <p>Sign in to your own Google, SmartThings, bank, and social accounts. Tokens are encrypted per user on your machine — no third party in the middle.</p>
+          </div>
+        </div>
+        <div class="dev-step">
+          <span class="verb">Combine</span>
+          <div>
+            <h3>Rules across domains</h3>
+            <p>The finance bot watches the number; the home bot owns the lights; notifications fan out. Data, devices, and workflows compose — connect, don't code.</p>
+          </div>
+        </div>
+        <div class="dev-step">
+          <span class="verb">Keep it</span>
+          <div>
+            <h3>Private by default</h3>
+            <p>Everything lands in a per-user encrypted store you host. Nothing posts, sends, or dials without passing your approval gate first.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- APPS:START -->
+    <p class="eyebrow apps-label">Applications — built on the framework, 7 live in the repo today</p>
+    <div class="day-apps">
+      <div class="day-app"><b>Ambient Recall</b><span>ask what someone said</span></div>
+      <div class="day-app"><b>Bot Forge</b><span>the bot factory. Describe a task you want automated</span></div>
+      <div class="day-app"><b>DevOps + Vault</b><span>premium privileged swarm (Private Preview)</span></div>
+      <div class="day-app"><b>Intelligent Operations</b><span>the base ticket system with the RCA process enabled</span></div>
+      <div class="day-app"><b>Intelligent Processing</b><span>streamlined self-healing alert queue</span></div>
+      <div class="day-app"><b>OSHAL Assistant</b><span>your single assistant over everything OSHAL connects to</span></div>
+      <div class="day-app"><b>Workflow Studio</b><span>design workflows by conversation</span></div>
+    </div>
+    <!-- APPS:END -->
+    <div class="spotlights">
+      <div class="spotlight">
+        <span class="mono-tag">app spotlight — intelligent trading</span>
+        <p>
+          <strong>Paper or real.</strong> Talk an idea through with the assistant and it becomes
+          a monitored strategy: backtest it just by describing it, wire it into the signals
+          already flowing through your swarm, and run it paper-first. Going live is a deliberate
+          double opt-in — every position watched, one kill switch to halt everything.
+        </p>
+        <p class="fine">Runs paper-first by default; going live is a deliberate double opt-in. No live track record is published here — nothing on this page is financial advice.</p>
+      </div>
+      <div class="spotlight">
+        <span class="mono-tag">app spotlight — shopping</span>
+        <p>
+          <strong>You place the order.</strong> Add things to your cart in chat; the swarm hunts
+          the best price and deep-links the filled cart into Walmart or Amazon. It never holds
+          your payment details and never buys on its own — the last click is always yours.
+        </p>
+      </div>
+      <div class="spotlight spotlight--wide">
+        <span class="mono-tag">platform spotlight — ambient voice</span>
+        <p>
+          <strong>It knows who's talking — and never phones home.</strong> Turn on always
+          listening and the assistant wakes on your phrase, keeps a transcript you control, and
+          tells people apart by voice. Speaker separation runs on local models
+          (pyannote&nbsp;+&nbsp;ERes2Net) in a hardened sidecar on your own machine; voiceprints
+          are encrypted and owner-private, strangers get a stable "Unidentified Person" label
+          until you name them, and the whole thing is opt-in, off by default, with retention you
+          set and delete controls you own.
+        </p>
+        <p class="fine">Bench-tested: two voices separated with turn boundaries within half a second; the same voice re-identified across separate recordings at 0.95 similarity against a 0.82 match threshold.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- platform pillars -->
+<section id="platform">
+  <div class="wrap">
+    <div class="route"><span>/platform</span></div>
+    <h2>The framework is what's possible. Every layer stays swappable.</h2>
+    <p class="lede">
+      Two things live here: the <strong>framework</strong> — the rails below — and the
+      <strong>applications</strong> built on top of it, like the ones above.
+      oshal doesn't compete with agent frameworks or model vendors — it wraps them.
+      <strong>Neutrality is the product:</strong> best-of-breed gets re-decided on every call,
+      and no single vendor can hold your workflows hostage.
+    </p>
+    <div class="pillars">
+      <div class="pillar">
+        <svg class="glyph" width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="15" y="2" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="2" y="15" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="15" y="15" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 2.4"/></svg>
+        <h3>Any harness, side by side</h3>
+        <p>Five first-class runtimes behind one interface: <strong>Cline</strong> — the general harness, any model, any API — plus <strong>Claude Code</strong> (Anthropic), <strong>Codex</strong> (OpenAI), <strong>Gemini</strong> (Google), and external agents over <strong>A2A</strong>. A single ticket can flow across vendors: one bot drafts, another reviews, a third documents — sharing one workspace.</p>
+      </div>
+      <div class="pillar">
+        <svg class="glyph" width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true"><circle cx="13" cy="13" r="10.5" stroke="currentColor" stroke-width="1.6"/><path d="M13 2.5v21M2.5 13h21M5.5 6.5c4.5 3.5 10.5 3.5 15 0M5.5 19.5c4.5-3.5 10.5-3.5 15 0" stroke="currentColor" stroke-width="1.2"/></svg>
+        <h3>Any model, hosted or local</h3>
+        <p>42 providers wired in — Anthropic, OpenAI, Google, Bedrock, Groq, Cerebras, Mistral, and more — plus fully local inference through <code>Ollama</code>, LM Studio, and LiteLLM, which run as providers under the Cline harness. Bring your own keys, or run models that never touch the internet.</p>
+      </div>
+      <div class="pillar">
+        <svg class="glyph" width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true"><path d="M9 17a4 4 0 0 1 0-8h1M17 9a4 4 0 0 1 0 8h-1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M9.5 13h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <h3>Connect, don't code</h3>
+        <p>A connector marketplace with hundreds of definitions and a live-proven core — Gmail, GitHub, Slack, Jira, LinkedIn, and more. OAuth per user, tokens encrypted at rest, capabilities scoped per bot. Adding a provider is configuration, not a rewrite.</p>
+      </div>
+      <div class="pillar">
+        <svg class="glyph" width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true"><path d="M4 6h18M4 13h12M4 20h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="19" cy="13" r="2.6" stroke="currentColor" stroke-width="1.6"/></svg>
+        <h3>Workflows with approval gates</h3>
+        <p>Declare ticket types and multi-stage pipelines in a manifest, or draw them in Workflow Studio. Stages can require an explicit human approval before anything posts, sends, or changes production. The human stays in the loop by design.</p>
+      </div>
+      <div class="pillar">
+        <svg class="glyph" width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true"><path d="M13 2.5 22 6v6.5c0 5.5-3.8 9.6-9 11-5.2-1.4-9-5.5-9-11V6l9-3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m9.5 13 2.4 2.4 4.6-4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <h3>Enterprise-grade security</h3>
+        <p>OIDC single sign-on, database-enforced row-level security on every tenant table, AES-256-GCM per-user token encryption, and a token broker so bots receive short-lived scoped credentials — never the master key.</p>
+      </div>
+      <div class="pillar">
+        <svg class="glyph" width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true"><rect x="3" y="3" width="20" height="20" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 21V13m5 8V5m5 16v-11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <h3>Every call on the ledger</h3>
+        <p>Each LLM call is metered per bot, per provider, per model, per ticket — real cost accounting in your own Postgres. And Token Chase captures calls as replayable frames, so cheaper model-and-harness lanes can be graded against the original for equivalence before you switch.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- the glue -->
+<section id="the-glue">
+  <div class="wrap">
+    <div class="route"><span>/the-glue</span></div>
+    <h2>At work: the glue between the systems you already bought.</h2>
+    <p class="lede">
+      oshal doesn't ask your team to switch tools. It sits between the pieces, and
+      <strong>any component can be subbed out or integrated</strong> — a model, a harness,
+      a connector, an entire workflow engine.
+    </p>
+    <div class="glue-flow">
+      <div class="glue-node">
+        <span class="mono-tag">system of record</span>
+        <h3>The ticket stays where it lives</h3>
+        <p>Jira, ServiceNow, or your own queue. Nobody migrates anything — the source of truth stays the source of truth.</p>
+      </div>
+      <div class="glue-arrow" aria-hidden="true">→</div>
+      <div class="glue-node swarm">
+        <span class="mono-tag">open swarm</span>
+        <h3>An internal bot does the job</h3>
+        <p>A swarm bot picks the ticket up, pulls context through your connectors and runbook RAG, does the work on your infrastructure, and passes your approval gates.</p>
+      </div>
+      <div class="glue-arrow" aria-hidden="true">→</div>
+      <div class="glue-node">
+        <span class="mono-tag">back to the source</span>
+        <h3>The answer lands in the ticket</h3>
+        <p>Resolution, artifacts, and the cost of producing them post back to the original ticket. Your team never left their tool.</p>
+      </div>
+    </div>
+    <div class="glue-swap">
+      <p><strong>A workflow step can be anything.</strong> Another workflow engine. An external process. A different vendor's agent. A human approval. The swarm genuinely doesn't care what a step runs — the wrapper owns the integration, so every part stays replaceable and no single vendor ever holds the whole.</p>
+      <div class="chips">
+        <span>another workflow engine</span>
+        <span>an external process</span>
+        <span>another vendor's agent</span>
+        <span>a human approval</span>
+        <span>that legacy script nobody rewrites</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- architecture -->
+<section id="architecture">
+  <div class="wrap">
+    <div class="route"><span>/architecture</span></div>
+    <h2>A control plane that orchestrates. Bot nodes that execute.</h2>
+    <p class="lede">
+      The separation is strict: the controller routes tickets, phases, and approvals —
+      it <strong>never calls an LLM</strong>. Bot nodes own all model execution, each running
+      its own harness against its own provider, collaborating over a Redis mesh.
+    </p>
+    <div class="arch">
+      <div class="arch-inner">
+        <div class="plane">
+          <div class="t">Swarm controller<small>cockpit · queue manager · ticket routing · approval gates · cost ledger</small></div>
+          <span class="badge">NEVER CALLS AN LLM</span>
+        </div>
+        <div class="meshbar"><span>redis mesh — streams · heartbeats · bot-to-bot collaboration</span></div>
+        <div class="nodes">
+          <div class="node">
+            <span class="k">bot-node</span> <span class="live">●</span><br>
+            <span class="h">claude-code</span><br>
+            <span class="k">provider</span> <span class="v">anthropic</span>
+          </div>
+          <div class="node">
+            <span class="k">bot-node</span> <span class="live">●</span><br>
+            <span class="h">codex</span><br>
+            <span class="k">provider</span> <span class="v">openai</span>
+          </div>
+          <div class="node">
+            <span class="k">bot-node</span> <span class="live">●</span><br>
+            <span class="h">gemini</span><br>
+            <span class="k">provider</span> <span class="v">google</span>
+          </div>
+          <div class="node">
+            <span class="k">bot-node</span> <span class="live">●</span><br>
+            <span class="h">cline</span><br>
+            <span class="k">provider</span> <span class="v">ollama · local</span>
+          </div>
+        </div>
+        <div class="arch-side">
+          <span><b>postgres</b> — tickets · agents · per-call cost ledger</span>
+          <span><b>chromadb</b> — RAG corpus · swarm memory</span>
+          <span><b>one image</b> — <b>BOT_RUNTIME</b> decides controller or node</span>
+        </div>
+      </div>
+      <p class="arch-caption">
+        <strong>One ticket, many vendors.</strong> Because every harness sits behind the same
+        interface, a single piece of work can move across them — a Codex bot drafts, a Claude
+        bot reviews, a Gemini bot writes the runbook — with every call metered and every
+        artifact in one shared workspace. oshal treats the harness itself
+        as a swappable layer.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- cockpit -->
+<section id="cockpit">
+  <div class="wrap">
+    <div class="route"><span>/cockpit</span></div>
+    <h2>Real software you can click, not a deck.</h2>
+    <p class="lede">
+      Unretouched screens from the current pre-release build. It still wears the project's
+      working name in the chrome — <strong>the rebrand hasn't reached the app yet, and we'd
+      rather show you that than restage a screenshot.</strong>
+    </p>
+    <div class="shots">
+      <figure class="shot">
+        <img src="assets/cockpit-ops-dashboard.png" alt="Ops dashboard: API health, scheduler ready, 186 active tickets, 8 active runs, a process-flow snapshot across intake, routing, dispatch, execution and closed, and a health registry listing agents as busy or idle" loading="lazy" width="1680" height="1050">
+        <figcaption><b>The runtime, under load.</b> A ticket's whole lifecycle — intake, routing, dispatch, execution, closed — beside a live registry of every agent, busy or idle.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/cockpit-workflow-studio.png" alt="Workflow Studio canvas showing a twelve-node, thirteen-edge graph: start, normalize intake, plan ticket, await build approval, route specialist, parallel split, execute work, verify deliverable, review outcome" loading="lazy" width="1920" height="911">
+        <figcaption><b>A workflow, and a gate.</b> Twelve nodes, thirteen edges — with <em>Await Build Approval</em> sitting in the middle. Nothing reaches production without a human.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/cockpit-world-intelligence.png" alt="World Intelligence surface: tracked tickers with a bias-aware sentiment breakdown across political and economic axes and by outlet kind, plus a note that outlet ratings are seed placeholders" loading="lazy" width="1920" height="911">
+        <figcaption><b>Bias-aware — and it admits its limits.</b> Sentiment split by political axis, economic axis, and outlet kind. Read the fine print: it tells you the outlet ratings are seed placeholders.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/cockpit-connectors.png" alt="The cockpit connector marketplace: a searchable catalog of connectors with per-user credentials, risk filters, and live counts" loading="lazy" width="1440" height="900">
+        <figcaption><b>The connector marketplace.</b> <strong>308 hand-audited connectors ship in the repo.</strong> This instance has also run the OpenAPI bulk importer, which is what takes the catalog to 1,306 — the counters break it down for you. Credentials stay user-owned.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/cockpit-connector-governance.png" alt="Connector cards showing each provider's auth model, risk rating, and exact read and write capabilities" loading="lazy" width="1300" height="305">
+        <figcaption><b>Governance, per connector.</b> Each one declares its auth model, its risk, and exactly what it can read or write — and those capabilities are scoped per bot.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- scale -->
+<section id="scale">
+  <div class="wrap">
+    <div class="route"><span>/scale</span></div>
+    <h2>The same platform, from one laptop to your cluster.</h2>
+    <p class="lede">
+      One Docker image boots as controller or bot node — the platform never changes, only the
+      substrate beneath it. Each tier does <strong>everything the one below it does, then adds a
+      single new power.</strong> We label what's shipped versus what's ahead, because honest
+      engineering is a feature.
+    </p>
+    <div class="scale-grid">
+      <div class="stage">
+        <span class="tag built">Shipped</span>
+        <h3>Laptop</h3>
+        <p><strong>You — one machine.</strong> One command brings the whole stack up on localhost, and a zero-keys demo needs no accounts at all. Chat with a swarm that routes every task to the right harness and model on your own keys, wire in your own accounts, and pull the results up on your phone or throw them on the TV.</p>
+        <p class="stage-add">the floor every tier above inherits</p>
+      </div>
+      <div class="stage">
+        <span class="tag built">Shipped</span>
+        <h3>Server</h3>
+        <p><strong>Your household or team — a box you own.</strong> Everything the laptop does, now shared: OIDC sign-on and database-enforced per-user isolation, so each person sees only their own data. Run the models locally through <code>Ollama</code>, LM Studio, or LiteLLM — no token limits, no per-call vendor bill, nothing leaves your walls.</p>
+        <p class="stage-add">adds → multiple users · self-hosted models</p>
+      </div>
+      <div class="stage">
+        <span class="tag partial">In progress</span>
+        <h3>Kubernetes</h3>
+        <p><strong>Your enterprise — a cluster you control.</strong> Everything the server does, isolated per tenant and built to scale. Tenant isolation is enforced at the database today — row-level security on every tenant table, each tenant its own data partition. Cluster autoscaling, batch-style scale-out for agent workloads, and automated per-tenant provisioning are still ahead — tracked in the open on the roadmap.</p>
+        <p class="stage-add">adds → per-tenant isolation · in-cluster models · scale-out</p>
+      </div>
+      <div class="stage">
+        <span class="tag built">Shipped</span>
+        <h3>Hybrid</h3>
+        <p><strong>Your whole ecosystem — every device, one console.</strong> Nodes on any machine — a laptop, a datacenter GPU box, a remote workstation — enlist into one mesh, and each job routes to whichever node owns the data, the tools, or the hardware. Edge nodes are live and proven on real hardware.</p>
+        <p class="stage-add">adds → distributed nodes · one control plane</p>
+        <p class="stage-add">on the roadmap → monitoring-to-remediation loop</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- compare -->
+<style>
+  .cmp-groups { margin-top: 36px; display: grid; gap: 30px; }
+  @media (min-width: 960px) { .cmp-groups { grid-template-columns: 1fr 1fr; gap: 44px; } }
+
+  .cmp-ghead {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding-bottom: 12px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .cmp-ghead h3 {
+    font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.1em;
+    text-transform: uppercase; font-weight: 500; color: var(--slate);
+  }
+  .cmp-ghead h3.us { color: var(--green); }
+
+  .cmp-row { display: grid; grid-template-columns: 1fr; gap: 5px; margin-bottom: 17px; }
+  .cmp-cat { font-size: 0.9rem; color: var(--white); font-weight: 550; }
+  .cmp-b { display: grid; grid-template-columns: 1fr 86px; align-items: center; gap: 9px; }
+  .cmp-track { height: 7px; border-radius: 4px; background: rgba(148, 163, 184, 0.13); overflow: hidden; }
+  .cmp-track i { display: block; height: 100%; border-radius: 4px; }
+  .cmp-b.us .cmp-track i { background: var(--green); }
+  .cmp-b.them .cmp-track i { background: var(--slate); opacity: 0.85; }
+  .cmp-who {
+    font-family: var(--mono); font-size: 0.66rem; color: var(--slate);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cmp-b.us .cmp-who { color: var(--green); }
+
+  .cmp-note {
+    margin-top: 30px; font-size: 0.84rem; color: var(--slate);
+    border-top: 1px solid var(--hairline); padding-top: 16px;
+  }
+
+  /* ---- thesis ---- */
+  .cmp-thesis { margin-top: 84px; }
+  .cmp-cards {
+    margin-top: 26px; display: grid; gap: 14px;
+    grid-template-columns: 1fr;
+  }
+  @media (min-width: 760px) { .cmp-cards { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 1000px) { .cmp-cards { grid-template-columns: repeat(4, 1fr); } }
+  .cmp-card {
+    background: var(--panel-2); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 18px 18px 20px;
+  }
+  .cmp-card h4 {
+    font-size: 0.95rem; color: var(--white); margin-bottom: 8px; letter-spacing: -0.01em;
+  }
+  .cmp-card p { font-size: 0.87rem; color: var(--body); }
+  .cmp-card .k {
+    font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--green); display: block; margin-bottom: 9px;
+  }
+
+  /* ---- story ---- */
+  .cmp-story {
+    margin-top: 40px;
+    display: grid; grid-template-columns: 1fr; gap: 26px;
+    background: var(--panel-2); border: 1px solid var(--hairline);
+    border-left: 2px solid var(--green);
+    border-radius: 12px; padding: 30px;
+  }
+  @media (min-width: 900px) { .cmp-story { grid-template-columns: 1.25fr 0.75fr; gap: 40px; padding: 38px; } }
+  .cmp-story h3 { font-size: 1.3rem; color: var(--white); letter-spacing: -0.02em; line-height: 1.3; }
+  .cmp-story p { margin-top: 14px; font-size: 0.97rem; }
+  .cmp-story p strong { color: var(--white); font-weight: 600; }
+  .cmp-story .pull {
+    margin-top: 18px; padding-left: 16px; border-left: 2px solid var(--hairline-strong);
+    color: var(--slate); font-size: 0.92rem;
+  }
+  .cmp-manifest {
+    background: var(--night); border: 1px solid var(--hairline); border-radius: 9px;
+    padding: 16px; font-family: var(--mono); font-size: 0.72rem; line-height: 1.85;
+    overflow-x: auto;
+  }
+  .cmp-manifest .cm { color: var(--slate); }
+  .cmp-manifest .ky { color: var(--cyan); }
+  .cmp-manifest .vl { color: var(--body); }
+  .cmp-manifest .hl { color: var(--green); }
+  .cmp-inherit { margin-top: 16px; display: grid; gap: 7px; }
+  .cmp-inherit li {
+    list-style: none; font-size: 0.8rem; color: var(--slate);
+    font-family: var(--mono); display: flex; gap: 9px;
+  }
+  .cmp-inherit li b { color: var(--body); font-weight: 500; }
+  .cmp-inherit .x { color: var(--green); }
+  .cmp-next { margin-top: 26px; border-top: 1px solid var(--hairline); padding-top: 18px; }
+  .cmp-next .tag { margin-right: 8px; }
+  .cmp-next p { margin-top: 12px; font-size: 0.89rem; color: var(--slate); }
+  .cmp-next p strong { color: var(--body); }
+</style>
+<section id="compare">
+  <div class="wrap">
+    <div class="route"><span>/compare</span></div>
+    <h2>Every tool here is good at something. Here's the honest version.</h2>
+    <p class="lede">
+      No scoreboard. Nobody can measure a rival's product from the outside, and a chart that puts
+      us alone in the winning corner is a chart nobody believes. So: <strong>relative strength only,
+      no scores</strong> — and the categories we lose go first. By our own read,
+      <strong>seven of these fifteen still belong to someone else.</strong>
+    </p>
+
+    <div class="cmp-groups">
+      <div>
+        <div class="cmp-ghead"><h3>Where the others are still ahead</h3></div>
+
+        <div class="cmp-row">
+          <div class="cmp-cat">Connector breadth</div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:100%"></i></div><span class="cmp-who">Zapier</span></div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:78%"></i></div><span class="cmp-who">oshal</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Ease of first run</div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:98%"></i></div><span class="cmp-who">ChatGPT</span></div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:78%"></i></div><span class="cmp-who">oshal</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Natural language &amp; voice</div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:98%"></i></div><span class="cmp-who">ChatGPT</span></div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:75%"></i></div><span class="cmp-who">oshal</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Raw responsiveness</div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:95%"></i></div><span class="cmp-who">ChatGPT</span></div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:82%"></i></div><span class="cmp-who">oshal</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Reliability at scale</div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:92%"></i></div><span class="cmp-who">Zapier</span></div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:80%"></i></div><span class="cmp-who">oshal</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Workflow authoring</div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:92%"></i></div><span class="cmp-who">LangGraph</span></div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:85%"></i></div><span class="cmp-who">oshal</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Self-hosting polish</div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:95%"></i></div><span class="cmp-who">n8n</span></div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:92%"></i></div><span class="cmp-who">oshal</span></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="cmp-ghead"><h3 class="us">Where oshal is ahead</h3></div>
+
+        <div class="cmp-row">
+          <div class="cmp-cat">Own your data &amp; keys</div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:95%"></i></div><span class="cmp-who">oshal</span></div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:85%"></i></div><span class="cmp-who">n8n</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Safety gates on by default</div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:88%"></i></div><span class="cmp-who">oshal</span></div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:72%"></i></div><span class="cmp-who">ChatGPT</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Audit trail &amp; live proof</div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:86%"></i></div><span class="cmp-who">oshal</span></div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:66%"></i></div><span class="cmp-who">Zapier</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Ready-made domain apps</div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:85%"></i></div><span class="cmp-who">oshal</span></div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:80%"></i></div><span class="cmp-who">ChatGPT</span></div>
+        </div>
+        <div class="cmp-row">
+          <div class="cmp-cat">Extension surface <span style="color:var(--slate);font-weight:400">— even</span></div>
+          <div class="cmp-b us"><div class="cmp-track"><i style="width:92%"></i></div><span class="cmp-who">oshal</span></div>
+          <div class="cmp-b them"><div class="cmp-track"><i style="width:92%"></i></div><span class="cmp-who">n8n</span></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="cmp-note">
+      Bar length is relative strength as <em>we</em> read the field — not a benchmark, and not a number
+      we'd ask you to trust. The point isn't the ranking. It's the shape: the things we lose are
+      features of a hosted product, and the things we win are properties of a platform you own.
+    </p>
+
+    <div class="cmp-story" style="margin-top: 34px;">
+      <div>
+        <h3>The one thing a hosted vendor structurally can't ship: a platform that fixes its own code.</h3>
+        <p>
+          Every bot in the swarm exposes a self-test. When one breaks, a self-healing agent captures a
+          <strong>baseline</strong>, patches the actual source, redeploys the container, re-runs the
+          test, and <strong>compares against the baseline</strong> — a <strong>red team / blue team</strong>
+          on the change itself. If the patch loses, it's <strong>rolled back automatically</strong>; it can
+          run with no human at the wheel.
+        </p>
+        <p class="pull">
+          A chatbot can't do this to itself, and a SaaS vendor can't let it — that would hand agents the
+          keys to their own product. It only works when you own the whole stack. Here, you do.
+        </p>
+        <div class="cmp-next">
+          <span class="tag built">Shipped</span>
+          <p><strong>Honest scope:</strong> this is health / regression testing — did the patch pass and not
+          break the baseline — not a marketing-style traffic-split experiment. The pieces exist elsewhere
+          (canary rollback, AI code-fixers, AIOps); the closed loop <em>inside a stack you own</em> is the rare part.</p>
+        </div>
+      </div>
+      <div>
+        <ul class="cmp-inherit">
+          <li><span class="x">1</span><span>capture a <b>baseline</b> — the self-test, before</span></li>
+          <li><span class="x">2</span><span>patch the <b>real source</b>, then redeploy</span></li>
+          <li><span class="x">3</span><span>re-run the test — <b>red vs blue</b></span></li>
+          <li><span class="x">4</span><span>lost? <b>auto-revert</b>. won? keep it.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- the thesis -->
+    <div class="cmp-thesis">
+      <div class="route"><span>/why-a-framework</span></div>
+      <h2>A chatbot answers you. A framework hands you the thing.</h2>
+      <p class="lede">
+        Ask any assistant for an app and you get code you now have to host, secure, theme, and wire
+        up yourself. <strong>Here that work is already done before you start.</strong> You bring the
+        idea; the platform brings the rest.
+      </p>
+      <div class="cmp-cards">
+        <div class="cmp-card">
+          <span class="k">inherited</span>
+          <h4>Born multi-user</h4>
+          <p>Sign-on and per-user isolation are the platform's, enforced at the database. Your family or your team logs into the same app and sees only their own rows. You don't write it.</p>
+        </div>
+        <div class="cmp-card">
+          <span class="k">inherited</span>
+          <h4>Born styled</h4>
+          <p>Ribbon, theme, and layout come standard, so an idea doesn't die in CSS. Override them when you have taste — ignore them when you have a deadline.</p>
+        </div>
+        <div class="cmp-card">
+          <span class="k">inherited</span>
+          <h4>Born connected</h4>
+          <p>The connector catalog and the credential broker are already there. An app opts in and gets user-owned tokens — no OAuth plumbing to invent.</p>
+        </div>
+        <div class="cmp-card">
+          <span class="k">inherited</span>
+          <h4>Born portable</h4>
+          <p>Any harness, any model, your keys, your hardware. The app never names a vendor, so swapping one is config — not a rewrite.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- the story -->
+    <div class="cmp-story">
+      <div>
+        <h3>The studio that made our pets' portraits went out of business. So we wrote a new one on the drive home.</h3>
+        <p>
+          There are framed, faintly ridiculous portraits of every family pet on our wall. Then a new
+          puppy arrived, the kids wanted him up there too — and the company we'd used was gone.
+        </p>
+        <p>
+          <strong>Portrait Studio is what we wrote instead.</strong> It puts a face — a person's or a
+          dog's — on a human body in a themed scene: American Gothic with the pitchfork, a steel-mill
+          worker in the sparks, a Renaissance noble. The same app, same code path, also does the
+          serious version: a studio headshot with a real backdrop, attire and framing.
+        </p>
+        <p class="pull">
+          A chat assistant can draw your dog. It can't hand you an application you own — one your
+          whole family signs into, with its own database, its own agent, installed into your own
+          stack from a store.
+        </p>
+        <div class="cmp-next">
+          <span class="tag built">Shipped</span>
+          <span class="tag partial">Next</span>
+          <p>
+            <strong>Shipped:</strong> the app, its agent, its schema, its tile — installable today, on your keys.
+            <strong>Next:</strong> pulling the source photo straight from your photo library and
+            publishing the finished headshot to a profile — both are connector additions on the
+            roadmap, and connectors are composition, not a rewrite. This page marks features
+            shipped only when they are.
+          </p>
+        </div>
+      </div>
+      <div>
+        <div class="cmp-manifest">
+<span class="cm"># portrait-studio — the whole app</span>
+<span class="ky">name</span>: <span class="vl">portrait-studio</span>
+<span class="ky">uses</span>:
+  - <span class="hl">media-generation</span>   <span class="cm"># the image engine</span>
+  - <span class="hl">tool-registry</span>      <span class="cm"># the credentials</span>
+<span class="ky">bots</span>:
+  - <span class="vl">portrait-artist</span>
+<span class="ky">routes</span>:
+  - <span class="vl">/api/portrait-studio</span>
+    <span class="ky">auth</span>: <span class="hl">service-or-oidc</span>
+<span class="ky">migrations</span>:
+  - <span class="vl">001-portrait-studio.sql</span>
+<span class="ky">theme</span>: <span class="vl">midnight</span>
+        </div>
+        <ul class="cmp-inherit">
+          <li><span class="x">✓</span><span>written: <b>the persona, the schema, the routes</b></span></li>
+          <li><span class="x">✓</span><span>free: <b>login + per-user isolation</b></span></li>
+          <li><span class="x">✓</span><span>free: <b>theme, ribbon, layout</b></span></li>
+          <li><span class="x">✓</span><span>free: <b>image engine + key broker</b></span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- security -->
+<section id="security">
+  <div class="wrap">
+    <div class="route"><span>/security</span></div>
+    <h2>Built like the data is yours. Because it is.</h2>
+    <p class="lede">
+      Self-hosting isn't a deployment detail — it's the security model. Nothing leaves your
+      infrastructure unless a workflow you approved sends it.
+    </p>
+    <div class="sec-grid">
+      <div class="sec-item">
+        <svg class="glyph" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div>
+          <h3>Keys encrypted per user</h3>
+          <p>Connector tokens and API keys are encrypted at rest with AES-256-GCM, keyed to the individual user. A token broker hands bots short-lived, single-user credentials — the master key never leaves the controller.</p>
+        </div>
+      </div>
+      <div class="sec-item">
+        <svg class="glyph" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M9 2.5v19" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div>
+          <h3>Isolation enforced by the database</h3>
+          <p>Row-level security is live across every tenant table and forced on — the application runs as a least-privilege role, so one user's data is invisible to another even if application code gets it wrong.</p>
+        </div>
+      </div>
+      <div class="sec-item">
+        <svg class="glyph" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.6"/><path d="M4.5 21c1.2-3.6 4.1-5.5 7.5-5.5s6.3 1.9 7.5 5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <div>
+          <h3>Single sign-on, opt-in routes</h3>
+          <p>OIDC authentication against your identity provider — Keycloak works out of the box. Anything that touches files, personas, or model execution is auth-gated; a mock-auth mode keeps local development friction-free.</p>
+        </div>
+      </div>
+      <div class="sec-item">
+        <svg class="glyph" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div>
+          <h3>Humans approve outward actions</h3>
+          <p>Agents draft; you decide. Nothing posts to social, sends an email, or changes a production system without an explicit approval step in the workflow. Autonomy where it's safe, a gate where it isn't.</p>
+        </div>
+      </div>
+      <div class="sec-item">
+        <svg class="glyph" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <div>
+          <h3>Voiceprints never leave the box</h3>
+          <p>Ambient listening is opt-in and off by default. Speaker recognition runs on local models in a read-only sidecar — raw audio is processed ephemerally and never stored, voice embeddings are encrypted at rest and owner-private, and ambient data rides the standard export/delete controls. When per-person insights are on, oshal also keeps its own read of each consented voice — topics, tone, and follow-ups — as deletable inferences you can purge per person; declining a heard person stops and purges theirs, and children are never modeled.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- developers -->
+<section id="developers">
+  <div class="wrap">
+    <div class="route"><span>/developers</span></div>
+    <h2>A cradle for your harness, outside the hosted walls.</h2>
+    <p class="lede">
+      Vendor agent harnesses are brilliant and boxed in. oshal gives them a neutral
+      runtime: run them side by side on your own hardware, where they inherit your connectors,
+      your security controls, your cost ledger — and collaborate over the mesh.
+      <strong>Add a module; the platform does the rest.</strong>
+    </p>
+    <div class="dev-grid">
+      <div class="dev-steps">
+        <div class="dev-step">
+          <span class="verb">Add an app</span>
+          <div>
+            <h3>One YAML manifest, zero forks — about ten minutes</h3>
+            <p>An app declares its bots, personas, tools, ticket types, and UI surface in a single manifest. Hot-load it into a running swarm — no redeploy. The core stays undifferentiated; the manifest is the DNA.</p>
+          </div>
+        </div>
+        <div class="dev-step">
+          <span class="verb">Add a harness</span>
+          <div>
+            <h3>Two methods and a factory entry</h3>
+            <p>A harness adapter implements <code>run()</code> and an optional health check; subprocess-spawning harnesses inherit shared plumbing from a base class. The Gemini harness landed as one ~300-line adapter.</p>
+          </div>
+        </div>
+        <div class="dev-step">
+          <span class="verb">Add a connector</span>
+          <div>
+            <h3>A spec, not a service</h3>
+            <p>Connectors are declarative specs with per-user brokered auth. Import them from OpenAPI definitions in bulk, scope their capabilities per bot, and let every app you build reuse them.</p>
+          </div>
+        </div>
+        <div class="dev-step">
+          <span class="verb">Or just describe it</span>
+          <div>
+            <h3>Bot Forge builds bots by conversation</h3>
+            <p>Describe a business process in plain language and the Forge interviews you, then packs a complete single-purpose bot — persona, manifest, tools, knowledge base — and registers it into the live swarm.</p>
+          </div>
+        </div>
+      </div>
+      <div class="codecard">
+        <div class="bar">swarm-apps/support-triage.yaml</div>
+        <pre><span class="y-c"># a working app, one manifest</span>
+<span class="y-k">name:</span> <span class="y-s">support-triage</span>
+<span class="y-k">ticketTypes:</span>
+  <span class="y-s">-</span> <span class="y-k">id:</span> <span class="y-s">support-triage</span>
+    <span class="y-k">workflow:</span>
+      <span class="y-k">workerBot:</span> <span class="y-s">triage-bot</span>
+<span class="y-k">bots:</span>
+  <span class="y-s">-</span> <span class="y-k">id:</span> <span class="y-s">triage-bot</span>
+    <span class="y-k">harnessType:</span> <span class="y-g">claude-code</span>   <span class="y-c"># or cline, codex, gemini, a2a</span>
+    <span class="y-k">persona:</span> <span class="y-s">personas/triage.yaml</span>
+<span class="y-k">connectors:</span> <span class="y-s">[zendesk, slack]</span>
+<span class="y-k">ui:</span>
+  <span class="y-k">ribbon:</span> <span class="y-s">{ tab: Support }</span>
+
+<span class="y-c"># hot-load into the running swarm</span>
+<span class="y-g">POST /api/swarm/apps/load</span></pre>
+      </div>
+    </div>
+    <div class="builder">
+      <p class="eyebrow">The premise, proven</p>
+      <p class="note-body">
+        Little Monsters — available from the <a href="https://github.com/emeraldcoastsystemsgroup/oshal-apps">open app store</a> — accelerates learning for
+        students with learning disabilities, and it was <strong>built by students with
+        disabilities; a dyslexic teenage girl led it.</strong> Record a lecture and it becomes
+        notes, slides, and flashcards; assignments track themselves; ask a question and get
+        help — on a laptop or a phone.
+      </p>
+      <p class="note-body">
+        And because it's a packed bot, it's boxed in: <strong>the deterministic persona
+        framework locks down cheating</strong> — it tutors, explains, and quizzes, but it
+        won't do the work for the student. That was this platform's founding premise:
+        building an app that's scalable, secure, and safe should be easy enough that anyone
+        with a real problem can do it. The manifest declared her app; the platform carried
+        the auth, the isolation, the bots, and the UI. Yours gets the same rails.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- mission -->
+<section id="mission">
+  <div class="wrap">
+    <div class="route"><span>/mission</span></div>
+    <div class="mission-block">
+      <div class="mvv">
+        <div class="label">Mission</div>
+        <p class="statement">Close the gap between agentic AI and the people it works for — make swarm-scale automation something you <em>run</em>, not something you rent.</p>
+      </div>
+      <div class="mvv">
+        <div class="label">Vision</div>
+        <p class="statement">Any individual or business can operate enterprise-grade agent swarms on infrastructure they control — laptop to datacenter — with <em>no vendor</em> able to hold their data, keys, or workflows hostage.</p>
+      </div>
+      <div class="mvv">
+        <div class="label">Values</div>
+        <div class="values">
+          <div class="value">
+            <h3>Ownership first</h3>
+            <p>Your keys, your data, your hardware. Every design decision starts from the premise that the user — not the platform, not a vendor — owns the substrate. If a feature requires surrendering that, it doesn't ship.</p>
+          </div>
+          <div class="value">
+            <h3>Neutrality is the product</h3>
+            <p>We don't bet your workflows on one framework or one model. Harnesses and providers stay interchangeable, so best-of-breed is re-decided on every call — and vendors compete for your work.</p>
+          </div>
+          <div class="value">
+            <h3>Honest engineering</h3>
+            <p>Docs describe what's built; the roadmap says what isn't. Shipped, in-progress, and planned are labeled — on this page too. Overclaiming is a bug.</p>
+          </div>
+          <div class="value">
+            <h3>Open by default</h3>
+            <p>AGPL-3.0, source-first, grassroots. No pricing page, no sales funnel, no enterprise edition holding the good parts back. Free means free.</p>
+          </div>
+          <div class="value">
+            <h3>Human in the loop</h3>
+            <p>Swarms draft, analyze, and prepare; people approve what leaves the building. Autonomy is earned per workflow, never assumed.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- honest state -->
+<section id="today">
+  <div class="wrap">
+    <div class="route"><span>/built-vs-roadmap</span></div>
+    <h2>What's real today. What we're building next.</h2>
+    <div class="honest">
+      <div class="honest-col built">
+        <h3>Shipped and working</h3>
+        <ul>
+          <li><strong>Six harnesses</strong> behind one interface, mixed within a single ticket</li>
+          <li><strong>42 model providers</strong>, including fully local via Ollama / LM Studio / LiteLLM</li>
+          <li><strong>Connector marketplace</strong> — 308 hand-audited specs (plus a bulk OpenAPI importer), OAuth broker, live-proven core</li>
+          <li><strong>40 app packages in the public store</strong> — email, social, storage, presentations, gaming, career, ops, and more (the grid above shows the published set, generated from them)</li>
+          <li><strong>Row-level security live</strong> on every tenant table; per-user AES-256-GCM token encryption</li>
+          <li><strong>Per-call cost ledger</strong> in Postgres — every bot, provider, model, ticket</li>
+          <li><strong>Workflow Studio</strong> — author on a canvas or talk-to-build, then <strong>Publish</strong> compiles it (single-shot, staged with approval gates, or a full branch/parallel graph) into a live ticket queue</li>
+          <li><strong>Bot Forge</strong> — pack and hot-load a new bot by conversation</li>
+          <li><strong>Self-healing red/blue loop</strong> — a bot patches its own source, redeploys, re-tests against a per-bot baseline, and auto-reverts a regression (health/regression scope; only possible because you own the stack)</li>
+          <li><strong>Token Chase</strong> — LLM calls captured as replayable frames, variants graded for equivalence, real estimated-vs-actual savings</li>
+          <li><strong>Edge nodes</strong> — remote machines join the mesh over A2A and take tasks, proven on real hardware</li>
+          <li><strong>Kubernetes deploy path</strong> — manifests and a setup script for the full stack ship in the repo</li>
+        </ul>
+      </div>
+      <div class="honest-col road">
+        <h3>On the roadmap</h3>
+        <ul>
+          <li><strong>Token Chase auto-routing</strong> — the replay corpus records every graded variant today; learning a selection policy from it and re-routing future calls to the cheapest equivalent lane automatically is what's next</li>
+          <li><strong>Cluster batch scale-out</strong> — Kubernetes and Argo manifests for the pipeline ship in the repo today; the plumbing that actually runs agent work as scheduled cluster batch jobs is still being built</li>
+          <li><strong>Multi-organization tenancy</strong> — multi-user isolation is DB-enforced and live-proven today; realm-per-tenant is designed</li>
+          <li><strong>Packaged all-local profile</strong> — local models run today via Ollama; the documented one-command all-local stack with benchmarks is ahead</li>
+          <li><strong>Production A2A gateway</strong> — the inbound gateway ships today (agent card, per-agent credentials, an inbound JSON-RPC ticket bridge), default-off and proven end-to-end; hardening it for production and federating real third-party vendors' agents over the wire is the target</li>
+        </ul>
+        <p class="honest-note"><strong>Check it yourself:</strong> every claim in the shipped column maps to code you can read in the public repo, and the roadmap lives next to that code with today-vs-target status per item. If this page and the repo ever disagree, the repo wins.</p>
+      </div>
+    </div>
+    <div class="builder">
+      <p class="eyebrow">A note from the builder</p>
+      <p class="note-body">
+        oshal is <strong>pre-release</strong>, and today it's one engineer's personal project.
+        Where it honestly stands: <strong>better than most of what you can rent, and not yet what
+        it becomes when a community pitches in from every side.</strong> The foundation is solid —
+        a real platform with real nightly proofs, not a demo — and the whole point of shipping it
+        open is that it doesn't have to stay a one-person effort.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- get started -->
+<section id="get-started">
+  <div class="wrap">
+    <div class="cta-final">
+      <div>
+        <h2>Your swarm is one command away.</h2>
+        <p class="lede">
+          Docker is the only prerequisite. The installer pulls prebuilt images — no clone,
+          no build — generates every secret, brings the swarm up, and opens your cockpit.
+          Pick the whole swarm or a bundle (kernel, gaming, jobs, Little&nbsp;Monsters with
+          its office tools). When you're ready, plug in your own keys — they stay yours.
+        </p>
+        <div class="hero-ctas">
+          <a class="btn primary" href="https://github.com/emeraldcoastsystemsgroup/oshal">Get the source on GitHub</a>
+          <a class="btn" href="https://oshal.agenticfederal.us/guest">Try the live demo</a>
+          <a class="btn" href="#today">See what's built</a>
+        </div>
+        <p class="cta-note">
+          <b>The source is live.</b> <a href="https://github.com/emeraldcoastsystemsgroup/oshal">The platform</a>
+          and <a href="https://github.com/emeraldcoastsystemsgroup/oshal-apps">the app store</a> are public
+          on GitHub under AGPL-3.0 — the code behind every claim on this page is there to read.
+          Prefer to look before installing? The hosted demo drops you into a
+          read-only guest session that touches no real accounts.
+        </p>
+      </div>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;one-click install</div>
+        <pre><span class="p">$</span> <span class="c">curl -fsSLO https://raw.githubusercontent.com/emeraldcoastsystemsgroup/oshal/main/scripts/oshal-install.sh</span>
+<span class="p">$</span> <span class="c">bash oshal-install.sh</span>
+<span class="arr">→</span> <span class="c">cockpit opens at</span> <span class="arr">http://localhost:35457</span></pre>
+        <p class="cta-note" style="margin:10px 14px 14px"><b>On Windows?</b>
+          <a href="/Install-OSHAL.bat">Download Install-OSHAL.bat</a> and double-click it —
+          same installer, no terminal. Docker Desktop is the only prerequisite (the installer
+          offers to add it via winget). Prefer fully offline? A downloadable swarm snapshot
+          (images + installer, no registry needed) builds from
+          <code>scripts/build-offline-bundle.sh</code>.</p>
+      </div>
+    </div>
+    <div class="builder" id="phone-install">
+      <p class="eyebrow">Get it on your phone</p>
+      <p class="note-body">
+        The cockpit is an <strong>installable web app (PWA)</strong> — no app store, nothing to
+        download here. It installs straight from <strong>your own swarm's cockpit URL</strong>
+        once your swarm is running (or try it against the
+        <a href="https://oshal.agenticfederal.us/guest">hosted demo</a>): home-screen icon,
+        full-screen launch, offline app shell.
+      </p>
+      <div class="phone-steps">
+        <div class="phone-step" id="phone-step-android"><b>Android — Chrome</b><span>Open your cockpit URL in Chrome, then menu (⋮) → <strong>Add to Home screen</strong> — or accept the install prompt when Chrome offers it.</span></div>
+        <div class="phone-step" id="phone-step-ios"><b>iPhone / iPad — Safari</b><span>Open your cockpit URL in Safari, then Share → <strong>Add to Home Screen</strong>.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <span>© 2026 open swarm oshal · AGPL-3.0</span>
+    </div>
+    <div class="cols">
+      <a href="#platform">Platform</a>
+      <a href="#compare">Compare</a>
+      <a href="#security">Security</a>
+      <a href="#requests">Requests &amp; defects</a>
+      <a href="#mission">Mission</a>
+      <a href="https://oshal.agenticfederal.us/guest">Live demo</a>
+      <a href="https://oshal.agenticfederal.us/login">Sign in</a>
+      <a href="#top">oshal.ai</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  // mobile menu toggle
+  var btn = document.getElementById('menu-btn');
+  var menu = document.getElementById('mobile-menu');
+  if (btn && menu) {
+    btn.addEventListener('click', function () {
+      var open = menu.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    });
+    menu.addEventListener('click', function (e) {
+      if (e.target && e.target.tagName === 'A') {
+        menu.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+        btn.setAttribute('aria-label', 'Open menu');
+      }
+    });
+  }
+
+  // phone-install: show only the visitor's platform on mobile; both on desktop
+  var ua = navigator.userAgent || '';
+  var androidStep = document.getElementById('phone-step-android');
+  var iosStep = document.getElementById('phone-step-ios');
+  if (androidStep && iosStep) {
+    if (/Android/i.test(ua)) {
+      iosStep.classList.add('hidden');
+    } else if (/iPhone|iPad|iPod/i.test(ua)) {
+      androidStep.classList.add('hidden');
+    }
+  }
+})();
+</script>
+<script>
+(function () {
+  var canvas = document.getElementById('swarm-canvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var W = 0, H = 0, agents = [], core = { x: 0, y: 0 };
+  var LINK_DIST = 130;
+
+  function resize() {
+    var host = canvas.parentElement;
+    W = host.clientWidth; H = host.clientHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    core.x = W * (W > 960 ? 0.72 : 0.5);
+    core.y = H * 0.46;
+  }
+
+  function seed() {
+    agents = [];
+    var count = Math.max(34, Math.min(72, Math.floor(W / 18)));
+    for (var i = 0; i < count; i++) {
+      var a = Math.random() * Math.PI * 2;
+      var r = 60 + Math.random() * Math.min(W, H) * 0.42;
+      agents.push({
+        x: core.x + Math.cos(a) * r,
+        y: core.y + Math.sin(a) * r,
+        vx: (Math.random() - 0.5) * 0.35,
+        vy: (Math.random() - 0.5) * 0.35,
+        green: Math.random() < 0.18,
+        size: 1.2 + Math.random() * 1.6
+      });
+    }
+  }
+
+  function step() {
+    for (var i = 0; i < agents.length; i++) {
+      var p = agents[i];
+      var dx = core.x - p.x, dy = core.y - p.y;
+      var d = Math.sqrt(dx * dx + dy * dy) || 1;
+      // gentle orbit: pull toward a ring around the core, not the core itself
+      var target = 190;
+      var pull = (d - target) * 0.00012;
+      p.vx += dx / d * pull * d; p.vy += dy / d * pull * d;
+      // slight tangential drift
+      p.vx += (-dy / d) * 0.004; p.vy += (dx / d) * 0.004;
+      p.vx *= 0.985; p.vy *= 0.985;
+      p.x += p.vx; p.y += p.vy;
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    // links
+    for (var i = 0; i < agents.length; i++) {
+      for (var j = i + 1; j < agents.length; j++) {
+        var a = agents[i], b = agents[j];
+        var dx = a.x - b.x, dy = a.y - b.y;
+        var d2 = dx * dx + dy * dy;
+        if (d2 < LINK_DIST * LINK_DIST) {
+          var t = 1 - Math.sqrt(d2) / LINK_DIST;
+          ctx.strokeStyle = 'rgba(148,163,184,' + (t * 0.16).toFixed(3) + ')';
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+      }
+      // link to core
+      var p = agents[i];
+      var cdx = p.x - core.x, cdy = p.y - core.y;
+      var cd = Math.sqrt(cdx * cdx + cdy * cdy);
+      if (cd < 240) {
+        ctx.strokeStyle = 'rgba(125,211,252,' + ((1 - cd / 240) * 0.10).toFixed(3) + ')';
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(core.x, core.y); ctx.stroke();
+      }
+    }
+    // agents
+    for (var k = 0; k < agents.length; k++) {
+      var q = agents[k];
+      ctx.fillStyle = q.green ? 'rgba(52,211,153,0.75)' : 'rgba(125,211,252,0.6)';
+      ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI * 2); ctx.fill();
+    }
+    // core
+    ctx.fillStyle = 'rgba(125,211,252,0.9)';
+    ctx.beginPath(); ctx.arc(core.x, core.y, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(125,211,252,0.35)';
+    ctx.beginPath(); ctx.arc(core.x, core.y, 12, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(125,211,252,0.12)';
+    ctx.beginPath(); ctx.arc(core.x, core.y, 26, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  function loop() { step(); draw(); requestAnimationFrame(loop); }
+
+  resize(); seed(); draw();
+  if (!reduced) requestAnimationFrame(loop);
+  window.addEventListener('resize', function () { resize(); seed(); draw(); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,179 @@
+# =============================================================================
+# OSHAL — namespace-per-tenant worker isolation (ADR-078 §3, the MT unit)
+# -----------------------------------------------------------------------------
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                                        | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-078 local prove-out: example of the per-tenant worker namespace the Argo batch Jobs run in — Namespace + ResourceQuota + LimitRange + default-deny + tenant-scoped NetworkPolicy + per-tenant ServiceAccount/RBAC. This is the ADR-078 §4 terraform `tenant/` module rendered as one instance ('acme'). Validates offline; live isolation (cross-tenant deny at the network boundary) needs a running cluster + CNI that enforces NetworkPolicy.
+# =============================================================================
+#
+# WHY A NAMESPACE, NOT JUST RLS
+#   ADR-076 gives DB-row (soft) isolation. ADR-078 §3 chose namespace-per-tenant so
+#   the boundary is HARD — pod + network + resource-quota + DB-role — credible for
+#   regulated/sovereign MT. Tenant identity flows: Keycloak realm/claim -> GUC
+#   (oshal.current_sub / tenant) -> the namespace this Workflow is submitted into.
+#
+# ONBOARDING A TENANT = apply one rendered copy of this file (the terraform
+#   `tenant/` module, ADR-078 §4). Replace every {{TENANT}} with the tenant slug.
+#   Here it is rendered concretely for tenant "acme" so the file validates as-is.
+# =============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oshal-tenant-acme
+  labels:
+    app.kubernetes.io/part-of: oshal
+    oshal.io/tenant: acme
+    # Kubernetes-native NetworkPolicy peer selector target (see policies below).
+    kubernetes.io/metadata.name: oshal-tenant-acme
+---
+# ── ResourceQuota: cap the tenant's blast radius (ADR-078 §3) ────────────────
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: oshal-tenant-quota
+  namespace: oshal-tenant-acme
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    # Bound the number of concurrent batch Job pods per tenant.
+    count/pods: "50"
+    count/workflows.argoproj.io: "100"
+---
+# ── LimitRange: default per-pod requests/limits inside the tenant ns ─────────
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: oshal-tenant-defaults
+  namespace: oshal-tenant-acme
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "1"
+        memory: 2Gi
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+---
+# ── Default-deny: no ingress/egress unless a policy below allows it ──────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: oshal-tenant-acme
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# ── Cross-tenant deny is implicit (default-deny). This policy re-grants ONLY:
+#    (a) same-namespace traffic, (b) DNS, (c) the shared control-plane services,
+#    (d) the in-cluster model endpoint. NO peer in another tenant namespace. ───
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-tenant-and-shared
+  namespace: oshal-tenant-acme
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only pods in THIS tenant namespace may talk to each other.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              oshal.io/tenant: acme
+  egress:
+    # Same-tenant east-west.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              oshal.io/tenant: acme
+    # DNS resolution (kube-dns).
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Shared control plane (api / queue / Keycloak) — one shared namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: oshal
+    # In-cluster model serving (GPU node) — the ADR-078 §2 endpoint.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: oshal-model
+    # kube-apiserver (double-check 2026-07-08): Argo's wait sidecar must write
+    # workflowtaskresults, and the apiserver endpoint is a NODE IP — namespace/pod
+    # selectors can never match it, so it needs an ipBlock. Substitute the endpoint
+    # from `kubectl get endpoints kubernetes` per cluster. Some CNIs (Docker Desktop
+    # kindnet) exempt apiserver traffic, so the rule's absence is invisible locally
+    # but errors every Workflow on Calico/Cilium after the work already succeeded.
+    - to:
+        - ipBlock:
+            cidr: 172.26.0.4/32   # <- per-cluster: kubectl get endpoints kubernetes
+      ports:
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 443
+---
+# ── Per-tenant ServiceAccount: what the Argo batch Jobs run as ───────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oshal-workflow
+  namespace: oshal-tenant-acme
+---
+# ── Least-privilege RBAC: the workflow SA may manage its OWN pods only ───────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oshal-workflow
+  namespace: oshal-tenant-acme
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [argoproj.io]
+    resources: [workflowtaskresults]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oshal-workflow
+  namespace: oshal-tenant-acme
+subjects:
+  - kind: ServiceAccount
+    name: oshal-workflow
+    namespace: oshal-tenant-acme
+roleRef:
+  kind: Role
+  name: oshal-workflow
+  apiGroup: rbac.authorization.k8s.io
+---
+# ── Per-tenant DB credential (the ADR-076 RLS role, scoped to this tenant) ───
+# stringData is a PLACEHOLDER for the prove-out. In a live cluster this is
+# sealed-secrets / external-secrets sourced, never committed. The role is a
+# per-tenant Postgres role whose SET oshal.current_sub / tenant drives RLS.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oshal-tenant-db
+  namespace: oshal-tenant-acme
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://oshal_tenant_acme:__SET_AT_DEPLOY_TIME__@oshal-db.oshal.svc.cluster.local:5432/oshal"

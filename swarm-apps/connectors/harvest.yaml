@@ -1,0 +1,36 @@
+# Harvest — time entries, projects, clients, and user via Bearer token plus required Harvest-Account-Id header.
+provider: harvest
+displayName: Harvest
+version: 1.0.0
+baseUrl: https://api.harvestapp.com/v2
+auth:
+  type: oauth2
+headers:
+  Harvest-Account-Id: '{accountId}'
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: time-entries
+    tool: harvest-time-entries
+    method: GET
+    path: /time_entries
+  - name: projects
+    tool: harvest-projects
+    method: GET
+    path: /projects
+  - name: clients
+    tool: harvest-clients
+    method: GET
+    path: /clients
+  - name: me
+    tool: harvest-me
+    method: GET
+    path: /users/me
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/harvestapp.com.ico

@@ -1,0 +1,118 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Declared issue-event webhook intake and made the duplicate create-issue resource explicitly confirmation-gated
+
+provider: github
+displayName: GitHub
+version: 1.0.0
+baseUrl: https://api.github.com
+auth:
+  type: oauth2
+headers:
+  Accept: application/vnd.github+json
+  X-GitHub-Api-Version: '2022-11-28'
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: link-header
+  itemsField: items
+resources:
+  - name: me
+    tool: github-me
+    method: GET
+    path: /user
+  - name: list-repos
+    tool: github-list-repos
+    method: GET
+    path: /user/repos
+    query:
+      per_page: '100'
+      sort: updated
+      affiliation: owner
+    paginate: true
+  - name: get-repo
+    tool: github-get-repo
+    method: GET
+    path: /repos/{owner}/{repo}
+  - name: search-issues
+    tool: github-search-issues
+    method: GET
+    path: /search/issues
+    query:
+      q: '{query}'
+      per_page: '50'
+    paginate: true
+  - name: create-issue
+    tool: github-create-issue
+    method: POST
+    path: /repos/{owner}/{repo}/issues
+    safety:
+      action: write
+      requiresConfirmation: true
+      supportsDryRun: true
+      idempotent: false
+    body:
+      title: '{title}'
+      body: '{body}'
+    retry:
+      maxRetries: 0
+# Write-capable action tier (connector-writes). Real documented endpoints:
+# https://docs.github.com/en/rest/issues/issues#create-an-issue
+# https://docs.github.com/en/rest/issues/comments#create-an-issue-comment
+actions:
+  - name: create-issue
+    method: POST
+    urlTemplate: /repos/{owner}/{repo}/issues
+    riskLevel: medium
+    approvalRequired: true
+    description: Create an issue in a repository the connected user can write to (POST /repos/{owner}/{repo}/issues).
+    paramsSchema:
+      type: object
+      required: [owner, repo, title]
+      additionalProperties: false
+      properties:
+        owner: { type: string, minLength: 1, description: Repository owner login. }
+        repo: { type: string, minLength: 1, description: Repository name. }
+        title: { type: string, minLength: 1, maxLength: 256, description: Issue title. }
+        body: { type: string, description: Issue body (GitHub-flavored Markdown). }
+        labels:
+          type: array
+          items: { type: string }
+          description: Label names to apply (requires push access).
+        assignees:
+          type: array
+          items: { type: string }
+          description: Logins to assign (requires push access).
+  - name: create-issue-comment
+    method: POST
+    urlTemplate: /repos/{owner}/{repo}/issues/{issue_number}/comments
+    riskLevel: medium
+    description: Comment on an existing issue or pull request (POST /repos/{owner}/{repo}/issues/{issue_number}/comments).
+    paramsSchema:
+      type: object
+      required: [owner, repo, issue_number, body]
+      additionalProperties: false
+      properties:
+        owner: { type: string, minLength: 1 }
+        repo: { type: string, minLength: 1 }
+        issue_number: { type: integer, minimum: 1 }
+        body: { type: string, minLength: 1, description: Comment body (GitHub-flavored Markdown). }
+webhooks:
+  - event: issues
+    verify:
+      type: hmac
+      header: X-Hub-Signature-256
+      secret: env:GITHUB_WEBHOOK_SECRET
+metadata:
+  description: "Read your GitHub profile, repositories, and issue search, with gated actions to create issues and comments."
+  category: "Developer tools"
+  icon: github
+  iconTitle: GitHub
+  iconSource: simple-icons
+  iconVerified: true

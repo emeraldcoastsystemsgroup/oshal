@@ -1,0 +1,36 @@
+provider: prestashop
+displayName: PrestaShop
+version: 1.0.0
+baseUrl: ${env:PRESTASHOP_BASE_URL:-https://yourstore.example.com}/api
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: products
+    tool: prestashop-products
+    method: GET
+    path: /products
+    query:
+      output_format: JSON
+  - name: orders
+    tool: prestashop-orders
+    method: GET
+    path: /orders
+    query:
+      output_format: JSON
+  - name: customers
+    tool: prestashop-customers
+    method: GET
+    path: /customers
+    query:
+      output_format: JSON
+metadata:
+  icon: prestashop
+  iconTitle: PrestaShop
+  iconSource: simple-icons
+  iconVerified: true

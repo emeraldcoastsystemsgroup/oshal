@@ -1,0 +1,122 @@
+# Scenario library — canned "playwright scripts" + option presets.
+#
+# WHY THIS EXISTS: the operator burns tokens because, for every job, the
+# computer-use agent re-derives the whole Google Vids click-path from a loose
+# goal. A scenario pins the *option selection* (which rail tool, which mode,
+# orientation, placement, captions) AND supplies a fill-in-the-blank script, so
+# the agent executes a tight checklist instead of exploring. Pick a scenario,
+# fill the blanks, ship.
+#
+# Invoke from the panel chat:
+#   scenario:<id> key="value" key2="value2" image=C:\path\to\avatar.png
+# e.g.
+#   scenario:stock-picks date="June 26" picks="AAPL on a strong iPhone cycle; NVDA on data-center demand; watching TSLA into earnings" image=C:\avatars\host.png
+#
+# Fields per scenario:
+#   label      human name
+#   surface    animate-image | veo-scratch | avatar   (which Vids surface to drive)
+#   orientation Landscape | Portrait | Square
+#   placement  Insert | Extend | none                  (where the clip lands)
+#   captions   true|false                              (auto-captions from the script)
+#   needsImage true|false                              (a still is required to animate)
+#   motion     how the still should move (for animate-image)
+#   script     the spoken line; {{blanks}} are filled from your key="value" args
+#   vars       blank name -> default (omitted = required; "" = optional/empty ok)
+
+defaults:
+  orientation: Landscape
+  placement: Insert
+  captions: true
+
+scenarios:
+  # ---- The proven path: a talking host animated from one still image. ----
+  animate-image:
+    label: Talking host (animate a still)
+    surface: animate-image
+    orientation: Landscape
+    placement: Insert
+    captions: true
+    needsImage: true
+    motion: >-
+      The person looks at the camera and speaks naturally with subtle head
+      movement and blinking; lighting steady; background still. No on-screen
+      text, no logos.
+    script: "{{line}}"
+    vars:
+      line:                       # required — what the host says
+
+  # ---- Daily market update. ----
+  stock-picks:
+    label: Daily stock picks
+    surface: animate-image
+    orientation: Portrait         # vertical for Shorts/Reels
+    placement: Insert
+    captions: true
+    needsImage: true
+    motion: >-
+      The host looks at the camera and speaks with confident, calm energy;
+      subtle head movement and blinking; steady lighting; still background.
+      No on-screen text, no logos.
+    script: >-
+      Good morning. Here are my top picks for {{date}}. {{picks}}.
+      Not financial advice, just what's on my radar. See you tomorrow.
+    vars:
+      date:
+      picks:                      # e.g. "AAPL on a strong cycle; NVDA on data-center demand"
+
+  # ---- New model / LLM overview. ----
+  llm-overview:
+    label: New LLM overview
+    surface: animate-image
+    orientation: Landscape
+    placement: Insert
+    captions: true
+    needsImage: true
+    motion: >-
+      The host looks at the camera and explains clearly with measured,
+      knowledgeable energy; subtle head movement and blinking; steady lighting;
+      still background. No on-screen text, no logos.
+    script: >-
+      Big drop today: {{model}} is out. The headline: {{capability}}. In plain
+      terms, that means {{benefit}}. Where it shines: {{useCase}}. Where it
+      doesn't yet: {{limitation}}. Full breakdown linked below.
+    vars:
+      model:
+      capability:
+      benefit:
+      useCase:
+      limitation: still early in places
+
+  # ---- Product / feature spotlight. ----
+  product-spotlight:
+    label: Product / feature spotlight
+    surface: animate-image
+    orientation: Landscape
+    placement: Insert
+    captions: true
+    needsImage: true
+    motion: >-
+      The host looks at the camera and speaks with upbeat, confident energy;
+      subtle head movement and blinking; steady lighting; still background.
+      No on-screen text, no logos.
+    script: >-
+      Quick one. We just shipped {{feature}}. Before, you had to {{pain}}. Now
+      you just {{action}} and it {{result}}. That's it. Try it and tell me what
+      you build.
+    vars:
+      feature:
+      pain:
+      action:
+      result:
+
+  # ---- Pure cinematic b-roll (no host, text-to-video). ----
+  broll:
+    label: Cinematic b-roll (no host)
+    surface: veo-scratch
+    orientation: Landscape
+    placement: Insert
+    captions: false
+    needsImage: false
+    script: "{{prompt}}"          # a full Veo shot description
+    vars:
+      prompt:

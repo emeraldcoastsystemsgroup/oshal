@@ -1,0 +1,36 @@
+provider: ipgeolocation
+displayName: IPGeolocation
+version: 1.0.0
+baseUrl: https://api.ipgeolocation.io
+auth:
+  type: apiKeyQuery
+  param: apiKey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: ipgeo
+    tool: ipgeolocation-ipgeo
+    method: GET
+    path: /ipgeo
+    query:
+      ip: '{ip}'
+  - name: timezone
+    tool: ipgeolocation-timezone
+    method: GET
+    path: /timezone
+    query:
+      location: '{q}'
+  - name: astronomy
+    tool: ipgeolocation-astronomy
+    method: GET
+    path: /astronomy
+    query:
+      location: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/ipgeolocation.io.ico

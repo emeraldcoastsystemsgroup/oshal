@@ -1,0 +1,36 @@
+provider: transitland
+displayName: Transitland
+version: 1.0.0
+baseUrl: https://transit.land/api/v2
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: stops
+    tool: transitland-stops
+    method: GET
+    path: /rest/stops
+    query:
+      search: '{q}'
+  - name: routes
+    tool: transitland-routes
+    method: GET
+    path: /rest/routes
+    query:
+      search: '{q}'
+  - name: feeds
+    tool: transitland-feeds
+    method: GET
+    path: /rest/feeds
+    query:
+      search: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/transit.land.ico

@@ -1,0 +1,27 @@
+provider: tomtom
+displayName: TomTom
+version: 1.0.0
+baseUrl: https://api.tomtom.com
+auth:
+  type: apiKeyQuery
+  param: key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: search
+    tool: tomtom-search
+    method: GET
+    path: /search/2/search/{query}.json
+  - name: calculate-route
+    tool: tomtom-calculate-route
+    method: GET
+    path: /routing/1/calculateRoute/{locations}/json
+metadata:
+  icon: tomtom
+  iconTitle: TomTom
+  iconSource: simple-icons
+  iconVerified: true

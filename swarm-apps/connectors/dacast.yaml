@@ -1,0 +1,38 @@
+provider: dacast
+displayName: Dacast
+version: 1.0.0
+baseUrl: https://developer.dacast.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: vod
+    tool: dacast-vod
+    method: GET
+    path: /content/vod
+    query:
+      page: '{page}'
+      per_page: '{per_page}'
+  - name: live
+    tool: dacast-live
+    method: GET
+    path: /content/live
+    query:
+      page: '{page}'
+      per_page: '{per_page}'
+  - name: analytics
+    tool: dacast-analytics
+    method: GET
+    path: /analytics
+    query:
+      from: '{from}'
+      to: '{to}'
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/dacast.com.ico

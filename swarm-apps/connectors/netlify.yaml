@@ -1,0 +1,28 @@
+provider: netlify
+displayName: Netlify
+version: 1.0.0
+baseUrl: https://api.netlify.com/api/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: netlify-me
+    method: GET
+    path: /user
+  - name: sites
+    tool: netlify-sites
+    method: GET
+    path: /sites
+    query:
+      per_page: '100'
+metadata:
+  icon: netlify
+  iconTitle: Netlify
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,49 @@
+provider: slack
+displayName: Slack
+version: 1.0.0
+baseUrl: https://slack.com/api
+auth:
+  type: oauth2
+rateLimit:
+  burst: 1
+  perSecond: 1
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: cursor
+  nextField: response_metadata.next_cursor
+  itemsField: channels
+resources:
+  - name: list-channels
+    tool: slack-list-channels
+    method: GET
+    path: /conversations.list
+    query:
+      limit: '200'
+      types: public_channel,private_channel
+    paginate: true
+  - name: channel-history
+    tool: slack-channel-history
+    method: GET
+    path: /conversations.history
+    query:
+      channel: '{channel}'
+      limit: '100'
+  - name: post-message
+    tool: slack-post-message
+    method: POST
+    path: /chat.postMessage
+    body:
+      channel: '{channel}'
+      text: '{text}'
+    retry:
+      maxRetries: 0
+metadata:
+  description: "List Slack channels, read conversation history, and post messages to a channel."
+  category: "Communications"
+  icon: slack
+  iconTitle: Slack
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,167 @@
+<!doctype html>
+<!--
+  OSHAL Node — renderer markup. A Jarvis-style orb you talk to (chat over the
+  swarm), plus a config screen (connection + local account logins) and a worker
+  activity log (tasks this machine runs for the swarm). Logic lives in renderer.js.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src *; media-src 'self' mediastream:" />
+    <title>OSHAL Node</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">OSHAL&nbsp;Node</div>
+      <div class="status">
+        <span id="statusDot" class="dot offline"></span>
+        <span id="statusText">disconnected</span>
+      </div>
+      <button id="settingsToggle" class="ghost-btn" type="button">⚙ Config</button>
+      <div class="winctl">
+        <button id="winMin" class="winbtn" type="button" title="Minimize" aria-label="Minimize">─</button>
+        <button id="winClose" class="winbtn close" type="button" title="Close" aria-label="Close">✕</button>
+      </div>
+    </header>
+
+    <!-- ============ Orb surface (primary) ============ -->
+    <main id="orbView" class="orb-view">
+      <div class="canvas-wrap"><canvas id="orb" aria-label="Assistant"></canvas></div>
+      <div id="status" class="orb-status">Tap the orb and start talking</div>
+
+      <div class="bubble-pair">
+        <div id="you" class="you"></div>
+        <div id="ai" class="ai"></div>
+      </div>
+
+      <div class="controls">
+        <button class="mic" id="mic" type="button">
+          <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-3.06A9 9 0 0 0 21 11h-2Z"/></svg>
+          <span id="miclabel">Tap to talk</span>
+        </button>
+      </div>
+      <div class="ctlrow">
+        <button class="ctl" id="typeToggle" type="button">⌨ Type</button>
+        <button class="ctl" id="mute" type="button" title="Stop / mute voice">■ Stop</button>
+        <button class="ctl" id="orbBtn" type="button" title="Cycle orb style">◎ Halo</button>
+        <button class="ctl" id="voiceBtn" type="button" title="Cycle voice">🔊 Voice</button>
+        <button class="ctl" id="jarvisBtn" type="button" title="Open the full swarm cockpit (task history, apps, dynamic screens) — signs in first if needed">◈ Full Jarvis</button>
+      </div>
+      <form class="typer" id="typer">
+        <input id="typein" type="text" placeholder="Ask the swarm…" autocomplete="off" />
+        <button type="submit">Ask</button>
+      </form>
+
+      <section class="worklog">
+        <div class="worklog-head"><span>Swarm tasks on this machine</span><span id="workerPill" class="worker-pill off">worker off</span></div>
+        <div id="worklog" class="worklog-body"><div class="muted">No tasks yet.</div></div>
+      </section>
+    </main>
+
+    <!-- ============ Config screen ============ -->
+    <section id="settings" class="settings hidden">
+      <h2>Connection</h2>
+      <label>Control-plane URL
+        <input id="controlPlaneUrl" type="text" placeholder="http://100.x.x.x:5000 (tailnet) or http://localhost:35457" />
+      </label>
+      <label>Shared secret
+        <input id="sharedSecret" type="password" placeholder="REMOTE_CLIENT_SHARED_SECRET" />
+      </label>
+      <div class="row">
+        <label>Auth header
+          <input id="authHeaderName" type="text" placeholder="x-remote-client-key" />
+        </label>
+        <label>Target bot agent id <span class="hint">(blank → default chat agent)</span>
+          <input id="targetAgentId" type="text" placeholder="" />
+        </label>
+      </div>
+      <div class="row">
+        <label>Client name
+          <input id="clientName" type="text" placeholder="OSHAL Node (desktop)" />
+        </label>
+        <label class="check">
+          <input id="workerEnabled" type="checkbox" />
+          <span>Participate as a worker (run swarm tasks on this machine)</span>
+        </label>
+      </div>
+
+      <div class="danger-box">
+        <label class="check">
+          <input id="allowSystemControl" type="checkbox" />
+          <span><strong>Allow this machine to be controlled</strong> — lets the swarm screenshot your screen, run shell commands, move/click the mouse, type, and launch apps (e.g. "open Outlook and screenshot it").</span>
+        </label>
+        <p class="warn-text">Off by default. Anyone holding the shared secret can drive this computer while it's enabled and connected. Every action is logged below the orb.</p>
+      </div>
+
+      <h2>Identity</h2>
+      <div class="identity-row">
+        <button id="signInBtn" class="ghost-btn" type="button">Sign in to the swarm</button>
+        <button id="signOutBtn" class="ghost-btn" type="button">Sign out</button>
+        <span id="identityMsg" class="hint">Not signed in (using asserted id).</span>
+      </div>
+
+      <h2>Background wake word</h2>
+      <div class="wake-box">
+        <label class="check">
+          <input id="backgroundWakeEnabled" type="checkbox" />
+          <span><strong>Listen while Jarvis is closed</strong> — requires an explicit microphone permission and keeps OSHAL Node in the system tray.</span>
+        </label>
+        <div class="row">
+          <label>Assistant name
+            <input id="wakeAssistantName" type="text" maxlength="32" placeholder="Jarvis" />
+          </label>
+          <div class="wake-state-wrap">
+            <span id="wakeStateDot" class="wake-dot off" aria-hidden="true"></span>
+            <span><strong id="wakeState">Background wake: OFF</strong><small id="wakeDetail">No microphone is active.</small></span>
+          </div>
+        </div>
+        <div class="wake-actions">
+          <button id="wakePauseBtn" class="ghost-btn small" type="button" disabled>Pause</button>
+          <span class="warn-text">Windows uses the installed offline speech engine with the exact phrase "Hey &lt;name&gt;". Raw audio is processed in memory and never stored. After wake, the authenticated Jarvis page records only your command through its normal voice path.</span>
+        </div>
+      </div>
+
+      <h2>Full Jarvis</h2>
+      <p class="hint">The full swarm cockpit — Jarvis with task history, dynamic visual responses, and (for allowlisted operators) super-admin tools — rendered from the swarm under your signed-in identity. The local worker keeps running either way.</p>
+      <div class="row">
+        <label class="check">
+          <input id="fullJarvisEnabled" type="checkbox" />
+          <span>Open the full Jarvis cockpit when this node starts</span>
+        </label>
+        <label>Cockpit path <span class="hint">(/cockpit/ for the full framework ribbon)</span>
+          <input id="cockpitPath" type="text" placeholder="/cockpit/?app=jarvis" />
+        </label>
+      </div>
+      <label>Cockpit / sign-in URL <span class="hint">(the swarm's public URL when login runs behind a tunnel; blank = control-plane URL)</span>
+        <input id="cockpitBaseUrl" type="text" placeholder="https://oshal.example.com" />
+      </label>
+
+      <h2>Accounts on this machine</h2>
+      <p class="hint">Log into the tools you want the swarm to use through this node. The browser popup runs here, on your computer; credentials stay in your home folder.</p>
+      <div id="accounts" class="accounts"></div>
+      <button id="connectionsBtn" class="ghost-btn" type="button">Manage web connections (Gmail, SmartThings…)</button>
+
+      <h2>Headscale (optional)</h2>
+      <p class="warn-text">Only use this if you are NOT already on a network that can reach the control plane. "Connect VPN" runs <code>tailscale up</code> against the headscale server below and will <strong>reconfigure the system Tailscale client</strong> — if you already have a VPN to your service provider on this machine, it can disrupt it. Normal <strong>Connect</strong> never touches your VPN; it just talks HTTP to the control-plane URL.</p>
+      <div class="row">
+        <label>Login server
+          <input id="headscaleLoginServer" type="text" placeholder="http://headscale:8085" />
+        </label>
+        <label>Pre-auth key
+          <input id="headscaleAuthKey" type="password" placeholder="hskey-auth-..." />
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="saveBtn" class="primary-btn" type="button">Save</button>
+        <button id="vpnBtn" class="ghost-btn" type="button">Connect VPN</button>
+        <button id="connectBtn" class="primary-btn" type="button">Connect</button>
+        <button id="closeSettings" class="ghost-btn" type="button">Done</button>
+        <span id="settingsMsg" class="msg"></span>
+      </div>
+    </section>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

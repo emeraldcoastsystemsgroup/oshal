@@ -1,0 +1,28 @@
+provider: gumlet
+displayName: Gumlet
+version: 1.0.0
+baseUrl: https://api.gumlet.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: video-assets
+    tool: gumlet-video-assets
+    method: GET
+    path: /video/assets
+    query:
+      collection_id: '{collection_id}'
+      page: '{page}'
+  - name: source
+    tool: gumlet-source
+    method: GET
+    path: /source
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/gumlet.com.ico

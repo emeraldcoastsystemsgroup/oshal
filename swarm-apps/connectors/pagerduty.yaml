@@ -1,0 +1,52 @@
+provider: pagerduty
+displayName: PagerDuty
+version: 1.0.0
+baseUrl: https://api.pagerduty.com
+auth:
+  type: apiKeyHeader
+  header: Authorization
+headers:
+  Accept: application/vnd.pagerduty+json;version=2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: offset
+  param: offset
+  pageSize: 25
+  nextField: more
+  itemsField: incidents
+resources:
+  - name: abilities
+    tool: pagerduty-abilities
+    method: GET
+    path: /abilities
+  - name: incidents
+    tool: pagerduty-incidents
+    method: GET
+    path: /incidents
+    query:
+      statuses[]: '{status}'
+    paginate: true
+  - name: services
+    tool: pagerduty-services
+    method: GET
+    path: /services
+  - name: oncalls
+    tool: pagerduty-oncalls
+    method: GET
+    path: /oncalls
+  - name: users
+    tool: pagerduty-users
+    method: GET
+    path: /users
+metadata:
+  description: "Read PagerDuty incidents, services, on-call schedules, users, and account abilities."
+  category: "Operations"
+  icon: pagerduty
+  iconTitle: PagerDuty
+  iconSource: simple-icons
+  iconVerified: true

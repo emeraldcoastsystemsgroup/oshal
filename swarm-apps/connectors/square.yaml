@@ -1,0 +1,46 @@
+provider: square
+displayName: Square
+version: 1.0.0
+baseUrl: https://connect.squareup.com/v2
+auth:
+  type: oauth2
+headers:
+  Square-Version: '2024-10-17'
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: square-customers
+    method: GET
+    path: /customers
+  - name: customer
+    tool: square-customer
+    method: GET
+    path: /customers/{customer_id}
+  - name: payments
+    tool: square-payments
+    method: GET
+    path: /payments
+  - name: orders
+    tool: square-orders
+    method: GET
+    path: /orders/{order_id}
+  - name: invoices
+    tool: square-invoices
+    method: GET
+    path: /invoices
+  - name: catalog
+    tool: square-catalog
+    method: GET
+    path: /catalog/list
+metadata:
+  description: "Read Square customers, payments, orders, invoices, and the item catalog."
+  category: "Payments"
+  icon: square
+  iconTitle: Square
+  iconSource: simple-icons
+  iconVerified: true

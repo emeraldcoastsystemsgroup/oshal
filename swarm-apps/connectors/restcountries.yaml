@@ -1,0 +1,37 @@
+provider: restcountries
+displayName: REST Countries
+version: 1.0.0
+baseUrl: https://restcountries.com/v3.1
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: all
+    tool: restcountries-all
+    method: GET
+    path: /all
+    query: {}
+  - name: by-name
+    tool: restcountries-by-name
+    method: GET
+    path: /name/{name}
+    query: {}
+  - name: by-code
+    tool: restcountries-by-code
+    method: GET
+    path: /alpha/{code}
+    query: {}
+  - name: by-region
+    tool: restcountries-by-region
+    method: GET
+    path: /region/{region}
+    query: {}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/restcountries.com.ico

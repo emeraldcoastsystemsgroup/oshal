@@ -1,0 +1,30 @@
+provider: pandadoc
+displayName: PandaDoc
+version: 1.0.0
+baseUrl: https://api.pandadoc.com/public/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-documents
+    tool: pandadoc-list-documents
+    method: GET
+    path: /documents
+  - name: get-document
+    tool: pandadoc-get-document
+    method: GET
+    path: /documents/{id}
+  - name: list-templates
+    tool: pandadoc-list-templates
+    method: GET
+    path: /templates
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/pandadoc.com.ico

@@ -1,0 +1,30 @@
+provider: opendota
+displayName: OpenDota
+version: 1.0.0
+baseUrl: https://api.opendota.com/api
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: player
+    tool: opendota-player
+    method: GET
+    path: /players/{account_id}
+  - name: pro-matches
+    tool: opendota-pro-matches
+    method: GET
+    path: /proMatches
+  - name: heroes
+    tool: opendota-heroes
+    method: GET
+    path: /heroes
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/opendota.com.ico

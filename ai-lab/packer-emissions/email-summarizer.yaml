@@ -1,0 +1,132 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ARCHIVED PACKER EMISSION (2026-07-19, ADR-085 Wave 3 carve) — NOT auto-loaded.
+# This is the preserved codex-packer emission artifact: the proof that the packer
+# interviews an operator and emits a complete packed bot (persona + manifest + UI).
+# The LIVE app now ships as the `email-summarizer` package in the
+# oshal-applications store; the runtime manifest lives there. This copy exists so
+# the packer-capability guards (tests/unit/codex-packer-created-bot.spec.ts +
+# scripts/evidence/prove-workflow-power-live.ts) keep proving the emission
+# against the real emitted artifact. Content below is byte-identical to the
+# manifest as emitted/maintained in swarm-apps/ before the carve.
+# ─────────────────────────────────────────────────────────────────────────────
+# Swarm Application Manifest — email-summarizer
+#
+# Emitted by codex-packer from a roleplayed interview targeting the
+# owner@example.com Google Workspace account.
+#
+# Single-purpose bot: produce a daily Gmail + Calendar digest. Read-only
+# by default; opt-in to a single label-write side effect via DRY_RUN=false.
+#
+# OPERATOR PREREQUISITE — must run BEFORE submitting the first ticket:
+#   export GOOGLE_CLIENT_ID=<oauth_client_id>
+#   export GOOGLE_CLIENT_SECRET=<oauth_client_secret>
+#   node scripts/google-workspace-cli.js auth login --profile workspace-profile
+#   node scripts/google-workspace-cli.js auth status --profile workspace-profile --json
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: email-summarizer
+suite: ai-productivity   # ADR-097: primary catalog shelf (tools keep their own category:)
+displayName: Intelligent Communication
+description: >-
+  Daily Gmail + Calendar digest for one configured Google Workspace
+  account. Sorts junk vs. signal by sender heuristics, summarizes signal
+  messages, and lists today's calendar events. Read-only by default;
+  with DRY_RUN=false it may apply the Gmail label `OSHAL/triaged-junk`
+  to junk messages (no delete, no archive, no send).
+version: 1.0.0
+status: active
+
+# Per-app skin (approved palette) — gray so the comms workspace reads distinct.
+theme: gray
+
+ticketType: email-summarizer
+
+workflow:
+  name: Email Digest Pipeline
+  # No `pipeline:` — this is not an incident. A ticketType=email-summarizer ticket
+  # (e.g. a cron-driven daily digest) routes via the generic single-bot worker
+  # dispatch (dispatchManifestWorkerTicket) straight to the email bot over the
+  # mesh — the background half of ADR-036. Interactive work uses the direct
+  # BotNodeClient path (no ticket). Same bot owns both.
+  workerBot: communications-bot
+  # One-and-done: the persona is its own quality gate (Mode A/B + preflight
+  # + side-effect rules + PII handling all baked in). No reviewer needed.
+
+# ADR-090 addendum (skill profiles): teach the generic `summarize` capability this app's
+# COMMS domain. Same mechanism little-monsters uses for class-notes — one capability, a
+# different declared pattern → domain-appropriate output. Resolved by ticketType at dispatch
+# and composed into the worker prompt; the communications-bot still does the reasoning (ADR-036).
+skillProfiles:
+  summarize:
+    pattern: email-digest
+    instructions: >-
+      Summarize the inbox/thread for a busy professional who wants to act, not read. Lead with
+      what NEEDS A REPLY and by when. Name each sender and the single decision or ask on the
+      table. Flag anything time-sensitive (deadlines, meetings, approvals). Keep it skimmable —
+      short lines, no restating full email bodies. Never invent senders, dates, or commitments
+      that are not in the source.
+    sections:
+      - needs-reply
+      - decisions-and-asks
+      - deadlines-and-meetings
+      - fyi
+    outputContract: markdown, newest/most-urgent first
+
+bots:
+  - agentId: b0000000-0000-0000-0000-000000000001
+    name: communications-bot
+    persona: ai-lab/bot-personas/email-summarizer.yaml
+    role: comms/email-calendar-social
+    # Keep IDENTICAL to swarm-apps/social.yaml's declaration of this bot — manifest
+    # upserts clobber whole-array, so differing lists make load order decide (ADR-083).
+    capabilities:
+      - email-summarization
+      - gmail-triage
+      - outlook-mail
+      - calendar-digest
+      - meeting-agenda
+      - reply-drafting
+      - inbox-triage
+      - social-signals-feed
+      - social-publishing
+      - sms-texting
+      - voice-calls
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COCKPIT UI SURFACE — same mechanism Little Monsters uses. Ribbon icons open the
+# email client pages (served by createEmailRoutes at /api/email/*) in the main
+# stage. Read-only Gmail + Calendar for the signed-in user's connected Google
+# account (connect once at /utilities). Replies are AI-drafted, not sent.
+# ─────────────────────────────────────────────────────────────────────────────
+ui:
+  static:
+    # My Day is the dashboard / intro to Intelligent Communication — list it first.
+    - toolName: email-myday
+      label: My Day
+      icon: codicon codicon-calendar
+      iframeUrl: /api/email/my-day
+      section: top
+    - toolName: email-inbox
+      label: Inbox
+      icon: codicon codicon-mail
+      iframeUrl: /api/email/inbox
+      section: top
+    - toolName: email-social
+      label: Social
+      icon: codicon codicon-account
+      iframeUrl: /api/email/social
+      section: top
+
+# When /cockpit?app=email-summarizer is requested, show this app's surfaces and
+# hide the generic framework tabs (settings stays so config is always reachable).
+ribbon:
+  hideFrameworkItems:
+    - tickets
+    - chat
+    - calendar
+    - addressbook
+    - dashboard
+    - echo
+    - logs
+    - operations
+  defaultView: email-myday

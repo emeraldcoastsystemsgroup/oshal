@@ -1,0 +1,41 @@
+provider: defender-cloud
+displayName: Microsoft Defender for Cloud
+version: 1.0.0
+baseUrl: https://management.azure.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: assessments
+    tool: defender-assessments
+    method: GET
+    path: /subscriptions/${env:AZURE_SUBSCRIPTION_ID}/providers/Microsoft.Security/assessments
+    query:
+      api-version: '2021-06-01'
+  - name: alerts
+    tool: defender-alerts
+    method: GET
+    path: /subscriptions/${env:AZURE_SUBSCRIPTION_ID}/providers/Microsoft.Security/alerts
+    query:
+      api-version: '2022-01-01'
+  - name: secure-scores
+    tool: defender-secure-scores
+    method: GET
+    path: /subscriptions/${env:AZURE_SUBSCRIPTION_ID}/providers/Microsoft.Security/secureScores
+    query:
+      api-version: '2020-01-01'
+  - name: compliance
+    tool: defender-compliance
+    method: GET
+    path: /subscriptions/${env:AZURE_SUBSCRIPTION_ID}/providers/Microsoft.Security/regulatoryComplianceStandards
+    query:
+      api-version: 2019-01-01-preview
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/management.azure.com.ico

@@ -1,0 +1,29 @@
+provider: usersnap
+displayName: Usersnap
+version: 1.0.0
+baseUrl: https://api.usersnap.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: projects
+    tool: usersnap-projects
+    method: GET
+    path: /projects
+  - name: project
+    tool: usersnap-project
+    method: GET
+    path: /projects/{api_id}
+  - name: feedbacks
+    tool: usersnap-feedbacks
+    method: GET
+    path: /projects/{api_id}/feedbacks
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/usersnap.com.ico

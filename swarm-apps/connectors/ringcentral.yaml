@@ -1,0 +1,137 @@
+provider: ringcentral
+displayName: RingCentral
+version: 1.0.0
+# Production. The developer sandbox is https://platform.devtest.ringcentral.com — same paths,
+# separate credentials and separate phone numbers; point a test tenant there, never mix the two.
+baseUrl: https://platform.ringcentral.com
+auth:
+  type: oauth2
+rateLimit:
+  # RingCentral bills API calls against per-app rate limit groups (Light/Medium/Heavy) and
+  # answers 429 with Retry-After. Stay conservative; call-log is a "Heavy" endpoint.
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+# NO pagination block on purpose. RingCentral pages are 1-BASED (`paging.page`), and the runtime's
+# `offset` walker starts at 0 and steps by pageSize — it would request page 0 and mis-walk the set.
+# `page`/`perPage` are exposed as query params instead, so the caller controls paging honestly.
+resources:
+  # ── Identity ──────────────────────────────────────────────────────────────
+  - name: account
+    tool: ringcentral-account
+    method: GET
+    path: '/restapi/v1.0/account/~'
+  - name: extension
+    tool: ringcentral-extension
+    method: GET
+    path: '/restapi/v1.0/account/~/extension/~'
+  - name: list-extensions
+    tool: ringcentral-list-extensions
+    method: GET
+    path: '/restapi/v1.0/account/~/extension'
+    query:
+      page: '{page}'
+      perPage: '{perPage}'
+      status: '{status}'
+      type: '{type}'
+  - name: phone-numbers
+    tool: ringcentral-phone-numbers
+    method: GET
+    path: '/restapi/v1.0/account/~/phone-number'
+    query:
+      page: '{page}'
+      perPage: '{perPage}'
+
+  # ── Live call state — this is what a CRM screen-pop reads ─────────────────
+  # Poll `active-calls` (or subscribe to telephony events once a webhook is registered) and
+  # resolve the caller's number against the CRM. intelligent-sales already matches on digits,
+  # so `from.phoneNumber` in E.164 lands on the right business partner without reformatting.
+  - name: active-calls
+    tool: ringcentral-active-calls
+    method: GET
+    path: '/restapi/v1.0/account/~/extension/~/active-calls'
+    query:
+      view: '{view}'
+      page: '{page}'
+      perPage: '{perPage}'
+  - name: company-active-calls
+    tool: ringcentral-company-active-calls
+    method: GET
+    path: '/restapi/v1.0/account/~/active-calls'
+    query:
+      page: '{page}'
+      perPage: '{perPage}'
+  - name: presence
+    tool: ringcentral-presence
+    method: GET
+    path: '/restapi/v1.0/account/~/extension/~/presence'
+    query:
+      detailedTelephonyState: '{detailedTelephonyState}'
+
+  # ── History — call logging and activity backfill ──────────────────────────
+  - name: call-log
+    tool: ringcentral-call-log
+    method: GET
+    path: '/restapi/v1.0/account/~/extension/~/call-log'
+    query:
+      dateFrom: '{dateFrom}'
+      dateTo: '{dateTo}'
+      direction: '{direction}'
+      type: '{type}'
+      phoneNumber: '{phoneNumber}'
+      view: '{view}'
+      page: '{page}'
+      perPage: '{perPage}'
+  - name: company-call-log
+    tool: ringcentral-company-call-log
+    method: GET
+    path: '/restapi/v1.0/account/~/call-log'
+    query:
+      dateFrom: '{dateFrom}'
+      dateTo: '{dateTo}'
+      direction: '{direction}'
+      extensionNumber: '{extensionNumber}'
+      phoneNumber: '{phoneNumber}'
+      view: '{view}'
+      page: '{page}'
+      perPage: '{perPage}'
+  - name: call-log-record
+    tool: ringcentral-call-log-record
+    method: GET
+    path: '/restapi/v1.0/account/~/extension/~/call-log/{recordId}'
+  - name: call-recording
+    tool: ringcentral-call-recording
+    method: GET
+    path: '/restapi/v1.0/account/~/recording/{recordingId}'
+
+  # ── Messaging (SMS / voicemail / fax share the message store) ─────────────
+  - name: message-store
+    tool: ringcentral-message-store
+    method: GET
+    path: '/restapi/v1.0/account/~/extension/~/message-store'
+    query:
+      dateFrom: '{dateFrom}'
+      dateTo: '{dateTo}'
+      messageType: '{messageType}'
+      direction: '{direction}'
+      phoneNumber: '{phoneNumber}'
+      page: '{page}'
+      perPage: '{perPage}'
+  - name: message
+    tool: ringcentral-message
+    method: GET
+    path: '/restapi/v1.0/account/~/extension/~/message-store/{messageId}'
+metadata:
+  description: "RingCentral cloud phone: live active-call state for CRM screen-pop, call log, recordings, presence, extensions, and the SMS/voicemail message store."
+  category: "Communication"
+  icon: ringcentral
+  iconTitle: RingCentral
+  iconSource: simple-icons
+  iconVerified: false
+  # `~` is RingCentral's literal "current account / current extension" token, not a placeholder —
+  # leave it in the path. Registration: an app under the business account with the ReadAccounts,
+  # ReadCallLog, ReadPresence and ReadMessages scopes; telephony event APIs are not on every plan
+  # tier, so confirm the customer's tier before promising live call events.
+  authNotes: "OAuth 2.0 (authorization code, or JWT for server-to-server). Sandbox base URL differs."

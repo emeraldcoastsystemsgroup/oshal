@@ -1,0 +1,30 @@
+provider: blockcypher
+displayName: BlockCypher
+version: 1.0.0
+baseUrl: https://api.blockcypher.com/v1
+auth:
+  type: apiKeyQuery
+  param: token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: chain-info
+    tool: blockcypher-chain-info
+    method: GET
+    path: /btc/main
+  - name: address
+    tool: blockcypher-address
+    method: GET
+    path: /btc/main/addrs/{address}
+  - name: tx
+    tool: blockcypher-tx
+    method: GET
+    path: /btc/main/txs/{hash}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/blockcypher.com.ico

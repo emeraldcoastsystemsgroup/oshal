@@ -1,0 +1,30 @@
+# BambooHR API — read employee directory, custom field meta, and time-off requests (HTTP basic, API key as username, 'x' password).
+provider: bamboohr
+displayName: BambooHR
+version: 1.0.0
+baseUrl: https://api.bamboohr.com/api/gateway.php/${env:BAMBOOHR_SUBDOMAIN:-yourco}/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: employees-directory
+    tool: bamboohr-employees-directory
+    method: GET
+    path: /employees/directory
+  - name: meta-fields
+    tool: bamboohr-meta-fields
+    method: GET
+    path: /meta/fields
+  - name: time-off-requests
+    tool: bamboohr-time-off-requests
+    method: GET
+    path: /time_off/requests
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/bamboohr.com.ico

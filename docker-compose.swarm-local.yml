@@ -1,0 +1,984 @@
+# =============================================================================
+# OSHAL Per-Bot Container Swarm — Local Development
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — per-bot container architecture replicating oshal pattern
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Added hot-swap bind mounts, proper startup chain, per-bot mounts (oshal alignment)
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Added config-seed shared volume for swarm-level provider config propagation
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Added scheduler/migration gating, ChromaDB infra, ENABLE_AGENT_SCHEDULER per-bot
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Added rca-specialist (3014) and presentation-bot (3015) service definitions
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | Added code-server workspace browser on port 8443 for cockpit artifact viewing
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Added hosted google-search-mcp service and default Google Search MCP URL to the swarm-local runtime so bot sessions can reach the managed search endpoint
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | Bound architect-bot to system-architect.yaml so USE_ARCHITECTURE_PHASE runs the spec-driven persona
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | Fixed missing per-bot settings volumes for bots 3017-3025; added architect/bizplan/tester volume declarations
+# 10 | maintainer@emeraldcoastsystemsgroup.com   | Exposed OpenAI Codex callback port on project-manager so redirect ownership defaults to the PM bot instead of a separate standalone runtime
+# 11 | maintainer@emeraldcoastsystemsgroup.com   | Phase 12 S1: Trimmed swarm to 14 default bots — disabled incident-response-bot (3019) and business-plan-bot (3024) as on-demand extras
+# 12 | maintainer@emeraldcoastsystemsgroup.com   | B4/CM-2: Removed all any-bot/ui-enhanced volume mounts — codicon fonts now served from @vscode/codicons npm package
+# =============================================================================
+#
+# Architecture: Each bot runs as its own Docker container with:
+#   - Own Express server on own port (5000 internal, mapped to 3010-3016 on host)
+#   - Own persona loaded from YAML via bot-entrypoint.sh
+#   - Own private settings volume (~/.cline equivalent)
+#   - Shared workspace volume for project files
+#   - Hot-swap: source code bind-mounted for live reload (nodemon + ts-node)
+#   - Redis Streams for inter-bot communication
+#
+# Infrastructure ownership:
+#   - project-manager ONLY: scheduler (ENABLE_AGENT_SCHEDULER), migrations (RUN_MIGRATIONS), queue manager
+#   - All bots: Redis Streams consumer, Postgres read, ChromaDB RAG
+#
+# Usage:
+#   docker compose -f docker-compose.swarm-local.yml up --build
+#   docker compose -f docker-compose.swarm-local.yml up -d
+#   docker compose -f docker-compose.swarm-local.yml logs -f project-manager
+#
+# Hot-swap:
+#   Edit any .ts file in src/ → nodemon detects change → ts-node restarts
+#   No rebuild needed. All 5 bots share the same source bind mount.
+# =============================================================================
+
+# ── Shared bot configuration anchor ─────────────────────────────────────────
+x-bot-common: &bot-common
+  image: oshal-bot:latest
+  # Image is built from Dockerfile.oshal and retagged oshal-bot:latest (CLAUDE.md
+  # "Two runtimes, one image"). No `build:` stanza: the former
+  # `dockerfile: Dockerfile.bot` was a stale slim-worker image that predated the
+  # single-image design, was never actually built by this stack (every path uses
+  # the prebuilt image via `up -d`), and was unbuildable anyway (it COPYd a
+  # removed vite.config.js). Dockerfile.bot removed 2026-07-09.
+  env_file: .env
+  entrypoint: ["/bin/sh", "/app/scripts/bot-entrypoint.sh"]
+  environment: &bot-env-common
+    NODE_ENV: production
+    HOST: 0.0.0.0
+    PORT: 5000
+    CONFIG_OUTPUT_DIR: /app/output
+    CONFIG_WRITE_MODE: "${CONFIG_WRITE_MODE:-split}"
+    # ── LLM Provider ──
+    LLM_PROVIDER: "${LLM_PROVIDER:-claude-code}"
+    LLM_MODEL: "${LLM_MODEL:-claude-sonnet-4-5-20250929}"
+    ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    CLINE_CLI_PATH: /usr/local/bin/cline
+    CLAUDE_CODE_CLI_PATH: /usr/local/bin/claude
+    CLINE_MODEL: "${CLINE_MODEL:-gpt-5.3-codex}"
+    # ── Swarm ──
+    SWARM_MODE: container
+    ENABLE_AGENT_SWARM: "true"
+    ENABLE_QUEUE_MANAGER: "false"
+    ENABLE_AGENT_SCHEDULER: "false"
+    RUN_MIGRATIONS: "false"
+    # ── Auth ──
+    MOCK_OIDC: "true"
+    # ── Redis — shared message bus ──
+    REDIS_URL: redis://oshal-redis:6379
+    # ── Postgres — shared persistence ──
+    DATABASE_URL: postgresql://oshal:oshalpass@oshal-db:5432/oshal
+    # ── ChromaDB — shared RAG store ──
+    CHROMADB_URL: http://oshal-chromadb:8000
+  # ── Hot-swap bind mounts (same pattern as oshal) ──────────────────────────
+  volumes: &bot-volumes-common
+    - ./src/api:/app/src/api
+    - ./src/app:/app/src/app
+    - ./src/features:/app/src/features
+    - ./src/shared:/app/src/shared
+    - ./src/entities:/app/src/entities
+    - ./src/pages:/app/src/pages
+    - /app/node_modules
+    - ./tsconfig.json:/app/tsconfig.json
+    - ./tsconfig.server.json:/app/tsconfig.server.json
+    - ./vite.config.ts:/app/vite.config.ts
+    - ./vite.config.ts:/app/vite.config.ts
+    - ./scripts:/app/scripts:ro
+    - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+    - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+    - ./workspace-shared:/app/workspace:rw
+    - ./config-seed:/app/config-seed
+    - claude-auth:/root/.claude
+    - cline-auth:/root/.cline
+  networks:
+    - oshal-swarm
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 60s
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SERVICES
+# ═════════════════════════════════════════════════════════════════════════════
+services:
+
+  # ─── Infrastructure (shared by all bots) ─────────────────────────────────
+
+  # Redis — Message bus, task routing, schedule persistence
+  oshal-redis:
+    image: redis:7-alpine
+    container_name: oshal-swarm-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - oshal-swarm
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Postgres — Agent state, tool registry, swarm persistence
+  oshal-db:
+    image: postgres:16-alpine
+    container_name: oshal-swarm-db
+    command: ["postgres", "-c", "max_connections=300"]
+    environment:
+      POSTGRES_USER: oshal
+      POSTGRES_PASSWORD: oshalpass
+      POSTGRES_DB: oshal
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    networks:
+      - oshal-swarm
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oshal"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ChromaDB — RAG vector store (shared across all bots)
+  oshal-chromadb:
+    image: chromadb/chroma:0.4.24
+    container_name: oshal-swarm-chromadb
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    networks:
+      - oshal-swarm
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+
+  # ─── Workspace Browser (code-server) ─────────────────────────────────────
+  # Provides VS Code in-browser at http://localhost:8443 for browsing
+  # swarm workspace artifacts. Cockpit links use:
+  #   http://localhost:8443/?folder=/workspace/<ticketId>
+  code-server:
+    image: codercom/code-server:latest
+    container_name: oshal-code-server
+    ports:
+      - "8443:8080"
+    environment:
+      PASSWORD: ""
+      DOCKER_USER: root
+    command: ["--auth", "none", "--bind-addr", "0.0.0.0:8080", "/workspace"]
+    volumes:
+      - ./workspace-shared:/workspace:rw
+    networks:
+      - oshal-swarm
+    restart: unless-stopped
+
+  # ─── Bot Services ───────────────────────────────────────────────────────
+
+  # ════════════════════════════════════════════════════════════════════════
+  # PROJECT MANAGER — Swarm Coordinator & Agitator
+  # OWNS: scheduler, migrations, queue manager
+  # ════════════════════════════════════════════════════════════════════════
+  project-manager:
+    <<: *bot-common
+    container_name: swarm-project-manager
+    ports:
+      - "1455:1455"
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: project-manager
+      AGENT_ID: project-manager
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/project-manager.yaml
+      BOT_ROLE: swarm/primary
+      AGENT_CAPABILITIES: "orchestration,task-decomposition,quality-enforcement,multi-agent-coordination,ticket-management"
+      AGENT_MAX_CONCURRENT: "3"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-project-manager:5000"
+      AGENT_EXTERNAL_PORT: "3010"
+      # PM ONLY — owns scheduler, migrations, and queue
+      ENABLE_QUEUE_MANAGER: "true"
+      ENABLE_AGENT_SCHEDULER: "true"
+      RUN_MIGRATIONS: "true"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - pm-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-chromadb:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # TASK MANAGER — QA Gatekeeper & Verification Agent
+  # ════════════════════════════════════════════════════════════════════════
+  task-manager:
+    <<: *bot-common
+    container_name: swarm-task-manager
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: task-manager
+      AGENT_ID: task-manager
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/task-manager.yaml
+      BOT_ROLE: swarm/qa-gatekeeper
+      AGENT_CAPABILITIES: "qa,verification,testing,code-review,quality-assurance,lifecycle-validation"
+      AGENT_MAX_CONCURRENT: "3"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-task-manager:5000"
+      AGENT_EXTERNAL_PORT: "3011"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - tm-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # CODE DEVELOPER — General Implementation Worker
+  # ════════════════════════════════════════════════════════════════════════
+  code-developer:
+    <<: *bot-common
+    container_name: swarm-code-developer
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: code-developer
+      AGENT_ID: code-developer
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/code-developer.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "coding,implementation,debugging,refactoring,feature-development,bug-fixing"
+      AGENT_MAX_CONCURRENT: "3"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-code-developer:5000"
+      AGENT_EXTERNAL_PORT: "3012"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - codedev-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # CODE REVIEWER — Review Specialist
+  # ════════════════════════════════════════════════════════════════════════
+  code-reviewer:
+    <<: *bot-common
+    container_name: swarm-code-reviewer
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: code-reviewer
+      AGENT_ID: code-reviewer
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/code-reviewer.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "code-review,security,quality,testing,architecture,refactoring"
+      AGENT_MAX_CONCURRENT: "2"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-code-reviewer:5000"
+      AGENT_EXTERNAL_PORT: "3013"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - reviewer-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # DOCUMENTATION WRITER — Docs Specialist
+  # ════════════════════════════════════════════════════════════════════════
+  documentation-writer:
+    <<: *bot-common
+    container_name: swarm-documentation-writer
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: documentation-writer
+      AGENT_ID: documentation-writer
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/documentation-writer.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "documentation,readme,adr,jsdoc,ralf,handover,technical-writing"
+      AGENT_MAX_CONCURRENT: "2"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-documentation-writer:5000"
+      AGENT_EXTERNAL_PORT: "3016"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - docwriter-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # RCA SPECIALIST — Root Cause Analysis & Incident Investigation
+  # ════════════════════════════════════════════════════════════════════════
+  rca-specialist:
+    <<: *bot-common
+    container_name: swarm-rca-specialist
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: rca-specialist
+      AGENT_ID: rca-specialist
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/rca-specialist.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "debugging,investigation,root-cause,incident,analysis,troubleshooting"
+      AGENT_MAX_CONCURRENT: "2"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-rca-specialist:5000"
+      AGENT_EXTERNAL_PORT: "3014"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - rca-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # PRESENTATION BOT — Slide Generation & Reporting Specialist
+  # ════════════════════════════════════════════════════════════════════════
+  presentation-bot:
+    <<: *bot-common
+    container_name: swarm-presentation-bot
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: presentation-bot
+      AGENT_ID: presentation-bot
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/presentation-bot.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "presentation,slides,reporting,visualization,formatting"
+      AGENT_MAX_CONCURRENT: "2"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-presentation-bot:5000"
+      AGENT_EXTERNAL_PORT: "3015"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - prebot-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # AGENT FACTORY — Meta-Agent for Creating New Specialists
+  # ════════════════════════════════════════════════════════════════════════
+  agent-factory:
+    <<: *bot-common
+    container_name: swarm-agent-factory
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: agent-factory
+      AGENT_ID: agent-factory
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/agent-factory.yaml
+      BOT_ROLE: swarm/factory
+      AGENT_CAPABILITIES: "agent-creation,bot-provisioning,capability-expansion,agent-design,persona-generation"
+      AGENT_MAX_CONCURRENT: "1"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-agent-factory:5000"
+      AGENT_EXTERNAL_PORT: "3017"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - agentfactory-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # DEVOPS BOT — Infrastructure & CI/CD Specialist
+  # ════════════════════════════════════════════════════════════════════════
+  devops-bot:
+    <<: *bot-common
+    container_name: swarm-devops-bot
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: devops-bot
+      AGENT_ID: devops-bot
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/devops-bot.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "infrastructure,cicd,kubernetes,docker,monitoring,deployment"
+      AGENT_MAX_CONCURRENT: "2"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-devops-bot:5000"
+      AGENT_EXTERNAL_PORT: "3018"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - devops-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ─── DISABLED BOTS (on-demand, not in default 14-bot swarm) ──────────
+  # incident-response-bot (port 3019) — see git history for full definition
+
+  # ════════════════════════════════════════════════════════════════════════
+  # RESEARCH BOT — Investigation & Analysis Specialist
+  # ════════════════════════════════════════════════════════════════════════
+  research-bot:
+    <<: *bot-common
+    container_name: swarm-research-bot
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: research-bot
+      AGENT_ID: research-bot
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/research-bot.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "research,analysis,documentation,investigation"
+      AGENT_MAX_CONCURRENT: "3"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-research-bot:5000"
+      AGENT_EXTERNAL_PORT: "3020"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - research-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # SECURITY AUDITOR BOT — Security & Compliance Specialist
+  # ════════════════════════════════════════════════════════════════════════
+  security-auditor-bot:
+    <<: *bot-common
+    container_name: swarm-security-auditor-bot
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: security-auditor-bot
+      AGENT_ID: security-auditor-bot
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/security-auditor-bot.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "security,compliance,vulnerability-assessment,audit"
+      AGENT_MAX_CONCURRENT: "2"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-security-auditor-bot:5000"
+      AGENT_EXTERNAL_PORT: "3021"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - secaudit-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ════════════════════════════════════════════════════════════════════════
+  # TEST ENGINEER — Testing & Validation Specialist
+  # ════════════════════════════════════════════════════════════════════════
+  test-engineer:
+    <<: *bot-common
+    container_name: swarm-test-engineer
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: test-engineer
+      AGENT_ID: test-engineer
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/test-engineer.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "testing,validation,verification,test-automation,qa"
+      AGENT_MAX_CONCURRENT: "3"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-test-engineer:5000"
+      AGENT_EXTERNAL_PORT: "3022"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - testengineer-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  architect-bot:
+    <<: *bot-common
+    container_name: swarm-architect-bot
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: architect-bot
+      AGENT_ID: architect-bot
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/system-architect.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "architecture,design,system-modeling,diagrams,patterns,review"
+      AGENT_MAX_CONCURRENT: "3"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-architect-bot:5000"
+      AGENT_EXTERNAL_PORT: "3023"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - architect-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # business-plan-bot (port 3024) — see git history for full definition
+
+  tester-bot:
+    <<: *bot-common
+    container_name: swarm-tester-bot
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: tester-bot
+      AGENT_ID: tester-bot
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/tester-bot.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "testing,qa,test-standards,acceptance-criteria,test-automation,quality-assurance"
+      AGENT_MAX_CONCURRENT: "3"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-tester-bot:5000"
+      AGENT_EXTERNAL_PORT: "3025"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - tester-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  general-bot:
+    <<: *bot-common
+    container_name: swarm-general-bot
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: general-bot
+      AGENT_ID: a0000000-0000-0000-0000-000000000099
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/everything-default.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "general,analysis,writing,synthesis,review,overflow,code,implementation,testing"
+      AGENT_MAX_CONCURRENT: "3"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-general-bot:5000"
+      AGENT_EXTERNAL_PORT: "3026"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed
+      - claude-auth:/root/.claude
+      - generalbot-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+  # ─── Workflow Assistant (3027) ──────────────────────────────────────────
+  workflow-assistant:
+    <<: *bot-common
+    container_name: swarm-workflow-assistant
+    expose: # internal-only since 2026-07-15 — bot-node /api/swarm-execute must not be host-reachable
+      - "5000"
+    environment:
+      <<: *bot-env-common
+      BOT_NAME: workflow-assistant
+      AGENT_ID: 307dc8bf-66df-4299-a656-24fe52bc7ae8
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/workflow-assistant.yaml
+      BOT_ROLE: localhost/worker
+      AGENT_CAPABILITIES: "workflow-design,process-architecture,orchestration,workflow-validation,workflow-deployment"
+      AGENT_MAX_CONCURRENT: "2"
+      AGENT_SCOPE: shared
+      AGENT_ENDPOINT_URL: "http://swarm-workflow-assistant:5000"
+      AGENT_EXTERNAL_PORT: "3027"
+    volumes:
+      - ./src/api:/app/src/api
+      - ./src/app:/app/src/app
+      - ./src/features:/app/src/features
+      - ./src/shared:/app/src/shared
+      - ./src/entities:/app/src/entities
+      - ./src/pages:/app/src/pages
+      - /app/node_modules
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.server.json:/app/tsconfig.server.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./scripts:/app/scripts:ro
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./any-bot/ui-cockpit:/app/any-bot/ui-cockpit:ro
+      - ./workspace-shared:/app/workspace:rw
+      - ./config-seed:/app/config-seed:ro
+      - claude-auth:/root/.claude
+      - wfassistant-settings:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VOLUMES
+# ═════════════════════════════════════════════════════════════════════════════
+volumes:
+  # Per-bot private settings
+  pm-settings:
+    driver: local
+  tm-settings:
+    driver: local
+  codedev-settings:
+    driver: local
+  reviewer-settings:
+    driver: local
+  docwriter-settings:
+    driver: local
+  rca-settings:
+    driver: local
+  prebot-settings:
+    driver: local
+  agentfactory-settings:
+    driver: local
+  devops-settings:
+    driver: local
+  # incident-settings:
+  #   driver: local
+  research-settings:
+    driver: local
+  secaudit-settings:
+    driver: local
+  testengineer-settings:
+    driver: local
+  architect-settings:
+    driver: local
+  # bizplan-settings:
+  #   driver: local
+  tester-settings:
+    driver: local
+  generalbot-settings:
+    driver: local
+  wfassistant-settings:
+    driver: local
+  # Infrastructure data
+  chroma-data:
+    driver: local
+  redis-data:
+    driver: local
+  claude-auth:
+    driver: local
+  cline-auth:
+    driver: local
+  pg-data:
+    driver: local
+
+# ═════════════════════════════════════════════════════════════════════════════
+# NETWORKS
+# ═════════════════════════════════════════════════════════════════════════════
+networks:
+  oshal-swarm:
+    name: oshal-swarm
+    driver: bridge

@@ -1,0 +1,42 @@
+provider: paddle
+displayName: Paddle
+version: 1.0.0
+baseUrl: https://api.paddle.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: paddle-customers
+    method: GET
+    path: /customers
+  - name: customer
+    tool: paddle-customer
+    method: GET
+    path: /customers/{customer_id}
+  - name: subscriptions
+    tool: paddle-subscriptions
+    method: GET
+    path: /subscriptions
+  - name: transactions
+    tool: paddle-transactions
+    method: GET
+    path: /transactions
+  - name: products
+    tool: paddle-products
+    method: GET
+    path: /products
+  - name: prices
+    tool: paddle-prices
+    method: GET
+    path: /prices
+metadata:
+  icon: paddle
+  iconTitle: Paddle
+  iconSource: simple-icons
+  iconVerified: true

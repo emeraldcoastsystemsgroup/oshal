@@ -1,0 +1,30 @@
+provider: squarespace
+displayName: Squarespace
+version: 1.0.0
+baseUrl: https://api.squarespace.com/1.0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: orders
+    tool: squarespace-orders
+    method: GET
+    path: /commerce/orders
+  - name: inventory
+    tool: squarespace-inventory
+    method: GET
+    path: /commerce/inventory
+  - name: products
+    tool: squarespace-products
+    method: GET
+    path: /commerce/products
+metadata:
+  icon: squarespace
+  iconTitle: Squarespace
+  iconSource: simple-icons
+  iconVerified: true

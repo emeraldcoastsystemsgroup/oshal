@@ -1,0 +1,67 @@
+node_modules
+.git
+dist
+coverage
+*.log
+agency-agents
+infra
+tests
+docs
+# ...but Dockerfile.oshal COPYs docs/governance/ (RLS bootstrap SQL) — keep it in context.
+!docs/governance/
+examples
+.github
+.claude
+.vscode
+_archive
+tmp
+temp
+workspace
+workspace-shared
+output
+data
+logs
+/*.md
+scripts/
+!scripts/container-start.sh
+!scripts/bot-entrypoint.sh
+!scripts/setup-cline-auth.sh
+!scripts/swarm-bot-lifecycle.sh
+# Argo DAG hooks (ADR-078 §1) — the WorkflowTemplate execs these directly; without these
+# allowlist entries the Dockerfile COPY fails at build (context excludes scripts/ by default).
+!scripts/bot-node-batch.sh
+!scripts/finalize-incident.sh
+!scripts/record-cost.sh
+# All OSHAL connector/app CLIs are runtime-required — keep them ALL in the build
+# context so every app (walmart, uber, spotify, duffel, …) survives a container
+# recreate. New oshal-*.js CLIs are included automatically.
+!scripts/oshal-*.js
+# (the swarm CLI moved to packages/swarm-cli — a real npm package, installed globally in the
+#  image; packages/ is not excluded, so it needs no allowlist entry here.)
+!scripts/migrations/
+# Dockerfile.oshal COPYs scripts/governance/ (app-role provisioning) — keep it in context.
+!scripts/governance/
+/*.bat
+/*.sh
+oshal.*
+docker
+infra
+checkin-*.log
+updated_master_list*
+config-output
+example-configs
+
+# ── Operator-local secrets: NEVER in any build context ─────────────────────────
+# git-archive builds (oshal-deploy.sh) exclude these by being untracked; these entries are the
+# defense-in-depth for a hand-run `docker build .` from a working tree where they DO exist.
+# The tracked, non-secret seed files (global-config.json, profiles/) stay in context — the
+# Dockerfile bakes them to /app/config-seed.dist/ for the registry installer.
+config-seed/secrets.json
+config-seed/claude-credentials.json
+config-seed/*credentials*
+config-seed/*.key
+.env
+.env.*
+
+# The dist-compose generator runs at image build (scripts/ is excluded by default above).
+!scripts/gen-dist-compose.js

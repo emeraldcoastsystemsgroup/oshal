@@ -1,0 +1,30 @@
+# YNAB (You Need A Budget) — personal budgets, accounts, and transactions via Bearer token.
+provider: ynab
+displayName: YNAB
+version: 1.0.0
+baseUrl: https://api.ynab.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: budgets
+    tool: ynab-budgets
+    method: GET
+    path: /budgets
+  - name: accounts
+    tool: ynab-accounts
+    method: GET
+    path: /budgets/{budget_id}/accounts
+  - name: transactions
+    tool: ynab-transactions
+    method: GET
+    path: /budgets/{budget_id}/transactions
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/ynab.com.ico

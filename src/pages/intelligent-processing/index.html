@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<!--
+  Intelligent Processing — Self-Healing Queue screen.
+  Standalone surface registered as the intelligent-processing app's ribbon icon
+  (swarm-apps/intelligent-processing.yaml ui.static). Served auth-protected at
+  /intelligent-processing; calls /api/tickets with the session cookie.
+
+  Filters by status (default Backlog) and GROUPS by alert fingerprint so the same
+  issue is always one row with a count — the queue cannot show 10K duplicates.
+  Promote moves backlog -> approved (the only way work enters the RCA pipeline).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Intelligent Processing — Self-Healing Queue</title>
+  <style>
+    :root {
+      --navy: #0b1733; --navy2: #11203f; --emerald: #2ecc8f; --emerald-dim: #1d8c63;
+      --text: #e8eef7; --muted: #8aa0c0; --line: #22324f; --bg: #070d1c;
+      --urgent: #ff5b6e; --high: #ffa033; --medium: #ffd23f; --low: #6fb7ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+      font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif; font-size: 13px; }
+    header { display: flex; align-items: center; gap: 14px; padding: 14px 18px;
+      background: linear-gradient(90deg, var(--navy), var(--navy2)); border-bottom: 1px solid var(--line); }
+    header h1 { font-size: 15px; margin: 0; font-family: "Archivo", sans-serif; letter-spacing: .3px; }
+    header .diamond { width: 14px; height: 14px; background: var(--emerald); transform: rotate(45deg); border-radius: 2px; }
+    .spacer { flex: 1; }
+    .stat { font-size: 12px; color: var(--muted); }
+    .stat b { color: var(--emerald); font-size: 15px; }
+    .controls { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+    select, button { background: var(--navy2); color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 7px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
+    button.primary { background: var(--emerald-dim); border-color: var(--emerald); color: #fff; }
+    button:hover { border-color: var(--emerald); }
+    .muted { color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+    tr:hover td { background: rgba(46,204,143,.04); }
+    .sev { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+    .sev.critical, .sev.urgent { background: rgba(255,91,110,.18); color: var(--urgent); }
+    .sev.warning, .sev.high, .sev.major { background: rgba(255,160,51,.18); color: var(--high); }
+    .sev.minor, .sev.medium { background: rgba(255,210,63,.16); color: var(--medium); }
+    .sev.info, .sev.low { background: rgba(111,183,255,.16); color: var(--low); }
+    .status { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
+    .count { display: inline-block; min-width: 20px; text-align: center; background: var(--navy2);
+      border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; font-weight: 700; }
+    .count.dup { border-color: var(--high); color: var(--high); }
+    .empty { padding: 48px; text-align: center; color: var(--muted); }
+    code { color: var(--emerald); }
+  </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <header>
+    <span class="diamond"></span>
+    <h1>Intelligent Processing</h1>
+    <span class="muted">Self-Healing Queue</span>
+    <div class="spacer"></div>
+    <span class="stat"><b id="statBacklog">0</b> backlog</span>
+    <span class="stat"><b id="statTotal">0</b> shown</span>
+  </header>
+
+  <div class="controls">
+    <label class="muted">Status</label>
+    <select id="statusFilter">
+      <option value="backlog" selected>Backlog (parked)</option>
+      <option value="approval_required">Approval Required</option>
+      <option value="approved">Approved</option>
+      <option value="in_process">In Process</option>
+      <option value="complete">Complete</option>
+      <option value="all">All</option>
+    </select>
+    <button id="refreshBtn">Refresh</button>
+    <span class="muted" id="updatedAt"></span>
+    <div class="spacer"></div>
+    <span class="muted">Grouped by alert fingerprint — one row per distinct issue.</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Severity</th><th>Alert</th><th>Target</th><th>Status</th>
+        <th>Count</th><th>Last seen</th><th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" style="display:none">No tickets in this view.</div>
+
+  <script>
+    const TICKET_TYPE = 'intelligent-processing';
+    const $ = (id) => document.getElementById(id);
+
+    function sevOf(t) {
+      const m = t.metadata || {};
+      return (m.severity || (t.priority || 'medium')).toLowerCase();
+    }
+    function fpOf(t) {
+      const m = t.metadata || {};
+      return m.alertFingerprint || `${m.alertname || t.title}:${m.target || ''}`;
+    }
+    function ageOf(iso) {
+      if (!iso) return '—';
+      const ms = Date.now() - new Date(iso).getTime();
+      const min = Math.floor(ms / 60000);
+      if (min < 60) return `${min}m`;
+      const h = Math.floor(min / 60);
+      if (h < 24) return `${h}h`;
+      return `${Math.floor(h / 24)}d`;
+    }
+    function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    async function load() {
+      const status = $('statusFilter').value;
+      const url = status === 'all' ? '/api/tickets' : `/api/tickets?status=${encodeURIComponent(status)}`;
+      let tickets = [];
+      try {
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        const data = await resp.json();
+        tickets = (data.tickets || []).filter(t => t.ticketType === TICKET_TYPE);
+      } catch (e) {
+        $('rows').innerHTML = `<tr><td colspan="7" class="muted">Failed to load: ${esc(e.message)}</td></tr>`;
+        return;
+      }
+
+      // Group by alert fingerprint so the same issue is one row (count >1 = dupes).
+      const groups = new Map();
+      for (const t of tickets) {
+        const k = fpOf(t);
+        const g = groups.get(k) || { tickets: [], sev: sevOf(t), m: t.metadata || {}, title: t.title };
+        g.tickets.push(t);
+        groups.set(k, g);
+      }
+
+      const rows = [...groups.values()].sort((a, b) => {
+        const order = { critical: 0, urgent: 0, warning: 1, high: 1, major: 1, minor: 2, medium: 2, info: 3, low: 3 };
+        return (order[a.sev] ?? 4) - (order[b.sev] ?? 4);
+      });
+
+      let backlog = 0;
+      $('rows').innerHTML = rows.map(g => {
+        const latest = g.tickets.slice().sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
+        const isBacklog = latest.status === 'backlog';
+        if (isBacklog) backlog++;
+        const dup = g.tickets.length > 1 ? 'dup' : '';
+        const action = isBacklog
+          ? `<button class="primary" data-id="${esc(latest.ticketId)}">Promote to approval</button>`
+          : `<span class="muted">—</span>`;
+        return `<tr>
+          <td><span class="sev ${esc(g.sev)}">${esc(g.sev)}</span></td>
+          <td>${esc(g.m.alertname || g.title)}</td>
+          <td><code>${esc(g.m.target || '')}</code></td>
+          <td><span class="status">${esc(latest.status)}</span></td>
+          <td><span class="count ${dup}">${g.tickets.length}</span></td>
+          <td class="muted">${ageOf(latest.createdAt)}</td>
+          <td>${action}</td>
+        </tr>`;
+      }).join('');
+
+      $('empty').style.display = rows.length ? 'none' : 'block';
+      $('statBacklog').textContent = backlog;
+      $('statTotal').textContent = rows.length;
+      $('updatedAt').textContent = 'updated ' + new Date().toLocaleTimeString();
+
+      document.querySelectorAll('button[data-id]').forEach(btn => {
+        btn.addEventListener('click', () => promote(btn.getAttribute('data-id'), btn));
+      });
+    }
+
+    async function promote(ticketId, btn) {
+      btn.disabled = true; btn.textContent = 'Promoting…';
+      try {
+        await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/status`, {
+          method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'approved' }),
+        });
+      } catch (e) { /* surfaced on reload */ }
+      load();
+    }
+
+    $('statusFilter').addEventListener('change', load);
+    $('refreshBtn').addEventListener('click', load);
+    load();
+    setInterval(load, 20000);
+  </script>
+</body>
+</html>

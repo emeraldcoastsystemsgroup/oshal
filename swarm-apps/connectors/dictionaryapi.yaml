@@ -1,0 +1,22 @@
+provider: dictionaryapi
+displayName: Free Dictionary API
+version: 1.0.0
+baseUrl: https://api.dictionaryapi.dev/api/v2
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: entry
+    tool: dictionaryapi-entry
+    method: GET
+    path: /entries/en/{word}
+    query: {}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/dictionaryapi.dev.ico

@@ -1,0 +1,27 @@
+provider: cronitor
+displayName: Cronitor
+version: 1.0.0
+baseUrl: https://cronitor.io/api
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: monitors
+    tool: cronitor-monitors
+    method: GET
+    path: /monitors
+    query:
+      page: '{page}'
+  - name: monitor
+    tool: cronitor-monitor
+    method: GET
+    path: /monitors/{key}
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/cronitor.io.ico

@@ -1,0 +1,37 @@
+provider: geoapify
+displayName: Geoapify
+version: 1.0.0
+baseUrl: https://api.geoapify.com/v1
+auth:
+  type: apiKeyQuery
+  param: apiKey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: geocode-search
+    tool: geoapify-geocode-search
+    method: GET
+    path: /geocode/search
+    query:
+      text: '{q}'
+  - name: geocode-reverse
+    tool: geoapify-geocode-reverse
+    method: GET
+    path: /geocode/reverse
+    query:
+      lat: '{lat}'
+      lon: '{lon}'
+  - name: places
+    tool: geoapify-places
+    method: GET
+    path: /places
+    query:
+      categories: '{categories}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/geoapify.com.ico

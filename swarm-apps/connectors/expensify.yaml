@@ -1,0 +1,36 @@
+provider: expensify
+displayName: Expensify
+version: 1.0.0
+baseUrl: https://integrations.expensify.com/Integration-Server
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: export-report
+    tool: expensify-export-report
+    method: GET
+    path: /ExpensifyIntegrations
+    query:
+      requestJobDescription: '{requestJobDescription}'
+  - name: get-policy-list
+    tool: expensify-get-policy-list
+    method: GET
+    path: /ExpensifyIntegrations
+    query:
+      requestJobDescription: '{requestJobDescription}'
+  - name: get-policy
+    tool: expensify-get-policy
+    method: GET
+    path: /ExpensifyIntegrations
+    query:
+      requestJobDescription: '{requestJobDescription}'
+metadata:
+  icon: expensify
+  iconTitle: Expensify
+  iconSource: simple-icons
+  iconVerified: true

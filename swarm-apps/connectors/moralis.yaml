@@ -1,0 +1,36 @@
+provider: moralis
+displayName: Moralis
+version: 1.0.0
+baseUrl: https://deep-index.moralis.io/api/v2.2
+auth:
+  type: apiKeyHeader
+  header: X-API-Key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: native-balance
+    tool: moralis-native-balance
+    method: GET
+    path: /{address}/balance
+    query:
+      chain: '{chain}'
+  - name: wallet-nfts
+    tool: moralis-wallet-nfts
+    method: GET
+    path: /{address}/nft
+    query:
+      chain: '{chain}'
+  - name: erc20-price
+    tool: moralis-erc20-price
+    method: GET
+    path: /erc20/{address}/price
+    query:
+      chain: '{chain}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/deep-index.moralis.io.ico

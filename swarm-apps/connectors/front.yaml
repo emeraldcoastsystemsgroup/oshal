@@ -1,0 +1,41 @@
+provider: front
+displayName: Front
+version: 1.0.0
+baseUrl: https://api2.frontapp.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: conversations
+    tool: front-conversations
+    method: GET
+    path: /conversations
+  - name: conversation
+    tool: front-conversation
+    method: GET
+    path: /conversations/{conversation_id}
+  - name: conversation-messages
+    tool: front-conversation-messages
+    method: GET
+    path: /conversations/{conversation_id}/messages
+  - name: inboxes
+    tool: front-inboxes
+    method: GET
+    path: /inboxes
+  - name: contacts
+    tool: front-contacts
+    method: GET
+    path: /contacts
+  - name: teammates
+    tool: front-teammates
+    method: GET
+    path: /teammates
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/api2.frontapp.com.ico

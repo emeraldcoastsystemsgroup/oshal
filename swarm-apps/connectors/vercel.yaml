@@ -1,0 +1,36 @@
+provider: vercel
+displayName: Vercel
+version: 1.0.0
+baseUrl: https://api.vercel.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: vercel-me
+    method: GET
+    path: /v2/user
+  - name: projects
+    tool: vercel-projects
+    method: GET
+    path: /v9/projects
+    query:
+      limit: '100'
+  - name: deployments
+    tool: vercel-deployments
+    method: GET
+    path: /v6/deployments
+    query:
+      limit: '100'
+metadata:
+  description: "Read the connected Vercel user, projects, and deployments."
+  category: "Developer tools"
+  icon: vercel
+  iconTitle: Vercel
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LinkedIn Content Assistant — OSHAL</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary); --panel: var(--bg-card); --panel2: var(--bg-tertiary);
+    --line: var(--border-color); --text: var(--text-primary); --muted: var(--text-muted);
+    --accent: var(--accent-primary, #0a66c2); --ok: var(--status-success, #00d3a7);
+    --warn: #e0a800; --bad: #ff6b6b; --li: #0a66c2;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+  .top { padding:16px 22px 12px; border-bottom:1px solid var(--line); }
+  .top h1 { font-size:19px; margin:0 0 4px; display:flex; align-items:center; gap:9px; }
+  .top .sub { color:var(--muted); font-size:12.5px; }
+  .li-badge { background:var(--li); color:#fff; border-radius:6px; font-size:11px; padding:2px 7px; font-weight:700; }
+  .split { display:flex; gap:0; height:calc(100vh - 62px); }
+  .pane { overflow-y:auto; padding:18px 20px; }
+  .left { flex:0 0 44%; border-right:1px solid var(--line); }
+  .right { flex:1; }
+  .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin:0 0 10px; display:flex; align-items:center; gap:8px; }
+  .lbl .ref { margin-left:auto; cursor:pointer; color:var(--accent); font-size:11px; text-transform:none; letter-spacing:0; }
+  label.f { display:block; font-size:11.5px; color:var(--muted); margin:11px 0 4px; }
+  input, textarea, select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px; font-family:inherit; }
+  textarea { min-height:70px; resize:vertical; }
+  .btn { border:none; border-radius:8px; padding:9px 15px; font-size:13px; font-weight:600; cursor:pointer; }
+  .btn.sm { padding:6px 11px; font-size:12px; }
+  .btn.primary { background:var(--accent); color:#fff; }
+  .btn.ok { background:var(--ok); color:#04120e; }
+  .btn.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--text); }
+  .btn.danger { background:transparent; border:1px solid var(--bad); color:var(--bad); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+  .postbody { white-space:pre-wrap; font-size:14px; line-height:1.6; }
+  .score { display:flex; align-items:baseline; gap:8px; margin:2px 0 10px; }
+  .score .n { font-size:30px; font-weight:800; }
+  .score .of { color:var(--muted); font-size:13px; }
+  .score .mode { margin-left:auto; font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; border:1px solid var(--line); border-radius:20px; padding:2px 8px; color:var(--muted); }
+  .score .mode.fallback { color:var(--warn); border-color:var(--warn); }
+  .dim { margin:7px 0; }
+  .dim .dr { display:flex; justify-content:space-between; font-size:11.5px; color:var(--muted); margin-bottom:3px; }
+  .bar { height:6px; background:var(--panel2); border-radius:4px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--accent); }
+  .rationale { color:var(--muted); font-size:12px; line-height:1.5; margin-top:9px; border-top:1px dashed var(--line); padding-top:9px; }
+  .pill { font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; border-radius:20px; padding:2px 9px; font-weight:700; }
+  .pill.pending-approval { background:rgba(224,168,0,.15); color:var(--warn); }
+  .pill.scheduled { background:rgba(10,102,194,.15); color:var(--accent); }
+  .pill.published { background:rgba(0,211,167,.15); color:var(--ok); }
+  .pill.rejected { background:rgba(255,107,107,.13); color:var(--bad); }
+  .pill.draft { background:var(--panel2); color:var(--muted); }
+  .draftrow { cursor:pointer; }
+  .draftrow:hover { border-color:var(--accent); }
+  .draftrow .t { font-size:13.5px; font-weight:600; margin:0 0 4px; }
+  .draftrow .meta { display:flex; gap:9px; align-items:center; font-size:11.5px; color:var(--muted); }
+  .empty { background:var(--panel); border:1px dashed var(--line); border-radius:12px; padding:22px; text-align:center; color:var(--muted); font-size:13px; }
+  .note { font-size:12px; border-radius:8px; padding:9px 12px; margin-bottom:10px; }
+  .note.skip { background:rgba(224,168,0,.12); color:var(--warn); border:1px solid var(--warn); }
+  .note.err { background:rgba(255,107,107,.1); color:var(--bad); border:1px solid var(--bad); }
+  .note.ok { background:rgba(0,211,167,.12); color:var(--ok); border:1px solid var(--ok); }
+  .spin { color:var(--muted); font-size:12.5px; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="top">
+    <h1><span class="li-badge">in</span> LinkedIn Content Assistant</h1>
+    <div class="sub">Draft on the social-writer bot &rarr; scored by the quality judge &rarr; approve into a slot &rarr; publish. Nothing posts without your click.</div>
+  </div>
+  <div class="split">
+    <div class="pane left">
+      <div class="lbl">Compose</div>
+      <div class="card">
+        <label class="f">Topic *</label>
+        <input id="topic" placeholder="e.g. Why multi-agent swarms beat single monolith agents" />
+        <label class="f">Goal (optional)</label>
+        <input id="goal" placeholder="e.g. Position me as an enterprise AI-orchestration builder" />
+        <div class="row" style="gap:10px;">
+          <div style="flex:1;">
+            <label class="f">Tone</label>
+            <select id="tone">
+              <option value="">Credible builder voice (default)</option>
+              <option>Warm and personal</option>
+              <option>Punchy and contrarian</option>
+              <option>Analytical and data-led</option>
+              <option>Playful but professional</option>
+            </select>
+          </div>
+          <div style="flex:1;">
+            <label class="f">Share a link (optional)</label>
+            <input id="sourceUrl" placeholder="https://..." />
+          </div>
+        </div>
+        <div class="row" style="margin-top:14px;">
+          <button class="btn primary" id="go">Draft &amp; score</button>
+          <span class="spin" id="composeStatus"></span>
+        </div>
+      </div>
+      <div class="lbl" style="margin-top:18px;">My drafts <span class="ref" id="refreshDrafts">refresh</span></div>
+      <div id="drafts"></div>
+    </div>
+    <div class="pane right">
+      <div class="lbl">Review</div>
+      <div id="review"><div class="empty">Compose a topic on the left, or pick a draft, to see the scored post here.</div></div>
+    </div>
+  </div>
+
+<script>
+const API = '/api/linkedin-assistant';
+let current = null;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function statusPill(st){ return `<span class="pill ${esc(st)}">${esc(st.replace('-',' '))}</span>`; }
+
+async function api(path, opts){
+  const r = await fetch(API+path, Object.assign({ headers:{'Content-Type':'application/json'} }, opts));
+  const j = await r.json().catch(()=>({}));
+  return { ok:r.ok, status:r.status, body:j };
+}
+
+function dimBars(dims){
+  return Object.entries(dims||{}).map(([k,v])=>{
+    const short = esc(k.split('—')[0].trim());
+    return `<div class="dim"><div class="dr"><span>${short}</span><span>${v}</span></div><div class="bar"><i style="width:${Math.max(2,Math.min(100,v))}%"></i></div></div>`;
+  }).join('');
+}
+
+function renderReview(d, notice){
+  current = d;
+  const mode = d.judgeMode==='lexical-fallback' ? '<span class="mode fallback">lexical fallback</span>' : (d.judgeMode ? '<span class="mode">judge</span>' : '');
+  const canApprove = d.state==='pending-approval';
+  const canReject = d.state==='draft'||d.state==='pending-approval'||d.state==='scheduled';
+  const canPublish = d.state==='scheduled';
+  let html = notice||'';
+  html += `<div class="card">
+    <div class="row" style="margin-bottom:8px;">${statusPill(d.state)}${d.refined?'<span class="pill draft">refined once</span>':''}${d.scheduledFor?`<span class="meta" style="color:var(--muted);font-size:11.5px;">slot: ${esc(new Date(d.scheduledFor).toLocaleString())}</span>`:''}</div>
+    <div class="score"><span class="n">${d.score==null?'—':d.score}</span><span class="of">/ 100</span>${mode}</div>
+    ${dimBars(d.dimensions)}
+    ${d.rationale?`<div class="rationale">${esc(d.rationale)}</div>`:''}
+  </div>`;
+  if (d.publishError) html += `<div class="note skip">${esc(d.publishError)}</div>`;
+  html += `<div class="card"><div class="postbody">${esc(d.body)}</div></div>`;
+  html += `<div class="row">
+    ${canApprove?'<button class="btn ok" id="approve">Approve &amp; schedule</button>':''}
+    ${canPublish?'<button class="btn primary" id="publish">Publish now</button>':''}
+    ${canReject?'<button class="btn danger sm" id="reject">Reject</button>':''}
+    <span class="spin" id="reviewStatus"></span>
+  </div>`;
+  document.getElementById('review').innerHTML = html;
+  const ap=document.getElementById('approve'); if(ap) ap.onclick=()=>mutate('/drafts/'+d.id+'/approve',{});
+  const rj=document.getElementById('reject'); if(rj) rj.onclick=()=>{ if(confirm('Reject this draft? This cannot be undone.')) mutate('/drafts/'+d.id+'/reject',{}); };
+  const pb=document.getElementById('publish'); if(pb) pb.onclick=()=>doPublish(d.id);
+}
+
+async function mutate(path){
+  const s=document.getElementById('reviewStatus'); if(s) s.textContent='working…';
+  const r = await api(path,{ method:'POST', body:'{}' });
+  if(!r.ok){ if(s) s.textContent = r.body.error||('error '+r.status); return; }
+  renderReview(r.body.draft); loadDrafts();
+}
+
+async function doPublish(id){
+  if(!confirm('Publish this post to your LinkedIn now?')) return;
+  const s=document.getElementById('reviewStatus'); if(s) s.textContent='publishing…';
+  const r = await api('/drafts/'+id+'/publish',{ method:'POST', body: JSON.stringify({ confirm:true }) });
+  const d = r.body.draft || current;
+  let notice='';
+  if(r.body.ok) notice = `<div class="note ok">Published to LinkedIn${r.body.postId?(' ('+esc(r.body.postId)+')'):''}.</div>`;
+  else if(r.body.skipped) notice = `<div class="note skip">${esc(r.body.message||'Connect LinkedIn to publish.')}</div>`;
+  else notice = `<div class="note err">${esc(r.body.message||r.body.error||('error '+r.status))}</div>`;
+  if(d) renderReview(d, notice); loadDrafts();
+}
+
+async function loadDrafts(){
+  const r = await api('/drafts',{});
+  const box = document.getElementById('drafts');
+  const list = (r.body&&r.body.drafts)||[];
+  if(!list.length){ box.innerHTML='<div class="empty">No drafts yet. Compose one above.</div>'; return; }
+  box.innerHTML = list.map(d=>`<div class="card draftrow" data-id="${d.id}">
+    <div class="t">${esc(d.topic)}</div>
+    <div class="meta">${statusPill(d.state)}<span>score ${d.score==null?'—':d.score}</span><span>${esc(new Date(d.updatedAt).toLocaleString())}</span></div>
+  </div>`).join('');
+  box.querySelectorAll('.draftrow').forEach(el=>el.onclick=async()=>{
+    const rr = await api('/drafts/'+el.dataset.id,{}); if(rr.ok) renderReview(rr.body.draft);
+  });
+}
+
+document.getElementById('go').onclick = async ()=>{
+  const topic = document.getElementById('topic').value.trim();
+  if(!topic){ document.getElementById('composeStatus').textContent='Topic is required.'; return; }
+  const body = {
+    topic,
+    goal: document.getElementById('goal').value.trim()||undefined,
+    tone: document.getElementById('tone').value||undefined,
+    sourceUrl: document.getElementById('sourceUrl').value.trim()||undefined,
+  };
+  const btn=document.getElementById('go'); btn.disabled=true;
+  document.getElementById('composeStatus').textContent='Drafting on the bot, then scoring… this can take a moment.';
+  const r = await api('/drafts',{ method:'POST', body: JSON.stringify(body) });
+  btn.disabled=false; document.getElementById('composeStatus').textContent='';
+  if(!r.ok){ document.getElementById('composeStatus').textContent = r.body.error||('error '+r.status); return; }
+  renderReview(r.body.draft); loadDrafts();
+};
+document.getElementById('refreshDrafts').onclick = loadDrafts;
+loadDrafts();
+</script>
+</body>
+</html>

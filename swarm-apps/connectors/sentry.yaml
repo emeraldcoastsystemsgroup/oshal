@@ -1,0 +1,32 @@
+provider: sentry
+displayName: Sentry
+version: 1.0.0
+baseUrl: https://sentry.io/api/0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: link-header
+resources:
+  - name: organizations
+    tool: sentry-organizations
+    method: GET
+    path: /organizations/
+    paginate: true
+  - name: projects
+    tool: sentry-projects
+    method: GET
+    path: /projects/
+    paginate: true
+metadata:
+  description: "List the connected Sentry account organizations and projects."
+  category: "Operations"
+  icon: sentry
+  iconTitle: Sentry
+  iconSource: simple-icons
+  iconVerified: true

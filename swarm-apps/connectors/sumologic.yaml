@@ -1,0 +1,48 @@
+provider: sumologic
+displayName: Sumo Logic
+version: 1.0.0
+baseUrl: https://${env:SUMOLOGIC_REGION:-api}.sumologic.com/api/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: collectors
+    tool: sumologic-collectors
+    method: GET
+    path: /collectors
+    query:
+      - limit
+      - offset
+  - name: search-job
+    tool: sumologic-search-job
+    method: GET
+    path: /search/jobs/{jobId}
+  - name: monitors
+    tool: sumologic-monitors
+    method: GET
+    path: /monitors/root
+  - name: dashboards
+    tool: sumologic-dashboards
+    method: GET
+    path: /dashboards/{dashboardId}
+  - name: fields
+    tool: sumologic-fields
+    method: GET
+    path: /fields
+  - name: partitions
+    tool: sumologic-partitions
+    method: GET
+    path: /partitions
+    query:
+      - limit
+      - token
+metadata:
+  icon: sumologic
+  iconTitle: Sumo Logic
+  iconSource: simple-icons
+  iconVerified: true

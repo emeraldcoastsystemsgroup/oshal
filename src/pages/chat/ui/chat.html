@@ -1,0 +1,591 @@
+<!--
+  CHANGE LOG
+  =============================================================================
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  =============================================================================
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of OSHAL chat window integrated with TaskOrchestrator and SSE streaming
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Switched chat task session IDs to UUID format for workspace/task traceability
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat</title>
+  <link rel="stylesheet" href="/fonts/codicon.css">
+  <link rel="stylesheet" href="/css/chat.css">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg-primary: #1e1e1e;
+      --bg-secondary: #252526;
+      --bg-tertiary: #2d2d2d;
+      --border-color: #3c3c3c;
+      --text-primary: #d4d4d4;
+      --text-secondary: #858585;
+      --accent-primary: #007acc;
+      --accent-hover: #005a9e;
+      --success-color: #4ec9b0;
+      --error-color: #f48771;
+      --warning-color: #dcdcaa;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .chat-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Header */
+    .chat-header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .chat-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .chat-header-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .chat-header-meta {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .chat-header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .header-btn:hover {
+      background: var(--bg-tertiary);
+    }
+
+    /* Message Area */
+    .message-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      scroll-behavior: smooth;
+    }
+
+    .chat-message {
+      margin-bottom: 16px;
+      animation: messageSlideIn 0.3s ease;
+    }
+
+    @keyframes messageSlideIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .message-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .message-role {
+      font-weight: 600;
+    }
+
+    .message-time {
+      font-size: 11px;
+      opacity: 0.7;
+    }
+
+    .message-body {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 12px;
+      line-height: 1.6;
+      word-wrap: break-word;
+    }
+
+    .user-message .message-body {
+      background: var(--bg-tertiary);
+    }
+
+    .assistant-message .message-body {
+      background: var(--bg-secondary);
+    }
+
+    .message-body code.inline-code {
+      background: var(--bg-tertiary);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+    }
+
+    .message-body pre.code-block {
+      background: var(--bg-primary);
+      padding: 12px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 8px 0;
+    }
+
+    .message-body pre.code-block code {
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* System Messages */
+    .system-message {
+      margin-bottom: 12px;
+    }
+
+    .system-message-content {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    .system-info .system-message-content {
+      background: rgba(0, 122, 204, 0.1);
+      color: var(--accent-primary);
+    }
+
+    .system-success .system-message-content {
+      background: rgba(78, 201, 176, 0.1);
+      color: var(--success-color);
+    }
+
+    .system-error .system-message-content {
+      background: rgba(244, 135, 113, 0.1);
+      color: var(--error-color);
+    }
+
+    .system-warning .system-message-content {
+      background: rgba(220, 220, 170, 0.1);
+      color: var(--warning-color);
+    }
+
+    /* Typing Indicator */
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      margin-bottom: 16px;
+      animation: messageSlideIn 0.3s ease;
+    }
+
+    .typing-dots {
+      display: flex;
+      gap: 4px;
+    }
+
+    .typing-dots span {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+      animation: typingPulse 1.4s infinite;
+    }
+
+    .typing-dots span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .typing-dots span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes typingPulse {
+      0%, 60%, 100% {
+        opacity: 0.3;
+      }
+      30% {
+        opacity: 1;
+      }
+    }
+
+    .typing-text {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-style: italic;
+    }
+
+    /* Input Area */
+    .input-area {
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-color);
+      padding: 16px;
+    }
+
+    .input-container {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    #messageInput {
+      flex: 1;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: none;
+      min-height: 44px;
+      max-height: 200px;
+      line-height: 1.5;
+    }
+
+    #messageInput:focus {
+      outline: none;
+      border-color: var(--accent-primary);
+    }
+
+    #sendBtn {
+      background: var(--accent-primary);
+      border: none;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+      min-height: 44px;
+    }
+
+    #sendBtn:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    #sendBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Connection Status */
+    .connection-status {
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .connection-status.connected {
+      background: rgba(78, 201, 176, 0.1);
+      color: var(--success-color);
+    }
+
+    .connection-status.disconnected {
+      background: rgba(244, 135, 113, 0.1);
+      color: var(--error-color);
+    }
+
+    .connection-status .codicon {
+      font-size: 12px;
+    }
+  </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="chat-container">
+    <!-- Header -->
+    <div class="chat-header">
+      <div class="chat-header-left">
+        <h1 class="chat-header-title">Chat</h1>
+        <div class="chat-header-meta">
+          <span id="taskId">Task: Loading...</span>
+        </div>
+      </div>
+      <div class="chat-header-right">
+        <div id="connectionStatus" class="connection-status disconnected">
+          <span class="codicon codicon-circle-slash"></span>
+          <span>Disconnected</span>
+        </div>
+        <button class="header-btn" onclick="clearChat()">
+          <span class="codicon codicon-clear-all"></span>
+          <span>Clear</span>
+        </button>
+        <button class="header-btn" onclick="window.location.href='/'">
+          <span class="codicon codicon-settings"></span>
+          <span>Config</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Message Area -->
+    <div class="message-area" id="messageArea">
+      <!-- Messages will be rendered here -->
+    </div>
+
+    <!-- Input Area -->
+    <div class="input-area">
+      <div class="input-container">
+        <textarea 
+          id="messageInput" 
+          placeholder="Type your message... (Shift+Enter for new line, Enter to send)"
+          rows="1"
+        ></textarea>
+        <button id="sendBtn">
+          <span class="codicon codicon-send"></span>
+          <span>Send</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { StreamingClient } from '/dist/shared/services/streaming-client/streaming-client.js';
+    import { 
+      renderUserMessage, 
+      renderAssistantMessage, 
+      renderSystemMessage,
+      renderTypingIndicator 
+    } from '/dist/shared/ui/message-renderer/message-renderer.js';
+
+    // Initialize
+    const taskId = generateTaskId();
+    const messageArea = document.getElementById('messageArea');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const connectionStatus = document.getElementById('connectionStatus');
+    
+    document.getElementById('taskId').textContent = `Task: ${taskId}`;
+
+    // Create streaming client
+    const streamingClient = new StreamingClient('/api', taskId);
+    
+    let typingIndicator = null;
+
+    // Connect to SSE stream
+    async function initializeChat() {
+      try {
+        await streamingClient.connect();
+        updateConnectionStatus(true);
+        addSystemMessage('Connected to chat', 'success');
+      } catch (error) {
+        console.error('Failed to connect:', error);
+        updateConnectionStatus(false);
+        addSystemMessage(`Connection failed: ${error.message}`, 'error');
+      }
+    }
+
+    // Update connection status display
+    function updateConnectionStatus(connected) {
+      if (connected) {
+        connectionStatus.className = 'connection-status connected';
+        connectionStatus.innerHTML = `
+          <span class="codicon codicon-check"></span>
+          <span>Connected</span>
+        `;
+      } else {
+        connectionStatus.className = 'connection-status disconnected';
+        connectionStatus.innerHTML = `
+          <span class="codicon codicon-circle-slash"></span>
+          <span>Disconnected</span>
+        `;
+      }
+    }
+
+    // Send message
+    async function sendMessage() {
+      const text = messageInput.value.trim();
+      if (!text) return;
+
+      // Disable input
+      messageInput.disabled = true;
+      sendBtn.disabled = true;
+
+      // Add user message to UI
+      const userMsg = renderUserMessage(text, new Date());
+      messageArea.appendChild(userMsg);
+      scrollToBottom();
+
+      // Clear input
+      messageInput.value = '';
+      messageInput.style.height = 'auto';
+
+      // Show typing indicator
+      showTypingIndicator();
+
+      try {
+        // Send via streaming client
+        await streamingClient.sendMessage(text);
+      } catch (error) {
+        console.error('Failed to send message:', error);
+        hideTypingIndicator();
+        addSystemMessage(`Failed to send: ${error.message}`, 'error');
+      } finally {
+        // Re-enable input
+        messageInput.disabled = false;
+        sendBtn.disabled = false;
+        messageInput.focus();
+      }
+    }
+
+    // Show typing indicator
+    function showTypingIndicator() {
+      if (!typingIndicator) {
+        typingIndicator = renderTypingIndicator();
+        messageArea.appendChild(typingIndicator);
+        scrollToBottom();
+      }
+    }
+
+    // Hide typing indicator
+    function hideTypingIndicator() {
+      if (typingIndicator) {
+        typingIndicator.remove();
+        typingIndicator = null;
+      }
+    }
+
+    // Add system message
+    function addSystemMessage(text, type = 'info') {
+      const msg = renderSystemMessage(text, type);
+      messageArea.appendChild(msg);
+      scrollToBottom();
+    }
+
+    // Scroll to bottom
+    function scrollToBottom() {
+      messageArea.scrollTop = messageArea.scrollHeight;
+    }
+
+    // Generate task ID
+    function generateTaskId() {
+      if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID();
+      }
+      return `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+    }
+
+    // Clear chat
+    window.clearChat = function() {
+      messageArea.innerHTML = '';
+      addSystemMessage('Chat cleared', 'info');
+    };
+
+    // Event listeners for streaming
+    streamingClient.on('message', (data) => {
+      console.log('Message event:', data);
+      hideTypingIndicator();
+      
+      if (data.role === 'assistant' && data.text) {
+        const msg = renderAssistantMessage(data.text, new Date());
+        messageArea.appendChild(msg);
+        scrollToBottom();
+      }
+    });
+
+    streamingClient.on('llm-response', (data) => {
+      console.log('LLM response:', data);
+      hideTypingIndicator();
+      
+      if (data.text) {
+        const msg = renderAssistantMessage(data.text, new Date());
+        messageArea.appendChild(msg);
+        scrollToBottom();
+      }
+    });
+
+    streamingClient.on('task-completion', (data) => {
+      console.log('Task completed:', data);
+      hideTypingIndicator();
+      addSystemMessage('Task completed', 'success');
+    });
+
+    streamingClient.on('error', (data) => {
+      console.error('Stream error:', data);
+      hideTypingIndicator();
+      addSystemMessage('Connection error occurred', 'error');
+      updateConnectionStatus(false);
+    });
+
+    streamingClient.on('connected', () => {
+      console.log('Stream connected');
+      updateConnectionStatus(true);
+    });
+
+    // Input event listeners
+    sendBtn.addEventListener('click', sendMessage);
+
+    messageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    // Auto-resize textarea
+    messageInput.addEventListener('input', () => {
+      messageInput.style.height = 'auto';
+      messageInput.style.height = messageInput.scrollHeight + 'px';
+    });
+
+    // Initialize chat on page load
+    initializeChat();
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# Server-side publish gate. Local pre-push hooks are per-clone — a contributor who never
+# ran `git config core.hooksPath .githooks` bypasses them. This runs the SAME gate on every
+# pull request, where it cannot be skipped, so a tester's or the public's PR is checked
+# before it can merge. PR-triggered only (no push:/schedule:) per the repo's CI policy.
+name: publish-gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # publish-gate.sh uses `git grep` over the tracked tree
+      - name: Run the publish gate
+        run: bash scripts/publish-gate.sh

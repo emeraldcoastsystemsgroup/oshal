@@ -1,0 +1,30 @@
+provider: jotform
+displayName: Jotform
+version: 1.0.0
+baseUrl: https://api.jotform.com
+auth:
+  type: apiKeyHeader
+  header: APIKEY
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-forms
+    tool: jotform-list-forms
+    method: GET
+    path: /user/forms
+  - name: get-form
+    tool: jotform-get-form
+    method: GET
+    path: /form/{id}
+  - name: get-form-submissions
+    tool: jotform-get-form-submissions
+    method: GET
+    path: /form/{id}/submissions
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/jotform.com.ico

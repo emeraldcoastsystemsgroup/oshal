@@ -1,0 +1,58 @@
+provider: pipedrive
+displayName: Pipedrive
+version: 1.0.0
+baseUrl: https://${env:PIPEDRIVE_DOMAIN:-yourcompany}.pipedrive.com/api/v1
+auth:
+  type: apiKeyQuery
+  param: api_token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: deals
+    tool: pipedrive-deals
+    method: GET
+    path: /deals
+    query:
+      status: null
+      limit: null
+      start: null
+  - name: persons
+    tool: pipedrive-persons
+    method: GET
+    path: /persons
+    query:
+      limit: null
+      start: null
+  - name: organizations
+    tool: pipedrive-organizations
+    method: GET
+    path: /organizations
+    query:
+      limit: null
+      start: null
+  - name: activities
+    tool: pipedrive-activities
+    method: GET
+    path: /activities
+    query:
+      done: null
+      limit: null
+      start: null
+  - name: pipelines
+    tool: pipedrive-pipelines
+    method: GET
+    path: /pipelines
+  - name: stages
+    tool: pipedrive-stages
+    method: GET
+    path: /stages
+    query:
+      pipeline_id: null
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/pipedrive.com.ico

@@ -1,0 +1,42 @@
+:root {
+  --navy: #0b1220; --navy-2: #111c2e; --panel: #16233a; --line: #243349;
+  --emerald: #2ecc8f; --emerald-dim: #1f8c63; --ink: #e8eef6; --muted: #93a4bd;
+  --bad: #e0544e; --warn: #e0b341;
+}
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+body { background: var(--navy); color: var(--ink); font: 15px/1.55 Inter, system-ui, -apple-system, Segoe UI, sans-serif; }
+
+/* A single chat column — it's just a bot on the computer, no screen mirror. */
+.app { display: flex; flex-direction: column; height: 100vh; max-width: 720px; margin: 0 auto; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+
+header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--navy-2); border-bottom: 1px solid var(--line); }
+header .logo { width: 22px; height: 22px; transform: rotate(45deg); background: linear-gradient(135deg, var(--emerald), var(--emerald-dim)); border-radius: 5px; }
+header h1 { font: 600 16px Archivo, Inter, sans-serif; margin: 0; }
+header .status { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--emerald); }
+.run { color: var(--warn); margin-left: 4px; animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .4; } }
+
+button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 9px; padding: 8px 14px; cursor: pointer; font: inherit; }
+button:hover:not(:disabled) { border-color: var(--emerald-dim); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--emerald-dim); border-color: var(--emerald); color: #04130c; font-weight: 600; }
+button.stop { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+
+.chat { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.msg { padding: 9px 13px; border-radius: 12px; max-width: 88%; white-space: pre-wrap; word-wrap: break-word; }
+.msg.me { align-self: flex-end; background: var(--emerald-dim); color: #04130c; }
+.msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+/* The bot's live actions while it operates — quiet, inline, like it's narrating. */
+.msg.sys { align-self: flex-start; background: transparent; color: var(--muted); font: 12.5px/1.5 ui-monospace, Menlo, monospace; padding: 1px 4px; max-width: 100%; }
+.msg.sys::before { content: '↳ '; opacity: .6; }
+
+.composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--navy-2); }
+.composer input { flex: 1; background: var(--navy); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 11px; font: inherit; }
+.composer input:focus { outline: none; border-color: var(--emerald-dim); }
+.composer .mic { width: 48px; font-size: 16px; }
+.composer .mic.live { background: var(--bad); border-color: var(--bad); color: #fff; animation: pulse 1s infinite; }
+
+.footnote { padding: 8px 14px; font-size: 12px; color: var(--warn); background: rgba(224,179,65,.08); border-top: 1px solid var(--line); text-align: center; }

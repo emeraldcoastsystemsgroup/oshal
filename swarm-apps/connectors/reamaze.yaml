@@ -1,0 +1,29 @@
+provider: reamaze
+displayName: Re:amaze
+version: 1.0.0
+baseUrl: ${env:REAMAZE_BASE_URL:-https://yourbrand.reamaze.io/api/v1}
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: conversations
+    tool: reamaze-conversations
+    method: GET
+    path: /conversations
+  - name: articles
+    tool: reamaze-articles
+    method: GET
+    path: /articles
+  - name: contacts
+    tool: reamaze-contacts
+    method: GET
+    path: /contacts
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/reamaze.com.ico

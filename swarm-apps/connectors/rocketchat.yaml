@@ -1,0 +1,42 @@
+provider: rocketchat
+displayName: Rocket.Chat
+version: 1.0.0
+baseUrl: ${env:ROCKETCHAT_BASE_URL:-https://your-rocketchat.example.com}/api/v1
+auth:
+  type: apiKeyHeader
+  header: X-Auth-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: channels-list
+    tool: rocketchat-channels-list
+    method: GET
+    path: /channels.list
+    query:
+      X-User-Id: '{userId}'
+      count: '{count}'
+      offset: '{offset}'
+  - name: users-list
+    tool: rocketchat-users-list
+    method: GET
+    path: /users.list
+    query:
+      X-User-Id: '{userId}'
+      count: '{count}'
+      offset: '{offset}'
+  - name: chat-get-message
+    tool: rocketchat-chat-get-message
+    method: GET
+    path: /chat.getMessage
+    query:
+      X-User-Id: '{userId}'
+      msgId: '{msgId}'
+metadata:
+  icon: rocketdotchat
+  iconTitle: Rocket.Chat
+  iconSource: simple-icons
+  iconVerified: true

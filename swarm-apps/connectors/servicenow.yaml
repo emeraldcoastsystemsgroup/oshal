@@ -1,0 +1,57 @@
+provider: servicenow
+displayName: ServiceNow
+version: 1.0.0
+baseUrl: ${env:SERVICENOW_BASE_URL:-https://YOUR-INSTANCE.service-now.com}
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: incidents
+    tool: servicenow-incidents
+    method: GET
+    path: /api/now/table/incident
+    query:
+      sysparm_query: '{query}'
+      sysparm_limit: '{limit}'
+      sysparm_display_value: 'true'
+  - name: changes
+    tool: servicenow-changes
+    method: GET
+    path: /api/now/table/change_request
+    query:
+      sysparm_query: '{query}'
+      sysparm_limit: '{limit}'
+      sysparm_display_value: 'true'
+  - name: ci
+    tool: servicenow-ci
+    method: GET
+    path: /api/now/table/cmdb_ci
+    query:
+      sysparm_query: '{query}'
+      sysparm_limit: '{limit}'
+      sysparm_display_value: 'true'
+  - name: table-query
+    tool: servicenow-table-query
+    method: GET
+    path: /api/now/table/{table}
+    query:
+      sysparm_query: '{query}'
+      sysparm_limit: '{limit}'
+      sysparm_display_value: 'true'
+  - name: record
+    tool: servicenow-record
+    method: GET
+    path: /api/now/table/{table}/{sysId}
+    query:
+      sysparm_display_value: 'true'
+metadata:
+  description: "Read ServiceNow incidents, change requests, CMDB CIs, and arbitrary table records via the Table API."
+  category: "Operations"
+  iconVerified: true
+  iconSource: favicon-curated
+  iconUrl: https://icons.duckduckgo.com/ip3/servicenow.com.ico

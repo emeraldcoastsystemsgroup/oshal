@@ -1,0 +1,39 @@
+provider: coincap
+displayName: CoinCap
+version: 1.0.0
+baseUrl: https://api.coincap.io/v2
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: assets
+    tool: coincap-assets
+    method: GET
+    path: /assets
+    query:
+      limit: '{limit}'
+      search: '{search}'
+  - name: asset-detail
+    tool: coincap-asset-detail
+    method: GET
+    path: /assets/{id}
+  - name: rates
+    tool: coincap-rates
+    method: GET
+    path: /rates
+  - name: markets
+    tool: coincap-markets
+    method: GET
+    path: /markets
+    query:
+      exchangeId: '{exchangeId}'
+      limit: '{limit}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/coincap.io.ico

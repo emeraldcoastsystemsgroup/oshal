@@ -1,0 +1,25 @@
+provider: abstractapi
+displayName: AbstractAPI
+version: 1.0.0
+baseUrl: https://ipgeolocation.abstractapi.com/v1
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: geolocate
+    tool: abstractapi-geolocate
+    method: GET
+    path: /
+    query:
+      ip_address: '{ip}'
+metadata:
+  icon: abstract
+  iconTitle: Abstract
+  iconSource: simple-icons
+  iconVerified: true

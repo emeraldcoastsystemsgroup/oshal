@@ -1,0 +1,55 @@
+provider: mailgun
+displayName: Mailgun
+version: 1.0.0
+baseUrl: https://api.mailgun.net/v3
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: domains
+    tool: mailgun-domains
+    method: GET
+    path: /domains
+    query:
+      limit: null
+      skip: null
+  - name: events
+    tool: mailgun-events
+    method: GET
+    path: /{domain}/events
+    query:
+      event: null
+      begin: null
+      end: null
+      limit: null
+  - name: stats
+    tool: mailgun-stats
+    method: GET
+    path: /{domain}/stats/total
+    query:
+      event: null
+      start: null
+      end: null
+      resolution: null
+  - name: bounces
+    tool: mailgun-bounces
+    method: GET
+    path: /{domain}/bounces
+    query:
+      limit: null
+  - name: unsubscribes
+    tool: mailgun-unsubscribes
+    method: GET
+    path: /{domain}/unsubscribes
+    query:
+      limit: null
+metadata:
+  icon: mailgun
+  iconTitle: Mailgun
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,287 @@
+<!--
+  CHANGE LOG
+  =============================================================================
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  =============================================================================
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added a dedicated bot-scoped swarm workspace page so cockpit can host a real swarm-bot UI instead of embedding the standalone chat app
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Added provider auth controls to the dedicated swarm-bot workspace so selected bots can authenticate from the new Layer 4 UI
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Added direct RAG and Presentron workspace modals so swarm-bot actions run in-rail instead of redirecting to generic config
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Retired the swarm-local Presentron markup so the page can reuse the shared Presentron studio popup
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Added a native in-rail switch-framework modal so cockpit tools action updates bot tool auth modes without leaving the swarm-bot workspace
+  6 | maintainer@emeraldcoastsystemsgroup.com   | Added native quick-settings modal so selected bot profile edits can be done in-rail before opening advanced config
+  7 | maintainer@emeraldcoastsystemsgroup.com   | Added iframe auto-embed detection and icon-first workspace action controls for tighter swarm-bot usability
+  8 | maintainer@emeraldcoastsystemsgroup.com   | UI compaction: icon-only close/refresh, user-friendly labels, removed verbose subtitles, tightened spacing
+  9 | maintainer@emeraldcoastsystemsgroup.com   | Major layout rework: collapsed runtime chrome to single status bar, added pop-out button, maximised chat vertical space
+  10 | maintainer@emeraldcoastsystemsgroup.com   | Replaced the inline swarm-bot RAG markup with a shared placeholder so chat, swarm, and cockpit can reuse one knowledge workspace renderer
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Swarm Bot Workspace</title>
+  <script>
+    (() => {
+      const params = new URLSearchParams(window.location.search);
+      const supportedThemes = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber'];
+      const queryEmbed = params.get('embed') === 'cockpit';
+      const requestedTheme = params.get('theme');
+      let persistedTheme = '';
+      try {
+        persistedTheme = window.localStorage.getItem('cockpit-theme') || '';
+      } catch (_error) {
+        persistedTheme = '';
+      }
+      const iframeEmbed = (() => {
+        try {
+          return window.self !== window.top;
+        } catch (_error) {
+          return true;
+        }
+      })();
+      if (queryEmbed || iframeEmbed) {
+        document.documentElement.setAttribute('data-embedded', 'cockpit');
+      }
+      // Prefer the parent cockpit's live data-theme when embedded — storage
+      // and query params are only a fallback for standalone loads.
+      let parentTheme = '';
+      try {
+        if (iframeEmbed && window.parent && window.parent !== window) {
+          parentTheme = window.parent.document.documentElement.getAttribute('data-theme') || '';
+        }
+      } catch (_error) { /* cross-origin parent — use persisted instead */ }
+      const nextTheme = supportedThemes.includes(parentTheme)
+        ? parentTheme
+        : (supportedThemes.includes(requestedTheme)
+          ? requestedTheme
+          : (supportedThemes.includes(persistedTheme) ? persistedTheme : 'midnight'));
+      document.documentElement.setAttribute('data-theme', nextTheme);
+
+      // Live-sync: when embedded in the cockpit, mirror any subsequent
+      // parent theme changes. storage events don't fire in the writing
+      // window, so a MutationObserver on the parent <html> is the reliable
+      // path for same-tab propagation.
+      try {
+        if (iframeEmbed && window.parent && window.parent !== window) {
+          const parentHtml = window.parent.document.documentElement;
+          new MutationObserver((mutations) => {
+            for (const m of mutations) {
+              if (m.attributeName === 'data-theme') {
+                const t = parentHtml.getAttribute('data-theme');
+                if (t && supportedThemes.includes(t)) {
+                  document.documentElement.setAttribute('data-theme', t);
+                }
+              }
+            }
+          }).observe(parentHtml, { attributes: true, attributeFilter: ['data-theme'] });
+        }
+      } catch (_error) { /* cross-origin parent — live sync unavailable */ }
+    })();
+  </script>
+  <!-- B4/CM-2: Codicon font served from @vscode/codicons npm package via /fonts route -->
+  <link rel="stylesheet" href="/fonts/codicon.css">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <link rel="stylesheet" href="/cockpit/css/base.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/forest.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/gray.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/black.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/amber.css">
+  <link rel="stylesheet" href="/cockpit/css/layout.css">
+  <link rel="stylesheet" href="/cockpit/css/chat.css">
+  <link rel="stylesheet" href="/cockpit/css/components.css">
+  <link rel="stylesheet" href="/chat-assets/chat-standalone-base.css">
+  <link rel="stylesheet" href="/swarmbot/chat/swarmbot-chat.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <main class="swarmbot-shell">
+    <header class="swarmbot-toolbar">
+      <h1 id="workspaceTitle">Loading...</h1>
+      <div class="toolbar-context">
+        <span id="providerSummary" class="toolbar-tag" title="Provider">—</span>
+        <span id="modelSummary" class="toolbar-tag" title="Model">—</span>
+        <span id="connectionStatus" class="toolbar-tag" title="Connection">⋯</span>
+        <span id="authStatusBadge" class="toolbar-tag auth-tag" data-tone="info" title="Auth">checking</span>
+      </div>
+      <div class="toolbar-actions">
+        <button id="authSignInBtn" type="button" class="toolbar-btn" hidden title="Sign In"><i class="ph ph-sign-in"></i></button>
+        <button id="authSignOutBtn" type="button" class="toolbar-btn" hidden title="Sign Out"><i class="ph ph-sign-out"></i></button>
+        <button id="openSettingsBtn" type="button" class="toolbar-btn" title="Settings"><i class="ph ph-gear-six"></i></button>
+        <button id="openToolsBtn" type="button" class="toolbar-btn" title="Tool Controls"><i class="ph ph-arrows-left-right"></i></button>
+        <button id="openHistoryBtn" type="button" class="toolbar-btn" title="History"><i class="ph ph-clock-counter-clockwise"></i></button>
+        <button id="openRagBtn" type="button" class="toolbar-btn" title="Knowledge Base"><i class="ph ph-books"></i></button>
+        <button id="openAiOfficeBtn" type="button" class="toolbar-btn" title="AI Office — decks, docs &amp; sheets"><i class="ph ph-presentation-chart"></i></button>
+        <button id="openPacksBtn" type="button" class="toolbar-btn" title="Packs — view flow, download, or deploy what you scoped"><i class="ph ph-package"></i></button>
+        <button id="popOutBtn" type="button" class="toolbar-btn popout-btn" title="Open in new window"><i class="ph ph-arrow-square-out"></i></button>
+      </div>
+    </header>
+
+    <div class="swarmbot-status-line">
+      <span id="statusBanner">Booting...</span>
+      <span id="agentSummary"></span>
+      <span id="workspaceSubtitle"></span>
+      <span id="cockpitContextSummary" hidden></span>
+      <span id="taskId" class="status-task" hidden></span>
+      <span id="authPanelTitle" hidden></span>
+      <span id="authInfoText" hidden></span>
+    </div>
+
+    <section id="messageArea" class="swarmbot-messages" aria-live="polite"></section>
+
+    <form id="composerForm" class="swarmbot-composer">
+      <textarea id="messageInput" rows="1" placeholder="Tell this bot what to work on."></textarea>
+      <button id="sendBtn" type="submit">Send</button>
+    </form>
+  </main>
+
+  <div id="packsModal" class="workspace-modal" hidden>
+    <div class="workspace-modal-backdrop" data-close-packs></div>
+    <div class="workspace-modal-dialog workspace-modal-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="packsTitle">
+      <div class="workspace-modal-header">
+        <strong id="packsTitle">📦 Packs — view flow · download · deploy</strong>
+        <button id="closePacksBtn" type="button" class="modal-icon-btn" title="Close" aria-label="Close">✕</button>
+      </div>
+      <iframe id="packsFrame" title="Packs" style="width:100%;height:70vh;border:none;border-radius:8px;" src="about:blank"></iframe>
+    </div>
+  </div>
+  <script>
+  // Self-contained Packs panel toggle — connects the codex-packer chat to the
+  // download/deploy rails (the flow the bot scopes lands in /api/swarm/packs/studio).
+  (function(){
+    const modal = document.getElementById('packsModal');
+    const frame = document.getElementById('packsFrame');
+    function open(){ if (frame.src === 'about:blank' || !frame.src) frame.src = '/api/swarm/packs/studio'; modal.removeAttribute('hidden'); }
+    function close(){ modal.setAttribute('hidden', ''); }
+    document.getElementById('openPacksBtn')?.addEventListener('click', open);
+    document.getElementById('closePacksBtn')?.addEventListener('click', close);
+    document.querySelector('[data-close-packs]')?.addEventListener('click', close);
+  })();
+  </script>
+
+  <div id="historyModal" class="workspace-modal" hidden>
+    <div class="workspace-modal-backdrop" data-close-history></div>
+    <div class="workspace-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+      <div class="workspace-modal-header">
+        <strong id="historyTitle">History</strong>
+        <button id="closeHistoryBtn" type="button" class="modal-icon-btn" title="Close" aria-label="Close">✕</button>
+      </div>
+      <div id="historyList" class="history-list"></div>
+    </div>
+  </div>
+
+  <div id="toolsConfigModal" class="workspace-modal" hidden>
+    <div class="workspace-modal-backdrop" data-close-config></div>
+    <div class="workspace-modal-dialog workspace-modal-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="toolsConfigTitle">
+      <div class="workspace-modal-header">
+        <strong id="toolsConfigTitle">Configuration</strong>
+        <button id="closeToolsConfigBtn" type="button" class="modal-icon-btn" title="Close" aria-label="Close">✕</button>
+      </div>
+      <iframe id="toolsConfigFrame" class="config-frame" title="Bot configuration workspace"></iframe>
+    </div>
+  </div>
+
+  <div id="quickSettingsModal" class="workspace-modal" hidden>
+    <div class="workspace-modal-backdrop" data-close-quick-settings></div>
+    <div class="workspace-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="quickSettingsTitle">
+      <div class="workspace-modal-header">
+        <strong id="quickSettingsTitle">Settings</strong>
+        <button id="closeQuickSettingsBtn" type="button" class="modal-icon-btn" title="Close" aria-label="Close">✕</button>
+      </div>
+      <div id="quickSettingsStatus" class="service-status-row">Ready.</div>
+      <div class="workspace-grid">
+        <label class="workspace-field workspace-field-wide">
+          <span>Bot Name</span>
+          <input id="quickSettingsNameInput" type="text" placeholder="Bot name" />
+        </label>
+        <label class="workspace-field workspace-field-wide">
+          <span>Project URL</span>
+          <input id="quickSettingsProjectUrlInput" type="url" placeholder="https://github.com/..." />
+        </label>
+        <label class="workspace-field workspace-field-wide">
+          <span>Selector Skills</span>
+          <textarea id="quickSettingsSkillsInput" rows="4" placeholder="One skill per line or comma-separated."></textarea>
+        </label>
+        <label class="workspace-field">
+          <span>Provider</span>
+          <select id="quickSettingsProviderSelect">
+            <option value="anthropic">anthropic</option>
+          </select>
+        </label>
+        <label class="workspace-field">
+          <span>Status</span>
+          <select id="quickSettingsStatusSelect">
+            <option value="active">active</option>
+            <option value="paused">paused</option>
+            <option value="disabled">disabled</option>
+          </select>
+        </label>
+        <label class="workspace-field workspace-field-wide">
+          <span>Model</span>
+          <select id="quickSettingsModelInput"></select>
+        </label>
+        <label class="workspace-field">
+          <span>Theme Preference</span>
+          <select id="quickSettingsThemeSelect">
+            <option value="midnight">Midnight</option>
+            <option value="daylight">Daylight</option>
+            <option value="ocean">Ocean</option>
+            <option value="sakura">Sakura</option>
+            <option value="forest">Forest</option>
+            <option value="gray">Gray</option>
+            <option value="black">Black</option>
+            <option value="light-blue">Light Blue</option>
+            <option value="aurora">Aurora</option>
+            <option value="graphite">Graphite</option>
+            <option value="amber">Amber</option>
+          </select>
+        </label>
+        <label class="workspace-field">
+          <span>Runtime</span>
+          <input id="quickSettingsRuntimeInput" type="text" readonly />
+        </label>
+        <label class="workspace-field workspace-field-wide workspace-checkbox-field" for="quickSettingsExcludeBulkInput">
+          <span>Bulk Configure Guard</span>
+          <div class="workspace-checkbox-row">
+            <input id="quickSettingsExcludeBulkInput" type="checkbox" />
+            <span>Exclude this bot from bulk configure actions unless the caller explicitly includes excluded bots.</span>
+          </div>
+        </label>
+      </div>
+      <div class="workspace-inline-actions workspace-inline-actions-block">
+        <button id="configureAllUnsetQuickSettingsBtn" type="button">Configure All Unset Bots</button>
+        <button id="configureAllQuickSettingsBtn" type="button">Configure All Eligible Bots</button>
+      </div>
+      <div class="workspace-inline-actions">
+        <button id="saveQuickSettingsBtn" type="button">Save</button>
+        <button id="openAdvancedConfigBtn" type="button">Open Advanced Config</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="switchFrameworkModal" class="workspace-modal" hidden>
+    <div class="workspace-modal-backdrop" data-close-switch-framework></div>
+    <div class="workspace-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="switchFrameworkTitle">
+      <div class="workspace-modal-header">
+        <strong id="switchFrameworkTitle">Tool Controls</strong>
+        <div class="modal-header-actions">
+          <button id="refreshSwitchFrameworkBtn" type="button" class="modal-icon-btn" title="Refresh" aria-label="Refresh">↻</button>
+          <button id="closeSwitchFrameworkBtn" type="button" class="modal-icon-btn" title="Close" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div id="switchFrameworkStatus" class="service-status-row">Ready.</div>
+      <div id="switchFrameworkList" class="workspace-result-list"></div>
+    </div>
+  </div>
+
+  <div id="ragModal" hidden></div>
+
+  <script type="module" src="/swarmbot/chat/swarmbot-chat.js"></script>
+</body>
+</html>

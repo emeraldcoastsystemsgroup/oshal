@@ -1,0 +1,101 @@
+name: Bug report
+description: Something is broken or not behaving as documented
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before filing, please confirm this isn't a
+        security issue — those go to `maintainer@emeraldcoastsystemsgroup.com` per
+        [SECURITY.md](https://github.com/OWNER/REPO/blob/main/SECURITY.md), not here.
+
+  - type: input
+    id: version
+    attributes:
+      label: OSHAL version / commit hash
+      description: Output of `git rev-parse HEAD` or the package.json version.
+      placeholder: "2.0.0-beta.3 (commit abc123def)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which subsystem is affected?
+      options:
+        - cockpit (UI)
+        - swarm-orchestration (queue / dispatcher)
+        - llm-provider (harness adapters)
+        - rag (ChromaDB / corpus / embeddings)
+        - ticketing (intake / lifecycle)
+        - bot persona / behavior
+        - docker / compose
+        - tests / CI
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Observed behavior, including any error messages or stack traces. Paste log output verbatim.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Be specific. "Submit an incident ticket and watch it fail" is not specific.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS / Docker version / Node version / what harness was active when this happened.
+      render: text
+      placeholder: |
+        OS: Windows 11 / WSL2 Ubuntu 24.04
+        Docker: Docker Desktop 4.x
+        Node: 20.x
+        Active harness: codex-cli (gpt-5.3-codex)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Useful log sources:
+        - `docker logs oshal-local-api --since 10m`
+        - The `chat_tasks` row from Postgres if a ticket failed
+        - The deliverables/ directory contents for incident tickets
+      render: shell
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I checked [BACKLOG.md](https://github.com/OWNER/REPO/blob/main/BACKLOG.md) — this isn't already a known deferred item
+          required: true
+        - label: I confirmed `localhost:35457` is actually responding (not just a Docker Desktop port-forward wedge — see [scripts/api-bounce.sh](https://github.com/OWNER/REPO/blob/main/scripts/api-bounce.sh))
+          required: true

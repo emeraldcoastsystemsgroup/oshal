@@ -1,0 +1,42 @@
+provider: youtube
+credProvider: google
+displayName: YouTube
+version: 1.0.0
+baseUrl: https://www.googleapis.com/youtube/v3
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: cursor
+  param: pageToken
+  nextField: nextPageToken
+  itemsField: items
+resources:
+  - name: my-channel
+    tool: youtube-my-channel
+    method: GET
+    path: /channels
+    query:
+      part: snippet,statistics
+      mine: 'true'
+  - name: search
+    tool: youtube-search
+    method: GET
+    path: /search
+    query:
+      part: snippet
+      q: '{query}'
+      maxResults: '25'
+    paginate: true
+metadata:
+  description: "Read YouTube channel details and run catalog searches."
+  category: "Media"
+  icon: youtube
+  iconTitle: YouTube
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,29 @@
+provider: productboard
+displayName: Productboard
+version: 1.0.0
+baseUrl: https://api.productboard.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: features
+    tool: productboard-features
+    method: GET
+    path: /features
+  - name: products
+    tool: productboard-products
+    method: GET
+    path: /products
+  - name: notes
+    tool: productboard-notes
+    method: GET
+    path: /notes
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/productboard.com.ico

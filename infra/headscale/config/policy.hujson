@@ -1,0 +1,21 @@
+// =============================================================================
+// OSHAL Headscale Starter ACL Policy
+// =============================================================================
+// CHANGE LOG
+// -----------------------------------------------------------------------------
+// SEQ                 | AUTHOR                      | DESCRIPTION
+// -----------------------------------------------------------------------------
+// 1 | maintainer@emeraldcoastsystemsgroup.com   | Added permissive starter ACL policy for local Headscale lab setup
+// =============================================================================
+
+{
+  // This policy is intentionally permissive so the first lab can come up with
+  // fewer moving parts. Tighten this before production.
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:*"],
+    },
+  ],
+}

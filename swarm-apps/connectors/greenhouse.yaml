@@ -1,0 +1,42 @@
+provider: greenhouse
+displayName: Greenhouse
+version: 1.0.0
+baseUrl: https://harvest.greenhouse.io/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: candidates
+    tool: greenhouse-candidates
+    method: GET
+    path: /candidates
+    query:
+      per_page: '100'
+  - name: jobs
+    tool: greenhouse-jobs
+    method: GET
+    path: /jobs
+    query:
+      per_page: '100'
+  - name: applications
+    tool: greenhouse-applications
+    method: GET
+    path: /applications
+    query:
+      per_page: '100'
+  - name: users
+    tool: greenhouse-users
+    method: GET
+    path: /users
+    query:
+      per_page: '100'
+metadata:
+  iconVerified: true
+  iconSource: simple-icons
+  icon: greenhouse
+  iconTitle: Greenhouse

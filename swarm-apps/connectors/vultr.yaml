@@ -1,0 +1,42 @@
+provider: vultr
+displayName: Vultr
+version: 1.0.0
+baseUrl: https://api.vultr.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: account
+    tool: vultr-account
+    method: GET
+    path: /account
+  - name: instances
+    tool: vultr-instances
+    method: GET
+    path: /instances
+  - name: instance
+    tool: vultr-instance
+    method: GET
+    path: /instances/{instanceId}
+  - name: block-storage
+    tool: vultr-block-storage
+    method: GET
+    path: /blocks
+  - name: dns-domains
+    tool: vultr-dns-domains
+    method: GET
+    path: /domains
+  - name: regions
+    tool: vultr-regions
+    method: GET
+    path: /regions
+metadata:
+  icon: vultr
+  iconTitle: Vultr
+  iconSource: simple-icons
+  iconVerified: true

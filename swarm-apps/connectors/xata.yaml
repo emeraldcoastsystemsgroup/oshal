@@ -1,0 +1,29 @@
+provider: xata
+displayName: Xata
+version: 1.0.0
+baseUrl: https://api.xata.io
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: workspaces
+    tool: xata-workspaces
+    method: GET
+    path: /workspaces
+  - name: workspace
+    tool: xata-workspace
+    method: GET
+    path: /workspaces/{workspace_id}
+  - name: databases
+    tool: xata-databases
+    method: GET
+    path: /workspaces/{workspace_id}/dbs
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/xata.io.ico

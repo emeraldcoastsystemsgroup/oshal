@@ -1,0 +1,44 @@
+/*
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial: launcher-shell styling for the Samsung Tizen surface (OSHAL brand palette, TV-scale type, visible D-pad focus ring). The dashboard itself is served by OSHAL (?tv=1); this styles only the host launcher (ADR-047).
+ */
+:root {
+  --bg:#0e0e16; --panel:#15151f; --panel2:#1b1b27; --line:#272735;
+  --text:#e6e6f0; --muted:#8b8ba3; --accent:#7c6cff; --accent2:#00d3a7;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; }
+body {
+  font-family:"Tizen Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  background:var(--bg); color:var(--text);
+  display:flex; align-items:center; justify-content:center;
+}
+.launcher { width:1100px; max-width:90vw; text-align:center; }
+.logo { font-size:64px; font-weight:800; letter-spacing:.01em; }
+.logo span { color:var(--accent); }
+.tag { color:var(--muted); font-size:24px; margin:8px 0 48px; }
+.hostRow {
+  display:inline-flex; align-items:center; gap:14px; background:var(--panel);
+  border:1px solid var(--line); border-radius:14px; padding:16px 26px; margin-bottom:34px;
+}
+.hostLabel { color:var(--muted); font-size:18px; text-transform:uppercase; letter-spacing:.08em; }
+.hostText { font-size:24px; font-weight:600; }
+.actions { display:flex; gap:18px; justify-content:center; }
+.btn {
+  font-size:24px; font-weight:700; color:var(--text); background:var(--panel2);
+  border:2px solid var(--line); border-radius:12px; padding:18px 38px; cursor:pointer;
+}
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.btn:focus { outline:none; border-color:var(--accent2); box-shadow:0 0 0 4px rgba(0,211,167,.4); }
+.editor { margin-top:40px; }
+.editor label { display:block; color:var(--muted); font-size:18px; margin-bottom:12px; }
+.editor input {
+  width:760px; max-width:80vw; font-size:26px; padding:18px 20px; border-radius:12px;
+  background:var(--panel); border:2px solid var(--line); color:var(--text); text-align:center;
+}
+.editor input:focus { outline:none; border-color:var(--accent2); }
+.editor .actions { margin-top:26px; }
+.hint { color:var(--muted); font-size:18px; margin-top:54px; }

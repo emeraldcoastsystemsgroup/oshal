@@ -1,0 +1,13 @@
+# =============================================================================
+# OSHAL any-bot Kubernetes Namespace
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Added dedicated namespace for any-bot Kubernetes deployment
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: any-bot

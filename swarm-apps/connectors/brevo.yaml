@@ -1,0 +1,57 @@
+provider: brevo
+displayName: Brevo
+version: 1.0.0
+baseUrl: https://api.brevo.com/v3
+auth:
+  type: apiKeyHeader
+  header: api-key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: contacts
+    tool: brevo-contacts
+    method: GET
+    path: /contacts
+    query:
+      limit: null
+      offset: null
+  - name: lists
+    tool: brevo-lists
+    method: GET
+    path: /contacts/lists
+    query:
+      limit: null
+      offset: null
+  - name: email-campaigns
+    tool: brevo-email-campaigns
+    method: GET
+    path: /emailCampaigns
+    query:
+      type: null
+      status: null
+      limit: null
+      offset: null
+  - name: senders
+    tool: brevo-senders
+    method: GET
+    path: /senders
+  - name: account
+    tool: brevo-account
+    method: GET
+    path: /account
+  - name: transactional-stats
+    tool: brevo-transactional-stats
+    method: GET
+    path: /smtp/statistics/aggregatedReport
+    query:
+      startDate: null
+      endDate: null
+metadata:
+  icon: brevo
+  iconTitle: Brevo
+  iconSource: simple-icons
+  iconVerified: true

@@ -1,0 +1,510 @@
+<!--
+  Applications — the operator app-admin console AND the signed-in app catalog, one page.
+  Backed by /api/swarm/apps. Apps LAUNCH from the cockpit left ribbon; this page is for
+  MANAGING them: the operator admin bar (build / packs / load manifest / import YAML / focus)
+  is pinned at the top, and every app is a compact row (small icon, status, bots/tools, and
+  per-row lifecycle actions) rather than a big store tile. Operator chrome (the admin bar +
+  per-row activate/export/unload + manifest paths) only appears when the super-admin probe
+  adds .is-operator — the API + RLS gate the writes regardless. For guests / regular users the
+  same rows render read-only (Open where working, greyed where not). Anonymous visitors never
+  see this cold: the route wears createGuestWelcomeMat, so they land on /guest first.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Swarm Applications — OSHAL</title>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #eef2f5;
+      --card: #ffffff;
+      --ink: #151b22;
+      --ink-muted: #53606c;
+      --line: rgba(21, 27, 34, 0.10);
+      --line-dark: rgba(21, 27, 34, 0.15);
+      --navy: #111820;
+      --teal: #149783;
+      --amber: #a46119;
+      --green: #5f8a3f;
+      --red: #b6453c;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--panel);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14.5px;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100%;
+    }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 40px 22px 64px; }
+
+    /* Header */
+    .section-header { max-width: 760px; margin-bottom: 22px; }
+    .section-kicker {
+      color: var(--amber); font-weight: 850; text-transform: uppercase;
+      font-size: 0.72rem; letter-spacing: 0.06em; margin-bottom: 10px;
+    }
+    h1 { margin: 0; font-size: 1.9rem; line-height: 1.1; font-weight: 900; letter-spacing: -0.01em; }
+    .sub { margin-top: 10px; color: var(--ink-muted); font-size: 0.95rem; max-width: 720px; line-height: 1.5; }
+    .sub code { background: rgba(21, 27, 34, 0.06); border-radius: 4px; padding: 1px 6px; font-size: 0.86em; }
+
+    button {
+      background: var(--card); color: var(--ink);
+      border: 1px solid var(--line-dark); border-radius: 8px;
+      padding: 7px 12px; cursor: pointer; font: inherit; font-weight: 600; font-size: 0.86rem;
+      transition: border-color .15s, color .15s, background .15s;
+    }
+    button:hover { border-color: var(--teal); color: var(--teal); }
+    button.danger { color: var(--red); border-color: rgba(182, 69, 60, 0.35); }
+    button.danger:hover { border-color: var(--red); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:disabled:hover { border-color: var(--line-dark); color: var(--ink); }
+
+    /* Operator admin bar — pinned at the top, operator-only. Load / import / build / packs / focus
+       are swarm-administration actions; launching an app is the left ribbon's job. */
+    .admin {
+      background: var(--card);
+      border: 1px solid var(--line-dark);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 28px;
+    }
+    .admin-head {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+      font-size: 0.72rem; font-weight: 850; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--ink-muted);
+    }
+    .admin-head .codicon { color: var(--amber); }
+    .admin-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .admin-row input[type="text"] {
+      flex: 1; min-width: 200px; padding: 7px 11px;
+      background: var(--panel); border: 1px solid var(--line-dark); border-radius: 8px; color: var(--ink); font: inherit; font-size: 0.86rem;
+    }
+    .admin-row input[type="text"]:focus { outline: none; border-color: var(--teal); }
+    .admin-row .sep { flex-basis: 100%; height: 0; }
+    .admin-row label.inline { color: var(--ink-muted); font-size: 0.82rem; font-weight: 600; }
+    .tb-build { background: var(--navy); color: #fff; border-color: var(--navy); text-decoration: none;
+      border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 0.86rem; display: inline-flex; align-items: center; gap: 6px; }
+    .tb-build:hover { background: var(--teal); color: #fff; }
+    .tb-secondary { background: var(--card); border: 1px solid var(--line-dark); color: var(--ink); text-decoration: none;
+      border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 0.86rem; display: inline-flex; align-items: center; gap: 6px; }
+    .tb-secondary:hover { border-color: var(--teal); color: var(--teal); }
+    .focus-select { padding: 7px 10px; background: var(--panel); border: 1px solid var(--line-dark); border-radius: 8px; color: var(--ink); font: inherit; font-weight: 600; font-size: 0.85rem; }
+
+    /* Suite groups + compact rows */
+    .suite-section { margin-bottom: 22px; }
+    .suite-header {
+      display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px;
+      font-size: 0.78rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--ink-muted); border-bottom: 1px solid var(--line); padding-bottom: 6px;
+    }
+    .suite-count { font-size: 0.74rem; font-weight: 600; color: var(--ink-muted); opacity: 0.7; }
+
+    .app-list { display: flex; flex-direction: column; gap: 8px; }
+    .app-row {
+      display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; align-items: center;
+      background: var(--card); border: 1px solid var(--line-dark); border-radius: 10px; padding: 10px 14px;
+    }
+    .app-row:hover { border-color: rgba(20, 151, 131, 0.4); }
+    .app-row.coming-soon { opacity: 0.5; }
+    .app-row.coming-soon:hover { border-color: var(--line-dark); }
+
+    .app-ico {
+      width: 38px; height: 38px; border-radius: 8px; flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(120% 120% at 0% 0%, #223041 0%, #111820 70%);
+      color: rgba(255,255,255,0.92); font-size: 0.98rem; font-weight: 800; letter-spacing: 0.02em;
+    }
+    .app-ico .codicon { font-size: 19px; line-height: 1; }
+
+    .app-main { min-width: 0; }
+    .app-titleline { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+    .app-name { font-weight: 800; font-size: 0.98rem; color: var(--ink); line-height: 1.2; }
+    .app-version { color: var(--ink-muted); font-size: 0.72rem; }
+    .update-badge {
+      border-radius: 999px; padding: 2px 9px; font-size: 0.68rem; font-weight: 700; white-space: nowrap;
+      color: #7a4d00; background: rgba(255, 176, 32, 0.16); border: 1px solid rgba(255, 176, 32, 0.45);
+    }
+    .app-desc { color: var(--ink-muted); font-size: 0.84rem; margin: 1px 0 0; line-height: 1.4;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .app-meta { display: flex; gap: 12px; font-size: 0.74rem; color: var(--ink-muted); margin-top: 3px; align-items: center; flex-wrap: wrap; }
+    .app-meta strong { color: var(--ink); font-weight: 800; }
+    .app-path { font-size: 0.68rem; color: var(--ink-muted); opacity: 0.75; word-break: break-all; }
+
+    .status-badge {
+      border-radius: 999px; padding: 2px 9px; font-size: 0.68rem; font-weight: 700; text-transform: capitalize;
+      border: 1px solid var(--line-dark); color: var(--ink-muted); background: rgba(20, 23, 26, 0.04); white-space: nowrap;
+    }
+    .status-active { color: var(--green); border-color: rgba(95, 138, 63, 0.4); background: rgba(95, 138, 63, 0.1); }
+    .status-inactive { color: var(--ink-muted); }
+    .status-coming { color: var(--ink-muted); }
+    .status-preview { color: var(--amber); border-color: rgba(164, 97, 25, 0.4); background: rgba(164, 97, 25, 0.1); }
+
+    .app-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+    .open-link { background: var(--navy); color: #fff; border-color: var(--navy); font-weight: 700; padding: 7px 14px; }
+    .open-link:hover { background: var(--teal); color: #fff; border-color: var(--teal); }
+    .open-link:disabled { background: var(--card); color: var(--ink-muted); border-color: var(--line-dark); }
+    .op-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+    .op-actions button { padding: 5px 9px; font-size: 0.76rem; font-weight: 600; }
+
+    .empty {
+      text-align: center; padding: 40px 24px; color: var(--ink-muted);
+      background: var(--card); border: 1px dashed var(--line-dark); border-radius: var(--radius);
+    }
+    .error { padding: 11px 15px; background: rgba(182, 69, 60, 0.08); border: 1px solid rgba(182, 69, 60, 0.5);
+      border-radius: 8px; color: var(--red); margin-bottom: 16px; }
+    .muted { color: var(--ink-muted); }
+
+    /* Operator chrome (the admin bar; per-row lifecycle actions; manifest paths; any .op-only copy)
+       stays hidden until the super-admin probe adds .is-operator. Cosmetic only — API + RLS gate writes. */
+    body:not(.is-operator) .admin,
+    body:not(.is-operator) .app-path,
+    body:not(.is-operator) .op-only,
+    body:not(.is-operator) .op-actions { display: none; }
+
+    /* Guest banner — shown only when /api/auth/user says this is a demo session. */
+    .guest-banner {
+      display: none; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 22px;
+      padding: 11px 15px; background: rgba(20, 151, 131, 0.08); border: 1px solid rgba(20, 151, 131, 0.35);
+      border-radius: 8px; color: var(--ink); font-size: 0.9rem; line-height: 1.45;
+    }
+    body.is-guest .guest-banner { display: flex; }
+    .guest-banner a { flex: 0 0 auto; margin-left: auto; background: var(--navy); color: #fff;
+      text-decoration: none; border-radius: 8px; padding: 7px 14px; font-weight: 700; font-size: 0.86rem; }
+    .guest-banner a:hover { background: var(--teal); }
+
+    @media (max-width: 640px) {
+      .app-row { grid-template-columns: 32px minmax(0, 1fr); }
+      .app-right { grid-column: 1 / -1; justify-content: flex-end; }
+      .wrap { padding: 32px 16px 48px; }
+    }
+  </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="section-header">
+      <div class="section-kicker">Applications</div>
+      <h1>Swarm applications</h1>
+      <div class="sub">
+        Apps launch from the cockpit ribbon on the left — this console is for <strong>managing</strong> them.
+        <span class="op-only">Load, import, build, activate, or unload the manifests loaded from
+        <code>swarm-apps/*.yaml</code> without restarting containers.</span>
+        <span class="muted">Greyed rows are on the roadmap.</span>
+      </div>
+    </div>
+
+    <div class="guest-banner" id="guestBanner">
+      <span>You&rsquo;re exploring as a <strong>guest</strong> — apps open with demo data and
+      writes to real accounts are disabled. Sign in to make it yours.</span>
+      <a href="/login">Sign in</a>
+    </div>
+
+    <!-- Operator admin bar — pinned at the top (operator-only via .is-operator). -->
+    <div class="admin">
+      <div class="admin-head"><span class="codicon codicon-tools"></span> Swarm administration</div>
+      <div class="admin-row">
+        <a id="buildBtn" class="tb-build" href="/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000030" title="Describe a swarm and codex-packer builds the manifest + bots">&#127959;&#65039; Build a swarm</a>
+        <a id="packsBtn" class="tb-secondary" href="/api/swarm/packs/studio" title="View flow, download, or deploy the swarms you scoped with codex-packer">&#128230; Packs</a>
+        <span class="sep"></span>
+        <input id="loadPath" type="text" placeholder="Manifest path (e.g. swarm-apps/eats.yaml)" />
+        <button id="loadBtn">Load manifest</button>
+        <button id="importBtn">Import YAML…</button>
+        <button id="updatesBtn" title="Compare every installed store package + the core platform against their sources now (the daemon also checks daily)">Check for updates</button>
+        <input id="importFile" type="file" accept=".yaml,.yml" style="display:none" />
+        <span class="sep"></span>
+        <label class="inline">Focus cockpit on:</label>
+        <select id="focusSelect" class="focus-select">
+          <option value="">— Framework (full) —</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="errorBox"></div>
+    <div id="apps" class="apps"></div>
+  </div>
+
+  <script type="module">
+    const appsEl = document.getElementById('apps');
+    const errorBox = document.getElementById('errorBox');
+    const focusSelect = document.getElementById('focusSelect');
+
+    // Reveal operator chrome only for super-admins — same probe the jarvis orb uses.
+    fetch('/api/dev-console/access', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && d.superAdmin) document.body.classList.add('is-operator'); })
+      .catch(() => {});
+
+    // Guest banner: show the demo notice + Sign in when this is a guest session.
+    fetch('/api/auth/user', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && d.guestMode) document.body.classList.add('is-guest'); })
+      .catch(() => {});
+
+    function escapeHtml(str) {
+      return String(str ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+    }
+
+    function showError(msg) {
+      errorBox.innerHTML = msg ? `<div class="error">${escapeHtml(msg)}</div>` : '';
+    }
+
+    // Only a codicon class from the manifest may render as the row icon — anything else falls
+    // back to the app-initial chip (defends against a poisoned icon string in a summary).
+    function safeIcon(icon) {
+      return /^codicon codicon-[a-z0-9-]+$/.test(String(icon || '')) ? icon : '';
+    }
+
+    // Only these swarms work today — listed first + openable; everything else is greyed out.
+    const WORKING = ['jarvis', 'social', 'email-summarizer', 'codex-packer', 'storage', 'presentations',
+      'career-hunter', 'gov-contracting', 'home', 'eats', 'travel', 'purchasing', 'vids', 'pumpkin', 'finance', 'identity', 'devops'];
+    // Premium "Private Preview" facades — openable into a real-looking surface, badged preview.
+    const PREVIEW = [];
+    // Codex Packer's real entry is the builder chat, NOT ?app=codex-packer (default app + a bare toolbar).
+    const CODEX_PACKER_LAUNCH = '/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000030';
+
+    // name -> latest store version, filled from the update-check daemon (GET /api/updates).
+    // Best-effort: the page renders identically when the report is empty or the fetch fails.
+    let storeUpdates = {};
+    async function fetchStoreUpdates() {
+      try {
+        const res = await fetch('/api/updates');
+        if (!res.ok) return {};
+        const data = await res.json();
+        const map = {};
+        for (const a of (data.apps || [])) {
+          if (a.updateAvailable === true && a.latestVersion) map[a.name] = a.latestVersion;
+        }
+        return map;
+      } catch { return {}; }
+    }
+
+    async function fetchApps() {
+      showError('');
+      try {
+        const [res, updates] = await Promise.all([fetch('/api/swarm/apps'), fetchStoreUpdates()]);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        storeUpdates = updates;
+        render(data.apps || []);
+      } catch (err) {
+        showError('Failed to load apps: ' + err.message);
+      }
+    }
+
+    function render(apps) {
+      if (apps.length === 0) {
+        appsEl.innerHTML = `
+          <div class="empty">
+            No applications are loaded on this swarm yet.
+            <span class="op-only">Place a manifest YAML in <code>swarm-apps/</code>
+            and restart the server, or use "Load manifest" above.</span>
+          </div>`;
+        focusSelect.innerHTML = '<option value="">— Framework (full) —</option>';
+        return;
+      }
+
+      focusSelect.innerHTML = '<option value="">— Framework (full) —</option>'
+        + apps.map(a => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.displayName)}</option>`).join('');
+      const focused = new URLSearchParams(location.search).get('app')
+        || localStorage.getItem('oshal-ui-profile') || '';
+      focusSelect.value = focused;
+
+      // Working swarms first (built-ins in WORKING order, then operator-deployed), then the rest
+      // greyed out + alphabetical.
+      const rank = (a) => {
+        const i = WORKING.indexOf(a.name);
+        if (i !== -1) return i;
+        if (a.manifestPath && a.manifestPath.includes('deployed-apps')) return 50;
+        if (PREVIEW.includes(a.name)) return 60;
+        return 99;
+      };
+      const sorted = [...apps].sort((x, y) => rank(x) - rank(y) || String(x.displayName).localeCompare(String(y.displayName)));
+
+      const rowHtml = (a) => {
+        const deployed = !!(a.manifestPath && a.manifestPath.includes('deployed-apps'));
+        const preview = PREVIEW.includes(a.name);
+        const working = WORKING.includes(a.name) || deployed;
+        const openable = working || preview;
+        const badgeClass = working ? a.status : (preview ? 'preview' : 'coming');
+        const badgeText = working ? a.status : (preview ? 'private preview' : 'coming soon');
+        const icon = safeIcon(a.icon);
+        const initial = escapeHtml(String(a.displayName || a.name || '?').trim().charAt(0).toUpperCase() || '?');
+        const iconInner = icon ? `<span class="${icon}"></span>` : initial;
+        return `
+        <div class="app-row${openable ? '' : ' coming-soon'}" data-name="${escapeHtml(a.name)}">
+          <div class="app-ico">${iconInner}</div>
+          <div class="app-main">
+            <div class="app-titleline">
+              <span class="app-name">${escapeHtml(a.displayName)}</span>
+              <span class="app-version">v${escapeHtml(a.version)}</span>
+              ${storeUpdates[a.name] ? `<span class="update-badge" title="A newer version is published in the app store. Update via: node scripts/oshal-app.js install ${escapeHtml(a.name)}">v${escapeHtml(storeUpdates[a.name])} available</span>` : ''}
+              <span class="status-badge status-${badgeClass}">${badgeText}</span>
+            </div>
+            <div class="app-desc">${escapeHtml(a.description)}</div>
+            <div class="app-meta">
+              <span><strong>${a.botCount}</strong> bots</span>
+              <span><strong>${a.toolCount}</strong> tools</span>
+              <span class="app-path muted">${escapeHtml(a.manifestPath)}</span>
+            </div>
+          </div>
+          <div class="app-right">
+            <div class="op-actions">
+              <button data-act="toggle" data-target="${a.status === 'active' ? 'inactive' : 'active'}">
+                ${a.status === 'active' ? 'Deactivate' : 'Activate'}
+              </button>
+              <button data-act="export">Export</button>
+              ${storeUpdates[a.name] ? `<button data-act="update" title="Re-install from the package's store source and hot-reload">Update to v${escapeHtml(storeUpdates[a.name])}</button>` : ''}
+              <button data-act="unload" class="danger">Unload</button>
+            </div>
+            ${openable
+              ? `<button class="open-link" data-act="focus">${preview ? 'Open preview' : 'Open'} &rarr;</button>`
+              : '<button class="open-link" disabled title="Not ready yet — tracked in BACKLOG">Coming soon</button>'}
+          </div>
+        </div>`;
+      };
+
+      // ADR-097: group by the app's ONE primary suite (manifest `suite:`). Platform pinned first;
+      // "More" catches pre-097 installed packages with no suite yet. Working-first rank holds within a group.
+      const SUITES = [
+        ['platform', 'Platform'],
+        ['ai-productivity', 'AI Productivity'],
+        ['ai-knowledge', 'AI Knowledge'],
+        ['ai-finance', 'AI Finance'],
+        ['ai-creative', 'AI Creative'],
+        ['ai-home', 'AI Home &amp; Lifestyle'],
+        ['ai-engineering', 'AI Engineering'],
+      ];
+      const bySuite = new Map(SUITES.map(([key]) => [key, []]));
+      const more = [];
+      for (const a of sorted) (bySuite.get(a.suite) || more).push(a);
+      appsEl.innerHTML = SUITES.map(([key, label]) => [label, bySuite.get(key)])
+        .concat([['More', more]])
+        .filter(([, group]) => group.length > 0)
+        .map(([label, group]) => `
+          <div class="suite-section">
+            <h3 class="suite-header">${label} <span class="suite-count">${group.length}</span></h3>
+            <div class="app-list">${group.map(rowHtml).join('')}</div>
+          </div>`)
+        .join('');
+
+      appsEl.querySelectorAll('[data-act]').forEach(btn => {
+        btn.addEventListener('click', e => handleAction(e.currentTarget));
+      });
+    }
+
+    async function handleAction(btn) {
+      const row = btn.closest('.app-row');
+      const name = row.dataset.name;
+      const act = btn.dataset.act;
+
+      if (act === 'toggle') {
+        const target = btn.dataset.target === 'active';
+        await call('PATCH', `/api/swarm/apps/${encodeURIComponent(name)}/toggle`, { active: target });
+        await fetchApps();
+      } else if (act === 'unload') {
+        if (!confirm(`Unload "${name}"? Bots will be deactivated and the app removed from the registry.`)) return;
+        await call('DELETE', `/api/swarm/apps/${encodeURIComponent(name)}`);
+        await fetchApps();
+      } else if (act === 'export') {
+        window.location.href = `/api/swarm/apps/${encodeURIComponent(name)}/export`;
+      } else if (act === 'update') {
+        if (!confirm(`Update "${name}" to v${storeUpdates[name]} from its store source? The package is re-installed and hot-reloaded.`)) return;
+        btn.disabled = true; btn.textContent = 'Updating…';
+        try {
+          await call('POST', `/api/updates/apps/${encodeURIComponent(name)}/apply`);
+          await fetchApps();
+        } catch (_) {
+          btn.disabled = false; btn.textContent = `Update to v${storeUpdates[name]}`;
+        }
+      } else if (act === 'focus') {
+        if (name === 'codex-packer') {
+          const tid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+          window.location.href = `${CODEX_PACKER_LAUNCH}&taskId=${tid}`;
+          return;
+        }
+        localStorage.setItem('oshal-ui-profile', name);
+        window.location.href = `/cockpit?app=${encodeURIComponent(name)}`;
+      }
+    }
+
+    async function call(method, url, body) {
+      showError('');
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: body ? { 'Content-Type': 'application/json' } : {},
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        return await res.json();
+      } catch (err) {
+        showError(err.message);
+        throw err;
+      }
+    }
+
+    document.getElementById('loadBtn').addEventListener('click', async () => {
+      const path = document.getElementById('loadPath').value.trim();
+      if (!path) return;
+      await call('POST', '/api/swarm/apps/load', { path });
+      await fetchApps();
+    });
+
+    document.getElementById('updatesBtn').addEventListener('click', async () => {
+      const b = document.getElementById('updatesBtn');
+      b.disabled = true; b.textContent = 'Checking…';
+      try {
+        await call('GET', '/api/updates?refresh=1');
+        await fetchApps();
+      } finally {
+        b.disabled = false; b.textContent = 'Check for updates';
+      }
+    });
+
+    document.getElementById('importBtn').addEventListener('click', () => {
+      document.getElementById('importFile').click();
+    });
+    document.getElementById('importFile').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('manifest', file);
+      showError('');
+      try {
+        const res = await fetch('/api/swarm/apps/import', { method: 'POST', body: formData });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(err.error);
+        }
+        await fetchApps();
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+
+    focusSelect.addEventListener('change', () => {
+      const val = focusSelect.value;
+      if (val) {
+        localStorage.setItem('oshal-ui-profile', val);
+        window.location.href = `/cockpit?app=${encodeURIComponent(val)}`;
+      } else {
+        localStorage.removeItem('oshal-ui-profile');
+        window.location.href = '/cockpit';
+      }
+    });
+
+    fetchApps();
+  </script>
+</body>
+</html>

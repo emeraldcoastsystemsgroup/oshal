@@ -1,0 +1,46 @@
+provider: xero
+displayName: Xero
+version: 1.0.0
+baseUrl: https://api.xero.com/api.xro/2.0
+auth:
+  type: oauth2
+headers:
+  Xero-tenant-id: ${env:XERO_TENANT_ID:-tenant}
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: contacts
+    tool: xero-contacts
+    method: GET
+    path: /Contacts
+  - name: contact
+    tool: xero-contact
+    method: GET
+    path: /Contacts/{contactID}
+  - name: invoices
+    tool: xero-invoices
+    method: GET
+    path: /Invoices
+  - name: payments
+    tool: xero-payments
+    method: GET
+    path: /Payments
+  - name: items
+    tool: xero-items
+    method: GET
+    path: /Items
+  - name: accounts
+    tool: xero-accounts
+    method: GET
+    path: /Accounts
+metadata:
+  description: "Read Xero contacts, invoices, payments, items, and the chart of accounts."
+  category: "Finance"
+  icon: xero
+  iconTitle: Xero
+  iconSource: simple-icons
+  iconVerified: true

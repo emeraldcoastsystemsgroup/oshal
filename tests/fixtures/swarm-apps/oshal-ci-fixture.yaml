@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# THE PERMANENT TEST FIXTURE APP (ADR-085 D5)
+#
+# Shared specs need an installed app to assert the framework against: it appears in the catalog,
+# contributes a ribbon icon, and can be toggled off. They used to fixture a REAL app —
+# little-monsters, then gov-contracting after LM carved out — so every carve broke them and they had
+# to be re-pointed. That treadmill has no end: the entire point of the store migration is that ANY
+# product app can carve.
+#
+# This app exists ONLY as a fixture. It is not a product, it ships no code, and it can never carve,
+# so specs pinned to it never need re-pointing again.
+#
+# It is loaded ONLY by the test server, via SWARM_APPS_EXTRA_DIRS=tests/fixtures/swarm-apps
+# (playwright.config.ts). That variable is UNSET in production — this file never reaches a real
+# swarm, and it deliberately lives outside swarm-apps/ so it cannot be auto-loaded by accident.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: oshal-ci-fixture
+displayName: CI Fixture
+description: >-
+  Permanent test fixture for the swarm-app framework specs (ADR-085 D5). Not a product app;
+  loaded only by the test server. Never carves, so specs pinned to it never need re-pointing.
+version: 1.0.0
+status: active
+
+# PUBLIC — and it must be. `scope: operator` looks safer but breaks the very specs this fixture
+# exists to serve: listApps() hides operator-scoped apps from non-operator callers, and the
+# MOCK_OIDC test session is not an operator, so `GET /api/swarm/apps` never returned the fixture
+# ("expected oshal-ci-fixture, received [brand-graphics, capture-crm, …]" — the 2026-07-16 nightly).
+# The real containment is that this file is loaded ONLY via SWARM_APPS_EXTRA_DIRS, which is unset in
+# production — it cannot reach a real swarm at all, so a narrower scope buys nothing.
+scope: public
+
+# Guests get nothing. `guestTier` is only a request anyway (D4) — an operator would have to approve
+# it — but declaring `blocked` states the intent outright.
+guestTier: blocked
+
+# No bots: this fixture asserts the FRAMEWORK (catalog, ribbon, toggle), not agent execution.
+# A bot would mean a container, a persona and an agentId to keep in sync forever.
+
+# One ribbon icon — enough for the specs to prove a surface appears on install and disappears on
+# toggle-off. Points at an existing always-present framework route.
+ui:
+  static:
+    - toolName: oshal-ci-fixture-surface
+      label: CI Fixture
+      icon: codicon codicon-beaker
+      iframeUrl: /api/health
+      section: bottom
+
+# One route, purely so the specs can prove the swarm-app GATE: routes[].mountPath is live (it hands
+# the path to the gate — ADR-085 D2), so toggling this app off must make the path 503 with a
+# structured body. The mountPath is namespaced to this fixture and matches no core route, so it can
+# never shadow a real one. The `module` deliberately does not exist: the mounter logs it as
+# "not package-relative — skipped" (exactly as it does for every core manifest's informational
+# routes block) and mounts nothing, which is what we want — the gate is the thing under test, not
+# the handler.
+routes:
+  - module: routes/ci-fixture.js
+    factory: createCiFixtureRoutes
+    mountPath: /api/oshal-ci-fixture
+    auth: oidc
+
+# hideFrameworkItems: gives the ribbon-synthesis specs something to assert against.
+ribbon:
+  hideFrameworkItems: [calendar]

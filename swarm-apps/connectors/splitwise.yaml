@@ -1,0 +1,30 @@
+# Splitwise — shared expenses, groups, and current-user profile via Bearer token.
+provider: splitwise
+displayName: Splitwise
+version: 1.0.0
+baseUrl: https://secure.splitwise.com/api/v3.0
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: current-user
+    tool: splitwise-current-user
+    method: GET
+    path: /get_current_user
+  - name: groups
+    tool: splitwise-groups
+    method: GET
+    path: /get_groups
+  - name: expenses
+    tool: splitwise-expenses
+    method: GET
+    path: /get_expenses
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/secure.splitwise.com.ico

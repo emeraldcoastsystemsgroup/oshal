@@ -1,0 +1,32 @@
+/* ═══ Daylight — Apple Liquid Glass Light ═══ */
+[data-theme="daylight"] {
+  --bg-primary: #f0f2f8;
+  --bg-secondary: rgba(255, 255, 255, 0.8);
+  --bg-tertiary: rgba(240, 242, 248, 0.7);
+  --bg-card: rgba(255, 255, 255, 0.6);
+  --bg-card-hover: rgba(255, 255, 255, 0.8);
+  --border-color: rgba(0, 0, 0, 0.06);
+  --border-color-hover: rgba(0, 0, 0, 0.12);
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a4a6a;
+  --text-muted: #8a8aa0;
+  --accent-primary: #5b4cdb;
+  --accent-primary-hover: #7c6ef0;
+  --accent-gradient: linear-gradient(135deg, #5b4cdb 0%, #8b5cf6 50%, #d946ef 100%);
+  --accent-glow: rgba(91, 76, 219, 0.2);
+  --status-success: #16a34a;
+  --status-active: #2563eb;
+  --status-warning: #d97706;
+  --status-error: #dc2626;
+  --glass-bg: rgba(255, 255, 255, 0.5);
+  --glass-bg-heavy: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.06);
+  --glass-highlight: linear-gradient(135deg, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0) 50%);
+  --glass-blur: 20px;
+  --glass-blur-light: 12px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.1);
+  --panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255,255,255,0.9);
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255,255,255,0.8);
+  --depth-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+}

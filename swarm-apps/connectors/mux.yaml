@@ -1,0 +1,41 @@
+provider: mux
+displayName: Mux
+version: 1.0.0
+baseUrl: https://api.mux.com
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: assets
+    tool: mux-assets
+    method: GET
+    path: /video/v1/assets
+    query:
+      limit: '{limit}'
+      page: '{page}'
+  - name: asset
+    tool: mux-asset
+    method: GET
+    path: /video/v1/assets/{ASSET_ID}
+  - name: live-streams
+    tool: mux-live-streams
+    method: GET
+    path: /video/v1/live-streams
+    query:
+      limit: '{limit}'
+      page: '{page}'
+  - name: metrics-breakdown
+    tool: mux-metrics-breakdown
+    method: GET
+    path: /data/v1/metrics/{METRIC_ID}/breakdown
+    query:
+      group_by: '{group_by}'
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/mux.com.ico

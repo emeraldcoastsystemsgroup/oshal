@@ -1,0 +1,30 @@
+provider: nolt
+displayName: Nolt
+version: 1.0.0
+baseUrl: https://api.nolt.io/v1
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: boards
+    tool: nolt-boards
+    method: GET
+    path: /boards
+  - name: board-posts
+    tool: nolt-board-posts
+    method: GET
+    path: /boards/{boardId}/posts
+  - name: post
+    tool: nolt-post
+    method: GET
+    path: /posts/{postId}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/nolt.io.ico

@@ -1,0 +1,35 @@
+provider: docusign
+displayName: DocuSign
+version: 1.0.0
+baseUrl: ${env:DOCUSIGN_BASE_URL:-https://demo.docusign.net/restapi}/v2.1/accounts/${env:DOCUSIGN_ACCOUNT_ID:-acct}
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-envelopes
+    tool: docusign-list-envelopes
+    method: GET
+    path: /envelopes
+    query:
+      from_date: '{from_date}'
+  - name: get-envelope
+    tool: docusign-get-envelope
+    method: GET
+    path: /envelopes/{envelope_id}
+  - name: list-templates
+    tool: docusign-list-templates
+    method: GET
+    path: /templates
+  - name: list-folders
+    tool: docusign-list-folders
+    method: GET
+    path: /folders
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/docusign.com.ico

@@ -1,0 +1,33 @@
+provider: coinpaprika
+displayName: Coinpaprika
+version: 1.0.0
+baseUrl: https://api.coinpaprika.com/v1
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: coins
+    tool: coinpaprika-coins
+    method: GET
+    path: /coins
+  - name: tickers
+    tool: coinpaprika-tickers
+    method: GET
+    path: /tickers
+    query:
+      quotes: '{quotes}'
+  - name: ticker-detail
+    tool: coinpaprika-ticker-detail
+    method: GET
+    path: /tickers/{coin_id}
+    query:
+      quotes: '{quotes}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/coinpaprika.com.ico

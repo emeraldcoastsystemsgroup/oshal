@@ -1,0 +1,37 @@
+# Cloudinary Admin API — basic auth (API key : API secret); list image/video assets and account usage (cloud name via env).
+provider: cloudinary
+displayName: Cloudinary
+version: 1.0.0
+baseUrl: https://api.cloudinary.com/v1_1/${env:CLOUDINARY_CLOUD_NAME:-yourcloud}
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: image-resources
+    tool: cloudinary-image-resources
+    method: GET
+    path: /resources/image
+    query:
+      max_results: "{max_results}"
+      next_cursor: "{next_cursor}"
+  - name: video-resources
+    tool: cloudinary-video-resources
+    method: GET
+    path: /resources/video
+    query:
+      max_results: "{max_results}"
+      next_cursor: "{next_cursor}"
+  - name: usage
+    tool: cloudinary-usage
+    method: GET
+    path: /usage
+metadata:
+  icon: cloudinary
+  iconTitle: Cloudinary
+  iconSource: simple-icons
+  iconVerified: true

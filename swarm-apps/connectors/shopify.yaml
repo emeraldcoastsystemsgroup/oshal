@@ -1,0 +1,45 @@
+provider: shopify
+displayName: Shopify
+version: 1.0.0
+baseUrl: https://${env:SHOPIFY_STORE:-yourstore}.myshopify.com/admin/api/2024-10
+auth:
+  type: apiKeyHeader
+  header: X-Shopify-Access-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: shopify-customers
+    method: GET
+    path: /customers.json
+  - name: customer
+    tool: shopify-customer
+    method: GET
+    path: /customers/{customer_id}.json
+  - name: orders
+    tool: shopify-orders
+    method: GET
+    path: /orders.json
+  - name: order
+    tool: shopify-order
+    method: GET
+    path: /orders/{order_id}.json
+  - name: products
+    tool: shopify-products
+    method: GET
+    path: /products.json
+  - name: transactions
+    tool: shopify-transactions
+    method: GET
+    path: /orders/{order_id}/transactions.json
+metadata:
+  description: "Read Shopify customers, orders, products, and order transactions for the connected store."
+  category: "Commerce"
+  icon: shopify
+  iconTitle: Shopify
+  iconSource: simple-icons
+  iconVerified: true

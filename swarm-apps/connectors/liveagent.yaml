@@ -1,0 +1,30 @@
+provider: liveagent
+displayName: LiveAgent
+version: 1.0.0
+baseUrl: ${env:LIVEAGENT_BASE_URL:-https://your.ladesk.com}/api/v3
+auth:
+  type: apiKeyHeader
+  header: apikey
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: tickets
+    tool: liveagent-tickets
+    method: GET
+    path: /tickets
+  - name: agents
+    tool: liveagent-agents
+    method: GET
+    path: /agents
+  - name: contacts
+    tool: liveagent-contacts
+    method: GET
+    path: /contacts
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/liveagent.com.ico

@@ -1,0 +1,121 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native health dashboard engineering page for cockpit runtime visibility
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Health Dashboard</title>
+  <link rel="stylesheet" href="/health-dashboard/health-dashboard.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Engineering Surface</p>
+        <h1>Health Dashboard</h1>
+        <p class="hero-copy">Native OSHAL runtime visibility for health, agents, swarm runs, scheduler readiness, and recent operational logs.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+        <a class="top-link" href="/cockpit/" target="_top" rel="noreferrer">Open Cockpit</a>
+      </div>
+    </header>
+
+    <p class="status-banner" id="statusBanner">Loading runtime health...</p>
+
+    <section class="metrics-grid" aria-label="Health dashboard summary">
+      <article class="metric-card">
+        <span class="metric-label">API Health</span>
+        <strong id="metricApiHealth">—</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Active Tasks</span>
+        <strong id="metricActiveTasks">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Agents</span>
+        <strong id="metricAgents">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Scheduler</span>
+        <strong id="metricScheduler">—</strong>
+      </article>
+    </section>
+
+    <main class="content-grid">
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Runtime Summary</p>
+            <h2>Core Signals</h2>
+          </div>
+        </div>
+        <div class="summary-grid" id="runtimeSummary" data-testid="health-runtime-summary"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Agent Activity</p>
+            <h2>Current Agent Metrics</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Completed</th>
+                <th>Active</th>
+                <th>Cost</th>
+              </tr>
+            </thead>
+            <tbody id="agentTableBody" data-testid="health-agent-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Swarm Runs</p>
+            <h2>Recent Runs</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>Status</th>
+                <th>Items</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="runTableBody" data-testid="health-run-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Operational Feed</p>
+            <h2>Recent Logs</h2>
+          </div>
+        </div>
+        <ul class="log-list" id="logList" data-testid="health-log-list"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/health-dashboard/health-dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+provider: getform
+displayName: Getform
+version: 1.0.0
+baseUrl: https://api.getform.io/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: list-forms
+    tool: getform-list-forms
+    method: GET
+    path: /forms
+  - name: list-form-submissions
+    tool: getform-list-form-submissions
+    method: GET
+    path: /forms/{form_id}/submissions
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/getform.io.ico

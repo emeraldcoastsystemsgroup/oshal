@@ -1,0 +1,40 @@
+provider: supabase
+displayName: Supabase
+version: 1.0.0
+baseUrl: https://api.supabase.com/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+pagination:
+  strategy: none
+resources:
+  - name: organizations
+    tool: supabase-organizations
+    method: GET
+    path: /organizations
+  - name: projects
+    tool: supabase-projects
+    method: GET
+    path: /projects
+  - name: project-api-keys
+    tool: supabase-project-api-keys
+    method: GET
+    path: /projects/{ref}/api-keys
+  - name: project-functions
+    tool: supabase-project-functions
+    method: GET
+    path: /projects/{ref}/functions
+  - name: project-secrets
+    tool: supabase-project-secrets
+    method: GET
+    path: /projects/{ref}/secrets
+metadata:
+  icon: supabase
+  iconTitle: Supabase
+  iconSource: simple-icons
+  iconVerified: true

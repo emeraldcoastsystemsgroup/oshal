@@ -1,0 +1,30 @@
+id: high-memory
+name: High Memory / OOMKilled Recovery
+description: Detects pods killed due to memory limits and restarts them
+trigger:
+  type: health_check
+  pattern: "OOMKilled|memory.*limit|oom|out of memory"
+  severity: critical
+diagnosis:
+  commands:
+    - "kubectl get pods -n ${namespace} -l app=${service} --no-headers"
+    - "kubectl describe pod -n ${namespace} -l app=${service} | grep -A5 'Last State'"
+    - "kubectl top pods -n ${namespace} -l app=${service} --no-headers"
+  expectedPatterns:
+    - "OOMKilled"
+    - "memory"
+    - "Terminated"
+remediation:
+  commands:
+    - "kubectl rollout restart deployment/${service} -n ${namespace}"
+  requiresApproval: false
+  maxAutoRetries: 1
+verification:
+  commands:
+    - "kubectl get pods -n ${namespace} -l app=${service} --no-headers"
+  successPatterns:
+    - "Running"
+    - "1/1"
+  delayMs: 30000
+  retries: 3
+  retryDelayMs: 15000

@@ -1,0 +1,36 @@
+provider: messagebird
+displayName: MessageBird
+version: 1.0.0
+baseUrl: https://rest.messagebird.com
+auth:
+  type: apiKeyHeader
+  header: Authorization
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: messages
+    tool: messagebird-messages
+    method: GET
+    path: /messages
+    query:
+      limit: '{limit}'
+      offset: '{offset}'
+  - name: balance
+    tool: messagebird-balance
+    method: GET
+    path: /balance
+  - name: contacts
+    tool: messagebird-contacts
+    method: GET
+    path: /contacts
+    query:
+      limit: '{limit}'
+      offset: '{offset}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/rest.messagebird.com.ico

@@ -1,0 +1,30 @@
+provider: honeycomb
+displayName: Honeycomb
+version: 1.0.0
+baseUrl: https://api.honeycomb.io/1
+auth:
+  type: apiKeyHeader
+  header: X-Honeycomb-Team
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: datasets
+    tool: honeycomb-datasets
+    method: GET
+    path: /datasets
+  - name: columns
+    tool: honeycomb-columns
+    method: GET
+    path: /columns/{dataset}
+  - name: triggers
+    tool: honeycomb-triggers
+    method: GET
+    path: /triggers/{dataset}
+metadata:
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/honeycomb.io.ico

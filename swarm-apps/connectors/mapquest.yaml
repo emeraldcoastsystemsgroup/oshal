@@ -1,0 +1,31 @@
+provider: mapquest
+displayName: MapQuest
+version: 1.0.0
+baseUrl: https://www.mapquestapi.com
+auth:
+  type: apiKeyQuery
+  param: key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: geocode-address
+    tool: mapquest-geocode-address
+    method: GET
+    path: /geocoding/v1/address
+    query:
+      location: '{q}'
+  - name: route
+    tool: mapquest-route
+    method: GET
+    path: /directions/v2/route
+    query:
+      from: '{from}'
+      to: '{to}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/mapquestapi.com.ico

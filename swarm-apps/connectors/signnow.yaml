@@ -1,0 +1,29 @@
+provider: signnow
+displayName: SignNow
+version: 1.0.0
+baseUrl: https://api.signnow.com
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: user
+    tool: signnow-user
+    method: GET
+    path: /user
+  - name: list-document-groups
+    tool: signnow-list-document-groups
+    method: GET
+    path: /documentgroup
+  - name: get-document
+    tool: signnow-get-document
+    method: GET
+    path: /document/{document_id}
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/signnow.com.ico

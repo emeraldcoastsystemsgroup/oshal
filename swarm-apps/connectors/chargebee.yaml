@@ -1,0 +1,41 @@
+provider: chargebee
+displayName: Chargebee
+version: 1.0.0
+baseUrl: https://${env:CHARGEBEE_SITE:-yoursite}.chargebee.com/api/v2
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: chargebee-customers
+    method: GET
+    path: /customers
+  - name: customer
+    tool: chargebee-customer
+    method: GET
+    path: /customers/{customer-id}
+  - name: subscriptions
+    tool: chargebee-subscriptions
+    method: GET
+    path: /subscriptions
+  - name: invoices
+    tool: chargebee-invoices
+    method: GET
+    path: /invoices
+  - name: transactions
+    tool: chargebee-transactions
+    method: GET
+    path: /transactions
+  - name: items
+    tool: chargebee-items
+    method: GET
+    path: /items
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/chargebee.com.ico

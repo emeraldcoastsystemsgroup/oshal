@@ -1,0 +1,61 @@
+{
+  "name": "oshal-starter",
+  "displayName": "OSHAL",
+  "description": "Clean first-run cockpit. Jarvis is the front door, the Bot Forge lets you create your first bot in plain language, and Explore Apps opens the full catalog when you're ready. This is a presentation profile only — every backend route, bot, and app stays running. Switch to the full operator cockpit any time by appending ?profile=oshal-framework to the cockpit URL, or set UI_PROFILE=oshal-framework.",
+  "ribbon": {
+    "items": [
+      {
+        "id": "tool-jarvis-home",
+        "icon": "codicon codicon-sparkle",
+        "label": "Jarvis",
+        "section": "home",
+        "toolUi": { "iframeUrl": "/api/jarvis/", "sidebarLabel": "Jarvis" }
+      },
+
+      {
+        "id": "tool-forge",
+        "icon": "codicon codicon-tools",
+        "label": "Create a Bot",
+        "section": "top",
+        "group": "Start here",
+        "toolUi": { "iframeUrl": "/api/forge", "sidebarLabel": "Bot Forge" }
+      },
+      {
+        "id": "tool-explore-apps",
+        "icon": "codicon codicon-extensions",
+        "label": "Explore Apps",
+        "section": "top",
+        "group": "Start here",
+        "toolUi": { "iframeUrl": "/applications", "sidebarLabel": "Explore Apps" }
+      },
+      {
+        "id": "tool-storage-files",
+        "icon": "codicon codicon-folder",
+        "label": "Files",
+        "section": "top",
+        "group": "Start here",
+        "toolUi": { "iframeUrl": "/api/files", "sidebarLabel": "Files" }
+      },
+
+      {
+        "id": "tickets",
+        "icon": "codicon codicon-tag",
+        "label": "Tickets",
+        "section": "bottom"
+      },
+      {
+        "id": "chat",
+        "icon": "codicon codicon-comment-discussion",
+        "label": "Swarm Messages",
+        "section": "bottom"
+      },
+      {
+        "id": "settings",
+        "icon": "codicon codicon-gear",
+        "label": "Settings",
+        "section": "bottom"
+      }
+    ]
+  },
+  "defaultView": "tool-jarvis-home"
+}

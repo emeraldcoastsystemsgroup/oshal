@@ -1,0 +1,35 @@
+provider: thesportsdb
+displayName: TheSportsDB
+version: 1.0.0
+baseUrl: https://www.thesportsdb.com/api/v1/json/3
+auth:
+  type: none
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: search-teams
+    tool: thesportsdb-search-teams
+    method: GET
+    path: /searchteams.php
+    query:
+      t: '{q}'
+  - name: lookup-team
+    tool: thesportsdb-lookup-team
+    method: GET
+    path: /lookupteam.php
+    query:
+      id: '{q}'
+  - name: next-league-events
+    tool: thesportsdb-next-league-events
+    method: GET
+    path: /eventsnextleague.php
+    query:
+      id: '{q}'
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/thesportsdb.com.ico

@@ -1,0 +1,39 @@
+provider: vonage
+displayName: Vonage
+version: 1.0.0
+baseUrl: https://rest.nexmo.com
+auth:
+  type: apiKeyQuery
+  param: api_key
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: account-numbers
+    tool: vonage-account-numbers
+    method: GET
+    path: /account/numbers
+    query:
+      index: '{index}'
+      size: '{size}'
+  - name: search-messages
+    tool: vonage-search-messages
+    method: GET
+    path: /search/messages
+    query:
+      date: '{date}'
+      to: '{to}'
+  - name: search-message
+    tool: vonage-search-message
+    method: GET
+    path: /search/message
+    query:
+      id: '{id}'
+metadata:
+  icon: vonage
+  iconTitle: Vonage
+  iconSource: simple-icons
+  iconVerified: true

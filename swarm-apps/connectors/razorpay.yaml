@@ -1,0 +1,42 @@
+provider: razorpay
+displayName: Razorpay
+version: 1.0.0
+baseUrl: https://api.razorpay.com/v1
+auth:
+  type: basic
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: customers
+    tool: razorpay-customers
+    method: GET
+    path: /customers
+  - name: payments
+    tool: razorpay-payments
+    method: GET
+    path: /payments
+  - name: payment
+    tool: razorpay-payment
+    method: GET
+    path: /payments/{paymentId}
+  - name: orders
+    tool: razorpay-orders
+    method: GET
+    path: /orders
+  - name: subscriptions
+    tool: razorpay-subscriptions
+    method: GET
+    path: /subscriptions
+  - name: invoices
+    tool: razorpay-invoices
+    method: GET
+    path: /invoices
+metadata:
+  icon: razorpay
+  iconTitle: Razorpay
+  iconSource: simple-icons
+  iconVerified: true

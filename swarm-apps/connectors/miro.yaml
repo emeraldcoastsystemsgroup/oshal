@@ -1,0 +1,26 @@
+provider: miro
+displayName: Miro
+version: 1.0.0
+baseUrl: https://api.miro.com/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: boards
+    tool: miro-boards
+    method: GET
+    path: /boards
+  - name: board-items
+    tool: miro-board-items
+    method: GET
+    path: /boards/{board_id}/items
+metadata:
+  icon: miro
+  iconTitle: Miro
+  iconSource: simple-icons
+  iconVerified: true

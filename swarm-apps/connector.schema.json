@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://open-shal/connector.schema.json",
+  "title": "OSHAL connector spec",
+  "description": "Declarative connector definition (ADR-065). A connector.yaml validated against this is generated into ConnectorClient-backed routes, JSON-Schema'd bot tools, registry/broker entries, and a doc stub. See docs/connector-spec.md.",
+  "type": "object",
+  "required": ["provider", "baseUrl", "auth", "resources"],
+  "additionalProperties": false,
+  "properties": {
+    "provider": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Slug; route name + default broker key." },
+    "credProvider": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Broker key for token resolution when it differs from provider (e.g. gmail -> google)." },
+    "displayName": { "type": "string" },
+    "version": { "type": "string" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "category": { "type": "string", "description": "Marketplace shelf category (matches the CATEGORY_BY_PROVIDER taxonomy in marketplace.ts)." },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "icon": { "type": "string", "description": "Simple Icons slug or local icon key." },
+        "iconTitle": { "type": "string", "description": "Human-readable logo title from the icon catalog." },
+        "iconSource": { "type": "string", "description": "Icon source, e.g. simple-icons or favicon-fallback." },
+        "iconVerified": { "type": "boolean", "description": "True when icon was validated against the source catalog." },
+        "iconUrl": { "type": "string", "format": "uri" },
+        "website": { "type": "string", "format": "uri" },
+        "sourceCatalog": { "type": "string" },
+        "sourceUrl": { "type": "string", "format": "uri" }
+      }
+    },
+    "baseUrl": { "type": "string", "format": "uri" },
+    "auth": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["none", "oauth2", "basic", "apiKeyHeader", "apiKeyQuery"] },
+        "tokenAuth": { "enum": ["basic", "body"], "description": "How the OAuth token endpoint authenticates the client." },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+        "header": { "type": "string", "description": "apiKeyHeader: header name." },
+        "param": { "type": "string", "description": "apiKeyQuery: query param name." }
+      },
+      "additionalProperties": true
+    },
+    "rateLimit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "burst": { "type": "number", "minimum": 0 },
+        "perSecond": { "type": "number", "minimum": 0 }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxRetries": { "type": "integer", "minimum": 0 },
+        "baseDelayMs": { "type": "integer", "minimum": 0 },
+        "maxDelayMs": { "type": "integer", "minimum": 0 },
+        "honorRetryAfter": { "type": "boolean" }
+      }
+    },
+    "timeoutMs": { "type": "integer", "minimum": 1 },
+    "pagination": {
+      "type": "object",
+      "required": ["strategy"],
+      "properties": {
+        "strategy": { "enum": ["cursor", "offset", "link", "link-header"] },
+        "param": { "type": "string" },
+        "nextField": { "type": "string" },
+        "pageSize": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "method", "path"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "tool": { "type": "string", "description": "If set, auto-exposed as a bot tool of this name." },
+          "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+          "path": { "type": "string", "description": "Path template; {placeholders} bind to inputs." },
+          "query": { "type": "object", "additionalProperties": { "type": "string" } },
+          "body": { "description": "JSON body template (object/string) with {placeholders}." },
+          "output": { "type": "string", "description": "Name of a JSON Schema describing the normalized output." },
+          "retry": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxRetries": { "type": "integer", "minimum": 0 },
+              "honorRetryAfter": { "type": "boolean" }
+            }
+          },
+          "emptyOk": { "type": "array", "items": { "type": "integer" }, "description": "Statuses treated as empty success, e.g. [204]." },
+          "safety": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "action": { "enum": ["read", "write", "destructive"] },
+              "requiresConfirmation": { "type": "boolean" },
+              "supportsDryRun": { "type": "boolean" },
+              "idempotent": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "description": "Optional write-capable action tier. Additive: GET-only connectors omit this entirely. Each entry is a REAL documented provider mutation, executed via POST /api/connectors/:id/actions/:action with the caller's brokered credentials, params validated against paramsSchema before any HTTP work, riskLevel medium/high (or approvalRequired) behind the explicit confirm:true rail, and one connector_action_audit row per attempt (migration 083).",
+      "items": {
+        "type": "object",
+        "required": ["name", "method", "urlTemplate", "paramsSchema", "riskLevel", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Action slug; the :action route segment." },
+          "method": { "enum": ["POST", "PUT", "PATCH", "DELETE"] },
+          "urlTemplate": { "type": "string", "description": "Path template relative to baseUrl; {placeholders} bind to validated params (URL-encoded). Params not consumed by the path become the JSON body (POST/PUT/PATCH) or query string (DELETE)." },
+          "paramsSchema": { "type": "object", "description": "JSON Schema (draft-07 subset: type/required/properties/enum/const/pattern/minLength/maxLength/minimum/maximum/items/additionalProperties) the request params must satisfy." },
+          "riskLevel": { "enum": ["low", "medium", "high"], "description": "medium/high ALWAYS require confirm:true (fail-closed); approvalRequired:false cannot relax that." },
+          "approvalRequired": { "type": "boolean", "description": "Force the confirm gate even at riskLevel low." },
+          "description": { "type": "string", "description": "What the mutation does on the provider, for operators and approval UIs." }
+        }
+      }
+    },
+    "webhooks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event", "verify"],
+        "additionalProperties": false,
+        "properties": {
+          "event": { "type": "string" },
+          "verify": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": { "enum": ["hmac", "jwt", "shared-secret"] },
+              "header": { "type": "string" },
+              "secret": { "type": "string", "description": "env:NAME reference or literal." }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added light-blue daylight-style cockpit theme for standalone chat and embedded API configuration
+ */
+
+/* ═══ Light Blue — Frosted Sky Glass ═══ */
+[data-theme="light-blue"] {
+  --bg-primary: #eaf4ff;
+  --bg-secondary: rgba(255, 255, 255, 0.78);
+  --bg-tertiary: rgba(222, 237, 255, 0.74);
+  --bg-card: rgba(255, 255, 255, 0.62);
+  --bg-card-hover: rgba(255, 255, 255, 0.82);
+  --border-color: rgba(59, 130, 246, 0.1);
+  --border-color-hover: rgba(59, 130, 246, 0.22);
+  --text-primary: #10233f;
+  --text-secondary: #315b8a;
+  --text-muted: #5f86b5;
+  --accent-primary: #3b82f6;
+  --accent-primary-hover: #60a5fa;
+  --accent-gradient: linear-gradient(135deg, #38bdf8 0%, #3b82f6 45%, #818cf8 100%);
+  --accent-glow: rgba(59, 130, 246, 0.22);
+  --status-success: #059669;
+  --status-active: #2563eb;
+  --status-warning: #d97706;
+  --status-error: #dc2626;
+  --glass-bg: rgba(255, 255, 255, 0.56);
+  --glass-bg-heavy: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(59, 130, 246, 0.1);
+  --glass-highlight: linear-gradient(135deg, rgba(255,255,255,0.86) 0%, rgba(255,255,255,0) 52%);
+  --glass-blur: 20px;
+  --glass-blur-light: 12px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(59, 130, 246, 0.16);
+  --panel-shadow: 0 10px 34px rgba(59, 130, 246, 0.12), inset 0 1px 0 rgba(255,255,255,0.9);
+  --card-shadow: 0 3px 10px rgba(59, 130, 246, 0.08), inset 0 1px 0 rgba(255,255,255,0.88);
+  --depth-shadow: 0 22px 58px rgba(59, 130, 246, 0.14);
+}

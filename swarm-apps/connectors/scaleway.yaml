@@ -1,0 +1,39 @@
+provider: scaleway
+displayName: Scaleway
+version: 1.0.0
+baseUrl: https://api.scaleway.com
+auth:
+  type: apiKeyHeader
+  header: X-Auth-Token
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: servers
+    tool: scaleway-servers
+    method: GET
+    path: /instance/v1/zones/{zone}/servers
+  - name: server
+    tool: scaleway-server
+    method: GET
+    path: /instance/v1/zones/{zone}/servers/{serverId}
+  - name: volumes
+    tool: scaleway-volumes
+    method: GET
+    path: /instance/v1/zones/{zone}/volumes
+  - name: images
+    tool: scaleway-images
+    method: GET
+    path: /instance/v1/zones/{zone}/images
+  - name: security-groups
+    tool: scaleway-security-groups
+    method: GET
+    path: /instance/v1/zones/{zone}/security_groups
+metadata:
+  icon: scaleway
+  iconTitle: Scaleway
+  iconSource: simple-icons
+  iconVerified: true

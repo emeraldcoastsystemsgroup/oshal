@@ -1,0 +1,42 @@
+provider: helpscout
+displayName: Help Scout
+version: 1.0.0
+baseUrl: https://api.helpscout.net/v2
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: conversations
+    tool: helpscout-conversations
+    method: GET
+    path: /conversations
+  - name: conversation
+    tool: helpscout-conversation
+    method: GET
+    path: /conversations/{id}
+  - name: conversation-threads
+    tool: helpscout-conversation-threads
+    method: GET
+    path: /conversations/{id}/threads
+  - name: mailboxes
+    tool: helpscout-mailboxes
+    method: GET
+    path: /mailboxes
+  - name: customers
+    tool: helpscout-customers
+    method: GET
+    path: /customers
+  - name: users
+    tool: helpscout-users
+    method: GET
+    path: /users
+metadata:
+  icon: helpscout
+  iconTitle: Help Scout
+  iconSource: simple-icons
+  iconVerified: true

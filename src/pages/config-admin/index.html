@@ -1,0 +1,241 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native config admin engineering page to replace the dead legacy /config route
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Added native per-bot configuration workspace sections so /config can host richer agent-level admin flows
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Added agent-scope section anchors and structure markers so bot-scoped /config links can open directly to per-bot settings
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Added shared Presentron runtime configuration to Config Admin so service-backed workspaces can hand operators to one canonical screen
+  5 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Added RAG Engine and Google Search MCP service runtime configuration sections
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Config Admin</title>
+  <script>
+    (() => {
+      const supported = ['midnight','daylight','ocean','sakura','forest','gray','black','light-blue','aurora','graphite','amber'];
+      try {
+        const saved = localStorage.getItem('cockpit-theme');
+        if (saved && supported.includes(saved)) {
+          document.documentElement.setAttribute('data-theme', saved);
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/forest.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/gray.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/black.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/amber.css">
+  <link rel="stylesheet" href="/config-admin/config-admin.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Engineering Surface</p>
+        <h1>Config Admin</h1>
+        <p class="hero-copy">Shared OSHAL configuration now lives in one place, while bot identity and tool configuration stay scoped to their own agent routes.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+        <a class="top-link" href="/cockpit/" target="_top" rel="noreferrer">Open Cockpit</a>
+      </div>
+    </header>
+
+    <section class="metrics-grid" aria-label="Config admin summary">
+      <article class="metric-card">
+        <span class="metric-label">Shared Routes</span>
+        <strong id="metricSharedRoutes">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Providers</span>
+        <strong id="metricProviders">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Agents</span>
+        <strong id="metricAgents">0</strong>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Legacy Routes</span>
+        <strong id="metricLegacyRoutes">0</strong>
+      </article>
+    </section>
+
+    <p class="status-banner" id="statusBanner">Loading config ownership...</p>
+
+    <main class="content-grid">
+      <section class="panel" data-scope="shared">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Shared Config</p>
+            <h2>OSHAL Control Plane</h2>
+          </div>
+        </div>
+
+        <form id="sharedConfigForm" class="config-form">
+          <label class="field">
+            <span>Plan Provider</span>
+            <select id="planProviderSelect" aria-label="Plan Provider"></select>
+          </label>
+
+          <label class="field">
+            <span>Act Provider</span>
+            <select id="actProviderSelect" aria-label="Act Provider"></select>
+          </label>
+
+          <label class="field field-wide">
+            <span>Plane URL</span>
+            <input id="planeUrlInput" type="url" placeholder="http://localhost:80">
+          </label>
+
+          <label class="field field-wide">
+            <span>Redis URL</span>
+            <input id="redisUrlInput" type="text" placeholder="redis://localhost:6379">
+          </label>
+
+          <label class="field field-wide">
+            <span>Git Repository URL</span>
+            <input id="gitRepoUrlInput" type="url" placeholder="https://github.com/...">
+          </label>
+
+          <label class="field field-wide">
+            <span>Code Server Workspace Root</span>
+            <input id="codeServerWorkspaceRootInput" type="text" placeholder="/usr/workspace">
+          </label>
+
+          <label class="field field-wide">
+            <span>API Key</span>
+            <input id="apiKeyInput" type="password" placeholder="Optional shared API key">
+          </label>
+
+          <div class="form-actions">
+            <button id="saveButton" type="submit">Save Shared Config</button>
+            <span class="helper-text">Bot-specific profile and tool settings stay under their agent-scoped routes.</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" data-scope="ownership">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Ownership Contract</p>
+            <h2>Route Boundaries</h2>
+          </div>
+        </div>
+        <div class="ownership-grid" id="ownershipGrid"></div>
+      </section>
+
+      <section class="panel" id="ragRuntimeSection" data-scope="shared">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Service Runtimes</p>
+            <h2>RAG Engine</h2>
+          </div>
+          <a class="top-link" href="/rag-center/" target="_top" rel="noreferrer">Open RAG Center</a>
+        </div>
+
+        <p class="helper-text service-runtime-copy">RAG is a shared swarm runtime for vector-based knowledge retrieval. Configure the embedding provider, chunking strategy, and vector store endpoint here.</p>
+        <form id="ragRuntimeForm" class="config-form">
+          <label class="field field-wide">
+            <span>RAG Endpoint</span>
+            <input id="ragConfigEndpointInput" type="text" placeholder="http://chromadb:8000">
+          </label>
+
+          <label class="field">
+            <span>Default Collection</span>
+            <input id="ragConfigDefaultCollectionInput" type="text" placeholder="default">
+          </label>
+
+          <label class="field">
+            <span>Embedding Provider</span>
+            <input id="ragConfigEmbeddingProviderInput" type="text" placeholder="openai">
+          </label>
+
+          <label class="field">
+            <span>Embedding Model</span>
+            <input id="ragConfigEmbeddingModelInput" type="text" placeholder="text-embedding-3-small">
+          </label>
+
+          <label class="field">
+            <span>Chunking Strategy</span>
+            <select id="ragConfigChunkStrategySelect">
+              <option value="tiered">Tiered</option>
+              <option value="sentence">Sentence</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Chunk Size</span>
+            <input id="ragConfigChunkSizeInput" type="number" placeholder="700" min="100" max="4000">
+          </label>
+
+          <label class="field">
+            <span>Chunk Overlap</span>
+            <input id="ragConfigChunkOverlapInput" type="number" placeholder="100" min="0" max="1000">
+          </label>
+
+          <div class="field field-wide" id="ragTierFieldsWrap">
+            <span>Tier Sizes (comma-separated)</span>
+            <input id="ragConfigTierSizesInput" type="text" placeholder="1200,700,350">
+            <span class="helper-text">Tier chunk sizes from largest to smallest. Only used when strategy is tiered.</span>
+          </div>
+
+          <div class="field field-wide" id="ragTierOverlapsWrap">
+            <span>Tier Overlaps (comma-separated)</span>
+            <input id="ragConfigTierOverlapsInput" type="text" placeholder="180,100,60">
+            <span class="helper-text">Overlap sizes matching each tier. Only used when strategy is tiered.</span>
+          </div>
+
+          <div class="field field-wide">
+            <span>Runtime Status</span>
+            <div class="service-runtime-status" id="ragRuntimeStatus">Loading RAG runtime config...</div>
+          </div>
+
+          <div class="form-actions field-wide">
+            <button id="testRagRuntimeBtn" type="button">Test RAG Connection</button>
+            <button id="saveRagRuntimeBtn" type="submit">Save RAG Runtime</button>
+            <span class="helper-text">Saves to the shared RAG service config. The vector store endpoint is also used by the RAG Center and swarm memory tools.</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel panel-wide" id="agentConfigSection" data-scope="agent">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Per-Bot Config</p>
+            <h2 id="agentConfigHeading">Choose an Agent</h2>
+          </div>
+        </div>
+        <div id="selectedAgentPanel" class="agent-config-panel">
+          <div class="empty-state">Select a bot below to load its native OSHAL profile and tool settings.</div>
+        </div>
+      </section>
+
+      <section class="panel panel-wide" data-scope="agent-list">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Agent Surfaces</p>
+            <h2>Per-Agent Admin Paths</h2>
+          </div>
+          <a class="top-link" href="/cockpit/" target="_top" rel="noreferrer">Manage Bots in Cockpit</a>
+        </div>
+        <div class="agent-list" id="agentList"></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/config-admin/config-admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Executor RBAC for the `argo` namespace's default workflow ServiceAccount.
+#
+# Argo's own install.yaml does NOT grant the `argo` ServiceAccount permission to
+# create/patch `workflowtaskresults`. Without this, a Workflow's MAIN container
+# runs and succeeds, but the `wait` sidecar fails with exit code 64 and the
+# Workflow lands in phase `Error` — a confusing failure where the work actually
+# happened. Verified on argo-workflows v4.0.7, 2026-07-08.
+#
+# NOTE: per-tenant workflows do NOT need this file — `tenant-namespace.example.yaml`
+# already grants the same verbs to the per-tenant `oshal-workflow` SA. This exists
+# only so smoke/lint workflows can run in the shared `argo` namespace.
+#
+#   kubectl apply -f ops/deployment/argo/argo-executor-rbac.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argo-executor
+  namespace: argo
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [workflowtaskresults]
+    verbs: [create, patch, get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argo-executor
+  namespace: argo
+subjects:
+  - kind: ServiceAccount
+    name: argo
+    namespace: argo
+  # `argo submit -n argo` without --serviceaccount runs pods as the namespace's
+  # `default` SA — which reproduced the exact exit-64 failure this file prevents
+  # (double-check 2026-07-08). Bind it too so the obvious smoke invocation works.
+  - kind: ServiceAccount
+    name: default
+    namespace: argo
+roleRef:
+  kind: Role
+  name: argo-executor
+  apiGroup: rbac.authorization.k8s.io

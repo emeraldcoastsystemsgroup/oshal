@@ -1,0 +1,32 @@
+{
+  "name": "@oshal/vids-operator",
+  "version": "0.1.0",
+  "description": "A screen-driving, self-learning Veo studio bot. Turns a human's idea into generated/edited video by CLICKING Google Vids (Veo) in your own logged-in Chrome over CDP. Runs a local web control panel you watch + chat with; deployable to a remote PC and joinable to the OSHAL swarm as a worker.",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/server.js",
+  "bin": {
+    "oshal-vids": "bin/oshal-vids.js"
+  },
+  "files": [
+    "bin/**/*",
+    "src/**/*",
+    "recipes/**/*",
+    "knowledge/**/*",
+    "scripts/**/*"
+  ],
+  "scripts": {
+    "start": "node bin/oshal-vids.js",
+    "chrome": "node scripts/launch-chrome.js",
+    "setup": "node scripts/setup.js",
+    "postinstall": "node scripts/setup.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "playwright": "^1.45.0",
+    "ws": "^8.17.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

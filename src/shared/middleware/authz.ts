@@ -1,0 +1,196 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | New shared authorization helpers to close object-level authorization (IDOR) gaps. Provides caller-identity extraction from the OIDC session, an operator (admin) allowlist (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS), and per-resource ownership checks. Object-level handlers must call canAccessResource() and return 404 on failure so resource ids are not oracle-able. Operator-only listing/override routes use requireOperator().
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | requiresOperator: middleware-shaped operator gate for whole mounts (requireOperator is handler-shaped and can't be listed in app.use). First consumer: /api/security — the Security Center exposes the platform's own weak points and redacted secret previews, so it must never be reachable by basic users.
+ */
+
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
+import crypto from 'crypto';
+
+/** Identity of the authenticated caller, derived ONLY from the validated OIDC session. */
+export interface CallerIdentity {
+  sub: string | null;
+  email: string | null;
+}
+
+interface OidcUserShape {
+  sub?: string;
+  email?: string;
+  preferred_username?: string;
+}
+
+/**
+ * @description Extracts the caller's identity from the validated OIDC session.
+ * Never trusts request body/query for identity — only req.oidc.user (set by the
+ * OIDC middleware or the mock injector). Returns nulls when unauthenticated.
+ */
+export function getCaller(req: Request): CallerIdentity {
+  const user = (req as { oidc?: { user?: OidcUserShape } }).oidc?.user;
+  const sub = user?.sub ? String(user.sub) : null;
+  const rawEmail = user?.email || user?.preferred_username || '';
+  const email = rawEmail ? String(rawEmail).toLowerCase() : null;
+  return { sub, email };
+}
+
+function parseAllowlist(value: string | undefined): Set<string> {
+  return new Set(
+    (value ?? '')
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry.length > 0),
+  );
+}
+
+/**
+ * @description Operator (admin) check. There is no IdP role claim wired into this
+ * deployment, so operator status is an explicit env allowlist matched against the
+ * caller's OIDC sub or email. FAIL-CLOSED: an empty allowlist means there are no
+ * operators, so operator-gated views simply scope to the caller instead of leaking
+ * everyone's data. Configure OSHAL_OPERATOR_EMAILS (comma-separated) to grant it.
+ */
+export function isOperator(req: Request): boolean {
+  const { sub, email } = getCaller(req);
+  return isOperatorIdentity(sub, email);
+}
+
+/**
+ * @description Same operator allowlist as {@link isOperator}, but for code paths that hold only an
+ * identity — services and background work with no Express `Request` (e.g. deciding whether a
+ * credential import may propagate swarm-wide). Same fail-closed semantics: an empty allowlist means
+ * nobody is an operator.
+ * @param sub - the caller's OIDC sub, when known
+ * @param email - the caller's email, when known
+ * @returns true when the identity is on the operator allowlist
+ */
+export function isOperatorIdentity(sub?: string | null, email?: string | null): boolean {
+  const subs = parseAllowlist(process.env.OSHAL_OPERATOR_SUBS);
+  const emails = parseAllowlist(process.env.OSHAL_OPERATOR_EMAILS);
+  if (sub && subs.has(sub.toLowerCase())) return true;
+  if (email && emails.has(email.toLowerCase())) return true;
+  return false;
+}
+
+/**
+ * @description Object-level authorization: may the caller read/mutate a resource
+ * owned by `ownerSub`? Allowed when the caller IS the owner, OR is an operator, OR
+ * the resource is unowned AND legacy-unowned access is explicitly permitted. The
+ * legacy branch is a backfill compatibility switch (default OFF) so new deployments
+ * fail closed on the "null owner = anyone" gap. Set OSHAL_ALLOW_LEGACY_UNOWNED=true
+ * only while reconciling old local data.
+ */
+export function canAccessResource(req: Request, ownerSub: string | null | undefined): boolean {
+  const { sub } = getCaller(req);
+  if (ownerSub && sub && ownerSub === sub) return true;
+  if (isOperator(req)) return true;
+  if (!ownerSub) {
+    return (process.env.OSHAL_ALLOW_LEGACY_UNOWNED ?? 'false').toLowerCase() === 'true';
+  }
+  return false;
+}
+
+/**
+ * @description Guard for operator-only routes. Sends 403 and returns false when the
+ * caller is not an operator; returns true otherwise. Caller should `return` on false.
+ */
+export function requireOperator(req: Request, res: Response): boolean {
+  if (isOperator(req)) return true;
+  res.status(403).json({ error: 'Operator privilege required' });
+  return false;
+}
+
+/**
+ * @description Express-middleware form of the operator gate, for gating a WHOLE mount
+ * (`app.use('/api/x', requiresAuth, requiresOperator, routes)`) instead of a single
+ * handler. Same fail-closed allowlist as isOperator: an empty OSHAL_OPERATOR_SUBS /
+ * OSHAL_OPERATOR_EMAILS means nobody passes. Denies with 403 and never calls next()
+ * for non-operators — mount it AFTER requiresAuth so unauthenticated callers still
+ * get the normal OIDC 401/redirect rather than a bare 403.
+ * @param req - The Express request (identity read from the validated OIDC session).
+ * @param res - The Express response.
+ * @param next - The next middleware; called only for operators.
+ */
+export function requiresOperator(req: Request, res: Response, next: NextFunction): void {
+  if (isOperator(req)) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: 'Operator privilege required' });
+}
+
+/**
+ * @description True when an internal service call presents the configured shared
+ * secret. Service-secret calls are trusted system traffic for RLS request
+ * identity stamping, but only when SWARM_SERVICE_SECRET is configured.
+ */
+export function hasValidServiceSecret(req: Request): boolean {
+  const secret = (process.env.SWARM_SERVICE_SECRET || '').trim();
+  const provided = String(req.headers['x-service-secret'] || '').trim();
+  return (
+    secret.length > 0 &&
+    provided.length === secret.length &&
+    crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(secret))
+  );
+}
+
+/**
+ * @description Resolves the user identity stamped by a trusted internal service
+ * call. External callers cannot use this because the header is honored only when
+ * SWARM_SERVICE_SECRET is configured and the request presents the matching
+ * X-Service-Secret value.
+ */
+export function getTrustedServiceUserSub(req: Request): string | null {
+  if (!hasValidServiceSecret(req)) return null;
+  const sub = String(req.headers['x-oshal-user-sub'] || '').trim();
+  return sub || null;
+}
+
+/**
+ * @description Builds the outbound header used by internal controller/bot-node calls.
+ * Returns an empty object when no secret is configured so callers stay fail-closed:
+ * serviceSecretOr() will fall through to normal auth instead of creating a partial bypass.
+ */
+export function serviceSecretHeaders(): Record<string, string> {
+  const secret = (process.env.SWARM_SERVICE_SECRET || '').trim();
+  return secret ? { 'X-Service-Secret': secret } : {};
+}
+
+/**
+ * @description Middleware wrapper that allows an internal service call carrying a valid
+ * `X-Service-Secret` header (matching SWARM_SERVICE_SECRET, constant-time compared) to pass,
+ * and otherwise delegates to `fallback` (normally the OIDC `requiresAuth`). This is how internal
+ * bots authenticate to the controller (e.g. POST /api/tools/register) without an OIDC session —
+ * the same session-OR-shared-secret pattern used for remote clients. External callers, having no
+ * secret, still go through the normal auth wall. No secret configured => always falls through to
+ * `fallback` (fail-safe: the bypass simply doesn't exist).
+ */
+export function serviceSecretOr(fallback: RequestHandler): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (hasValidServiceSecret(req)) {
+      next();
+      return;
+    }
+    fallback(req, res, next);
+  };
+}
+
+/**
+ * @description Optional service-secret gate for INTERNAL-ONLY endpoints that have no OIDC
+ * session to fall back to (e.g. the bot-node's `/api/swarm-execute`). Enforces
+ * `SWARM_SERVICE_SECRET` ONLY when it is configured: a valid `X-Service-Secret` header passes,
+ * anything else is 401. When the secret is unset it is a NO-OP (fail-open) so it can be rolled
+ * out across the fleet without breaking existing controller→bot dispatch. Differs from
+ * `serviceSecretOr`, which always requires the secret OR a fallback auth; this one has no
+ * fallback and simply opens when unconfigured. Pair the caller with `serviceSecretHeaders()`.
+ * @param req - Express request.
+ * @param res - Express response.
+ * @param next - Next middleware; called when the secret is unset or valid.
+ */
+export function requireServiceSecretWhenConfigured(req: Request, res: Response, next: NextFunction): void {
+  const secret = (process.env.SWARM_SERVICE_SECRET || '').trim();
+  if (!secret) { next(); return; }               // not configured → no-op (fail-open)
+  if (hasValidServiceSecret(req)) { next(); return; }
+  res.status(401).json({ success: false, error: 'Unauthorized' });
+}

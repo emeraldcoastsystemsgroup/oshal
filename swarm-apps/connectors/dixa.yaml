@@ -1,0 +1,29 @@
+provider: dixa
+displayName: Dixa
+version: 1.0.0
+baseUrl: https://dev.dixa.io/v1
+auth:
+  type: oauth2
+rateLimit:
+  burst: 10
+  perSecond: 10
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: conversations
+    tool: dixa-conversations
+    method: GET
+    path: /conversations
+  - name: agents
+    tool: dixa-agents
+    method: GET
+    path: /agents
+  - name: end-users
+    tool: dixa-end-users
+    method: GET
+    path: /end-users
+metadata:
+  iconVerified: false
+  iconSource: favicon-fallback
+  iconUrl: https://icons.duckduckgo.com/ip3/dev.dixa.io.ico
