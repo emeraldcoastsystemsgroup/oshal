@@ -7,11 +7,10 @@ criteria live in [BACKLOG.md](../BACKLOG.md) ("Alert triage & consolidation").
 
 - **Operator directive (2026-07-28):** non-noisy alerts get put into the queue; duplicates get
   bundled and consolidated. This is the analyst + self-healing portion of the platform.
-- **Source of functional truth:** the operator's retired production SRE alerting platform — the
-  14-microservice pipeline referenced in [ADR-069 §2a](../adr/069-operations-and-secops-connectors.md)
-  (private, out-of-repo). Its behavior, constants, and — just as
-  valuable — its own postmortem ADR trail were mined on 2026-07-28. Citations of the form
-  "source ADR-NNN" refer to that platform's internal ADRs, not this repo's.
+- **Source of functional truth:** the operator's retired production SRE alerting platform — a
+  14-microservice pipeline (private, out-of-repo). Its behavior, constants, and — just as
+  valuable — its own postmortem ADR trail were mined for this spec. Citations of the form
+  "source ADR-NNN" refer to that platform's ADRs, not this repo's.
 - **As-built baseline this spec extends:**
   [alertmanager-routes.ts](../../src/app/routes/alertmanager-routes.ts) (webhook intake),
   [intelligent-processing.yaml](../../swarm-apps/intelligent-processing.yaml) (queue + pipeline),
@@ -190,7 +189,7 @@ ticket queue (backlog or auto-flow → incident-rca)   [unchanged from here on]
 - **FR-D7 Attaching never restarts or promotes work by itself.** Attach to a backlog ticket keeps
   backlog; attach to an approved/in-flight ticket never re-dispatches RCA. If an attaching member's
   rule says `auto` while the bundle sits in backlog, the ticket gets a needs-attention flag for
-  The operator rather than silently auto-promoting. Conservative by default; the human gate stays
+  the operator rather than silently auto-promoting. Conservative by default; the human gate stays
   where it is.
 
 ### Stage E — dispatch gates
