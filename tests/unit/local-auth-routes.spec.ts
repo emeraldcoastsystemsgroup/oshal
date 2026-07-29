@@ -91,6 +91,35 @@ function fakePool() {
       if (sql.includes('SELECT 1 FROM oshal_local_users')) {
         return { rows: rows.length ? [{ one: 1 }] : [] };
       }
+      // Second-factor reads/writes. Modelled rather than stubbed away, so the login path's
+      // interaction with them is exercised: a fake that answered {} here would hide the
+      // difference between "no factor" and "factor enabled".
+      if (sql.includes('totp_enabled, totp_required')) {
+        const row = rows.find((r) => r.user_sub === params[0]);
+        return {
+          rows: row ? [{
+            totp_enabled: row.totp_enabled === true,
+            totp_required: row.totp_required === true,
+            totp_confirmed_at: row.totp_confirmed_at ?? null,
+            totp_recovery_hashes: row.totp_recovery_hashes ?? [],
+          }] : [],
+        };
+      }
+      if (sql.includes('totp_secret_enc, totp_last_step')) {
+        const row = rows.find((r) => r.user_sub === params[0]);
+        return {
+          rows: row ? [{
+            totp_secret_enc: row.totp_secret_enc ?? null,
+            totp_last_step: row.totp_last_step ?? null,
+            totp_recovery_hashes: row.totp_recovery_hashes ?? [],
+          }] : [],
+        };
+      }
+      if (sql.includes('SET totp_') || sql.includes('totp_secret_enc = $2')) {
+        const row = rows.find((r) => r.user_sub === params[0]);
+        if (row && sql.includes('totp_last_step = $2')) row.totp_last_step = params[1];
+        return { rows: [] };
+      }
       if (sql.includes('ORDER BY created_at')) return { rows: [...rows] };
       // This fake models ONE table. The invite flow's Gmail rail legitimately queries the
       // connector store (and its tenancy helpers) looking for a sending account; answer
