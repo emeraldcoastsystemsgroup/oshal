@@ -1045,6 +1045,20 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_SECURE: ${SMTP_SECURE:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # The invitation sender identity when mail rides the Gmail connector rail (ADR-117):
+      # whose connected Google account sends. Falls back to the first OSHAL_OPERATOR_SUBS
+      # entry, which IS forwarded (the shared anchor) — this line makes the documented,
+      # first-choice variable actually reach the process. Without it, setting the name the
+      # code reads did nothing and only an operator-subs box could send.
+      NOTIFY_EMAIL_SENDER_SUB: ${NOTIFY_EMAIL_SENDER_SUB:-}
+      NOTIFY_EMAIL_TO: ${NOTIFY_EMAIL_TO:-}
+      # Connector OAuth client. connectors-routes' providerCreds reads GOOGLE_CONNECT_* FIRST
+      # and falls back to OIDC_CLIENT_*; only the fallback was ever forwarded, so on a box
+      # with no OIDC (a LOCAL_AUTH customer deployment) every Google connector reported
+      # "needs setup" no matter what was configured. Defaults to the OIDC client so a single
+      # Google app still serves login + Gmail + GCP, as connectors-routes documents.
+      GOOGLE_CONNECT_CLIENT_ID: ${GOOGLE_CONNECT_CLIENT_ID:-${OIDC_CLIENT_ID:-}}
+      GOOGLE_CONNECT_CLIENT_SECRET: ${GOOGLE_CONNECT_CLIENT_SECRET:-${OIDC_CLIENT_SECRET:-}}
       # Per-user DEK envelope encryption for connector tokens. Default is now ON
       # (2026-07-19): new writes upgrade to v2 DEK envelope; legacy single-key blobs
       # still decrypt under the same SESSION_SECRET (format-aware, no re-connect needed).
