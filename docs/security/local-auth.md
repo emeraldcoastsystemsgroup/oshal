@@ -30,14 +30,26 @@ In `.env` (see `.env.example` for the full commented block):
 LOCAL_AUTH=true
 MOCK_OIDC=false            # required — the api refuses to boot with both on
 SESSION_SECRET=<openssl rand -hex 32>
-APP_URL=https://crm.example.com          # used in emailed invite links
-# optional — invitations go out by email when set; copyable links otherwise
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=invites@example.com
-SMTP_PASS=...
-SMTP_FROM=invites@example.com
+APP_URL=https://crm.example.com          # REQUIRED for emailed links (must be absolute)
+OSHAL_OPERATOR_SUBS=<your sub>           # also the invitation sender identity
+# OPTIONAL — only when this box has its OWN mail server. Without it, invitations
+# send through the platform's Gmail connector instead (see below).
+# SMTP_HOST= SMTP_PORT=587 SMTP_USER= SMTP_PASS= SMTP_FROM=
 ```
+
+### How an invitation actually leaves the box
+
+Two rails, tried in this order:
+
+1. **SMTP**, when the deployment configures its own mail server. Explicit beats inherited.
+2. **The platform's Gmail connector** — the same OAuth grant every other outbound message in
+   the swarm uses. Connect a Google account once on the Connectors screen (the account named by
+   `NOTIFY_EMAIL_SENDER_SUB`, else the first `OSHAL_OPERATOR_SUBS` entry) and invitations ride
+   that grant with the invitee as recipient. **No mail password anywhere.**
+
+If neither rail is available the invitation is still created and the admin screen shows a
+**copyable one-time link** — that is a working state, not a failure. `emailSent` and
+`emailDetail` in the API response say which happened and why.
 
 Serve the box behind TLS. The session cookie is HttpOnly/SameSite=Lax and marked Secure in
 production, but passwords travel in the login POST — TLS is not optional for a real client.
