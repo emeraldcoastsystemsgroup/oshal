@@ -13,6 +13,7 @@
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | e2e datastore image postgres:16-alpine -> pgvector/pgvector:pg16 to MATCH THE LIVE STACK (docker-compose.oshal-local.yml). ADR-091 migrations run CREATE EXTENSION vector; on plain postgres the extension is absent, the migration fails, and 12 RAG/memory e2e specs go red every night against a bug that does not exist in production. CI datastores must track the production image, not a generic one.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: two new gates for the kernel-skill contract. `kernel-skills` (source) asserts every skill the kernel promises packages is re-exported by the build anchor; `kernel-skills-image` probes the BUILT IMAGE for each skill's compiled module. Closes the silent-prune class: tsconfig.server.json excludes src/features/**, so a feature core stops importing vanishes from dist and the first installed package that imports it dies at MOUNT time, far from the cause (this ate google-calendar, then notifications).
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | LOCAL CI - operator decision 2026-07-09: GitHub Actions is retired for this repo (billed real money, failed for weeks; workflows disabled + archived to docs/archive/github-actions-retired/). This script runs the same gates on the operator's machine for $0.
+# 10 | maintainer@emeraldcoastsystemsgroup.com   | New `worktree-strays` gate (backlog "Seven agent-worktree branches" done-when 3): scripts/check-worktree-strays.sh fails on any linked worktree carrying unpushed commits or uncommitted changes. Worktree isolation made an unpushed agent commit INVISIBLE (the shared index used to surface it by accident); seven branches sat silent 2026-07-24→26, two of them regression guards. Runs against REPO_DIR, not the HEAD export — worktree state is repo plumbing, not tree content.
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | e2e gate: --retries=2 --workers=4 (was retries=1, default workers). This is a shared workstation - other agents commit/build while the suite runs, and the flake signatures (context destroyed by navigation, toBeVisible timeouts) tracked machine load, passing 30 min earlier untouched. Trivy tarball now streams into a docker volume (see gate comment).
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | Proveout round 2: (1) smoke container joins a private oshal-ci-net and dials the datastores by container name - on Docker Desktop's WSL2 backend host.docker.internal cannot reach 127.0.0.1-bound host ports (shallow /health 200 masked a dead DB); ticket assert retries 3x (health is shallow, migrations settle late). (2) NEW --head mode (implied by --scheduled): node gates run from a clean git-archive HEAD export with its own npm ci - this multi-agent tree is routinely mid-edit (ambient-listening was literally broken mid-run by another agent), and an unattended gate must judge committed code or it emails false alarms.
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | First proveout run: ephemeral ports moved 15432/16379 -> 25432/26379 - the LIVE stack's redis is published at 127.0.0.1:16379 (.env OSHAL_REDIS_PORT overrides the compose default 56380), so the CI redis collided; DS_UP now set BEFORE container starts (a partial start leaked oshal-ci-pg past on_exit); INT/TERM also trap to cleanup (bash skips EXIT traps on untrapped fatal signals).
@@ -222,6 +223,15 @@ gate_repo_separation() {
   (cd "$GATE_SRC" && timeout 120 node scripts/check-repo-separation.js);
 }
 
+# Stray-worktree guard (2026-07-29): worktree isolation made an unpushed agent commit
+# INVISIBLE — seven sat silent for two days in 2026-07, two of them regression guards.
+# Runs against the REPO (not the HEAD export): worktree state is repo plumbing, not tree
+# content. Loud on: unpushed commits in a linked worktree, uncommitted changes there,
+# or a pruned-on-disk-but-registered worktree.
+gate_worktree_strays() {
+  (cd "$REPO_DIR" && timeout 60 bash scripts/check-worktree-strays.sh);
+}
+
 # BLOCKING (2026-07-24): the governance counters reached 0 (324 warnings burned down —
 # FSD deep imports rewritten to slice barrels, no-console converted to the pino logger or
 # justified-disabled, harness second-barrel lint-exempt). The gate now FAILS on any new
@@ -399,6 +409,7 @@ if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate kernel-skills gate_kernel_skills
   run_gate workflow-triggers gate_workflow_triggers
   run_gate repo-separation gate_repo_separation
+  run_gate worktree-strays gate_worktree_strays
 else
   log "GATES typecheck/unit/lint/connectors/manifests/kernel-skills/e2e: SKIPPED (HEAD export failed)"
   FAILED_GATES+=(node-gates-skipped)
