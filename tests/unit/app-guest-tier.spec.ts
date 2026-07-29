@@ -148,3 +148,33 @@ describe('the capability snapshot matches the guard (no UI drift)', () => {
     }
   });
 });
+
+describe('guest voice I/O — a Tier-A app depending on another segment', () => {
+  // REGRESSION: Jarvis is Tier A, but its mic posts to /api/voice/transcribe, whose segment
+  // (`voice`) fell to the Tier-B mutation block. Every guest push-to-talk 403'd and the UI
+  // reported "Didn't catch that" — the brain answered fine, only voice input was dead.
+  it('allows the STT + TTS routes the Jarvis mic and spoken reply need', () => {
+    expect(guestDecision('/api/voice/transcribe', 'POST')).toBe('allow');
+    expect(guestDecision('/api/voice/synthesize', 'POST')).toBe('allow');
+  });
+
+  it('grants the two routes WITHOUT opening the rest of the voice segment', () => {
+    // Not Tier A on `voice` — an unrelated future mutation there stays read-only.
+    expect(guestDecision('/api/voice/settings', 'PUT')).toBe('guest_readonly');
+    expect(guestDecision('/api/voice/clone', 'POST')).toBe('guest_readonly');
+    expect(guestCapabilities().tierA).not.toContain('voice');
+    // Reads were never blocked.
+    expect(guestDecision('/api/voice/voices', 'GET')).toBe('allow');
+  });
+
+  it('a hard block still wins over a mutation grant', () => {
+    // A prefix grant must never be able to widen Tier C or an approved `blocked` tier.
+    registerAppGuestTier('voice', 'blocked');
+    try {
+      expect(guestDecision('/api/voice/transcribe', 'POST')).toBe('guest_blocked');
+    } finally {
+      unregisterAppGuestTier('voice');
+    }
+    expect(guestDecision('/api/forge/agents', 'POST')).toBe('guest_blocked');
+  });
+});

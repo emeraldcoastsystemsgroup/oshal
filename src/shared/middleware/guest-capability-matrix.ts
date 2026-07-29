@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 3: dropped 'travel' from the hardcoded Tier-A list — the Travel surface carved to the store (package requests guestTier: full; the D4 unapproved default keeps guests read-only until operator approval).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 3: dropped 'video' from the hardcoded Tier-C list — the Video Studio carved to the store; the D4 unapproved default keeps guests read-only on the packaged mount regardless (and its every handler self-gates on callerSub anyway).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Pumpkin public demo: retain the safe Tier-B server posture while advertising its explicitly browser-local interactive controls. No guest mutation grant is added.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Guest voice I/O: added GUEST_ALLOWED_MUTATIONS (the symmetric mirror of GUEST_BLOCKED_GETS) and granted /api/voice/transcribe + /api/voice/synthesize. Jarvis is Tier-A, but its mic posts to /api/voice/transcribe — a DIFFERENT segment that fell to the Tier-B default, so every guest push-to-talk 403'd and the UI reported "Didn't catch that". Narrow literal-prefix grants, not Tier A on `voice`, so anything else mounted there stays read-only; both routes resolve the deployment's default STT/TTS via resolveForApp() (no per-user token) and stay under the guest-guard mutation rate limit.
  */
 
 /**
@@ -70,6 +71,27 @@ export const GUEST_ALWAYS_ALLOW_APPS = ['guest', 'auth', 'branding', 'ui', 'heal
  * Matched as a literal path prefix. Extend as needed.
  */
 export const GUEST_BLOCKED_GETS: readonly string[] = [];
+
+/**
+ * Tier-B endpoints a guest MAY mutate — the symmetric mirror of
+ * `GUEST_BLOCKED_GETS`. Matched as a literal path prefix, and checked only after
+ * the Tier-C and approved-`blocked` denials, so a hard block always wins.
+ *
+ * This exists because a Tier-A app can depend on a route in a DIFFERENT segment.
+ * Jarvis is Tier A, but its microphone posts to `/api/voice/transcribe`, whose
+ * segment (`voice`) fell to the Tier-B default — so every guest push-to-talk got
+ * 403 `guest_readonly` and the UI reported "Didn't catch that". Granting the two
+ * voice-I/O routes here (rather than making the whole `voice` segment Tier A)
+ * keeps anything else mounted under `/api/voice` read-only to guests.
+ *
+ * Cost posture: both routes resolve the DEPLOYMENT's default STT/TTS provider
+ * (`resolveForApp()` — no per-user connector token), and the guest guard's
+ * per-sub mutation rate limit applies to them like any other Tier-A write.
+ */
+export const GUEST_ALLOWED_MUTATIONS: readonly string[] = [
+  '/api/voice/transcribe', // speech-to-text: the Jarvis mic (push-to-talk + wake word)
+  '/api/voice/synthesize', // text-to-speech: Jarvis's spoken reply
+];
 
 /** UX notation hints surfaced to the frontend (Phase 2 renders the banners). */
 export const GUEST_NOTATIONS: Record<string, string> = {
@@ -188,6 +210,10 @@ export function guestDecision(path: string, method: string): GuestDecision {
     if (GUEST_BLOCKED_GETS.some((p) => path.startsWith(p))) return 'guest_blocked';
     return 'allow';
   }
+  // Narrow per-route mutation grants (e.g. the voice I/O a Tier-A app needs from
+  // another segment). Reached only after every denial above, so a Tier-C app or an
+  // approved `blocked` tier can never be widened by a prefix listed here.
+  if (GUEST_ALLOWED_MUTATIONS.some((p) => path.startsWith(p))) return 'allow';
   return 'guest_readonly';
 }
 
