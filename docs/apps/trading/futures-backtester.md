@@ -148,12 +148,16 @@ artifact of the mis-graded scores and never shipped.)
 
 Three things worth saying out loud, all in-sample and un-optimized:
 
-1. **His Q4 stop answer makes results worse at otherwise-default settings, on both markets.** The
-   ATR×3 minimum distance widens every stop, so risk per trade roughly doubles versus 1.5 and
-   position size halves; ES full-stack drops $42K → $23K, CL −$31K → −$75K, and zero-quantity skips
-   triple on ES. This is not evidence he is wrong — he tunes on 15/30/45/60-minute charts per market,
-   and we are mixing his stop constant into our hourly defaults. It is evidence that **mixed
-   constants are meaningless** and his optimized per-market sets are the missing input.
+1. **His answers make results worse at otherwise-default settings, and the attribution was
+   MEASURED, not guessed** (each answer run alone): the stop answer (ATR×3 floor + MACD-wave-only
+   source) costs ~$19K on BOTH markets (ES +$42.1K→+$23.3K alone; CL −$31.2K→−$50.2K alone) — NOT
+   by risking more dollars, since risk-percent sizing normalizes stop width (average loss is ~flat,
+   ES −$8,980 → −$9,199); the cost is ~3 points of win rate from different initial-stop placement.
+   The gate answer ('adx-laguerre' alone) is market-split: +$6.3K on ES, −$23.9K on CL — a rarer
+   Strangle latch let ES trends run and cost crude its banked spikes. The two effects are
+   near-additive. None of this says he is wrong — he tunes per market on 15/30/45/60-minute charts;
+   transplanting two constants into foreign defaults measures the transplant. **Mixed constants are
+   meaningless** and his optimized per-market sets are the missing input.
 2. **His ensemble entries at the default 70% threshold act as a homogenizer, not an edge.** By his
    own stage-1 objective they pull BOTH markets toward neutral: CL lifts from clearly negative
    (0.924 → 0.999, the real improvement) while ES dilutes (1.026 → 1.004), on ~75% more trades.
