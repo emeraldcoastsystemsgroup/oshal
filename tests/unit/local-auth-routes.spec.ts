@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { Server } from 'http';
 import { createLocalAuthRoutes } from '@/app/routes/local-auth-routes';
+import { base32Decode, currentStep, totpCodeForStep } from '@/features/local-auth';
 
 // ── In-memory stand-in for the oshal_local_users table ───────────────────────
 type Row = Record<string, unknown>;
@@ -115,9 +116,39 @@ function fakePool() {
           }] : [],
         };
       }
-      if (sql.includes('SET totp_') || sql.includes('totp_secret_enc = $2')) {
+      if (sql.includes('SELECT totp_secret_enc FROM')) {   // confirmTotpEnrolment
         const row = rows.find((r) => r.user_sub === params[0]);
-        if (row && sql.includes('totp_last_step = $2')) row.totp_last_step = params[1];
+        return { rows: row ? [{ totp_secret_enc: row.totp_secret_enc ?? null }] : [] };
+      }
+      if (sql.includes('UPDATE oshal_local_users') && sql.includes('totp_')) {
+        // These writes have to PERSIST, or an end-to-end enrolment test would pass against a
+        // pool that quietly forgot the secret it had just been given.
+        const row = rows.find((r) => r.user_sub === params[0]);
+        if (row) {
+          if (sql.includes('totp_secret_enc = $2')) {         // beginTotpEnrolment
+            row.totp_secret_enc = params[1];
+            row.totp_enabled = false;
+            row.totp_confirmed_at = null;
+            row.totp_last_step = null;
+            row.totp_recovery_hashes = JSON.parse(String(params[2]));
+          } else if (sql.includes('totp_enabled = TRUE')) {   // confirmTotpEnrolment
+            row.totp_enabled = true;
+            row.totp_confirmed_at = new Date();
+            row.totp_last_step = params[1];
+          } else if (sql.includes('totp_secret_enc = NULL')) { // disableTotp
+            row.totp_secret_enc = null;
+            row.totp_enabled = false;
+            row.totp_confirmed_at = null;
+            row.totp_last_step = null;
+            row.totp_recovery_hashes = [];
+          } else if (sql.includes('totp_required = $2')) {     // setTotpRequired
+            row.totp_required = params[1] === true;
+          } else if (sql.includes('totp_last_step = $2')) {    // verifySecondFactor
+            row.totp_last_step = params[1];
+          } else if (sql.includes('totp_recovery_hashes = $2')) { // recovery code spent
+            row.totp_recovery_hashes = JSON.parse(String(params[1]));
+          }
+        }
         return { rows: [] };
       }
       if (sql.includes('ORDER BY created_at')) return { rows: [...rows] };
@@ -352,5 +383,161 @@ describe('local-auth pages', () => {
     expect(logout.status).toBe(302);
     expect(logout.headers.get('location')).toBe('/login');
     expect(logout.headers.get('set-cookie')).toContain('oshal_local=;');
+  });
+});
+
+describe('local-auth second factor, end to end through the real routes', () => {
+  /** Enrol a user by driving the actual endpoints, and return their live TOTP secret. */
+  async function enrol(sub: string, email: string) {
+    const setup = await post('/api/local-auth/2fa/setup', {});
+    expect(setup.status).toBe(200);
+    // A QR the page can render with no external host, and the key for manual entry.
+    expect(String(setup.data.qrDataUri).startsWith('data:image/png;base64,')).toBe(true);
+    expect(String(setup.data.otpauthUri)).toContain('otpauth://totp/');
+    expect(String(setup.data.otpauthUri)).toContain(encodeURIComponent(email));
+    expect(setup.data.recoveryCodes).toHaveLength(8);
+    const secret = String(setup.data.secret).replace(/\s+/g, '');
+
+    // Enrolment is NOT live yet: nothing about signing in has changed.
+    const before = await (await fetch(`${base}/api/local-auth/2fa/state`)).json();
+    expect(before.enabled).toBe(false);
+
+    const code = totpCodeForStep(base32Decode(secret), currentStep(Date.now()));
+    const confirmed = await post('/api/local-auth/2fa/confirm', { code });
+    expect(confirmed.status).toBe(200);
+    const after = await (await fetch(`${base}/api/local-auth/2fa/state`)).json();
+    expect(after.enabled).toBe(true);
+    expect(after.recoveryCodesRemaining).toBe(8);
+    return { secret, recoveryCodes: setup.data.recoveryCodes as string[] };
+  }
+
+  it('refuses the whole surface to an anonymous caller', async () => {
+    pool = fakePool();
+    await startApp();                                   // no session injected
+    expect((await (await fetch(`${base}/api/local-auth/2fa/state`)).status)).toBe(401);
+    expect((await post('/api/local-auth/2fa/setup', {})).status).toBe(401);
+    expect((await post('/api/local-auth/2fa/confirm', { code: '123456' })).status).toBe(401);
+    expect((await post('/api/local-auth/2fa/disable', { password: 'x' })).status).toBe(401);
+  });
+
+  it('enrols, then gates login on the code, and refuses a replay of it', async () => {
+    pool = fakePool();
+    await startApp();
+    const svc = { 'X-Service-Secret': SVC_SECRET };
+    const email = 'liz@example.com';
+    const password = 'example-chosen-pw-000002';
+    const invited = await post('/api/local-auth/users', { email, name: 'Liz' }, svc);
+    const token = decodeURIComponent(String(invited.data.invitePath).split('token=')[1]);
+    await post('/api/local-auth/accept', { token, password });
+    const sub = String(pool.rows.find((r) => r.email === email)!.user_sub);
+
+    // Password alone still works while no factor exists.
+    expect((await post('/api/local-auth/login', { email, password })).status).toBe(200);
+
+    // Re-boot the app WITH this user signed in, so enrolment runs as them.
+    server.close();
+    await startApp({ sub, email });
+    const { secret, recoveryCodes } = await enrol(sub, email);
+
+    // Now the password alone is NOT enough — and no session cookie is issued.
+    const step1 = await post('/api/local-auth/login', { email, password });
+    expect(step1.status).toBe(200);
+    expect(step1.data.ok).toBe(false);
+    expect(step1.data.secondFactor).toBe('required');
+    expect(step1.setCookie).toBeNull();
+
+    // A wrong code is refused.
+    expect((await post('/api/local-auth/login', { email, password, code: '000000' })).status).toBe(401);
+
+    // CONFIRMING ENROLMENT CONSUMED the current step, so the code that switched the factor
+    // on cannot then be used to sign in — the replay guard refuses it, correctly. A real user
+    // signs in later, on a later code. Here that is the NEXT step, which the +1 drift window
+    // accepts and which is above the recorded last step.
+    const usedAtConfirm = totpCodeForStep(base32Decode(secret), currentStep(Date.now()));
+    expect((await post('/api/local-auth/login', { email, password, code: usedAtConfirm })).status).toBe(401);
+
+    // The right (unused) code signs in and issues the session.
+    const code = totpCodeForStep(base32Decode(secret), currentStep(Date.now()) + 1);
+    const ok = await post('/api/local-auth/login', { email, password, code });
+    expect(ok.status).toBe(200);
+    expect(ok.data.ok).toBe(true);
+    expect(ok.setCookie).toContain('oshal_local=');
+
+    // THE SAME CODE MUST NOT WORK TWICE, even though it is still inside its 30-second window.
+    const replay = await post('/api/local-auth/login', { email, password, code });
+    expect(replay.status).toBe(401);
+
+    // A recovery code works exactly once.
+    const rc = recoveryCodes[0];
+    expect((await post('/api/local-auth/login', { email, password, code: rc })).status).toBe(200);
+    expect((await post('/api/local-auth/login', { email, password, code: rc })).status).toBe(401);
+    const left = await (await fetch(`${base}/api/local-auth/2fa/state`)).json();
+    expect(left.recoveryCodesRemaining).toBe(7);
+  });
+
+  it('an administrator can require it, and requiring it never locks anyone out', async () => {
+    pool = fakePool();
+    await startApp();
+    const svc = { 'X-Service-Secret': SVC_SECRET };
+    const email = 'bdo2@example.com';
+    const password = 'example-chosen-pw-000003';
+    const invited = await post('/api/local-auth/users', { email, name: 'A BDO' }, svc);
+    const token = decodeURIComponent(String(invited.data.invitePath).split('token=')[1]);
+    await post('/api/local-auth/accept', { token, password });
+    const userId = String(pool.rows.find((r) => r.email === email)!.id);
+
+    const required = await post(`/api/local-auth/users/${userId}/2fa`, { required: true }, svc);
+    expect(required.status).toBe(200);
+    expect(required.data.state.required).toBe(true);
+
+    // Required but not enrolled: they still get IN, and are told to go and enrol. Refusing
+    // here would lock somebody out of an account they were never given a chance to set up.
+    const login = await post('/api/local-auth/login', { email, password });
+    expect(login.status).toBe(200);
+    expect(login.data.ok).toBe(true);
+    expect(login.data.enrolSecondFactor).toBe(true);
+    expect(login.setCookie).toContain('oshal_local=');
+  });
+
+  it('turning it off needs the password, and an admin can reset a lost phone', async () => {
+    pool = fakePool();
+    await startApp();
+    const svc = { 'X-Service-Secret': SVC_SECRET };
+    const email = 'rep3@example.com';
+    const password = 'example-chosen-pw-000004';
+    const invited = await post('/api/local-auth/users', { email, name: 'Rep' }, svc);
+    const token = decodeURIComponent(String(invited.data.invitePath).split('token=')[1]);
+    await post('/api/local-auth/accept', { token, password });
+    const row = pool.rows.find((r) => r.email === email)!;
+    const sub = String(row.user_sub);
+    const userId = String(row.id);
+
+    server.close();
+    await startApp({ sub, email });
+    await enrol(sub, email);
+
+    // A live session alone must not strip the factor.
+    expect((await post('/api/local-auth/2fa/disable', { password: 'wrong-password' })).status).toBe(401);
+    let state = await (await fetch(`${base}/api/local-auth/2fa/state`)).json();
+    expect(state.enabled).toBe(true);
+
+    // With the password, it comes off.
+    expect((await post('/api/local-auth/2fa/disable', { password })).status).toBe(200);
+    state = await (await fetch(`${base}/api/local-auth/2fa/state`)).json();
+    expect(state.enabled).toBe(false);
+
+    // Re-enrol, have an admin require it, and confirm the user can no longer remove it.
+    await enrol(sub, email);
+    await post(`/api/local-auth/users/${userId}/2fa`, { required: true }, svc);
+    expect((await post('/api/local-auth/2fa/disable', { password })).status).toBe(403);
+
+    // The lost-phone path: an admin reset clears the enrolment even when required.
+    const reset = await post(`/api/local-auth/users/${userId}/2fa`, { reset: true }, svc);
+    expect(reset.status).toBe(200);
+    expect(reset.data.state.enabled).toBe(false);
+    // ...and the password alone signs in again, with the enrol prompt.
+    const login = await post('/api/local-auth/login', { email, password });
+    expect(login.status).toBe(200);
+    expect(login.data.enrolSecondFactor).toBe(true);
   });
 });
