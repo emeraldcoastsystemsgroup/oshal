@@ -5302,20 +5302,30 @@ enough that two runs prove nothing; the 20-run loop in the done-when is the bar 
 **Not caused by:** the delivery-bot registry entries (#68) — those add data to two arrays and are
 covered by `tests/unit/delivery-bots-registered.spec.ts`, which is green in both modes.
 
-## LOCAL_AUTH second factor + self-service reset (ADR-117 deferred) ⬜ (2026-07-28)
+## LOCAL_AUTH self-service password reset (ADR-117 deferred) ⬜ (2026-07-28)
 
-LOCAL_AUTH (invited-user login, ADR-117) shipped deliberately without 2FA and without an
-unauthenticated "forgot password" flow: the client team decides its second factor, and
-admin-driven reinvites cover resets until then. The hooks are in place — `token_version`
-revocation + the one-time-token accept path are what a second factor attaches to.
+**The second factor SHIPPED 2026-07-29 — TOTP, RFC 6238.** The operator's constraint was that
+it must not require an external provider, and it does not: a shared secret plus the clock,
+verified in-process, enrolment QR rendered locally from the `qrcode` dependency that already
+ships. Per-user opt-in with an administrator able to require it per account (the operator chose
+per-user over deployment-wide, so there is deliberately **no** env force-flag — the original
+done-when asked for one and it was superseded by that decision). Secret AES-256-GCM at rest
+under an HKDF key from `SESSION_SECRET`; accepted time step recorded so a code cannot be
+replayed; eight single-use recovery codes; admin reset for a lost phone. Guards in
+`tests/unit/local-totp.spec.ts` — 29 cases including the **RFC 6238 Appendix B vectors**, which
+are what prove real authenticator apps will accept these codes; six mutations verified red.
+See [ADR-117](adr/117-local-auth-invited-users.md) and
+[docs/security/local-auth.md](security/local-auth.md#two-step-sign-in-totp).
 
-- **Done when:** (1) a deployment can require a second factor at login (TOTP first —
-  enrolment QR on first login, per-user secret in `oshal_local_users`, drift-window verify;
-  recovery codes minted once), toggleable per deployment via env; (2) `tests/unit/local-auth-*`
-  gain red-provable cases for enrolment, verify, and recovery-code single-use; (3) the
-  docs/security/local-auth.md "does NOT do" list shrinks accordingly. Self-service reset (an
-  emailed one-time link initiated from /login) rides the same invite-token machinery and needs
-  an enumeration-safe response shape before it ships.
+Still open: an unauthenticated "forgot password" flow. Resets are admin-driven (Re-invite),
+which is safe but needs an administrator awake. It rides the same invite-token machinery.
+
+- **Done when:** a user can request a reset from `/login`, receives a one-time link, and sets a
+  new password — with an **enumeration-safe response shape** (identical answer whether or not
+  the email exists, identical timing), per-ip rate limiting, and a guard proving an unknown
+  address is indistinguishable from a known one. Note this weakens nothing only if the mail
+  channel is trusted: on a box where the second factor is enabled, the reset link must not by
+  itself clear the second factor.
 
 ## App access tiers Phase 2 — the platform primitive (ADR-118) ⬜ (2026-07-28)
 

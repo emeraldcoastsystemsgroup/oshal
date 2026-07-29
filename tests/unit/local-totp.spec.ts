@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the TOTP second factor. The load-bearing cases are the RFC 6238 APPENDIX-B VECTORS: a home-grown TOTP that only agrees with itself will produce codes no authenticator app accepts, and a round-trip test would pass anyway. Verifying against the published vectors is the only assertion that proves interoperability with Google Authenticator / Authy / 1Password without a phone in the loop. The other three are the mistakes that turn 2FA into either a breach or a lockout: a code must not be replayable inside its own 30-second window, a recovery code must be single-use, and a rotated SESSION_SECRET must degrade to "unreadable" rather than crash the login path.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the TOTP second factor. The load-bearing cases are the RFC 6238 APPENDIX-B VECTORS: a home-grown TOTP that only agrees with itself will produce codes no authenticator app accepts, and a round-trip test would pass anyway. Verifying against the published vectors is the only assertion that proves interoperability with Google Authenticator / Authy / 1Password without a phone in the loop. The other three are the mistakes that turn 2FA into either a breach or a lockout: a code must not be replayable inside its own 30-second window, a recovery code must be single-use, and a rotated SESSION_SECRET must degrade to "unreadable" rather than crash the login path. One case here was FAKE on first writing and mutation testing found it: the 64-bit counter test asserted that the RFC's T=20000000000 vector exercises the high word, which it does not — that timestamp divided by the 30-second step is only ~667 million, so hard-coding the high word to zero left all six vectors green. It is now a differential check (the code for 2^32+n must differ from the code for n), which needs no published vector and does go red.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import crypto from 'crypto';
@@ -78,12 +78,22 @@ describe('RFC 6238 Appendix B vectors (SHA-1)', () => {
     expect(totpCodeForStep(secret, step, TOTP_DIGITS)).toBe(eightDigit.slice(-TOTP_DIGITS));
   });
 
-  it('handles the 64-bit counter (T=20000000000 exceeds 32 bits)', () => {
-    // Writing the counter as a single 32-bit int would silently truncate here and the last
-    // vector above would fail — which is exactly why that vector is in the RFC.
-    const step = Math.floor(20000000000 / TOTP_STEP_SECONDS);
-    expect(step).toBeGreaterThan(0xffffffff / 8);
-    expect(totpCodeForStep(Buffer.from(RFC_SECRET_ASCII, 'ascii'), step, 8)).toBe('65353130');
+  it('writes a genuine 64-bit counter, proven by difference not by assertion', () => {
+    // A previous version of this test claimed the T=20000000000 vector exercised the high
+    // 32 bits. It does not: 20000000000 / 30 is ~667 million, which fits in 32 bits, so
+    // hard-coding the high word to zero left every published vector passing. Mutation
+    // testing caught it. The counter's high word is only reached above 2^32 STEPS, which is
+    // past year 6000 and therefore has no published vector at all.
+    //
+    // So assert it differentially instead: if the high word were dropped, the code for
+    // (2^32 + n) would be identical to the code for n. Requiring them to differ is a real
+    // check with no external vector needed.
+    const secret = Buffer.from(RFC_SECRET_ASCII, 'ascii');
+    const low = 12345;
+    const high = 0x100000000 + low;
+    expect(totpCodeForStep(secret, high, 8)).not.toBe(totpCodeForStep(secret, low, 8));
+    // And two distinct high words must not collapse onto each other either.
+    expect(totpCodeForStep(secret, high, 8)).not.toBe(totpCodeForStep(secret, 0x200000000 + low, 8));
   });
 });
 
