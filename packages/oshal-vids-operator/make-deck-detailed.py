@@ -149,7 +149,31 @@ else:
     box(s, 0.6, 3.9, 12, 0.7, "The strategy held its current configuration.", 22, MUTED)
     narr.append("No parameter optimizations were recommended this session; the strategy held its current configuration.")
 
-# 9 — book at close
+# 9 — what changed & operations, honestly (strategy journal + runner ops notes)
+CH = data.get("changes", []) or []
+OPS = (data.get("ops") or {}).get("notes", []) if data.get("ops") else []
+s = slide(); brand(s, "WHAT CHANGED · OPERATIONS")
+if CH or OPS:
+    y = 1.3
+    if CH:
+        box(s, 0.6, y, 12, 0.55, "Strategy changes since the last report", 24, WHITE); y += 0.7
+        for c in CH[:5]:
+            box(s, 0.8, y, 12, 0.5, f"•  {c.get('day','')}  [{(c.get('kind') or '').replace('-',' ')}]  {(c.get('summary') or '')[:110]}", 16, CYAN); y += 0.55
+        y += 0.25
+    if OPS:
+        box(s, 0.6, y, 12, 0.55, "Operations", 24, WHITE); y += 0.7
+        for n in OPS[:4]:
+            box(s, 0.8, y, 12, 0.5, "•  " + str(n)[:120], 16, MUTED); y += 0.55
+    spoken = []
+    if CH: spoken.append(f"{len(CH)} strategy change{'s' if len(CH) != 1 else ''} since the last report — {CH[0].get('summary','')[:90]}" + (" and more" if len(CH) > 1 else ""))
+    if OPS: spoken.append(f"On operations: {str(OPS[0])[:110]}")
+    narr.append("Transparency section. " + ". ".join(spoken) + ".")
+else:
+    box(s, 0.6, 2.6, 12, 1.2, "No strategy changes since the last report.", 34, MUTED)
+    box(s, 0.6, 3.9, 12, 0.7, "Operations nominal — the report ran on schedule.", 22, MUTED)
+    narr.append("No strategy changes since the last report, and operations were nominal.")
+
+# 10 — book at close
 s = slide(); brand(s, "BOOK AT CLOSE")
 box(s, 0.6, 2.0, 6, 2.2, str(R.get("positions", 0)), 150, CYAN)
 box(s, 0.6, 4.4, 6, 0.6, "OPEN POSITIONS", 20, MUTED)

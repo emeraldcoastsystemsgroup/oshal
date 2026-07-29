@@ -121,6 +121,10 @@ async function pullFile() {
   const remote = args.remote || args.from || args._[1];
   const local = args.local || args.to || args._[2];
   if (!remote || !local) die('pull requires --remote=<path> and --local=<path>');
+  // A pull is hundreds of chunk round-trips and ONE chunk exceeding the global 30s result window
+  // kills the whole transfer (2026-07-28: every nightly video pull died this way while the node
+  // was healthy). Default each chunk to a patient window; --timeoutMs still overrides.
+  if (args.timeoutMs == null) args.timeoutMs = 120_000;
   const remotePath = String(remote);
   const out = resolve(String(local));
   const chunkSize = Math.max(2000, Math.min(num(args.chunkSize, 14000), 18000));

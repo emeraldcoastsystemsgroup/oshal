@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Stale-guard the recap-data.json fallback: only use its numbers when its date matches the report day. A frozen prior-day copy could otherwise silently supply the headline P/L when the DB equity row is missing (the failure mode behind the June-30-labeled July-6 email).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Honesty rails: "changes" (strategy-journal entries since the prior session — knob turns, universe changes, incidents) and "ops" (date-guarded ops-notes.json from the runner: lateness, restarts, outages) now ride in deck-data so the report SAYS what changed and what broke.
  */
 /*
  * oshal-deck-data.js — EXTRACTION for the DETAILED daily trade-recap deck.
@@ -50,6 +51,19 @@ async function alpaca(p) {
 // ET calendar date as 'YYYY-MM-DD' (Postgres does the tz math in the queries).
 function etDate(d) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); }
 
+/**
+ * Runner-observed operational truth for the report day (lateness, api restarts, watchdog
+ * recoveries, outage notes). Date-guarded exactly like recap-data.json: a stale file from a
+ * prior day must never speak for today. Missing/invalid/stale -> null (section not rendered).
+ */
+function readOpsNotes(targetDate) {
+  try {
+    const ops = JSON.parse(fs.readFileSync(path.join(OUT_DIR, 'ops-notes.json'), 'utf8'));
+    if (ops.date !== targetDate || !Array.isArray(ops.notes)) return null;
+    return { date: ops.date, notes: ops.notes.slice(0, 8).map((n) => String(n).slice(0, 200)) };
+  } catch { return null; }
+}
+
 (async () => {
   const arg = process.argv.slice(2).find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a));
   // Default = yesterday ET = the last COMPLETE trading session (a mid-session "today" is partial).
@@ -86,7 +100,7 @@ function etDate(d) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Americ
   const client = await pool.connect();
   const q = (sql, params) => client.query(sql, params).then((r) => r.rows).catch(() => []);
   const ET = "AT TIME ZONE 'America/New_York'";
-  let trades = [], whyThemes = [], sentTop = [], sentHeadlines = [], optimize = [], decisionStats = {}, totalSignals = 0;
+  let trades = [], whyThemes = [], sentTop = [], sentHeadlines = [], optimize = [], decisionStats = {}, totalSignals = 0, changes = [];
   try {
     await client.query("SELECT set_config('oshal.is_operator','on',false)");
 
@@ -155,6 +169,16 @@ function etDate(d) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Americ
         WHERE (created_at ${ET})::date = $1::date OR status='applied'
         ORDER BY created_at DESC LIMIT 8`, [targetDate]);
 
+    // HONESTY: every knob turn / strategy change / incident journaled since the PRIOR session
+    // rides into the report's "What changed" section. Missing table or no rows -> empty array
+    // (q() swallows) — the section simply doesn't render; nothing is ever invented.
+    const prevSessionDay = (eqRows.find((r) => r.d < targetDate) || {}).d || targetDate;
+    changes = await q(
+      `SELECT et_day::text AS day, kind, summary, source
+         FROM oshal_trading_strategy_journal
+        WHERE user_sub=$1 AND et_day > $2::date AND et_day <= $3::date
+        ORDER BY et_day, id LIMIT 12`, [SUB, prevSessionDay, targetDate]);
+
     // Real trading age = distinct ET days we've actually placed orders, up to the report day
     // (NOT Alpaca's 251-point 1-year history). Drives the "since inception" period.
     const td = await q(
@@ -191,9 +215,11 @@ function etDate(d) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Americ
     why: { themes: whyThemes, stats: decisionStats },
     sentiment: { topSymbols: sentTop, headlines: sentHeadlines, totalSignals },
     optimize, // empty array = no parameter changes this period (surfaced honestly, not faked)
+    changes,  // strategy-journal entries since the prior session; empty = "no changes", said honestly
+    ops: readOpsNotes(targetDate), // runner-observed lateness/restarts/outages; null = nothing to report
     book: dayResults ? dayResults.positions : (recap.positions ?? null),
     positionsDetail: livePositions.map((p) => ({ sym: p.symbol, qty: Number(p.qty), avg: round2(Number(p.avg_entry_price)), mv: round2(Number(p.market_value)), pl: round2(Number(p.unrealized_pl)), plpc: round2(Number(p.unrealized_plpc) * 100) })),
   };
   fs.writeFileSync(OUT, JSON.stringify(deck, null, 2));
-  console.log('DECK_DATA_OK', OUT, '| trades=' + trades.length, 'whyThemes=' + whyThemes.length, 'sentiment=' + sentTop.length, 'optimize=' + optimize.length, 'ytd=' + (ytd && ytd.retPct != null ? ytd.retPct + '%' : 'n/a'));
+  console.log('DECK_DATA_OK', OUT, '| trades=' + trades.length, 'whyThemes=' + whyThemes.length, 'sentiment=' + sentTop.length, 'optimize=' + optimize.length, 'changes=' + changes.length, 'ops=' + (deck.ops ? deck.ops.notes.length : 0), 'ytd=' + (ytd && ytd.retPct != null ? ytd.retPct + '%' : 'n/a'));
 })().catch((e) => { console.error('DECK_DATA_FAIL', e.message || e); process.exit(1); });
