@@ -30,12 +30,14 @@ param(
 # NOT 'Stop': native commands (node/docker) write progress to stderr which, under Stop + 2>&1,
 # PowerShell 5.1 turns into a terminating NativeCommandError. We gate real failures with Fail() checks.
 $ErrorActionPreference = 'Continue'
-$REPO    = 'C:\Projects\open-shal-swarm-harness-agent-llm'
+# Operator-local paths come from env (the repo ships placeholders only): OSHAL_RECAP_REPO is the
+# working tree holding the vids-operator assets/out, OSHAL_FFMPEG the ffmpeg binary.
+$REPO    = if ($env:OSHAL_RECAP_REPO) { $env:OSHAL_RECAP_REPO } else { 'C:\Projects\open-shal-swarm-harness-agent-llm' }
 $OUT     = Join-Path $REPO 'packages\oshal-vids-operator\out'
-$FINREPO = 'C:\Projects\finance-history'
+$FINREPO = if ($env:OSHAL_FINREPO) { $env:OSHAL_FINREPO } else { 'C:\Projects\finance-history' }
 $GOAL    = Join-Path $REPO 'packages\oshal-vids-operator\RECAP-BUILD-GOAL.md'
 $RNJS    = "$REPO\scripts\codex-remote-node.mjs"
-$FF      = 'C:\Users\you\AppData\Local\Programs\Python\Python311\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe'
+$FF      = if ($env:OSHAL_FFMPEG) { $env:OSHAL_FFMPEG } else { 'ffmpeg' }
 if (-not $Date) { $Date = (Get-Date).ToUniversalTime().AddHours(-5).ToString('yyyy-MM-dd') }  # ET calendar date
 $parent = Split-Path $NodeOut   # the node's vids-operator root, e.g. C:\oshal-vidsop
 $log = Join-Path $FINREPO ("run-" + $Date + ".log")
