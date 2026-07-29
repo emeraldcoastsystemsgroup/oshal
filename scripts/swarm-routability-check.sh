@@ -18,7 +18,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIST="${ROUTABILITY_LIST:-$HERE/routability-critical-bots.txt}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-oshal-local-redis}"
-API_HEALTH="${API_URL:-http://localhost:35457/api/health}"
+# 127.0.0.1, NOT localhost: on Windows hosts `localhost` resolves to ::1 first, and a stale
+# wslrelay squatting [::1]:35457 makes this probe fail while the api is healthy. That false FAIL
+# fed the stack watchdog a "routing-critical" signal and it bounced a healthy api three times in
+# one evening, killing in-flight work each time (2026-07-28). IPv4 loopback dodges the squatter.
+API_HEALTH="${API_URL:-http://127.0.0.1:35457/api/health}"
 KEY_PREFIX="oshal:runtime-agent"
 WAIT_SECS=0
 

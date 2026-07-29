@@ -23,6 +23,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — override CRUD (one active per user, history kept) + the pure overlay helpers the dispatch config resolvers call (effectiveCorePct, overlayCoreEntries, overlayRotationKnobs, policyOverrideOf).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BLEND overrides (ADR-095 round 2): an applied blend enables rotation at the blend cadence (the merged-target path executes it), and policyOverrideOf resolves the MOST-CONSERVATIVE component policy (tightest stop, earliest tp) for book-level exits/caps.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Honesty rails: apply/revert now auto-record a strategy-journal entry so every knob turn reaches the daily report's "What changed" section without anyone remembering to write it down.
  *
  * @module trading-config-overrides
  */
@@ -32,6 +33,7 @@ import { createChildLogger } from '@/shared/logger';
 import type { PolicyOverride } from '@/features/trading';
 import type { StrategyConfig } from './trading-strategy-lab-sim';
 import { conservativeBlendPolicy } from './trading-blend';
+import { recordStrategyJournal } from './trading-strategy-journal';
 
 const logger = createChildLogger({ module: 'trading-config-overrides' });
 
@@ -138,6 +140,13 @@ export async function applyOverride(pool: Pool, sub: string, apply: {
        Math.round(Math.max(1, Math.min(100, apply.applyPct))), apply.note.slice(0, 500)]);
     await client.query('COMMIT');
     logger.info({ sub, strategy: apply.strategyName, applyPct: apply.applyPct }, 'profile override APPLIED');
+    // Honesty rail: every knob turn reaches the daily report. Fire-and-forget — the journal
+    // helper swallows its own failures, so the apply itself can never be blocked by reporting.
+    void recordStrategyJournal(pool, {
+      sub, kind: 'knob-turn', source: 'trading-config-overrides.applyOverride',
+      summary: `Strategy override applied: "${apply.strategyName}" at ${apply.applyPct}% of the sleeve${apply.note ? ` — ${apply.note.slice(0, 120)}` : ''}`,
+      detail: { strategyId: apply.strategyId, applyPct: apply.applyPct },
+    });
     return rowMap(rows[0]);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -159,7 +168,14 @@ export async function revertOverride(pool: Pool, sub: string): Promise<ConfigOve
   const { rows } = await pool.query(
     `UPDATE trading_config_overrides SET active = false, deactivated_at = now()
       WHERE user_sub = $1 AND active RETURNING *`, [sub]);
-  if (rows.length) logger.info({ sub, strategy: rows[0].strategy_name }, 'profile override REVERTED — env defaults resume');
+  if (rows.length) {
+    logger.info({ sub, strategy: rows[0].strategy_name }, 'profile override REVERTED — env defaults resume');
+    void recordStrategyJournal(pool, {
+      sub, kind: 'knob-turn', source: 'trading-config-overrides.revertOverride',
+      summary: `Strategy override reverted: "${rows[0].strategy_name}" — profile back on env defaults`,
+      detail: { strategyId: rows[0].strategy_id ?? null },
+    });
+  }
   return rows.length ? rowMap(rows[0]) : null;
 }
 

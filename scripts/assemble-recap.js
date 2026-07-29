@@ -26,11 +26,11 @@ const clamp = (x) => Math.max(1.0, Math.min(2.0, x));
 // Scenes in order. words:0 => stretch 1.0 (natural speed). Every clip here is Veo/Google-made
 // and self-paced, so NONE are stretched — a nonzero words count would slow the speaker down.
 const scenes = [
-  { f: path.join(OUT, 'the operator-intro.mp4'), words: 0 },           // Veo clip — self-paced, no stretch
+  { f: path.join(OUT, 'presenter-intro.mp4'), words: 0 },         // Veo clip — self-paced, no stretch
   { f: path.join(OUT, 'brand', 'oshal.mp4'), words: 0 },          // sting (music) — no stretch
-  { f: path.join(OUT, 'the operator-overview.mp4'), words: 0 },        // Veo clip — self-paced, no stretch
+  { f: path.join(OUT, 'presenter-overview.mp4'), words: 0 },      // Veo clip — self-paced, no stretch
   { f: path.join(OUT, 'deck-narrated.mp4'), words: 0 },           // Google Convert-Slides narrated deck (has its own VO+music)
-  { f: path.join(OUT, 'the operator-close.mp4'), words: 0 },           // Veo clip — self-paced, no stretch
+  { f: path.join(OUT, 'presenter-close.mp4'), words: 0 },         // Veo clip — self-paced, no stretch
 ];
 
 function ff(args) {
