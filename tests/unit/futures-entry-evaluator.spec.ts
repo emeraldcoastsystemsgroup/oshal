@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guards for the ADR-116 entry evaluator: every graded-state formula (incl. DMI between-rule, LagRSI exact-equality saturation, wave-pattern lookup), window inclusivity/wrap/invalid-pass-through, threshold-0 exclusion vs +2 exactness, the hard LagOsc clause, close0>close1 gate, the same-direction re-entry latch lifecycle, NaN skip-bar semantics, LTF fail-open + DynStops graded gate + size weighting (count/3, ≤0→full), equity-halt latch, generation deltas (wave pattern ignored in dynstops).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the third generation 'ensemble': the reading is attached to every graded bar (in-position included) and never to the other generations, entry on score alone with no up-close gate and no re-entry latch, the hard-clause difference isolated from the threshold, membership scaling, and LTF parity — the ensemble uses the BINARY export-style rule (ATCEnsembleGen.cs:291-292), not the DynStops graded gate.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -20,7 +21,7 @@ function bar(h: number, l: number, c: number, o = c): OhlcvBar {
 /** An "everything maximally bullish" chart snapshot that passes every long clause. */
 function bullishSnapshot(over: Partial<ChartIndicatorSnapshot> = {}): ChartIndicatorSnapshot {
   return {
-    plusDi0: 40, minusDi0: 10, adx0: 30, // DMI +2 (DI+ > ADX > DI−)
+    plusDi0: 40, minusDi0: 10, adx0: 30, adx1: 25, // DMI +2 (DI+ > ADX > DI−; rising for the ensemble grade)
     macd0: 2, macdAvg0: 1, macd1: 1.5, // MACD +2
     mfi0: 60, mfi1: 55, // MFI +2
     lagOsc0: 0.8, lagOsc1: 0.5, // hard clause passes, rising
@@ -269,5 +270,191 @@ describe('entry evaluator — LTF filter + generation deltas', () => {
     expect(tight.signal).toBeNull();
     const tiny = makeEval({ riskPerTradePercent: 0.01 }).evaluate(ctx()); // qty floors to 0
     expect(tiny.signal).toBeNull();
+  });
+});
+
+describe("generation 'ensemble' — the scalar model (ATCEnsembleGen parity)", () => {
+  const ens = (over: Partial<EntryEvaluatorConfig> = {}) =>
+    makeEval({ generation: 'ensemble', ...over });
+
+  it('attaches the ensemble reading to every graded bar, IN-POSITION included', () => {
+    // The confirmation exit needs the score each bar, so the in-position path must carry it.
+    const e = ens();
+    const held = e.evaluate(ctx({ flat: false }));
+    expect(held.signal).toBeNull();
+    expect(held.reasons).toContain('in-position');
+    expect(held.ensemble).toBeDefined();
+    expect(held.ensemble!.maxPossible).toBe(18);
+  });
+
+  it('the other generations never carry an ensemble reading', () => {
+    expect(makeEval({ generation: 'export' }).evaluate(ctx()).ensemble).toBeUndefined();
+    expect(makeEval({ generation: 'dynstops' }).evaluate(ctx()).ensemble).toBeUndefined();
+  });
+
+  it('enters on score alone with NO up-close bar — his ensemble has no close0>close1 gate', () => {
+    // A DOWN close that the unanimous-AND generations reject at the submission gate.
+    const downClose = ctx({
+      bar: bar(101.5, 100.4, 101),
+      prevBar: bar(102.5, 101.0, 101.5, 101.2), // prev close 101.5 > this close 101
+    });
+    expect(makeEval({ generation: 'export' }).evaluate(downClose).signal).toBeNull();
+    const d = ens().evaluate(downClose);
+    expect(d.signal).toBe('long');
+    expect(d.ensemble!.score).toBeGreaterThanOrEqual(13); // ≥ 70% of 18
+  });
+
+  it('enters when the HARD oscillator clause fails — no indicator is mandatory', () => {
+    // Positive but FALLING: the hard clause needs lagOsc0 > lagOsc1, so 'export' must refuse. The
+    // state still grades +1, so the ensemble score stays above threshold — isolating the CLAUSE as
+    // the only difference between the two models, not the score.
+    const oscFalling = ctx({ indicators: bullishSnapshot({ lagOsc0: 0.8, lagOsc1: 0.9 }) });
+    expect(makeEval({ generation: 'export' }).evaluate(oscFalling).signal).toBeNull();
+    const d = ens().evaluate(oscFalling);
+    expect(d.signal).toBe('long');
+    expect(d.ensemble!.contributions.lagOsc).toBe(1);
+  });
+
+  it('a strongly-adverse contributor moves the ARITHMETIC, never a mandate', () => {
+    // lagOsc at −2 drops the score from 17 to 13 (under the ensemble's own grades): still ≥ 70% of
+    // 18 (12.6) so the trade fires, and a slightly stricter threshold refuses the very same bar.
+    // The oscillator has no veto — only its four points of weight.
+    const oscAgainst = ctx({ indicators: bullishSnapshot({ lagOsc0: -0.5, lagOsc1: -0.2 }) });
+    const d = ens().evaluate(oscAgainst);
+    expect(d.ensemble!.score).toBe(13);
+    expect(d.signal).toBe('long');
+    expect(ens({ ensembleEntryThresholdPct: 75 }).evaluate(oscAgainst).signal).toBeNull(); // 13.5 bar
+  });
+
+  it('refuses below the threshold and says so', () => {
+    // Only three contributors bullish → score well under 12.6.
+    const weak = ctx({
+      indicators: bullishSnapshot({
+        macd0: 1, macdAvg0: 2, macd1: 1.5, // MACD negative
+        mfi0: 40, mfi1: 45, // MFI negative
+        lagFilter0: 98, lagFilter1: 99, // falling
+        eitTrigger0: 99.5, eitTrend0: 100.2, // below trend
+        stStopDot0: 102, stStopDot1: 102.5, // dot above the bar
+        lagRsi0: 20, lagRsi1: 25,
+        bullWavePat: WavePattern.LL, bearWavePat: WavePattern.LH,
+      }),
+    });
+    const d = ens().evaluate(weak);
+    expect(d.signal).toBeNull();
+    expect(d.reasons).toContain('ensemble-below-threshold');
+  });
+
+  it('honours the membership flags — dropping contributors moves the bar', () => {
+    const c = ctx();
+    const full = ens().evaluate(c);
+    expect(full.ensemble!.maxPossible).toBe(18);
+    const trimmed = ens({ ensembleMembership: { lagRsi: false, wavePattern: false } }).evaluate(c);
+    expect(trimmed.ensemble!.maxPossible).toBe(14);
+    expect(trimmed.ensemble!.contributions.lagRsi).toBeUndefined();
+  });
+
+  it('a 100% threshold blocks a merely-strong bar', () => {
+    expect(ens({ ensembleEntryThresholdPct: 100 }).evaluate(ctx()).signal).toBeNull();
+  });
+
+  it('ignores the same-direction re-entry latch that gates the older generations', () => {
+    // After a long exit with no zero-cross, 'export' is latched out; the ensemble is not.
+    const exp = makeEval({ generation: 'export' });
+    exp.evaluate(ctx());
+    exp.onPositionClosed('long');
+    expect(exp.evaluate(ctx()).signal).toBeNull(); // latched out
+    const e = ens();
+    e.evaluate(ctx());
+    e.onPositionClosed('long');
+    expect(e.evaluate(ctx()).signal).toBe('long'); // no latch in the ensemble
+  });
+
+  it('still respects the hard warmup gates and the entry window', () => {
+    expect(ens().evaluate(ctx({ chartBarNumber: 5 })).skippedBar).toBe(true);
+    expect(ens().evaluate(ctx({ timeOfDayMinutes: 5 * 60 })).reasons).toContain('outside-window');
+  });
+});
+
+describe("generation 'ensemble' — contributor grades that DIFFER from the Export chain", () => {
+  const ens = (over: Partial<EntryEvaluatorConfig> = {}) => makeEval({ generation: 'ensemble', ...over });
+
+  it('DMI contributes NOTHING when ADX is not rising (ATCEnsembleGen.cs:402-406)', () => {
+    // Export grades this bar +2 (DI+ 40 > ADX 30 > DI− 10); his ensemble requires dmiAdx0 > dmiAdx1
+    // in BOTH branches, so a falling ADX zeroes the contribution.
+    const falling = ctx({ indicators: bullishSnapshot({ adx1: 35 }) });
+    const d = ens().evaluate(falling);
+    expect(d.ensemble!.contributions.dmi).toBe(0);
+    expect(d.states!.dmi).toBe(0); // the ensemble's own graded state, not Export's
+    expect(makeEval({ generation: 'export' }).evaluate(falling).states!.dmi).toBe(2);
+  });
+
+  it('a MISSING adx1 falls back to adx0 — not-rising — never to Export behavior', () => {
+    const noPrev = ctx({ indicators: bullishSnapshot({ adx1: undefined as never }) });
+    expect(ens().evaluate(noPrev).ensemble!.contributions.dmi).toBe(0);
+  });
+
+  it('the Laguerre-filter ±2 upgrade is an up CLOSE, not close-above-open + higher high (cs:442-446)', () => {
+    // Close 101 above prev close 100.5 but BELOW its own open 101.2, no higher high: Export grades
+    // +1, his ensemble +2. This one point flips entries near the threshold.
+    const bar0 = bar(101.5, 100.4, 101, 101.2);
+    const c = ctx({ bar: bar0 });
+    const d = ens().evaluate(c);
+    expect(d.ensemble!.contributions.lagFilter).toBe(2);
+    expect(makeEval({ generation: 'export' }).evaluate(c).states!.lagFilter).toBe(1);
+  });
+
+  it("the ensemble's NaN skip-bar guard has NO adaptive-filter term (his eleven-value list)", () => {
+    const alfNaN = ctx({ indicators: bullishSnapshot({ alf0: Number.NaN }) });
+    expect(makeEval({ generation: 'export' }).evaluate(alfNaN).skippedBar).toBe(true);
+    const d = ens().evaluate(alfNaN);
+    expect(d.skippedBar).toBe(false);
+    expect(d.signal).toBe('long');
+  });
+});
+
+describe("generation 'ensemble' — LTF filter parity (ATCEnsembleGen.cs:291-292)", () => {
+  const ens = (over: Partial<EntryEvaluatorConfig> = {}) => makeEval({ generation: 'ensemble', ...over });
+
+  it('uses the BINARY export-style rule, not the DynStops graded gate', () => {
+    // An LTF snapshot that the binary rule REJECTS (lagOsc ≤ 0) but whose graded states would pass
+    // the DynStops gate on SuperTrend alone. The ensemble must refuse.
+    const flatOsc: LtfSnapshot = {
+      close: 101, low: 100.5, high: 101.5, stopDot: 99, stopDotPrev: 98.5,
+      lagOsc: 0, lagOscPrev: -0.2, lagRsiAvg: 60, lagRsiAvgPrev: 55,
+    };
+    expect(ens().evaluate(ctx({ ltf: flatOsc })).ltfBullish).toBe(false);
+    expect(ens().evaluate(ctx({ ltf: flatOsc })).signal).toBeNull();
+    // Same snapshot under the export generation → identically rejected (proves rule equivalence).
+    expect(makeEval({ generation: 'export' }).evaluate(ctx({ ltf: flatOsc })).ltfBullish).toBe(false);
+  });
+
+  it('does NOT gate on the LagRSI Average line (that is DynStops-only)', () => {
+    // Missing lagRsiAvg sends DynStops to its fail-open branch; the ensemble never reads it at all,
+    // so the binary rule still evaluates normally.
+    const noRsiAvg: LtfSnapshot = {
+      close: 101, low: 100.5, high: 101.5, stopDot: 99, stopDotPrev: 98.5,
+      lagOsc: 0.6, lagOscPrev: 0.4,
+    };
+    const d = ens().evaluate(ctx({ ltf: noRsiAvg }));
+    expect(d.ltfBullish).toBe(true);
+    expect(d.signal).toBe('long');
+  });
+
+  it('fails OPEN on a missing LTF SNAPSHOT after warmup (NaN-value fail-open, not a gate)', () => {
+    const d = ens().evaluate(ctx({ ltf: null }));
+    expect(d.skippedBar).toBe(false);
+    expect(d.signal).toBe('long');
+  });
+
+  it('the LTF WARMUP gate is unconditional for the ensemble whenever an LTF series exists', () => {
+    // His ensemble always loads its LTF series and gates on its bar count regardless of the filter
+    // flag (ATCEnsembleGen.cs:271-276); Export gates only when the filter is ON.
+    const young = ctx({ ltfBarNumber: 5 });
+    expect(ens({ useLtfTrendFilter: false }).evaluate(young).skippedBar).toBe(true);
+    expect(makeEval({ generation: 'export', useLtfTrendFilter: false }).evaluate(young).skippedBar).toBe(false);
+    // NT8 DEVIATION: with NO LTF series at all (a state his code cannot reach) the ensemble fails
+    // open instead of gating forever.
+    const none = ctx({ ltf: null, ltfBarNumber: undefined });
+    expect(ens({ useLtfTrendFilter: false }).evaluate(none).skippedBar).toBe(false);
   });
 });
