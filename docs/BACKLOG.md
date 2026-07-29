@@ -10,7 +10,10 @@ bundled and consolidated — the analyst + self-healing portion). The functional
 [docs/architecture/alert-triage-and-consolidation-spec.md](architecture/alert-triage-and-consolidation-spec.md),
 mined from the retired SRE platform's pipeline (ADR-069 §2a) including its own postmortem trail —
 its proven constants are the spec's defaults and its documented flaws are do-not-repeat
-requirements. Build lands in three phases, each shipping its named guards in the same change:
+requirements. The end state is [ADR-119](adr/119-autonomous-health-ticket-processing.md):
+autonomous health ticket processing — the alert stream drives the RCA resolution stream through a
+per-rule autonomy ladder. Build lands in four phases, each shipping its named guards in the same
+change:
 
 1. **P1 Consolidation** (intake route + ticket-service metadata). **Done when:** 10 identical
    concurrent firing alerts yield exactly ONE active ticket with `updateCount=9` and visible
@@ -26,9 +29,19 @@ requirements. Build lands in three phases, each shipping its named guards in the
    promote overrides; 6 refires in 30m defers dispatch with a `flapping` flag; with
    `ALERT_AUTO_RESOLVE=true` a fully-resolved backlog ticket self-closes while an `approved`
    ticket never does; a claim rule containing a time predicate is rejected at load.
+4. **P4 Autonomy ladder ([ADR-119](adr/119-autonomous-health-ticket-processing.md))** — structurally
+   blocked on P1+P3. **Done when:** with the container-health rules at A1, a live container-kill
+   drill flows alert → consolidated ticket → RCA proposal waiting at the approve gate with zero
+   human touches before the gate; with `SELF_HEAL_AUTO_APPLY=true` (A2), a whitelisted worker
+   restart auto-applies once, verifies the target healthy within its window, and completes the
+   ticket — while a second failure of the same incident key inside the consolidation TTL
+   escalates to a human instead of re-applying; an alert naming core infra (api/db/redis) NEVER
+   auto-applies (guard); with the kill switch off, A2 behaves exactly as A1 (guard); every
+   auto-apply is audited on the ticket with its verification result.
 
 Non-goal recorded deliberately: no accumulate-then-flush delay of the FIRST alert of an incident —
-detection latency beats group tidiness in a self-healing loop (spec §10).
+detection latency beats group tidiness in a self-healing loop (spec §10). ADR-119's A3 non-goal
+also stands here: no autonomous code-change remediation; Mode B/C always land on a human.
 
 ## Strategy Studio + Bot Forge conversational parity — deferred pieces
 
