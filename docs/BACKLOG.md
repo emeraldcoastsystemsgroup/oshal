@@ -5379,6 +5379,96 @@ work to retry blind.
   the unknown-outcome case asks a human rather than reconciling from the node's own task history.
   A durable result consumer that resolves the ticket from the mesh result would close that gap.
 
+
+## Kernel-vs-app bot boundary: what an 11-agent audit found (2026-07-29)
+
+Operator directive, standing at the first hosted customer box: *"they should have the base swarm
+bots which include the rca and build bots but they don't have the pumpkin app so they shouldn't
+get the pumpkin bot."* An adversarial classification (5 evidence passes + 4 refutation lenses +
+synthesis) was run to define `SWARM_REGISTRY=kernel`. It did not return a clean list — it returned
+the reasons a naive filter would break a deployment, plus defects worth fixing on their own.
+Everything below carries file:line evidence in the run journal.
+
+**K1 — `SWARM_REGISTRY=kernel` is NOT a name filter over the local registry.** ⬜
+Core code pins app-flavoured bots by UUID, so excluding them leaves core dispatching to a
+nonexistent agent rather than to a package-restored one: `shopping-concierge`
+(bot-node-provider-intent 'walmart-catalog'), `weather-bot` (same file + two committed guards),
+`screenplay-writer` (series-pipeline + the unconditional `startSeriesReconciler` boot cron),
+`ambient-analyst` (src/app/ambient-enrichment-runtime.ts, not a manifest), plus
+`communications-bot`, `social-writer`, `home-bot`, `trading-analyst`. Their surfaces carved; the
+packages declare **no bots**, so nothing would re-register them.
+- **Done when:** kernel is defined **by agentId, not name** (see K2); every pinned-but-app-flavoured
+  bot is either carved WITH a package that declares it, or its core pin is replaced by a
+  fail-loud escalate; and a guard proves a kernel-mode boot dispatches no ticket to an unregistered
+  agentId. Until then `UI_PROFILE=<app>` is the shipped mitigation (customer sees only their app).
+
+**K2 — `system-architect` / `architect-bot`: one UUID, three names.** ⬜
+`swarm-bot-registry-local.ts:772` says `system-architect`; `swarm-bot-registry.ts:782` and
+`swarm-apps/oshal-engineering.yaml:70` say `architect-bot`; `dispatch-routing.ts:96-99` resolves
+the built-in **build** workflow BY NAME on `system-architect`. The kernel manifest registers the
+name the build workflow cannot resolve, and `agent-profile-controller.ts` assigns the name
+`system-architect` to a *different* uuid.
+- **Done when:** one name across both registries and the manifest, name-vs-id resolution is
+  consistent in dispatch-routing, and a guard fails on a registry/manifest name divergence.
+
+**K3 — `codex-packer` agentId is a three-way collision.** ⬜
+`a0000000-0000-0000-0000-000000000030` is declared by `swarm-apps/codex-packer.yaml:36` AND
+`swarm-apps/intelligent-processing.yaml:54`, and `docker-compose.oshal-local.yml:1277` assigns it
+to the **self-healing-bot** service. `validate-swarm-wiring.ts` matches by agentId only, so the
+boot audit reports OK. A UUID cannot be safely re-pointed once tickets, `chat_tasks` and Redis
+heartbeats reference it.
+- **Done when:** self-healing-bot has its own agentId, the wiring validator fails on a
+  one-id-many-names/services collision, and a migration note covers existing rows.
+
+**K4 — `self-healing-bot` is the sharpest object in the tree.** ⬜
+Mounts `/var/run/docker.sock` (root-equivalent on the host), sets `TOOL_AUTH_DOCKER_SOCKET=auto`
+(the only service overriding the swarm-wide `off`), runs autonomously under
+`ENABLE_SELF_HEALING_SCHEDULER`, grants restart-container / git-pull / analyze-and-fix-code /
+docker-build, declares **no accessRoles anywhere**, and reaches a box through
+`swarm-apps/intelligent-processing.yaml:53-56` even though it is in no registry.
+- **Done when:** it is removed from that manifest's `bots:` (or the manifest is not kernel-resident),
+  its compose service is profile-gated away from any customer bring-up, and a guard asserts no
+  kernel-resident manifest declares a docker-socket bot.
+
+**K5 — worker bots inherit the SUPERUSER database URL; the api does not.** ⬜
+`docker-compose.oshal-local.yml:225` gives the shared bot env a DSN for the `oshal` role
+(superuser, `rolbypassrls=true`) while the api was moved to least-privilege `oshal_app` at :679.
+**Postgres superuser bypasses RLS** — the keystone of the multi-user isolation the platform is sold
+on. VERIFIED NOT APPLICABLE to the first customer box (2026-07-29: api runs `oshal_app`;
+`rolsuper=f, rolbypassrls=f`; zero bot containers exist). It applies to any deployment that runs
+bot nodes, including the dev box.
+- **Done when:** worker bots use `oshal_app` (or a per-bot least-privilege role), a guard asserts no
+  compose service hands a bot a superuser DSN, and the RLS two-user live test is re-run with bots up.
+
+**K6 — `OSHAL_EXECUTE_ENTITLEMENT` appears in no compose file** ⬜ so it defaults to `warn`:
+entitlement denials are logged and then **allowed**. Setting `enforce` (with `OSHAL_OPERATOR_SUBS`
+populated) is the single highest-value hardening step, but it must be proven on the dev box first —
+flipping an enforcement default on a live customer box without an exercised path is how a working
+deployment goes dark.
+- **Done when:** `enforce` is the compose default, an e2e proves an unentitled execute is refused
+  AND an operator path still works, and the customer runbook lists it.
+
+**K7 — internal machinery bots ship unscoped.** ⬜ `code-developer`, `code-reviewer`,
+`test-engineer`, `tester-bot`, `devops-bot`, `research-bot`, `security-analyst`, `vault-bot` and
+`general-bot` declare no `accessRoles`, so ADR-087's "omitted = open to every caller" makes them
+live Jarvis / inbound-A2A call-out candidates with the shared workspace mounted read-write.
+`security-analyst` is the sharpest: its ROUTE is `requiresOperator`-gated but its IDENTITY is not,
+so a call-out reaches it around the gate. Care needed: `general-bot` is the Jarvis `task` lane
+fallback, so scoping it must include the `jarvis` role or Jarvis routing breaks.
+- **Done when:** each gets an explicit accessRoles decision (both registries per
+  docs/building-a-bot.md), and a guard asserts every bot the platform treats as internal machinery
+  declares them.
+
+**K8 — registry-membership hazards.** ⬜ `linkedin-profile-operator` is pinned by
+`src/app/profile-studio-dispatch.ts:37` and mounted unconditionally, but exists ONLY in
+`swarm-bot-registry.ts` — a kernel filter written against the local registry alone silently misses
+it. `advisor-bot` looks like a **phantom**: no persona, no compose service, no references outside
+the registries. `research-bot` defaults `TOOL_AUTH_GOOGLE_SEARCH=auto` while kubectl/aws/docker
+default off — a prompt-to-external-vendor path with no approval gate, and a third LLM vendor in the
+customer's DPA inventory.
+- **Done when:** both registries agree on membership for every pinned bot, phantoms are deleted or
+  justified, and tool-auth defaults are consistent with the swarm-wide `off` posture.
+
 ## First-run provisioning wizard — store → apps → users → defaults (operator vision, 2026-07-28) ⬜
 
 Stated the night the first hosted customer box went live, after doing all of it by hand: "the
