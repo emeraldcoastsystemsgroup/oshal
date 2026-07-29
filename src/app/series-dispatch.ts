@@ -36,6 +36,7 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 import { buildRenderPlan, SCREENPLAY_WRITER_AGENT_ID, type CastMember, type Scene } from '@/app/series-pipeline';
+import { nodePkgDir, nodeExe } from '@/app/vids-node-availability';
 
 const logger = createChildLogger({ module: 'series-dispatch' });
 
@@ -44,10 +45,11 @@ export { SCREENPLAY_WRITER_AGENT_ID };
 /** How many scene clips an episode is expected to yield (intro is prepended at assembly). */
 const DEFAULT_SCENES = 4;
 
-/** Where the vids-operator package lives on the render node, and the node binary that runs it. */
-const NODE_PKG_DIR = process.env.VIDS_NODE_PKG_DIR
-  || 'C:\\Projects\\open-shal-swarm-harness-agent-llm\\packages\\oshal-vids-operator';
-const NODE_EXE = process.env.VIDS_NODE_EXE || 'C:\\Program Files\\nodejs\\node.exe';
+// Where the vids-operator package lives ON THE RENDER NODE, and the node binary that runs it. Both
+// resolve through vids-node-availability so the availability probe and the render dispatch can never
+// disagree about which directory the node's package is in. The old default here pointed at the
+// controller's own legacy checkout path — a directory that has never existed on the node, so every
+// dispatch shelled into nothing unless VIDS_NODE_PKG_DIR happened to be set.
 
 /** True when a remote client can run a shell command (the render transport, as in lora-train-dispatch). */
 function isShellWorker(c: { capabilities?: unknown }): boolean {
@@ -305,12 +307,12 @@ export async function dispatchStoryboardedEpisode(
   }), 'utf8').toString('base64');
 
   const command = [
-    `$p='${NODE_PKG_DIR}'`,
+    `$p='${nodePkgDir()}'`,
     'Set-Location $p',
     `$env:VIDS_DRIVE_ACCESS_TOKEN='${opts.driveToken}'`,
     '$env:VIDS_RENDER_TIMEOUT_MS=\'600000\'',
     '$env:VIDS_SCENE_ATTEMPTS=\'3\'',
-    `& '${NODE_EXE}' episode-render.js '${planB64}'`,
+    `& '${nodeExe()}' episode-render.js '${planB64}'`,
   ].join('; ');
 
   const taskId = randomUUID();
