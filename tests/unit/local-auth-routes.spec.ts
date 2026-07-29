@@ -92,6 +92,12 @@ function fakePool() {
         return { rows: rows.length ? [{ one: 1 }] : [] };
       }
       if (sql.includes('ORDER BY created_at')) return { rows: [...rows] };
+      // This fake models ONE table. The invite flow's Gmail rail legitimately queries the
+      // connector store (and its tenancy helpers) looking for a sending account; answer
+      // "nothing here" so the fallback exercises its real no-connection path instead of
+      // surfacing a stub error as the admin-facing detail. Unknown queries against the
+      // table we DO model still throw — that is what caught the earlier column mismatch.
+      if (!sql.includes('oshal_local_users')) return { rows: [] };
       throw new Error(`fake pool has no handler for: ${sql.slice(0, 80)}`);
     },
   };
@@ -100,7 +106,7 @@ function fakePool() {
 // ── Harness ──────────────────────────────────────────────────────────────────
 const SVC_SECRET = 'example-service-secret-0000';
 let saved: Record<string, string | undefined>;
-const ENV_KEYS = ['SESSION_SECRET', 'SWARM_SERVICE_SECRET', 'OSHAL_OPERATOR_EMAILS', 'SMTP_HOST', 'LOCAL_AUTH'];
+const ENV_KEYS = ['SESSION_SECRET', 'SWARM_SERVICE_SECRET', 'OSHAL_OPERATOR_EMAILS', 'OSHAL_OPERATOR_SUBS', 'SMTP_HOST', 'LOCAL_AUTH', 'APP_URL', 'LOCAL_AUTH_PUBLIC_URL'];
 
 let pool: ReturnType<typeof fakePool>;
 let server: Server;
@@ -139,6 +145,11 @@ beforeAll(() => {
   process.env.SWARM_SERVICE_SECRET = SVC_SECRET;
   delete process.env.OSHAL_OPERATOR_EMAILS;
   delete process.env.SMTP_HOST; // force the copyable-link fallback
+  delete process.env.OSHAL_OPERATOR_SUBS; // and no connector sending identity
+  // A public URL is required before EITHER mail rail is attempted: an emailed invite
+  // needs an absolute link. Without it the admin screen still shows a copyable path
+  // (the browser knows its own origin), which is what the assertions below check.
+  process.env.APP_URL = 'https://box.example.com';
 });
 
 afterAll(() => {
@@ -246,7 +257,7 @@ describe('local-auth invite lifecycle', () => {
     const invited = await post('/api/local-auth/users', { email: 'bdo@example.com', name: 'A BDO' }, svc);
     expect(invited.status).toBe(201);
     expect(invited.data.emailSent).toBe(false);
-    expect(String(invited.data.emailDetail)).toMatch(/SMTP/i);
+    expect(String(invited.data.emailDetail)).toMatch(/copy the invite link/i);
     expect(invited.data.invitePath).toMatch(/^\/invite\?token=oshal_inv_[0-9a-f]{48}$/);
     const token = decodeURIComponent(String(invited.data.invitePath).split('token=')[1]);
 
@@ -273,6 +284,30 @@ describe('local-auth invite lifecycle', () => {
     const reinvited = await post(`/api/local-auth/users/${userId}/reinvite`, {}, svc);
     expect(reinvited.status).toBe(200);
     expect(reinvited.data.invitePath).toMatch(/oshal_inv_/);
+  });
+});
+
+describe('local-auth invite delivery rails', () => {
+  it('falls back to the Gmail connector rail when SMTP is absent, and still returns the link when both fail', async () => {
+    pool = fakePool();
+    await startApp();
+    const svc = { 'X-Service-Secret': SVC_SECRET };
+
+    // No SMTP and no sending identity: the copyable link is still the answer, and the
+    // detail names the actual reason rather than blaming SMTP alone.
+    const noRails = await post('/api/local-auth/users', { email: 'norails@example.com' }, svc);
+    expect(noRails.status).toBe(201);
+    expect(noRails.data.emailSent).toBe(false);
+    expect(noRails.data.invitePath).toMatch(/oshal_inv_/);
+    expect(String(noRails.data.emailDetail)).toMatch(/copy the invite link/);
+
+    // With a sending identity configured but no connected Google account, the failure
+    // must point at the connector — the fix an operator actually needs.
+    process.env.OSHAL_OPERATOR_SUBS = 'local-operator-sub';
+    const noConnection = await post('/api/local-auth/users', { email: 'noconn@example.com' }, svc);
+    expect(noConnection.data.emailSent).toBe(false);
+    expect(String(noConnection.data.emailDetail)).toMatch(/Google|connect|SMTP_HOST/i);
+    delete process.env.OSHAL_OPERATOR_SUBS;
   });
 });
 
