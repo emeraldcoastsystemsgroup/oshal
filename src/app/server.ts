@@ -283,6 +283,7 @@ import { seedDemoData, shouldSeedDemoData } from '@/features/demo-mode';
 import { createScheduleController } from './schedule-runtime';
 import { registerSwarmExtensionRoutes } from '@/app/extensions';
 import { startSeriesReconciler } from '@/app/series-orchestrator';
+import { startVideoPump } from '@/app/series-pump';
 import { startAmbientReviewRuntime } from './ambient-review-runtime';
 import { createTicketRoutes } from './routes/ticket-routes';
 import { createWorkspaceRoutes } from './routes/workspace-routes';
@@ -1444,6 +1445,11 @@ function createApp(): express.Application {
   // advance its series (dispatch the next, or finish). Only ever progresses work already past the
   // approval gate — it never authorizes new spend.
   startSeriesReconciler(ctx);
+  // The joke-shorts pump: the driver that keeps the same conductor producing. Off unless
+  // VIDEO_PUMP_ENABLED=true, and each show is opt-in again through its own enrollment — an
+  // automated production loop is never on by default. It refuses to touch the render node while
+  // the nightly recap (or anything else) owns it.
+  startVideoPump(ctx);
   // /api/lora is no longer hard-mounted: LoRA Studio was carved out to the oshal-applications
   // store (ADR-085 Wave 1) — its split mounts (public self-guarded /api/lora/ingest + oidc
   // /api/lora) dynamic-mount from the installed package via ManifestRouteMounter.
