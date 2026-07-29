@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Invitations send with NO mail password. The first hosted customer box had no SMTP, so an invited user simply never got an email and the admin had to notice the copy-link banner - the operator did not, and the invitee waited. Invite delivery now tries two rails in order: SMTP when a deployment configures its own server (explicit beats inherited), else the platform's EXISTING Gmail connector - the same OAuth grant every other outbound message in the swarm already uses, resolved through the same NOTIFY_EMAIL_SENDER_SUB / OSHAL_OPERATOR_SUBS identity notify-routes uses. sendGmail is reused, not re-implemented, so the header-injection fence still applies. The public-URL check moved FIRST because an emailed invite needs an absolute link (the copyable path still works without one - the browser knows its origin), and both rails failing is not an error: the admin screen always shows the link. Guard: local-auth-routes.spec rail-order case, mutation-proven.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | LOCAL_AUTH mode (ADR-117): a controlled invited-user login for deployments with no external IdP. createLocalAuthMiddlewareSet is the third sibling of the OIDC/mock middleware sets (server.ts picks it when LOCAL_AUTH=true): a session-cookie injector that fabricates the SAME req.oidc shape as the PAT/TV/guest injectors, a requiresAuth that answers API requests 401-JSON and browser documents with a /login redirect (reusing shouldReturnUnauthorizedResponse — one discrimination rule), and a loginHandler that serves the first-party credential page. createLocalAuthRoutes carries the flows: bootstrap-first-admin (the installer is the first login), email invitations with a copyable-link fallback when SMTP is absent, one-time accept (set password), login with per-ip+email rate limiting and account-enumeration-proof errors, logout, and the operator/trusted-service user administration API the CRM admin screen proxies to. Fail-closed at boot: LOCAL_AUTH+MOCK_OIDC together, or a missing SESSION_SECRET, throw instead of silently degrading to open auth.
  */
 
@@ -39,6 +40,8 @@ import {
   type LocalUser,
 } from '@/features/local-auth';
 import { sendTransactionalMail, smtpConfigured } from '@/features/notifications';
+import { sendGmail } from './email-routes';
+import { getValidAccessToken } from './connectors-routes';
 
 const logger = createChildLogger({ module: 'local-auth-routes' });
 
@@ -235,10 +238,51 @@ function publicBaseUrl(): string | null {
   return base || null;
 }
 
-async function deliverInvite(user: LocalUser, token: string, expiresAt: string): Promise<{ emailSent: boolean; emailDetail?: string }> {
-  if (!smtpConfigured()) {
-    return { emailSent: false, emailDetail: 'SMTP is not configured — copy the invite link to the user yourself' };
+/**
+ * @description The sending identity for connector-rail delivery: NOTIFY_EMAIL_SENDER_SUB, else
+ * the first OSHAL_OPERATOR_SUBS entry — the same resolution notify-routes uses, so a deployment
+ * configures ONE sender identity rather than one per feature.
+ *
+ * @returns The sub whose Google connection sends invitations, or '' when none is configured.
+ */
+function inviteSenderSub(): string {
+  return (process.env.NOTIFY_EMAIL_SENDER_SUB || (process.env.OSHAL_OPERATOR_SUBS || '').split(',')[0] || '').trim();
+}
+
+/**
+ * @description Sends an invitation through the platform's EXISTING Gmail connector rail — the
+ * same path every other outbound mail in the swarm uses. This is why a deployment needs no SMTP
+ * password: an operator connects their Google account once (OAuth, gmail.send scope, revocable
+ * from the Google account page) and invitations ride that grant with the invitee as recipient.
+ * sendGmail carries the header-injection fence; it is deliberately not re-implemented here.
+ *
+ * @param pool - Postgres pool holding the connector tokens.
+ * @param mail - Recipient, subject, body.
+ * @returns Send outcome; never throws (a failure degrades to the copyable link).
+ */
+async function sendViaConnectedGmail(pool: Pool, mail: { to: string; subject: string; text: string }): Promise<{ ok: boolean; detail?: string }> {
+  const senderSub = inviteSenderSub();
+  if (!senderSub) {
+    return { ok: false, detail: 'no sending identity configured (set OSHAL_OPERATOR_SUBS or NOTIFY_EMAIL_SENDER_SUB)' };
   }
+  try {
+    const token = await getValidAccessToken(pool, senderSub, 'google');
+    if (!token) {
+      return { ok: false, detail: 'no Google account is connected on this deployment — connect one on the Connectors screen, or set SMTP_HOST' };
+    }
+    await sendGmail(token, { to: mail.to, subject: mail.subject, body: mail.text });
+    logger.info({ to: mail.to }, 'invitation sent via the Gmail connector rail');
+    return { ok: true };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    logger.error({ err, to: mail.to }, 'invitation send via Gmail connector failed');
+    return { ok: false, detail };
+  }
+}
+
+async function deliverInvite(
+  pool: Pool, user: LocalUser, token: string, expiresAt: string,
+): Promise<{ emailSent: boolean; emailDetail?: string }> {
   const base = publicBaseUrl();
   if (!base) {
     return { emailSent: false, emailDetail: 'no public URL configured (set LOCAL_AUTH_PUBLIC_URL or APP_URL) — copy the invite link instead' };
@@ -246,7 +290,7 @@ async function deliverInvite(user: LocalUser, token: string, expiresAt: string):
   const product = process.env.SERVICE_DISPLAY_NAME || process.env.SERVICE_NAME || 'oshal';
   const link = `${base}${invitePath(token)}`;
   const expires = new Date(expiresAt).toUTCString();
-  const result = await sendTransactionalMail({
+  const mail = {
     to: user.email,
     subject: `You're invited to ${product}`,
     text: [
@@ -258,8 +302,24 @@ async function deliverInvite(user: LocalUser, token: string, expiresAt: string):
       `The link works once and expires ${expires}.`,
       "If you weren't expecting this invitation, you can ignore this email.",
     ].join('\n'),
-  });
-  return result.ok ? { emailSent: true } : { emailSent: false, emailDetail: result.detail };
+  };
+  // Two rails, in this order. SMTP wins when a deployment configures its own mail server
+  // (explicit beats inherited). Otherwise the platform's OWN Gmail connector sends it — the
+  // rail every other outbound message in the swarm already uses, so a box needs no mail
+  // password at all. Both failing is not an error: the admin screen always shows the link.
+  if (smtpConfigured()) {
+    const result = await sendTransactionalMail(mail);
+    if (result.ok) return { emailSent: true };
+    logger.warn({ detail: result.detail }, 'SMTP invite send failed — falling back to the connector rail');
+    const viaConnector = await sendViaConnectedGmail(pool, mail);
+    return viaConnector.ok
+      ? { emailSent: true }
+      : { emailSent: false, emailDetail: `SMTP failed (${result.detail}); Gmail rail failed (${viaConnector.detail})` };
+  }
+  const viaConnector = await sendViaConnectedGmail(pool, mail);
+  return viaConnector.ok
+    ? { emailSent: true }
+    : { emailSent: false, emailDetail: `${viaConnector.detail} — copy the invite link to the user yourself` };
 }
 
 // ── Admin gate ───────────────────────────────────────────────────────────────
@@ -417,7 +477,7 @@ export function createLocalAuthRoutes(pool: Pool): Router {
       const invitedBySub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub
         ?? (typeof body.invitedBySub === 'string' ? body.invitedBySub : null);
       const invite = await upsertInvite(pool, { email: String(body.email ?? ''), displayName: body.name ?? null, invitedBySub });
-      const delivery = await deliverInvite(invite.user, invite.token, invite.expiresAt);
+      const delivery = await deliverInvite(pool, invite.user, invite.token, invite.expiresAt);
       bustLocalUserSnapshot(invite.user.userSub);
       logger.info({ email: invite.user.email, emailSent: delivery.emailSent }, 'local-auth invite created');
       res.status(201).json({ user: invite.user, invitePath: invitePath(invite.token), inviteExpiresAt: invite.expiresAt, ...delivery });
@@ -437,7 +497,7 @@ export function createLocalAuthRoutes(pool: Pool): Router {
         return;
       }
       const invite = await upsertInvite(pool, { email: existing.email });
-      const delivery = await deliverInvite(invite.user, invite.token, invite.expiresAt);
+      const delivery = await deliverInvite(pool, invite.user, invite.token, invite.expiresAt);
       res.json({ user: invite.user, invitePath: invitePath(invite.token), inviteExpiresAt: invite.expiresAt, ...delivery });
     } catch (err) {
       logger.error({ err }, 'local-auth reinvite failed');
