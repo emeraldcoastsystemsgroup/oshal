@@ -7,6 +7,31 @@
  */
 
 export {
+  TOTP_DIGITS,
+  TOTP_STEP_SECONDS,
+  RECOVERY_CODE_COUNT,
+  base32Encode,
+  base32Decode,
+  totpCodeForStep,
+  currentStep,
+  verifyTotpCode,
+  otpauthUri,
+  formatSecretForDisplay,
+  encryptSecret,
+  decryptSecret,
+  generateRecoveryCodes,
+  hashRecoveryCode,
+  ensureTotpSchema,
+  getTotpState,
+  beginTotpEnrolment,
+  confirmTotpEnrolment,
+  verifySecondFactor,
+  disableTotp,
+  setTotpRequired,
+} from './services/local-totp';
+export type { TotpState, TotpEnrolment, SecondFactorResult } from './services/local-totp';
+
+export {
   INVITE_TOKEN_PREFIX,
   PASSWORD_MIN_LENGTH,
   localSubForEmail,

@@ -30,7 +30,7 @@ if [ "$ALLOW_SECRET_COMMIT" != "1" ]; then
   added=$(git diff --cached -U0 --no-color | grep -E '^\+' | grep -vE '^\+\+\+')
   secrets=$(printf '%s\n' "$added" \
     | grep -En "AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|(password|secret|api_?key|token|access_key)[\"' ]*[:=][\"' ]*[A-Za-z0-9/+_=-]{16,}" \
-    | grep -viE "REPLACE_ME|CHANGE_ME|changeme|example|placeholder|<[^>]+>|\\\$\\{|\\\$env|process\.env|import\.meta\.env|__[A-Z_]+__|do-not-use|dev-secret|your[-_]|sample|TODO|keycloak_db_password|ats_token|Initialize-Secret|New-JoinSecret|Get-EnvFileValue|Set-EnvFileValue|generateCliToken|generateInviteToken|localAuthSigningSecret|decodeURIComponent|encryptedAccessToken|encryptedRefreshToken|leak-|safeLanguageToken|resolveStoreToken" \
+    | grep -viE "REPLACE_ME|CHANGE_ME|changeme|example|placeholder|<[^>]+>|\\\$\\{|\\\$env|process\.env|import\.meta\.env|__[A-Z_]+__|do-not-use|dev-secret|your[-_]|sample|TODO|keycloak_db_password|ats_token|Initialize-Secret|New-JoinSecret|Get-EnvFileValue|Set-EnvFileValue|generateCliToken|generateInviteToken|localAuthSigningSecret|decodeURIComponent|encryptedAccessToken|encryptedRefreshToken|leak-|safeLanguageToken|resolveStoreToken|formatSecretForDisplay" \
     || true)
   if [ -n "$secrets" ]; then
     echo "" >&2
