@@ -93,13 +93,16 @@ export { wilderAtr, dmiAdx, laguerreRsi, movingMedian } from './services/futures
 export type { ChandelierBandsSeries, ChandelierBandsOptions, SuperTrendM11Series, SuperTrendM11Options, ParabolicSarSeries, ParabolicSarOptions } from './services/futures-trail-stops';
 export { chandelierBands, superTrendM11, parabolicSar } from './services/futures-trail-stops';
 export type { FuturesDirection, StrangleGateMode, StrangleExitMode, TrailMode, StopEngineConfig, InitialStopCandidate, StopEngineBarInput, StopEngineDecision, InitialStopParams, FuturesStopEngine } from './services/futures-stop-engine';
-export { createFuturesStopEngine, resolveInitialStop, validateStopPrice } from './services/futures-stop-engine';
+export { createFuturesStopEngine, resolveInitialStop, validateStopPrice, STOP_ENGINE_DEFAULTS } from './services/futures-stop-engine';
 // ADR-116 entry side — NT8Custom-parity entry indicators, wave tracking, and the entry evaluator.
 export type { LaguerreOscillatorOptions } from './services/futures-entry-indicators';
 export { laguerreOscillator, laguerreFilter, mfi, adaptiveLaguerreFilter } from './services/futures-entry-indicators';
 export type { WaveSeries, LaguerreWaveStopsSeries, LaguerreWaveStopsOptions } from './services/futures-wave-tracking';
 export { WavePattern, macdWave, dmiWave, ehlersInstTrendWave, laguerreWaveStops } from './services/futures-wave-tracking';
 export type { EntryGeneration, GradedStates, EntryThresholds, LtfThresholds, EntryEvaluatorConfig, ChartIndicatorSnapshot, LtfSnapshot, EntryBarContext, EntryDecision, FuturesEntryEvaluator } from './services/futures-entry-evaluator';
+// The trader's scalar ENSEMBLE entry model — no mandatory indicator, entry on a minimum score.
+export type { EnsembleContributor, EnsembleMembership, EnsembleScore, EnsembleConfirmationConfig, EnsembleConfirmationVerdict, EnsembleConfirmation } from './services/futures-entry-ensemble';
+export { ENSEMBLE_CONTRIBUTORS, ensembleScore, ensembleEntrySignal, createEnsembleConfirmation, gradeDmiStateEnsemble, gradeLagFilterStateEnsemble } from './services/futures-entry-ensemble';
 export { createFuturesEntryEvaluator, isWithinEntryWindow, gradeDmiState, gradeMacdState, gradeMfiState, gradeLagOscState, gradeLagFilterState, gradeEitState, gradeSuperTrendState, gradeLagRsiState, gradeWavePatternState, gradeAdaptiveLagFilterState } from './services/futures-entry-evaluator';
 // ADR-116 optimization objectives — the trader's nine NT8 OptimizationFitness classes as pure functions.
 export type { FitnessTrade, FitnessAggregates, FitnessFunction } from './services/futures-fitness';

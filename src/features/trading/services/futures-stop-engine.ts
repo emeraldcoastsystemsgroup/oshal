@@ -29,6 +29,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — resolveInitialStop (candidates→widest, ATR fallback, floor/ceiling), validateStopPrice (2-tick clamp + 5-tick sanity), createFuturesStopEngine per-trade state machine (breakeven-gated chandelier trail, risk-goal arming, Strangle level tracking + ADX-gate latch + underwater stand-down + close-breach market exit). Ported from NT8Custom ATCEntryCountDynStops.cs / ATCEntryCountExport.cs for ADR-116.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The source trader's answers (2026-07-28) become defaults: Strangle gate defaults to 'adx-laguerre' (his stated "both conditions" = ADX + Laguerre RSI) and gains an 'adx-all' mode for the reading where both SECOND clauses are ANDed; initial-stop ATR multiple defaults to 3 (his "Initial Stop ATR Mult (i.e. 3)" floor minimum); new initialStopWaveSource knob defaulting to 'macd' because his current stop reads atcMACDWaveStops alone. Defaults extracted to the exported STOP_ENGINE_DEFAULTS so the backtester's sizing-time estimate cannot drift from the engine's real placement.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review fixes: explicit-undefined config values no longer clobber defaults (stripped before the merge — a NaN stop that never triggers was constructible); gateFires is an exhaustive switch whose default is the documented gate, never a silent 'adx-any'; initialStopWaveSource moved OFF StopEngineConfig (the engine never reads it) and lives only in STOP_ENGINE_DEFAULTS for the candidate-building caller.
  *
  * @module futures-stop-engine
  */
@@ -38,14 +40,24 @@ import type { OhlcvBar } from './market-data';
 /** Trade direction the engine manages. */
 export type FuturesDirection = 'long' | 'short';
 
-/** Which second condition arms the Strangle latch alongside ADX ≥ threshold. */
+/**
+ * Which second condition arms the Strangle latch alongside ADX ≥ threshold.
+ *
+ * The source trader confirmed (2026-07-28) that his INTENT is "both conditions" — ADX ≥ 30 together
+ * with the Laguerre-RSI exhaustion reading — which is `adx-laguerre`, now the default. His shipped
+ * C# gate tests the DI/ADX-falling clause instead; `adx-di-or-falling` preserves it for parity runs,
+ * and `adx-all` requires every clause in case "both conditions" turns out to mean the two candidate
+ * SECOND clauses ANDed (he said he would re-check his own code). The optimizer arbitrates.
+ */
 export type StrangleGateMode =
   /** As shipped: directional DI below ADX, or ADX falling (ATCEntryCountDynStops.cs). */
   | 'adx-di-or-falling'
-  /** As dictated: Laguerre RSI at/above the exhaustion threshold. */
+  /** His stated intent (DEFAULT): Laguerre RSI at/above the exhaustion threshold. */
   | 'adx-laguerre'
-  /** Either of the above. */
-  | 'adx-any';
+  /** Either second clause. */
+  | 'adx-any'
+  /** Both second clauses: the Laguerre reading AND the DI/ADX-falling test. */
+  | 'adx-all';
 
 /** How a latched Strangle level is enforced. */
 export type StrangleExitMode =
@@ -62,7 +74,13 @@ export interface StopEngineConfig {
   direction: FuturesDirection;
   /** Instrument tick size (ES 0.25). */
   tickSize: number;
-  /** Initial-stop ATR multiple (source default 1.5). */
+  /**
+   * Initial-stop ATR multiple. Default 3 — the trader's stated current value ("a floor minimum that
+   * is based on the ATR * Initial Stop ATR Mult (i.e. 3)", 2026-07-28). It does double duty: the
+   * ATR-fallback distance when no wave candidate survives, and — with `initialStopMinRiskFloor` —
+   * the MINIMUM stop distance from entry. Raising it therefore widens stops and shrinks risk-percent
+   * position sizes; see the sizing note on {@link initialStopMaxRiskAtrFactor}.
+   */
   initialStopAtrMultiple?: number;
   /** Initial-stop buffer in ticks (newest gen 3; older gen 2). */
   initialStopBufferTicks?: number;
@@ -74,9 +92,18 @@ export interface StopEngineConfig {
    * entry bar's low/high to count). Pair 'beyond-bar-extreme' with raw SuperTrend/PSAR candidates.
    */
   initialStopCandidateFilter?: 'none' | 'beyond-bar-extreme';
-  /** Widen the stop to at least atrMultiple·ATR from entry (newest gen: true). */
+  /**
+   * Widen the stop to at least atrMultiple·ATR from entry (newest gen: true). This is the trader's
+   * "floor minimum": a MINIMUM STOP DISTANCE, not a bound on the stop price — a wave low closer than
+   * atrMultiple·ATR is pushed out to it.
+   */
   initialStopMinRiskFloor?: boolean;
-  /** Cap risk at factor × (atrMultiple·ATR); null disables (newest gen: 4). */
+  /**
+   * Cap risk at factor × (atrMultiple·ATR); null disables (newest gen: 4). Note the coupling: the cap
+   * is a multiple of the FLOOR, so raising `initialStopAtrMultiple` raises both. At the default 3×4
+   * the ceiling is 12·ATR, wide enough that a far wave low can still floor risk-percent sizing to
+   * zero contracts — the backtester reports those as `skippedZeroQty`, watch it.
+   */
   initialStopMaxRiskAtrFactor?: number | null;
   /** Base-trail mode (default 'ts'; 'ts-with-risk-goal' arms only past pctOrigRisk·1R). */
   trailMode?: TrailMode;
@@ -97,6 +124,42 @@ export interface StopEngineConfig {
   /** Enforcement mode (default the shipped 'close-breach-market'). */
   strangleExitMode?: StrangleExitMode;
 }
+
+/**
+ * The engine's default configuration — every value the trader's newest generation ships, plus the
+ * intents he confirmed on 2026-07-28 (`strangleGateMode: 'adx-laguerre'`, `initialStopAtrMultiple: 3`,
+ * `initialStopWaveSource: 'macd'`).
+ *
+ * Exported because more than one module needs these numbers: the engine places the real stop, and
+ * the backtester independently estimates the same stop at sizing time. Those two MUST agree, and
+ * duplicating literals is how they drift apart (the backtester carried its own `?? 1.5` while the
+ * engine defaulted 1.5 — correct by luck, and silently wrong the moment either moved).
+ */
+export const STOP_ENGINE_DEFAULTS = Object.freeze({
+  initialStopAtrMultiple: 3,
+  /**
+   * Which wave tracker's frozen extreme feeds the initial stop — consumed by the CALLER that builds
+   * candidates (the backtester), never by the engine itself, which is why it lives here in the
+   * shared defaults but NOT on StopEngineConfig: the engine's config surface only advertises what
+   * the engine reads. 'macd' = the trader's current code (`atcMACDWaveStops` alone); 'all-waves'
+   * also admits the DMI and Ehlers wave extremes, combined WIDEST.
+   */
+  initialStopWaveSource: 'macd' as 'macd' | 'all-waves',
+  initialStopBufferTicks: 3,
+  initialStopFallbackAnchor: 'low' as 'low' | 'close',
+  initialStopCandidateFilter: 'none' as 'none' | 'beyond-bar-extreme',
+  initialStopMinRiskFloor: true,
+  initialStopMaxRiskAtrFactor: 4 as number | null,
+  trailMode: 'ts' as TrailMode,
+  pctOrigRisk: 1.0,
+  useStrangleTrail: true,
+  strangleAdxThreshold: 30,
+  strangleGateMode: 'adx-laguerre' as StrangleGateMode,
+  strangleLaguerreRsiThreshold: 80,
+  strangleBufferTicks: 2,
+  strangleLookbackCapBars: 255,
+  strangleExitMode: 'close-breach-market' as StrangleExitMode,
+});
 
 /** A named candidate level for the initial stop (SuperTrend dot, PSAR, wave extreme…). */
 export interface InitialStopCandidate { name: string; value: number }
@@ -247,24 +310,12 @@ export interface FuturesStopEngine {
  * @returns A {@link FuturesStopEngine}.
  */
 export function createFuturesStopEngine(config: StopEngineConfig): FuturesStopEngine {
-  const cfg = {
-    initialStopAtrMultiple: 1.5,
-    initialStopBufferTicks: 3,
-    initialStopFallbackAnchor: 'low' as const,
-    initialStopCandidateFilter: 'none' as const,
-    initialStopMinRiskFloor: true,
-    initialStopMaxRiskAtrFactor: 4 as number | null,
-    trailMode: 'ts' as TrailMode,
-    pctOrigRisk: 1.0,
-    useStrangleTrail: true,
-    strangleAdxThreshold: 30,
-    strangleGateMode: 'adx-di-or-falling' as StrangleGateMode,
-    strangleLaguerreRsiThreshold: 80,
-    strangleBufferTicks: 2,
-    strangleLookbackCapBars: 255,
-    strangleExitMode: 'close-breach-market' as StrangleExitMode,
-    ...config,
-  };
+  // Strip explicit-undefined values before merging: `{ initialStopAtrMultiple: undefined }`
+  // typechecks (exactOptionalPropertyTypes is off) and a plain spread would let it overwrite the
+  // frozen default, yielding a NaN stop that never triggers. Omitted and undefined must both mean
+  // "use the default".
+  const provided = Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined));
+  const cfg = { ...STOP_ENGINE_DEFAULTS, ...(provided as StopEngineConfig) };
   const long = cfg.direction === 'long';
   const bars: OhlcvBar[] = [];
   let entryPrice = NaN;
@@ -356,10 +407,17 @@ export function createFuturesStopEngine(config: StopEngineConfig): FuturesStopEn
     if (adx < cfg.strangleAdxThreshold) return false;
     const di = long ? input.plusDi : input.minusDi;
     const shipped = di != null && !Number.isNaN(di) && (di < adx || adx < adxPrev);
-    const dictated = input.laguerreRsi != null && input.laguerreRsi >= cfg.strangleLaguerreRsiThreshold;
-    if (cfg.strangleGateMode === 'adx-di-or-falling') return shipped;
-    if (cfg.strangleGateMode === 'adx-laguerre') return dictated;
-    return shipped || dictated;
+    const dictated = input.laguerreRsi != null && !Number.isNaN(input.laguerreRsi)
+      && input.laguerreRsi >= cfg.strangleLaguerreRsiThreshold;
+    // Exhaustive on purpose: an unexpected mode value must behave as the DOCUMENTED default, never
+    // silently widen to 'adx-any' via a fallthrough.
+    switch (cfg.strangleGateMode) {
+      case 'adx-di-or-falling': return shipped;
+      case 'adx-laguerre': return dictated;
+      case 'adx-all': return shipped && dictated;
+      case 'adx-any': return shipped || dictated;
+      default: return dictated;
+    }
   }
 
   /** Breach = the CLOSE is at/beyond the Strangle level (never intrabar, never when unseeded). */

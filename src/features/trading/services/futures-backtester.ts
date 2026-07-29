@@ -50,8 +50,10 @@ import { macdWave, dmiWave, ehlersInstTrendWave, laguerreWaveStops, WavePattern 
 import {
   createFuturesEntryEvaluator, type EntryEvaluatorConfig, type LtfSnapshot, type ChartIndicatorSnapshot,
 } from './futures-entry-evaluator';
+import { createEnsembleConfirmation, type EnsembleConfirmation } from './futures-entry-ensemble';
 import {
   createFuturesStopEngine, type StopEngineConfig, type InitialStopCandidate, resolveInitialStop,
+  validateStopPrice, STOP_ENGINE_DEFAULTS,
 } from './futures-stop-engine';
 
 /** One completed trade, with everything the fitness functions and a trade blotter need. */
@@ -127,7 +129,10 @@ export interface BacktestConfig {
   /** Entry-evaluator config minus the instrument economics, which are taken from `instrument`. */
   entry: Omit<EntryEvaluatorConfig, 'tickSize' | 'pointValue'>;
   /** Stop-engine config minus direction/tickSize, set per trade. */
-  stops: Omit<StopEngineConfig, 'direction' | 'tickSize'>;
+  stops: Omit<StopEngineConfig, 'direction' | 'tickSize'> & {
+    /** Which wave extremes feed the initial stop (see STOP_ENGINE_DEFAULTS.initialStopWaveSource). */
+    initialStopWaveSource?: 'macd' | 'all-waves';
+  };
   costs?: BacktestCosts;
   /** Starting equity; also the sizing base when compounding is off. */
   startingEquity?: number;
@@ -318,6 +323,8 @@ interface OpenTrade {
   restingStopName: string | null;
   /** Set when a market exit was ordered at a bar close; fills at the next open. */
   pendingMarketExit: string | null;
+  /** Ensemble generation only — the per-trade dual-floor strength monitor (null otherwise). */
+  ensembleConf: EnsembleConfirmation | null;
   mfe: number; mae: number;
   barsHeld: number;
 }
@@ -360,13 +367,17 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
   let skippedZeroQty = 0;
   let open: OpenTrade | null = null;
   /** An entry ordered at a bar close, filling at the next bar's open. */
-  let pendingEntry: { direction: 'long' | 'short'; quantity: number; signalBar: number } | null = null;
+  let pendingEntry: {
+    direction: 'long' | 'short'; quantity: number; signalBar: number;
+    /** Ensemble score that produced the signal — his `ensembleStateAtEntry`, read at SIGNAL time. */
+    ensembleEntryScore?: number;
+  } | null = null;
 
   /** Assemble the evaluator's chart snapshot for bar i (prev values with the source's fallbacks). */
   function snapshotAt(i: number): ChartIndicatorSnapshot {
     const p = Math.max(0, i - 1);
     return {
-      plusDi0: cs.plusDi[i], minusDi0: cs.minusDi[i], adx0: cs.adx[i],
+      plusDi0: cs.plusDi[i], minusDi0: cs.minusDi[i], adx0: cs.adx[i], adx1: cs.adx[p],
       macd0: cs.macd[i], macdAvg0: cs.macdSignal[i], macd1: cs.macd[p],
       mfi0: cs.mfiV[i], mfi1: cs.mfiV[p],
       lagOsc0: cs.lagOsc[i], lagOsc1: cs.lagOsc[p],
@@ -393,7 +404,12 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
     };
   }
 
-  /** Initial-stop candidates: wave extremes (newest gen) plus SuperTrend/PSAR (older gen). */
+  /**
+   * Initial-stop candidates. Default (`initialStopWaveSource: 'macd'`) is the MACD wave alone —
+   * "the lowest low of most recent bearish macd wave", which is what the trader's current
+   * `atcMACDWaveStops`-based stop reads. 'all-waves' also admits the DMI and Ehlers wave extremes,
+   * which `resolveInitialStop` then combines WIDEST.
+   */
   function candidatesAt(i: number, direction: 'long' | 'short'): InitialStopCandidate[] {
     const out: InitialStopCandidate[] = [];
     const long = direction === 'long';
@@ -401,28 +417,34 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
       if (ok && Number.isFinite(value)) out.push({ name, value });
     };
     push('macd-wave', long ? cs.macdBull[i] : cs.macdBear[i], long ? cs.macdBearLow[i] : cs.macdBullHigh[i]);
-    push('dmi-wave', long ? cs.dmiBull[i] : cs.dmiBear[i], long ? cs.dmiBearLow[i] : cs.dmiBullHigh[i]);
-    push('eit-wave', long ? cs.eitBull[i] : cs.eitBear[i], long ? cs.eitBearLow[i] : cs.eitBullHigh[i]);
+    if ((config.stops.initialStopWaveSource ?? STOP_ENGINE_DEFAULTS.initialStopWaveSource) === 'all-waves') {
+      push('dmi-wave', long ? cs.dmiBull[i] : cs.dmiBear[i], long ? cs.dmiBearLow[i] : cs.dmiBullHigh[i]);
+      push('eit-wave', long ? cs.eitBull[i] : cs.eitBear[i], long ? cs.eitBearLow[i] : cs.eitBullHigh[i]);
+    }
     return out;
   }
 
   /** Sizing-time stop estimate for bar i, mirroring what the engine will place at the fill. */
   function estimateStop(i: number, direction: 'long' | 'short'): number {
     const s = config.stops;
-    return resolveInitialStop({
+    // Defaults come from STOP_ENGINE_DEFAULTS, never from literals repeated here, and the estimate
+    // passes through the SAME validateStopPrice clamp the engine applies at placement — without it,
+    // a wide entry bar (a roll seam, a news bar) sizes the position off a stop the engine will never
+    // place (reviewer-measured: sizing risk 12.75 vs actual 1000.50 on one constructed bar).
+    return validateStopPrice(direction, resolveInitialStop({
       direction,
       entryPrice: chartBars[i].c,
       bar: chartBars[i],
       atr: cs.atr[i],
       candidates: candidatesAt(i, direction),
       tickSize,
-      atrMultiple: s.initialStopAtrMultiple ?? 1.5,
-      bufferTicks: s.initialStopBufferTicks ?? 3,
-      fallbackAnchor: s.initialStopFallbackAnchor ?? 'low',
-      candidateFilter: s.initialStopCandidateFilter ?? 'none',
-      minRiskFloor: s.initialStopMinRiskFloor ?? true,
-      maxRiskAtrFactor: s.initialStopMaxRiskAtrFactor ?? 4,
-    });
+      atrMultiple: s.initialStopAtrMultiple ?? STOP_ENGINE_DEFAULTS.initialStopAtrMultiple,
+      bufferTicks: s.initialStopBufferTicks ?? STOP_ENGINE_DEFAULTS.initialStopBufferTicks,
+      fallbackAnchor: s.initialStopFallbackAnchor ?? STOP_ENGINE_DEFAULTS.initialStopFallbackAnchor,
+      candidateFilter: s.initialStopCandidateFilter ?? STOP_ENGINE_DEFAULTS.initialStopCandidateFilter,
+      minRiskFloor: s.initialStopMinRiskFloor ?? STOP_ENGINE_DEFAULTS.initialStopMinRiskFloor,
+      maxRiskAtrFactor: s.initialStopMaxRiskAtrFactor ?? STOP_ENGINE_DEFAULTS.initialStopMaxRiskAtrFactor,
+    }), chartBars[i], tickSize);
   }
 
   /** Close the open trade at `price` on bar i and record it. */
@@ -473,12 +495,20 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
       // The engine seeds from the SIGNAL bar's values (NT computes the stop from [0] at fill time).
       const sig = pendingEntry.signalBar;
       const first = engine.onEntry(fill, chartBars[sig], cs.atr[sig], candidatesAt(sig, pendingEntry.direction));
+      // Arm the ensemble strength monitor with the SIGNAL bar's score (his ensembleStateAtEntry).
+      // Suppressed in stage-1 timed mode, which deliberately runs entries with no exit logic.
+      const ensScore = pendingEntry.ensembleEntryScore;
+      let ensembleConf: EnsembleConfirmation | null = null;
+      if (timedBars <= 0 && ensScore != null) {
+        ensembleConf = createEnsembleConfirmation(config.entry.ensembleConfirmation);
+        ensembleConf.onEntry(ensScore, pendingEntry.direction);
+      }
       open = {
         direction: pendingEntry.direction, signalBar: sig, entryBar: i, entryTime: bar.t, entryPrice: fill,
         quantity: pendingEntry.quantity, engine,
         restingStop: timedBars > 0 ? null : first.restingStop, // timed mode places no stops
         restingStopName: timedBars > 0 ? null : first.restingStopName,
-        pendingMarketExit: null, mfe: 0, mae: 0, barsHeld: 0,
+        pendingMarketExit: null, ensembleConf, mfe: 0, mae: 0, barsHeld: 0,
       };
       pendingEntry = null;
     }
@@ -548,13 +578,16 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
         estimatedStopShort: estimateStop(i, 'short'),
       });
       if (decision.signal && decision.quantity >= 1 && i + 1 < chartBars.length) {
-        pendingEntry = { direction: decision.signal, quantity: decision.quantity, signalBar: i };
+        pendingEntry = {
+          direction: decision.signal, quantity: decision.quantity, signalBar: i,
+          ensembleEntryScore: decision.ensemble?.score,
+        };
       } else if (decision.reasons.some((r) => r.endsWith('qty-zero'))) {
         skippedZeroQty++;
       }
     } else if (open) {
       // Keep the evaluator's per-bar state (latches, previousLagOsc) advancing while in position.
-      evaluator.evaluate({
+      const held = evaluator.evaluate({
         bar,
         prevBar: chartBars[Math.max(0, i - 1)],
         chartBarNumber: i,
@@ -565,6 +598,13 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
         flat: false,
         equity: compound ? startingEquity + realized : startingEquity,
       });
+      // The ensemble confirmation exit: strength below MAX(entry-retention, peak-drawdown) floors
+      // flattens at market. It overrides a Strangle exit ordered this same bar — both fill at the
+      // next open, so P&L is identical and his code attributes the exit to the ensemble (it checks
+      // the ensemble first and returns before touching stop management).
+      if (open.ensembleConf && held.ensemble) {
+        if (open.ensembleConf.onBar(held.ensemble.score).exit) open.pendingMarketExit = 'EnsembleExit';
+      }
     }
   }
 

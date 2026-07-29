@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guards for the ADR-116 backtester: NT8 fill semantics (next-bar-open entries priced off the signal bar, intrabar stop triggers, gap-through fills at the open, next-bar market exits), stage-1 timed-exit mode, slippage/commission attribution, MFE/MAE in currency+percent, equity curve + drawdown, compounding, and the multi-market overlay's step-forward arithmetic.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the ensemble generation's confirmation exit: it fires under strict strength floors and never under disabled ones, fills at the next bar's open, is suppressed in stage-1 timed mode, never appears for the other generations, and the entry threshold is monotonically selective.
  */
 import { describe, it, expect } from 'vitest';
 import { runFuturesBacktest, overlayEquityCurves, maxDrawdownOf } from '../../src/features/trading';
@@ -210,7 +211,8 @@ describe('backtester — excursions, equity, and accounting', () => {
   });
 
   it('reports zero-qty skips when the max-risk ceiling outgrows the risk budget (the ES sizing trap)', () => {
-    // The wave candidates sit far below, so the 4× ceiling yields a ~6×ATR stop; on ES at $50/pt
+    // The wave candidates sit far below, so the 4× ceiling yields a 12×ATR stop at the default
+    // ATR multiple of 3 (it was ~6× at the pre-answer 1.5); on ES at $50/pt
     // that exceeds 2% of a $100k account and sizing floors to 0 contracts. This is the trader's
     // documented ES sizing collapse — the run must SURFACE it, not silently trade nothing.
     const poor = runFuturesBacktest(bars, [], cfg({ startingEquity: 100_000 }));
@@ -394,5 +396,109 @@ describe('regression guards — the defects the gapless fixture could not catch'
     const b = slipped.trades[slipped.trades.length - 1];
     expect(a.exitName).toBe('EndOfData');
     expect(b.exitPrice).toBeCloseTo(a.exitPrice - 1.0, 10); // long sells 4 ticks worse
+  });
+});
+
+describe("backtester — the ensemble generation's confirmation exit", () => {
+  /** Ensemble config: score-driven entries, an easy threshold so the fixture reaches a trade. */
+  function ensCfg(over: Partial<BacktestConfig> = {}): BacktestConfig {
+    return cfg({
+      entry: {
+        generation: 'ensemble',
+        useLtfTrendFilter: false,
+        allowShort: false,
+        riskPerTradePercent: 2,
+        ensembleEntryThresholdPct: 40,
+      },
+      ...over,
+    });
+  }
+
+  it('trades at all under the ensemble generation', () => {
+    const r = runWithTrades(series(rallyPath()), ensCfg());
+    expect(r.trades.length).toBeGreaterThan(0);
+  });
+
+  it('raising the threshold is monotonically more selective', () => {
+    const bars = series(rallyPath());
+    const at = (pct: number) => runFuturesBacktest(bars, [], ensCfg({
+      entry: { generation: 'ensemble', useLtfTrendFilter: false, allowShort: false, riskPerTradePercent: 2, ensembleEntryThresholdPct: pct },
+    })).trades.length;
+    // Note this synthetic ramp is clean enough that even 100% (every contributor ultra-aligned)
+    // still trades — real bars are not this tidy. Selectivity is the property that must hold.
+    expect(at(100)).toBeLessThan(at(40));
+    expect(at(120)).toBe(0); // unreachable by construction
+  });
+
+  it('EnsembleExit fires when the strength floors are strict, and never when they are disabled', () => {
+    const bars = series(rallyPath());
+    // Aggressive floors: any decay from the peak trips the exit.
+    const strict = runWithTrades(bars, ensCfg({
+      entry: {
+        generation: 'ensemble', useLtfTrendFilter: false, allowShort: false, riskPerTradePercent: 2,
+        ensembleEntryThresholdPct: 40,
+        ensembleConfirmation: { retentionPct: 100, drawdownPct: 100 },
+      },
+    }));
+    expect(strict.trades.some((t) => t.exitName === 'EnsembleExit')).toBe(true);
+    // Floors at zero can never bind → the stop stack owns every exit.
+    const loose = runWithTrades(bars, ensCfg({
+      entry: {
+        generation: 'ensemble', useLtfTrendFilter: false, allowShort: false, riskPerTradePercent: 2,
+        ensembleEntryThresholdPct: 40,
+        ensembleConfirmation: { retentionPct: 0, drawdownPct: 0 },
+      },
+    }));
+    expect(loose.trades.some((t) => t.exitName === 'EnsembleExit')).toBe(false);
+  });
+
+  it('the ensemble exit fills at the NEXT bar open, like every other market exit', () => {
+    const bars = series(rallyPath());
+    const r = runWithTrades(bars, ensCfg({
+      entry: {
+        generation: 'ensemble', useLtfTrendFilter: false, allowShort: false, riskPerTradePercent: 2,
+        ensembleEntryThresholdPct: 40,
+        ensembleConfirmation: { retentionPct: 100, drawdownPct: 100 },
+      },
+    }));
+    const t = r.trades.find((x) => x.exitName === 'EnsembleExit')!;
+    expect(t).toBeDefined();
+    // Costs default to 0 in these fixtures, so the fill is the exit bar's open exactly.
+    expect(t.exitPrice).toBeCloseTo(bars[t.exitBar].o, 10);
+  });
+
+  it('stage-1 timed mode suppresses the confirmation exit entirely', () => {
+    const r = runWithTrades(series(rallyPath()), ensCfg({
+      entry: {
+        generation: 'ensemble', useLtfTrendFilter: false, allowShort: false, riskPerTradePercent: 2,
+        ensembleEntryThresholdPct: 40,
+        ensembleConfirmation: { retentionPct: 100, drawdownPct: 100 },
+      },
+      timedBarsToExit: 10,
+    }));
+    expect(r.trades.every((t) => t.exitName === 'TimedExit' || t.exitName === 'EndOfData')).toBe(true);
+  });
+
+  it('the other generations never produce an EnsembleExit', () => {
+    const r = runWithTrades(series(rallyPath()), cfg());
+    expect(r.trades.some((t) => t.exitName === 'EnsembleExit')).toBe(false);
+  });
+});
+
+describe('sizing-time stop estimate — the validateStopPrice clamp (reviewer-caught divergence)', () => {
+  it('a freak-wide SIGNAL bar sizes off the CLAMPED stop the engine will actually place', () => {
+    // Signals in the permissive cfg depend only on closes (hard clause + up-close), so dropping one
+    // bar's low perturbs sizing without moving any signal. Unclamped, the estimate stays near the
+    // 3·ATR floor (~tens of points) while the engine's real stop lands 2 ticks under the freak low
+    // (~200 points): the position would be sized ~5x too large for the risk actually taken. The
+    // clamp makes the estimate agree, which at $100k equity floors qty to ZERO on that signal.
+    const bars = series(rallyPath());
+    const probe = runWithTrades(bars, cfg({ startingEquity: 100_000 }));
+    const sig = probe.trades[0].signalBar;
+    const wide = bars.map((b, i) => (i === sig ? { ...b, l: b.c - 200 } : b));
+    const clamped = runFuturesBacktest(wide, [], cfg({ startingEquity: 100_000 }));
+    // The freak-bar signal is skipped as zero-quantity instead of opening an oversized trade.
+    expect(clamped.skippedZeroQty).toBeGreaterThan(probe.skippedZeroQty);
+    expect(clamped.trades.some((t) => t.signalBar === sig)).toBe(false);
   });
 });

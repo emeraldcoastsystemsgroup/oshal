@@ -5102,25 +5102,49 @@ The foundation shipped 2026-07-24: instrument model, mock+Kibot data source, `ma
 all proven end-to-end by `scripts/oshal-futures-ingest.ts` and three unit specs. What was deliberately
 deferred (`do what you can, backlog the rest`):
 
-- **The friend's actual strategy rules — the critical input.** ~~Never captured~~ **Half captured
-  2026-07-27:** the EXIT half (three-layer stop stack) was dictated by the trader, reconciled against his
-  NT8Custom code, and **shipped** as `futures-indicators.ts` + `futures-trail-stops.ts` +
-  `futures-stop-engine.ts` (see [docs/apps/trading/futures-stop-engine.md](apps/trading/futures-stop-engine.md)).
-  Still owed from his side, blocking the entry port: (a) LagRSI≥80 in the Strangle gate, or is ADX-falling
-  the intended replacement? (b) close-breach market exit vs resting stop — intended? (c) which multiplier
-  model is canonical (optimizer-swept static / ATCDynStop regime map / spec-only score ladder)?
-  (d) initial-stop fallback anchor Close (his code) vs Low (his dictation)? (e) entry model of record:
-  graded-state thresholds (code) vs the EntryEnsemble.md scalar model? **ENTRY HALF CODED 2026-07-27**
-  (same-day follow-up PR): `futures-entry-indicators.ts` + `futures-wave-tracking.ts` +
-  `futures-entry-evaluator.ts` — the graded-state model as shipped in his code, both generations
-  ('export' 10-state/Daily-LTF and 'dynstops' 9-state/240-min-LTF) as config; the EntryEnsemble scalar
-  model stays unported pending (e). **Done when:** the intraday backtester drives
-  evaluator+stop-engine over `market_bars` and a backtest/forward/optimize cycle runs end to end.
-- **Stop-stack remainder (from the 2026-07-27 port).** Wave-stop indicators (`atcLaguerreWaveStops` /
-  `atcMACDWaveStops`) as initial-stop candidates; the DTAM regime scaler from `ATCDynStop.cs` (momentum
-  votes → Loose/Neutral/Tight/Defensive → chandelier multiplier map with asymmetric hysteresis); the %ATR
-  buffer variant the dictation asked for (code ships fixed tick buffers). **Done when:** each is a config
-  the intraday backtester can sweep.
+- ~~**The friend's actual strategy rules — the critical input.**~~ **COMPLETE 2026-07-28.** Both
+  halves are ported and all five open questions are ANSWERED by the trader. The exit half (three-layer
+  stop stack) and entry half (ten graded states, both generations) shipped 2026-07-27; his answers
+  landed 2026-07-28 and moved three defaults plus added a third entry generation. Full answer table:
+  [docs/apps/trading/futures-stop-engine.md](apps/trading/futures-stop-engine.md#dictation-vs-code-divergences--answered-by-the-source-trader-2026-07-28).
+  Summary: (a) Strangle gate = **both conditions**, ADX + LagRSI → default `'adx-laguerre'`, with a
+  stricter `'adx-all'` shipped for the reading where both SECOND clauses are ANDed; (b) close-breach
+  market exit **confirmed**, alongside a resting trailing stop refreshed every bar the close holds —
+  our dual mechanism was already right; (c) **DTAM is dead** (see the retirement item below);
+  (d) initial stop = lowest low of the most recent **bearish MACD wave** with an **ATR × 3 floor
+  minimum** → `initialStopAtrMultiple: 3`, new `initialStopWaveSource: 'macd'`; (e) graded-state stays
+  the model of record while he **refactors to the scalar ensemble**, now shipped as
+  `generation: 'ensemble'`.
+- ~~**DTAM regime scaler + the score-binned multiplier ladder.**~~ **RETIRED 2026-07-28 — do not
+  port.** Its author tested it and removed it: "the dynamic trailing stop (DTAM) was removed as it had
+  not shown to be helpful." The single optimizer-swept static chandelier multiplier (default 2.0) is
+  canonical, and the {1.5, 2, 2.5, 3} family is a sweep over that one field. The never-coded 1.5–4.0
+  score-binned ladder is spec-only and superseded. Porting either would revive something its designer
+  rejected. Nothing to delete in our tree — the trail stack is entirely config-driven.
+- ~~**Scalar ensemble entry model.**~~ **SHIPPED 2026-07-28** — `futures-entry-ensemble.ts` +
+  `generation: 'ensemble'`, ported from `ATCEnsembleGen.cs` (which turned out to be real code, not
+  spec-only). Nine contributors with a membership-derived maximum (`enabledCount × 2`, never the
+  doc's hardcoded ±14), a percentage entry threshold, no mandatory indicator, and the dual-floor
+  confirmation exit. Faithful to the three gates his ensemble lacks (up-close test, re-entry latch,
+  fixed window) and the one it keeps (the binary Export-style LTF rule). 41 guards, all
+  mutation-proven.
+- **Optimize the ensemble confirmation-exit percentages — a real finding, not a nicety.** At his
+  documented 90 / 93 defaults the dual floor takes ~99% of exits on hourly ES and CL (386/389 and
+  390/395), leaving the stop stack almost no role: it costs ~$45K on ES and *saves* ~$96K on CL. His
+  own spec gives ranges (85–95 retention, 90–96 drawdown, "this is the key"). **Done when:** the
+  staged optimizer sweeps both percentages per market and the exit-mix table is reported beside the
+  P&L.
+- **Stop-stack remainder.** The %ATR buffer variant the dictation asked for (code ships fixed tick
+  buffers). **Done when:** it is a config the intraday backtester can sweep.
+- **Vacuous guard (pre-existing, reviewer-flagged 2026-07-28): the backtester's doubly-deferred
+  Strangle-exit regression test iterates an always-empty array.** On the synthetic rally fixture the
+  latched level is always hit INTRABAR (relabelled `StrangleStop`), never close-breached, so the
+  `exitName === 'Strangle'` loop body never runs — under old and new defaults alike. The property IS
+  guarded at the engine level (`futures-stop-engine.spec.ts` "close breach … market-exits NEXT bar")
+  and the path IS reachable on real data (the canonical ES run shows `Strangle=2` exits), but the
+  backtester-level guard is dead. **Done when:** a fixture forces a close-breach without an intrabar
+  touch (the level must sit inside the prior bar's clamp margin so the resting stop lands below it)
+  and the test asserts on at least one `Strangle` exit, next-bar-open fill.
 - **Six-stage optimization pipeline (his method, our rails).** Entry → StopLoss → Trail → Targets →
   EmergencyExit → Sizing, prior-stage winners locked; stage 1 = entries alone with a fixed-bar exit
   optimizing AvgMFE/AvgMAE (his `ATCMaxAvgMfeMinAvgMae` fitness — a pure function to port); walk-forward

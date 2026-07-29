@@ -127,6 +127,49 @@ the view he has been assembling by hand because NinjaTrader won't draw it. It is
 margin-aware portfolio model: no cross-margining, no shared risk budget, no correlation haircut.
 Read it as "what the combined book would have looked like", not as a capital-efficiency claim.
 
+## What his answers did to the numbers
+
+The source trader answered the five open questions on 2026-07-28, and three of those answers move
+defaults that the backtester consumes. Same 5-year panama-adjusted front-month series, same costs
+(1 tick/side, $2.50/contract/side), $500K, 2% risk, hourly chart with a daily LTF filter:
+
+| Configuration | ES stage-1 net | ES MFE/MAE | ES full-stack net | ES win% | CL stage-1 net | CL MFE/MAE | CL full-stack net |
+|---|---|---|---|---|---|---|---|
+| **A** pre-answer defaults (ATR×1.5, all waves, shipped gate) | −$36,273 | 1.026 | **+$42,115** | 70.3% | −$92,895 | 0.924 | −$31,177 |
+| **B** his answers (ATR×3 floor, MACD wave only, ADX+LagRSI gate) | −$44,928 | 0.965 | +$23,367 | 66.7% | −$115,660 | 0.924 | −$74,504 |
+| **C** his ensemble entries | −$36,758 | 1.004 | −$50,236 | 37.7% | −$127,270 | 0.999 | −$67,514 |
+| **C2** ensemble entries, confirmation exit disabled | — | — | +$4,400 | 66.7% | — | — | −$98,213 |
+
+(The ensemble rows are the post-review numbers: a pre-land adversarial pass caught two contributors
+being graded with the Export chain's formulas where his ensemble uses different ones — DMI requiring
+ADX rising, the Laguerre filter upgrading on an up close. An earlier draft of this table, produced
+before that fix, showed the ensemble as the best entry signal on both markets; that result was an
+artifact of the mis-graded scores and never shipped.)
+
+Three things worth saying out loud, all in-sample and un-optimized:
+
+1. **His Q4 stop answer makes results worse at otherwise-default settings, on both markets.** The
+   ATR×3 minimum distance widens every stop, so risk per trade roughly doubles versus 1.5 and
+   position size halves; ES full-stack drops $42K → $23K, CL −$31K → −$75K, and zero-quantity skips
+   triple on ES. This is not evidence he is wrong — he tunes on 15/30/45/60-minute charts per market,
+   and we are mixing his stop constant into our hourly defaults. It is evidence that **mixed
+   constants are meaningless** and his optimized per-market sets are the missing input.
+2. **His ensemble entries at the default 70% threshold act as a homogenizer, not an edge.** By his
+   own stage-1 objective they pull BOTH markets toward neutral: CL lifts from clearly negative
+   (0.924 → 0.999, the real improvement) while ES dilutes (1.026 → 1.004), on ~75% more trades.
+   Entry quality ≈ 1.0 means the threshold and the membership flags are doing no selection work at
+   these defaults — they are precisely the constants his optimizer sweeps (62–78), so this is a
+   measurement of un-tuned machinery, not a verdict on the model.
+3. **The dual-floor confirmation exit at his documented 90/93 dominates everything on hourly bars** —
+   it takes ~99% of exits on both markets (367 of 369 on ES, 373 of 378 on CL), leaving the stop
+   stack almost no role. On ES it costs about $55K (+$4K without it → −$50K with it); on CL it
+   *saves* about $31K (−$98K → −$68K) by cutting losers fast. Market-dependent, and his own spec
+   gives ranges (85–95 / 90–96) — so those two percentages are optimizer inputs, not constants.
+
+Stage-1 sanity check worth noting: on CL, configurations A and B produce the *identical* 125 trades
+and identical MFE/MAE while differing in net P&L. That is exactly right — stage-1 suppresses stops
+but still sizes from the estimated stop, so a wider stop changes contracts, not entries.
+
 ## Current honest numbers (2026-07-27, second pass)
 
 Defaults everywhere (no per-market optimization), 1 tick slippage/side, $2.50/contract/side,
@@ -138,6 +181,12 @@ $500K equity, 2% risk, hourly chart / daily LTF, panama-adjusted front-month ser
 | ES 2021→2025 full stop stack | 118 | 70.3% | **+$42,115** | $37,829 | — |
 | CL 2021→2025 stage-1 | 125 | 48.0% | −$92,895 | $124,490 | 0.924 |
 | CL 2021→2025 full stop stack | 122 | 68.0% | −$31,177 | $114,883 | — |
+
+(Row A of the table above reproduces this block exactly — 119 trades / −$36,273 / 1.0256 stage-1 and
+118 / 70.3% / +$42,115 full-stack — which is the harness self-check that makes the comparison
+trustworthy. One caveat it exposed: the daily LTF series must come from the **daily** bulk files, as
+the runner picks them. Resampling minute bars up to daily instead changes the trade set materially,
+so never mix the two within a comparison.)
 
 Read: at DEFAULT parameters the entries carry essentially no fixed-horizon edge (AvgMFE/AvgMAE ≈ 1)
 — which is exactly why the trader's pipeline optimizes entry constants per market as stage 1. The

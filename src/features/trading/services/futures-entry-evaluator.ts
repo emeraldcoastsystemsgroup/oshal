@@ -35,15 +35,29 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ten pure graded-state functions, the entry-window rule, and createEntryEvaluator (confluence + hard LagOsc clause + submission gates + re-entry latch + generation-specific LTF filter + sizing incl. the DynStops LTF weight and the equity-halt latch). Ported from NT8Custom ATCEntryCountExport/ATCEntryCountDynStops for ADR-116.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Third generation 'ensemble' (NT8Custom ATCEnsembleGen.cs): scores the nine participating graded states and enters on a percentage-of-maximum threshold with NO mandatory indicator — the trader's stated direction of travel (2026-07-28). Faithful to his ensemble's absent gates: no up-close submission test and no zero-cross re-entry latch. Every graded bar now carries the ensemble reading (in-position included) so the caller can drive the dual-floor confirmation exit. The two unanimous-AND generations are behaviorally untouched.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review fixes for ensemble parity: adx1 joins the snapshot and the ensemble selects gradeDmiStateEnsemble (ADX must be rising) + gradeLagFilterStateEnsemble (up-close upgrade) — his ATCEnsembleGen grades those two differently than the Export chain; the LTF warmup gate is unconditional for the ensemble whenever an LTF series exists (his is always loaded; running with none at all fails open, a labelled deviation); the ensemble's NaN skip-bar guard drops alf0 (his eleven-value list has no adaptive-filter term).
  *
  * @module futures-entry-evaluator
  */
 
 import type { OhlcvBar } from './market-data';
 import { WavePattern } from './futures-wave-tracking';
+import {
+  ensembleScore, ensembleEntrySignal, gradeDmiStateEnsemble, gradeLagFilterStateEnsemble,
+  type EnsembleMembership, type EnsembleScore, type EnsembleConfirmationConfig,
+} from './futures-entry-ensemble';
 
-/** Which NT8 strategy generation's variant rules apply. */
-export type EntryGeneration = 'export' | 'dynstops';
+/**
+ * Which NT8 strategy generation's variant rules apply.
+ *
+ * 'export' and 'dynstops' are the two unanimous-AND generations — every enabled indicator must clear
+ * its graded threshold AND the hard Laguerre-oscillator clause must hold. 'ensemble' is his newer
+ * scalar model: no indicator is mandatory and entry fires on a minimum accumulated score (see
+ * futures-entry-ensemble.ts). Parity requirement: adding 'ensemble' must not change what the two
+ * older generations do on any bar.
+ */
+export type EntryGeneration = 'export' | 'dynstops' | 'ensemble';
 
 /** Graded indicator states, each in {−2, −1, 0, +1, +2}. */
 export interface GradedStates {
@@ -188,11 +202,33 @@ export interface EntryEvaluatorConfig {
   chartWarmupBars?: number;
   /** LTF-series warmup gate when the LTF filter is on — max(10, LaguerrePeriod) (default 30 bars). */
   ltfWarmupBars?: number;
+  /**
+   * `generation: 'ensemble'` only — which contributors are in the ensemble (his `Use*` flags).
+   * Omitted keys are enabled, so the default is all nine. Ignored by the other generations.
+   */
+  ensembleMembership?: EnsembleMembership;
+  /**
+   * `generation: 'ensemble'` only — entry threshold as a percent of the membership-derived maximum
+   * (his default 70; he optimizes 62–78). Ignored by the other generations.
+   */
+  ensembleEntryThresholdPct?: number;
+  /**
+   * `generation: 'ensemble'` only — the dual-floor confirmation-exit percentages. The evaluator does
+   * not act on these (it never closes positions); it carries them so the whole ensemble policy is one
+   * config object, and the CALLER that owns exits drives {@link createEnsembleConfirmation} with them.
+   */
+  ensembleConfirmation?: EnsembleConfirmationConfig;
 }
 
 /** Chart-side indicator values at the evaluated bar (current and prior where the rules need them). */
 export interface ChartIndicatorSnapshot {
   plusDi0: number; minusDi0: number; adx0: number;
+  /**
+   * ADX at the prior bar — read ONLY by the ensemble generation, whose DMI grade requires ADX to be
+   * RISING before DMI contributes anything (ATCEnsembleGen.cs:402-406; the Export chain has no such
+   * term). NaN/omitted falls back to adx0 (his prev-NaN cache behavior), which reads as not-rising.
+   */
+  adx1?: number;
   macd0: number; macdAvg0: number; macd1: number;
   mfi0: number; mfi1: number;
   lagOsc0: number; lagOsc1: number;
@@ -245,6 +281,12 @@ export interface EntryDecision {
   skippedBar: boolean;
   /** Why no signal (diagnostic). */
   reasons: string[];
+  /**
+   * `generation: 'ensemble'` only — the bar's ensemble reading. Present whenever states were graded,
+   * so a caller can drive the dual-floor confirmation exit (which needs the score EVERY bar, not
+   * just on entry bars) and report why a trade opened. Undefined for the other generations.
+   */
+  ensemble?: EnsembleScore;
 }
 
 /** The per-run entry evaluator (holds the re-entry latch, halt latch, and lastMove state). */
@@ -283,6 +325,7 @@ export function createFuturesEntryEvaluator(config: EntryEvaluatorConfig): Futur
     allowLong: true, allowShort: true, useLtfTrendFilter: true,
     riskPerTradePercent: 2.0, maxPositionSize: 0, weightPosSizeOnLtfIndis: true, disableSizing: false,
     chartWarmupBars: 30, ltfWarmupBars: 30,
+    ensembleEntryThresholdPct: 70,
     ...config,
     thresholds: { ...DEFAULT_THRESHOLDS, ...config.thresholds },
     ltfThresholds: { ...DEFAULT_LTF, ...config.ltfThresholds },
@@ -304,7 +347,10 @@ export function createFuturesEntryEvaluator(config: EntryEvaluatorConfig): Futur
     if (gateValues.some((v) => v == null || Number.isNaN(v))) {
       return { bullish: true, bearish: true, states: [0, 0, 0] };
     }
-    if (cfg.generation === 'export') {
+    // The Export generation's BINARY rule — and the ensemble's too: ATCEnsembleGen.cs:291-292
+    // computes `closeLTF0 > superTrendLTF0 && lagOscLTF0 > 0`, the same two-term test, NOT the
+    // DynStops graded gate. Only DynStops grades its LTF states.
+    if (cfg.generation === 'export' || cfg.generation === 'ensemble') {
       return {
         bullish: ltf.close > ltf.stopDot && ltf.lagOsc > 0,
         bearish: ltf.close < ltf.stopDot && ltf.lagOsc < 0,
@@ -361,18 +407,38 @@ export function createFuturesEntryEvaluator(config: EntryEvaluatorConfig): Futur
     const lagRsi1 = Number.isNaN(s.lagRsi1) ? s.lagRsi0 : s.lagRsi1;
     const alf1 = Number.isNaN(s.alf1) ? s.alf0 : s.alf1;
     const sd1 = Number.isNaN(s.stStopDot1) ? s.stStopDot0 : s.stStopDot1;
+    // Two contributors grade DIFFERENTLY in his ensemble strategy than in the Export chain the
+    // other generations use (reviewer-caught parity break): DMI needs ADX rising, and the Laguerre
+    // filter upgrades on an up close instead of close-above-open + higher high. The other seven are
+    // character-for-character identical across his strategies.
+    const isEnsemble = cfg.generation === 'ensemble';
+    const adx1 = s.adx1 == null || Number.isNaN(s.adx1) ? s.adx0 : s.adx1;
     return {
-      dmi: gradeDmiState(s.plusDi0, s.minusDi0, s.adx0),
+      dmi: isEnsemble
+        ? gradeDmiStateEnsemble(s.plusDi0, s.minusDi0, s.adx0, adx1)
+        : gradeDmiState(s.plusDi0, s.minusDi0, s.adx0),
       macd: gradeMacdState(s.macd0, s.macdAvg0, macd1),
       mfi: gradeMfiState(s.mfi0, mfi1),
       lagOsc: gradeLagOscState(s.lagOsc0, lagOsc1),
-      lagFilter: gradeLagFilterState(s.lagFilter0, s.lagFilter1, ctx.bar, ctx.prevBar),
+      lagFilter: isEnsemble
+        ? gradeLagFilterStateEnsemble(s.lagFilter0, s.lagFilter1, ctx.bar.c, ctx.prevBar.c)
+        : gradeLagFilterState(s.lagFilter0, s.lagFilter1, ctx.bar, ctx.prevBar),
       eit: gradeEitState(s.eitTrigger0, s.eitTrend0, ctx.bar.c, ctx.prevBar.c),
       superTrend: gradeSuperTrendState(s.stStopDot0, sd1, ctx.bar.l, ctx.bar.h),
       lagRsi: gradeLagRsiState(s.lagRsi0, lagRsi1),
       wavePattern: gradeWavePatternState(s.bullWavePat ?? WavePattern.None, s.bearWavePat ?? WavePattern.None),
       adaptiveLagFilter: gradeAdaptiveLagFilterState(s.alf0, alf1, ctx.bar.c, lastMoveAlf),
     };
+  }
+
+  /**
+   * The ensemble generation's decision: a pure score test, no mandatory indicator. Returns the
+   * scored reading alongside the verdict so the caller can drive the confirmation exit.
+   */
+  function ensembleConfluence(states: GradedStates): { long: boolean; short: boolean; scored: EnsembleScore } {
+    const scored = ensembleScore(states, cfg.ensembleMembership);
+    const signal = ensembleEntrySignal(scored, cfg.ensembleEntryThresholdPct);
+    return { long: signal === 'long', short: signal === 'short', scored };
   }
 
   function confluence(states: GradedStates, ctx: EntryBarContext): { long: boolean; short: boolean } {
@@ -401,14 +467,23 @@ export function createFuturesEntryEvaluator(config: EntryEvaluatorConfig): Futur
         ({ signal: null, quantity: 0, states, ltfBullish: ltfB, ltfBearish: ltfS, skippedBar: skipped, reasons });
       const s = ctx.indicators;
       // The HARD warmup gates — the sources return before ANY processing (no state updates,
-      // no latches, no previousLagOsc) until both series are seasoned.
+      // no latches, no previousLagOsc) until both series are seasoned. The two older generations
+      // gate the LTF only when the filter is ON (ATCEntryCountExport.cs:462); his ensemble gates it
+      // UNCONDITIONALLY because its LTF series is always loaded ("it's always loaded now",
+      // ATCEnsembleGen.cs:271-276) — so the ensemble applies the gate whenever an LTF series is
+      // actually present. NT8 DEVIATION: an ensemble run with NO LTF series at all (a state his
+      // code cannot be in) fails open rather than gating forever.
       if (ctx.chartBarNumber < cfg.chartWarmupBars) return none(['chart-warmup'], null, true);
-      if (cfg.useLtfTrendFilter && (ctx.ltfBarNumber == null || ctx.ltfBarNumber < cfg.ltfWarmupBars)) {
+      const ltfGated = cfg.useLtfTrendFilter || (cfg.generation === 'ensemble' && ctx.ltfBarNumber != null);
+      if (ltfGated && (ctx.ltfBarNumber == null || ctx.ltfBarNumber < cfg.ltfWarmupBars)) {
         return none(['ltf-warmup'], null, true);
       }
-      // The NaN skip-bar guard — previousLagOsc deliberately NOT updated on skipped bars.
+      // The NaN skip-bar guard — previousLagOsc deliberately NOT updated on skipped bars. His
+      // ensemble's guard lists eleven values with NO adaptive-filter term (the indicator does not
+      // exist in that strategy), so the ensemble generation drops alf0 from the set.
       const nanGuard = [s.plusDi0, s.minusDi0, s.macd0, s.macdAvg0, s.mfi0, s.lagOsc0, s.lagFilter0,
-        s.eitTrigger0, s.eitTrend0, s.stStopDot0, s.lagRsi0, s.alf0];
+        s.eitTrigger0, s.eitTrend0, s.stStopDot0, s.lagRsi0,
+        ...(cfg.generation === 'ensemble' ? [] : [s.alf0])];
       if (nanGuard.some((v) => Number.isNaN(v))) return none(['nan-skip-bar'], null, true);
       // lastMove update precedes state grading (source order).
       const alf1 = Number.isNaN(s.alf1) ? s.alf0 : s.alf1;
@@ -421,26 +496,36 @@ export function createFuturesEntryEvaluator(config: EntryEvaluatorConfig): Futur
       previousLagOsc = s.lagOsc0;
       const states = computeStates(ctx);
       const ltf = ltfFilter(ctx.ltf);
-      if (!ctx.flat) return none(['in-position'], states, false, ltf.bullish, ltf.bearish);
+      const isEnsemble = cfg.generation === 'ensemble';
+      // The ensemble reading is attached on EVERY graded bar, in-position included: the dual-floor
+      // confirmation exit needs the current score each bar, not only on entry bars.
+      const ens = isEnsemble ? ensembleConfluence(states) : null;
+      const withEns = (d: EntryDecision): EntryDecision => (ens ? { ...d, ensemble: ens.scored } : d);
+      if (!ctx.flat) return withEns(none(['in-position'], states, false, ltf.bullish, ltf.bearish));
       if (!isWithinEntryWindow(cfg.entryWindowStartHhmm, cfg.entryWindowEndHhmm, ctx.timeOfDayMinutes)) {
-        return none(['outside-window'], states, false, ltf.bullish, ltf.bearish);
+        return withEns(none(['outside-window'], states, false, ltf.bullish, ltf.bearish));
       }
-      const cond = confluence(states, ctx);
-      const reentryLongOk = !(lastTradeDirection === 'long' && !crossedBelowZero);
-      const reentryShortOk = !(lastTradeDirection === 'short' && !crossedAboveZero);
+      const cond = ens ?? confluence(states, ctx);
+      // Three gates belong to the unanimous-AND generations ONLY — his ATCEnsembleGen has no
+      // up-close submission test and no zero-cross re-entry latch (it gates on a session-close
+      // cutoff instead of a fixed window, which a caller reproduces via a pass-through window).
+      const upCloseLong = isEnsemble || ctx.bar.c > ctx.prevBar.c;
+      const upCloseShort = isEnsemble || ctx.bar.c < ctx.prevBar.c;
+      const reentryLongOk = isEnsemble || !(lastTradeDirection === 'long' && !crossedBelowZero);
+      const reentryShortOk = isEnsemble || !(lastTradeDirection === 'short' && !crossedAboveZero);
       const reasons: string[] = [];
-      if (cond.long && ctx.bar.c > ctx.prevBar.c && cfg.allowLong && ltf.bullish && reentryLongOk) {
+      if (cond.long && upCloseLong && cfg.allowLong && ltf.bullish && reentryLongOk) {
         const qty = sizeEntry('long', ctx, ltf.states);
-        if (qty >= 1) return { signal: 'long', quantity: qty, states, ltfBullish: ltf.bullish, ltfBearish: ltf.bearish, skippedBar: false, reasons };
+        if (qty >= 1) return withEns({ signal: 'long', quantity: qty, states, ltfBullish: ltf.bullish, ltfBearish: ltf.bearish, skippedBar: false, reasons });
         reasons.push('long-qty-zero');
       }
-      if (cond.short && ctx.bar.c < ctx.prevBar.c && cfg.allowShort && ltf.bearish && reentryShortOk) {
+      if (cond.short && upCloseShort && cfg.allowShort && ltf.bearish && reentryShortOk) {
         const qty = sizeEntry('short', ctx, ltf.states);
-        if (qty >= 1) return { signal: 'short', quantity: qty, states, ltfBullish: ltf.bullish, ltfBearish: ltf.bearish, skippedBar: false, reasons };
+        if (qty >= 1) return withEns({ signal: 'short', quantity: qty, states, ltfBullish: ltf.bullish, ltfBearish: ltf.bearish, skippedBar: false, reasons });
         reasons.push('short-qty-zero');
       }
-      if (!reasons.length) reasons.push('no-confluence');
-      return none(reasons, states, false, ltf.bullish, ltf.bearish);
+      if (!reasons.length) reasons.push(isEnsemble ? 'ensemble-below-threshold' : 'no-confluence');
+      return withEns(none(reasons, states, false, ltf.bullish, ltf.bearish));
     },
 
     onPositionClosed(direction: 'long' | 'short'): void {

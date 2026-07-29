@@ -1,4 +1,4 @@
-# Futures stop engine + entry side — the ADR-116 strategy port, as built (2026-07-27)
+# Futures stop engine + entry side — the ADR-116 strategy port, as built (2026-07-28)
 
 > **Status update, same day:** the ENTRY side shipped in the follow-up PR —
 > `futures-entry-indicators.ts` (Laguerre oscillator/filter, MFI, adaptive Laguerre filter),
@@ -62,21 +62,63 @@ described as his new layer, ported from `UseStrangleTrail`:
 Every emitted stop passes the source's `ValidateAndAdjustStopPrice` clamp (≥ 2 ticks outside the
 current bar's range, 5-tick conservative fallback).
 
-## Dictation-vs-code divergences = config knobs
+## Dictation-vs-code divergences — ANSWERED by the source trader (2026-07-28)
 
-The trader's spoken spec (2026-07-27) and his shipped code disagree in five places. The engine
-makes each an explicit option so optimization arbitrates instead of us guessing:
+His spoken spec and his shipped code disagreed in five places. Every one shipped as a config knob
+so optimization could arbitrate rather than us guessing — and he has now answered all five. The
+knobs stay (they are how a parity run reproduces the old behaviour), but the DEFAULTS now encode
+his stated intent:
 
-| Divergence | Shipped code | Dictation | Knob |
+| Question | His answer | Default now | Knob (all still available) |
 |---|---|---|---|
-| Second gate condition | DI < ADX **or** ADX falling | Laguerre RSI ≥ 80 | `strangleGateMode: 'adx-di-or-falling' \| 'adx-laguerre' \| 'adx-any'` |
-| Strangle enforcement | close-breach → market exit next bar | (unspecified — resting stop implied) | `strangleExitMode: 'close-breach-market' \| 'resting-stop'` |
-| Initial-stop fallback anchor | `close` (older gen) / `low` (newest) | `low` | `initialStopFallbackAnchor` |
-| Buffers | fixed 2–3 ticks | X% of ATR | tick counts (`initialStopBufferTicks`, `strangleBufferTicks`) — %ATR variant deferred |
-| Chandelier multiplier family {1.5, 2, 2.5, 3} | one optimizer-swept static (default 2.0); regime map lives in a sibling fork | dynamic by "risk parameters" | static per instance now; DTAM regime scaling deferred (BACKLOG) |
+| Second gate condition: LagRSI ≥ 80, or DI/ADX-falling? | "activate the Strangle gate with **both conditions**" | `'adx-laguerre'` — ADX ≥ 30 **and** LagRSI ≥ 80 | `strangleGateMode: 'adx-di-or-falling' \| 'adx-laguerre' \| 'adx-any' \| 'adx-all'` |
+| Strangle enforcement: close-breach market exit, or resting stop? | **both, in sequence** — track the level all trade; once gated, a close beyond it exits at market, otherwise create/update the resting trailing stop | `'close-breach-market'` (unchanged — his answer confirms it) | `strangleExitMode` |
+| Which ATR-multiplier model is canonical? | "the dynamic trailing stop (**DTAM**) **was removed** as it had not shown to be helpful" | single optimizer-swept static, 2.0 | `chandelierMultiplier`; DTAM **retired, not deferred** |
+| Initial-stop anchor + buffer? | stop = **lowest low of the most recent bearish MACD wave** (`atcMACDWaveStops`), with a **floor minimum of ATR × 3** | `initialStopAtrMultiple: 3`, `initialStopWaveSource: 'macd'` | both, plus the anchor/buffer knobs as fallbacks |
+| Entry model of record: graded-state or scalar ensemble? | he is **refactoring to the ensemble** — "wouldn't require specific indicators to create a signal but would require a minimal score" | graded-state stays the parity default; `generation: 'ensemble'` now exists | `EntryGeneration: 'export' \| 'dynstops' \| 'ensemble'` |
 
-The Laguerre RSI itself (`laguerreRsi`, Ehlers 4-stage filter, native 0–100 scale, alpha 0.5,
-EMA-7 average line) ships so the dictated gate mode is testable from day one.
+Two notes on reading those answers:
+
+- **"Both conditions" is taken as ADX + Laguerre RSI** (the two terms his dictation named, which the
+  question quoted back to him). He also said he would re-check his own code, so the stricter reading
+  — his RSI clause **and** the coded DI/ADX-falling clause — ships as `'adx-all'`. One line from him
+  settles which is canonical; both are one config value away.
+- **"Floor minimum" is implemented as a minimum stop DISTANCE**: a wave low closer than 3·ATR is
+  pushed out to it. The alternative reading (a bound on the stop price, i.e. a cap on distance) is
+  what `initialStopMaxRiskAtrFactor` already does separately, so the two together bracket risk.
+
+Beware the coupling this creates: the max-risk ceiling is a multiple of the floor, so moving the ATR
+multiple from 1.5 to 3 doubled both, and at 3 × 4 the ceiling sits at 12·ATR. Wider stops mean
+smaller risk-percent positions and more zero-quantity skips — measured, with numbers, in
+[futures-backtester.md](./futures-backtester.md#what-his-answers-did-to-the-numbers).
+
+## The scalar ensemble entry model (`generation: 'ensemble'`)
+
+His newer entry model, ported from `ATCEnsembleGen.cs` + `EntryEnsemble.md` into
+`futures-entry-ensemble.ts`. It replaces unanimous-AND confluence with a score:
+
+- **Nine contributors** — DMI, MACD, MFI, LagOsc, LagFilter, Ehlers IT, SuperTrend, LagRSI, wave
+  pattern — each grading to the same {−2…+2} scaler the other generations already compute. The
+  adaptive-Laguerre-filter state is graded but takes **no part**. (His spec doc lists seven and a
+  ±14 range; the shipped code carries nine and computes the maximum from the enabled `Use*` flags,
+  so the port derives `maxPossible = enabledCount × 2` and never hardcodes it.)
+- **Entry** when `score ≥ 70% × maxPossible` (long) or `≤ −threshold` (short). He optimizes 62–78.
+- **No indicator is mandatory** — this is the point of the model, and the single biggest behavioural
+  difference from the unanimous-AND generations, whose hard `LagOsc > 0 AND rising` clause has no
+  exclusion parameter.
+- **Three gates his ensemble does NOT have**, and which the port therefore skips for this generation
+  only: the `close > prevClose` submission test, the zero-cross same-direction re-entry latch, and
+  the fixed 09:30–15:45 window (his ensemble uses a session-close cutoff instead — reproduce it with
+  a pass-through window). It **does** keep the Export-style **binary** LTF rule
+  (`close > superTrend && lagOsc > 0`), not the DynStops graded gate.
+- **A dual-floor confirmation exit**: track the peak score in the trade's direction and flatten at
+  market when `|current| < MAX(90% × |entry|, 93% × |peak|)`. He flags the peak floor as "this is the
+  key". It is a SIGNAL exit that coexists with the stop stack, and his code cancels working
+  stop/target orders and returns before evaluating entries on that bar.
+
+Why he moved: his own notes record that unanimous-AND plus an indicator-count exit **cannot fire**
+when few indicators are enabled — with 2 of 7 used for entry and a 3-indicator exit threshold, the
+early exit is unreachable (`EntryEnsemble.md:10-11`).
 
 ## Indicator fidelity notes (the traps)
 
@@ -109,8 +151,14 @@ landing; the remaining findings were sub-ulp float ordering and out-of-scope NaN
 
 ## Still owed (BACKLOG, "Futures extension layer")
 
-Entry-side port (the 10 graded indicator states + LTF filter + re-entry filter), wave-stop
-indicators as initial-stop candidates, the DTAM regime scaler (`ATCDynStop.cs`), the %ATR buffer
-variant, the intraday backtester that drives all of this over `market_bars`, and the six-stage
-optimization pipeline (stage-1 fixed-bar-exit MFE/MAE fitness first). The five open questions for
-the source trader are logged in the ADR-116 BACKLOG section.
+The %ATR buffer variant, margin modelling, the Target-1 partial exit, and the six-stage
+optimization pipeline with its walk-forward driver (stage-1 fixed-bar-exit MFE/MAE fitness first).
+
+**Retired rather than owed:** the DTAM regime scaler (`ATCDynStop.cs`) and the never-coded 1.5–4.0
+score-binned multiplier ladder. Their author tested DTAM and removed it as unhelpful (2026-07-28),
+so the static optimizer-swept multiplier is canonical and porting DTAM would be reviving something
+its own designer rejected.
+
+**Now delivered rather than owed:** the entry-side port (ten graded states + LTF filter + re-entry
+filter), the wave indicators as initial-stop candidates, the intraday backtester, and the scalar
+ensemble generation above. The five open questions are ANSWERED — see the table.
