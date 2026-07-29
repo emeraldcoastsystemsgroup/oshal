@@ -18,6 +18,7 @@ import {
   shouldReturnUnauthorizedResponse,
   type OidcMiddlewareSet,
 } from '@/shared/middleware/oidc';
+import QRCode from 'qrcode';
 import { hasValidServiceSecret, isOperator } from '@/shared/middleware/authz';
 import {
   LOCAL_SESSION_COOKIE,
@@ -29,6 +30,15 @@ import {
   acceptInvite,
   bootstrapFirstAdmin,
   ensureLocalUserSchema,
+  // Second factor (TOTP, RFC 6238) — same feature slice, separate module.
+  beginTotpEnrolment,
+  confirmTotpEnrolment,
+  disableTotp,
+  ensureTotpSchema,
+  formatSecretForDisplay,
+  getTotpState,
+  setTotpRequired,
+  verifySecondFactor,
   findByInviteToken,
   getSessionSnapshot,
   getUserById,
@@ -170,6 +180,11 @@ export function createLocalAuthMiddlewareSet(pool: Pool): OidcMiddlewareSet {
   }
   void ensureLocalUserSchema(pool).catch((err) => {
     logger.error({ err }, 'oshal_local_users schema bootstrap failed — local login unavailable until it exists');
+  });
+  // The second-factor columns are a separate ALTER: the table above is created with
+  // IF NOT EXISTS, so an already-deployed box would never gain new columns from it.
+  void ensureTotpSchema(pool).catch((err) => {
+    logger.error({ err }, 'second-factor columns missing — TOTP unavailable until they exist');
   });
   logger.warn('🔐 LOCAL_AUTH mode enabled — invited-user login (ADR-117). Only invited accounts can sign in.');
 
@@ -360,6 +375,13 @@ export function createLocalAuthRoutes(pool: Pool): Router {
   /** GET /invite — the set-your-password page an invite link lands on. */
   router.get('/invite', (_req, res) => servePage(res, 'invite.html'));
 
+  /**
+   * GET /2fa — the second-factor enrolment surface. Served to anyone; the page itself calls
+   * the authenticated state endpoint and bounces to /login on a 401, which keeps one
+   * redirect rule rather than a second copy of the auth discrimination logic.
+   */
+  router.get('/2fa', (_req, res) => servePage(res, 'two-factor.html'));
+
   /** GET /logout — ends the local session and returns to the login page. */
   router.get('/logout', (_req, res) => {
     clearLocalSessionCookie(res);
@@ -399,7 +421,7 @@ export function createLocalAuthRoutes(pool: Pool): Router {
 
   /** POST /api/local-auth/login — email + password. One generic failure message (no enumeration). */
   router.post('/api/local-auth/login', async (req, res) => {
-    const body = (req.body ?? {}) as { email?: string; password?: string; returnTo?: string };
+    const body = (req.body ?? {}) as { email?: string; password?: string; returnTo?: string; code?: string };
     const email = String(body.email ?? '').trim().toLowerCase();
     const key = loginKey(req, email);
     if (isLoginBlocked(key)) {
@@ -413,11 +435,39 @@ export function createLocalAuthRoutes(pool: Pool): Router {
         res.status(401).json({ error: 'that email and password did not match' });
         return;
       }
+      // The password is right. Now the second factor, if this account has one. Note this
+      // block is reached ONLY after a successful password check, so it can never be used to
+      // probe which accounts have 2FA enabled.
+      const factor = await getTotpState(pool, user.userSub);
+      const code = String(body.code ?? '').trim();
+      if (factor?.enabled) {
+        if (!code) {
+          // No session yet, and deliberately NOT counted as a failure: the credential was
+          // correct and the client simply has one more step to complete.
+          res.json({ ok: false, secondFactor: 'required' });
+          return;
+        }
+        const verdict = await verifySecondFactor(pool, user.userSub, code, Date.now());
+        if (verdict !== 'ok') {
+          recordLoginFailure(key);
+          res.status(401).json({
+            error: 'that code did not match \u2014 check your authenticator app, or use a recovery code',
+          });
+          return;
+        }
+      }
       loginFailures.delete(key);
       bustLocalUserSnapshot(user.userSub);
       setLocalSessionCookie(req, res, sessionIdentityFor(user));
-      logger.info({ sub: user.userSub }, 'local-auth login');
-      res.json({ ok: true, returnTo: sanitizeLoginReturnTo(body.returnTo) ?? '/' });
+      logger.info({ sub: user.userSub, secondFactor: factor?.enabled === true }, 'local-auth login');
+      res.json({
+        ok: true,
+        returnTo: sanitizeLoginReturnTo(body.returnTo) ?? '/',
+        // An administrator may REQUIRE the factor on an account that has not enrolled yet.
+        // Requiring it must never lock somebody out of an account they have not set up, so
+        // the answer is "you are in, now go and enrol" rather than a refusal.
+        enrolSecondFactor: factor?.required === true && factor.enabled !== true,
+      });
     } catch (err) {
       logger.error({ err }, 'local-auth login failed');
       res.status(500).json({ error: 'login unavailable' });
@@ -455,6 +505,148 @@ export function createLocalAuthRoutes(pool: Pool): Router {
     } catch (err) {
       logger.error({ err }, 'local-auth accept failed');
       res.status(errStatus(err)).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Second factor (TOTP, RFC 6238) ─────────────────────────────────────────
+  // Self-service: a signed-in user enrols their own authenticator app. Nothing here talks to
+  // an external service — the secret is generated locally and the QR is rendered locally, so
+  // this works on an air-gapped box and costs nothing per login.
+
+  /** The signed-in caller's own sub, or null when the request is not authenticated. */
+  function callerSub(req: Request): string | null {
+    const oidc = (req as { oidc?: { isAuthenticated?: () => boolean; user?: { sub?: string } } }).oidc;
+    if (!oidc?.isAuthenticated?.()) return null;
+    const sub = oidc.user?.sub;
+    return typeof sub === 'string' && sub ? sub : null;
+  }
+
+  /** Answers 401 and returns null when the caller has no session. */
+  function requireSelf(req: Request, res: Response): string | null {
+    const sub = callerSub(req);
+    if (!sub) {
+      res.status(401).json({ error: 'sign in first' });
+      return null;
+    }
+    return sub;
+  }
+
+  /** GET /api/local-auth/2fa/state — the caller's own second-factor status. */
+  router.get('/api/local-auth/2fa/state', async (req, res) => {
+    const sub = requireSelf(req, res);
+    if (!sub) return;
+    try {
+      const state = await getTotpState(pool, sub);
+      res.json(state ?? { enabled: false, required: false, confirmedAt: null, recoveryCodesRemaining: 0 });
+    } catch (err) {
+      logger.error({ err }, 'second-factor state read failed');
+      res.status(500).json({ error: 'second-factor state unavailable' });
+    }
+  });
+
+  /**
+   * POST /api/local-auth/2fa/setup — mint a secret + recovery codes and return the QR.
+   * Stored UNCONFIRMED: the login path is untouched until the user proves the app works,
+   * so a mis-scanned QR cannot lock them out of their own account.
+   */
+  router.post('/api/local-auth/2fa/setup', async (req, res) => {
+    const sub = requireSelf(req, res);
+    if (!sub) return;
+    try {
+      const snapshot = await getSessionSnapshot(pool, sub);
+      if (!snapshot) {
+        res.status(404).json({ error: 'no such account' });
+        return;
+      }
+      const issuer = (process.env.TOTP_ISSUER || 'oshal').trim() || 'oshal';
+      const enrolment = await beginTotpEnrolment(pool, sub, issuer, snapshot.email);
+      // Rendered as a data URI so the page needs no external image host — the artifact CSP
+      // and an offline client box both refuse anything else.
+      const qrDataUri = await QRCode.toDataURL(enrolment.otpauthUri, { margin: 1, width: 240 });
+      res.json({
+        qrDataUri,
+        otpauthUri: enrolment.otpauthUri,
+        // Shown so a user whose camera will not cooperate can type the key in by hand.
+        secret: formatSecretForDisplay(enrolment.secretBase32),
+        // Shown ONCE. There is no endpoint that returns these again, by design.
+        recoveryCodes: enrolment.recoveryCodes,
+      });
+    } catch (err) {
+      logger.error({ err }, 'second-factor setup failed');
+      res.status(500).json({ error: 'could not start second-factor setup' });
+    }
+  });
+
+  /** POST /api/local-auth/2fa/confirm — verify a code from the app and switch the factor on. */
+  router.post('/api/local-auth/2fa/confirm', async (req, res) => {
+    const sub = requireSelf(req, res);
+    if (!sub) return;
+    const code = String(((req.body ?? {}) as { code?: string }).code ?? '').trim();
+    try {
+      const ok = await confirmTotpEnrolment(pool, sub, code, Date.now());
+      if (!ok) {
+        res.status(400).json({ error: 'that code did not match \u2014 check the clock on your phone and try the current code' });
+        return;
+      }
+      res.json({ ok: true, enabled: true });
+    } catch (err) {
+      logger.error({ err }, 'second-factor confirm failed');
+      res.status(500).json({ error: 'could not confirm the second factor' });
+    }
+  });
+
+  /**
+   * POST /api/local-auth/2fa/disable — turn it off. Requires the account PASSWORD again:
+   * a live session alone must not be enough to strip a second factor, or an unattended
+   * browser undoes the whole control.
+   */
+  router.post('/api/local-auth/2fa/disable', async (req, res) => {
+    const sub = requireSelf(req, res);
+    if (!sub) return;
+    const password = String(((req.body ?? {}) as { password?: string }).password ?? '');
+    try {
+      const snapshot = await getSessionSnapshot(pool, sub);
+      if (!snapshot) {
+        res.status(404).json({ error: 'no such account' });
+        return;
+      }
+      const state = await getTotpState(pool, sub);
+      if (state?.required) {
+        res.status(403).json({ error: 'an administrator requires a second factor on this account' });
+        return;
+      }
+      if (!await verifyLogin(pool, snapshot.email, password)) {
+        res.status(401).json({ error: 'that password did not match' });
+        return;
+      }
+      await disableTotp(pool, sub);
+      res.json({ ok: true, enabled: false });
+    } catch (err) {
+      logger.error({ err }, 'second-factor disable failed');
+      res.status(500).json({ error: 'could not disable the second factor' });
+    }
+  });
+
+  /**
+   * POST /api/local-auth/users/:id/2fa — the administrator's two levers. Admin.
+   * `{ required: true|false }` makes the factor mandatory for that account; `{ reset: true }`
+   * clears an enrolment, which is the lost-phone path when the recovery codes are gone too.
+   */
+  router.post('/api/local-auth/users/:id/2fa', async (req, res) => {
+    if (!requireUserAdmin(req, res)) return;
+    const body = (req.body ?? {}) as { required?: boolean; reset?: boolean };
+    try {
+      const user = await getUserById(pool, String(req.params.id));
+      if (!user) {
+        res.status(404).json({ error: 'no such account' });
+        return;
+      }
+      if (body.reset === true) await disableTotp(pool, user.userSub);
+      if (typeof body.required === 'boolean') await setTotpRequired(pool, user.userSub, body.required);
+      res.json({ ok: true, state: await getTotpState(pool, user.userSub) });
+    } catch (err) {
+      logger.error({ err }, 'second-factor administration failed');
+      res.status(500).json({ error: 'could not change the second-factor setting' });
     }
   });
 
