@@ -832,8 +832,12 @@ async function buildAgentStateBreakdown(ctx: AppContext, onlineCount: number): P
   try {
     let busy = 0;
     if (ctx.pool) {
+      // Column is assigned_agent_id (migration 007) — there has NEVER been an agent_id on
+      // work_items, so this query failed on every deployment and the catch below quietly
+      // rendered busy=0 while Postgres logged an error every poll. Surfaced by the first
+      // fresh-schema customer box, whose clean logs made the 30-second error drumbeat obvious.
       const result = await ctx.pool.query(
-        `SELECT COUNT(DISTINCT agent_id) AS cnt FROM work_items WHERE status IN ('executing', 'subtask-executing', 'pending')`,
+        `SELECT COUNT(DISTINCT assigned_agent_id) AS cnt FROM work_items WHERE status IN ('executing', 'subtask-executing', 'pending')`,
       );
       busy = parseInt(result.rows[0]?.cnt ?? '0', 10);
     }
