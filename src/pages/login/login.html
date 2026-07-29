@@ -67,6 +67,15 @@
       <input id="confirm" name="confirm" type="password" autocomplete="new-password">
     </div>
 
+    <div id="codeRow" class="hidden">
+      <label for="code">Six-digit code</label>
+      <!-- inputmode + one-time-code lets a phone keyboard go numeric and lets password
+           managers autofill the TOTP they already hold. -->
+      <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="9" placeholder="123456">
+      <p class="sub" id="codeHint">From your authenticator app. No app to hand? Enter one of your recovery codes.</p>
+    </div>
+
     <button id="submit" type="submit">Sign in</button>
     <p class="error" id="error"></p>
     <p class="foot" id="foot">Forgot your password? Ask your administrator to send a new invitation link.</p>
@@ -76,6 +85,7 @@
 (function () {
   'use strict';
   var bootstrapMode = false;
+  var secondFactorNeeded = false;
   var $ = function (id) { return document.getElementById(id); };
 
   function returnTo() {
@@ -114,18 +124,38 @@
     var body = bootstrapMode
       ? { email: $('email').value, name: $('name').value, password: password }
       : { email: $('email').value, password: password, returnTo: returnTo() };
+    // The code only exists on the second pass. The password is re-sent with it rather than
+    // held server-side as a half-authenticated state: one fewer stealable token, and the
+    // failed-attempt counter keeps covering the whole credential.
+    if (!bootstrapMode && secondFactorNeeded) body.code = $('code').value;
     fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }).then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
       .then(function (res) {
-        if (res.status < 300 && res.data && res.data.ok !== false) {
-          location.assign((res.data && res.data.returnTo) || returnTo());
+        var data = res.data || {};
+        // Password accepted, one step to go. Not an error — say nothing red.
+        if (res.status < 300 && data.ok === false && data.secondFactor === 'required') {
+          secondFactorNeeded = true;
+          $('codeRow').className = '';
+          $('title').textContent = 'One more step';
+          $('subtitle').textContent = 'Enter the code from your authenticator app.';
+          $('submit').textContent = 'Verify';
+          $('submit').disabled = false;
+          $('code').focus();
+          return;
+        }
+        if (res.status < 300 && data.ok !== false) {
+          // An administrator can require the factor on an account that has not enrolled.
+          // Send them to enrolment rather than refusing the login.
+          if (data.enrolSecondFactor) { location.assign('/2fa?returnTo=' + encodeURIComponent(returnTo())); return; }
+          location.assign(data.returnTo || returnTo());
           return;
         }
         $('submit').disabled = false;
-        $('error').textContent = (res.data && res.data.error) || 'Sign-in failed. Try again.';
+        $('error').textContent = data.error || 'Sign-in failed. Try again.';
+        if (secondFactorNeeded) { $('code').value = ''; $('code').focus(); }
       })
       .catch(function () {
         $('submit').disabled = false;

@@ -74,9 +74,40 @@ production, but passwords travel in the login POST — TLS is not optional for a
 
 Sessions ride a signed cookie: 24-hour rolling window, 7-day absolute cap.
 
+## Two-step sign-in (TOTP)
+
+A second factor ships with this mode and needs **no external provider** — no SMS gateway, no
+vendor, no per-login fee. RFC 6238 is a shared secret plus the clock, so enrolment and
+verification both happen on the box, and it works with the network unplugged.
+
+| | |
+|---|---|
+| **Factor** | A six-digit code from any authenticator app — Google Authenticator, Microsoft Authenticator, Authy, or a password manager that does codes |
+| **Enrolment** | `/2fa` — QR rendered locally as a data URI (no external image host), plus the key in text for anyone whose camera will not cooperate |
+| **Default** | **Off.** Each user may turn it on; an administrator can require it per account |
+| **Recovery** | Eight single-use codes, shown **once** at enrolment. An admin can also clear an enrolment for a lost phone |
+| **At rest** | The secret is AES-256-GCM encrypted with a key derived (HKDF) from `SESSION_SECRET` — a stolen database dump alone does not yield working codes |
+| **Replay** | The accepted time step is recorded; the same code cannot be used twice inside its own 30-second window |
+| **Drift** | ±1 step (90 seconds total), so a slightly wrong phone clock still works |
+
+Set `TOTP_ISSUER` to control the name the app displays (defaults to `oshal`).
+
+**Emailed codes were considered and rejected as the primary factor.** Email is the same
+channel as the invite and the admin-driven password reset — an attacker holding the mailbox
+would satisfy both factors, so it would have added ceremony rather than security.
+
+Three deliberate behaviours worth knowing before you operate this:
+
+- **Requiring the factor never locks anyone out.** An account that is required but not enrolled
+  signs in and is sent to enrolment, rather than refused.
+- **Turning it off needs the password again.** A live session is not enough, or an unattended
+  browser undoes the control.
+- **A deployment that has not run the migration is password-only, not broken.** Only Postgres
+  `undefined_column` is forgiven that way; any other read failure refuses the login, because a
+  database blip must never become a 2FA bypass.
+
 ## What this mode does NOT do (yet)
 
-- **2FA** — deferred until the client picks a second factor (BACKLOG entry with done-when).
 - **Self-service password reset** — resets are admin-driven by design for now; there is no
   unauthenticated "forgot password" email flow to enumerate or abuse.
 - **SSO** — when the client gets an IdP, switch to the OIDC mode; identities keyed by email

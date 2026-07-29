@@ -61,8 +61,16 @@ middleware set wholesale (same `{authMiddleware, requiresAuth, loginHandler}` co
   the same scrypt cost as wrong passwords), per-ip+email fixed-window rate limiting, and the
   same API-401-JSON vs browser-redirect split as the OIDC guard (shared implementation).
 
-2FA is explicitly deferred (BACKLOG): the client decides the second factor; the store's
-`token_version` and the accept flow are the hooks it will attach to.
+**Second factor — SHIPPED 2026-07-29 as TOTP (RFC 6238).** Originally deferred pending the
+client's choice of factor; the operator's constraint was that it must not need an external
+provider, and TOTP does not: a shared secret plus the clock, HMAC-SHA1, verified in-process.
+Off by default, per-user opt-in, administrator can require it per account. Secrets are
+AES-256-GCM at rest under an HKDF-derived key from `SESSION_SECRET`; the accepted time step is
+recorded so a code cannot be replayed; eight single-use recovery codes are minted once at
+enrolment. Emailed codes were rejected as the primary factor because email is the same channel
+as the invite and reset links, so an attacker holding the mailbox would satisfy both factors.
+See [docs/security/local-auth.md](../security/local-auth.md#two-step-sign-in-totp).
+Self-service password reset remains deferred — it needs an enumeration-safe response shape.
 
 ## Consequences
 

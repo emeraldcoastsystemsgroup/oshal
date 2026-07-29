@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two-step sign-in</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
+<style>
+  :root {
+    --surface: #ffffff; --text: #14161c; --dim: #5b6472; --line: #d7dbe3;
+    --panel: #f5f7fb; --accent: #2f5fb0; --bad: #b0362c; --good: #1f7a4d; --workspace: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1b1e26; --text: #e8eaef; --dim: #9aa2b1; --line: #363b47;
+      --panel: #232733; --accent: #6f9ce0; --bad: #e07a70; --good: #64c398; --workspace: #14161c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--workspace); color: var(--text); padding: 24px 0;
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .card {
+    width: min(460px, calc(100vw - 32px)); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 12px; padding: 32px 30px 26px;
+  }
+  .brand { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  h2 { font-size: 15px; margin: 22px 0 6px; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
+  label { display: block; font-size: 12.5px; font-weight: 600; margin: 14px 0 4px; }
+  input {
+    width: 100%; padding: 9px 11px; font-size: 14px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    width: 100%; margin-top: 18px; padding: 10px; font-size: 14.5px; font-weight: 600;
+    color: #fff; background: var(--accent); border: none; border-radius: 7px; cursor: pointer;
+  }
+  button.ghost { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  button:disabled { opacity: .6; cursor: default; }
+  .error { color: var(--bad); font-size: 13px; margin: 12px 0 0; min-height: 1.4em; }
+  .ok { color: var(--good); font-size: 13px; font-weight: 600; }
+  .hidden { display: none; }
+  .foot { color: var(--dim); font-size: 11.5px; margin-top: 18px; }
+  .qr { display: block; margin: 14px auto 8px; width: 200px; height: 200px; border-radius: 8px; background: #fff; }
+  .key {
+    font: 13px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; text-align: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 8px;
+    user-select: all; word-break: break-all;
+  }
+  .codes {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0 4px;
+    font: 13.5px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 12px;
+  }
+  .warn {
+    background: var(--panel); border-left: 3px solid var(--accent); border-radius: 4px;
+    padding: 10px 12px; font-size: 12.5px; margin: 12px 0 0;
+  }
+  .status { display: flex; gap: 8px; align-items: baseline; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand" id="brand">oshal</div>
+    <h1>Two-step sign-in</h1>
+    <p class="sub" id="subtitle">An extra code at sign-in, from an app on your phone.</p>
+
+    <!-- ── state: loading ─────────────────────────────────────────────── -->
+    <p id="loading" class="sub">Checking…</p>
+
+    <!-- ── state: off, offer setup ────────────────────────────────────── -->
+    <div id="offPanel" class="hidden">
+      <p class="sub" id="offWhy">
+        Right now your password is the only thing protecting this account. Two-step sign-in
+        means a stolen password on its own is not enough.
+      </p>
+      <p class="warn">
+        You will need a free authenticator app on your phone — <b>Google Authenticator</b>,
+        <b>Microsoft Authenticator</b>, <b>Authy</b> or a password manager that does codes.
+        Nothing is sent anywhere: the code is worked out from a shared secret and the clock.
+      </p>
+      <button id="startBtn" type="button">Set up two-step sign-in</button>
+    </div>
+
+    <!-- ── state: enrolling ───────────────────────────────────────────── -->
+    <div id="setupPanel" class="hidden">
+      <h2>1 · Scan this with your app</h2>
+      <img id="qr" class="qr" alt="Enrolment QR code">
+      <p class="sub" style="text-align:center;margin:0 0 6px">Can't scan? Type this key in instead:</p>
+      <div class="key" id="secret"></div>
+
+      <h2>2 · Save your recovery codes</h2>
+      <p class="sub" style="margin:0 0 8px">
+        Each one works <b>once</b>, if you ever lose your phone. Print them or put them somewhere
+        safe that is not your phone. <b>This is the only time they are shown.</b>
+      </p>
+      <div class="codes" id="codes"></div>
+      <button id="copyBtn" class="ghost" type="button">Copy codes</button>
+
+      <h2>3 · Confirm it works</h2>
+      <p class="sub" style="margin:0 0 4px">
+        Enter the six digits your app is showing now. Nothing changes about how you sign in until
+        this succeeds — so a bad scan cannot lock you out.
+      </p>
+      <label for="code">Six-digit code</label>
+      <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="9" placeholder="123456">
+      <button id="confirmBtn" type="button">Turn on two-step sign-in</button>
+      <p class="error" id="setupError"></p>
+    </div>
+
+    <!-- ── state: on ──────────────────────────────────────────────────── -->
+    <div id="onPanel" class="hidden">
+      <p class="status"><span class="ok">✓ Two-step sign-in is on.</span></p>
+      <p class="sub" id="onDetail"></p>
+      <div id="requiredNote" class="warn hidden">
+        Your administrator requires two-step sign-in on this account, so it cannot be switched off here.
+      </div>
+      <div id="offerOff">
+        <h2>Turn it off</h2>
+        <p class="sub" style="margin:0 0 4px">Your password is needed — a signed-in browser alone is not enough.</p>
+        <label for="pw">Password</label>
+        <input id="pw" type="password" autocomplete="current-password">
+        <button id="offBtn" class="ghost" type="button">Turn off two-step sign-in</button>
+      </div>
+      <p class="error" id="onError"></p>
+    </div>
+
+    <p class="foot"><a id="doneLink" href="/">← Back</a></p>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var show = function (id, on) { $(id).className = on ? '' : 'hidden'; };
+
+  /** Where to send the user when they are finished. Same-origin paths only. */
+  function returnTo() {
+    var raw = new URLSearchParams(location.search).get('returnTo') || '/';
+    return /^\/(?!\/)/.test(raw) ? raw : '/';
+  }
+  $('doneLink').setAttribute('href', returnTo());
+
+  fetch('/api/branding').then(function (r) { return r.json(); }).then(function (b) {
+    if (b && b.productName) $('brand').textContent = b.productName;
+  }).catch(function () {});
+
+  function post(url, body) {
+    return fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }).then(function (r) { return r.json().then(function (d) { return { status: r.status, data: d || {} }; }); });
+  }
+
+  function render(state) {
+    show('loading', false);
+    if (state.enabled) {
+      show('offPanel', false); show('setupPanel', false); show('onPanel', true);
+      var left = state.recoveryCodesRemaining;
+      $('onDetail').textContent = 'You will be asked for a code from your app each time you sign in. '
+        + 'Recovery codes left: ' + left + (left === 0 ? ' — ask your administrator to reset this if you lose your phone.' : '.');
+      show('requiredNote', state.required === true);
+      show('offerOff', state.required !== true);
+      return;
+    }
+    show('onPanel', false); show('setupPanel', false); show('offPanel', true);
+    if (state.required) {
+      $('subtitle').textContent = 'Your administrator requires two-step sign-in on this account.';
+      $('offWhy').textContent = 'Set this up now. It takes about a minute and needs a free app on your phone.';
+    }
+  }
+
+  fetch('/api/local-auth/2fa/state')
+    .then(function (r) {
+      if (r.status === 401) { location.assign('/login?returnTo=' + encodeURIComponent(location.pathname + location.search)); return null; }
+      return r.json();
+    })
+    .then(function (s) { if (s) render(s); })
+    .catch(function () {
+      show('loading', false);
+      $('subtitle').textContent = 'Two-step sign-in is unavailable on this deployment.';
+    });
+
+  $('startBtn').addEventListener('click', function () {
+    $('startBtn').disabled = true;
+    post('/api/local-auth/2fa/setup').then(function (res) {
+      if (res.status >= 300) {
+        $('startBtn').disabled = false;
+        $('offWhy').textContent = res.data.error || 'Setup could not start.';
+        return;
+      }
+      $('qr').setAttribute('src', res.data.qrDataUri);
+      $('secret').textContent = res.data.secret;
+      $('codes').innerHTML = '';
+      (res.data.recoveryCodes || []).forEach(function (c) {
+        var d = document.createElement('div'); d.textContent = c; $('codes').appendChild(d);
+      });
+      show('offPanel', false); show('setupPanel', true);
+      $('code').focus();
+    }).catch(function () { $('startBtn').disabled = false; });
+  });
+
+  $('copyBtn').addEventListener('click', function () {
+    var text = Array.prototype.map.call($('codes').children, function (d) { return d.textContent; }).join('\n');
+    if (navigator.clipboard) navigator.clipboard.writeText(text);
+    $('copyBtn').textContent = 'Copied';
+  });
+
+  $('confirmBtn').addEventListener('click', function () {
+    $('setupError').textContent = '';
+    $('confirmBtn').disabled = true;
+    post('/api/local-auth/2fa/confirm', { code: $('code').value }).then(function (res) {
+      $('confirmBtn').disabled = false;
+      if (res.status >= 300) {
+        $('setupError').textContent = res.data.error || 'That code did not match.';
+        $('code').value = ''; $('code').focus();
+        return;
+      }
+      // Re-read rather than assume, so the panel reflects what the server actually stored.
+      fetch('/api/local-auth/2fa/state').then(function (r) { return r.json(); }).then(render);
+    }).catch(function () {
+      $('confirmBtn').disabled = false;
+      $('setupError').textContent = 'The server did not answer. Try again.';
+    });
+  });
+
+  $('offBtn').addEventListener('click', function () {
+    $('onError').textContent = '';
+    $('offBtn').disabled = true;
+    post('/api/local-auth/2fa/disable', { password: $('pw').value }).then(function (res) {
+      $('offBtn').disabled = false;
+      $('pw').value = '';
+      if (res.status >= 300) { $('onError').textContent = res.data.error || 'Could not turn it off.'; return; }
+      fetch('/api/local-auth/2fa/state').then(function (r) { return r.json(); }).then(render);
+    }).catch(function () {
+      $('offBtn').disabled = false;
+      $('onError').textContent = 'The server did not answer. Try again.';
+    });
+  });
+})();
+</script>
+</body>
+</html>
