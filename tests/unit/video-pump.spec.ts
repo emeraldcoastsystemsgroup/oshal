@@ -155,3 +155,42 @@ describe('the ordering the pump depends on', () => {
     expect(gate).toBeLessThan(open);
   });
 });
+
+/**
+ * "The conductor is resumable" was only half true: it CAN resume, but nothing asked it to. An
+ * episode interrupted between stages parked forever — the daily cap correctly refused to start a
+ * replacement, and the render reconciler only looks at episodes already `rendering`. Seen live on
+ * 2026-07-29 when another lane's deploy recreated the api mid-storyboard.
+ */
+describe('an interrupted episode gets picked back up', () => {
+  const src = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'series-pump.ts'), 'utf8');
+
+  it('resumes BEFORE it considers starting anything new', () => {
+    const resume = src.indexOf('const resumed = await resumeInFlight(');
+    const pick = src.indexOf('const show = await pickNextShow(pool, now)');
+    expect(resume).toBeGreaterThan(0);
+    expect(resume).toBeLessThan(pick);
+  });
+
+  it('returns immediately when it resumed something — one episode at a time, across every show', () => {
+    expect(src).toMatch(/const resumed = await resumeInFlight\(ctx, now\);\s*\n\s*if \(resumed\) return resumed;/);
+  });
+
+  it('looks for every non-terminal stage, not just the one that failed today', () => {
+    expect(src).toMatch(/s\.status IN \('scripting','awaiting_approval','storyboarding','rendering'\)/);
+    expect(src).toMatch(/r\.outcome IN \('started','rendering'\)/);
+  });
+
+  it('takes the OLDEST open episode, so nothing can be starved by newer work', () => {
+    expect(src).toMatch(/ORDER BY r\.created_at ASC\s*\n\s*LIMIT 1/);
+  });
+
+  it('re-runs the authorization decision at the gate — a day may have turned over while it sat', () => {
+    const gate = src.indexOf("if (String(r.status) === 'awaiting_approval')");
+    const decide = src.indexOf('autoApprovalDecision(', gate);
+    const approve = src.indexOf('approveSeries(ctx.pool, seriesId)', gate);
+    expect(gate).toBeGreaterThan(0);
+    expect(decide).toBeGreaterThan(gate);
+    expect(decide).toBeLessThan(approve);
+  });
+});

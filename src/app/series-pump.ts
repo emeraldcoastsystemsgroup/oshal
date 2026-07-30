@@ -349,6 +349,14 @@ export async function runPumpOnce(
   await reconcilePendingRenders(ctx).catch((err) => logger.warn({ err: (err as Error).message }, 'reconcile sweep failed'));
   await syncPumpRuns(ctx).catch((err) => logger.warn({ err: (err as Error).message }, 'ledger sync failed'));
 
+  // Finish what is already open before starting anything new. The conductor is resumable, but
+  // nothing was calling it: an episode interrupted between stages — an api restart, a deploy, a
+  // provider blip — sat at `storyboarding` forever, because the daily cap correctly stopped the pump
+  // from starting a replacement and no other driver looks at a series mid-flight. This is also what
+  // keeps the pump to ONE episode at a time across every show.
+  const resumed = await resumeInFlight(ctx, now);
+  if (resumed) return resumed;
+
   const show = await pickNextShow(pool, now);
   if (!show) return { action: 'idle', detail: 'no enrolled show is due' };
 
@@ -371,6 +379,64 @@ export async function runPumpOnce(
   }
 
   return produceEpisode(ctx, show, avail, now);
+}
+
+/**
+ * @description Advance the oldest episode the pump already has open, by exactly one step, and report
+ * it. Returns null when nothing is in flight.
+ *
+ * This exists because "the conductor is resumable" was only half true: it can resume, but nothing
+ * asked it to. An episode interrupted between stages — a restart, a deploy, a provider blip — parked
+ * at `storyboarding` indefinitely, since the daily cap correctly refused to start a replacement and
+ * the render reconciler only looks at episodes already `rendering`. Observed live 2026-07-29 when
+ * another lane's deploy recreated the api mid-storyboard.
+ *
+ * @param {AppContext} ctx app context
+ * @param {Date} now the instant defining "today" for the cap re-check
+ * @returns {Promise<PumpCycle | null>} what it advanced, or null when nothing was open
+ */
+async function resumeInFlight(ctx: AppContext, now: Date): Promise<PumpCycle | null> {
+  const { rows } = await ctx.pool.query(
+    `SELECT r.run_id, r.series_id, r.show_id, r.show_slug, s.status, sh.standing_authorization, sh.daily_cap
+       FROM video_pump_runs r
+       JOIN video_series s ON s.series_id = r.series_id
+       LEFT JOIN video_pump_shows sh ON sh.show_id = r.show_id
+      WHERE r.outcome IN ('started','rendering')
+        AND s.status IN ('scripting','awaiting_approval','storyboarding','rendering')
+      ORDER BY r.created_at ASC
+      LIMIT 1`,
+  );
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+
+  const seriesId = String(r.series_id);
+  const slug = String(r.show_slug ?? 'unknown');
+
+  // A series parked at the gate is the one case that needs the authorization decision again — the
+  // cap included, since a day may have turned over while it sat there.
+  if (String(r.status) === 'awaiting_approval') {
+    const decision = autoApprovalDecision(
+      { standingAuthorization: Boolean(r.standing_authorization), dailyCap: Number(r.daily_cap ?? 0) },
+      r.show_id ? await startedTodayCount(ctx.pool, String(r.show_id), now) : 0,
+    );
+    if (!decision.approve) {
+      return { action: 'skipped', showSlug: slug, stage: 'approval', seriesId, detail: decision.why };
+    }
+    const approved = await approveSeries(ctx.pool, seriesId);
+    if (!approved.ok) return { action: 'skipped', showSlug: slug, stage: 'approval', seriesId, detail: approved.error ?? 'approval failed' };
+  }
+
+  const step = await advanceVideoSeries(ctx, seriesId);
+  await ctx.pool.query(
+    `UPDATE video_pump_runs SET outcome_stage=$2, outcome_reason=$3, updated_at=now() WHERE run_id=$1`,
+    [String(r.run_id), step.stage, `resumed: ${step.detail}`.slice(0, 500)],
+  );
+  logger.info({ seriesId, slug, stage: step.stage, detail: step.detail }, 'pump resumed an in-flight episode');
+  return {
+    action: step.blocked ? 'skipped' : 'made',
+    showSlug: slug, stage: step.stage, seriesId,
+    detail: `resumed — ${step.detail}`,
+  };
 }
 
 /** The productive half of a cycle: open the work, write it, and (when authorized) let it render. */
