@@ -399,11 +399,15 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
   try {
     const rows = (await ctx.pool.query(
       `SELECT sa.name, sa.display_name, sa.agent_ids[1] AS agent_id,
-              COALESCE(NULLIF(a.computed_selector_descriptor, ''), a.base_selector_descriptor, '') AS selector
+              COALESCE(NULLIF(a.computed_selector_descriptor, ''), a.base_selector_descriptor, '') AS selector,
+              a.metadata->>'jarvisMode' AS jarvis_mode
        FROM swarm_applications sa
        LEFT JOIN agents a ON a.agent_id = sa.agent_ids[1]
        WHERE sa.status = 'active' AND sa.name <> 'jarvis'`,
-    )).rows as Array<{ name: string; display_name: string; agent_id: string | null; selector: string }>;
+    )).rows as Array<{
+      name: string; display_name: string; agent_id: string | null;
+      selector: string; jarvis_mode: string | null;
+    }>;
     for (const r of rows) {
       if (!r.agent_id || have.has(r.name)) continue;
       if (!isBotAccessibleTo(r.agent_id, 'jarvis')) continue;   // ADR-087
@@ -412,7 +416,12 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
         agentId: r.agent_id,
         name: r.display_name || r.name,
         blurb: (r.selector || `The ${r.display_name || r.name} app.`).slice(0, 300),
-        mode: 'handoff',
+        // A manifest may declare `bots[].jarvisMode: delegate` to have Jarvis CALL the bot and
+        // answer inline. Default stays 'handoff' (deep-link to the app's surface) — that was the
+        // hardcoded behaviour, and it is right for a data app whose surface builds context first.
+        // Only the two known values are honoured; anything else falls back rather than inventing
+        // a mode the delegate/handoff branches cannot handle.
+        mode: r.jarvis_mode === 'delegate' ? 'delegate' : 'handoff',
         deepLink: `/cockpit/?app=${r.name}`,
       });
       have.add(r.name);

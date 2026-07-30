@@ -154,12 +154,68 @@ function dynamicAppBots(): SwarmBotDefinition[] {
  * them to permit the caller (ADR-085 D3), because a first-match-wins read would let a package widen
  * a core bot's reach by re-declaring its agentId with no accessRoles. For access, restriction wins.
  */
+/**
+ * The kernel bot identities: Tier-0 baselines plus the bots the ten kernel-resident
+ * `swarm-apps/` manifests declare. Nothing an APP brought.
+ *
+ * Derived, not invented — `docs/apps/swarm-store-migration-plan.md` §2 names the Tier-0 baselines
+ * ("`project-manager`, `queue-bot`, `general-bot`") and `docs/architecture/kernel-vs-app-packages.md`
+ * §2e names the kernel-resident apps' bots. Every other entry here is declared by one of the ten
+ * kernel manifests, so this set == {general-bot} ∪ {every `bots[].agentId` in `swarm-apps/*.yaml`}.
+ * `tests/unit/kernel-registry-scope.spec.ts` recomputes exactly that and fails if the two drift —
+ * add a kernel manifest and the test tells you to update this list.
+ *
+ * Keyed by agentId, NOT name: a manifest's bot name and its registry name legitimately differ
+ * (`architect-bot` vs `system-architect`), and the id is the contract both sides must share.
+ */
+const KERNEL_BOT_AGENT_IDS: ReadonlySet<string> = new Set([
+  'a0000000-0000-0000-0000-000000000099', // general-bot — ADR-083 low-confidence routing fallback
+  'a0000000-0000-0000-0000-000000000001', // project-manager
+  'f0000000-0000-0000-0000-000000000001', // queue-bot
+  'a0000000-0000-0000-0000-000000000050', // oshal-assistant (jarvis)
+  'de000000-0000-0000-0000-000000000001', // oshal-developer (oshal-dev)
+  'a0000000-0000-0000-0000-000000000002', // code-developer         ┐
+  'a0000000-0000-0000-0000-000000000003', // code-reviewer          │ oshal-engineering
+  'a0000000-0000-0000-0000-000000000004', // documentation-writer   │ (build pipeline)
+  'a0000000-0000-0000-0000-000000000005', // test-engineer          │
+  'a0000000-0000-0000-0000-000000000018', // architect-bot          ┘
+  'a0000000-0000-0000-0000-000000000016', // rca-specialist            ┐ intelligent-operations
+  'a0000000-0000-0000-0000-00000000000b', // incident-response-bot     │ (incident/RCA pipeline)
+  'e0000000-0000-0000-0000-000000000100', // incident-remediation-bot  ┘
+  'a0000000-0000-0000-0000-000000000030', // self-healing-bot (intelligent-processing)
+  'a0000000-0000-0000-0000-000000000047', // security-analyst (security)
+  'a0000000-0000-0000-0000-0000000000d0', // vault-bot (devops)
+  'a0000000-0000-0000-0000-000000000051', // workflow-assistant (workflow-studio)
+]);
+
+/**
+ * @description The bot registry for this process.
+ *
+ * `SWARM_REGISTRY` selects the base lineup:
+ *  - `full`   — the canonical registry (every bot the monolith knows).
+ *  - `kernel` — Tier-0 + the kernel manifests' bots ONLY. A customer box running core plus their
+ *    own app should not inherit the app-bot catalog: before this existed, a lean install still
+ *    seeded ~50 agent identities it would never run, which is what made a single-app deployment
+ *    look like a fleet. Installed packages still register their own bots via `dynamicAppBots()`,
+ *    so an app is never scoped out of its own swarm.
+ *  - anything else (default) — the lean local lineup, unchanged.
+ *
+ * @returns The active bot definitions, with any dynamically registered app bots appended.
+ */
 export function getActiveRegistry(): ReadonlyArray<SwarmBotDefinition> {
-  const base = (process.env.SWARM_REGISTRY ?? '').trim().toLowerCase() === 'full'
+  const mode = (process.env.SWARM_REGISTRY ?? '').trim().toLowerCase();
+  const base = mode === 'full'
     ? SWARM_BOT_REGISTRY
-    : LOCAL_BOT_REGISTRY;
+    : mode === 'kernel'
+      ? LOCAL_BOT_REGISTRY.filter((b) => b.agentId !== undefined && KERNEL_BOT_AGENT_IDS.has(b.agentId))
+      : LOCAL_BOT_REGISTRY;
   const dynamic = dynamicAppBots();
   return dynamic.length ? [...base, ...dynamic] : base;
+}
+
+/** @description The kernel identity set, exported so the anti-rot guard can recompute it. */
+export function kernelBotAgentIds(): ReadonlySet<string> {
+  return KERNEL_BOT_AGENT_IDS;
 }
 
 /**

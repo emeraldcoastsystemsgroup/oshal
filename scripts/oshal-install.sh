@@ -248,6 +248,15 @@ if [ ! -f "$ENV_FILE" ]; then
       echo "#MOCK_OIDC_SUB=local-your-stable-id"
       echo "#OSHAL_OPERATOR_EMAILS=you@example.com"
     fi
+    # A kernel install starts ONLY the kernel services, so it must not SEED the app-bot catalog
+    # either — otherwise a core+one-app box lists ~50 bot identities it will never run, which is
+    # exactly how the first customer deployment ended up looking like a fleet. Installed packages
+    # still register their own bots, so an app is never scoped out of its own swarm.
+    if [ "$BUNDLE" = "kernel" ]; then
+      echo "# ── REGISTRY SCOPE ── kernel bundle: Tier-0 baselines + the kernel manifests' bots only."
+      echo "# Set to 'local' for the full lean lineup, or 'full' for the canonical registry."
+      echo "SWARM_REGISTRY=kernel"
+    fi
   } > "$ENV_FILE"
 else
   note ".env already exists — keeping yours"
