@@ -72,7 +72,7 @@ snapshots by ADR-095 design — the chat explains this and points at the Lab's b
 Earlier studio deferrals stand: RAG-corpus graduation for the research findings, streamed
 narration, futures.
 
-## Seven agent-worktree branches pushed but not landed (+ the push gap that stranded them)
+## Seven agent-worktree branches pushed but not landed (+ the push gap that stranded them) ✅ CLOSED 2026-07-29
 
 **Deferred 2026-07-26** — found while auditing the ADR-045 graph tier; the branches were
 discovered only because a gitignored path turned up in a background grep.
@@ -106,7 +106,28 @@ shows one entry, run only after the branches land; (3) a guard exists that makes
 agent-worktree commit loud rather than silent — a `git worktree list` + ahead-of-origin check in
 `ci-local.sh` or the session-close path, so this cannot recur undetected.
 
-## ADR-045 graph tier — the pieces that were never built
+**✅ CLOSED 2026-07-29 (PR #14).** All three done-when items met: every branch's work was verified
+already landed, the seven worktrees are removed, the branches deleted, `git worktree list` is back to
+one entry, and the missing guard exists — `scripts/check-worktree-strays.sh`, wired as the
+**`worktree-strays`** gate in `ci-local.sh`. It exits 1 on any linked worktree with commits ahead of
+origin, uncommitted changes, or prune debt, and was proven red against a live stray before landing.
+The primary shared checkout is deliberately exempt (its dirty tree is normal), which is a real gap —
+see the new "worktree-strays is red by design mid-flight" item below.
+
+**⚠ The verification METHOD is the reusable part, because the obvious one is wrong.** Subject and
+PR-number matching against `main` is useless across the 2026-07-24 repo recreation: those seven
+branches carry squash-merges for **PRs #16–#26** while `main`'s history topped out at **#11**, so
+grepping `main` for their subjects returns *zero hits for all seven* — which reads as seven bundles of
+lost work and is false. The recreation snapshot preserved the **content** without the **history**. The
+check that actually settles it is a per-file content diff (`git diff <branch>:<path> main:<path>`) for
+every path the branch tip touched, expecting change-log normalization noise (`DATE/TIME`→`SEQ`,
+authors scrubbed) rather than equality. Two further traps: a symmetric `+34/-34` on a docs-only commit
+is header rewriting, not missing work; and `git diff main...<branch>` silently reports "0 files" if
+`git merge-base` errored earlier in the same script, because the empty variable defaults to `HEAD`.
+The one genuinely absent file was a CrewAI degradation spec — correct, because CrewAI was removed
+from this lineage entirely.
+
+## ADR-045 graph tier — the pieces that were never built ✅ CLOSED 2026-07-29 (one item promoted to an open decision)
 
 **Deferred 2026-07-26** — recorded when ADR-045's status was reconciled from `Proposed` to
 as-built (PR #48). The connector, both tiers, `/api/graph`, the kernel skill and the swarm
@@ -128,6 +149,33 @@ operational graph are live; these three are not, and the ADR now says so.
 **Done when:** each of the three is either built, or has an explicit "won't build, because…" line
 in ADR-045 — no item stays in the ambiguous middle. The `uses:` question in particular needs a
 yes/no from ADR-090, not silence.
+
+**✅ CLOSED 2026-07-29 (PR #25).** Nothing is left in the ambiguous middle, which was the done-when:
+- **RCA-persona rewiring — BUILT.** Concrete graph recipes added to the personas that actually do the
+  work, modelled on the only persona that already used the tier successfully. The three personas
+  ADR-045 originally named were **phantoms** — `graph-analyst`, `advisor-bot` and `alert-intake-bot`
+  were registry/catalog rows with no persona YAML and no compose service, so they could never be
+  personified or dispatched, yet were served as the default catalog. Their rows are deleted.
+- **`subgraph()` — WON'T BUILD**, recorded in ADR-045 with a named revisit trigger (the deferred
+  visual graph explorer, the first consumer that would need vertices *and* edges in one bounded call).
+  Every shipped `rawQuery` consumer was checked: the data-lifecycle exporter wants a full dump,
+  career-hunter's insights want aggregates, `world` delegates to `neighbors`.
+- **`uses:` declaration — GUARDED.** A CI-side check now asserts declaration ⊇ compiled imports for
+  store packages. Deliberately *not* enforced in `readManifest`, which runs at load on live boxes and
+  would have failed-closed several already-installed packages at mount.
+- **A live trap fixed alongside:** the seeded `graph-query` baseline tool still instructed bots to
+  curl Memgraph/Neo4j with Cypher via a `$GRAPH_API_URL` that does not exist in this stack. Retargeted
+  at `/api/graph` + AQL.
+
+**⬜ ONE ITEM PROMOTED, NOT CLOSED — needs an operator decision.** `world` reaches the graph
+*transitively* through `@/features/world-data`, which is **not** one of the registered kernel skills;
+it survives in `dist/` only because six `src/app/` files happen to import it. That is the documented
+silent-prune class, and its failure mode is a store package not mounting on a customer box — not a
+compile error here. Note the `uses:` guard above **cannot** catch it: `world-data` has no skill id for
+a manifest to declare. Options, evidence and a recommendation are written up in
+[docs/architecture/three-orphan-boundary-decisions.md](architecture/three-orphan-boundary-decisions.md)
+(PR #36). **Done when:** `world-data` is either promoted to a kernel skill (registry entry + build
+anchor + `uses:` in the manifest) or the slice moves into the `world` package.
 
 ## Nightly scheduled tasks still launch from the frozen archive repo (ADR-115 cleanup)
 
@@ -874,7 +922,7 @@ onto it (started 2026-07-05 05:46Z as `oshal_app`). Verified live: health 200, c
 `/api/governance/posture` present + auth-gated (401 anonymous), core-4 tables FORCE-RLS'd
 with policies on the live DB. Rollback image: `oshal-bot:prev`.
 
-### Workflow Studio — test-run, run history, run inspector
+### Workflow Studio — test-run, run history, run inspector ✅ CLOSED 2026-07-29 (premise was false: history + inspector already shipped)
 - **Update 2026-07-05 (commit 69f153d5): run history + run inspector SHIPPED.** Every 'graph'
   dispatch records `workflow_runs` + per-node `workflow_run_steps` (status, timing, agent,
   REDACTED input/output; one logical run across approval-gate suspend/resume via
@@ -901,6 +949,24 @@ written to the ticket workspace); run `5aef0722-6d04-4653-a001-db8889690bff` rec
 node steps. The "not yet live-smoke-tested" caveat above is CLOSED for the single-shot path.
 Still open: a REPEATABLE live spec (the manual proof used a hand-driven PAT session; graph-mode
 branching/parallel remains the least-proven publish branch) and the draft test-run above.
+
+**✅ CLOSED 2026-07-29 (PR #21). The premise here was FALSE and worth recording as such** — run
+history and the run inspector had already shipped (tables `workflow_runs` / `workflow_run_steps`, the
+writer in `dispatch-graph-worker.ts` via the engine's `onStep` observer, and owner-hard-scoped reader
+routes). This is the third item this pass where the backlog under-claimed working code; per CLAUDE.md
+that costs the same credibility as over-claiming.
+
+What PR #21 actually closed were the residuals: the runs panel now scopes to the open workflow via the
+`ticketType` join (it previously listed *all* the caller's runs, so "this workflow's runs" meant
+eyeballing), a run deep-links to its cost trace, a route-level authz guard pins the owner-scoping and
+the 404-not-403 behaviour that keeps run ids from being oracle-able, and a new guard pins that **all
+three publish modes emit `pipeline: 'graph'`** — load-bearing, because that unification is the only
+reason every published run gets recorded, and it had been asserted in a code comment alone.
+
+**⬜ Scoped OUT, not deferred: test-running a DRAFT.** It would require wiring the studio compiler
+into the queue-manager, which CLAUDE.md explicitly forecloses (the runtime stays the authority;
+Publish emits into it, it does not become a second orchestration engine). If it is ever wanted it is
+an ADR-level decision, not a to-do on this entry.
 
 ### ~~A1.2 committed-default cutover — final step~~ DONE 2026-07-04
 Both done-when clauses met (commits ace8d338, 070c35fe): flag-ON fresh boot of the actual api
@@ -3796,6 +3862,22 @@ nothing has run on the GPU box yet. Design + decisions in [ADR-071](adr/071-char
   allowlisted so `lint:strict` passes and the CI gate can be promoted from advisory to required.
   (over-cap: cleared for jarvis-routes 2026-07-18.)
 
+**✅ CAP CLEARED 2026-07-29 (PR #29) — and the gate was blind, which is why this entry kept
+resurfacing.** eslint's `max-lines` rule was scoped to `files: ['src/**/*.ts', 'src/**/*.tsx']` only,
+so `.mjs` / `.js` files and everything under `tests/` and `scripts/` had **no cap rule at all**. The
+worst file in the repo — a chat config modal at ~1850 code lines, **1.85x the hard cap** — exited 0
+under `npm run lint` for months and appeared on no list. Three files were genuinely over; all three
+are now under, and `gate_lint` lints `src tests scripts` (blocking, `--max-warnings 0`), so the class
+cannot regress unseen. `any-bot/**` stays eslint-ignored as legacy JS — its largest file is under the
+cap, and that exemption is deliberate.
+
+Two measurement lessons worth keeping, because three sessions produced three different numbers for the
+same file: measure with **eslint's own `max-lines` definition** (skips blank lines and whole-line
+comments, counts a code line carrying a trailing comment, counts CSS/HTML inside template literals) —
+never `wc -l`, which is raw lines and overstates by 15-40% here. And per CLAUDE.md anti-drift rule 2,
+**do not hand-type the warn-band count** anywhere; run the gate for the current list. The figures
+previously quoted in this section were produced by neither method and were wrong in both directions.
+
 ### Promote real DB-backed live specs into the own-data evidence flow ⬜
 - **Context:** adversarial verification (2026-07-05) flagged that Own Data/Isolation "closed"
   leans on two integration-tier proofs: `data-export-delete-*` is loopback (in-memory
@@ -4482,7 +4564,7 @@ mobile-ux fix. Context: `docs/evidence/gap-list-build-2026-07-15.md` and the `@g
   model, and whether the surplus-funds PII exclusion (`DEALFINDER_INCLUDE_SURPLUS=0` — real names + amounts
   owed) holds. **Do NOT build a from-scratch gov-auctions/foreclosure app.**
 
-### Cockpit surfaces for the gap-list shared services (budgets / notify / DLQ / export)
+### Cockpit surfaces for the gap-list shared services (budgets / notify / DLQ / export) ✅ CLOSED 2026-07-29
 - **Reason:** budgets, notification prefs, queue DLQ, and data export/delete shipped 2026-07-15 with
   auth-gated routes but no surfaces — only global-search and run-trace got one.
 - **Done when:** each has a bind-mounted cockpit tool surface registered like `tool-global-search` /
@@ -4492,6 +4574,26 @@ mobile-ux fix. Context: `docs/evidence/gap-list-build-2026-07-15.md` and the `@g
 **Verified 2026-07-19:** OPEN — no tool-budgets/notify/dlq/export surfaces (DLQ has an operator surface, so partial there).
 
 **Verified 2026-07-19 (completion-day):** PARTIAL — the operator DATA rails now exist (routes, not cockpit surfaces): `GET /api/budgets/state` (`3173f104`, requiresOperator — every cap + trailing-window spend + recent `oshal_budget_events`), `POST /api/notify/operator` (`07a9aef0`, requiresOperator + `confirm:true`→428, fails LOUD 502 when the transport skips so a monitoring operator is never fooled by a silent no-op), and `GET /api/queue/dlq/export` (`bf738100`, requiresOperator — downloadable JSON over the SAME `DeadLetterService.listEntries`, not a second surface). Each is operator-gated inside an already-`requiresAuth` mount (route-auth inventory unchanged, 5/5 green) and ships its guard spec. The entry's done-when — bind-mounted **cockpit tool surfaces** (like `tool-global-search`/`tool-run-trace`) — stays OPEN; these routes are the accountable data layer such a surface would consume. DLQ now has list + requeue + export.
+
+**✅ CLOSED 2026-07-29 (PR #24).** All four have a read surface under `src/pages/cockpit/tools/`,
+registered in the ribbon's platform-tools list and served from the bind-mounted page tree, so they
+needed no image rebuild. Five route-level guard specs came with them, because the surfaces read
+endpoints whose auth behaviour had no direct coverage.
+
+Two honest limits recorded rather than papered over: **`/api/me` has no GET** that lists stores /
+`knownGaps` or the `data_lifecycle_audit` trail, so the my-data surface states what it cannot show
+instead of inventing a summary; and the budgets surface renders `spendUsd: null` as a dash, never
+`0`, because the budget service is fail-open and null means "could not read".
+
+**⬜ NEW, small, and worth doing: the Settings "Cost Controls" decoy.** `SettingsGlobalTab.js` offers
+"Daily Spending Limit" / "Bucket Spending Limit" that write to a **browser-local** cost tracker with no
+relationship to the enforced `oshal_budgets` caps the new surface reads — an operator can set a
+"limit" there that enforces nothing. PR #24 originally deleted the inputs; adversarial review rejected
+that, because `setCostLimits()` / `resetBucket()` then had zero callers repo-wide, leaving the
+`localStorage` state unreachable and unclearable. **Done when:** the panel is relabelled as a local
+display preference and links out to the budgets surface — *not* deleted, since it is the only control
+over live state. (Do not confuse it with the admin console's Budgets card, which reads
+`/api/llm-governance/status` — the older env-only governance flags — and is legitimate.)
 
 ### Connector write-actions: marketplace surfacing + audit read endpoint + interactive-approval UX
 - **Reason:** the actions tier + `connector_action_audit` shipped 2026-07-15, but actions are not surfaced in
@@ -4937,12 +5039,25 @@ fully and **text-based** documents. These extend it:
 - **Done when:** harness exports are moved off the barrel (deep module or a separate entry point), and
   the boundary spec's allowlist shrinks to the sanctioned edge only.
 
-## Security Center route-audit PUBLIC_BY_DESIGN list stale ⬜ (2026-07-19)
+## Security Center route-audit PUBLIC_BY_DESIGN list stale ✅ CLOSED 2026-07-29 (the stated symptom was already fixed; the real gap was the missing sync check)
 
 - **Context:** `src/features/security/route-audit.ts` doesn't know `/api/profile-studio` (added
   07-17, serviceSecretOk-gated) — likely a standing false positive in the Security Center.
 - **Done when:** the list is updated + a sync check exists against
   `tests/unit/server-route-auth-inventory.spec.ts`'s allowlist.
+
+**✅ CLOSED 2026-07-29 (PR #26).** The stated symptom was already fixed before this pass —
+`/api/profile-studio` is present in `PUBLIC_BY_DESIGN` and a static diff of `app.use` mounts showed
+zero drift. The genuine done-when was the **programmatic sync check** between `route-audit.ts`'s
+`PUBLIC_BY_DESIGN` and `server-route-auth-inventory.spec.ts`'s `UNGUARDED_ALLOWLIST`: the two lists
+referenced each other only in prose comments, so they could diverge silently forever. They are now
+cross-asserted and a divergence goes red.
+
+**⚠ Known blind spot, recorded rather than closed:** `route-audit.ts` matches only `app.use(`, so
+inline `app.get`/`app.post` mounts are structurally invisible to the runtime scanner — which is why
+the Security Center can report "0 route_auth findings" while an entire class of mount is unexamined.
+The CI spec's allowlist covers the reviewed inline cases today. **Done when:** the scanner either sees
+inline method mounts, or its blindness is pinned by a test so it cannot silently under-report.
 
 ## Spaces / spatial mapping (ADR-111) — deferred phases + box-side pipeline ⬜ (2026-07-20)
 
@@ -5524,3 +5639,81 @@ The pieces exist — the wizard that strings them into one first-run path does n
   records the design (store trust model for third-party URLs is the hard decision — a malicious
   store URL must not get code execution just by being typed) and a red-provable guard covers the
   gate: an anonymous visitor can never reach the wizard's install actions.
+
+## Orphan-boundary decisions promoted out of the 2026-07-29 sweep ⬜ (2026-07-29)
+
+The orphan sweep (PR #26) deleted what was provably dead and deliberately left four things alone,
+because each is a boundary call rather than a cleanup. Evidence, per-option gain/lose/cost-to-reverse
+tables and a recommendation for the first three are in
+[docs/architecture/three-orphan-boundary-decisions.md](architecture/three-orphan-boundary-decisions.md)
+(PR #36). They are listed here so they are tracked, not so a bot resolves them unilaterally.
+
+- **`world-data` reaches the graph tier without being a kernel skill** — see the ADR-045 entry above.
+  Recommended: promote it (six `src/app/` importers make it kernel capability in practice).
+- **`src/features/google-calendar/`** — zero importers here because a store package vendored a fork,
+  and `ci-local.sh` names it as the *original* silent-prune casualty, which is plausibly why the fork
+  exists. Recommended: delete, unless a second calendar consumer is expected (re-pinning as a kernel
+  skill only pays off with two or more).
+- **`src/agent/` + `src/swarm/`** — one-file barrels from Phase 1 of an abandoned plan, nothing imports
+  either, but both carry `tsconfig.server.json` aliases and `docker-compose.hotswap.yml` mounts. And
+  `src/agent/index.ts` is the **only** reason `src/features/tool-loader/` survived the sweep (its
+  exports are all commented out under a "Phase 5" of the same plan). Recommended: delete all three and
+  close the plan — the boundary Phase 2+ would build is the same one the roadmap's AnyBot unified
+  node-runtime item describes, and it belongs there.
+- **`src/features/haven/haven-direct-llm-service.ts`** — referenced only by `experiments/` scripts that
+  patch a dist path the import graph never produces, i.e. those experiments are already broken against
+  it. Decision: fix the experiments or delete the service.
+
+**Done when:** each of the four is either actioned or carries an explicit "won't do, because…" line —
+the same bar ADR-045 was held to.
+
+**⚠ A false-positive trap that nearly made two of these look live:** grepping for importers of
+`src/swarm` matches `'../swarm-bot-registry'` inside `src/app/extensions/swarm/routes/`, a different
+directory entirely. Verify with the exact alias (`from '@/swarm`) before concluding either way.
+
+## Pre-push hook: the remaining fail-open branches ⬜ (2026-07-29)
+
+Two independent holes in `.githooks/pre-push` were closed on 2026-07-29 and are **not** open work:
+the committed-HEAD typecheck had been **silently skipping for every agent-worktree push** (PR #20 —
+`REPO_ROOT` is the worktree, and a fresh worktree has no `node_modules`, so the link dangled and the
+hook exited 0 after one stderr line), and `OSHAL_SKIP_PREPUSH_VERIFY=1` exited **above** the publish
+gate, so the one documented override also disabled the leak wall on a public repo (PR #21). A third
+fix followed immediately: preferring the worktree's own `node_modules` meant linking a junction to a
+junction, which made `tsc` emit ~36 spurious `TS2742` "not portable" errors and block a clean push —
+measured 36 vs 0 against a direct link.
+
+What remains open is the same class, unexamined: the hook still **passes silently** when it cannot
+export HEAD, and when `tsc` exits non-zero without matching `error TS` (the timeout / missing-tsc
+path). Both are fail-open by design and one of them is defensible; neither is currently justified in
+a comment or pinned by a test. **Done when:** each remaining silent-pass branch is either argued for
+in-place or made loud — a gate that skips itself is not a gate.
+
+Related and worth knowing when reading hook behaviour: `core.hooksPath` here is an **absolute** path
+to the main checkout, so every linked worktree executes *main's* hooks. A worktree cannot test its own
+hook edit by pushing, and a hook fix is only live once main is merged **and** the main checkout has
+pulled it.
+
+## `worktree-strays` is red by design while lanes are in flight ⬜ (2026-07-29)
+
+The new `worktree-strays` gate (PR #14) exempts the primary shared checkout but flags any *linked*
+worktree with uncommitted changes — which is the normal state of an agent lane that is mid-task. So
+during parallel work the gate is red for correct reasons, and a red gate nobody can act on is how
+everyone learns to ignore red (the 2026-07-19 doctrine says so explicitly).
+
+**Done when:** either the gate distinguishes an active lane from an abandoned one (an age threshold,
+or a lane marker file the harness writes), or `ci-local.sh` documents that this gate is meant to run
+against a quiet swarm and the session-close path is where it belongs.
+
+## `res.sendFile` and dot-segment paths — check the rest of the tree ⬜ (2026-07-29)
+
+Express `res.sendFile` defaults to `dotfiles: 'ignore'`, which **404s when any segment of the resolved
+path begins with a dot**. Every agent worktree lives under `.claude/worktrees/<name>`, so page-serving
+404'd from any worktree run: two local-auth specs were red **by default** for worktree runs, and the
+next agent to see them would reasonably blame its own change (that nearly happened while auditing a
+nine-PR merge). Fixed for the login/invite/2FA pages in PR #33, where the served path is one of three
+hardcoded literals so allowing dotfiles cannot widen traversal.
+
+**Done when:** every other `sendFile` / `express.static` call in the tree has been checked for the same
+exposure, and each either sets `dotfiles` deliberately or is confirmed unreachable from a dot-segment
+path. A real deployment installed under a dot-directory would today serve no login page at all, with
+a 404 and no diagnostic.
