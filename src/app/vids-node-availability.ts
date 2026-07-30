@@ -324,7 +324,9 @@ export async function checkVidsNodeAvailability(
 
   // 3. The window the nightly recap owns. It does not announce itself, so we stay out by the clock
   //    as well as by the probe below.
-  const spec = process.env.VIDS_NODE_BLACKOUT ?? '16:45-19:45';
+  // `||`, not `??`: compose passes an unset variable through as an EMPTY STRING, and `??` would
+  // accept that as "the operator configured no window" — silently deleting the recap's protection.
+  const spec = process.env.VIDS_NODE_BLACKOUT || '16:45-19:45';
   const zone = process.env.VIDS_NODE_BLACKOUT_TZ || 'America/Chicago';
   if (isInBlackout(new Date(), spec, zone)) {
     return { available: false, check: 'blackout', clientId, reason: `inside the reserved window ${spec} ${zone} (the nightly recap owns the node)` };

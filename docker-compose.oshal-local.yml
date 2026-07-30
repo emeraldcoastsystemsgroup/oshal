@@ -190,6 +190,28 @@ x-bot-env: &bot-env
   # separate opt-in (Portrait Studio + Video Studio storyboards ride it).
   STORYBOARD_IMAGE_PROVIDER: ${STORYBOARD_IMAGE_PROVIDER:-}
   OPENROUTER_IMAGE_MODEL: ${OPENROUTER_IMAGE_MODEL:-}
+
+  # ── The joke-shorts pump (ADR-120) ────────────────────────────────────────────
+  # OFF unless VIDEO_PUMP_ENABLED is exactly "true", and each show is opt-in again
+  # through its own enrolment row. The VIDS_NODE_* knobs calibrate the availability
+  # gate to the operator's actual render node — the memory floor especially: an 8GB
+  # box running the signed-in Vids Chrome sits at ~450MB "available" while perfectly
+  # healthy (commit 53%), so the meaningful pressure signal is COMMIT PERCENT.
+  VIDEO_PUMP_ENABLED: ${VIDEO_PUMP_ENABLED:-}
+  VIDEO_PUMP_INTERVAL_MS: ${VIDEO_PUMP_INTERVAL_MS:-}
+  VIDEO_PUMP_FAILURE_LIMIT: ${VIDEO_PUMP_FAILURE_LIMIT:-}
+  VIDEO_PUMP_SKIP_LOG_MIN: ${VIDEO_PUMP_SKIP_LOG_MIN:-}
+  VIDS_NODE_BLACKOUT: ${VIDS_NODE_BLACKOUT:-}
+  VIDS_NODE_BLACKOUT_TZ: ${VIDS_NODE_BLACKOUT_TZ:-}
+  VIDS_NODE_PKG_DIR: ${VIDS_NODE_PKG_DIR:-}
+  VIDS_NODE_EXE: ${VIDS_NODE_EXE:-}
+  VIDS_RENDER_CLIENT_ID: ${VIDS_RENDER_CLIENT_ID:-}
+  VIDS_NODE_PROBE_TIMEOUT_MS: ${VIDS_NODE_PROBE_TIMEOUT_MS:-}
+  VIDS_NODE_RECAP_IDLE_MIN: ${VIDS_NODE_RECAP_IDLE_MIN:-}
+  VIDS_NODE_MIN_FREE_MB: ${VIDS_NODE_MIN_FREE_MB:-}
+  VIDS_NODE_MAX_COMMIT_PCT: ${VIDS_NODE_MAX_COMMIT_PCT:-}
+  VIDS_NODE_MAX_CHROME: ${VIDS_NODE_MAX_CHROME:-}
+  VIDS_NODE_LEASE_MINUTES: ${VIDS_NODE_LEASE_MINUTES:-}
   # Other free lanes (ADR-064 Plan B). All free-signup, no card. These are OPERATOR/platform keys:
   # they feed scripts/evidence/prove-free-tier-live.ts and the Token Chase optimizer's replay lanes
   # (optimizer-providers.ts COMPAT). A USER's own free tiers are pasted per-user in the connect UI
