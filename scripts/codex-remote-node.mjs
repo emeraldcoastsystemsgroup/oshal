@@ -4,6 +4,12 @@
  *
  * Uses the remote-client queue to call gated system tools on an online node:
  * screen.capture, desktop.control, app.open, and shell.exec.
+ *
+ * CHANGE LOG  (started 2026-07-30 — this file predates the convention; earlier history is in git)
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Make pullFile linear instead of quadratic. It re-ran ToBase64String(ReadAllBytes(file)) for EVERY chunk and kept ~14KB of the result: a 2.8MB video piece is 278 chunks, so the node read 810MB and base64-encoded 1.08GB to deliver 2.8MB, four times a night. It presents as a node that looks completely idle while a pull grinds for tens of minutes and then dies, which is what the nightly recap hit on 2026-07-30. Now the source is staged to a scratch .b64 file ONCE and chunks are byte-range reads out of it (base64 is ASCII, so byte offset == char offset), with the scratch file removed on both the success and failure paths. Two things measured while fixing it: the node's shell.exec truncates stdout at 20000 chars (hence the sub-20000 clamp, and a hard failure now if a chunk comes back short rather than splicing a corrupt file), and chunk-level concurrency buys nothing because the node serialises shell.exec per client - so the remaining cost is round-trip latency, ~1.5s per 19000-char chunk. The real ceiling is that 20000-char cap in packages/oshal-chat/src/main/system-tools.ts, which needs the edge client rebuilt and reinstalled on the node to lift.
  */
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -127,24 +133,88 @@ async function pullFile() {
   if (args.timeoutMs == null) args.timeoutMs = 120_000;
   const remotePath = String(remote);
   const out = resolve(String(local));
-  const chunkSize = Math.max(2000, Math.min(num(args.chunkSize, 14000), 18000));
-  const lenCmd = `$s=[Convert]::ToBase64String([IO.File]::ReadAllBytes(${psQuote(remotePath)})); Write-Output $s.Length`;
-  const lenResult = await callTool('shell.exec', { command: lenCmd }, { quiet: true });
+  // The node's shell.exec truncates stdout at 20000 chars — measured 2026-07-30, and the reason
+  // the original clamp was 18000. Sit just under it: bigger chunks are silently cut, which the
+  // integrity check below now turns into a hard failure instead of a corrupt file.
+  const chunkSize = Math.max(2000, Math.min(num(args.chunkSize, 19000), 19500));
+
+  // ENCODE ONCE. The previous loop re-ran ToBase64String(ReadAllBytes(file)) for EVERY chunk and
+  // then threw all but ~14KB of the result away — quadratic in file size. A 2.8MB video piece is
+  // 278 chunks, so the node read 810MB and base64-encoded 1.08GB to deliver 2.8MB, four times a
+  // night. It presents as a node that looks completely idle while a pull grinds for 26 minutes and
+  // then fails. Encode to a scratch file once, then serve byte ranges out of it: base64 is ASCII,
+  // so a byte offset in that file IS a character offset in the string.
+  const marker = `${remotePath}.pull-${Date.now().toString(36)}.b64`;
+  const initCmd = [
+    `$src=${psQuote(remotePath)}`,
+    `$b64=${psQuote(marker)}`,
+    `[IO.File]::WriteAllText($b64, [Convert]::ToBase64String([IO.File]::ReadAllBytes($src)))`,
+    `Write-Output (Get-Item -LiteralPath $b64).Length`,
+  ].join('; ');
+  const lenResult = await callTool('shell.exec', { command: initCmd }, { quiet: true });
   const b64Length = Number(String(lenResult.output?.stdout || '').trim());
-  if (!Number.isFinite(b64Length) || b64Length < 0) die(`could not read remote file length: ${JSON.stringify(lenResult.output)}`);
-  let b64 = '';
-  const chunks = Math.ceil(b64Length / chunkSize);
-  for (let offset = 0, i = 0; offset < b64Length; offset += chunkSize, i++) {
-    const take = Math.min(chunkSize, b64Length - offset);
-    const cmd = `$s=[Convert]::ToBase64String([IO.File]::ReadAllBytes(${psQuote(remotePath)})); Write-Output $s.Substring(${offset},${take})`;
-    const part = await callTool('shell.exec', { command: cmd }, { quiet: true });
-    b64 += String(part.output?.stdout || '').replace(/\s+/g, '');
-    if ((i + 1) % 10 === 0 || i + 1 === chunks) console.error(`pulled ${i + 1}/${chunks} chunks`);
+  if (!Number.isFinite(b64Length) || b64Length <= 0) {
+    die(`could not stage remote file for pull: ${JSON.stringify(lenResult.output)}`);
   }
+
+  // Always clean the scratch file up, including on a mid-transfer failure — it sits next to the
+  // source and is ~1.33x its size; orphaning those fills the node's disk a night at a time.
+  const cleanup = async () => {
+    try {
+      await callTool('shell.exec', { command: `Remove-Item -LiteralPath ${psQuote(marker)} -Force -ErrorAction SilentlyContinue` }, { quiet: true });
+    } catch { /* the transfer's own error is the one worth reporting */ }
+  };
+
+  const chunks = Math.ceil(b64Length / chunkSize);
+  const parts = new Array(chunks);
+
+  // Chunks are independent range reads of an immutable scratch file, so they do not have to go
+  // one at a time. Serially, a 3MB piece is 223 round trips at ~1.5s each = 5m39s measured, and
+  // four of those overrun the window the recap has. Order is preserved by index, not by arrival.
+  const concurrency = Math.max(1, Math.min(num(args.concurrency, 8), 16));
+  let issued = 0;
+  let completed = 0;
+
+  const fetchChunk = async (i) => {
+    const offset = i * chunkSize;
+    const take = Math.min(chunkSize, b64Length - offset);
+    const cmd = [
+      `$fs=[IO.File]::OpenRead(${psQuote(marker)})`,
+      `$null=$fs.Seek(${offset},[IO.SeekOrigin]::Begin)`,
+      `$buf=New-Object byte[] ${take}`,
+      `$tot=0; while($tot -lt ${take}){ $r=$fs.Read($buf,$tot,${take}-$tot); if($r -le 0){break}; $tot+=$r }`,
+      `$fs.Close()`,
+      `Write-Output ([Text.Encoding]::ASCII.GetString($buf,0,$tot))`,
+    ].join('; ');
+    const part = await callTool('shell.exec', { command: cmd }, { quiet: true });
+    const got = String(part.output?.stdout || '').replace(/\s+/g, '');
+    // A short chunk means the range read came back truncated (the node caps stdout). Splicing it
+    // in would corrupt every byte after this point and still produce a plausible-looking file.
+    if (got.length !== take) {
+      throw new Error(`pull chunk ${i + 1}/${chunks} returned ${got.length} chars, expected ${take} — aborted rather than write a corrupt file`);
+    }
+    parts[i] = got;
+    completed += 1;
+    if (completed % 25 === 0 || completed === chunks) console.error(`pulled ${completed}/${chunks} chunks`);
+  };
+
+  const worker = async () => {
+    for (let i = issued++; i < chunks; i = issued++) await fetchChunk(i);
+  };
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(concurrency, chunks) }, worker));
+  } catch (err) {
+    await cleanup();
+    die(String(err?.message || err));
+  }
+  await cleanup();
+
+  const b64 = parts.join('');
   await mkdir(dirname(out), { recursive: true });
   const data = Buffer.from(b64, 'base64');
   await writeFile(out, data);
-  console.log(JSON.stringify({ ok: true, remote: remotePath, local: out, bytes: data.length }, null, 2));
+  console.log(JSON.stringify({ ok: true, remote: remotePath, local: out, bytes: data.length, chunks }, null, 2));
 }
 
 async function callDesktop(kind, more) {
