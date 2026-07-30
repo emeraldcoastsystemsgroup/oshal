@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dead-letter queue — quarantined tickets</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5b8cff);
+    --ok: var(--status-success, #36d399);
+    --warn: var(--status-warning, #f4bf50);
+    --bad: var(--status-error, #ff8585);
+    --chip: var(--bg-tertiary);
+    /* --bg-card is translucent by design — composite it over the page colour for the tiles and the
+       sticky table head, which both sit over scrolling content. */
+    --solid-panel: linear-gradient(var(--panel), var(--panel));
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 24px 20px 80px; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13.5px; max-width: 76ch; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .checkrow { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--muted); }
+  button, a.btn { cursor: pointer; border: 1px solid var(--line); background: var(--chip);
+    color: var(--text); border-radius: 9px; padding: 7px 13px; font: inherit; font-size: 13.5px;
+    font-weight: 600; text-decoration: none; display: inline-block; }
+  button.primary { background: var(--accent); color: #04122e; border-color: transparent; }
+  button:disabled { opacity: .55; cursor: default; }
+  button.mini { padding: 4px 10px; font-size: 12.5px; }
+  .tiles { display: flex; gap: 12px; flex-wrap: wrap; margin: 4px 0 16px; }
+  .tile { border: 1px solid var(--line); border-radius: 11px; padding: 11px 16px; min-width: 150px;
+    background: var(--bg) var(--solid-panel); }
+  .tile .k { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+  .tile .v { font-size: 24px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .status { color: var(--muted); font-size: 12.5px; margin: 6px 0 14px; min-height: 17px; }
+  .status.err { color: var(--bad); }
+  .tblwrap { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 58vh; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { position: sticky; top: 0; z-index: 1; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--muted); font-weight: 600; white-space: nowrap;
+    background: var(--bg) var(--solid-panel); }
+  tr:last-child td { border-bottom: none; }
+  td.nowrap { white-space: nowrap; }
+  td.err { overflow-wrap: anywhere; max-width: 44ch; color: var(--bad); font-size: 12.5px; }
+  td.title { overflow-wrap: anywhere; max-width: 30ch; }
+  .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 9px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .pill.q { border-color: var(--bad); color: var(--bad); }
+  .pill.acc { border-color: var(--warn); color: var(--warn); }
+  .rowmsg { font-size: 12px; margin-top: 5px; overflow-wrap: anywhere; }
+  .rowmsg.ok { color: var(--ok); }
+  .rowmsg.bad { color: var(--bad); }
+  .empty { color: var(--muted); padding: 22px 12px; font-size: 13.5px; }
+  .gate { border: 1px solid var(--line); border-radius: 12px; padding: 26px 22px; max-width: 62ch;
+    background: var(--bg) var(--solid-panel); }
+  .gate h2 { margin: 0 0 8px; font-size: 18px; }
+  .gate p { color: var(--muted); font-size: 13.5px; margin: 0 0 10px; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 26px; border-top: 1px solid var(--line);
+    padding-top: 12px; max-width: 84ch; }
+  code { background: var(--chip); border-radius: 5px; padding: 0 5px; font-size: 12.5px; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>Dead-letter queue</h1>
+  <p class="sub">Tickets the queue gave up on — quarantined poison work in
+  <code>oshal_queue_dlq</code>. Read-only except for requeue, which resets the attempt counter and
+  releases one ticket back to <code>approved</code> so the swarm picks it up again.</p>
+
+  <div id="gate" hidden></div>
+
+  <div id="main" hidden>
+    <div class="row">
+      <label class="checkrow"><input type="checkbox" id="all" />
+        Also show tickets still accumulating attempts (not yet quarantined)</label>
+      <button class="primary" id="reload" type="button">Reload</button>
+      <!-- Plain anchor: the export route sets an attachment Content-Disposition, so the browser
+           saves the file. Fetching it into JS would just discard the filename. -->
+      <a class="btn" id="exportLink" href="/api/queue/dlq/export" download>Download JSON export</a>
+    </div>
+
+    <div class="tiles">
+      <div class="tile"><div class="k">Entries shown</div><div class="v" id="countShown">—</div></div>
+      <div class="tile"><div class="k">Quarantined</div><div class="v" id="countQuarantined">—</div></div>
+      <div class="tile"><div class="k">Already requeued</div><div class="v" id="countRequeued">—</div></div>
+    </div>
+
+    <div class="status" id="status">Loading…</div>
+
+    <div class="tblwrap"><table>
+      <thead><tr>
+        <th>Title</th><th>Ticket type</th><th>Ticket status</th><th>Attempts</th><th>State</th>
+        <th>Reason</th><th>Last error</th><th>Quarantined</th><th>Requeued</th><th></th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <p class="foot">Requeue outcomes are reported per row exactly as the API answers them:
+  <strong>404</strong> the DLQ row is gone, <strong>409</strong> the ticket is not in a state that
+  can be released (it may already be running), <strong>503</strong> the DLQ store is unavailable.
+  A requeue that reports nothing changed did not silently work.</p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $gate = document.getElementById('gate');
+  const $main = document.getElementById('main');
+  const $status = document.getElementById('status');
+  const $rows = document.getElementById('rows');
+  const $all = document.getElementById('all');
+  const $exportLink = document.getElementById('exportLink');
+  const COLS = 10;
+
+  function say(text, bad) {
+    $status.textContent = text;
+    $status.classList.toggle('err', Boolean(bad));
+  }
+
+  async function readJson(res) {
+    const raw = await res.text();
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+
+  function when(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
+  }
+
+  function cell(text, cls) {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = text;
+    return td;
+  }
+
+  function messageRow(text) {
+    $rows.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = COLS;
+    td.className = 'empty';
+    td.textContent = text;
+    tr.appendChild(td);
+    $rows.appendChild(tr);
+  }
+
+  /** Render the operator-only gate body — a plain explanation, not an error. */
+  function showGate(title, message) {
+    $main.hidden = true;
+    $gate.hidden = false;
+    $gate.replaceChildren();
+    const box = document.createElement('div');
+    box.className = 'gate';
+    const h2 = document.createElement('h2');
+    h2.textContent = title;
+    box.appendChild(h2);
+    const p = document.createElement('p');
+    p.textContent = message;
+    box.appendChild(p);
+    $gate.appendChild(box);
+  }
+
+  function pill(entry) {
+    const td = document.createElement('td');
+    const span = document.createElement('span');
+    const quarantined = Boolean(entry.quarantinedAt);
+    span.className = 'pill ' + (quarantined ? 'q' : 'acc');
+    span.textContent = quarantined ? 'quarantined' : 'accumulating';
+    span.title = quarantined
+      ? 'The queue stopped retrying this ticket.'
+      : 'Still inside the retry budget — shown because "all" is on.';
+    td.appendChild(span);
+    return td;
+  }
+
+  /** Build the requeue cell: a button plus the per-row outcome line. */
+  function requeueCell(entry) {
+    const td = document.createElement('td');
+    td.className = 'nowrap';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mini';
+    btn.textContent = 'Requeue';
+    const msg = document.createElement('div');
+    msg.className = 'rowmsg';
+    td.appendChild(btn);
+    td.appendChild(msg);
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      msg.className = 'rowmsg';
+      msg.textContent = 'Requeueing…';
+      try {
+        const res = await fetch('/api/queue/dlq/' + encodeURIComponent(entry.ticketId) + '/requeue', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await readJson(res);
+        if (res.ok && data && data.ok) {
+          msg.className = 'rowmsg ok';
+          msg.textContent = 'Released back to the queue.';
+          await load();
+          return;
+        }
+        msg.className = 'rowmsg bad';
+        msg.textContent = explainRequeue(res.status, data);
+      } catch (err) {
+        msg.className = 'rowmsg bad';
+        msg.textContent = 'Requeue failed — ' + (err && err.message ? err.message : String(err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    return td;
+  }
+
+  /** Map each distinct failure the requeue route can answer with to its real meaning. */
+  function explainRequeue(status, data) {
+    const raw = data && data.error ? String(data.error) : '';
+    if (status === 400) return 'Not requeued — the ticket id was rejected as malformed.';
+    if (status === 401) return 'Not requeued — you are not signed in.';
+    if (status === 403) return 'Not requeued — operator privilege required.';
+    if (status === 404) return 'Not requeued — no dead-letter row for this ticket (it may already have been released).';
+    if (status === 409) return 'Not requeued — the ticket is not in a releasable state (invalid-state); it may already be running.';
+    if (status === 503) return 'Not requeued — the dead-letter store is unavailable. Try again once the DB is reachable.';
+    return 'Not requeued — HTTP ' + status + (raw ? ' (' + raw + ')' : '');
+  }
+
+  function renderRows(entries) {
+    if (!entries.length) {
+      messageRow($all.checked
+        ? 'Nothing in the dead-letter table — no ticket has accumulated a failed attempt.'
+        : 'No quarantined tickets. Tick the box above to also list tickets still accumulating attempts.');
+      return;
+    }
+    $rows.replaceChildren();
+    for (const e of entries) {
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(e.title === null || e.title === undefined ? '(ticket row gone)' : String(e.title), 'title'));
+      tr.appendChild(cell(e.ticketType ? String(e.ticketType) : '—', 'nowrap'));
+      tr.appendChild(cell(e.status ? String(e.status) : '—', 'nowrap'));
+      tr.appendChild(cell(String(e.attempts ?? '—'), 'nowrap'));
+      tr.appendChild(pill(e));
+      tr.appendChild(cell(e.reason ? String(e.reason) : '—', 'title'));
+      tr.appendChild(cell(e.lastError ? String(e.lastError) : '—', 'err'));
+      tr.appendChild(cell(when(e.quarantinedAt), 'nowrap'));
+      tr.appendChild(cell(e.requeuedAt ? when(e.requeuedAt) + (e.requeuedBy ? ' by ' + e.requeuedBy : '') : '—', 'nowrap'));
+      tr.appendChild(requeueCell(e));
+      $rows.appendChild(tr);
+    }
+  }
+
+  async function load() {
+    const includeAll = $all.checked;
+    $exportLink.href = '/api/queue/dlq/export' + (includeAll ? '?all=true' : '');
+    say('Loading…');
+    let res;
+    try {
+      res = await fetch('/api/queue/dlq' + (includeAll ? '?all=true' : ''), { credentials: 'same-origin' });
+    } catch (err) {
+      $gate.hidden = true;
+      $main.hidden = false;
+      say('Network error reaching /api/queue/dlq: ' + (err && err.message ? err.message : String(err)), true);
+      messageRow('Could not reach the API.');
+      return;
+    }
+    if (res.status === 403) {
+      showGate('Operator only', 'The dead-letter queue lists other users’ ticket titles and failure text, '
+        + 'and requeue re-triggers swarm work — so all three of its routes are restricted to the operator '
+        + 'allowlist (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS). Your account is not on it. This is the '
+        + 'expected answer, not a fault.');
+      return;
+    }
+    if (res.status === 401) {
+      showGate('Not signed in', 'Reload the cockpit to authenticate, then open this tool again.');
+      return;
+    }
+    $gate.hidden = true;
+    $main.hidden = false;
+    const data = await readJson(res);
+    if (!res.ok) {
+      say('Dead-letter read failed: ' + ((data && data.error) || 'HTTP ' + res.status), true);
+      messageRow('Dead-letter read failed.');
+      return;
+    }
+    const entries = Array.isArray(data && data.entries) ? data.entries : [];
+    const quarantined = entries.filter((e) => Boolean(e.quarantinedAt)).length;
+    const requeued = entries.filter((e) => Boolean(e.requeuedAt)).length;
+    document.getElementById('countShown').textContent = String(entries.length);
+    document.getElementById('countQuarantined').textContent = String(quarantined);
+    document.getElementById('countRequeued').textContent = String(requeued);
+    renderRows(entries);
+    say(entries.length + ' entr' + (entries.length === 1 ? 'y' : 'ies')
+      + (includeAll ? ' (quarantined + still accumulating)' : ' (quarantined only)') + '.');
+  }
+
+  document.getElementById('reload').addEventListener('click', () => { void load(); });
+  $all.addEventListener('change', () => { void load(); });
+  void load();
+})();
+</script>
+</body>
+</html>

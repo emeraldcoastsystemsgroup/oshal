@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>My data — export and delete</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5b8cff);
+    --ok: var(--status-success, #36d399);
+    --warn: var(--status-warning, #f4bf50);
+    --bad: var(--status-error, #ff8585);
+    --chip: var(--bg-tertiary);
+    /* --bg-card is translucent by design; composite over the page colour wherever a panel covers
+       scrolling content (the sticky table heads below). */
+    --solid-panel: linear-gradient(var(--panel), var(--panel));
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 24px 20px 90px; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 13.5px; max-width: 74ch; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+    margin: 28px 0 10px; }
+  .card { border: 1px solid var(--line); border-radius: 11px; padding: 16px 18px; background: var(--panel); }
+  .card p { font-size: 13.5px; margin: 0 0 12px; color: var(--muted); }
+  .card p.lead { color: var(--text); }
+  .danger { border-color: var(--bad); }
+  button, a.btn { cursor: pointer; border: 1px solid var(--line); background: var(--chip);
+    color: var(--text); border-radius: 9px; padding: 8px 15px; font: inherit; font-size: 13.5px;
+    font-weight: 600; text-decoration: none; display: inline-block; }
+  button.primary { background: var(--accent); color: #04122e; border-color: transparent; }
+  button.destructive { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: .55; cursor: default; }
+  .actions { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+  .msg { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; margin-top: 10px; }
+  .msg.ok { color: var(--ok); }
+  .msg.bad { color: var(--bad); }
+  .msg.warn { color: var(--warn); }
+  .tblwrap { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 40vh;
+    margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { position: sticky; top: 0; z-index: 1; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--muted); font-weight: 600; white-space: nowrap;
+    background: var(--bg) var(--solid-panel); }
+  tr:last-child td { border-bottom: none; }
+  td.w { overflow-wrap: anywhere; }
+  .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 9px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .pill.yes { border-color: var(--ok); color: var(--ok); }
+  .pill.no { border-color: var(--warn); color: var(--warn); }
+  .pill.fail { border-color: var(--bad); color: var(--bad); }
+  .confirm { border: 1px solid var(--bad); border-radius: 10px; padding: 14px 16px; margin-top: 14px;
+    background: var(--bg) var(--solid-panel); }
+  .confirm .exp { font-size: 12.5px; color: var(--warn); }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 28px; border-top: 1px solid var(--line);
+    padding-top: 12px; max-width: 84ch; }
+  code { background: var(--chip); border-radius: 5px; padding: 0 5px; font-size: 12.5px; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>My data</h1>
+  <p class="sub">Export or delete everything this deployment holds about <strong>you</strong>.
+  Both actions are scoped to your signed-in account by the server — the subject is always taken
+  from your session, never from anything this page sends.</p>
+
+  <h2>Export</h2>
+  <div class="card">
+    <p class="lead">One JSON download containing a manifest (which stores were read, how many rows
+    each returned, and which failed) plus a section per store.</p>
+    <p>The file is built on demand and can be large. Nothing is shown here first, because there is
+    no route that summarises the bundle without generating it — so a preview would be a second full
+    export, not a cheaper one.</p>
+    <div class="actions">
+      <a class="btn primary" href="/api/me/export" download>Download my data (JSON)</a>
+    </div>
+  </div>
+
+  <h2>Delete</h2>
+  <div class="card danger">
+    <p class="lead">Deletion is two steps on purpose: this button only asks the server what would be
+    deleted and returns a short-lived token. Nothing is destroyed until you confirm below.</p>
+    <div class="actions">
+      <button class="destructive" id="requestBtn" type="button">Show me what would be deleted</button>
+    </div>
+    <div class="msg" id="requestMsg"></div>
+    <div id="plan"></div>
+  </div>
+
+  <div id="outcomeSection" hidden>
+    <h2>Result</h2>
+    <div class="card">
+      <div class="msg" id="outcomeMsg"></div>
+      <div id="outcomeTable"></div>
+      <div id="outcomeGaps"></div>
+    </div>
+  </div>
+
+  <p class="foot">What this surface deliberately does not claim. The API has no read-only endpoint
+  that lists your stores, the known coverage gaps, or your <code>data_lifecycle_audit</code> history
+  — the store list and gap list below arrive only as part of a delete <em>request</em>, and the audit
+  trail is write-only today. So this page shows nothing about your data until you ask for a delete
+  plan, and it cannot show you past exports or deletions at all. Stores marked <em>export-only</em>
+  are retained by design (append-only audit trails, security floors) and are <strong>not</strong>
+  deleted; the gap list names data the platform holds that this surface does not cover, and a
+  successful delete never implies those were touched.</p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $requestBtn = document.getElementById('requestBtn');
+  const $requestMsg = document.getElementById('requestMsg');
+  const $plan = document.getElementById('plan');
+  const $outcomeSection = document.getElementById('outcomeSection');
+  const $outcomeMsg = document.getElementById('outcomeMsg');
+  const $outcomeTable = document.getElementById('outcomeTable');
+  const $outcomeGaps = document.getElementById('outcomeGaps');
+
+  async function readJson(res) {
+    const raw = await res.text();
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+
+  function setMsg(el, text, cls) {
+    el.className = 'msg' + (cls ? ' ' + cls : '');
+    el.textContent = text;
+  }
+
+  function cell(text, cls) {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = text;
+    return td;
+  }
+
+  function pillCell(text, cls, title) {
+    const td = document.createElement('td');
+    const span = document.createElement('span');
+    span.className = 'pill' + (cls ? ' ' + cls : '');
+    span.textContent = text;
+    if (title) span.title = title;
+    td.appendChild(span);
+    return td;
+  }
+
+  /** Build a table with the given headers; returns {wrap, tbody}. */
+  function table(headers) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tblwrap';
+    const tbl = document.createElement('table');
+    const thead = document.createElement('thead');
+    const tr = document.createElement('tr');
+    for (const h of headers) {
+      const th = document.createElement('th');
+      th.textContent = h;
+      tr.appendChild(th);
+    }
+    thead.appendChild(tr);
+    tbl.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    return { wrap: wrap, tbody: tbody };
+  }
+
+  /** Render the knownGaps list the API returned — data the surface does NOT cover. */
+  function renderGaps(gaps, host, heading) {
+    host.replaceChildren();
+    if (!Array.isArray(gaps) || !gaps.length) return;
+    const h = document.createElement('div');
+    h.className = 'msg warn';
+    h.textContent = heading;
+    host.appendChild(h);
+    const t = table(['Store', 'What it holds', 'Why it is not covered']);
+    for (const g of gaps) {
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(String(g.store ?? ''), 'w'));
+      tr.appendChild(cell(String(g.holds ?? ''), 'w'));
+      tr.appendChild(cell(String(g.status ?? ''), 'w'));
+      t.tbody.appendChild(tr);
+    }
+    host.appendChild(t.wrap);
+  }
+
+  /** Step 1 result: the store plan + gaps + the confirm box bound to this token. */
+  function renderPlan(data) {
+    $plan.replaceChildren();
+    const stores = Array.isArray(data.stores) ? data.stores : [];
+
+    const t = table(['Store', 'Delete', 'Note']);
+    if (!stores.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 3;
+      td.textContent = 'The server returned no store list.';
+      tr.appendChild(td);
+      t.tbody.appendChild(tr);
+    }
+    for (const s of stores) {
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(String(s.store ?? ''), 'w'));
+      tr.appendChild(s.deletable
+        ? pillCell('deleted', 'yes', 'Rows keyed to you are removed.')
+        : pillCell('export-only', 'no', 'Retained by design — NOT deleted.'));
+      tr.appendChild(cell(s.note ? String(s.note) : '—', 'w'));
+      t.tbody.appendChild(tr);
+    }
+    $plan.appendChild(t.wrap);
+
+    const gapHost = document.createElement('div');
+    $plan.appendChild(gapHost);
+    renderGaps(data.knownGaps, gapHost,
+      'These stores are NOT covered by the delete pass and will still hold data afterwards:');
+
+    const box = document.createElement('div');
+    box.className = 'confirm';
+    const warn = document.createElement('p');
+    warn.style.margin = '0 0 10px';
+    warn.style.fontSize = '13.5px';
+    warn.textContent = 'Confirming runs the delete pass immediately and cannot be undone. '
+      + 'Only the stores marked "deleted" above are affected.';
+    box.appendChild(warn);
+
+    if (data.expiresAt) {
+      const exp = document.createElement('div');
+      exp.className = 'exp';
+      const d = new Date(data.expiresAt);
+      exp.textContent = 'This confirmation expires ' +
+        (Number.isNaN(d.getTime()) ? String(data.expiresAt) : d.toLocaleString()) +
+        '. After that, request a new plan.';
+      box.appendChild(exp);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.style.marginTop = '11px';
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'destructive';
+    confirmBtn.textContent = 'Delete my data now';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    actions.appendChild(confirmBtn);
+    actions.appendChild(cancelBtn);
+    box.appendChild(actions);
+    const msg = document.createElement('div');
+    msg.className = 'msg';
+    box.appendChild(msg);
+    $plan.appendChild(box);
+
+    cancelBtn.addEventListener('click', () => {
+      $plan.replaceChildren();
+      setMsg($requestMsg, 'Cancelled — nothing was deleted. The confirmation token was discarded.');
+    });
+
+    confirmBtn.addEventListener('click', async () => {
+      if (!window.confirm('Delete your data now? Only the stores marked "deleted" are affected. This cannot be undone.')) return;
+      confirmBtn.disabled = true;
+      cancelBtn.disabled = true;
+      setMsg(msg, 'Deleting…');
+      try {
+        const res = await fetch('/api/me/delete-confirm', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: data.token }),
+        });
+        const body = await readJson(res);
+        if (!res.ok) {
+          setMsg(msg, explainConfirmFailure(res.status, body), 'bad');
+          confirmBtn.disabled = false;
+          cancelBtn.disabled = false;
+          return;
+        }
+        setMsg(msg, 'Delete pass executed.', 'ok');
+        renderOutcome(body);
+        $plan.replaceChildren();
+        setMsg($requestMsg, 'Delete completed — see the result below.', 'ok');
+      } catch (err) {
+        setMsg(msg, 'Delete failed — ' + (err && err.message ? err.message : String(err)), 'bad');
+        confirmBtn.disabled = false;
+        cancelBtn.disabled = false;
+      }
+    });
+  }
+
+  /** Every distinct failure the confirm route can answer with, named. */
+  function explainConfirmFailure(status, body) {
+    const detail = body && (body.message || body.error) ? ' ' + String(body.message || body.error) : '';
+    if (status === 400) return 'Nothing deleted — the confirmation token was missing from the request.' + detail;
+    if (status === 401) return 'Nothing deleted — you are not signed in.';
+    if (status === 403) return 'Nothing deleted — the token was rejected (expired, tampered with, or issued for another account), or this account is on the operator allowlist.' + detail;
+    if (status === 500) return 'The delete pass errored server-side; some stores may have been processed before it failed. Check the server log, then request a new plan to see what remains.' + detail;
+    return 'Nothing deleted — HTTP ' + status + '.' + detail;
+  }
+
+  /** Step 2 result: per-store outcomes, the audit-row flag, and the gaps again. */
+  function renderOutcome(body) {
+    $outcomeSection.hidden = false;
+    const outcomes = Array.isArray(body && body.outcomes) ? body.outcomes : [];
+    const deleted = outcomes.filter((o) => o.action === 'deleted').length;
+    const skipped = outcomes.filter((o) => o.action === 'skipped').length;
+    const failed = outcomes.filter((o) => o.action === 'failed').length;
+
+    const audit = body && body.auditRecorded === true;
+    setMsg($outcomeMsg,
+      'Executed ' + (body && body.executedAt ? new Date(body.executedAt).toLocaleString() : 'just now')
+      + ' — ' + deleted + ' store(s) deleted, ' + skipped + ' retained/export-only, ' + failed + ' failed. '
+      + (audit
+        ? 'A retained audit row was written for this deletion.'
+        : 'WARNING: the retained audit row could NOT be written, so there is no durable record of this deletion.'),
+      failed > 0 || !audit ? 'bad' : 'ok');
+
+    $outcomeTable.replaceChildren();
+    const t = table(['Store', 'Outcome', 'Rows', 'Detail']);
+    for (const o of outcomes) {
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(String(o.store ?? ''), 'w'));
+      const action = String(o.action ?? '');
+      tr.appendChild(pillCell(action || 'unknown',
+        action === 'deleted' ? 'yes' : action === 'failed' ? 'fail' : 'no'));
+      tr.appendChild(cell(Number.isFinite(Number(o.deleted)) ? String(o.deleted) : '—'));
+      tr.appendChild(cell(o.error ? String(o.error) : o.reason ? String(o.reason) : '—', 'w'));
+      t.tbody.appendChild(tr);
+    }
+    $outcomeTable.appendChild(t.wrap);
+
+    renderGaps(body && body.knownGaps, $outcomeGaps,
+      'Still held after this deletion (not covered by any exporter):');
+  }
+
+  $requestBtn.addEventListener('click', async () => {
+    $requestBtn.disabled = true;
+    $plan.replaceChildren();
+    setMsg($requestMsg, 'Asking the server what would be deleted…');
+    try {
+      const res = await fetch('/api/me/delete-request', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const body = await readJson(res);
+      if (res.status === 403) {
+        setMsg($requestMsg, 'Self-service deletion is refused for this account. '
+          + ((body && body.message) || 'Operator accounts cannot be deleted this way — deleting the operator would orphan the deployment.'), 'bad');
+        return;
+      }
+      if (res.status === 503) {
+        setMsg($requestMsg, 'Deletion is unavailable on this deployment. '
+          + ((body && body.message) || 'No signing secret is configured, so a confirmation token cannot be issued (fail-closed).'), 'bad');
+        return;
+      }
+      if (res.status === 401) { setMsg($requestMsg, 'You are not signed in.', 'bad'); return; }
+      if (!res.ok || !body || !body.token) {
+        setMsg($requestMsg, 'Could not build a delete plan — ' + ((body && body.error) || 'HTTP ' + res.status), 'bad');
+        return;
+      }
+      setMsg($requestMsg, 'Nothing has been deleted yet. Review the plan, then confirm below.', 'warn');
+      renderPlan(body);
+    } catch (err) {
+      setMsg($requestMsg, 'Could not build a delete plan — ' + (err && err.message ? err.message : String(err)), 'bad');
+    } finally {
+      $requestBtn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
