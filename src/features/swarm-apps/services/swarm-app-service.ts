@@ -1118,7 +1118,15 @@ export class SwarmAppService {
             bot.capabilities ?? [],
             selectorSeed.selectorDescriptor,
             baseRoutingKeywords,
-            JSON.stringify({ role: bot.role ?? '', manifestApp: manifest.name, persona: bot.persona ?? '' }),
+            JSON.stringify({
+              role: bot.role ?? '',
+              manifestApp: manifest.name,
+              persona: bot.persona ?? '',
+              // Read back by Jarvis's loadEffectiveRoutes to decide delegate-vs-handoff. Only
+              // written when declared, so `metadata || EXCLUDED.metadata` cannot clobber an
+              // operator's stored value with an empty one on every manifest reload.
+              ...(bot.jarvisMode ? { jarvisMode: bot.jarvisMode } : {}),
+            }),
             JSON.stringify({
               role: bot.role ?? '',
               systemPrompt: bot.persona ?? '',

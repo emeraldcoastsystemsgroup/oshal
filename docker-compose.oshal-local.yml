@@ -58,7 +58,11 @@ x-bot-env: &bot-env
   PORT: 5000
   LOG_LEVEL: info
   SWARM_MODE: container
-  SWARM_REGISTRY: local
+  # local | kernel | full. `kernel` = Tier-0 baselines + the ten kernel manifests' bots ONLY —
+  # the right setting for a customer box running core plus their own app, which should not
+  # inherit the app-bot catalog (a lean install otherwise seeds ~50 identities it never runs).
+  # Installed packages still register their own bots, so an app is never scoped out of its swarm.
+  SWARM_REGISTRY: ${SWARM_REGISTRY:-local}
   # Default: worker bots run as first-class swarm participants (bot-node).
   # Each bot consumes its own Redis envelopes and executes via any-bot providers.
   # The API/PM container overrides this to 'swarm' (orchestration only).

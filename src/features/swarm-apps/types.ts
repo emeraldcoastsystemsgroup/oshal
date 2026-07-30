@@ -105,6 +105,17 @@ export interface SwarmAppBotDeclaration {
   capabilities?: string[];
   selectorDescriptor?: string;
   routingKeywords?: string[];
+  /** How Jarvis should REACH this bot once it has selected it.
+   *
+   *  - `handoff` (default) — Jarvis deep-links the user to the app's own surface. Correct for a
+   *    data app whose surface must build context before it can answer.
+   *  - `delegate` — Jarvis calls the bot and synthesizes its reply inline, so the user gets an
+   *    answer in the chat instead of a link.
+   *
+   *  Before this existed every dynamically discovered app was hardcoded to `handoff`, so an
+   *  installed app could be correctly selected and still never answer a question. Omit to keep
+   *  the historical behaviour. */
+  jarvisMode?: 'delegate' | 'handoff';
   /** ADR-087 / ADR-085 D3: which CALLER ROLES may discover and call this bot —
    *  `operator` | `swarm` | `jarvis`.
    *
