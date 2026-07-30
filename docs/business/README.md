@@ -12,6 +12,12 @@ Positioning, go-to-market, and pitch material. The engineering-facing "why OSHAL
   agent cluster per step) were refuted and retired; documents what's real in our own code (the
   self-healing red/blue loop) so nobody re-confuses it in either direction. If the site and this file
   disagree, this file wins.
+- [native-kernel-publication.md](./native-kernel-publication.md) — publication-ready write-up of the
+  "should we rewrite it in a compiled language?" question. **Posture: measured, one machine, one
+  subsystem** — the control plane is I/O-bound so compiling it buys ~nothing, while one 900-line
+  numeric layer gave 5-7x bit-exact. Stated limits are on the page, not in footnotes. Engineering
+  detail: [../architecture/native-compiled-kernel.md](../architecture/native-compiled-kernel.md);
+  deck: [../assets/oshal/native-kernel-deck.pptx](../assets/oshal/native-kernel-deck.pptx).
 - [oshal-capabilities-brief.md](./oshal-capabilities-brief.md) — capabilities brief.
 - [oshal-as-is-to-be-delivery.md](./oshal-as-is-to-be-delivery.md) — as-is / to-be state and
   delivery plan.

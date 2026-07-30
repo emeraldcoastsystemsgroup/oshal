@@ -14,6 +14,12 @@ Use this folder when someone asks "what is OSHAL?", "what did we prove?", or "ho
   - live demo talk track with commands, expected outcomes, and recovery notes
 - [sales-deck-outline.md](./sales-deck-outline.md)
   - slide-by-slide narrative for a short OSHAL pitch deck
+- [native-kernel-deck.pptx](./native-kernel-deck.pptx)
+  - "Should we rewrite it in a compiled language?" — 16 slides on the profile-first method, the 5-7x
+    bit-exact result, and the limits. **GENERATED, do not hand-edit:**
+    `npx tsx scripts/build-native-kernel-deck.ts [--theme <id>]`. Every figure lives in that script's
+    `MEASURED` block with a pointer at the benchmark that produced it — editing the deck directly is
+    how a generator drifts from the docs it is supposed to mirror.
 - [messaging-kit.md](./messaging-kit.md)
   - positioning, taglines, objection handling, and proof language
 - [operator-benchmark-runbook.md](./operator-benchmark-runbook.md)

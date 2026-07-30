@@ -119,6 +119,12 @@ The guiding model is:
 
 ### Feature & Data-Plane Architecture
 
+- [native-compiled-kernel.md](./native-compiled-kernel.md)
+  - why compiling the control plane buys nothing (it is I/O-bound: 4-5ms of JS against LLM
+    dispatches of 2-120s) and why the ADR-116 indicator layer was the one worth porting — the
+    Rust→WASM kernel's boundary/bit-parity/optional-by-construction decisions, the measured 5-7x with
+    its variance caveat, and the installable-app track that needs no compiled language. Code + its
+    own docs live in [`native/`](../../native/README.md)
 - [platform-capability-flows.md](./platform-capability-flows.md)
   - code-backed Mermaid maps for ticket/DLQ lifecycle, Workflow Studio, remote nodes, connectors, A2A, diarization, security/ops, and scheduling, with explicit validation boundaries
 - [alert-triage-and-consolidation-spec.md](./alert-triage-and-consolidation-spec.md)
@@ -175,11 +181,6 @@ The guiding model is:
   - outcome-first triage framework for incoming work
 - [phase-12-last-mile-project-plan.md](./phase-12-last-mile-project-plan.md)
   - phase-12 last-mile project plan
-- [three-orphan-boundary-decisions.md](./three-orphan-boundary-decisions.md)
-  - awaiting an operator decision: `world-data`'s undeclared reach into the graph tier,
-    `google-calendar` (delete or re-pin as a kernel skill), and whether deleting `src/agent`
-    + `src/swarm` formally closes the agent/swarm code-separation plan. Evidence, per-option
-    cost/benefit, and a recommendation for each
 
 ## Recommended Reading Order
 
