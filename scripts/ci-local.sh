@@ -19,6 +19,7 @@
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | First proveout run: ephemeral ports moved 15432/16379 -> 25432/26379 - the LIVE stack's redis is published at 127.0.0.1:16379 (.env OSHAL_REDIS_PORT overrides the compose default 56380), so the CI redis collided; DS_UP now set BEFORE container starts (a partial start leaked oshal-ci-pg past on_exit); INT/TERM also trap to cleanup (bash skips EXIT traps on untrapped fatal signals).
 # 13 | maintainer@emeraldcoastsystemsgroup.com   | Hardened per the 10-finding adversarial review before first run: single-instance lock (overlap destroyed e2e datastores); timeouts on every external command (hung trivy pull = invisible zombie); secret-scan runs on a git-archive HEAD export, --network none (working-tree scan tripped on the operator's live .env; unpinned image could exfil it); e2e gate blanks all broker/trading env so dotenv cannot back-fill LIVE keys into the mock-auth test server; datastore ports bound 127.0.0.1 (were LAN-exposed 0.0.0.0); trivy scans a docker-save tarball instead of holding the docker socket; image-smoke gate restores the retired quickstart coverage (image boots + serves + ticket + swarm apps loaded); alert exec fixed (MSYS path mangling silently killed failure emails); scoped dangling-image/builder prune (disk creep threatened the live stack's VM disk).
 # 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045/ADR-090 closure: pass the store checkout to the kernel-skills gate so its new PHASE 3 (every store package DECLARES the kernel skills its compiled js imports) can actually run. The script autodetects the conventional sibling, but --head mode runs from a temp git-archive export with no sibling, so the path comes from the REAL repo (OSHAL_STORE_DIR overrides). Absent store = the script's loud PHASE 3 SKIPPED line, never a silent pass.
+# 15 | maintainer@emeraldcoastsystemsgroup.com   | gate_lint scans `src tests scripts`, not `src` alone. The 1000-code-line cap covers source, tests, and logic-bearing config, but eslint's max-lines rule was scoped to src/**/*.ts{,x} — so the three files actually over the cap (an 1850-code-line chat modal .mjs, a 1044-line RAG popup .mjs, a 1006-line Playwright spec) exited 0 under the old command. The rule now also covers src JS, tests/, and scripts/, and this gate looks there; timeout raised 600->900 for the wider tree.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -247,10 +248,15 @@ gate_worktree_strays() {
 # justified-disabled, harness second-barrel lint-exempt). The gate now FAILS on any new
 # warning so the FSD boundary + no-console discipline can't silently regress. To debug a
 # failure locally: `npx eslint src` shows the offending imports/console calls.
+# 2026-07-29: the scan covers `src tests scripts`, not `src` alone. The 1000-code-line cap applies
+# to source, tests, and logic-bearing config (CLAUDE.md), but the max-lines rule was scoped to
+# src/**/*.ts{,x}, so the three files actually over the cap — including an 1850-code-line .mjs, the
+# worst file in the repo — exited 0 under `npx eslint src`. eslint.config.mjs now applies max-lines
+# (and only max-lines) to src JS, tests/, and scripts/, and this gate has to look there to enforce it.
 gate_lint() {
   # eslint 9 flat config (eslint.config.mjs); --ext was removed in v9.
-  (cd "$GATE_SRC" && timeout 600 npx eslint src --max-warnings 0) \
-    || { log "lint: eslint reported findings (BLOCKING — drive to zero: npx eslint src)"; return 1; }
+  (cd "$GATE_SRC" && timeout 900 npx eslint src tests scripts --max-warnings 0) \
+    || { log "lint: eslint reported findings (BLOCKING — drive to zero: npx eslint src tests scripts)"; return 1; }
   return 0
 }
 

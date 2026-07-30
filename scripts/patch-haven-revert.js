@@ -1,4 +1,13 @@
-,const fs = require('fs');
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | One-off container hotfix: rewrite the compiled Haven persona chat method back onto getProvider().sendRequest() with a model override, instead of the direct OpenAI Chat Completions path
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Removed a stray leading comma that made the whole file a SyntaxError on line 1, so it could never have run. Found by widening the eslint max-lines gate to scripts/ — the previous src-only-TypeScript scope meant no gate had ever parsed this file. Added this header at the same time.
+ */
+
+const fs = require('fs');
 const p = '/app/dist/features/haven/haven-persona-service.js';
 let c = fs.readFileSync(p, 'utf8');
 

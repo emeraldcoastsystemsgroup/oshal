@@ -12,6 +12,21 @@
 //   - no-empty (allowEmptyCatch:false): no swallowed exceptions (CLAUDE.md "no silent catches").
 //   - no-console: never console.log in production code (use the Pino child logger).
 //   - max-lines: the 1000 CODE-line cap (skipComments + skipBlankLines matches the definition).
+//
+// TWO config objects, deliberately:
+//   1. The Feature-Sliced TypeScript surface (src/**/*.ts{,x}) gets all four rules.
+//   2. Everything else the cap applies to — src/**/*.{js,jsx,mjs,cjs}, tests/**, scripts/** — gets
+//      max-lines ONLY. Before 2026-07-29 the max-lines rule was scoped to src/**/*.ts{,x}, so the
+//      three files actually over the cap (a 1850-code-line chat modal, a 1044-line RAG popup, a
+//      1006-line spec) were invisible to `npx eslint src` and exited 0. CLAUDE.md applies the cap to
+//      "source, tests, and logic-bearing config", so the gate now sees all of it. The other three
+//      rules stay off for these paths on purpose: scripts/ legitimately writes to the console, and
+//      the FSD barrel rule is about src/ slice boundaries, not test or script imports. Widening
+//      those is a separate decision with its own backlog burn-down, not a side effect of the cap.
+//      gate_lint in scripts/ci-local.sh lints `src tests scripts` so this scope is enforced.
+//
+// any-bot/** stays ignored (below): battle-tested legacy JS, not Feature-Sliced, out of scope by
+// prior decision — its four 860-970 code-line files are under the cap anyway.
 
 import tseslint from 'typescript-eslint';
 
@@ -70,6 +85,44 @@ export default tseslint.config(
       }],
       'no-empty': ['warn', { allowEmptyCatch: false }],
       'no-console': 'warn',
+      'max-lines': ['warn', { max: 1000, skipComments: true, skipBlankLines: true }],
+    },
+  },
+  {
+    // The rest of the capped surface: browser/Node JavaScript under src/, the Playwright + vitest
+    // corpus, and the tooling in scripts/. max-lines ONLY — see the header note for why.
+    files: [
+      'src/**/*.js',
+      'src/**/*.jsx',
+      'src/**/*.mjs',
+      'src/**/*.cjs',
+      'tests/**/*.ts',
+      'tests/**/*.tsx',
+      'tests/**/*.js',
+      'tests/**/*.mjs',
+      'tests/**/*.cjs',
+      'scripts/**/*.ts',
+      'scripts/**/*.js',
+      'scripts/**/*.mjs',
+      'scripts/**/*.cjs',
+    ],
+    languageOptions: {
+      // The TS parser reads plain JS too, so one parser covers every extension above.
+      parser: tseslint.parser,
+      parserOptions: { ecmaVersion: 'latest', sourceType: 'module', ecmaFeatures: { jsx: true } },
+    },
+    // Same reasoning as the TypeScript block: existing `eslint-disable` comments in these trees
+    // target rules this focused gate does not enable, so they are dormant, not removable.
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    // Same defined-but-inert stubs as the TypeScript block, for the same reason: scripts/ and tests/
+    // carry `eslint-disable` comments naming @typescript-eslint/* and import/* rules, and an
+    // unresolvable rule name is a hard error ("Definition for rule not found") even when the rule
+    // itself is not enabled.
+    plugins: {
+      '@typescript-eslint': tseslint.plugin,
+      import: { rules: { 'no-cycle': { create: () => ({}) }, first: { create: () => ({}) } } },
+    },
+    rules: {
       'max-lines': ['warn', { max: 1000, skipComments: true, skipBlankLines: true }],
     },
   },
