@@ -52,7 +52,7 @@ function Fail($m){
   } catch { Note "alert email also failed: $($_.Exception.Message)" }
   exit 1
 }
-function RestartApi(){ Note "api hung -> restarting oshal-local-api"; docker restart oshal-local-api | Out-Null; for($i=0;$i -lt 30;$i++){ try{ if((Invoke-WebRequest 'http://localhost:35457/api/health' -TimeoutSec 5 -UseBasicParsing).StatusCode -eq 200){ Start-Sleep 28; return } }catch{}; Start-Sleep 4 } }
+function RestartApi(){ Note "api hung -> restarting oshal-local-api"; docker restart oshal-local-api | Out-Null; for($i=0;$i -lt 30;$i++){ try{ if((Invoke-WebRequest 'http://127.0.0.1:35457/api/health' -TimeoutSec 5 -UseBasicParsing).StatusCode -eq 200){ Start-Sleep 28; return } }catch{}; Start-Sleep 4 } }
 # Run a codex-remote-node subcommand from the repo cwd (so .env is found). Simple retry on a
 # transient reset — a short wait, NOT an api restart (restarting knocks the node out of the
 # in-memory registry and loops). If the api is genuinely down, the caller's health guard restarts it.
@@ -72,7 +72,21 @@ function NodePush($local,$remote){ RN @('push', "--client=$Node", "--local=$loca
 function NodePull($remote,$local){ RN @('pull', "--client=$Node", "--timeoutMs=600000", "--remote=$remote", "--local=$local") | Out-Null }
 
 Set-Location $REPO   # so `node scripts\codex-remote-node.mjs` finds .env (REMOTE_CLIENT_SHARED_SECRET)
-try { if ((Invoke-WebRequest 'http://localhost:35457/api/health' -TimeoutSec 6 -UseBasicParsing).StatusCode -ne 200) { RestartApi } } catch { RestartApi }
+# 127.0.0.1, never 'localhost': a stale wslrelay can squat the IPv6 loopback [::1] on the published
+# port, so 'localhost' fails while the api is perfectly healthy on IPv4. That false signal is what
+# drove a night of pointless api restarts (2026-07-28), each one killing an in-flight node transfer.
+#
+# BE PATIENT BEFORE RESTARTING. Restarting the api is not free: it drops the render node from the
+# in-memory registry, which then fails preflight. And the api's own boot fires a burst of parallel
+# DB work that can make /api/health answer slower than a 6s probe — so an impatient check restarts
+# a booting api, causing another slow boot, and so on (observed 2026-07-29: three restarts in
+# twenty minutes, all self-inflicted). Probe generously, and only restart if it is really wedged.
+$apiOk = $false
+for ($h = 0; $h -lt 6; $h++) {
+  try { if ((Invoke-WebRequest 'http://127.0.0.1:35457/api/health' -TimeoutSec 15 -UseBasicParsing).StatusCode -eq 200) { $apiOk = $true; break } } catch {}
+  Start-Sleep -Seconds 10
+}
+if (-not $apiOk) { RestartApi }
 Note "=== daily recap $Date on node $Node ($NodeOut) ==="
 
 # 1) PREFLIGHT — prune stray Chrome on the node, then OPEN a Vids tab (a prior build closes its
@@ -94,8 +108,19 @@ try {
   'VIDS_SIGNED_IN='+[bool]($v|Where-Object{$_.type -eq 'page' -and $_.url -match 'docs.google.com/videos' -and $_.url -notmatch 'accounts.google.com|signin|ServiceLogin'})
 } catch { 'CHROME_9222_DOWN' }
 '@ | Set-Content $pf -Encoding ascii
-$pfOut = NodeShell $pf 45000
+# A node we cannot REACH is not a node that is signed out. Treating the two the same emailed the
+# operator "go sign in on the render box" when Chrome was perfectly healthy and the api had simply
+# been restarted a moment earlier, dropping the node from its in-memory registry (2026-07-29). Only
+# a definitive answer FROM the node decides; anything else is transport and gets waited out.
+$pfOut = $null
+for ($pfTry = 0; $pfTry -lt 6; $pfTry++) {
+  $pfOut = NodeShell $pf 45000
+  if ($pfOut -match 'VIDS_SIGNED_IN=|CHROME_9222_DOWN') { break }
+  Note "preflight: no answer from the node yet (attempt $($pfTry + 1)/6) - the api may still be re-registering it"
+  Start-Sleep -Seconds 20
+}
 if ($pfOut -match 'CHROME_PRUNED=(\d+)') { Note ("preflight: pruned " + $Matches[1] + " stray Chrome process(es) on the node") }
+if ($pfOut -notmatch 'VIDS_SIGNED_IN=|CHROME_9222_DOWN') { Fail "could not reach the render node $Node after 6 preflight attempts (transport, not the node's browser - check the api and the node's OSHAL Node app)" }
 if ($pfOut -notmatch 'VIDS_SIGNED_IN=True') { Fail "node not ready (Chrome not up / not signed into Vids on :9222). Sign in on $Node, then re-run." }
 
 # 2) DATA (in the api container)
@@ -138,6 +163,17 @@ if (-not $SkipData) {
   # too so the HOST copy can never go stale (a frozen host copy mislabeled the 07-06 email June 30).
   docker cp "oshal-local-api:/app/packages/oshal-vids-operator/out/recap-data.json" "$OUT\recap-data.json" 2>&1 | Out-Null
   if (-not (Test-Path "$OUT\deck-data.json")) { Fail "deck-data.json not produced" }
+  # ASSERT THE ARTIFACT, not the inputs. A generator that runs without the date argument silently
+  # reports YESTERDAY, and one that runs without OSHAL_USER_SUB silently reports a null P/L against
+  # Alpaca's live equity instead of our own close store. Both look like success and both did ship
+  # (2026-07-29: a hand relaunch from a shell lacking the user-level env var built a July-28 deck
+  # with no P/L, and the build agent was already running on it before anyone noticed). Whatever the
+  # cause, the day's own deck must name the day and carry a real number, or we do not build a video.
+  $dd = Get-Content "$OUT\deck-data.json" -Raw | ConvertFrom-Json
+  $wantLabel = ([datetime]$Date).ToString('MMMM d, yyyy')
+  if ($dd.date -ne $wantLabel) { Fail "deck-data.json is for '$($dd.date)' but this report is $wantLabel - the generator ran without its date argument; refusing to build a mislabeled report" }
+  if ($null -eq $dd.results.pl) { Fail "deck-data.json has a NULL day P/L (equity store returned nothing - OSHAL_USER_SUB missing or unset for the container); refusing to ship a report with no headline number" }
+  Note ("numbers verified: " + $dd.date + "  equity " + $dd.results.equity + "  day P/L " + $dd.results.pl + " (" + $dd.results.pct + "%)")
   python "$REPO\packages\oshal-vids-operator\make-deck-detailed.py" 2>&1 | Out-Null
   if (-not (Test-Path "$OUT\deck.pptx")) { Fail "deck.pptx not built" }
 }
