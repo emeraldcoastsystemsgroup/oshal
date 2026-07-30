@@ -117,3 +117,34 @@ content, not code.
 **Not addressed here.** Publishing (nothing is posted anywhere; episodes land in the content folder
 and Drive), and the second half of the tuning loop — nothing yet reads a delivered episode back and
 judges whether the joke landed.
+
+## What the first live run changed (2026-07-30)
+
+The pump was deployed the same night and produced Stupid Superheroes "The Big One" end to end with no
+human in any step. Getting there corrected three things in this ADR's own assumptions, and they are
+worth recording because each was invisible until something actually asked the machine to run.
+
+**"Resumable" was only half true.** The conductor *can* resume; nothing was asking it to. An episode
+interrupted between stages parked indefinitely — the daily cap correctly refused to start a
+replacement, and the render reconciler only looks at episodes already `rendering`. Two api recreations
+proved it within an hour. A cycle now advances the oldest open episode before considering new work,
+which also means the pump has exactly one episode in flight across all shows, not one per series
+(PR #37).
+
+**The gate belonged on the dispatch, not just on the pump.** `advanceVideoSeries` runs from a
+20-second reconciler sweep that nobody watches, and its render branch checked only "is one already in
+flight for THIS series". Every render path now checks availability first — the pump, the reconciler,
+and an operator clicking render by hand (PR #28).
+
+**Free memory was the wrong pressure signal.** The gate originally refused below 512MB available. The
+render node sits at ~450MB available and 53% commit charge while perfectly healthy, so that floor
+would have idled the pump forever. Commit percent is the signal that actually caught the 2026-07-28
+crawl (99% of a 31.8GB limit); available-MB is now a much lower secondary floor.
+
+And one thing outside the pump entirely: **Google redesigned Vids between the last hand-run render and
+this one**, so the renderer was two UI generations behind and every render died on a 30-second click
+timeout. That is not a pump concern, but it is the reason "the engine stopped producing" had two
+independent causes rather than one — nothing was asking, *and* the asking would not have worked. The
+UI changes and the recon recipe live in
+[kids-video-pipeline-lessons.md § F](../creative-studio/kids-video-pipeline-lessons.md); the fixes are
+PRs #46 and #47.

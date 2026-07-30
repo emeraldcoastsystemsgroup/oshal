@@ -5,6 +5,11 @@ This is the swarm-wired version of the hand-run process in
 [kids-video-pipeline-lessons.md](./kids-video-pipeline-lessons.md). Read that first — the
 rules it describes are what this pipeline enforces in code.
 
+A user describing a series is one way to start this pipeline. The other is the
+[joke-shorts pump](./joke-shorts-pump.md) (ADR-120), which drives the same conductor on a schedule —
+rotating enrolled shows, refusing to touch the render node while anything else owns it, and resuming
+its own interrupted work. Nothing below changes when the pump is the caller.
+
 ## The shape
 
 ```

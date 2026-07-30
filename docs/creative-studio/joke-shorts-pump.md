@@ -7,6 +7,10 @@ reasoning behind the safety model: [ADR-120](../adr/120-joke-shorts-pump.md).
 This is the operator's page: how to switch it on, what each switch means, and how to read it when it
 produces nothing.
 
+**Live since 2026-07-30.** All six shows are enrolled with standing authorization, `Max/day = 1` each,
+on a 20-minute cycle. First episode produced end to end with no human in it: Stupid Superheroes,
+["The Big One"](https://drive.google.com/file/d/1lftsNyRc5fqnNl7chrfH0IZTdLjehU7R/view).
+
 ## The shape
 
 ```
@@ -24,6 +28,12 @@ every VIDEO_PUMP_INTERVAL_MS (default 20 min)
 ```
 
 One episode per cycle. Never two chains against the one signed-in Chrome.
+
+**It finishes what it started, first.** Before a cycle considers starting anything new it advances the
+oldest episode already open, by one step. That is what makes a restart, a deploy, or a provider blip
+cost one cycle instead of the episode — and it is not theoretical: two api recreations interrupted the
+first episode's storyboard stage, and the pump picked it back up both times unattended. It also means
+the whole pump, across every show, only ever has one episode in flight.
 
 ## Switching it on
 
@@ -102,6 +112,43 @@ talking. Add the file, re-import in the panel, tick it on.
 
 Shipped: Breakfast Crew, Cardboard Cosmo Crew, Neon Noodle Jam, Detective Dot, Bubblebop Reef, and
 Stupid Superheroes.
+
+## When a render fails and the browser looks fine
+
+A scene failure that reads `locator.click: Timeout 30000ms exceeded`, or
+`render timed out (no NEW Generated video src appeared)`, is usually **Google having moved the Vids
+UI** — not a hung browser and not the node. It happened on 2026-07-30 and broke every render.
+
+The renderer saves `scene-fail-<timestamp>.jpg` in the node's stage dir on every scene failure.
+**Read that screenshot before reading any code.** The full recon recipe, and the three changes the
+Omni redesign made (a modal start dialog that blocks the rail, Create/Edit/Animate tabs replacing the
+Mode combobox, and a contenteditable prompt that `fill()` cannot write to) are in
+[kids-video-pipeline-lessons.md § F](./kids-video-pipeline-lessons.md).
+
+## Deploying a change to the pump
+
+The pump is kernel code (`src/**`), which is **baked into the image** — the api runs
+`node dist/app/server.js`, so nothing takes effect until a deploy runs. On the operator's box the
+image build needs the app tier **stopped**, or it exhausts the Docker engine and takes the whole stack
+down with it (16GB host, WSL capped at 7GB; with 34 containers up there is well under 1GB available):
+
+```bash
+# stop every app container — infra (db, redis, chroma, arango, tsdb) stays up
+docker ps --filter ancestor=oshal-bot:latest --format '{{.Names}}' | xargs docker stop
+git archive HEAD | docker build --label "oshal.git.commit=$(git rev-parse HEAD)" \
+  -t oshal-bot:latest -f Dockerfile.oshal -
+docker start oshal-local-chromadb oshal-local-arangodb oshal-local-tsdb
+bash scripts/oshal-deploy.sh --skip-build     # verify + recreate + parity + health gates
+```
+
+Two things will fight you while that runs: the **stack watchdog** (`OSHAL Stack Watchdog` schtask,
+every 5 minutes) sees "api is DOWN" during the api-recreate step and runs `oshal-up.sh` on top of it,
+and any other lane recreating the api **resets the pump's interval timer** — so a 20-minute cycle can
+go a long time without firing. Drop `VIDEO_PUMP_INTERVAL_MS` temporarily if you are waiting on a cycle.
+
+The **store package** (shows, routes, panel) is separate: `node scripts/oshal-app.js build
+../oshal-applications/video`, then `docker cp` it into
+`oshal-local-api:/app/workspace-shared/deployed-apps/video/` and restart the api.
 
 ## One thing that will bite you on a fresh deployment
 
