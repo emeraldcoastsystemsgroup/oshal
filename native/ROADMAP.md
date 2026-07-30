@@ -16,6 +16,7 @@ unless it is.
 | Parity guard, 0 ULP, 2 config sets | ✅ `tests/unit/native-indicator-parity.spec.ts`, 88 tests |
 | Profile / compare / parity benchmarks | ✅ `bench/` |
 | ABI drift detection (version + counts) | ✅ loader refuses a stale artifact |
+| Standalone CLI + single-executable build | ✅ `native/cli/` + `build-exe.js` → `oshal-kernel.exe` |
 
 ## Next — the obvious follow-up
 
@@ -46,12 +47,45 @@ The original question was two questions, and the packaging half is the one with 
 value. **Node 24.11 already ships what it needs**, which changes the answer from what it would have
 been a year ago:
 
-**4. Single executable via Node SEA.**
-Node 22+ has Single Executable Applications built into the runtime — no `pkg`, no `nexe`.
-`scripts/build-executable.js` already exists in this repo and uses the older esbuild → `pkg` chain.
-*Done when:* one `oshal.exe` boots the controller on a box with no Node installed, the SEA path
-replaces the `pkg` dependency in `scripts/build-executable.js`, and a smoke test asserts the binary
-serves `/api/health`.
+**4. Single executable via Node SEA — MECHANISM PROVEN, controller not done.**
+
+The SEA pipeline is built and works: `node native/build-exe.js` produces `oshal-kernel.exe`
+(85.9 MB — the Node runtime dominates), and it is **genuinely self-contained**. Verified by copying
+the single file into an empty directory with no `node_modules`, no `.wasm` and no repo, and running
+it there:
+
+```
+kernel origin  : embedded (SEA asset)
+packaged       : yes — single executable
+bit-exact series : 40/40
+```
+
+The compiled kernel travels *inside* the binary as an SEA asset (`node:sea` `getAsset`), so there is
+no sidecar file. `oshal-kernel where | bench | parity` all work with nothing beside them.
+
+**What this proves and what it does not.** It proves bundle → blob → inject works in this repo on a
+target with zero native dependencies and zero external services. It does **not** prove the controller
+can be packaged, and the remaining work there is not the SEA step:
+
+- `pg-native`, `better-sqlite3`, `canvas` and `sharp` are compiled `.node` binaries. A packer can
+  carry the bytes, but the OS loader cannot `dlopen` them from a virtual filesystem — they extract at
+  runtime or fail.
+- **The controller still needs Postgres and Redis running.** That is the actual barrier to
+  "installable", and it is item 5's problem, not item 4's. A perfect single binary whose install
+  instructions begin "first, set up Docker" has not solved anything.
+
+Note for anyone reading the older script: `scripts/build-executable.js` (esbuild → `pkg`) is *not*
+non-self-contained because of its `--external` flags — `pkg` re-resolves pure-JS modules into its own
+snapshot. It needs files beside it because its own closing output says so (`dist/pages/`,
+`dist/config-seed/`, `dist/ai-lab/`), because of the four native modules above, and because of
+Postgres/Redis.
+
+*Done when:* one `oshal.exe` boots the controller on a box with no Node installed, and a smoke test
+asserts the binary serves `/api/health`. **Blocked on item 5**, realistically.
+
+⚠ On Windows without `signtool` (Windows SDK, not bundled with Node) postject warns
+"The signature seems corrupted!" — expected, not a failure; the copied node binary keeps a
+now-invalid Authenticode signature. Strip or re-sign before distributing to anyone else.
 
 **5. `node:sqlite` for single-user installs.**
 Also built into Node 22+. Postgres in Docker is the actual install friction, not the language. A

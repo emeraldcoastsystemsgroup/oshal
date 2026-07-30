@@ -67,7 +67,9 @@ native/
 │   ├── compare.ts           TS vs WASM, with the run-to-run spread
 │   ├── parity.ts            per-series ULP table with first-divergence index
 │   └── bars.ts              seeded synthetic bars, shared by bench and guard
+├── cli/kernel-cli.ts        standalone CLI: where | bench | parity
 ├── build.js                 cargo → native/dist/oshal_kernel.wasm
+├── build-exe.js             → oshal-kernel.exe, a real single file (Node SEA)
 ├── ARCHITECTURE.md          why WASM, why this boundary, why bit-exact
 ├── BENCHMARKS.md            the measured numbers
 └── ROADMAP.md               the installable-app track (not built)
@@ -101,6 +103,33 @@ npx tsx native/bench/compare.ts               # TS vs WASM
 
 **No toolchain? Nothing breaks.** `build.js` exits 0 with an explanation, the loader returns `null`,
 and the parity spec asserts the fallback contract instead of skipping.
+
+## The standalone executable
+
+```bash
+node native/build-exe.js          # → native/dist/oshal-kernel.exe  (85.9 MB)
+
+./native/dist/oshal-kernel.exe where          # build provenance
+./native/dist/oshal-kernel.exe bench 100000   # TS vs kernel
+./native/dist/oshal-kernel.exe parity 20000   # 40/40 bit-exact
+```
+
+One file, and **genuinely one file** — verified by copying it alone into an empty directory with no
+`node_modules`, no `.wasm` and no repo:
+
+```
+kernel origin  : embedded (SEA asset)
+packaged       : yes — single executable
+bit-exact series : 40/40
+```
+
+The compiled kernel rides *inside* the binary as a `node:sea` asset, so there is no sidecar. Built
+with Node's built-in SEA — no `pkg`, no `nexe`, no prebuilt-binary download. 86 MB is the Node
+runtime; the kernel is 40 KB of it.
+
+This proves the packaging mechanism, **not** that the controller can be packaged — see
+[ROADMAP item 4](ROADMAP.md) for why that is blocked on replacing Postgres/Redis rather than on
+anything to do with compiling.
 
 ## Using it
 

@@ -24,8 +24,7 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   ABI_VERSION, PARAM_COUNT, SERIES_COUNT, SERIES_NAMES,
   packParams, type IndicatorConfig,
@@ -59,12 +58,16 @@ interface KernelExports {
   kernel_abi_version(): number;
 }
 
-/** Default artifact location, resolved relative to this file so cwd does not matter. */
+/**
+ * Default artifact location, resolved relative to THIS FILE so the caller's cwd does not matter.
+ *
+ * `__dirname` rather than `import.meta.url`: the package is CommonJS (`tsconfig` module `Node16`, no
+ * `"type": "module"`), and the single-executable build bundles this to CJS — where `import.meta` is
+ * empty and esbuild warns about it. An `import.meta` fallback here would be a dead branch that emits
+ * a build warning on every packaging run.
+ */
 function defaultWasmPath(): string {
-  const here = typeof __dirname === 'string'
-    ? __dirname
-    : dirname(fileURLToPath(import.meta.url));
-  return join(here, '..', 'dist', 'oshal_kernel.wasm');
+  return join(__dirname, '..', 'dist', 'oshal_kernel.wasm');
 }
 
 /**
@@ -76,8 +79,23 @@ function defaultWasmPath(): string {
  */
 export function loadKernel(wasmPath = defaultWasmPath()): Kernel | null {
   if (!existsSync(wasmPath)) return null;
+  return loadKernelFromBytes(readFileSync(wasmPath), wasmPath);
+}
 
-  const bytes = readFileSync(wasmPath);
+/**
+ * @description Instantiate the kernel from module bytes already in memory, rather than from a path.
+ *
+ * This exists for the single-executable build: a packaged binary carries the `.wasm` as an embedded
+ * SEA asset (`node:sea` `getAsset`), where there is no file to stat. Same ABI checks, same contract.
+ * @param bytes - The compiled WebAssembly module.
+ * @param origin - Label used in error messages to say where the bytes came from.
+ * @returns A {@link Kernel}. Throws on an ABI mismatch, exactly as {@link loadKernel} does.
+ */
+export function loadKernelFromBytes(
+  bytes: Uint8Array | ArrayBuffer,
+  origin = '<in-memory>',
+): Kernel {
+  const wasmPath = origin;
   const module = new WebAssembly.Module(bytes);
   const instance = new WebAssembly.Instance(module, {});
   const ex = instance.exports as unknown as KernelExports;
