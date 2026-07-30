@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Video Series dispatch: render episodes on the remote Vids node ONE AT A TIME, then assemble. Serialized because the node drives a single Chrome; resumable because a re-render is real money.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Node package dir + exe resolve through vids-node-availability (the old default was a controller-side path that has never existed on the node), and the storyboarded-render dispatch now checks the node is FREE before enqueueing — the reconciler sweeps every 20s and would otherwise dispatch straight into the nightly recap's window.
  */
 /**
  * @description Video Series — remote-node render dispatch.
@@ -36,7 +37,7 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 import { buildRenderPlan, SCREENPLAY_WRITER_AGENT_ID, type CastMember, type Scene } from '@/app/series-pipeline';
-import { nodePkgDir, nodeExe } from '@/app/vids-node-availability';
+import { nodePkgDir, nodeExe, checkVidsNodeAvailability } from '@/app/vids-node-availability';
 
 const logger = createChildLogger({ module: 'series-dispatch' });
 
@@ -173,6 +174,10 @@ export async function dispatchEpisode(
   if (!episode.scriptMd) {
     return { ok: false, episodeId: episode.episodeId, error: 'episode has no script — the screenplay-writer stage has not run' };
   }
+  // Same gate as the storyboarded path: nothing reaches the node while something else owns it.
+  const free = await checkVidsNodeAvailability(pool, { skipProbe: true });
+  if (!free.available) return { ok: false, episodeId: episode.episodeId, error: `the render node is not free: ${free.reason}` };
+
   const worker = findVidsWorker();
   if (!worker) {
     return {
@@ -292,6 +297,15 @@ export async function dispatchStoryboardedEpisode(
   if (!scenes.length || scenes.length !== frameIds.length) {
     return { ok: false, episodeId, error: `scene/frame mismatch: ${scenes.length} scenes, ${frameIds.length} frames` };
   }
+
+  // The node gate belongs HERE, not only in the pump. Everything that renders comes through this
+  // function — the pump, the reconciler advancing a series on its own timer, and an operator
+  // clicking render — and the reconciler is the one nobody is watching: it sweeps every 20s and will
+  // happily dispatch a storyboarded episode into the middle of the nightly recap. `skipProbe` keeps
+  // this instant (registry + database + the clock, no round trip to the node) so a 20s sweep never
+  // blocks on it; the pump's own full probe is what additionally catches a recap running LATE.
+  const free = await checkVidsNodeAvailability(pool, { skipProbe: true });
+  if (!free.available) return { ok: false, episodeId, error: `the render node is not free: ${free.reason}` };
 
   const worker = findShellWorker();
   if (!worker) return { ok: false, episodeId, error: 'No render node is connected (no worker advertising shell.exec).' };
