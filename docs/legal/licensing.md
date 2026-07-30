@@ -28,6 +28,16 @@ paid commercial license is available.
 | Offer it as a service | Provided you honor section 13 (below). |
 | Fork it permanently | Rename the fork — the name is not licensed. See [NOTICE](../../NOTICE). |
 
+**Your license rights are separate from participation in this repository.**
+Issues, comments, and pull requests here are limited to collaborators, and
+contribution is by invitation (see
+[CONTRIBUTING.md](../../CONTRIBUTING.md#who-can-do-what)). That restriction is
+about the maintainer's inbox, not about your license: every right in the table
+above — including cloning, modifying, redistributing, and publishing your own
+fork wherever you like — is fully intact and is not conditioned on being allowed
+to post here. The AGPL does not require a licensor to accept contributions, and
+declining them takes nothing away from you.
+
 ## What the AGPL requires of you
 
 These obligations attach when you **convey** the software or **offer it over a

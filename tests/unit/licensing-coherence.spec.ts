@@ -48,6 +48,7 @@ const LICENSING_SURFACE = [
   'NOTICE',
   'CLA.md',
   'docs/legal/licensing.md',
+  'docs/legal/copyright-registration.md',
   'docs/legal/README.md',
 ];
 
@@ -169,6 +170,45 @@ describe('the license is not quietly narrowed', () => {
   });
 });
 
+describe('the access model is documented as it is actually enforced', () => {
+  const contributing = read('CONTRIBUTING.md');
+
+  it('states that reading is public but contribution is by invitation', () => {
+    expect(contributing).toMatch(/Contribution is by invitation/i);
+    expect(contributing).toMatch(/\*\*Collaborators only\*\*/);
+  });
+
+  it('no longer claims anyone may open an issue or a PR', () => {
+    // The claim was true before the interaction limit was applied. It is now false,
+    // and a false permission claim on the public front door is the drift this guards.
+    expect(contributing).not.toMatch(/Open an issue or PR \(from a fork\) \| Anyone/);
+    expect(contributing).not.toMatch(/anyone can \*\*read, clone, fork, open issues/i);
+  });
+
+  it('requires an approving review from someone other than the author', () => {
+    expect(contributing).toMatch(/approving review from someone other than the author/i);
+    expect(contributing).toMatch(/does not permit self-approval/i);
+  });
+
+  it('is honest that a public repo cannot disable forking, and that it does not matter', () => {
+    expect(contributing).toMatch(/public repository is always forkable/i);
+  });
+
+  it('records that the interaction limit expires and how to renew it', () => {
+    expect(contributing).toMatch(/maximum term of six months/i);
+    expect(contributing).toMatch(/expiry=six_months/);
+  });
+
+  it('locking the repo down never implies the license itself is narrowed', () => {
+    // The failure mode: access-control prose drifts into sounding like a use
+    // restriction, and a reader concludes the AGPL grants were withdrawn.
+    expect(contributing).toMatch(/AGPL guarantees it and nothing in this section narrows it/i);
+    expect(read('docs/legal/licensing.md')).toMatch(
+      /license rights are separate from participation/i,
+    );
+  });
+});
+
 describe('the licensing docs are reachable and their links resolve', () => {
   it('docs/README.md indexes the legal topic folder', () => {
     expect(read('docs/README.md')).toContain('legal/README.md');
@@ -181,11 +221,36 @@ describe('the licensing docs are reachable and their links resolve', () => {
     expect(readme).toContain('(CLA.md)');
   });
 
-  it.each(['docs/legal/licensing.md', 'docs/legal/README.md', 'CLA.md'])(
-    '%s has no dangling relative links',
-    (rel) => {
-      const missing = relativeLinkTargets(read(rel), rel).filter((p) => !existsSync(p));
-      expect(missing, `dangling links in ${rel}`).toEqual([]);
-    },
-  );
+  it.each([
+    'docs/legal/licensing.md',
+    'docs/legal/copyright-registration.md',
+    'docs/legal/README.md',
+    'CLA.md',
+  ])('%s has no dangling relative links', (rel) => {
+    const missing = relativeLinkTargets(read(rel), rel).filter((p) => !existsSync(p));
+    expect(missing, `dangling links in ${rel}`).toEqual([]);
+  });
+});
+
+describe('enforcement is actionable, not just described', () => {
+  it('the deposit generator exists and is wired to the registration doc', () => {
+    expect(existsSync(join(REPO_ROOT, 'scripts/copyright-deposit.js'))).toBe(true);
+    const doc = read('docs/legal/copyright-registration.md');
+    expect(doc).toContain('scripts/copyright-deposit.js');
+  });
+
+  it('the registration doc carries the two statutory hooks that make it worth filing', () => {
+    const doc = read('docs/legal/copyright-registration.md');
+    // 411(a): cannot sue without registration. 412: timely registration unlocks
+    // statutory damages + fees, which is the only realistic remedy for free software.
+    expect(doc).toMatch(/§411\(a\)/);
+    expect(doc).toMatch(/§412/);
+    expect(doc).toMatch(/statutory damages/i);
+  });
+
+  it('the registration doc does not promise a filing has happened', () => {
+    // Guards against a future edit that reads as "oshal is registered" before it is.
+    const doc = read('docs/legal/copyright-registration.md');
+    expect(doc).not.toMatch(/oshal is registered|registration (is|has been) complete/i);
+  });
 });

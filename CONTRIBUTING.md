@@ -15,9 +15,14 @@ section is the coordination contract for every contributor — human or agent;
 if the model changes, it changes here first.**
 
 - **Never commit to `main`.** Everything lands branch → PR → merge, no matter
-  how small. This is enforced, not aspirational: `main` is a protected branch —
-  direct pushes are rejected, every merge requires a pull request with a passing
-  `gate` check **and an approving review**, and nothing is ever auto-merged.
+  how small. This is enforced server-side by branch rulesets, not aspirational:
+  direct pushes are rejected, every merge requires a pull request **and one
+  approving review from someone other than the author**, and nothing is ever
+  auto-merged. Force-pushing or deleting `main` is blocked outright, for
+  everyone including admins. The publish gate and typecheck run as a **pre-push
+  hook** — they are a hard local wall, not a required GitHub status check
+  (repository CI is `workflow_dispatch`-only, and a required check that never
+  runs would deadlock every merge).
 - **ONE active development branch per repo at a time.** Before creating a
   branch, check `git fetch origin && git branch -r` and the open-PR list. If a
   development branch is already open, **join it** — pull it and coordinate in
@@ -56,26 +61,45 @@ flowchart LR
 
 ## Who can do what
 
-Public visibility means anyone can **read, clone, fork, open issues, and open
-pull requests** — it does not mean anyone can commit.
+**The code is public to read. Contribution is by invitation.** Those are two
+separate things here, deliberately.
+
+Anyone may read, clone, download, build, run, and redistribute this code — the
+AGPL guarantees it and nothing in this section narrows it. What is restricted is
+*participation in this repository*: opening issues, commenting, and opening pull
+requests are limited to collaborators. If you want to contribute, ask first
+(**oss@oswarm.ai**) rather than sending an unsolicited pull request you will not
+be able to land.
 
 | Action | Who |
 |---|---|
-| Read / clone / fork | Anyone |
-| Open an issue or PR (from a fork) | Anyone |
+| Read / clone / download / build / run | Anyone |
+| Redistribute, or publish your own fork elsewhere | Anyone — see [LICENSE](LICENSE) and [NOTICE](NOTICE) |
+| Open an issue, comment, or open a PR | **Collaborators only** — enforced by a repository interaction limit |
 | Push a branch to this repo | Collaborators only |
 | Commit directly to `main` | Nobody — a GitHub ruleset requires a pull request. Repo admins can bypass for an emergency hotfix; the project convention (CLAUDE.md Rule 0) is that they don't. |
 | Force-push or delete `main` | **Nobody, including admins** — the ruleset carries no bypass for either. Rewriting published history is not an available action. |
-| Approve a PR | Maintainers (repo collaborators with review rights) |
-| Merge a PR | Maintainers, after the publish gate has run and a maintainer has read the diff. External PRs are never merged unread. |
+| Approve a PR | A collaborator other than the author — GitHub does not permit self-approval, and the ruleset requires one approving review |
+| Merge a PR | A collaborator, after an approving review. Pushing new commits voids the prior approval, and open review threads must be resolved first. |
 | Auto-merge | Disabled — every merge is a deliberate maintainer action |
 
-These are enforced server-side by branch rulesets, not by convention alone. Ask
-GitHub what is actually in force for the default branch:
+Everything above is enforced server-side, not by convention. Ask GitHub what is
+actually in force rather than trusting this table:
 
 ```bash
 gh api repos/emeraldcoastsystemsgroup/oshal/rules/branches/main
+gh api repos/emeraldcoastsystemsgroup/oshal/interaction-limits
 ```
+
+Two limits of the platform, stated so nobody mistakes them for policy:
+
+- **A public repository is always forkable.** GitHub only allows the fork setting
+  to be changed on org-owned *private* repositories. This is moot in practice —
+  the AGPL already grants the right to clone and redistribute, so the fork button
+  adds nothing a `git clone` could not do.
+- **The interaction limit has a maximum term of six months** and must be renewed.
+  If you are a maintainer reading this after it has lapsed, re-apply it:
+  `gh api -X PUT repos/emeraldcoastsystemsgroup/oshal/interaction-limits -f limit=collaborators_only -f expiry=six_months`
 
 External PRs are reviewed like any other change: the publish gate runs, a
 maintainer reads the diff, and merge happens only on explicit approval. If your
