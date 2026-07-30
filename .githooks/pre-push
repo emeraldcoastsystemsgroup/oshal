@@ -8,6 +8,7 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the PUBLISH GATE as the FIRST step (this repo is now public and has no scrubber in front of it). It runs on every push, including docs-only pushes the typecheck skips, and is NOT bypassable via OSHAL_SKIP_PREPUSH_VERIFY.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | The HEAD typecheck was SILENTLY SKIPPING for every agent-worktree push. REPO_ROOT is `git rev-parse --show-toplevel`, which in a LINKED WORKTREE is the worktree itself — and a fresh worktree has no node_modules, so `ln -s "$REPO_ROOT/node_modules"` produced a dangling link (or failed) and the hook printed one stderr line and exited 0. Worktree isolation is now the normal way parallel agents work here, so the default case for automated pushes was ZERO verification — precisely the class SEQ 1 exists to catch, and exactly the "a gate that skips itself is not a gate" failure the hardening doctrine names. Now: resolve the main checkout's node_modules via git-common-dir, fall back to a Windows junction when MSYS refuses symlinks, and BLOCK with an actionable message (naming the documented override) when neither works, instead of passing quietly. Found 2026-07-29 when an agent noticed its own pre-push had self-disabled, then confirmed live: the push of this very fix printed the OLD skip message. core.hooksPath is an ABSOLUTE path to the main checkout, so EVERY linked worktree executes the main checkout's hooks — which is why the fix takes effect only once main is merged AND the main checkout has pulled it, and why a worktree cannot test its own hook edit by pushing.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Made SEQ 2's promise true. OSHAL_SKIP_PREPUSH_VERIFY=1 exited at the very top of the script, BEFORE the publish gate — so the one documented escape hatch for a slow/unrunnable typecheck also silently disabled the leak wall on a public repo. The skip check now sits after the gate: you may skip the typecheck, never the gate.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | SEQ 3 preferred `$REPO_ROOT/node_modules` when present, which in an agent worktree is normally a JUNCTION back to the main checkout. Linking a link makes tsc resolve @types through a doubly-indirect path and emit ~36 spurious TS2742 "inferred type cannot be named without a reference to ../../../node_modules/@types/qs ... likely not portable" errors, so the newly-loud gate BLOCKED a push whose HEAD typechecks clean — SEQ 3 traded a silent skip for a false positive. Measured on the same commit: link-to-link 36 errors, direct link to the real directory 0. Now a linked worktree always resolves the main checkout's real node_modules and only falls back to its own. Found immediately because SEQ 3 made the gate loud, which is the argument for loud gates.
 # =============================================================================
 #
 # Exports committed HEAD to a scratch tree and typechecks THAT. Rule 0a: one worktree, one index,
@@ -63,16 +64,20 @@ fi
 # resolve the main checkout's via git-common-dir — otherwise every agent-worktree push silently got
 # NO verification at all (see Change Log 3). Missing deps now BLOCK instead of passing quietly: a
 # gate that skips itself is not a gate.
+# Prefer the MAIN checkout's node_modules whenever we are in a linked worktree, even if this
+# worktree has one of its own — an agent worktree's node_modules is almost always a junction back
+# to the main checkout, and linking a link makes tsc emit ~36 spurious TS2742 "cannot be named
+# without a reference to ../../../node_modules/@types/qs, likely not portable" errors. Those are an
+# artifact of the doubly-indirect path, not real type errors, and they blocked a push whose HEAD
+# typechecks clean. Resolving to the real directory yields zero. (See Change Log 5.)
 NODE_MODULES=""
-if [ -d "$REPO_ROOT/node_modules" ]; then
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+MAIN_ROOT="${COMMON_DIR%/.git}"
+if [ -n "$MAIN_ROOT" ] && [ "$MAIN_ROOT" != "$REPO_ROOT" ] && [ -d "$MAIN_ROOT/node_modules" ]; then
+  NODE_MODULES="$MAIN_ROOT/node_modules"
+  echo "pre-push: linked worktree — using the main checkout's node_modules ($MAIN_ROOT)" >&2
+elif [ -d "$REPO_ROOT/node_modules" ]; then
   NODE_MODULES="$REPO_ROOT/node_modules"
-else
-  COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  MAIN_ROOT="${COMMON_DIR%/.git}"
-  if [ -n "$MAIN_ROOT" ] && [ -d "$MAIN_ROOT/node_modules" ]; then
-    NODE_MODULES="$MAIN_ROOT/node_modules"
-    echo "pre-push: using the main checkout's node_modules ($MAIN_ROOT)" >&2
-  fi
 fi
 
 if [ -z "$NODE_MODULES" ]; then
