@@ -168,6 +168,18 @@ here is either "what Breakfast Crew did" or "what broke when we stopped doing it
 25. **LAN between ParentPC and the node is firewalled both directions.** Files bridge
     through Drive. Don't retry SMB/HTTP pulls.
 
+26. **`locator.click: Timeout 30000ms exceeded` usually means Google moved the UI.**
+    It reads like a hung browser and almost never is. Vids shipped its "Omni" redesign
+    between 2026-07-08 and 2026-07-30 and broke the renderer in three places at once
+    (fixed in PRs #46/#47 — see section F).
+
+27. **A render that finishes FAST is still your render.** The ghost guard used to fold
+    any `<video>` src seen inside the first 110s into the never-return baseline, because
+    in the Veo 3.1 era anything that quick was the recents gallery hydrating. Omni is
+    faster than that, so the real clip was classified a ghost and the loop waited out the
+    full window for a second clip that was never coming. New srcs are *candidates* now;
+    the prompt fingerprint is preferred, not required.
+
 ---
 
 ## E. THE STANDING RULES
@@ -177,3 +189,38 @@ here is either "what Breakfast Crew did" or "what broke when we stopped doing it
 - Trims belong to Extend-mode only. Fresh scenes get a 0.45s freeze tail pad instead.
 - Voices are stable per character *name* (hash), so a character sounds the same
   across every episode of a series.
+
+---
+
+## F. WHEN THE VIDS UI CHANGES — the recon recipe
+
+Google will do this again. This is the loop that turned a mystery 30-second timeout into
+three named changes in about twenty minutes, on 2026-07-30:
+
+1. **Read the screenshot the renderer already saved.** Every scene failure writes
+   `scene-fail-<ts>.jpg` into the node's stage dir. Pull the newest one and look at it
+   *before* reading any code — it showed the new start dialog immediately.
+2. **Drive the node's own signed-in Chrome over CDP and dump the controls** at each step:
+   `button, [role=button], [role=tab], [role=combobox], [role=option], textarea,
+   [contenteditable="true"], [role=textbox], input` — name, role, size, one line each.
+   Do this step by step (start dialog → dismiss → rail → tab), not all at once.
+3. **Change one selector, re-run one scene, look again.** Generation costs money; DOM
+   dumps do not.
+
+What that recon found (all three live in `story-extend.js` now):
+
+- **A MODAL start dialog covers every new project** — *"Hello, &lt;name&gt;. Let's start
+  creating."* with the Omni cards. While it is up, the right-rail "Generate an AI video
+  clip" button is **visible but not clickable**: every selector still matches and the click
+  just times out. Dismiss it with the dialog's own **"Blank vid"** button.
+- **The Mode combobox became TABS** — `Create | Edit | Animate`. "Animate an image" is the
+  **Animate** tab. An inspiration gallery sits over the controls until **"Hide gallery"**.
+- **The prompt is no longer a `textarea`** — it is a contenteditable
+  `div[role=textbox]` ("Add your image, then describe what should happen in your vid").
+  `fill()` **silently does nothing** on a contenteditable: the box stays empty, Generate
+  never enables, and nothing in the log says so. Use `execCommand('insertText')` plus the
+  keystroke tail that makes Generate enable.
+
+The old selectors are still tried first, so a node Google has not migrated yet keeps working.
+
+---
