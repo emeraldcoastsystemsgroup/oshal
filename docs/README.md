@@ -78,6 +78,13 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | [workflows/](./workflows/README.md) | Tool approval / management / verification workflows. |
 | archive/ | The graveyard: superseded handovers, closed-phase plans, historical snapshots. Kept on purpose; dropped from the public snapshot. |
 
+**Outside `docs/` but documented on its own:** [`native/`](../native/README.md) — the compiled-kernel
+track (Rust → WASM port of the ADR-116 indicator layer), with its own README / ARCHITECTURE /
+BENCHMARKS / ROADMAP. Kept beside its code rather than here because the docs and the crate change
+together. ⚠ Not to be confused with the `*-native-migration-plan.md` files in [apps/](./apps/README.md):
+"native" there means *a native OSHAL surface* (folding a standalone app into the platform), which is
+unrelated to native compiled code.
+
 ## Planning & status
 
 - [BACKLOG.md](./BACKLOG.md) — deferred engineering work; every entry has done-when criteria.

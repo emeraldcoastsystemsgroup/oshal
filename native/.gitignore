@@ -1,0 +1,11 @@
+# Rust build output — never tracked.
+target/
+
+# Built artifacts. The .wasm is a BUILD PRODUCT: the loader falls back to the TS
+# reference implementation when it is absent, so an untracked artifact is a
+# supported state, not a broken checkout. See ARCHITECTURE.md "Optional by construction".
+dist/
+*.wasm
+
+# Benchmark output — regenerate with `npm run bench`, never hand-edit BENCHMARKS.md numbers.
+bench/results/*.json
