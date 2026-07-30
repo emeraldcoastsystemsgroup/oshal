@@ -194,3 +194,33 @@ describe('an interrupted episode gets picked back up', () => {
     expect(decide).toBeLessThan(approve);
   });
 });
+
+/**
+ * Every show file names a cached intro clip, and five of them have been sitting on the render node
+ * since 2026-07-08. Declaring one and never using it is the "documented but not real" failure this
+ * project keeps writing rules about, so the wiring is checked end to end: pump → series row →
+ * render plan → the node prepending it at the stitch.
+ */
+describe('a show opens its episodes with its own cached intro', () => {
+  const pump = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'series-pump.ts'), 'utf8');
+  const dispatch = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'series-dispatch.ts'), 'utf8');
+  const renderer = readFileSync(join(__dirname, '..', '..', 'packages', 'oshal-vids-operator', 'episode-render.js'), 'utf8');
+
+  it('the pump copies the show\'s intro onto the series it opens', () => {
+    expect(pump).toMatch(/intro_clip/);
+    expect(pump).toMatch(/show\.introClip/);
+  });
+
+  it('the dispatcher puts it in the render plan', () => {
+    expect(dispatch).toMatch(/s\.intro_clip/);
+    expect(dispatch).toMatch(/introClip: \(e\.intro_clip as string \| null\) \?\? null/);
+  });
+
+  it('the node prepends it BEFORE the scenes', () => {
+    expect(renderer).toMatch(/clips\.unshift\(introPath\)/);
+  });
+
+  it('a named intro missing from the node does not throw away paid scenes', () => {
+    expect(renderer).toMatch(/intro MISSING on this node, continuing without it/);
+  });
+});

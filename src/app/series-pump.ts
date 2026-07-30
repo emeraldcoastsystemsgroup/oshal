@@ -72,6 +72,8 @@ export interface PumpShow {
   seedCursor: number;
   scenesPerEpisode: number;
   orientation: string;
+  /** Cached intro clip on the render node, prepended to every episode of this show. */
+  introClip: string | null;
   standingAuthorization: boolean;
   dailyCap: number;
   minIntervalMinutes: number;
@@ -107,8 +109,8 @@ function nodeLocalDay(now: Date): string {
 async function loadCandidateShows(pool: Pool): Promise<PumpShow[]> {
   const { rows } = await pool.query(
     `SELECT show_id, user_sub, slug, title, premise, style_lock, cast_bible, joke_seeds, seed_cursor,
-            scenes_per_episode, orientation, standing_authorization, daily_cap, min_interval_minutes,
-            consecutive_failures
+            scenes_per_episode, orientation, intro_clip, standing_authorization, daily_cap,
+            min_interval_minutes, consecutive_failures
        FROM video_pump_shows
       WHERE enabled = TRUE
         AND paused_reason IS NULL
@@ -129,6 +131,7 @@ async function loadCandidateShows(pool: Pool): Promise<PumpShow[]> {
     seedCursor: Number(r.seed_cursor ?? 0),
     scenesPerEpisode: Number(r.scenes_per_episode ?? 4),
     orientation: String(r.orientation ?? 'Landscape'),
+    introClip: (r.intro_clip as string | null) ?? null,
     standingAuthorization: Boolean(r.standing_authorization),
     dailyCap: Number(r.daily_cap ?? 1),
     minIntervalMinutes: Number(r.min_interval_minutes ?? 240),
@@ -303,11 +306,11 @@ async function openEpisode(
   const { rows } = await ctx.pool.query(
     `INSERT INTO video_series
        (user_sub, ticket_id, title, premise, style_lock, cast_bible, episode_count,
-        scenes_per_episode, orientation, status)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,1,$7,$8,'scripting')
+        scenes_per_episode, orientation, intro_clip, status)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,1,$7,$8,$9,'scripting')
      RETURNING series_id`,
     [show.userSub, ticket.ticketId, show.title, premise, show.styleLock,
-      JSON.stringify(show.cast), show.scenesPerEpisode, show.orientation],
+      JSON.stringify(show.cast), show.scenesPerEpisode, show.orientation, show.introClip],
   );
   return { seriesId: String((rows[0] as { series_id: string }).series_id), ticketId: ticket.ticketId };
 }

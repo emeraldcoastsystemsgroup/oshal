@@ -47,7 +47,7 @@ const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
   try { plan = JSON.parse(Buffer.from(raw, 'base64').toString('utf8')); }
   catch (e) { console.log('EPISODE_ERR unreadable plan: ' + e.message); process.exit(2); }
 
-  const { episodeId, title, series, orientation, scenes } = plan;
+  const { episodeId, title, series, orientation, scenes, introClip } = plan;
   if (!Array.isArray(scenes) || !scenes.length) { console.log('EPISODE_ERR plan has no scenes'); process.exit(2); }
   if (!process.env.VIDS_DRIVE_ACCESS_TOKEN) { console.log('EPISODE_ERR VIDS_DRIVE_ACCESS_TOKEN is not set — cannot fetch the stills'); process.exit(2); }
 
@@ -96,10 +96,20 @@ const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
   });
   if (!run.ok) { console.log('EPISODE_ERR ' + run.error); process.exit(1); }
 
-  // 3. Assemble. concatClips fails loud on a missing or truncated clip rather than shipping a short
-  //    episode as a success.
+  // 3. Assemble. The show's cached intro goes FIRST when it is present — every episode of a show
+  //    opens with the same title sequence, rendered once on 2026-07-08 and reused ever since. A named
+  //    intro that is not on this node is skipped loudly rather than failing the episode: the scenes
+  //    are already paid for, and a missing title card is not worth throwing them away.
+  const clips = [...run.clips];
+  if (introClip) {
+    const introPath = path.join(stage, String(introClip));
+    if (fs.existsSync(introPath)) { clips.unshift(introPath); console.log(`[episode] intro: ${introClip}`); }
+    else console.log(`[episode] intro MISSING on this node, continuing without it: ${introClip}`);
+  }
+  // concatClips fails loud on a missing or truncated clip rather than shipping a short episode as a
+  // success.
   const finalOut = path.join(stage, `${base}.mp4`);
-  const asm = concatClips(run.clips, finalOut, { tailPadSec: 0.45 });
+  const asm = concatClips(clips, finalOut, { tailPadSec: 0.45 });
   if (!asm.ok) { console.log('EPISODE_ERR assemble: ' + asm.error); process.exit(1); }
 
   // 4. Save + Drive (store.saveStory uploads when the token is present).
