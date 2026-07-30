@@ -82,6 +82,7 @@ fi
 # EMAIL are intentionally never gated (attribution), and bare given names are never
 # gated ("Michelle" is an Azure TTS voice id; "elizabeth" is a town in us_cities.tsv).
 LOCAL_PATTERNS="$(cd "$(dirname "$0")" && pwd)/publish-gate.local.patterns"
+ID_RE=""
 if git ls-files --error-unmatch "scripts/publish-gate.local.patterns" >/dev/null 2>&1; then
   bad "scripts/publish-gate.local.patterns is TRACKED — the identifier list must never be committed"
 fi
@@ -125,6 +126,48 @@ if [ -n "$STRAY_MEDIA" ]; then
   say "        file. If it is pipeline debris (screenshots, exports), it belongs in .gitignore."
 else
   ok "no binary media outside curated directories"
+fi
+
+# ── 5. Commit MESSAGES, which every rule above is blind to ────────────────────
+# Checks 1-4 scan the TREE: `git ls-files` and `git grep` read file contents. A commit
+# message is not a file. It is pushed, it is rendered on the public repo page, it is
+# permanent — and until now it was the one part of a push this gate never looked at. A
+# client name, a home address, or a token pasted into `git commit -m` shipped through a
+# wall that printed "clean".
+#
+# It is also the expensive kind of leak to undo: fixing a published message means
+# rewriting history, and the branch ruleset now refuses force-pushes on main with no
+# bypass for anyone. Refusing the push is far cheaper than needing the rewrite.
+#
+# Scope is `HEAD --not --remotes` — exactly the commits THIS push would publish.
+# Deliberately NOT `--all`: this box carries archive/pre-scrub-main and old worktree lanes
+# that will never be pushed, and scanning them would fail the gate on every push forever.
+# A gate that cries wolf on unpushable history is a gate people start bypassing.
+MSG_SCAN_RE="$CRED_RE"
+[ -n "$ID_RE" ] && MSG_SCAN_RE="$CRED_RE|$ID_RE"
+PENDING="$(git rev-list HEAD --not --remotes 2>/dev/null || true)"
+if [ -z "$PENDING" ]; then
+  ok "no unpublished commit messages to scan"
+else
+  MSG_HITS=""
+  for sha in $PENDING; do
+    HIT="$(git show -s --format='%B' "$sha" 2>/dev/null \
+      | grep -IE "$MSG_SCAN_RE" \
+      | grep -viE "REPLACE_ME|CHANGE_ME|example|placeholder|<[^>]+>|MIIBOgIBAAJBAK" \
+      | head -2 || true)"
+    if [ -n "$HIT" ]; then
+      MSG_HITS="${MSG_HITS}$(git rev-parse --short "$sha"): $(printf '%s' "$HIT" | tr '\n' ' ')
+"
+    fi
+  done
+  if [ -n "$MSG_HITS" ]; then
+    bad "personal / credential content in unpublished COMMIT MESSAGE(s):"
+    printf '%s' "$MSG_HITS" | sed 's/^/       /' | head -10 >&2
+    say "      → Reword before pushing: git commit --amend  (or git rebase -i for older ones)."
+    say "        Once pushed this is permanent — main refuses force-pushes for everyone."
+  else
+    ok "no personal / credential content in unpublished commit messages"
+  fi
 fi
 
 echo ""
