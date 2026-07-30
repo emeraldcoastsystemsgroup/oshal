@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Update docs/ paths after docs directory consolidation
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Memoize the service per TSDB url — the factory built a new un-ended pg Pool on every scheduler tick (every 5 min via trading-assess-dispatch), a steady connection leak (2026-07-05 leak audit)
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | scheduledEventsBetween(eventType, fromIso, toIso) — ranged sibling of upcomingEvents (now()-anchored) for the Strategy Lab earnings-gate walks, which need "who prints between session D and D+N" for past walk dates; ingested calendar rows persist, so pinned regression windows replay identically.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read the windowed averages and the subject catalog from the pre-aggregated HEAD (world-preaggregate) instead of re-scanning the running stream on every call. The trading autopilot's 100-name basket read cost 10.5s every 5 minutes and listEntities cost 7.8s to return 402 rows; both are now sub-200ms. Means are recovered as sum/count, which is arithmetically identical to avg over the same rows — verified equal across 6,714 (entity,metric) pairs.
  */
 
 /**
@@ -24,6 +25,13 @@ import { createGraphConnector, type GraphConnector, type GraphNode, type GraphEd
 import { createChildLogger } from '@/shared/logger';
 import type { WorldContribution } from './world-types';
 import { computeSentimentBreakdown, type SentimentRow } from './sentiment-math';
+import {
+  METRICS_DAILY_VIEW,
+  SUBJECTS_TABLE,
+  alignedWindowStart,
+  ensureMetricsPreaggregate,
+  ensureSubjectsHead,
+} from './world-preaggregate';
 
 const logger = createChildLogger({ module: 'world-intelligence-service' });
 const WORLD_TENANT = 'world';
@@ -122,6 +130,9 @@ export class WorldIntelligenceService {
     } catch (err) {
       logger.warn({ err }, 'world_metrics (entity,metric,ts) index create failed — reads will be slower');
     }
+    // The pre-aggregated HEAD in front of this stream. The index above still matters — the rollup's
+    // sub-day window reads (perSourceSentimentHours) go straight to the stream, below day granularity.
+    await ensureMetricsPreaggregate(this.tsdb);
     this.seriesReady = true;
   }
 
@@ -158,6 +169,8 @@ export class WorldIntelligenceService {
        )`,
     );
     try { await this.tsdb.query(`SELECT create_hypertable('world_pulls','ts', if_not_exists => TRUE)`); } catch { /* plain table is fine */ }
+    // The subject-catalog head + the world_pulls (entity_id, ts) index.
+    await ensureSubjectsHead(this.tsdb);
     this.archiveReady = true;
   }
 
@@ -181,7 +194,25 @@ export class WorldIntelligenceService {
         r.eventType, r.eventIntensity, r.classifierModel, r.classifierVersion, r.usedLlm,
       ],
     );
-    return { inserted: Boolean((res.rows[0] as { inserted?: boolean })?.inserted) };
+    const inserted = Boolean((res.rows[0] as { inserted?: boolean })?.inserted);
+    // Keep the catalog head in step with the archive. Only a genuinely NEW item bumps the count, so
+    // the head's `items` matches `count(*)` over the archive rather than counting re-sightings; a
+    // re-sighting still refreshes the label and last_seen. Best-effort: the head is a cache of the
+    // archive and is rebuildable, so a failure here must not fail the ingest that owns the real row.
+    try {
+      await this.tsdb.query(
+        `INSERT INTO ${SUBJECTS_TABLE} (entity, label, items, last_seen)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (entity) DO UPDATE
+           SET items = ${SUBJECTS_TABLE}.items + $3,
+               label = COALESCE(EXCLUDED.label, ${SUBJECTS_TABLE}.label),
+               last_seen = GREATEST(${SUBJECTS_TABLE}.last_seen, EXCLUDED.last_seen)`,
+        [r.entityId, r.entityLabel, inserted ? 1 : 0],
+      );
+    } catch (err) {
+      logger.warn({ err, entity: r.entityId }, 'world_subjects head update failed — the catalog count for this subject is now behind the archive');
+    }
+    return { inserted };
   }
 
   /** Which of these content hashes are ALREADY archived — so re-pulls skip re-classifying (LLM cost). */
@@ -423,13 +454,16 @@ export class WorldIntelligenceService {
     return { nodes: nodes.length, edges: edges.length, facts: c.facts.length };
   }
 
-  /** The historical series the reasoner joins against personal data: avg of a metric over N days. */
+  /** The historical series the reasoner joins against personal data: avg of a metric over N days.
+   *  Served from the daily HEAD — the mean is recovered as sum/count, which is the same number
+   *  `avg(value)` produced over the same rows (see world-preaggregate). */
   async metricAvg(entity: string, metric: string, days: number): Promise<{ points: number; avg: number | null }> {
     await this.ensureSeries();
     const r = await this.tsdb.query(
-      `SELECT count(*)::int AS points, avg(value) AS avg
-         FROM world_metrics WHERE entity=$1 AND metric=$2 AND ts >= now() - ($3 || ' days')::interval`,
-      [entity, metric, String(days)],
+      `SELECT sum(cnt)::int AS points, sum(sum_v) / NULLIF(sum(cnt), 0) AS avg
+         FROM ${METRICS_DAILY_VIEW}
+        WHERE entity=$1 AND metric=$2 AND bucket >= ${alignedWindowStart('$3')}`,
+      [entity, metric, days],
     );
     const row = (r.rows[0] || {}) as { points?: number; avg?: string | number | null };
     return { points: row.points || 0, avg: row.avg != null ? Number(row.avg) : null };
@@ -450,11 +484,11 @@ export class WorldIntelligenceService {
     if (!entities.length || !metrics.length) return out;
     await this.ensureSeries();
     const r = await this.tsdb.query(
-      `SELECT entity, metric, count(*)::int AS points, avg(value) AS avg
-         FROM world_metrics
-        WHERE entity = ANY($1::text[]) AND metric = ANY($2::text[]) AND ts >= now() - ($3 || ' days')::interval
+      `SELECT entity, metric, sum(cnt)::int AS points, sum(sum_v) / NULLIF(sum(cnt), 0) AS avg
+         FROM ${METRICS_DAILY_VIEW}
+        WHERE entity = ANY($1::text[]) AND metric = ANY($2::text[]) AND bucket >= ${alignedWindowStart('$3')}
         GROUP BY entity, metric`,
-      [entities, metrics, String(days)],
+      [entities, metrics, days],
     );
     for (const row of r.rows as Array<{ entity: string; metric: string; points: number; avg: string | number | null }>) {
       if (row.avg == null) continue;
@@ -477,12 +511,16 @@ export class WorldIntelligenceService {
   async sentimentBreakdown(entity: string, days: number): Promise<Record<string, unknown>> {
     await this.ensureSeries();
     const r = await this.tsdb.query(
-      `SELECT source, count(*)::int AS points, avg(value) AS avg
-         FROM world_metrics WHERE entity=$1 AND metric='sentiment' AND ts >= now() - ($2 || ' days')::interval
-         GROUP BY source`,
-      [entity, String(days)],
+      `SELECT source, sum(cnt)::int AS points, sum(sum_v) / NULLIF(sum(cnt), 0) AS avg
+         FROM ${METRICS_DAILY_VIEW}
+        WHERE entity=$1 AND metric='sentiment' AND bucket >= ${alignedWindowStart('$2')}
+        GROUP BY source`,
+      [entity, days],
     );
-    const rows: SentimentRow[] = (r.rows as Array<{ source: string; points: number; avg: string | number }>)
+    const rows: SentimentRow[] = (r.rows as Array<{ source: string; points: number; avg: string | number | null }>)
+      // A head row always carries cnt >= 1, so avg is never null in practice — but Number(null) is 0,
+      // and a fabricated 0.00 sentiment reads as "neutral coverage" rather than "no coverage".
+      .filter((row) => row.avg != null)
       .map((row) => ({ source: String(row.source), points: row.points, avg: Number(row.avg) }));
     // The bias-aware math is PURE + unit-tested in sentiment-math.ts; this method only does the I/O.
     return { entity, days, ...computeSentimentBreakdown(rows) };
@@ -591,17 +629,19 @@ export class WorldIntelligenceService {
   }
 
   /** The world subjects already tracked (ingested), most-covered first — the catalog the
-   *  surface lists and the world_entities tool returns. Sourced from the archive. */
+   *  surface lists and the world_entities tool returns. Read from the catalog HEAD: this used to
+   *  aggregate the whole million-row archive (a 1.36 GB sequential scan, ~7.8s) to return ~400 rows,
+   *  and it is the FIRST request the cockpit surface makes, so every other panel queued behind it. */
   async listEntities(limit = 50): Promise<Array<{ entity: string; label: string; items: number; lastSeen: string | null }>> {
     await this.ensureArchive();
     const r = await this.tsdb.query(
-      `SELECT entity_id, max(entity_label) AS label, count(*)::int AS items, max(first_seen_at) AS last_seen
-         FROM world_items GROUP BY entity_id ORDER BY items DESC LIMIT $1`,
+      `SELECT entity, label, items, last_seen FROM ${SUBJECTS_TABLE}
+        ORDER BY items DESC LIMIT $1`,
       [limit],
     );
     return (r.rows as Array<Record<string, unknown>>).map((row) => ({
-      entity: String(row.entity_id),
-      label: String(row.label || row.entity_id),
+      entity: String(row.entity),
+      label: String(row.label || row.entity),
       items: Number(row.items) || 0,
       lastSeen: row.last_seen ? new Date(row.last_seen as string).toISOString() : null,
     }));

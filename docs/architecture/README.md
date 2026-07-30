@@ -129,6 +129,10 @@ The guiding model is:
   - connector runtime + personal knowledge graph architecture
 - [connectors-tenant-isolation.md](./connectors-tenant-isolation.md)
   - connectors hub and per-user token isolation (as-built)
+- [world-read-head-and-stream.md](./world-read-head-and-stream.md)
+  - the world layer's pre-aggregated HEAD vs its running STREAM (as-built): why the feature rollup
+    made reads slower by landing in the stream it replaced, the exact-mean `sum/count` contract the
+    trading gate depends on, and why `materialized_only=false` is a correctness setting
 - [model-gateway.md](./model-gateway.md)
   - LLM model-gateway governance layer
 - [human-in-the-loop.md](./human-in-the-loop.md)
