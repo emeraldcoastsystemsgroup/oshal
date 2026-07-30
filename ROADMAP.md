@@ -133,7 +133,7 @@ These are governance/hygiene items, tracked in detail in [BACKLOG.md](docs/BACKL
 
 | Item | Today | Target |
 |---|---|---|
-| **1000-line file cap** | 1 file exceeds the hard cap (`src/app/routes/jarvis-routes.ts`, blocked on in-flight work) after the 2026-07-11 decomposition burn-through of the other 11; 16 files sit in the 800–1000 warn band. | Every source file at or under 1000 code lines, decomposed behind existing interfaces with no behavior change; a lint gate so it can't regress. |
+| **1000-line file cap** | **0 tracked files exceed the hard cap** (2026-07-29). The last three were decomposed in that change: `chat-config-modal.mjs` 1850→504, `chat-rag-workspace-popup.mjs` 1044→710, `tests/jarvis-rich-response-integration.spec.ts` 1006→297. 24 files sit in the 800–1000 warn band. The gate can now see the whole capped surface: eslint's `max-lines` applied only to `src/**/*.ts{,x}`, which is why an 1850-code-line `.mjs` exited 0 for months; it now also covers src JS, `tests/`, and `scripts/`, and `gate_lint` (blocking, `--max-warnings 0`) lints all three trees. `any-bot/**` stays eslint-ignored as legacy JS — its largest file is 970, under the cap. Counts measured with eslint's own `max-lines` definition (skips blank lines and comment lines), not `wc -l`. | Hold at 0 over the cap, and burn the 800–1000 band down so a single feature addition can't push a file back over. |
 | **Documentation standard** | Backfilled 2026-06-07: Change Log headers + exported-member JSDoc across the files that lacked them. | 100% of tracked source files carry the header and JSDoc; enforced going forward (consider a CI lint). |
 
 ## Non-goals (for now)

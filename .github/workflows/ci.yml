@@ -71,7 +71,9 @@ jobs:
       - name: Lint check
         # eslint 9 flat config (eslint.config.mjs) — drop the removed --ext flag. Advisory: exits
         # non-zero while the FSD deep-import / no-console counters are non-zero (warnings-first).
-        run: npx eslint src --max-warnings 0 || echo "ESLint reported findings (advisory until governance counts reach 0)"
+        # Scans tests/ and scripts/ too: the 1000-code-line cap applies to source, tests, and
+        # logic-bearing config, and max-lines now covers those trees (see eslint.config.mjs).
+        run: npx eslint src tests scripts --max-warnings 0 || echo "ESLint reported findings (advisory until governance counts reach 0)"
 
   # ── TypeScript Type Check ──────────────────────────────────────────────────
   typecheck:
