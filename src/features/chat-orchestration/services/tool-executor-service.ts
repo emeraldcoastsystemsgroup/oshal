@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Replaced localhost Presentron fallback with deployable service default
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added optional workspaceService for ticket→workspace resolution before per-task fallback
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Re-pointed the presentron tool at the in-repo deck engine (BACKLOG "Re-point the presentron chat tool at the real deck renderer"): handlePresentron now renders a real themed .pptx via @/features/presentation-generation renderPptx into the task workspace instead of POSTing to the retired Presentron sidecar; dropped the PresentronIntegrationService/readPresentronRuntimeSettings/endpoint-resolution plumbing from this executor.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Change-log accuracy: entry 2 above claims the ADR-060 per-user namespace is in force here, but that layout was REVERTED (see the note in ensureWorkspacePath) — this file writes the flat <root>/<taskId> and the orphaned userScopedWorkspacePath helper it was to call has been deleted. Entry 2 stands as history; this entry is the correction. No behavior change.
  */
 
 import fs from 'fs';
@@ -952,8 +953,11 @@ export class ToolExecutorService {
     // NOTE (ADR-060 reverted): bot task files use the flat <root>/<taskId> layout. Per-user
     // file partitioning was reverted because the swarm's verifier/handover/deliverable readers
     // assume this flat path in ~10 places; isolation is enforced at the API/DB/route layer
-    // instead (owner_sub columns + the IDOR guards). Per-user FILE storage needs a dedicated
-    // pass that routes every reader AND writer through one resolver.
+    // instead (owner_sub columns + the IDOR guards), by the task owner binding on the bot path,
+    // and by the ADR-040 credential lease/wipe. Per-user FILE storage needs a dedicated pass that
+    // routes every reader AND writer through one resolver — and a real boundary under it, since
+    // every bot mounts this root read-write. Done-when: ADR-060 "Reverted: where the isolation
+    // actually lives".
     const workspacePath = path.join(this.workspaceRoot, this.normalizeWorkspaceId(taskId));
     fs.mkdirSync(workspacePath, { recursive: true });
     return workspacePath;
