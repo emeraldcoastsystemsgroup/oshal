@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | First guard for the publish gate. This repo is public with no sanitizer between a commit and the world, and scripts/publish-gate.sh is the only wall — yet it had no test, so a regression in it would be found by the leak. Proves the gate passes on this tree and goes RED on each shape it must refuse, including the binary blind spot found 2026-07-27 (every check used `git grep -I`, which skips binaries, so a screenshot of a filled-in job application passed clean). Also guards the .gitignore half of that fix: debris in a NEW artifacts subdir must be ignored without anyone having named the subdir.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards check 5, the commit-message blind spot. Checks 1-4 read the TREE via git ls-files / git grep; a commit message is not a file, so a token or a personal detail typed into `git commit -m` shipped through a gate that printed "clean" — and undoing it needs a history rewrite the main ruleset now refuses outright. Also pins the SCOPE, which is the part that decides whether the check survives: it must scan `HEAD --not --remotes` and not `--all`, because this box carries 117 commits of unpushable local history (archive/pre-scrub-main, retired worktree lanes) that would fail the gate on every push forever until somebody disabled it.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -95,7 +96,7 @@ function pngBytes(): Buffer {
  * @param mutate - Optional hook to plant a violation before files are committed.
  * @returns The fixture checkout path.
  */
-function makeFixture(mutate?: (dir: string) => void): string {
+function makeFixture(mutate?: (dir: string) => void, message = 'fixture'): string {
   const dir = mkdtempSync(join(tmpdir(), 'oshal-gate-'));
   mkdirSync(join(dir, 'src'), { recursive: true });
   writeFileSync(join(dir, 'src/index.ts'), 'export const ok = true;\n', 'utf8');
@@ -104,10 +105,37 @@ function makeFixture(mutate?: (dir: string) => void): string {
   execFileSync('git', ['-C', dir, 'add', '-A'], { stdio: 'pipe' });
   execFileSync(
     'git',
-    ['-C', dir, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-qm', 'fixture'],
+    ['-C', dir, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-qm', message],
     { stdio: 'pipe' },
   );
   return dir;
+}
+
+/**
+ * @description Run a git command inside a fixture checkout with a fixed identity.
+ * @param dir - Fixture repository.
+ * @param args - git arguments.
+ * @returns void
+ */
+function git(dir: string, ...args: string[]): void {
+  execFileSync(
+    'git',
+    ['-C', dir, '-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args],
+    { stdio: 'pipe' },
+  );
+}
+
+/**
+ * @description A credential-shaped string the gate's check-2 regex matches.
+ *
+ * Assembled at runtime rather than written as one literal: this spec is a tracked file, and a
+ * whole token in the source would be flagged by the gate's own scan of this repository — the
+ * test would break the thing it tests.
+ *
+ * @returns A fake GitHub PAT.
+ */
+function fakeToken(): string {
+  return ['ghp', 'A'.repeat(24)].join('_');
 }
 
 /**
@@ -240,6 +268,76 @@ describe('publish gate: the wall between this public repo and the world', () => 
  * stops it getting there. The rules were `artifacts/*.png` — one level, loose files only — so a
  * pipeline writing into a subdirectory was uncovered.
  */
+describe('commit messages, which the tree checks cannot see', () => {
+  /**
+   * @description Give a fixture a bare remote and push, so its commits become "already
+   *              published" — the state that must take a commit out of scope.
+   * @param dir - Fixture repository.
+   * @returns void
+   */
+  function publishTo(dir: string): void {
+    const remote = mkdtempSync(join(tmpdir(), 'oshal-gate-remote-'));
+    execFileSync('git', ['init', '-q', '--bare', remote], { stdio: 'pipe' });
+    git(dir, 'remote', 'add', 'origin', remote);
+    const branch = execFileSync('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim();
+    git(dir, 'push', '-q', 'origin', branch);
+  }
+
+  it('FAILS when an unpushed commit message carries a credential', () => {
+    const dir = makeFixture(undefined, `wire up deploy, token ${fakeToken()}`);
+    try {
+      const r = runGate(dir);
+      expect(r.code).toBe(1);
+      expect(r.output).toMatch(/COMMIT MESSAGE/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('PASSES when unpushed commit messages are clean', () => {
+    withFixture(undefined, (r) => {
+      expect(r.code).toBe(0);
+      expect(r.output).toMatch(/commit messages|commit messages to scan/i);
+    });
+  });
+
+  it('does NOT re-flag a bad message that is already published', () => {
+    // Nothing can be done about an already-pushed message except a history rewrite, which
+    // the main ruleset refuses. Re-reporting it every push would only train people to bypass
+    // the gate, so scope is what is about to ship, not what already shipped.
+    const dir = makeFixture(undefined, `leaked ${fakeToken()}`);
+    try {
+      expect(runGate(dir).code).toBe(1);
+      publishTo(dir);
+      expect(runGate(dir).code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores bad messages on OTHER local branches — the scope that keeps this usable', () => {
+    // The trap this pins: `--all --not --remotes` would scan every unpushable local branch.
+    // On the real repo that is 117 commits of archived history, and a gate that fails every
+    // push on history nobody can rewrite is a gate that gets turned off.
+    const dir = makeFixture();
+    try {
+      publishTo(dir);
+      git(dir, 'checkout', '-q', '-b', 'archive/old-lane');
+      writeFileSync(join(dir, 'src/other.ts'), 'export const x = 1;\n', 'utf8');
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-qm', `ancient mistake ${fakeToken()}`);
+      expect(runGate(dir).code).toBe(1); // that branch IS HEAD right now, so it is in scope
+
+      git(dir, 'checkout', '-q', '-');
+      expect(runGate(dir).code).toBe(0); // back on the published branch: out of scope
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('artifacts/ ignore rules cover pipeline debris at any depth', () => {
   /**
    * @description Ask git whether a path would be ignored in this repo.
