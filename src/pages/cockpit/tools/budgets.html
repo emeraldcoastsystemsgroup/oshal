@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Budgets — enforced spend caps</title>
+<!-- Framework theme tokens + the bootstrap that picks the operator's theme (and follows it live).
+     Theme files scope to [data-theme="…"] with NO :root fallback, so the default on <html> above
+     is load-bearing — without it the surface would have no colours at all. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5b8cff);
+    --ok: var(--status-success, #36d399);
+    --warn: var(--status-warning, #f4bf50);
+    --bad: var(--status-error, #ff8585);
+    --chip: var(--bg-tertiary);
+    /* --bg-card is DELIBERATELY translucent (cockpit chrome is glass over the page), so anything
+       that covers scrolling content — here the sticky table head — must composite its themed tint
+       over the opaque page colour instead of using the token directly. */
+    --solid-panel: linear-gradient(var(--panel), var(--panel));
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 24px 20px 80px; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13.5px; max-width: 74ch; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  label.inline { color: var(--muted); font-size: 12.5px; }
+  select, button { border: 1px solid var(--line); background: var(--chip); color: var(--text);
+    border-radius: 9px; padding: 7px 12px; font: inherit; font-size: 13.5px; }
+  button { cursor: pointer; font-weight: 600; }
+  button.primary { background: var(--accent); color: #04122e; border-color: transparent; }
+  .status { color: var(--muted); font-size: 12.5px; margin: 8px 0 14px; min-height: 17px; }
+  .status.err { color: var(--bad); }
+  .banner { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    background: var(--bg) var(--solid-panel); font-size: 13.5px; margin-bottom: 16px; }
+  .banner strong { color: var(--text); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+    margin: 26px 0 8px; }
+  .tblwrap { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 52vh; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 11px; border-bottom: 1px solid var(--line);
+    white-space: nowrap; }
+  th { position: sticky; top: 0; z-index: 1; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--muted); font-weight: 600;
+    /* Opaque composite — a translucent sticky head would show rows scrolling through it. */
+    background: var(--bg) var(--solid-panel); }
+  tr:last-child td { border-bottom: none; }
+  td.wrap-cell { white-space: normal; overflow-wrap: anywhere; max-width: 40ch; }
+  .num { font-variant-numeric: tabular-nums; }
+  .dash { color: var(--muted); }
+  .bar { position: relative; width: 120px; height: 7px; border-radius: 999px;
+    background: var(--panel2); overflow: hidden; }
+  .bar > i { position: absolute; inset: 0 auto 0 0; background: var(--ok); display: block; }
+  .bar > i.warn { background: var(--warn); }
+  .bar > i.bad { background: var(--bad); }
+  .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 9px; font-size: 11.5px; color: var(--muted); }
+  .pill.hard { border-color: var(--bad); color: var(--bad); }
+  .pill.soft { border-color: var(--warn); color: var(--warn); }
+  .pill.off { opacity: .65; }
+  .empty { color: var(--muted); padding: 22px 12px; font-size: 13.5px; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 26px; border-top: 1px solid var(--line);
+    padding-top: 12px; max-width: 84ch; }
+  code { background: var(--chip); border-radius: 5px; padding: 0 5px; font-size: 12.5px; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>Budgets</h1>
+  <p class="sub">The spend caps the platform actually <strong>enforces</strong> — rows in
+  <code>oshal_budgets</code>, checked before dispatch and before inline execution. This is a
+  read surface over <code>/api/budgets</code>; it never changes a cap.</p>
+
+  <div class="row">
+    <label class="inline" for="win">Spend window</label>
+    <select id="win">
+      <option value="1">last 1 h</option>
+      <option value="24" selected>last 24 h (the daily cap window)</option>
+      <option value="168">last 7 d</option>
+      <option value="720">last 30 d</option>
+    </select>
+    <button id="reload" class="primary" type="button">Reload</button>
+  </div>
+
+  <div class="status" id="status">Loading…</div>
+  <div id="scopeBanner"></div>
+
+  <h2 id="capsHead">Caps</h2>
+  <div class="tblwrap"><table>
+    <thead><tr>
+      <th>Scope</th><th>Key</th><th>Daily cap</th><th>Spend in window</th><th>Used</th>
+      <th>Breach</th><th>State</th><th>Owner</th><th>Updated</th>
+    </tr></thead>
+    <tbody id="caps"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+  </table></div>
+
+  <div id="eventsSection" hidden>
+    <h2>Enforcement trail</h2>
+    <div class="tblwrap"><table>
+      <thead><tr>
+        <th>When</th><th>Action</th><th>Scope</th><th>Key</th><th>Spend</th><th>Cap</th><th>Detail</th>
+      </tr></thead>
+      <tbody id="events"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <p class="foot">Two honesty notes about what you are reading. <strong>(1)</strong> The budget
+  service is deliberately <em>fail-open</em>: when the spend store cannot be read it returns no
+  number rather than zero, and this surface shows <span class="dash">—</span> for that. A dash is
+  "unknown", never "$0.00 spent". <strong>(2)</strong> For the same reason an empty caps table can
+  mean either "no caps are configured" or "the budgets table could not be read" — the API cannot
+  currently tell the two apart, so do not read an empty table as proof that nothing is capped.</p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $status = document.getElementById('status');
+  const $caps = document.getElementById('caps');
+  const $events = document.getElementById('events');
+  const $eventsSection = document.getElementById('eventsSection');
+  const $banner = document.getElementById('scopeBanner');
+  const $win = document.getElementById('win');
+  const $capsHead = document.getElementById('capsHead');
+
+  const CAP_COLS = 9;
+
+  /** Set the status line; `bad` renders it as an error. */
+  function say(text, bad) {
+    $status.textContent = text;
+    $status.classList.toggle('err', Boolean(bad));
+  }
+
+  /** One full-width message row inside a table body. */
+  function messageRow(tbody, cols, text) {
+    tbody.replaceChildren();
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = cols;
+    td.className = 'empty';
+    td.textContent = text;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+
+  /** A <td> carrying plain text (textContent — never innerHTML with server data). */
+  function cell(text, cls) {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = text;
+    return td;
+  }
+
+  /** USD with 4 decimals, or an em-dash for null/undefined (unknown, NOT zero). */
+  function usdCell(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+      const td = cell('—', 'dash');
+      td.title = 'Not available — the spend store could not be read (the budget service is fail-open, so this is unknown, not zero).';
+      return td;
+    }
+    return cell('$' + Number(value).toFixed(4), 'num');
+  }
+
+  /** A percentage-of-cap bar; blank when either side is unknown or the cap is 0. */
+  function usageCell(spend, cap) {
+    const td = document.createElement('td');
+    const s = Number(spend);
+    const c = Number(cap);
+    if (spend === null || spend === undefined || !Number.isFinite(s) || !Number.isFinite(c) || c <= 0) {
+      td.className = 'dash';
+      td.textContent = '—';
+      return td;
+    }
+    const pct = (s / c) * 100;
+    const bar = document.createElement('span');
+    bar.className = 'bar';
+    const fill = document.createElement('i');
+    fill.style.width = Math.min(100, Math.max(0, pct)).toFixed(1) + '%';
+    if (pct >= 100) fill.className = 'bad';
+    else if (pct >= 80) fill.className = 'warn';
+    bar.appendChild(fill);
+    bar.title = pct.toFixed(1) + '% of cap';
+    td.appendChild(bar);
+    const label = document.createElement('span');
+    label.className = 'num';
+    label.style.marginLeft = '8px';
+    label.textContent = pct.toFixed(0) + '%';
+    td.appendChild(label);
+    return td;
+  }
+
+  /** A bordered pill. */
+  function pillCell(text, cls, title) {
+    const td = document.createElement('td');
+    const span = document.createElement('span');
+    span.className = 'pill' + (cls ? ' ' + cls : '');
+    span.textContent = text;
+    if (title) span.title = title;
+    td.appendChild(span);
+    return td;
+  }
+
+  /** ISO timestamp → local short string; passes through anything unparseable. */
+  function when(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
+  }
+
+  /** Render the caps table from BudgetStateRow[] (spendUsd may be null = unknown). */
+  function renderCaps(rows) {
+    if (!rows.length) {
+      messageRow($caps, CAP_COLS, 'No caps returned. That means either no budgets are configured or the budgets table could not be read — the API cannot distinguish the two (fail-open).');
+      return;
+    }
+    $caps.replaceChildren();
+    for (const b of rows) {
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(String(b.scopeType ?? '')));
+      tr.appendChild(cell(String(b.scopeKey ?? ''), 'wrap-cell'));
+      tr.appendChild(usdCell(b.dailyUsd));
+      tr.appendChild(usdCell(b.spendUsd));
+      tr.appendChild(usageCell(b.spendUsd, b.dailyUsd));
+      tr.appendChild(b.hard
+        ? pillCell('hard', 'hard', 'A definitive breach HALTS work on this scope.')
+        : pillCell('soft', 'soft', 'A breach is recorded and alerted but work continues.'));
+      tr.appendChild(b.enabled
+        ? pillCell('enabled', '', 'This cap is checked.')
+        : pillCell('disabled', 'off', 'Saved but not checked — it enforces nothing while disabled.'));
+      tr.appendChild(cell(b.setByOperator ? 'operator' : 'self', ''));
+      tr.appendChild(cell(when(b.updatedAt)));
+      $caps.appendChild(tr);
+    }
+  }
+
+  /** Render the append-only oshal_budget_events trail (operator view only). */
+  function renderEvents(rows) {
+    $eventsSection.hidden = false;
+    if (!rows.length) {
+      messageRow($events, 7, 'No enforcement events in the trail. Nothing has breached a cap (or no cap has been checked yet).');
+      return;
+    }
+    $events.replaceChildren();
+    for (const e of rows) {
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(when(e.ts)));
+      tr.appendChild(cell(String(e.action ?? '')));
+      tr.appendChild(cell(String(e.scopeType ?? '')));
+      tr.appendChild(cell(String(e.scopeKey ?? ''), 'wrap-cell'));
+      tr.appendChild(usdCell(e.spendUsd));
+      tr.appendChild(usdCell(e.capUsd));
+      tr.appendChild(cell(e.detail ? JSON.stringify(e.detail) : '—', 'wrap-cell'));
+      $events.appendChild(tr);
+    }
+  }
+
+  /** Explain which of the two views the caller got, and why. */
+  function banner(html) {
+    $banner.replaceChildren();
+    if (!html) return;
+    const div = document.createElement('div');
+    div.className = 'banner';
+    div.innerHTML = html; // static author-written copy only — never server data
+    $banner.appendChild(div);
+  }
+
+  /** Parse a JSON body, tolerating an empty or non-JSON response. */
+  async function readJson(res) {
+    const raw = await res.text();
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+
+  /**
+   * Non-operator path: /state is operator-only, so list the caller's own row(s) via
+   * GET /api/budgets and read spend per row via GET /api/budgets/spend (self-read is allowed
+   * for scopeType 'user' + your own sub). A 503 there means the spend store is unavailable —
+   * recorded as null (unknown), never 0.
+   */
+  async function loadSelfView(hours) {
+    const res = await fetch('/api/budgets', { credentials: 'same-origin' });
+    if (res.status === 401) { say('Not signed in — reload the cockpit to authenticate.', true); messageRow($caps, CAP_COLS, 'Not signed in.'); return; }
+    const body = await readJson(res);
+    if (!res.ok) {
+      say('Could not read your budgets: ' + (body && body.error ? body.error : 'HTTP ' + res.status), true);
+      messageRow($caps, CAP_COLS, 'Budget read failed.');
+      return;
+    }
+    const rows = Array.isArray(body && body.budgets) ? body.budgets : [];
+    const withSpend = [];
+    for (const b of rows) {
+      let spendUsd = null;
+      try {
+        const q = new URLSearchParams({ scope: String(b.scopeType) + ':' + String(b.scopeKey), windowHours: String(hours) });
+        const sr = await fetch('/api/budgets/spend?' + q.toString(), { credentials: 'same-origin' });
+        const sb = await readJson(sr);
+        // 200 => a real number. 503 => store unavailable. 403 => cross-user scope (not self).
+        spendUsd = sr.ok && sb && Number.isFinite(Number(sb.spendUsd)) ? Number(sb.spendUsd) : null;
+      } catch (err) {
+        spendUsd = null; // network failure is unknown spend, not zero
+      }
+      withSpend.push(Object.assign({}, b, { spendUsd }));
+    }
+    $capsHead.textContent = 'Your cap';
+    renderCaps(withSpend);
+    $eventsSection.hidden = true;
+    say('Showing your own cap only, over the last ' + hours + ' h.');
+    banner('<strong>Your view.</strong> The deployment-wide snapshot (<code>/api/budgets/state</code>) '
+      + 'and the enforcement trail are operator-only, so this shows just the cap that applies to you. '
+      + 'A cap marked <em>operator</em> was set for you and cannot be changed from your account.');
+  }
+
+  /** Operator path: one call gives caps+spend+events. */
+  async function load() {
+    const hours = Number($win.value) || 24;
+    say('Loading…');
+    messageRow($caps, CAP_COLS, 'Loading…');
+    let res;
+    try {
+      const q = new URLSearchParams({ windowHours: String(hours), eventLimit: '50' });
+      res = await fetch('/api/budgets/state?' + q.toString(), { credentials: 'same-origin' });
+    } catch (err) {
+      say('Network error reaching /api/budgets/state: ' + (err && err.message ? err.message : String(err)), true);
+      messageRow($caps, CAP_COLS, 'Could not reach the API.');
+      return;
+    }
+    if (res.status === 403) { await loadSelfView(hours); return; }
+    if (res.status === 401) {
+      say('Not signed in — reload the cockpit to authenticate.', true);
+      messageRow($caps, CAP_COLS, 'Not signed in.');
+      return;
+    }
+    const body = await readJson(res);
+    if (!res.ok) {
+      say('Budget state read failed: ' + (body && body.error ? body.error : 'HTTP ' + res.status), true);
+      messageRow($caps, CAP_COLS, 'Budget state read failed.');
+      return;
+    }
+    banner('');
+    $capsHead.textContent = 'Caps (all scopes)';
+    const budgets = Array.isArray(body.budgets) ? body.budgets : [];
+    const events = Array.isArray(body.events) ? body.events : [];
+    renderCaps(budgets);
+    renderEvents(events);
+    const unknown = budgets.filter((b) => b.spendUsd === null || b.spendUsd === undefined).length;
+    say(budgets.length + ' cap(s), ' + events.length + ' enforcement event(s), window '
+      + (Number.isFinite(Number(body.windowHours)) ? body.windowHours : hours) + ' h'
+      + (unknown ? ' — spend unreadable for ' + unknown + ' cap(s) (shown as —)' : ''));
+  }
+
+  document.getElementById('reload').addEventListener('click', () => { void load(); });
+  $win.addEventListener('change', () => { void load(); });
+  void load();
+})();
+</script>
+</body>
+</html>

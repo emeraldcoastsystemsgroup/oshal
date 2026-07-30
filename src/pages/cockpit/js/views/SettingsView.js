@@ -429,30 +429,12 @@ export class SettingsView {
   }
 
   /**
-   * @description Refresh the visible cost cards after limits or spend totals change.
-   *
-   * @returns {void}
-   */
-  _updateCostDisplay() {
-    const costStatus = this.api.getCostStatus();
-    logger.debug('Updating cockpit settings cost display', {
-      dailySpent: costStatus.dailySpent,
-      bucketSpent: costStatus.bucketSpent,
-    });
-    updateCostCard('costDailySpent', costStatus.dailySpent, costStatus.dailyLimit);
-    updateCostCard('costBucketSpent', costStatus.bucketSpent, costStatus.bucketLimit);
-  }
-
-  /**
    * @description Clean up listeners and DOM state owned by the settings view.
    *
    * @returns {void}
    */
   destroy() {
     logger.info('Destroying cockpit settings view');
-    if (this.costUpdateHandler) {
-      window.removeEventListener('cost-updated', this.costUpdateHandler);
-    }
     if (this.container) {
       this.container.innerHTML = '';
     }
@@ -588,20 +570,6 @@ async function postEmptyJson(endpoint) {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: response.statusText }));
     throw new Error(error.error || response.statusText);
-  }
-}
-
-// Update one cost card value and limit label.
-function updateCostCard(valueId, spent, limit) {
-  const valueNode = document.getElementById(valueId);
-  if (!valueNode) {
-    return;
-  }
-  const card = valueNode.closest('.cost-status-card');
-  const limitNode = card?.querySelector('.cost-status-limit');
-  valueNode.textContent = `$${spent.toFixed(4)}`;
-  if (limitNode) {
-    limitNode.textContent = limit ? `of $${limit.toFixed(2)} limit` : 'No limit set';
   }
 }
 

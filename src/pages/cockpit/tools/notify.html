@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Notifications — where each topic reaches you</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5b8cff);
+    --ok: var(--status-success, #36d399);
+    --warn: var(--status-warning, #f4bf50);
+    --bad: var(--status-error, #ff8585);
+    --chip: var(--bg-tertiary);
+    /* --bg-card is translucent by design; composite it over the page colour anywhere it must cover
+       scrolling content (the toast below). */
+    --solid-panel: linear-gradient(var(--panel), var(--panel));
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 90px; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13.5px; max-width: 74ch; }
+  .status { color: var(--muted); font-size: 12.5px; margin: 8px 0 16px; min-height: 17px; }
+  .status.err { color: var(--bad); }
+  .banner { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    background: var(--bg) var(--solid-panel); font-size: 13.5px; margin-bottom: 18px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+    margin: 26px 0 10px; }
+  .card { border: 1px solid var(--line); border-radius: 11px; padding: 14px 16px; margin-bottom: 12px;
+    background: var(--panel); }
+  .card h3 { margin: 0 0 2px; font-size: 16px; display: flex; align-items: center; gap: 9px; }
+  .card .meta { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 14px; }
+  .f { display: flex; flex-direction: column; gap: 4px; }
+  .f > span { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+  input, select { border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+    border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13.5px; width: 100%; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .checkrow { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+  .checkrow input { width: auto; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--chip); color: var(--text);
+    border-radius: 9px; padding: 8px 14px; font: inherit; font-size: 13.5px; font-weight: 600; }
+  button.primary { background: var(--accent); color: #04122e; border-color: transparent; }
+  button:disabled { opacity: .55; cursor: default; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 13px; align-items: center; }
+  .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 9px; font-size: 11.5px; color: var(--muted); }
+  .pill.on { border-color: var(--ok); color: var(--ok); }
+  .pill.off { border-color: var(--line); opacity: .7; }
+  .result { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+  .result.ok { color: var(--ok); }
+  .result.bad { color: var(--bad); }
+  .empty { border: 1px dashed var(--line); border-radius: 11px; padding: 22px 18px; color: var(--muted);
+    font-size: 13.5px; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 28px; border-top: 1px solid var(--line);
+    padding-top: 12px; max-width: 84ch; }
+  code { background: var(--chip); border-radius: 5px; padding: 0 5px; font-size: 12.5px; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>Notifications</h1>
+  <p class="sub">Where each topic reaches <strong>you</strong> — your own saved routing over
+  <code>/api/notify/prefs</code>. Every send uses your own connected account (your Gmail, your
+  Twilio, your Telegram chat), never a shared deployment credential.</p>
+
+  <div class="status" id="status">Loading…</div>
+  <div id="banner"></div>
+
+  <h2>Saved topics</h2>
+  <div id="cards"></div>
+
+  <h2>Add a topic</h2>
+  <div class="card">
+    <p class="meta">Topics are created by whatever produces the notification (a digest job, an alert
+    rail), so there is no catalog to pick from — type the exact topic name the producer uses. It is
+    stored lowercase; <code>a-z 0-9 _ -</code>, up to 64 characters.</p>
+    <div class="grid">
+      <label class="f"><span>Topic</span><input id="newTopic" placeholder="career-digest" autocomplete="off" /></label>
+      <label class="f"><span>Channel</span><select id="newChannel"></select></label>
+    </div>
+    <div class="actions"><button class="primary" id="addBtn" type="button">Create topic pref</button>
+      <span class="result" id="addResult"></span></div>
+  </div>
+
+  <p class="foot">Two things this surface cannot show you, stated plainly. <strong>(1)</strong> There
+  is no route that lists the topics the platform <em>can</em> notify about — only the prefs you have
+  already saved — so an empty list means "you have saved nothing", not "nothing will ever notify
+  you"; unsaved topics fall back to the resolved default channel below. <strong>(2)</strong> Send
+  test reports exactly what the router returned: <code>delivered</code>, or the real reason it was
+  skipped (quiet hours, channel unavailable, no connected account). It never shows a green tick for
+  a send that did not happen.</p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $status = document.getElementById('status');
+  const $cards = document.getElementById('cards');
+  const $banner = document.getElementById('banner');
+  const $newTopic = document.getElementById('newTopic');
+  const $newChannel = document.getElementById('newChannel');
+  const $addBtn = document.getElementById('addBtn');
+  const $addResult = document.getElementById('addResult');
+
+  let channels = ['email', 'sms', 'telegram', 'none'];
+  let defaultChannel = 'none';
+
+  function say(text, bad) {
+    $status.textContent = text;
+    $status.classList.toggle('err', Boolean(bad));
+  }
+
+  async function readJson(res) {
+    const raw = await res.text();
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+
+  function when(ts) {
+    if (!ts) return 'never saved';
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
+  }
+
+  /** A <select> of the channel list the API returned (never a hardcoded list). */
+  function channelSelect(selected) {
+    const sel = document.createElement('select');
+    for (const c of channels) {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c === 'none' ? 'none (mute this topic)' : c;
+      if (c === selected) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    return sel;
+  }
+
+  function field(labelText, control) {
+    const label = document.createElement('label');
+    label.className = 'f';
+    const span = document.createElement('span');
+    span.textContent = labelText;
+    label.appendChild(span);
+    label.appendChild(control);
+    return label;
+  }
+
+  function numberInput(value, min, max, placeholder) {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = String(min);
+    input.max = String(max);
+    input.placeholder = placeholder;
+    input.value = value === null || value === undefined ? '' : String(value);
+    return input;
+  }
+
+  /**
+   * Build one topic card. The saved pref is the source of truth for every control; nothing is
+   * defaulted into a value the server did not send.
+   */
+  function buildCard(pref) {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const h3 = document.createElement('h3');
+    h3.textContent = pref.topic;
+    const state = document.createElement('span');
+    state.className = 'pill ' + (pref.enabled ? 'on' : 'off');
+    state.textContent = pref.enabled ? 'enabled' : 'muted';
+    h3.appendChild(state);
+    card.appendChild(h3);
+
+    const meta = document.createElement('p');
+    meta.className = 'meta';
+    meta.textContent = 'Last saved: ' + when(pref.updatedAt);
+    card.appendChild(meta);
+
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    const chan = channelSelect(pref.channel);
+    const qStart = numberInput(pref.quietHoursStart, 0, 23, 'e.g. 22');
+    const qEnd = numberInput(pref.quietHoursEnd, 0, 23, 'e.g. 7');
+    const phone = document.createElement('input');
+    phone.type = 'tel';
+    phone.placeholder = '+15551234567';
+    phone.value = pref.phone || '';
+    const chat = document.createElement('input');
+    chat.type = 'text';
+    chat.placeholder = 'telegram chat id';
+    chat.value = pref.telegramChatId || '';
+    grid.appendChild(field('Channel', chan));
+    grid.appendChild(field('Quiet from (hour)', qStart));
+    grid.appendChild(field('Quiet until (hour)', qEnd));
+    grid.appendChild(field('SMS destination', phone));
+    grid.appendChild(field('Telegram chat id', chat));
+    card.appendChild(grid);
+
+    const enabledRow = document.createElement('label');
+    enabledRow.className = 'checkrow';
+    enabledRow.style.marginTop = '11px';
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.checked = pref.enabled !== false;
+    enabledRow.appendChild(enabled);
+    const enabledText = document.createElement('span');
+    enabledText.textContent = 'Enabled (unchecking keeps this routing saved but mutes the topic)';
+    enabledRow.appendChild(enabledText);
+    card.appendChild(enabledRow);
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const save = document.createElement('button');
+    save.className = 'primary';
+    save.type = 'button';
+    save.textContent = 'Save';
+    const test = document.createElement('button');
+    test.type = 'button';
+    test.textContent = 'Send test';
+    test.title = 'Sends a REAL notification to you on this topic’s resolved channel.';
+    const result = document.createElement('span');
+    result.className = 'result';
+    actions.appendChild(save);
+    actions.appendChild(test);
+    actions.appendChild(result);
+    card.appendChild(actions);
+
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      result.className = 'result';
+      result.textContent = 'Saving…';
+      const body = {
+        topic: pref.topic,
+        channel: chan.value,
+        enabled: enabled.checked,
+        quietHoursStart: qStart.value === '' ? null : Number(qStart.value),
+        quietHoursEnd: qEnd.value === '' ? null : Number(qEnd.value),
+        phone: phone.value.trim() || null,
+        telegramChatId: chat.value.trim() || null,
+      };
+      try {
+        const res = await fetch('/api/notify/prefs', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await readJson(res);
+        if (res.ok) {
+          result.className = 'result ok';
+          result.textContent = 'Saved.';
+          await load();
+        } else {
+          result.className = 'result bad';
+          result.textContent = 'Not saved — ' + ((data && data.error) || 'HTTP ' + res.status);
+        }
+      } catch (err) {
+        result.className = 'result bad';
+        result.textContent = 'Not saved — ' + (err && err.message ? err.message : String(err));
+      } finally {
+        save.disabled = false;
+      }
+    });
+
+    test.addEventListener('click', async () => {
+      test.disabled = true;
+      result.className = 'result';
+      result.textContent = 'Sending…';
+      try {
+        const res = await fetch('/api/notify/test', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          // confirm:true is required — the route 428s without it, because this sends for real.
+          body: JSON.stringify({ confirm: true, topic: pref.topic }),
+        });
+        const data = await readJson(res);
+        result.className = 'result ' + (res.ok && data && data.delivered ? 'ok' : 'bad');
+        result.textContent = describeOutcome(res.status, data);
+      } catch (err) {
+        result.className = 'result bad';
+        result.textContent = 'Send failed — ' + (err && err.message ? err.message : String(err));
+      } finally {
+        test.disabled = false;
+      }
+    });
+
+    return card;
+  }
+
+  /**
+   * Turn a /test response into an honest sentence. 200 = delivered; 409 = the router ran and
+   * nothing went out (with its reason); 428 = confirm missing; anything else is reported raw.
+   */
+  function describeOutcome(status, data) {
+    if (status === 428) return 'Not sent — the route requires an explicit confirmation.';
+    if (status === 401) return 'Not sent — you are not signed in.';
+    if (!data) return 'Not sent — HTTP ' + status + ' with no body.';
+    const parts = [];
+    if (data.delivered) {
+      parts.push('Delivered via ' + (data.channel || 'unknown channel') + '.');
+      if (data.id) parts.push('id ' + data.id);
+    } else {
+      parts.push('NOT delivered.');
+      if (data.channel) parts.push('channel: ' + data.channel);
+      if (data.skipped) parts.push('skipped');
+      if (data.reason) parts.push('reason: ' + data.reason);
+      if (data.error) parts.push('error: ' + data.error);
+      if (!data.reason && !data.error) parts.push('the router gave no reason (HTTP ' + status + ')');
+    }
+    return parts.join(' ');
+  }
+
+  function bannerText() {
+    $banner.replaceChildren();
+    const div = document.createElement('div');
+    div.className = 'banner';
+    const strong = document.createElement('strong');
+    strong.textContent = 'Default channel: ' + defaultChannel + '. ';
+    div.appendChild(strong);
+    div.appendChild(document.createTextNode(
+      defaultChannel === 'none'
+        ? 'You have no Gmail-send connection, so a topic with no saved pref reaches you nowhere. Connect Google (with gmail.send) or save a pref below.'
+        : 'A topic with no saved pref falls back to this channel. Channels offered by this deployment: ' + channels.join(', ') + '.'));
+    $banner.appendChild(div);
+  }
+
+  async function load() {
+    say('Loading…');
+    let res;
+    try {
+      res = await fetch('/api/notify/prefs', { credentials: 'same-origin' });
+    } catch (err) {
+      say('Network error reaching /api/notify/prefs: ' + (err && err.message ? err.message : String(err)), true);
+      return;
+    }
+    if (res.status === 401) { say('Not signed in — reload the cockpit to authenticate.', true); return; }
+    const data = await readJson(res);
+    if (!res.ok) {
+      say('Could not read your notification prefs: ' + ((data && data.error) || 'HTTP ' + res.status), true);
+      return;
+    }
+    channels = Array.isArray(data && data.channels) && data.channels.length ? data.channels : channels;
+    defaultChannel = (data && data.defaultChannel) || 'none';
+    bannerText();
+
+    // Rebuild the "add" channel picker from the server's list.
+    $newChannel.replaceChildren();
+    for (const c of channels) {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c === 'none' ? 'none (mute this topic)' : c;
+      $newChannel.appendChild(opt);
+    }
+
+    const prefs = Array.isArray(data && data.prefs) ? data.prefs : [];
+    $cards.replaceChildren();
+    if (!prefs.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'You have not saved a routing preference for any topic yet. Anything that '
+        + 'notifies you falls back to the default channel above. Add a topic below to override it.';
+      $cards.appendChild(empty);
+    } else {
+      for (const p of prefs) $cards.appendChild(buildCard(p));
+    }
+    say(prefs.length + ' saved topic pref(s).');
+  }
+
+  $addBtn.addEventListener('click', async () => {
+    const topic = $newTopic.value.trim().toLowerCase();
+    $addResult.className = 'result';
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(topic)) {
+      $addResult.className = 'result bad';
+      $addResult.textContent = 'Topic must be 1-64 characters of a-z 0-9 _ - and start with a letter or digit.';
+      return;
+    }
+    $addBtn.disabled = true;
+    $addResult.textContent = 'Saving…';
+    try {
+      const res = await fetch('/api/notify/prefs', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic,
+          channel: $newChannel.value,
+          enabled: true,
+          quietHoursStart: null,
+          quietHoursEnd: null,
+          phone: null,
+          telegramChatId: null,
+        }),
+      });
+      const data = await readJson(res);
+      if (res.ok) {
+        $addResult.className = 'result ok';
+        $addResult.textContent = 'Created.';
+        $newTopic.value = '';
+        await load();
+      } else {
+        $addResult.className = 'result bad';
+        $addResult.textContent = 'Not created — ' + ((data && data.error) || 'HTTP ' + res.status);
+      }
+    } catch (err) {
+      $addResult.className = 'result bad';
+      $addResult.textContent = 'Not created — ' + (err && err.message ? err.message : String(err));
+    } finally {
+      $addBtn.disabled = false;
+    }
+  });
+
+  void load();
+})();
+</script>
+</body>
+</html>

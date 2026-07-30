@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bridge: map lm-navigate 'class-<full-uuid>' onto the 8-char dynamic-button prefix (class tiles never matched a button — broken since before the carve-out), and WARN when a navigation targets a button the ribbon doesn't have — the silent no-op is what kept this invisible.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add 'tool-global-search' (Search) — the caller-scoped global search surface (/api/search/ui) rides along on every cockpit like Optimizer/Workflow Studio, since search over the caller's own data isn't owned by any one app.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add 'tool-run-trace' (Run Trace) — the caller-scoped run-trace waterfall surface (/api/trace/app) rides along on every cockpit, since tracing a ticket's execution timeline isn't owned by any one app.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add the four read surfaces for the shared platform services that shipped headless — Budgets (enforced spend caps), Notifications (per-topic routing prefs), Dead Letters (queue quarantine, operator-only), and My Data (export/delete). They are static pages under src/pages/cockpit/tools/, so they need no Express route. Added _loadOperatorState() (GET /api/cli-tokens/whoami) so the operator-only Dead Letters entry is not pinned into a basic user's rail — the routes self-gate server-side regardless, this only avoids offering a tool that can only answer 403.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -167,6 +168,7 @@ export class RibbonNav {
 
   async _init() {
     await this._loadGuestState();
+    await this._loadOperatorState();
     this.profile = await this._fetchProfile();
     this._applyAppBranding();
     this.activeView = this.profile?.defaultView || 'tickets';
@@ -224,6 +226,28 @@ export class RibbonNav {
       }
     } catch (err) {
       logger.debug('Could not resolve guest state (non-fatal)', { error: err?.message });
+    }
+  }
+
+  /**
+   * @description Resolves whether the signed-in caller is on the operator allowlist, so the
+   * ribbon does not pin an operator-only tool (Dead Letters) into a basic user's rail where
+   * every click can only answer 403. `/api/cli-tokens/whoami` is the existing identity probe
+   * that already reports the operator flag. This is COSMETIC only — all three DLQ routes are
+   * requiresAuth + requiresOperator server-side, and the surface itself renders an honest
+   * "operator only" panel on a 403, so a wrong answer here leaks nothing. Fails closed
+   * (non-operator) on any error, because pinning a dead tool is worse than omitting one.
+   * @returns {Promise<void>}
+   */
+  async _loadOperatorState() {
+    this.isOperator = false;
+    try {
+      const res = await fetch('/api/cli-tokens/whoami', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const data = await res.json();
+      this.isOperator = data?.operator === true;
+    } catch (err) {
+      logger.debug('Could not resolve operator state (non-fatal, treated as non-operator)', { error: err?.message });
     }
   }
 
@@ -291,6 +315,11 @@ export class RibbonNav {
    * tool this is a no-op. Optimizer = the Token Chase capture + playback optimizer (replay a captured
    * LLM call against the user's own configured providers; ADR-046). Embedded as an iframe tool view
    * via toolUi.iframeUrl — the `tool-` id prefix routes it to renderToolView.
+   *
+   * Four of these (Budgets, Notifications, My Data, Dead Letters) point at static pages under
+   * `src/pages/cockpit/tools/`, which the cockpit's own authenticated express.static mount already
+   * serves at `/cockpit/tools/<name>.html` — they need no Express route of their own. Dead Letters
+   * is appended only for an operator (see {@link RibbonNav#_loadOperatorState}).
    * @returns {void}
    */
   _appendPlatformTools() {
@@ -351,7 +380,54 @@ export class RibbonNav {
         // assembled from persisted rows and caller-scoped by owner_sub — served by trace-routes.ts.
         toolUi: { iframeUrl: '/api/trace/app', sidebarLabel: 'Run Trace' },
       },
+      {
+        id: 'tool-budgets',
+        icon: 'codicon codicon-dashboard',
+        label: 'Budgets',
+        section: 'bottom',
+        // Read surface over /api/budgets: the spend caps the platform actually ENFORCES
+        // (oshal_budgets, checked pre-dispatch) with their trailing-window spend. Operators see
+        // every scope plus the enforcement trail; a basic user sees only their own cap. Static
+        // page under src/pages/cockpit/tools/ — served by the cockpit's own express.static mount.
+        toolUi: { iframeUrl: '/cockpit/tools/budgets.html', sidebarLabel: 'Budgets' },
+      },
+      {
+        id: 'tool-notify',
+        icon: 'codicon codicon-bell',
+        label: 'Notifications',
+        section: 'bottom',
+        // Self-scoped notification preference center (/api/notify/prefs): per-topic channel,
+        // quiet window, and destination, plus a confirm-gated real test send that reports the
+        // router's actual outcome rather than an unconditional success.
+        toolUi: { iframeUrl: '/cockpit/tools/notify.html', sidebarLabel: 'Notifications' },
+      },
+      {
+        id: 'tool-my-data',
+        icon: 'codicon codicon-archive',
+        label: 'My Data',
+        section: 'bottom',
+        // The self-service data-lifecycle surface (/api/me): export your bundle, and run the
+        // two-step delete (request a plan + token, then confirm) with the per-store outcomes and
+        // the declared coverage gaps shown honestly.
+        toolUi: { iframeUrl: '/cockpit/tools/my-data.html', sidebarLabel: 'My Data' },
+      },
     ];
+
+    // Dead letters is operator-only at every one of its three routes, so it is only pinned for an
+    // operator. The surface still self-gates (it renders an "operator only" panel on a 403) —
+    // this keeps a basic user's rail free of a tool that could never answer.
+    if (this.isOperator) {
+      PLATFORM_TOOLS.push({
+        id: 'tool-dlq',
+        icon: 'codicon codicon-warning',
+        label: 'Dead Letters',
+        section: 'bottom',
+        // Operator view of oshal_queue_dlq (ADR queue dead-letter rails): the quarantine table,
+        // the JSON export, and per-ticket requeue with each distinct failure surfaced separately.
+        toolUi: { iframeUrl: '/cockpit/tools/dlq.html', sidebarLabel: 'Dead Letters' },
+      });
+    }
+
     for (const tool of PLATFORM_TOOLS) {
       if (!this.views.find(v => v.id === tool.id)) this.views.push(tool);
     }
