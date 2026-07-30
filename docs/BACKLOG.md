@@ -5767,3 +5767,29 @@ the same boundary `check-repo-separation.js` exists to protect.
   resolves `@/` aliases — the window is made safe and loud: copy under a package-scoped subdirectory,
   clean up in a `trap`, and refuse to run when the target path already holds a kernel-tracked file.
   Either way a guard should prove that a store build leaves `git status` on the kernel tree unchanged.
+
+## Joke-shorts pump — deferred work (ADR-120)
+
+The pump is live and producing (six shows, 1/day each). Three things it deliberately does NOT do:
+
+- **Nothing is published anywhere.** Episodes land in the node's content folder and the owner's
+  Drive, and stop there. Publishing to YouTube/Shorts is a separate decision with its own consent
+  question — per the operator's standing rule, outward-acting automation is explicit opt-in, so this
+  needs a per-destination switch, not a flag on the pump.
+  *Done when:* an operator can enable a destination per show, a dry-run shows exactly what would be
+  posted, and nothing posts without that switch being on.
+
+- **The tuning loop only reads outcomes, not the video.** `video_pump_runs` records what happened
+  (delivered / failed / skipped and why) and auto-pauses a show after three consecutive failures, but
+  nothing watches a delivered episode back. The failure modes that matter most — a joke that does not
+  land, four scenes that drifted apart, dialogue that came out garbled — are invisible to it.
+  *Done when:* a delivered episode is scored on at least the mechanical checks the hand-run era used
+  (duration, silence stretches, per-scene frame distinctness) and a failing score pauses the show the
+  same way three failures do.
+
+- **The recap does not take the node lease.** The pump takes a lease before it renders, and detects
+  the recap by its own markers (`out/build.pid`, `out/build.log`) plus a blackout window. That works,
+  but it is inference: if the recap runner changes its markers the gate goes blind to it and only the
+  clock protects the collision.
+  *Done when:* `run-daily-recap.ps1` acquires and releases the same `<data>\node.lock` the pump uses,
+  and the pump's `recap-running` probe becomes a backstop rather than the primary signal.

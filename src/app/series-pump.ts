@@ -547,10 +547,17 @@ export async function syncPumpRuns(ctx: AppContext): Promise<number> {
     const ms = Date.now() - new Date(String(raw.created_at)).getTime();
     if (status === 'rendered' || status === 'assembled') {
       // eslint-disable-next-line no-await-in-loop
+      // "Delivered" must never imply a link that does not exist. The node uploads best-effort and
+      // reports `drivePending` when Drive did not return one; the episode is still real and still on
+      // the node, so this is a delivery — it just has to SAY that the copy is local only. (Live
+      // 2026-07-30: Cardboard Cosmo's episode rendered fine and the ledger showed "delivered" with an
+      // empty link, which reads exactly like the fabricated-link mistake this project already paid for.)
+      const link = (raw.drive_url as string | null) ?? null;
       await pool.query(
         `UPDATE video_pump_runs SET outcome='delivered', outcome_stage=$2, drive_url=$3, duration_ms=$4,
-                outcome_reason=NULL, updated_at=now() WHERE run_id=$1`,
-        [runId, status, (raw.drive_url as string | null) ?? null, ms],
+                outcome_reason=$5, updated_at=now() WHERE run_id=$1`,
+        [runId, status, link, ms,
+          link ? null : 'delivered to the node content folder; the Drive upload returned no link'],
       );
       if (raw.show_id) {
         // eslint-disable-next-line no-await-in-loop
