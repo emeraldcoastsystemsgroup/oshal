@@ -57,6 +57,19 @@
 - [ ] Live-validated the harness's actual flag set against `--help`
       (don't copy-paste from another adapter blind).
 
+## Licensing (required for contributions from outside the maintainer org)
+
+<!-- Delete this section only if you are a maintainer. -->
+- [ ] I have read [CLA.md](../CLA.md) and I agree to it.
+- [ ] My commits are signed off (`git commit -s`).
+- [ ] Every contribution here is my original work, or is separately identified
+      with its license and author, and is AGPL-3.0-compatible.
+- [ ] If my employer has rights to IP I create, I have permission to contribute.
+
+```
+I have read CLA.md and I agree to it. Signed-off-by: Your Name <you@example.com>
+```
+
 ## Breaking changes
 
 <!-- If yes, what changed, who is affected, migration steps. -->

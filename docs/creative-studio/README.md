@@ -12,3 +12,6 @@ prompted, rendered, validated, and delivered.
 - [video-series-pipeline.md](./video-series-pipeline.md) — the swarm-wired pipeline: a user
   describes a series, the `screenplay-writer` bot writes it, the swarm storyboards and renders
   it. Architecture, the stage hand-off, the build traps, and the honest gap list. (ADR-082.)
+- [joke-shorts-pump.md](./joke-shorts-pump.md) — running that pipeline on a schedule instead of by
+  hand: the switches, what each cycle's refusal means, and what the render node has to have
+  installed. Read the table of skip reasons before concluding the pump is broken. (ADR-120.)

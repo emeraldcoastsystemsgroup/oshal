@@ -19,6 +19,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard for graph-routes graceful degradation: unset → 503 unavailable, runtime-unreachable → 503 unreachable (was an unhandled 500), query error → 502; all logged, none a 500.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: the fake handle grows readQuery, the method POST /query now calls. Without it case (c) would exercise an undefined method (a TypeError → 500) and pass for the wrong reason — the fake must track the interface it stands in for.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
@@ -39,14 +40,20 @@ vi.mock('@/shared/logger', () => ({
 }));
 
 const createGraphConnectorMock = vi.hoisted(() => vi.fn());
-vi.mock('@/features/graph', () => ({ createGraphConnector: createGraphConnectorMock }));
+// GRAPH_READ_ONLY_CODE must be present on the mock: graph-routes imports it, and vitest throws
+// "no export defined on the mock" the moment the handler touches a missing one — which surfaced as
+// a 500 and would have read like a degradation regression rather than a test-double gap.
+vi.mock('@/features/graph', () => ({
+  createGraphConnector: createGraphConnectorMock,
+  GRAPH_READ_ONLY_CODE: 'graph_read_only',
+}));
 
 import { createGraphRoutes } from '@/app/routes/graph-routes';
 
 /** A GraphHandle whose every operation rejects — models an engine that connects but errors per-query. */
 function throwingHandle(): Record<string, unknown> {
   const boom = async (): Promise<never> => { throw new Error('AQL: syntax error near RETURN'); };
-  return { rawQuery: boom, neighbors: boom, shortestPath: boom, upsertNodes: boom, upsertEdges: boom };
+  return { readQuery: boom, rawQuery: boom, neighbors: boom, shortestPath: boom, upsertNodes: boom, upsertEdges: boom };
 }
 
 /** Build an app whose fake OIDC session carries `sub` (null = unauthenticated), mounting the real router. */

@@ -6,6 +6,9 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Verify the COMMIT, not the working tree, before it reaches main. On 2026-07-14 a hook-rejected commit was retried after a concurrent session cleared the shared index, so it shipped ONE file: the importers of a new module landed while the module itself never did, and main did not compile for ~40 minutes. Nothing caught it because typecheck/tests were green LOCALLY — against files that were on disk but not in git. This is the only check that can catch that class.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the PUBLISH GATE as the FIRST step (this repo is now public and has no scrubber in front of it). It runs on every push, including docs-only pushes the typecheck skips, and is NOT bypassable via OSHAL_SKIP_PREPUSH_VERIFY.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | The HEAD typecheck was SILENTLY SKIPPING for every agent-worktree push. REPO_ROOT is `git rev-parse --show-toplevel`, which in a LINKED WORKTREE is the worktree itself — and a fresh worktree has no node_modules, so `ln -s "$REPO_ROOT/node_modules"` produced a dangling link (or failed) and the hook printed one stderr line and exited 0. Worktree isolation is now the normal way parallel agents work here, so the default case for automated pushes was ZERO verification — precisely the class SEQ 1 exists to catch, and exactly the "a gate that skips itself is not a gate" failure the hardening doctrine names. Now: resolve the main checkout's node_modules via git-common-dir, fall back to a Windows junction when MSYS refuses symlinks, and BLOCK with an actionable message (naming the documented override) when neither works, instead of passing quietly. Found 2026-07-29 when an agent noticed its own pre-push had self-disabled, then confirmed live: the push of this very fix printed the OLD skip message. core.hooksPath is an ABSOLUTE path to the main checkout, so EVERY linked worktree executes the main checkout's hooks — which is why the fix takes effect only once main is merged AND the main checkout has pulled it, and why a worktree cannot test its own hook edit by pushing.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Made SEQ 2's promise true. OSHAL_SKIP_PREPUSH_VERIFY=1 exited at the very top of the script, BEFORE the publish gate — so the one documented escape hatch for a slow/unrunnable typecheck also silently disabled the leak wall on a public repo. The skip check now sits after the gate: you may skip the typecheck, never the gate.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | SEQ 3 preferred `$REPO_ROOT/node_modules` when present, which in an agent worktree is normally a JUNCTION back to the main checkout. Linking a link makes tsc resolve @types through a doubly-indirect path and emit ~36 spurious TS2742 "inferred type cannot be named without a reference to ../../../node_modules/@types/qs ... likely not portable" errors, so the newly-loud gate BLOCKED a push whose HEAD typechecks clean — SEQ 3 traded a silent skip for a false positive. Measured on the same commit: link-to-link 36 errors, direct link to the real directory 0. Now a linked worktree always resolves the main checkout's real node_modules and only falls back to its own. Found immediately because SEQ 3 made the gate loud, which is the argument for loud gates.
 # =============================================================================
 #
 # Exports committed HEAD to a scratch tree and typechecks THAT. Rule 0a: one worktree, one index,
@@ -13,11 +16,6 @@
 #
 # Skip (rare, deliberate): OSHAL_SKIP_PREPUSH_VERIFY=1 git push
 set -uo pipefail
-
-if [ "${OSHAL_SKIP_PREPUSH_VERIFY:-0}" = "1" ]; then
-  echo "pre-push: HEAD verification SKIPPED (OSHAL_SKIP_PREPUSH_VERIFY=1)" >&2
-  exit 0
-fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT" || exit 0
@@ -34,6 +32,15 @@ if [ -f "${REPO_ROOT}/scripts/publish-gate.sh" ]; then
     echo "✗ pre-push BLOCKED by the publish gate — this repo is PUBLIC (see above)." >&2
     exit 1
   fi
+fi
+
+# ── The typecheck escape hatch — deliberately BELOW the publish gate ─────────
+# Skipping a slow or unrunnable HEAD typecheck is a supported (rare) choice; skipping the leak
+# wall on a public repo is not. This check used to sit at the top of the file, which quietly made
+# the flag do both.
+if [ "${OSHAL_SKIP_PREPUSH_VERIFY:-0}" = "1" ]; then
+  echo "pre-push: HEAD typecheck SKIPPED (OSHAL_SKIP_PREPUSH_VERIFY=1) — publish gate still ran." >&2
+  exit 0
 fi
 
 # Nothing to verify if there are no TS/JS sources in the push range (docs-only pushes are common
@@ -53,10 +60,47 @@ if ! git archive HEAD | tar -x -C "$VERIFY_DIR" 2>/dev/null; then
   exit 0
 fi
 
-# node_modules is huge; symlink rather than copy. If the platform refuses, skip rather than block.
-if ! ln -s "$REPO_ROOT/node_modules" "$VERIFY_DIR/node_modules" 2>/dev/null; then
-  echo "pre-push: could not link node_modules — skipping HEAD verification." >&2
-  exit 0
+# node_modules is huge; link rather than copy. A LINKED WORKTREE has no node_modules of its own, so
+# resolve the main checkout's via git-common-dir — otherwise every agent-worktree push silently got
+# NO verification at all (see Change Log 3). Missing deps now BLOCK instead of passing quietly: a
+# gate that skips itself is not a gate.
+# Prefer the MAIN checkout's node_modules whenever we are in a linked worktree, even if this
+# worktree has one of its own — an agent worktree's node_modules is almost always a junction back
+# to the main checkout, and linking a link makes tsc emit ~36 spurious TS2742 "cannot be named
+# without a reference to ../../../node_modules/@types/qs, likely not portable" errors. Those are an
+# artifact of the doubly-indirect path, not real type errors, and they blocked a push whose HEAD
+# typechecks clean. Resolving to the real directory yields zero. (See Change Log 5.)
+NODE_MODULES=""
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+MAIN_ROOT="${COMMON_DIR%/.git}"
+if [ -n "$MAIN_ROOT" ] && [ "$MAIN_ROOT" != "$REPO_ROOT" ] && [ -d "$MAIN_ROOT/node_modules" ]; then
+  NODE_MODULES="$MAIN_ROOT/node_modules"
+  echo "pre-push: linked worktree — using the main checkout's node_modules ($MAIN_ROOT)" >&2
+elif [ -d "$REPO_ROOT/node_modules" ]; then
+  NODE_MODULES="$REPO_ROOT/node_modules"
+fi
+
+if [ -z "$NODE_MODULES" ]; then
+  echo "" >&2
+  echo "✗ pre-push BLOCKED — cannot verify committed HEAD: no node_modules found." >&2
+  echo "  Looked in this tree and in the main checkout (via git-common-dir)." >&2
+  echo "  Run 'npm ci --legacy-peer-deps' in the main checkout, then push again." >&2
+  echo "  Override (rare, and you own what lands): OSHAL_SKIP_PREPUSH_VERIFY=1 git push" >&2
+  echo "" >&2
+  exit 1
+fi
+
+# MSYS/Windows refuses symlinks under some configurations; a directory junction is equivalent here
+# and costs nothing. Only if BOTH mechanisms fail do we block.
+if ! ln -s "$NODE_MODULES" "$VERIFY_DIR/node_modules" 2>/dev/null; then
+  if ! MSYS_NO_PATHCONV=1 cmd //c mklink /J "$(cygpath -w "$VERIFY_DIR")\\node_modules" "$(cygpath -w "$NODE_MODULES")" >/dev/null 2>&1; then
+    echo "" >&2
+    echo "✗ pre-push BLOCKED — could not link node_modules into the verification tree." >&2
+    echo "  Neither 'ln -s' nor 'mklink /J' worked, so committed HEAD cannot be typechecked." >&2
+    echo "  Override (rare, and you own what lands): OSHAL_SKIP_PREPUSH_VERIFY=1 git push" >&2
+    echo "" >&2
+    exit 1
+  fi
 fi
 
 OUT="$(cd "$VERIFY_DIR" && timeout 600 npx tsc -p tsconfig.json --noEmit --pretty false 2>&1)"

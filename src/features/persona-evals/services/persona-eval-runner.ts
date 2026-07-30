@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Persona regression eval runner: loads the persona AS DEPLOYED (loadPersonaFromFile — the bot nodes' own loader), assembles the same embedded-persona system prompt shape the bot-node prompt assembly uses as its fallback, executes each golden task through the injected LLMService lane (noop or real harness — the existing provider interface every harness implements), and evaluates tiered assertions into an evidence-carrying report. All-skipped runs are NOT passes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Accept an injected `rubricJudge` lane and prefer it for every semantic assertion, so the API path can grade on the SHARED quality-judge bot (cost in chat_tasks) instead of the raw LLMService the caller handed in — the controller/LLM-boundary rule. The provider path is unchanged and stays the documented fallback for callers with no judge lane (the CLI). Two honesty consequences: the judge's own lane label rides into the assertion detail, and a judge lane no longer makes a NOOP EXECUTION lane semantic-capable — grading canned stub output would manufacture a verdict.
  */
 
 import { randomUUID } from 'crypto';
@@ -11,7 +12,7 @@ import { createChildLogger } from '@/shared/logger';
 import type { LLMService } from '@/features/llm-provider';
 import { loadPersonaFromFile, type BotPersona } from '@/features/swarm-orchestration';
 import { evaluateStructuralAssertion, type StructuralEvalContext } from './assertion-engine';
-import { gradeRubric, isSemanticCapable } from './semantic-judge';
+import { gradeRubric, isSemanticCapable, type RubricJudgeLane } from './semantic-judge';
 import type {
   AssertionResult,
   EvalAssertion,
@@ -38,7 +39,18 @@ const DEFAULT_MAX_EXCERPT = 2000;
 export interface PersonaEvalRunnerDeps {
   /** The lane that executes the persona (noop for plumbing runs; a real harness for the gate). */
   executionService: LLMService;
-  /** Optional separate judge lane for semantic rubrics (defaults to the execution lane). */
+  /**
+   * PREFERRED judge lane: a grading callback the app layer binds to the SHARED quality-judge bot
+   * (ADR-106), so grading spend is a real bot call captured in `chat_tasks` and the controller never
+   * calls a model itself. When present it wins over `judgeService`/`executionService` for every
+   * semantic assertion.
+   */
+  rubricJudge?: RubricJudgeLane;
+  /**
+   * Fallback judge lane for callers with no shared-judge transport (the `scripts/persona-eval.ts`
+   * CLI has no orchestrator): a raw `LLMService` used directly for rubric grading. Defaults to the
+   * execution lane. Ignored when `rubricJudge` is supplied.
+   */
   judgeService?: LLMService;
   /** Persona YAML directory override (defaults to ai-lab/bot-personas via the shared loader). */
   personaDir?: string;
@@ -178,29 +190,43 @@ export class PersonaEvalRunner {
         detail: `semantic rubric skipped: lane '${lane.provider}' has no LLM judge (noop). Run with a real provider lane to grade this assertion.`,
       };
     }
-    const judge = this.deps.judgeService ?? this.deps.executionService;
-    const grade = await gradeRubric(judge, { rubric: String(a.rubric), taskPrompt: prompt, output });
+    const args = { rubric: String(a.rubric), taskPrompt: prompt, output };
+    // The shared-judge lane wins when the caller wired one; the raw provider stays the fallback for
+    // callers that have no bot transport (see PersonaEvalRunnerDeps).
+    const grade = this.deps.rubricJudge
+      ? await this.deps.rubricJudge(args)
+      : await gradeRubric(this.deps.judgeService ?? this.deps.executionService, args);
     if (grade.error !== undefined || grade.score === undefined) {
       return { ...base, status: 'error', detail: grade.error ?? 'judge returned no score' };
     }
     const minScore = a.minScore ?? 70;
+    const via = grade.mode ? ` via ${grade.mode}` : '';
     return {
       ...base,
       status: grade.score >= minScore ? 'pass' : 'fail',
       score: grade.score,
-      detail: `judge scored ${grade.score} (threshold ${minScore})`,
+      detail: `judge scored ${grade.score} (threshold ${minScore})${via}`,
     };
   }
 
   /** Describes the active lane honestly, including what its results do and do not prove. */
   private describeLane(): EvalLaneInfo {
     const provider = this.deps.executionService.getProviderName();
-    const semanticCapable = isSemanticCapable(this.deps.judgeService ?? this.deps.executionService);
+    // Grading canned noop output would manufacture a verdict no matter how good the judge is, so the
+    // EXECUTION lane has to be real before semantic assertions are graded at all — a shared-judge
+    // lane does not buy its way past that.
+    const executionReal = isSemanticCapable(this.deps.executionService);
+    const judge = this.deps.rubricJudge
+      ? 'shared-judge-bot'
+      : (this.deps.judgeService ?? this.deps.executionService).getProviderName();
+    const semanticCapable = executionReal
+      && (this.deps.rubricJudge !== undefined || isSemanticCapable(this.deps.judgeService ?? this.deps.executionService));
     return {
       provider,
+      judge,
       semanticCapable,
       laneNotice: semanticCapable
-        ? `Executed on '${provider}'. Structural + semantic tiers both graded.`
+        ? `Executed on '${provider}'; semantic rubrics graded by '${judge}'. Structural + semantic tiers both graded.`
         : `Executed on '${provider}' (noop lane): structural assertions ran against the stub output — this run proves the eval plumbing end-to-end, NOT persona quality. Semantic assertions were skipped with notice.`,
     };
   }

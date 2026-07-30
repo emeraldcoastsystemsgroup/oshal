@@ -317,9 +317,11 @@ Still ahead: **multi-organization SaaS provisioning** (realm-per-tenant + billin
 
 **Copyright © 2026 oshal maintainers** (Emerald Coast Systems Group). Written and maintained by oshal maintainers.
 
-OSHAL is licensed under the **GNU Affero General Public License v3.0 or later** ([AGPL-3.0](LICENSE)) — free and open source. You can run, modify, and self-host it freely; if you offer it (or a modified version) to others over a network, the AGPL requires you to make your source available to those users under the same license.
+OSHAL is licensed under the **GNU Affero General Public License v3.0 or later** ([AGPL-3.0](LICENSE)) — free and open source. You can run, modify, and self-host it freely, **including in production and including inside a company**; if you offer it (or a modified version) to others over a network, the AGPL requires you to make your source available to those users under the same license.
 
 **Building a closed-source or commercial product on OSHAL, and can't meet the AGPL's copyleft terms?** A commercial license is available — contact **oss@oswarm.ai**.
+
+Attribution, trademark, and third-party material: [NOTICE](NOTICE). What the license does and does not restrict, in full: [docs/legal/licensing.md](docs/legal/licensing.md). Contributing code: [CLA.md](CLA.md).
 
 ---
 

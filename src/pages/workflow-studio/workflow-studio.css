@@ -420,7 +420,16 @@ button.button-accent, button.button-danger,
 .runs-flyout { width: 360px; }
 .run-card { cursor: pointer; transition: border-color 0.14s, box-shadow 0.14s; }
 .run-card:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.run-scope-bar { display: flex; gap: 6px; padding: 10px 12px 0; }
+/* `display: flex` outranks the UA's [hidden] { display: none }, so the scope bar needs its own
+   rule or toggling the hidden attribute leaves it visible. */
+.run-scope-bar[hidden] { display: none; }
+.run-scope-chip { cursor: pointer; font-family: inherit; }
+.run-scope-chip:hover { border-color: var(--accent); color: var(--text); }
+.run-scope-chip.is-active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .run-when, .run-ticket { margin: 2px 0 6px; font-size: 0.74rem; color: var(--faint); }
+.run-ticket-link { color: var(--accent); text-decoration: none; border-bottom: 1px dotted currentColor; }
+.run-ticket-link:hover { text-decoration: none; border-bottom-style: solid; }
 .run-reason { margin: 6px 0 0; font-size: 0.78rem; color: var(--muted); }
 .run-status { text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.66rem; font-weight: 700; }
 .run-tone-ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }

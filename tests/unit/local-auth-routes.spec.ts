@@ -449,15 +449,11 @@ describe('local-auth second factor, end to end through the real routes', () => {
     // A wrong code is refused.
     expect((await post('/api/local-auth/login', { email, password, code: '000000' })).status).toBe(401);
 
-    // CONFIRMING ENROLMENT CONSUMED the current step, so the code that switched the factor
-    // on cannot then be used to sign in — the replay guard refuses it, correctly. A real user
-    // signs in later, on a later code. Here that is the NEXT step, which the +1 drift window
-    // accepts and which is above the recorded last step.
-    const usedAtConfirm = totpCodeForStep(base32Decode(secret), currentStep(Date.now()));
-    expect((await post('/api/local-auth/login', { email, password, code: usedAtConfirm })).status).toBe(401);
-
-    // The right (unused) code signs in and issues the session.
-    const code = totpCodeForStep(base32Decode(secret), currentStep(Date.now()) + 1);
+    // ENROL THEN SIGN STRAIGHT IN. This is the first thing a real person does, and it used to
+     // FAIL: confirmation recorded the step, so the code still on their screen was already spent
+    // and the replay guard refused it. A browser walk of the live deployment caught it. The
+    // confirmation no longer consumes a step, so the code they are looking at works.
+    const code = totpCodeForStep(base32Decode(secret), currentStep(Date.now()));
     const ok = await post('/api/local-auth/login', { email, password, code });
     expect(ok.status).toBe(200);
     expect(ok.data.ok).toBe(true);

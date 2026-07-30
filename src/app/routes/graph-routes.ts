@@ -3,8 +3,17 @@
  *
  * Replaces the retired external Memgraph graph endpoint. Every endpoint resolves to the
  * CALLER'S OWN person graph via the connector — isolation is enforced by `callerSub`, so a request
- * can only ever read/write the requester's graph. This is what the RCA bots (graph-analyst, …) call
- * in place of that retired external graph API. Mount under `requiresAuth`.
+ * can only ever read/write the requester's graph. This is what the incident/capture personas
+ * (rca-specialist, capture-coordinator) call in place of that retired external graph API. Mount
+ * under `requiresAuth`.
+ *
+ * THE TENANT TIER IS DELIBERATELY NOT REACHABLE FROM HTTP. `getTenantGraph` exists on the
+ * connector and is used IN-PROCESS only (the swarm operational graph, the world tier). No route
+ * here takes a tenant parameter, because the connector enforces graph isolation and NOT tenant
+ * membership — the membership check the connector's own doc comment defers "upstream" does not
+ * exist yet, and it is unnecessary precisely because no HTTP path reaches that tier. Adding a
+ * `?tenant=` here without first building that check would hand any authenticated caller another
+ * tenant's shared graph. tests/unit/graph-route-tenant-boundary.spec.ts fails if it happens.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -13,13 +22,20 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 #2 — caller-scoped /api/graph: query (AQL), neighbors, path, node/edge upsert; backed by the graph connector; 503 when the engine isn't configured.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081: bots can act for their ticket's user — callerSub honors the trusted-service headers (X-Service-Secret + X-OSHAL-User-Sub, same pattern as /api/trading and /api/vids) so a bot-node curl reaches the RIGHT person graph under real OIDC, not just under MOCK_OIDC. Mount switched to serviceSecretOr(requiresAuth) in server.ts.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Graceful-degradation sweep: RUNTIME engine failure now degrades. callerGraph awaits getPersonGraph inside a try/catch — when ARANGO_URL is SET but the engine is unreachable (connection refused / provisioning listDatabases rejects), the rejection was previously unhandled inside the async route (→ 500 / hung request). It now logs at ERROR and returns a clear 503 graph_engine_unreachable, matching the ARANGO_URL-unset 503 shape. Query-time failures after the handle resolves keep their per-route 502.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: POST /query now goes through GraphHandle.readQuery, which asks the ENGINE to plan the query and refuses a data-modifying one (400 graph_read_only). The endpoint documented itself as "run a raw AQL read" while calling rawQuery, so a REMOVE/INSERT went straight through — caller-scoped, so never a cross-tenant hole, but a contract the code contradicted, and a bot that mis-writes its own topology poisons the next investigation. Also documented WHY no route may take a tenant parameter (the tenant tier is in-process only and there is no upstream membership check), pinned by graph-route-tenant-boundary.spec.ts.
  *
  * @module graph-routes
  */
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
-import { createGraphConnector, type GraphConnector, type GraphEdge, type GraphNode } from '@/features/graph';
+import {
+  createGraphConnector,
+  GRAPH_READ_ONLY_CODE,
+  type GraphConnector,
+  type GraphEdge,
+  type GraphNode,
+} from '@/features/graph';
 
 const logger = createChildLogger({ module: 'graph-routes' });
 
@@ -59,13 +75,26 @@ export function createGraphRoutes(): Router {
     }
   }
 
-  /** POST /query — run a raw AQL read against the caller's graph. Body: { aql, bindVars? }. */
+  /**
+   * POST /query — run an AQL READ against the caller's graph. Body: { aql, bindVars? }.
+   * Reads only: `readQuery` has the engine plan the query first and refuses a data-modifying one
+   * with 400 graph_read_only. Writes go through POST /nodes and POST /edges.
+   */
   router.post('/query', async (req: Request, res: Response) => {
     const g = await callerGraph(req, res); if (!g) return;
     const { aql, bindVars } = req.body as { aql?: string; bindVars?: Record<string, unknown> };
     if (!aql) { res.status(400).json({ error: 'aql required' }); return; }
-    try { res.json({ rows: await g.rawQuery(aql, bindVars || {}) }); }
-    catch (err) { logger.error({ err }, 'graph query failed'); res.status(502).json({ error: (err as Error).message }); }
+    try { res.json({ rows: await g.readQuery(aql, bindVars || {}) }); }
+    catch (err) {
+      // A refused WRITE is the caller's mistake (400), not an engine failure (502) — the caller
+      // must be able to tell "your query is not allowed here" from "the graph is broken".
+      if ((err as { code?: string }).code === GRAPH_READ_ONLY_CODE) {
+        logger.warn({ err }, 'graph query refused — write attempted on the read-only endpoint');
+        res.status(400).json({ error: GRAPH_READ_ONLY_CODE, message: (err as Error).message });
+        return;
+      }
+      logger.error({ err }, 'graph query failed'); res.status(502).json({ error: (err as Error).message });
+    }
   });
 
   /** GET /neighbors?id=&depth= — nodes within `depth` hops of a node (blast radius). */

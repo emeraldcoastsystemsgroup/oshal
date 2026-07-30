@@ -13,8 +13,13 @@
 >    `src/features/llm-provider/services/claude-code-provider.ts` is now `ClineHarnessProvider`, and
 >    it is only the Cline harness. The three CLI-spawn harnesses extend `BaseCliHarnessAdapter`.
 > 3. **"No direct HTTP calls to any LLM API. Ever."** — `AnthropicProvider` is resolved directly in
->    `provider-runtime.ts`, and `anthropic-provider.ts` / `openai-codex-provider.ts` (which this ADR
->    said MUST NOT exist) are both present.
+>    `provider-runtime.ts`. `anthropic-provider.ts` is still present.
+>    **`openai-codex-provider.ts` is DELETED (2026-07-29).** An orphan sweep found it referenced by
+>    nothing but documentation: not in the `llm-provider` barrel, not in `HARNESS_FACTORIES`, not
+>    reachable from `provider-runtime.ts`, and absent from both store repos. ADR-020's
+>    `createOpenAiCodexRuntimeProvider()` — its last real caller — had already been removed when the
+>    harness framework landed, so the 468-line class had been unreachable code for months. This ADR's
+>    "MUST NOT exist" line is now literally true for that one file.
 >
 > What survives is the *reason* the rule existed: don't reimplement a vendor's OAuth/endpoint/scope
 > quirks in OSHAL code when the vendor's own CLI already handles them. That is why the codex, claude,
@@ -73,7 +78,9 @@ User types message in chat UI
 
 ### Files That MUST NOT Exist (or must not be used at runtime)
 
-- `openai-codex-provider.ts` — Direct HTTP calls to OpenAI. **WRONG.**
+- `openai-codex-provider.ts` — Direct HTTP calls to OpenAI. **WRONG. DELETED 2026-07-29** (see the
+  superseded-status note at the top of this ADR). Codex now runs through the `codex-cli` harness,
+  which spawns the vendor CLI against mounted OAuth instead of calling `/v1/responses` itself.
 - Any future `*-provider.ts` that makes direct `fetch()` calls to an LLM API. **WRONG.**
 
 ### Files That ARE Correct

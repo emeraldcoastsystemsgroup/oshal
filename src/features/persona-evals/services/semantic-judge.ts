@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Semantic (rubric) judge for persona regression evals. Grades output 0-100 against the assertion's rubric via the injected LLMService — the same judging shape the ADR-063 golden loop uses. Under a noop lane the judge is declared incapable and semantic assertions are SKIPPED with notice; an unparseable judge reply is an ERROR, never a default pass.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the RubricJudgeLane seam so the app layer can grade through the SHARED quality-judge bot (ADR-106) instead of the raw provider handed to the runner: grading is LLM work and the controller must never call a model itself. The narrow function type keeps FSD intact (persona-evals never imports the quality-judge slice — same pattern as JudgeBrainInvoker / token-chase's QualityGrader), and `mode` carries the judge's own lane label through so a lexical-fallback score is never reported as a judged one.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -20,7 +21,24 @@ export interface RubricGrade {
   score?: number;
   /** Why the grade could not be produced (judge failed / reply unparseable). */
   error?: string;
+  /**
+   * Which lane produced the score, when the grader knows (the shared JudgeService reports 'llm'
+   * or 'lexical-fallback'). Carried into the assertion detail so a deterministic proxy score is
+   * never presented as an LLM judgement. Absent for the raw-provider path, which has one lane.
+   */
+  mode?: string;
 }
+
+/**
+ * @description The injected grading lane for semantic (rubric) assertions. The app layer binds this
+ * to the SHARED quality-judge concierge bot (`JudgeService.grade` over `ctx.orchestrator`), so the
+ * eval's grading spend is a real bot call recorded in `chat_tasks` — never an LLM call made by the
+ * controller. Kept as a narrow function type (not the quality-judge class) because FSD forbids a
+ * feature→feature import; this mirrors `JudgeBrainInvoker` and token-chase's `QualityGrader`.
+ * @param args - The rubric, the original task prompt (context), and the persona's output.
+ * @returns The grade, or a descriptive error — never a thrown exception.
+ */
+export type RubricJudgeLane = (args: { rubric: string; taskPrompt: string; output: string }) => Promise<RubricGrade>;
 
 /**
  * @description Decides whether an execution lane can grade semantic rubric assertions. The

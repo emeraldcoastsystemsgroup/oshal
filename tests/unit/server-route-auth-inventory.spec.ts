@@ -6,97 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Route-auth INVENTORY guard: enumerate EVERY /api mount in server.ts and fail on any unguarded one that is not on the reviewed allowlist below. oidc.ts runs authRequired:false, so a mount without requiresAuth/serviceSecretOr/requiresOperator is anonymous-callable — and until now no test enumerated the mount table (every existing spec pins specific routes), so a new unwrapped /api mount shipped anonymous with no red. SCOPE: /api mounts registered directly via app.use/get/post/put/patch/delete/all in server.ts only. Out of scope for now (deliberately minimal): non-/api mounts (/shared, /cockpit, /welcome — static assets + HTML surfaces with their own guards) and register*(app, requiresAuth) helper modules, which carry requiresAuth by parameter and mount inside their own files. Runtime sibling: src/features/security/route-audit.ts (the Security Center scanner) — this spec is the CI-side version with a stricter parser (multi-line mounts, app.get/post as well as app.use).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the /api/world allowlist entry per the spec's own stale-entry instruction — World Intelligence carved to the app store (ADR-085 Wave 3), server.ts no longer mounts the path. The packaged route keeps the identical self-guarded posture (WORLD_INGEST_TOKEN fail-closed writes / open reads / ENABLE_WORLD_INTELLIGENCE 503).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the /api/trading-charts allowlist entry per the spec's own stale-entry instruction — the trading surface carved to the app store (ADR-085 Wave 3), server.ts no longer mounts any trading path. The packaged route keeps the identical split posture (public MIT chart lib / callerSub-gated /bars), declared auth: public in the package manifest. Anti-bitrot floors lowered with the four unmounts (90→85 inventory, 80→75 guarded — 87/78 remain; floors, not censuses).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Moved UNGUARDED_ALLOWLIST (content unchanged, reasons verbatim) to tests/helpers/unguarded-route-allowlist.ts so tests/unit/route-audit.spec.ts can import it and cross-check it against the runtime scanner's PUBLIC_BY_DESIGN. The two lists previously referenced each other only in prose and HAD diverged: '/api/security/csp-report' and '/api/branding' were reviewed here and absent from the scanner's list entirely, which the scanner's app.use-only parser hid. Importing a spec from a spec would re-register its suites, hence a plain helper module. Every assertion in this file is unchanged.
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THE ALLOWLIST. Every entry was populated by READING the mounted route module
-// (or the inline handler) and confirming either an internal guard or deliberate
-// public-ness. If this test just failed on a mount you added: add a guard to the
-// mount, or read your route module end-to-end and add {path, reason} here with
-// the file:line of its internal guard. Never add an entry without that reading.
-// ─────────────────────────────────────────────────────────────────────────────
-const UNGUARDED_ALLOWLIST: Array<{ path: string; reason: string }> = [
-  {
-    path: '/api/security/csp-report',
-    reason:
-      'CSP violation report collector — browsers POST reports without a session (inline handler in ' +
-      'server.ts: logs the violated directive and returns 204; parses only the CSP report content-types).',
-  },
-  {
-    path: '/api/branding',
-    reason:
-      'Public branding lookup — inline handler returns SERVICE_NAME/DISPLAY_NAME/TITLE env values only; ' +
-      'no user data, needed by pre-login surfaces.',
-  },
-  {
-    path: '/api/health',
-    reason:
-      'Extended health endpoint (public by design) — Docker healthcheck + monitors probe it without ' +
-      'credentials; returns status/uptime/stream stats only.',
-  },
-  {
-    path: '/api/auth/user',
-    reason:
-      'Auth-state probe for the cockpit profile widget — deliberately ungated so it always returns 200 ' +
-      '(never a login redirect) and reports the REAL session state ({authenticated:false} when anonymous).',
-  },
-  {
-    path: '/api/intake',
-    reason:
-      'Limiter-only mount — app.use(\'/api/intake\', expensiveOpLimiter) registers a rate limiter and no ' +
-      'handlers; the real route POST /api/intake/fast mounts separately with requiresAuth ' +
-      '(src/app/routes/fast-intake-routes.ts L36).',
-  },
-  {
-    path: '/api/apply',
-    reason:
-      'Desktop-worker box callback — every route 401s without the service secret: serviceSecretOk() at ' +
-      'src/app/routes/apply-ingest-routes.ts L35 (/dispatch) + L44 (/ingest); fail-closed when ' +
-      'SWARM_SERVICE_SECRET is unset. Wrapping in requiresAuth would break the non-OIDC box.',
-  },
-  {
-    path: '/api/profile-studio',
-    reason:
-      'LinkedIn profile-plan box callback — POST /ingest 401s without the service secret: ' +
-      'serviceSecretOk() at src/app/routes/profile-studio-ingest-routes.ts L43; fail-closed when ' +
-      'SWARM_SERVICE_SECRET is unset (mirrors /api/apply).',
-  },
-  // ('/api/trading-charts' removed: the trading surface carved to the app store, ADR-085
-  //  Wave 3 — server.ts no longer mounts the path (the stale-entry guard below demands
-  //  removal). The packaged route ships the same split posture: the vendored chart lib is a
-  //  public MIT JS asset, GET /bars self-gates via callerSub() → 401, declared auth: public
-  //  in the package manifest.)
-  {
-    path: '/api/remote-clients',
-    reason:
-      'Router-level fail-closed gate — router.use(authorizeRemoteClient) at ' +
-      'src/app/routes/remote-client-routes.ts L89: OIDC session OR REMOTE_CLIENT_SHARED_SECRET bearer, ' +
-      '401 otherwise; session callers are additionally device-ownership gated (requireDeviceAccess). ' +
-      'Wrapping in requiresAuth would reject the bearer path remote bot-nodes use.',
-  },
-  {
-    path: '/api/alerts',
-    reason:
-      'Prometheus Alertmanager webhook (machine-to-machine, no OIDC session possible) — fail-closed ' +
-      'bearer guard on ALERT_WEBHOOK_TOKEN at src/app/routes/alertmanager-routes.ts L179-L193: with the ' +
-      'token unset the receiver rejects EVERYTHING (401), so it is never open by omission.',
-  },
-  {
-    path: '/api/sms',
-    reason:
-      'Inbound SMS webhook (Twilio, machine-to-machine, no OIDC session possible) — self-guards with the ' +
-      'Twilio request signature (X-Twilio-Signature) verified against TWILIO_AUTH_TOKEN inside the router ' +
-      '(verifyTwilioSignature in src/app/routes/sms-inbound-routes.ts): fail-closed 503 when the token is ' +
-      'unset and 403 on a bad/missing signature, so it is never open by omission (mirrors /api/alerts).',
-  },
-  // ('/api/world' removed: World Intelligence carved to the app store, ADR-085 Wave 3 —
-  //  server.ts no longer mounts the path (the stale-entry guard below demands removal). The
-  //  packaged route ships the same self-guarded posture: WORLD_INGEST_TOKEN fail-closed
-  //  writes, open shared-feed reads, ENABLE_WORLD_INTELLIGENCE 503 gate.)
-];
+import { UNGUARDED_ALLOWLIST } from '../helpers/unguarded-route-allowlist';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // server.ts source-scanning helpers. The existing single-line idiom

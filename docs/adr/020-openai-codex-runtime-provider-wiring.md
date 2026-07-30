@@ -1,7 +1,18 @@
 # ADR-020: OpenAI Codex Runtime Provider Wiring
 
 ## Status
-Accepted
+**SUPERSEDED** by [ADR-033: Multi-Harness Execution Framework](033-multi-harness-execution-framework.md). Its implementation is gone.
+
+> **This ADR's decision no longer exists in the tree (recorded 2026-07-29).** `provider-runtime.ts`
+> has no `createOpenAiCodexRuntimeProvider()` and no `resolveOpenAiCodexAccessToken()`; provider
+> selection happens through `HARNESS_FACTORIES`, and OpenAI Codex is reached by the `codex-cli`
+> harness spawning the vendor CLI against mounted OAuth (`~/.codex/auth.json`) rather than by
+> calling `/v1/responses` from OSHAL code. The class this ADR wired —
+> `src/features/llm-provider/services/openai-codex-provider.ts` — was **deleted 2026-07-29** as
+> verified-orphaned: an orphan sweep found zero code references to `OpenAICodexProvider` anywhere in
+> this repo or either store repo, only doc mentions. [ADR-005](005-cline-cli-only-provider.md) had
+> already called the file architecturally wrong; removing it makes that true in the tree. Item 4
+> (the GPT-5.x Codex model entries in `provider-definitions.ts`) is the only part still live.
 
 ## Context
 The OSHAL provider registry defines 41 providers, but `provider-runtime.ts` only had explicit runtime branches for `anthropic`, `claude-code`, and `echo`. All other providers — including `openai-codex`, `openai-native`, and `openai` — fell through to `claude-code` as a default, which then tried to use Anthropic credentials from `.env`. This caused 401 `authentication_error: invalid x-api-key` failures when users selected OpenAI Codex in the cockpit settings and completed OAuth sign-in.

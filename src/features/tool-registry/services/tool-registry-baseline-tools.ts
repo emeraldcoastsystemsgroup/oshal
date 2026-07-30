@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted baseline tool seed catalog from ToolRegistryService for file-size governance compliance
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Restored compile compatibility by de-contextualizing extracted seed literals before CreateToolInput cast in dedicated baseline catalog module
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | presentron catalog entry updated to describe the as-built tool: it now renders via the in-repo deck engine (@/features/presentation-generation renderPptx) into the task workspace, not the retired Presentron sidecar — description, input schema, usage, and tags reconciled with the executor swap in tool-executor-service.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: graph-query retargeted from the DEAD external graph service to the real tier. It advertised Cypher/Gremlin against Memgraph/Neo4j via $GRAPH_API_URL — a variable nothing sets and an engine the compose file strips — while the shipped tier is ArangoDB/AQL behind the caller-scoped /api/graph route. Every bot granted this tool (defaultAuthMode 'auto') was being instructed to curl a service that does not exist, so routingTags/description/inputSchema/usageInstructions now describe /api/graph, AQL (never Cypher), the trusted-service header contract, and the 503-means-absent degradation. Name kept — seed names are pinned by tests/unit/tool-registry-seed-idempotency.spec.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Same trap, sibling entry: opensearch-query disabled (enabled:false, defaultAuthMode 'off') and its copy rewritten to say so plainly. There is no OpenSearch/Elasticsearch anywhere in this stack, so an enabled auto-mode tool pointed every granted bot at $OPENSEARCH_URL. Disabled rather than deleted because the seeder only INSERTs — removing the entry would leave the stale enabled row in live tools tables with nothing left in the repo to explain it.
  */
 
 import type { CreateToolInput } from '@/entities/tool';
@@ -735,31 +737,48 @@ export const TOOL_REGISTRY_BASELINE_TOOLS = [
       // ── Graph & Data Platform Tools ────────────────────────────────────────
       {
         name: 'graph-query',
-        displayName: 'Graph Database Query',
+        displayName: 'Graph Query (caller-scoped /api/graph)',
         type: 'api',
         category: 'data-platform',
-        version: '1.0.0',
+        version: '2.0.0',
         installSpec: { method: 'none' },
         skills: ['graph-query', 'topology', 'correlation', 'rca'],
-        selectorFragment: 'Graph database queries are available for topology traversal, relationship correlation, and dependency analysis via $GRAPH_API_URL.',
-        routingTags: ['graph', 'topology', 'correlation', 'rca', 'cypher'],
+        selectorFragment: "Graph traversal is available over the swarm's own caller-scoped /api/graph route (ADR-045): AQL reads, neighbors, shortest path, and node/edge upsert against the caller's OWN graph.",
+        routingTags: ['graph', 'topology', 'correlation', 'rca', 'aql', 'arangodb'],
         authGroup: 'data-platform',
         defaultAuthMode: 'auto',
-        description: 'Query a graph database via its API (configured via GRAPH_API_URL env var). Supports Cypher/Gremlin queries for topology traversal, alarm correlation, dependency tracing, and blast radius analysis. Engine-agnostic — works with Memgraph, Neo4j, or any Bolt/HTTP-compatible graph DB.',
+        description:
+          "Read and write the caller's OWN graph through the platform's caller-scoped /api/graph route (ADR-045). " +
+          'The engine is ArangoDB and the query language is AQL — NOT Cypher and NOT Gremlin. There is no GRAPH_API_URL ' +
+          'and no direct database access: the route resolves the graph from the caller identity, so a bot can never ' +
+          "reach another person's graph. The tier is OPTIONAL — when the deployment has no graph engine every endpoint " +
+          'returns HTTP 503, which is a supported state to note once and skip, not an error to retry.',
         inputSchema: {
           type: 'object',
           properties: {
-            query: { type: 'string', description: 'Graph query to execute (Cypher, Gremlin, etc.)' },
-            params: { type: 'object', description: 'Query parameters' },
+            aql: { type: 'string', description: 'AQL read query (collections are literally `nodes` and `edges`; filter on the `id` field, never `_key`)' },
+            bindVars: { type: 'object', description: 'AQL bind variables' },
           },
-          required: ['query'],
+          required: ['aql'],
         },
-        outputSchema: { type: 'object', properties: { nodes: { type: 'array' }, relationships: { type: 'array' } } },
-        usageInstructions: 'Use execute_command with curl against $GRAPH_API_URL. Send queries to traverse topology, find correlations, and trace dependency paths. The graph engine and query language depend on the deployment configuration.',
+        outputSchema: { type: 'object', properties: { rows: { type: 'array' }, nodes: { type: 'array' } } },
+        usageInstructions:
+          'Use execute_command with curl against the api, sending the trusted-service headers so the route resolves ' +
+          "the right person's graph:\n" +
+          '  READ (AQL, read-only — a data-modifying query is refused with HTTP 400 graph_read_only):\n' +
+          '    curl -s -X POST "http://oshal-local-api:5000/api/graph/query" \\\n' +
+          '      -H "X-Service-Secret: $SWARM_SERVICE_SECRET" -H "X-OSHAL-User-Sub: $OSHAL_USER_SUB" \\\n' +
+          '      -H "Content-Type: application/json" \\\n' +
+          '      -d \'{"aql":"FOR n IN nodes FILTER @l IN n.labels RETURN n.id","bindVars":{"l":"service"}}\'\n' +
+          '  NEIGHBORS (blast radius): GET /api/graph/neighbors?id=<nodeId>&depth=<1-6>\n' +
+          '  PATH:                     GET /api/graph/path?from=<nodeId>&to=<nodeId>\n' +
+          '  WRITE:                    POST /api/graph/nodes {"nodes":[{"id","labels","props"}]}\n' +
+          '                            POST /api/graph/edges {"edges":[{"from","to","type","props"}]}\n' +
+          'HTTP 503 means no graph engine on this deployment — report it once and continue without the graph.',
         examples: [],
         requiresApproval: false,
         timeoutMs: 30000,
-        tags: ['graph', 'cypher', 'topology', 'data-platform'],
+        tags: ['graph', 'aql', 'arangodb', 'topology', 'data-platform'],
         enabled: true,
         registeredBy: 'system',
         // ui: { sidebarIcon: 'codicon codicon-type-hierarchy', sidebarLabel: 'Graph Viewer', route: 'tool-graph-query' },
@@ -767,17 +786,29 @@ export const TOOL_REGISTRY_BASELINE_TOOLS = [
       },
       {
         name: 'opensearch-query',
-        displayName: 'OpenSearch / Elasticsearch Query',
+        displayName: 'OpenSearch / Elasticsearch Query (no cluster in this stack)',
         type: 'api',
         category: 'data-platform',
-        version: '1.0.0',
+        version: '2.0.0',
         installSpec: { method: 'none' },
         skills: ['opensearch', 'elasticsearch', 'log-search', 'event-query'],
-        selectorFragment: 'OpenSearch/Elasticsearch queries are available for log search, event lookup, and data correlation via $OPENSEARCH_URL.',
+        selectorFragment: 'No OpenSearch/Elasticsearch cluster is part of this platform — do not offer log search over one.',
         routingTags: ['opensearch', 'elasticsearch', 'logs', 'search', 'events'],
         authGroup: 'data-platform',
-        defaultAuthMode: 'auto',
-        description: 'Query an OpenSearch or Elasticsearch cluster (configured via OPENSEARCH_URL env var) for logs, events, alarms, and metrics. Uses standard OpenSearch/ES DSL query syntax.',
+        // DISABLED, not deleted: the name is pinned by tests/unit/tool-registry-seed-idempotency.spec.ts
+        // (seed names are the contract), and the row already exists in every live tools table — the
+        // seeder only INSERTs, so a delete here would leave the stale enabled row behind forever.
+        // There is no OpenSearch anywhere in this stack (the compose file strips it; see
+        // dispatch-incident-worker.ts change-log entry 2), so an enabled tool with defaultAuthMode
+        // 'auto' was instructing every granted bot to curl $OPENSEARCH_URL — a variable nothing sets.
+        defaultAuthMode: 'off',
+        description:
+          'RETIRED — there is no OpenSearch or Elasticsearch cluster in this platform. The compose stack ' +
+          'never ships one and OPENSEARCH_URL is set nowhere, so any curl against it fails to resolve. ' +
+          'Log/event search is not a capability this deployment has; use the ticket evidence, the workspace ' +
+          'files, and the RAG corpus (/api/rag/search) instead. Kept as a disabled row only because the ' +
+          'seeder inserts and never updates, so deleting the entry would orphan the stale row already in ' +
+          'live tools tables.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -788,12 +819,12 @@ export const TOOL_REGISTRY_BASELINE_TOOLS = [
           required: ['index', 'query'],
         },
         outputSchema: { type: 'object', properties: { hits: { type: 'object' }, aggregations: { type: 'object' } } },
-        usageInstructions: 'Use execute_command with curl against $OPENSEARCH_URL. Query indices with standard DSL. Example: curl -X POST "$OPENSEARCH_URL/<index>/_search" -H "Content-Type: application/json" -d \'{"query": {...}, "size": 50}\'',
+        usageInstructions: 'Do not use — no OpenSearch/Elasticsearch endpoint exists on this deployment. Use /api/rag/search for corpus retrieval and read the ticket + workspace evidence for incident data.',
         examples: [],
         requiresApproval: false,
         timeoutMs: 30000,
-        tags: ['opensearch', 'elasticsearch', 'search', 'data-platform'],
-        enabled: true,
+        tags: ['opensearch', 'elasticsearch', 'search', 'data-platform', 'retired'],
+        enabled: false,
         registeredBy: 'system',
       },
       {

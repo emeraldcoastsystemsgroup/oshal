@@ -58,6 +58,25 @@
   ::-webkit-scrollbar-track{background:transparent}
   html{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb,rgba(255,255,255,.14)) transparent}
   input[type=file]{display:none}
+  /* Surface-bridge dock — the packer (right rail) drives these through the cockpit relay; the ops it
+     may use are swarm-apps/codex-packer.yaml `surface.ops`. Each host stays invisible until driven.
+     Class names are the ones the SHARED client emits (bridge-option / bridge-propose / …) — they are
+     the contract, so do not rename them here. */
+  .bridge-dock { display:flex; flex-direction:column; gap:10px; margin:0 0 20px; }
+  .bridge-dock > *:empty { display:none; }
+  [data-bridge-region="packer-note"] { background:var(--panel2); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:10px; padding:12px 15px; font-size:12.5px; line-height:1.55; white-space:pre-wrap; }
+  [data-bridge-host="options"] { display:flex; flex-wrap:wrap; gap:9px; align-items:stretch; }
+  .bridge-prompt { flex:0 0 100%; margin:0; font-size:13px; font-weight:600; }
+  .bridge-option { display:flex; flex-direction:column; gap:3px; text-align:left; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13px; cursor:pointer; }
+  .bridge-option:hover { border-color:var(--accent); }
+  .bridge-option-desc { color:var(--muted); font-size:11.5px; }
+  .bridge-propose { flex:0 0 100%; display:flex; flex-wrap:wrap; align-items:center; gap:10px; background:var(--panel); border:1px solid var(--accent); border-radius:11px; padding:13px 16px; }
+  .bridge-propose p { margin:0; flex:1; font-size:13px; }
+  .bridge-confirm { background:var(--accent); color:#fff; border:1px solid var(--accent); border-radius:8px; padding:7px 15px; font-size:12.5px; cursor:pointer; }
+  .bridge-cancel { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 15px; font-size:12.5px; cursor:pointer; }
+  .bridge-notice { border:1px solid var(--line); border-left:3px solid var(--accent2); border-radius:9px; padding:10px 14px; font-size:12.5px; background:var(--panel); margin-bottom:8px; }
+  .bridge-notice-warn { border-left-color:var(--warn); }
+  .bridge-notice-error { border-left-color:var(--danger); }
   @media (max-width:640px) {
     .wrap { padding:16px 14px 48px; }
     .steps { flex-direction:column; }
@@ -93,6 +112,18 @@
     </div>
     <div class="arrow">→</div>
   </a>
+
+  <!--
+    Surface-bridge dock. The packer bot on the chat rail drives this through the cockpit relay:
+    render_options / propose → cards here (a click emits `select` / `submit` straight back to the
+    packer), notify → banners, set_content → the packer-note region. Empty and invisible until driven.
+    Wired by the module script at the bottom of this file; ops allow-listed in codex-packer.yaml.
+  -->
+  <aside class="bridge-dock" aria-label="Forge assistant">
+    <div data-bridge-region="packer-note"></div>
+    <div data-bridge-host="options"></div>
+    <div data-bridge-host="notices"></div>
+  </aside>
 
   <div id="pendingWrap" style="display:none">
     <div class="row"><h2>Ready to inject</h2><span class="count" id="pcount"></span></div>
@@ -181,6 +212,10 @@ async function injectApp(path, label) {
     if (!r.ok) { const t = await r.json().catch(() => ({})); throw new Error(t.error || ('HTTP ' + r.status)); }
     const { app } = await r.json();
     toast('Injected ' + ((app && app.displayName) || label) + ' — live'); refresh();
+    // Tell the packer its bot went live (inbound `event` op, declared in codex-packer.yaml) so the
+    // conversation can move on without the operator re-typing what just happened. No-op until the
+    // bridge module below has attached.
+    if (window.__forgeBridge) window.__forgeBridge.emitEvent('app-injected', { name: (app && app.name) || null });
   } catch (e) { toast('Inject failed: ' + e.message, true); }
 }
 
@@ -215,6 +250,10 @@ async function loadPending() {
 /** Refresh both trays. */
 function refresh() { loadApps(); loadPending(); }
 
+// Exposed for the surface-bridge module below: the packer's `custom` op {"name":"refresh"} re-polls
+// the trays the instant it finishes writing a manifest, instead of waiting out the 15s interval.
+window.forgeRefresh = refresh;
+
 /** Load the live (active) swarm and render the gallery. */
 async function loadApps() {
   try {
@@ -247,6 +286,64 @@ document.getElementById('injectFile').addEventListener('change', async (ev) => {
 
 refresh();
 setInterval(refresh, 15000); // pick up bots the Forge agent authors/injects mid-conversation
+</script>
+
+<!--
+  Surface-bridge adopter — the Forge joins the chat↔surface bridge (second kernel adopter, after
+  /workflow-studio/). Mirrors src/pages/workflow-studio/workflow-studio-bridge.js; inline because
+  src/api/ is deliberately NOT served as a static directory (only named routes), so a sibling .js
+  file would 404 — the shared client itself is fetched from the /shared/ui/js static mount.
+
+    packer reply ```oshal:surface fence → chat-rail producer posts `to_surface`
+      → cockpit relay (channel/version/app + codex-packer.yaml `surface.ops`, fail-closed)
+        → THIS client renders render_options / propose / notify / set_content / custom
+          → the operator clicks → `select` / `submit` back to the packer (loop closed)
+
+  `app` MUST equal the manifest name (codex-packer), not the tool name (forge) — the relay compares
+  it to the focused app's profile. Unknown ops are logged and IGNORED here; nothing throws.
+-->
+<script type="module">
+import { createSurfaceBridgeClient } from '/shared/ui/js/surface-bridge-client.js';
+
+const bridge = createSurfaceBridgeClient({ app: 'codex-packer' });
+
+/** Structured-ish surface log line (browser context: no Pino here, same as the other surfaces). */
+function bridgeLog(level, message, context) {
+  const method = typeof console[level] === 'function' ? console[level] : console.log;
+  method.call(console, `[oshal-ui][forge-surface-bridge] ${message}`, context || {});
+}
+
+// Own listener instead of bridge.attach(): the client returns WHY it did not handle a message, and an
+// op the Forge cannot honor must be visible in the console rather than silently dropped. (attach()
+// would also wire field_change auto-emit, which this surface has no bot-drivable field for.)
+window.addEventListener('message', (event) => {
+  let outcome;
+  try {
+    outcome = bridge.handleMessage(event);
+  } catch (error) {
+    bridgeLog('error', 'surface-bridge message handling threw', { error: String(error) });
+    return;
+  }
+  // 'foreign_origin' / 'not_bridge' / 'app_mismatch' are ordinary page traffic — never log those.
+  const reason = outcome && outcome.handled === false ? String(outcome.reason || '') : '';
+  if (reason.startsWith('unhandled_op') || reason.startsWith('no_such') || reason.startsWith('no_options_host')) {
+    bridgeLog('warn', 'surface-bridge op ignored by the Forge surface', { reason });
+  }
+});
+
+// The one `custom` name this surface honors: an immediate tray re-poll. Anything else is ignored.
+document.addEventListener('surface-bridge:custom', (event) => {
+  const name = event && event.detail ? event.detail.name : '';
+  if (name === 'refresh') {
+    if (typeof window.forgeRefresh === 'function') window.forgeRefresh();
+    return;
+  }
+  bridgeLog('warn', 'surface-bridge custom op ignored: the Forge handles only {"name":"refresh"}', { name });
+});
+
+// Exposed so the gallery's inject handler can emit `app-injected`, and for manual verification from
+// the surface console. Never posts on its own.
+window.__forgeBridge = bridge;
 </script>
 </body>
 </html>
