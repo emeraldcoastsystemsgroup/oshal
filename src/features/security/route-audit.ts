@@ -22,6 +22,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 3 carve: dropped '/api/trading-charts' from the allow-list — the trading surface carved to the store; core no longer hard-mounts the path (lora/world precedent). The /bars callerSub 401 self-gate ships unchanged in the package route (declared auth: public in its manifest).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Three fixes from the route-audit diagnosis: (1) PARSER — the old MOUNT_RE captured middlewares with [^)]* which stopped at the FIRST close-paren, so `app.use('/api/vision', express.json({ limit: '12mb' }), serviceSecretOr(requiresAuth), …)` truncated before requiresAuth was seen → standing false positive; replaced with the string-aware comment-strip + balanced-paren argument walk proven in tests/unit/server-route-auth-inventory.spec.ts. (2) MANIFEST WALK — auditRoutes() now accepts the active manifests' routes[] and flags any declaration resolving to `public` (via the shared resolveRouteAuthMode, fail-closed on omission) that is not public-by-design — the mounter mounts `public` with an empty guard chain, and carved apps are invisible to the server.ts scan. (3) PUBLIC_BY_DESIGN reconciled against the actual current routes: added '/api/profile-studio' (server.ts:1003, service-secret self-guarded — was the second standing false positive) and the five reviewed anonymous package mounts (world / trading-charts / lora/ingest / vids-public / hello-oshal — the complete auth:public-or-requiresAuth:false set across the live stack's ACTIVE manifests, verified against swarm_applications 2026-07-24); matching tightened from bare startsWith to exact-or-slash-boundary so '/api/apply' can never silently whitelist '/api/apply-operator'.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Allow-listed '/api/sms' — the inbound Twilio SMS webhook mounts anonymous by design (machine-to-machine) and self-guards with the X-Twilio-Signature verification (verifyTwilioSignature) against TWILIO_AUTH_TOKEN inside the router: 503 when the token is unset, 403 on a bad signature, never open by omission (mirrors the /api/alerts entry). The CI-side sibling (tests/unit/server-route-auth-inventory.spec.ts) carries the matching reviewed entry.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | CLOSED THE METHOD BLIND SPOT. This scanner matched only `app.use(` — its own docblock declared `app.get`/`app.post` "out of scope" — so four unguarded /api mounts registered as INLINE HANDLERS were structurally invisible to it, and the Security Center reported "0 route_auth findings" while unable to see a whole class of mount. Two of those four ('/api/security/csp-report' and '/api/branding') were not covered by PUBLIC_BY_DESIGN at all; the CI-side spec's UNGUARDED_ALLOWLIST was the only place they had ever been reviewed, which is exactly the divergence the two lists were supposed to prevent. extractServerMounts now walks app.use/get/post/put/patch/delete/all (the parser the CI-side sibling already used) and accepts an array-of-paths first argument, and the two inline mounts are allow-listed here citing their reviewed guards. Inventory went 81 -> 87 /api mounts. Pinned by the new programmatic sync check in tests/unit/route-audit.spec.ts, which imports BOTH lists and asserts the containment relationship so they can no longer drift silently.
  *
  * @module features/security/route-audit
  */
@@ -69,6 +70,16 @@ export const PUBLIC_BY_DESIGN: readonly string[] = [
                          // validation, published-dir only, no listing, fail-closed 404)
   '/api/hello-oshal',    // the sample app package (legacy requiresAuth:false ⇒ public) — /ping
                          // returns a static hello JSON only; no data, no actions, nothing to guard
+  // INLINE-HANDLER mounts (app.post/app.get in server.ts, reviewed 2026-07-29). These became
+  // visible only when this scanner stopped matching app.use() alone; before that they were
+  // reviewed exclusively in tests/unit/server-route-auth-inventory.spec.ts's UNGUARDED_ALLOWLIST.
+  // Both reasons are copied from that list so the two stay word-for-word reconcilable.
+  '/api/security/csp-report', // CSP violation report collector — browsers POST reports with no
+                              // session; the inline handler logs the violated directive and returns
+                              // 204, parsing only the CSP report content-types. No data returned.
+  '/api/branding',            // pre-login branding lookup — the inline handler returns only the
+                              // SERVICE_NAME / DISPLAY_NAME / TITLE env values. No user data, and
+                              // the login surfaces need it before a session exists.
 ];
 
 /** @description Is this mount path covered by the public-by-design list (exact or `/`-boundary)? */
@@ -160,38 +171,74 @@ function balancedArgs(text: string, openIdx: number): string | null {
   return null;
 }
 
-/** @description One extracted `app.use('/api/…', …)` mount. */
+/** @description One extracted `app.<method>('/api/…', …)` mount. */
 interface ServerMount {
   mountPath: string;
+  /** The Express method the mount was registered with (`use`, `get`, `post`, …). */
+  method: string;
   /** Full middleware argument text (everything after the path argument). */
   middlewares: string;
   line: number;
 }
 
+/** Express registration methods that can expose an `/api/*` path. */
+const MOUNT_METHOD_RE = /\bapp\.(use|get|post|put|patch|delete|all)\s*\(/g;
+
 /**
- * @description Extract every `app.use('<path literal starting /api/>', …)` mount from server.ts
- * source, with its FULL balanced argument text. `app.get/post/…` inline handlers are out of
- * scope here (deliberately minimal, matching this scanner's historical scope); the CI-side
- * inventory spec covers all methods.
+ * @description Parse a mount's leading path argument(s) and return both the `/api/*` literals it
+ * claims and the remaining argument text. Two shapes occur in server.ts: a single string literal,
+ * and an array of string literals (`app.get(['/a', '/b'], …)`). A non-literal first argument
+ * (a variable, or `express.static(dir)`) yields no paths and the mount is ignored — this scanner
+ * can only reason about paths it can read statically.
+ * @param args - The mount's full balanced argument text.
+ * @returns The `/api/*` paths claimed plus the middleware text that follows them.
+ */
+function splitPathsAndMiddlewares(args: string): { paths: string[]; middlewares: string } {
+  const lead = args.trimStart();
+  const single = lead.match(/^(['"`])(\/api\/[^'"`]*)\1/);
+  if (single) {
+    return { paths: [single[2]], middlewares: lead.slice(single[0].length).replace(/^\s*,/, '') };
+  }
+  if (lead.startsWith('[')) {
+    const close = lead.indexOf(']');
+    if (close === -1) return { paths: [], middlewares: '' };
+    const arr = lead.slice(0, close + 1);
+    const paths = [...arr.matchAll(/(['"`])([^'"`]*)\1/g)]
+      .map((m) => m[2])
+      .filter((p) => p.startsWith('/api/'));
+    return { paths, middlewares: lead.slice(arr.length).replace(/^\s*,/, '') };
+  }
+  return { paths: [], middlewares: '' };
+}
+
+/**
+ * @description Extract every `app.<method>('<path literal starting /api/>', …)` mount from
+ * server.ts source, with its FULL balanced argument text.
+ *
+ * WHY all methods (changed 2026-07-29): matching `app.use(` alone made INLINE-HANDLER mounts
+ * structurally invisible — `app.post('/api/security/csp-report', handler)` and
+ * `app.get('/api/branding', handler)` are anonymous-callable in exactly the way this scanner
+ * exists to catch, and it could not see them. A scanner that cannot see a class of mount reports
+ * "clean" for the wrong reason, which is worse than reporting a finding. This is the same method
+ * set the CI-side sibling (tests/unit/server-route-auth-inventory.spec.ts) has always used.
  * @param source - Raw server.ts source.
- * @returns The mount inventory.
+ * @returns The mount inventory (one entry per claimed `/api/*` path).
  */
 function extractServerMounts(source: string): ServerMount[] {
   const stripped = stripComments(source);
   const mounts: ServerMount[] = [];
-  const starts = /\bapp\.use\s*\(/g;
+  const starts = new RegExp(MOUNT_METHOD_RE.source, 'g');
   let m: RegExpExecArray | null;
   while ((m = starts.exec(stripped)) !== null) {
     const openIdx = m.index + m[0].length - 1;
     const args = balancedArgs(stripped, openIdx);
     if (args === null) continue;
-    const lead = args.trimStart();
-    const pathMatch = lead.match(/^(['"`])(\/api\/[^'"`]*)\1/);
-    if (!pathMatch) continue;
-    // Middlewares = everything after the path literal and its separating comma.
-    const rest = lead.slice(pathMatch[0].length).replace(/^\s*,/, '');
+    const { paths, middlewares } = splitPathsAndMiddlewares(args);
+    if (!paths.length) continue;
     const line = stripped.slice(0, m.index).split('\n').length;
-    mounts.push({ mountPath: pathMatch[2], middlewares: rest, line });
+    for (const mountPath of paths) {
+      mounts.push({ mountPath, method: m[1], middlewares, line });
+    }
   }
   return mounts;
 }
@@ -229,11 +276,11 @@ export function auditRoutes(serverFile?: string, manifestRoutes?: ManifestRouteA
       category: 'route_auth',
       severity: 'high',
       title: `Route ${mount.mountPath} mounted without requiresAuth`,
-      detail: `${mount.mountPath} is mounted in server.ts (line ${mount.line}) without the requiresAuth middleware. `
+      detail: `${mount.mountPath} is mounted in server.ts (app.${mount.method} at line ${mount.line}) without the requiresAuth middleware. `
         + `Auth is opt-in per route in this codebase, so unless this endpoint is meant to be public, its data/actions are reachable unauthenticated. `
         + `Add requiresAuth to the mount, or add the path to the public-by-design allow-list if it is intentional.`,
       source: `src/app/server.ts:${mount.line}`,
-      evidence: { mountPath: mount.mountPath, line: mount.line, middlewares: mount.middlewares.trim().slice(0, 200) },
+      evidence: { mountPath: mount.mountPath, method: mount.method, line: mount.line, middlewares: mount.middlewares.trim().slice(0, 200) },
       fingerprint: `route_auth:${mount.mountPath}`,
     });
   }
