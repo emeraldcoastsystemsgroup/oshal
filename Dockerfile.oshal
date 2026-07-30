@@ -156,7 +156,12 @@ RUN pip3 install --break-system-packages --no-cache-dir uv pytest flask requests
 # NOTE: the `playwright` PyPI package has NO musl/Alpine wheel ("No matching distribution"),
 # so it can't be pip-installed here. The engine's renderer drives the apk `chromium` directly
 # (chromium --headless --print-to-pdf), so we install chromium and skip pip-playwright.
-RUN pip3 install --break-system-packages --no-cache-dir tenacity beautifulsoup4 lxml Jinja2 pypdf python-docx anthropic \
+# psycopg2-binary: the career engine's store moved from SQLite to Postgres with FORCE RLS
+# (career-hunter migrations 095/096), so the Python engine needs a Postgres driver. Unlike
+# playwright above, this one DOES have a musl wheel and installs cleanly on Alpine.
+# It was pip-installed into a running container while developing the cutover, which does not
+# survive an image rebuild — hence pinning it here.
+RUN pip3 install --break-system-packages --no-cache-dir tenacity beautifulsoup4 lxml Jinja2 pypdf python-docx anthropic psycopg2-binary \
     && apk add --no-cache chromium nss freetype harfbuzz ttf-freefont
 ENV PLAYWRIGHT_CHROMIUM_PATH=/usr/bin/chromium-browser
 
