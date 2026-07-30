@@ -175,6 +175,11 @@ The guiding model is:
   - outcome-first triage framework for incoming work
 - [phase-12-last-mile-project-plan.md](./phase-12-last-mile-project-plan.md)
   - phase-12 last-mile project plan
+- [three-orphan-boundary-decisions.md](./three-orphan-boundary-decisions.md)
+  - awaiting an operator decision: `world-data`'s undeclared reach into the graph tier,
+    `google-calendar` (delete or re-pin as a kernel skill), and whether deleting `src/agent`
+    + `src/swarm` formally closes the agent/swarm code-separation plan. Evidence, per-option
+    cost/benefit, and a recommendation for each
 
 ## Recommended Reading Order
 
