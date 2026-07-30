@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the Runs panel for Workflow Studio: a rail-toggled left flyout listing past graph runs (GET /api/workflow-studio/runs) and a click-through run inspector showing each step's status, timing, agent, and redacted input/output (GET /api/workflow-studio/runs/:runId). Own module (sibling of workflow-studio-chat.js) so the 1700-line core stays untouched; auto-refreshes while a run is still executing.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The list was fetching every run the caller owns, so opening one workflow showed unrelated history: scope it to the open definition's published ticketType (via the shared workflowTicketTypeSlug) with a This-workflow/All-my-runs toggle, and turn the inspector's inert "Ticket <id>" text into a deep link to that ticket's cost trace so a run is one click from its spend.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
+import { workflowTicketTypeSlug } from './workflow-studio-utils.js';
 
 const logger = createUiLogger('workflow-studio-runs');
 
@@ -36,6 +38,7 @@ const STATUS_TONES = {
 class WorkflowStudioRuns {
   constructor() {
     this.flyout = document.getElementById('runsFlyout');
+    this.scopeBarEl = document.getElementById('runsScopeBar');
     this.listEl = document.getElementById('runsList');
     this.detailEl = document.getElementById('runDetail');
     this.titleEl = document.getElementById('runsFlyoutTitle');
@@ -45,6 +48,60 @@ class WorkflowStudioRuns {
     this.closeButton = document.getElementById('runsCloseButton');
     this.selectedRunId = null;
     this.refreshTimer = null;
+    /** 'workflow' = only the open definition's runs; 'all' = every run the caller owns. */
+    this.scope = 'all';
+  }
+
+  /**
+   * @description The ticketType the open definition publishes (and records runs) under, or null
+   * when no definition is selected. Derived from the SAME helper the publish path uses so the
+   * join key can never drift.
+   * @returns {string|null} the open workflow's ticketType slug, or null
+   */
+  openWorkflowTicketType() {
+    try {
+      const definition = window.workflowStudioApp?.state?.selectedDefinition;
+      if (!definition || !(definition.slug || definition.name)) return null;
+      return workflowTicketTypeSlug(definition);
+    } catch (error) {
+      logger.error('Could not read the open definition for run scoping', { error: serializeUiError(error) });
+      return null;
+    }
+  }
+
+  /**
+   * @description Render the This-workflow / All-my-runs toggle. Hidden entirely when no
+   * definition is open (there is nothing to scope to).
+   */
+  renderScopeBar() {
+    if (!this.scopeBarEl) return;
+    const ticketType = this.openWorkflowTicketType();
+    if (!ticketType) {
+      this.scopeBarEl.hidden = true;
+      this.scopeBarEl.innerHTML = '';
+      return;
+    }
+    const chip = (value, label, title) =>
+      `<button type="button" class="chip run-scope-chip${this.scope === value ? ' is-active' : ''}" data-run-scope="${value}" title="${escapeHtml(title)}">${escapeHtml(label)}</button>`;
+    this.scopeBarEl.hidden = false;
+    this.scopeBarEl.innerHTML =
+      chip('workflow', 'This workflow', `Runs recorded against ${ticketType}`) +
+      chip('all', 'All my runs', 'Every workflow run you own');
+    this.scopeBarEl.querySelectorAll('[data-run-scope]').forEach((button) => {
+      button.addEventListener('click', () => this.setScope(button.getAttribute('data-run-scope')));
+    });
+  }
+
+  /**
+   * @description Switch the list scope and reload.
+   * @param {string} scope - 'workflow' | 'all'
+   */
+  setScope(scope) {
+    const next = scope === 'workflow' ? 'workflow' : 'all';
+    if (next === this.scope) return;
+    this.scope = next;
+    this.renderScopeBar();
+    void this.loadList();
   }
 
   /** @description Wire the rail toggle, header controls, and cross-flyout coordination. */
@@ -72,6 +129,9 @@ class WorkflowStudioRuns {
     }
     this.flyout.hidden = false;
     this.railButton.classList.add('is-active');
+    // Default to the open workflow's own history — an author opening Runs from a canvas means
+    // "how has THIS workflow run"; with no definition open there is nothing to scope to.
+    this.scope = this.openWorkflowTicketType() ? 'workflow' : 'all';
     this.showList();
     if (!this.refreshTimer) this.refreshTimer = setInterval(() => this.refresh(true), REFRESH_MS);
   }
@@ -94,6 +154,7 @@ class WorkflowStudioRuns {
     if (this.backButton) this.backButton.hidden = true;
     if (this.detailEl) { this.detailEl.hidden = true; this.detailEl.innerHTML = ''; }
     if (this.listEl) this.listEl.hidden = false;
+    this.renderScopeBar();
     void this.loadList();
   }
 
@@ -114,11 +175,16 @@ class WorkflowStudioRuns {
   async loadList(background = false) {
     if (!this.listEl) return;
     if (!background) this.listEl.innerHTML = '<p class="selection-state">Loading runs…</p>';
+    const ticketType = this.scope === 'workflow' ? this.openWorkflowTicketType() : null;
     try {
-      const payload = await this.fetchJson('/api/workflow-studio/runs?limit=50');
+      const params = new URLSearchParams({ limit: '50' });
+      if (ticketType) params.set('ticketType', ticketType);
+      const payload = await this.fetchJson(`/api/workflow-studio/runs?${params.toString()}`);
       const runs = Array.isArray(payload.runs) ? payload.runs : [];
       if (runs.length === 0) {
-        this.listEl.innerHTML = '<p class="selection-state">No runs yet. Publish a workflow and send it a ticket — every graph run lands here.</p>';
+        this.listEl.innerHTML = ticketType
+          ? `<p class="selection-state">No runs recorded for <strong>${escapeHtml(ticketType)}</strong> yet. Publish this workflow and send it a ticket — every graph run lands here.</p>`
+          : '<p class="selection-state">No runs yet. Publish a workflow and send it a ticket — every graph run lands here.</p>';
         return;
       }
       this.listEl.innerHTML = runs.map((run) => this.renderRunCard(run)).join('');
@@ -163,6 +229,7 @@ class WorkflowStudioRuns {
     if (this.titleEl) this.titleEl.textContent = 'Run inspector';
     if (this.backButton) this.backButton.hidden = false;
     if (this.listEl) this.listEl.hidden = true;
+    if (this.scopeBarEl) this.scopeBarEl.hidden = true;
     if (this.detailEl) this.detailEl.hidden = false;
     void this.loadDetail(runId);
   }
@@ -193,7 +260,7 @@ class WorkflowStudioRuns {
           </div>
           <p class="run-when">${escapeHtml(formatWhen(run.startedAt))}${formatDuration(run.startedAt, run.finishedAt) ? ` · ${escapeHtml(formatDuration(run.startedAt, run.finishedAt))}` : ''}</p>
           ${run.reason ? `<p class="run-reason">${escapeHtml(run.reason)}</p>` : ''}
-          <p class="run-ticket">Ticket ${escapeHtml(String(run.ticketId).slice(0, 8))}…</p>
+          ${renderTicketTrace(run.ticketId)}
         </div>
         <div class="run-steps">
           ${steps.length === 0 ? '<p class="selection-state">No steps recorded yet.</p>' : steps.map((step) => this.renderStep(step)).join('')}
@@ -250,6 +317,20 @@ class WorkflowStudioRuns {
     }
     return data;
   }
+}
+
+/**
+ * @description Render the run's ticket as a deep link into the run-trace surface, which keys off
+ * exactly this ticket id (`/api/trace/app?ticketId=`) and is itself caller-scoped — so "what did
+ * this run cost" is one click from the run, with no second lookup and no widened access.
+ * @param {unknown} ticketId - the run's ticket id
+ * @returns {string} paragraph HTML (plain text when there is no ticket id to link)
+ */
+function renderTicketTrace(ticketId) {
+  const id = ticketId === null || ticketId === undefined ? '' : String(ticketId);
+  if (!id) return '<p class="run-ticket">Ticket —</p>';
+  const href = `/api/trace/app?ticketId=${encodeURIComponent(id)}`;
+  return `<p class="run-ticket">Ticket <a class="run-ticket-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="Open the cost trace for ${escapeHtml(id)}">${escapeHtml(id.slice(0, 8))}…</a></p>`;
 }
 
 /**
