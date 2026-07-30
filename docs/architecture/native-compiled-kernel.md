@@ -8,9 +8,13 @@ SEQ                 | AUTHOR                      | DESCRIPTION
 
 # Compiling oshal: what actually pays
 
-**Status — 2026-07-29: SHIPPED (PR #39), not yet wired into the backtester.** The kernel and its
-guard are on `main`. `futures-backtester.ts` still calls the TypeScript path; switching it over is
-tracked in [native/ROADMAP.md](../../native/ROADMAP.md).
+**Status — 2026-07-30: SHIPPED (PRs #39, #42, #45, #48), not yet wired into the backtester.** The
+kernel, its guard, and the single-file executable are on `main`. `futures-backtester.ts` still calls
+the TypeScript path; switching it over is tracked in [native/ROADMAP.md](../../native/ROADMAP.md).
+
+**The decision itself is [ADR-121](../adr/121-native-compiled-kernel.md).** This document is the
+narrative record — the profiling, the reasoning and the bug. Read the ADR for the decision, its scope
+guard, and the as-built executable status.
 
 This is the engineering record of a question that turned out to have two different answers depending
 on which half of the system you asked about. The code and its own docs live in

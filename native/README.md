@@ -1,5 +1,10 @@
 # `native/` — the compiled-kernel track
 
+> **Decision record: [ADR-121](../docs/adr/121-native-compiled-kernel.md).**
+> **Status 2026-07-30 —** kernel ✅ shipped · 0-ULP parity guard ✅ 88 tests · single-file executable
+> ✅ built and verified standalone · **wired into `futures-backtester.ts` ❌ not yet** ·
+> **controller packaged ❌ not, and blocked on Postgres/Redis rather than on compiling.**
+
 A self-contained answer to one question: **would compiling oshal make it faster, and what would it
 take to ship it as a real installable application?**
 
