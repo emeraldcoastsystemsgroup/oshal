@@ -8,7 +8,6 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron + deprecated Google Search MCP service-runtime inputs, save requests, collect helpers, and health cards; the shared service-runtimes section now covers RAG only
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added the operator-only "Manage swarm apps" link (→ /applications) — the replacement entry for the retired cockpit header apps-grid button; revealed via the dev-console super-admin probe
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added the "Add a computer (remote node)" link (→ /api/join/, the join surface that mints enrollment + join codes) beside Manage swarm apps, revealed by the same probe — the surface existed since 07-08 but nothing in the cockpit linked to it, so adding a node meant knowing the URL by heart
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | Removed the "Cost Controls" decoy: the Daily/Bucket "Spending Limit" inputs wrote only to a browser-local localStorage counter (api-client costTracker) that NOTHING in the cockpit ever incremented and NOTHING ever enforced, so the two spend tiles were permanently $0.0000 and a limit typed there had zero relationship to the caps in oshal_budgets that the platform actually enforces. Replaced by a Cost Governance pointer to the real read surface (the Budgets tool). A control that looks like a spend limit and enforces nothing is worse than no control at all.
  */
 
 import { createUiLogger, serializeUiError } from '../../../shared/ui-debug.js';
@@ -62,7 +61,7 @@ export class SettingsGlobalTab {
     return [
       renderConfigOwnershipSection(this.view.configOwnership),
       this.renderRuntimeIntroSection(),
-      this.renderCostGovernanceSection(),
+      this.renderCostControlsSection(),
       this.renderProviderSection(),
       this.renderOpenAiCodexSection(),
       this.renderIntegrationsSection(),
@@ -81,24 +80,46 @@ export class SettingsGlobalTab {
       </div>`;
   }
 
-  // Point at the ENFORCED spend caps instead of offering a limit this screen cannot enforce.
-  // The predecessor ("Cost Controls") wrote a daily/bucket limit into a browser-local
-  // localStorage counter that nothing incremented and nothing checked — an operator could type
-  // "$20/day" and burn any amount. The caps that actually stop work live in oshal_budgets and
-  // are read/managed through the Budgets tool, so this section links there and claims nothing else.
-  renderCostGovernanceSection() {
+  // Render the cockpit-local cost controls section.
+  renderCostControlsSection() {
+    const costStatus = this.view.api.getCostStatus();
     return `
       <div class="setting-section">
-        <div class="setting-section-title"><i class="ph ph-currency-dollar"></i> Cost Governance</div>
-        <div class="setting-section-desc">Spend caps are enforced by the swarm, not by this screen. The
-        caps that actually halt or flag work live in the platform budget store and are checked before
-        every dispatch and inline execution — open the <strong>Budgets</strong> tool in the left rail to
-        see each cap with its spend, or the enforcement trail if you are an operator.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-          <a class="settings-cancel-btn" href="/cockpit/tools/budgets.html" target="_blank" rel="noreferrer">
-            <i class="ph ph-gauge"></i> Open Budgets
-          </a>
+        <div class="setting-section-title"><i class="ph ph-currency-dollar"></i> Cost Controls</div>
+        <div class="setting-section-desc">Set spending limits to control AI swarm costs</div>
+        <div class="cost-status-grid">
+          ${this.renderCostStatusCard('Daily Spent', 'costDailySpent', costStatus.dailySpent, costStatus.dailyLimit)}
+          ${this.renderCostStatusCard('Bucket Spent', 'costBucketSpent', costStatus.bucketSpent, costStatus.bucketLimit)}
         </div>
+        <div class="setting-field">
+          <label>Daily Spending Limit ($)</label>
+          <input type="number" id="costDailyLimit" value="${costStatus.dailyLimit || ''}" placeholder="e.g., 20" min="0" step="0.01">
+          <span class="field-hint">Maximum amount to spend per day. Resets at midnight. Leave empty for no limit.</span>
+        </div>
+        <div class="setting-field">
+          <label>Bucket Spending Limit ($)</label>
+          <input type="number" id="costBucketLimit" value="${costStatus.bucketLimit || ''}" placeholder="e.g., 100" min="0" step="0.01">
+          <span class="field-hint">Total budget amount. Runs until exhausted. Reset manually when refilling budget.</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="settings-save-btn" id="costSaveLimitsBtn" style="background:var(--accent-primary);">
+            <i class="ph ph-floppy-disk"></i> Save Limits
+          </button>
+          <button class="settings-cancel-btn" id="costResetBucketBtn">
+            <i class="ph ph-arrow-counter-clockwise"></i> Reset Bucket to $0
+          </button>
+        </div>
+      </div>`;
+  }
+
+  // Render one cost-status card.
+  renderCostStatusCard(label, valueId, spent, limit) {
+    const limitLabel = limit ? `of $${limit.toFixed(2)} limit` : 'No limit set';
+    return `
+      <div class="cost-status-card">
+        <div class="cost-status-label">${label}</div>
+        <div class="cost-status-value" id="${valueId}">$${spent.toFixed(4)}</div>
+        <div class="cost-status-limit">${limitLabel}</div>
       </div>`;
   }
 
@@ -246,6 +267,7 @@ export class SettingsGlobalTab {
   // Attach all global-tab interaction handlers.
   bindEvents() {
     this.bindThemePicker();
+    this.bindCostControls();
     this.bindProviderControls();
     this.bindRuntimeRefresh();
     this.bindSave();
@@ -285,6 +307,38 @@ export class SettingsGlobalTab {
         }
       });
     });
+  }
+
+  // Bind local cost-control actions.
+  bindCostControls() {
+    this.body.querySelector('#costSaveLimitsBtn')?.addEventListener('click', () => this.handleSaveCostLimits());
+    this.body.querySelector('#costResetBucketBtn')?.addEventListener('click', () => this.handleResetBucket());
+    this.view.costUpdateHandler = () => this.view._updateCostDisplay();
+    window.addEventListener('cost-updated', this.view.costUpdateHandler);
+  }
+
+  // Persist cockpit-local cost limits.
+  handleSaveCostLimits() {
+    const dailyLimit = this.body.querySelector('#costDailyLimit')?.value;
+    const bucketLimit = this.body.querySelector('#costBucketLimit')?.value;
+    logger.info('Saving cockpit cost limits', {
+      dailyLimit: dailyLimit || null,
+      bucketLimit: bucketLimit || null,
+    });
+    this.view.api.setCostLimits(dailyLimit ? parseFloat(dailyLimit) : null, bucketLimit ? parseFloat(bucketLimit) : null);
+    this.view._updateCostDisplay();
+    flashButtonState(this.body.querySelector('#costSaveLimitsBtn'), '<i class="ph ph-check"></i> Saved!');
+  }
+
+  // Reset the local cockpit budget bucket after user confirmation.
+  handleResetBucket() {
+    if (!window.confirm('Reset bucket spending to $0? This will clear the bucket counter but not daily spending.')) {
+      logger.debug('Canceled cockpit bucket reset');
+      return;
+    }
+    logger.info('Resetting cockpit cost bucket');
+    this.view.api.resetBucket();
+    this.view._updateCostDisplay();
   }
 
   // Bind provider/model and OAuth controls.
@@ -448,6 +502,18 @@ function renderToggle(label, id, checked) {
       <div><div class="setting-toggle-label">${label}</div></div>
       <label class="toggle-switch"><input type="checkbox" id="${id}" ${checked ? 'checked' : ''}><span class="toggle-slider"></span></label>
     </div>`;
+}
+
+// Swap a button into a temporary success state before restoring its original label.
+function flashButtonState(button, replacementMarkup) {
+  if (!button) {
+    return;
+  }
+  const originalMarkup = button.innerHTML;
+  button.innerHTML = replacementMarkup;
+  window.setTimeout(() => {
+    button.innerHTML = originalMarkup;
+  }, 2000);
 }
 
 // Render the Session 70 ownership guidance from the backend contract.
