@@ -716,10 +716,27 @@ services:
       # sub or the privileged-dispatch gate escalates it. Unset = no nightly ticket.
       OSHAL_DEV_OWNER_SUB: ${OSHAL_DEV_OWNER_SUB:-}
       OSHAL_DEV_DOCS_CRON: ${OSHAL_DEV_DOCS_CRON:-0 4 * * *}
-      # Career-Hunter native cron (replaces the retired Windows JobHunter* scheduled tasks):
-      # 04:00 shared corpus pull (scrape --all + keyword index), 12:30 per-user AI score
-      # (codex) + auto-enqueue approval tickets. jobs.db stays the operator's frozen fallback.
+      # Career-Hunter native cron (replaces the retired Windows JobHunter* scheduled tasks).
+      # Windows are AMERICA/CHICAGO local, resolved via Intl inside the app -- deliberately
+      # NOT a container TZ env, which would shift trading market-hours and the 5pm-CT recap.
+      #   18:00 CT  evening chain: shared scrape --all -> keyword-index EVERY user ->
+      #             bounded AI score -> title pass -> draft enqueue (approval tickets)
+      #   07:00 CT  per-user digest, so the morning mail reflects the prior evening's drop
+      # A cron-triggered chain does NOTHING unless at least one user has opted in via
+      # career_automation_settings.auto_generate (migration 091; absent row = OFF).
       CAREER_HUNTER_CRON: ${CAREER_HUNTER_CRON:-1}
+      # Controlled-burst caps for that chain. Declared explicitly so the nightly LLM spend is
+      # bounded and visible rather than inherited from code defaults.
+      # Scoring is gated on jobs NEW TO THE CORPUS within this window. It must never be keyed
+      # to posted_date: that column is NULL for ~26% of postings and a ten-day window on it
+      # matched 32 rows out of 1.21M on 2026-07-29, which is how a nightly scorer can report
+      # success while scoring nothing at all.
+      CAREER_SCORE_FIRST_SEEN_DAYS: ${CAREER_SCORE_FIRST_SEEN_DAYS:-3}
+      # Hard ceiling on a single catch-up pass. A container recreate used to re-run an
+      # unbounded score for hours (killed by hand three times) before this existed.
+      CAREER_SCORE_CATCHUP_LIMIT: ${CAREER_SCORE_CATCHUP_LIMIT:-250}
+      # Ceiling on the per-user title pass that follows the keyword pass.
+      CAREER_TITLE_PASS_LIMIT: ${CAREER_TITLE_PASS_LIMIT:-60}
       # Drone Ops (ADR-098/099): extra embedded sim drones on the api's fleet plane —
       # comma-separated ids (e.g. "bravo,charlie") for hardware-free fleet demos with
       # zero node processes. Empty (default) = just the embedded 'alpha'.
