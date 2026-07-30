@@ -42,7 +42,11 @@ $REPO    = if ($env:OSHAL_RECAP_REPO) { $env:OSHAL_RECAP_REPO } else { 'C:\Proje
 $OUT     = Join-Path $REPO 'packages\oshal-vids-operator\out'
 $FINREPO = if ($env:OSHAL_FINREPO) { $env:OSHAL_FINREPO } else { 'C:\Projects\finance-history' }
 $GOAL    = Join-Path $REPO 'packages\oshal-vids-operator\RECAP-BUILD-GOAL.md'
-$RNJS    = "$REPO\scripts\codex-remote-node.mjs"
+# The remote-node driver comes from THIS script's own repo, not $REPO. $REPO still points at the
+# pre-cutover archive for the vids-operator assets, and the archive's copy of the driver never
+# received the 2026-07-28 chunk-window fix or the 2026-07-30 quadratic-pull fix — so every fix
+# landed in the trunk and the nightly kept running the old code. Fall back only if it is absent.
+$RNJS    = if (Test-Path "$PSScriptRoot\codex-remote-node.mjs") { "$PSScriptRoot\codex-remote-node.mjs" } else { "$REPO\scripts\codex-remote-node.mjs" }
 $FF      = if ($env:OSHAL_FFMPEG) { $env:OSHAL_FFMPEG } else { 'ffmpeg' }
 if (-not $Date) { $Date = (Get-Date).ToUniversalTime().AddHours(-5).ToString('yyyy-MM-dd') }  # ET calendar date
 $parent = Split-Path $NodeOut   # the node's vids-operator root, e.g. C:\oshal-vidsop
@@ -78,7 +82,10 @@ function NodeShell($psFile,[int]$t=45000){ RN @('shell', "--client=$Node", "--ti
 # step 5 noticed, 26 minutes late. Verify AT the transfer instead: the driver's own failure text,
 # then the file the transfer was supposed to produce.
 function LastLine($s){ $l = ($s -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 1); if ($l) { $l.Trim() } else { '(no output)' } }
-function TransferFailed($out){ return ($out -match 'ECONNRESET|fetch failed|timed out|ENOENT|no such file') }
+# 'FAIL:' is how the driver reports its own hard errors (die()) — including a truncated chunk,
+# which must never be spliced into a file. Matching it here means a driver-side abort is caught
+# by the same path as a transport error rather than falling through as an apparent success.
+function TransferFailed($out){ return ($out -match 'ECONNRESET|fetch failed|timed out|ENOENT|no such file|FAIL:') }
 function NodePush($local,$remote){
   $out = RN @('push', "--client=$Node", "--local=$local", "--remote=$remote")
   if (TransferFailed $out) { Fail ("push FAILED for " + (Split-Path $local -Leaf) + " -> " + $Node + ": " + (LastLine $out)) }
