@@ -18,6 +18,12 @@
   recoveries) which the deck generator folds into the report's "What changed / Operations" section.
 
   Usage: run-daily-recap.ps1 [-Date YYYY-MM-DD] [-Node <clientId>] [-SkipData]
+
+  CHANGE LOG  (started 2026-07-30 — this file predates the convention; earlier history is in git)
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Verify node transfers AT the transfer. NodePush/NodePull piped RN's output to Out-Null, and RN returns its last output after exhausting retries - so a transfer that never landed was indistinguishable from one that did. On 2026-07-30 the four piece pulls ran 26 minutes, reported nothing, and handed the assembler a prior day's deck-narrated.mp4; the step-5 freshness gate caught it (correctly) but only after the whole window was spent, and the operator got a failure that named a stale file rather than the dead transfer that caused it. Each helper now checks the driver's failure text and then the file it was supposed to produce - existence, and that the local copy actually changed. The step-5 freshness gate stays: it covers the different case of a remote piece that is itself stale.
 #>
 [CmdletBinding()]
 param(
@@ -65,11 +71,28 @@ function RN([string[]]$rnArgs){
   return $out
 }
 function NodeShell($psFile,[int]$t=45000){ RN @('shell', "--client=$Node", "--timeoutMs=$t", "--cmdFile=$psFile") }
-function NodePush($local,$remote){ RN @('push', "--client=$Node", "--local=$local", "--remote=$remote") | Out-Null }
+# A transfer that never landed used to be INVISIBLE. RN returns its last output after exhausting
+# its retries, and both helpers piped that straight to Out-Null — so a dead transfer and a good
+# one were the same thing to every caller. On 2026-07-30 four piece pulls "succeeded" over 26
+# minutes and handed the assembler a PRIOR DAY's deck-narrated.mp4; only the freshness gate at
+# step 5 noticed, 26 minutes late. Verify AT the transfer instead: the driver's own failure text,
+# then the file the transfer was supposed to produce.
+function LastLine($s){ $l = ($s -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 1); if ($l) { $l.Trim() } else { '(no output)' } }
+function TransferFailed($out){ return ($out -match 'ECONNRESET|fetch failed|timed out|ENOENT|no such file') }
+function NodePush($local,$remote){
+  $out = RN @('push', "--client=$Node", "--local=$local", "--remote=$remote")
+  if (TransferFailed $out) { Fail ("push FAILED for " + (Split-Path $local -Leaf) + " -> " + $Node + ": " + (LastLine $out)) }
+}
 # Pulls are CHUNKED and take minutes for a video piece; the driver's default 30s result window
 # guarantees a "timed out" no matter how healthy the node is (root-caused 2026-07-28 — every
 # nightly piece pull was structurally doomed). Wait long enough for the transfer to finish.
-function NodePull($remote,$local){ RN @('pull', "--client=$Node", "--timeoutMs=600000", "--remote=$remote", "--local=$local") | Out-Null }
+function NodePull($remote,$local){ $name = Split-Path $remote -Leaf
+  $before = if (Test-Path $local) { (Get-Item $local).LastWriteTime } else { [datetime]::MinValue }
+  $out = RN @('pull', "--client=$Node", "--timeoutMs=600000", "--remote=$remote", "--local=$local")
+  if (TransferFailed $out) { Fail ("pull FAILED for $name from $Node - " + (LastLine $out) + " (a locked or blank desktop session on the node looks exactly like this)") }
+  if (-not (Test-Path $local)) { Fail "pull of $name reported no error but produced no local file" }
+  if ((Get-Item $local).LastWriteTime -le $before) { Fail "pull of $name did not refresh the local copy - the transfer silently no-opped, leaving the prior day's file on disk" }
+}
 
 Set-Location $REPO   # so `node scripts\codex-remote-node.mjs` finds .env (REMOTE_CLIENT_SHARED_SECRET)
 # 127.0.0.1, never 'localhost': a stale wslrelay can squat the IPv6 loopback [::1] on the published

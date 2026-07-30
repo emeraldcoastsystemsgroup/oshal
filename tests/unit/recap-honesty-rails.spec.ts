@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — file-content guards for the 2026-07-28 recap outage fixes. Each assertion goes red if its fix regresses: doomed 30s pulls, existence-only piece checks (the stale-mix hazard), silent MessageBox failures, the missing OSHAL_USER_SUB on data steps, the localhost/::1 watchdog false-FAIL, piece-name drift across runner/assembler/goal, and the auto-journaled knob turns feeding the deck's "changes" section.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the 2026-07-30 silent-transfer fix, plus a re-point. NodePull is no longer a one-liner, so the existing 600000-timeout assertion (which required the value on the SAME line as `function NodePull`) is re-pointed at the function BODY — same claim, new shape; it would otherwise have gone green-by-vacuity the moment the body moved. New assertions: both transfer helpers inspect RN's result instead of discarding it to Out-Null, and NodePull fails on a local file that did not change (the exact shape of the 26-minute silent no-op).
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -11,6 +12,29 @@ import { join } from 'node:path';
 
 const root = join(__dirname, '..', '..');
 const read = (p: string) => readFileSync(join(root, p), 'utf8');
+
+/**
+ * Extracts one PowerShell function's body from a script's text.
+ * @description Assertions that pin behaviour to a single physical line silently stop testing
+ *   anything when the function is reformatted. Scoping to the body keeps the claim honest
+ *   across shape changes — and throws (rather than passing) if the function is renamed away.
+ * @param src the script contents
+ * @param name the function name, e.g. 'NodePull'
+ * @returns the function header plus its brace-matched body
+ * @throws if the function is absent or its braces do not balance — either way the guard is no
+ *   longer testing what it claims to, and going red is the correct outcome.
+ */
+const bodyOf = (src: string, name: string): string => {
+  const start = src.indexOf(`function ${name}(`);
+  if (start < 0) throw new Error(`function ${name} not found — the guard is pointing at a name that no longer exists`);
+  const open = src.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}' && (depth -= 1) === 0) return src.slice(start, i + 1);
+  }
+  throw new Error(`function ${name} has unbalanced braces — cannot scope the assertion to its body`);
+};
 
 const runner = read('scripts/run-daily-recap.ps1');
 const routability = read('scripts/swarm-routability-check.sh');
@@ -23,7 +47,7 @@ const template = read('packages/oshal-vids-operator/make-deck-detailed.py');
 
 describe('recap runner honesty rails (2026-07-28 outage fixes)', () => {
   it('pulls wait for chunked transfers instead of the doomed 30s default', () => {
-    expect(runner).toMatch(/function NodePull[^\n]*--timeoutMs=600000/);
+    expect(bodyOf(runner, 'NodePull')).toMatch(/--timeoutMs=600000/);
   });
   it('piece check includes FRESHNESS, not just existence (the stale-mix hazard)', () => {
     expect(runner).toMatch(/LastWriteTime -lt \$runStart/);
@@ -40,6 +64,42 @@ describe('recap runner honesty rails (2026-07-28 outage fixes)', () => {
   });
   it('runner writes ops-notes.json for the report\'s operations section', () => {
     expect(runner).toMatch(/ops-notes\.json/);
+  });
+});
+
+// 2026-07-30: the four piece pulls ran 26 minutes, reported nothing, and produced a prior day's
+// deck-narrated.mp4. RN returns its last output after exhausting retries; both helpers threw that
+// output away with `| Out-Null`, so a dead transfer and a good one were the same thing to every
+// caller. The failure the operator finally saw named a stale FILE, not the dead transfer.
+describe('node transfers fail loudly (2026-07-30 silent-pull fix)', () => {
+  it('neither transfer helper discards the driver result to Out-Null', () => {
+    expect(bodyOf(runner, 'NodePull')).not.toMatch(/\|\s*Out-Null/);
+    expect(bodyOf(runner, 'NodePush')).not.toMatch(/\|\s*Out-Null/);
+  });
+
+  it('both helpers inspect the result and call Fail on a dead transfer', () => {
+    for (const fn of ['NodePull', 'NodePush']) {
+      const body = bodyOf(runner, fn);
+      expect(body, `${fn} must test the transfer result`).toMatch(/TransferFailed/);
+      expect(body, `${fn} must fail loudly, not continue`).toMatch(/Fail /);
+    }
+  });
+
+  it('the failure test covers the transport errors RN itself retries on', () => {
+    const test = bodyOf(runner, 'TransferFailed');
+    for (const signal of ['ECONNRESET', 'fetch failed', 'timed out']) {
+      expect(test, `TransferFailed must recognise "${signal}"`).toContain(signal);
+    }
+  });
+
+  it('NodePull rejects a pull that left the local copy unchanged (the silent no-op)', () => {
+    const body = bodyOf(runner, 'NodePull');
+    expect(body).toMatch(/\$before/);              // captures the pre-pull timestamp
+    expect(body).toMatch(/LastWriteTime -le \$before/); // …and refuses when it did not move
+  });
+
+  it('keeps the independent step-5 freshness gate — it catches a stale REMOTE piece', () => {
+    expect(runner).toMatch(/LastWriteTime -lt \$runStart/);
   });
 });
 
