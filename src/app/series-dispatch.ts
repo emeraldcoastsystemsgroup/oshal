@@ -284,7 +284,7 @@ export async function dispatchStoryboardedEpisode(
 ): Promise<DispatchResult> {
   const { rows } = await pool.query(
     `SELECT e.episode_id, e.title, e.ordinal, e.scenes, e.frame_ids, e.status,
-            s.title AS series_title, s.cast_bible, s.orientation
+            s.title AS series_title, s.cast_bible, s.orientation, s.intro_clip
        FROM video_episodes e JOIN video_series s ON s.series_id = e.series_id
       WHERE e.episode_id = $1`, [episodeId],
   );
@@ -317,6 +317,9 @@ export async function dispatchStoryboardedEpisode(
     title: String(e.title),
     series: String(e.series_title),
     orientation: String(e.orientation ?? 'Landscape'),
+    // The show's cached title sequence, prepended at the stitch. Every episode of a show opens with
+    // the same one — it is rendered once and reused forever, which is the Breakfast Crew shape.
+    introClip: (e.intro_clip as string | null) ?? null,
     scenes: plan,
   }), 'utf8').toString('base64');
 
