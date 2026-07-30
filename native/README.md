@@ -7,7 +7,7 @@ The short version, measured rather than assumed:
 
 - **Compiling the platform buys nothing.** The control plane is I/O-bound. A language rewrite
   targets the ~1% of wall-clock that is not already waiting on an LLM, Postgres, or a subprocess.
-- **Compiling the *numeric kernel* buys 4–8×.** There is exactly one CPU-bound cluster in this
+- **Compiling the *numeric kernel* buys 5–7×.** There is exactly one CPU-bound cluster in this
   codebase — the ADR-116 futures indicator layer — and this folder ports it to Rust, proves it
   bit-exact against the TypeScript, and measures the win.
 - **"Installable application" is a packaging problem, not a language problem**, and Node 24 already
@@ -139,7 +139,7 @@ import { computeReference } from '../native/loader/reference';
 
 const kernel = loadKernel();               // null when the artifact is absent
 const series = kernel
-  ? kernel.compute(bars, DEFAULT_CONFIG)   // ~4-8x faster
+  ? kernel.compute(bars, DEFAULT_CONFIG)   // ~5-7x faster
   : computeReference(bars, DEFAULT_CONFIG); // identical numbers, always available
 
 const atr = series[SERIES.ATR];            // Float64Array, bars.length long

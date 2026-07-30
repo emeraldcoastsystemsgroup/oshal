@@ -52,7 +52,7 @@ a set of ergonomic per-indicator functions.
 | runs in the browser | yes — the cockpit is a browser surface | no |
 | speed | ~1.2–1.5× slower than native | baseline |
 
-Giving up 1.2–1.5× is noise against the 4–8× being chased, and it buys away the entire per-platform
+Giving up 1.2–1.5× is noise against the 5–7× being chased, and it buys away the entire per-platform
 build matrix and ABI-compatibility problem. A native addon becomes worth revisiting only if the
 kernel ever needs SIMD or threads that WASM cannot reach.
 
