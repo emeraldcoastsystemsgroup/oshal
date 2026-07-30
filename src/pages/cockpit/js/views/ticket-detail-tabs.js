@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — config-driven ticket-detail sub-screen (tab) visibility so only screens relevant to a ticket's process show. Replaces the hardcoded tab list that surfaced the incident-only "RCA & Remediation" screen on every ticket regardless of process.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Run Trace sub-screen. The run-trace read model already renders an embeddable cost waterfall (GET /api/trace/:ticketId.html) but the only way to reach it was the standalone tool, where the operator pastes the id of the ticket they already have open; the trace now sits on the ticket itself. Ungated: a trace is generic to every process, and a ticket without one shows the renderer's own empty state.
  */
 
 /**
@@ -29,6 +30,7 @@ export const TICKET_DETAIL_TABS = [
   { key: 'artifacts', label: 'Work Artifacts' },
   { key: 'rca', label: 'RCA &amp; Remediation', iconHtml: '<i class="ph ph-file-text"></i> ' },
   { key: 'cost', label: 'Cost' },
+  { key: 'trace', label: 'Run Trace', iconHtml: '<i class="ph ph-flow-arrow"></i> ' },
 ];
 
 /** Processes (ticketType values) that the incident/RCA workflow produces — the only ones for which the

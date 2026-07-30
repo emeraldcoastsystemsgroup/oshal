@@ -48,12 +48,20 @@ rubric, reference?})` routes to the **quality-judge concierge** (inline on `osha
 registered in **both** bot registries) and returns one strict JSON verdict `{score, dimensions,
 rationale}`. A deterministic **lexical fallback** (`mode: 'lexical-fallback'`) runs under
 `FORCE_LLM_PROVIDER=noop` or when the bot is unavailable, so tests run free. Route: `/api/judge`.
-Consumed by Token Chase step 4, persona-evals, and the LinkedIn assistant.
+Consumed in-process (the `JudgeService` class, not the HTTP route) by Token Chase step 4, the
+LinkedIn assistant, and the persona-eval **API** path (`POST /api/persona-evals/run`) — the
+standalone `scripts/persona-eval.ts` CLI has no orchestrator, so it grades on its own provider lane
+and its report says so (`lane.judge`).
 
 ### Persona regression evals — `src/features/persona-evals`
 Golden-task suites (`ai-lab/persona-evals/*.yaml`) with **tiered assertions**: structural
-(mechanically checkable now) and semantic (graded via the quality-judge when an LLM lane is
-available). Runner: `scripts/persona-eval.ts`; routes `/api/persona-evals/*` (operator-gated).
+(mechanically checkable now) and semantic (rubric-graded, only when the execution lane is a real
+provider). Over the routes, semantic grading runs on the **quality-judge bot** via `JudgeService`
+(cost in `chat_tasks`; the controller makes no LLM call of its own); the CLI grades on its own
+provider lane. Either way the report names the grader in `lane.judge`, and a `lexical-fallback`
+verdict is labelled `via lexical-fallback` on the assertion. Executing the golden tasks themselves
+still runs on the process provider lane (`ctx.getProvider()`) — that is the subject under test.
+Runner: `scripts/persona-eval.ts`; routes `/api/persona-evals/*` (operator-gated).
 ⚠ The **noop lane exits 1 by design** — semantic assertions cannot pass without an LLM; do **not**
 wire the noop lane as a CI gate.
 

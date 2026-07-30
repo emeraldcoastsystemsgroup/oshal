@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Persona regression evals (golden-task gate): suite/task/assertion types + report shapes. Assertions are TIERED — structural (mechanically checkable now) vs semantic (rubric graded by an LLM judge when a real lane is available; skipped-with-notice under noop) — so a persona edit can be regression-gated honestly without faking passes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | EvalLaneInfo now records WHICH lane graded the semantic rubrics, because they no longer always run on the execution provider: the API path grades on the shared quality-judge bot. A report that does not say who judged it cannot be audited for where the spend landed.
  */
 
 /**
@@ -168,6 +169,13 @@ export interface TaskResult {
 export interface EvalLaneInfo {
   /** Provider name reported by the lane's LLMService (e.g. 'noop', 'harness:claude-code'). */
   provider: string;
+  /**
+   * Which lane graded the semantic rubrics: 'shared-judge-bot' when grading ran on the shared
+   * quality-judge concierge (the API path — cost lands in `chat_tasks`), otherwise the raw provider
+   * name that did the grading (the CLI path). Optional so stored reports written before the judge
+   * lane existed still read back.
+   */
+  judge?: string;
   /** Whether the lane can grade semantic rubric assertions. */
   semanticCapable: boolean;
   /** Honest caveat about what this lane's results do and do not prove. */
