@@ -146,6 +146,33 @@ So the honest generalization is narrower and more useful than "compile it":
 > it's the language or the memory layout — and if you port, make interchangeability provable and the
 > port optional.
 
+## The other half of the question: "a real installable application"
+
+The original question was two questions — *would compiling make it faster*, and *what would shipping
+a real installable application take*. They have different answers, and conflating them is how a team
+ends up doing a rewrite to solve a packaging problem.
+
+We built the packaging mechanism to find out. `oshal-kernel.exe` is a genuine single file: 86 MB,
+containing the language runtime, the CLI, and the compiled kernel embedded as an asset. Verified by
+copying that one file into an empty directory — no dependency tree, no sidecar, no source checkout —
+and running it there. It works, and reports the kernel as embedded.
+
+**It also demonstrates why the platform itself is not one command away from that.** The kernel binary
+is self-contained precisely *because* it has nothing to talk to. The control plane has two blockers,
+and neither is the packaging step:
+
+- Four dependencies are compiled native libraries. A packer can carry the bytes, but the operating
+  system's loader cannot open them from inside a virtual filesystem.
+- **It still needs a database and a cache server running.** That is the actual barrier to
+  "installable", and it is a dependency-architecture problem, not a compilation one.
+
+A flawless single binary whose install instructions begin *"first, set up Docker"* has not made
+anything installable. The useful next move there is embedding the database — for us, a runtime
+feature that arrived without ceremony in a recent Node release, no compiler involved.
+
+That is the same lesson as the performance half, in a different costume: **the obvious tool was aimed
+at the wrong constraint.**
+
 ## Stated limits
 
 Published limits, not footnotes:

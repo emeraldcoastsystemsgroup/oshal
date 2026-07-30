@@ -141,7 +141,7 @@ bug this whole guard exists for: correct on the first call, wrong afterwards, no
 ## What has not been measured
 
 - **A real backtest end-to-end.** The kernel is not yet called from `futures-backtester.ts`, so the
-  4–8× is on the indicator layer in isolation. Total run speedup will be lower by whatever share the
+  5–7× is on the indicator layer in isolation. Total run speedup will be lower by whatever share the
   evaluator, stop engine and fill simulation take — unmeasured, and it should be measured before any
   end-to-end claim.
 - **Real market data.** `bench/bars.ts` is a seeded random walk. Throughput should not depend on
