@@ -4,10 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from workflow-studio.js (1000-line cap decomposition): server data/API operations mixin — load/create/duplicate/fork/save/validate/compile/export/publish plus the canvas→WorkflowPublishSpec translator
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Publish now takes its slug from the shared workflowTicketTypeSlug helper instead of an inline regex chain, so the Runs panel can scope to the same ticketType the queue is published under without the two derivations drifting apart.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
-import { requestJson, readErrorMessage } from './workflow-studio-utils.js';
+import { requestJson, readErrorMessage, workflowTicketTypeSlug } from './workflow-studio-utils.js';
 
 const logger = createUiLogger('workflow-studio');
 
@@ -353,12 +354,9 @@ export const workflowStudioDataMethods = {
       throw new Error('workflow needs a start node');
     }
 
-    const slug =
-      (definition.slug || definition.name || 'workflow')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 64) || 'workflow';
+    // Shared with the Runs panel — this slug is both the queue name and the ticketType every
+    // run of this workflow is recorded under, so it must come from one place.
+    const slug = workflowTicketTypeSlug(definition);
 
     const BOT_NODE_TYPES = new Set(['execute-agent', 'route-agent', 'ai-decision']);
     const agentInfo = (id) => {
