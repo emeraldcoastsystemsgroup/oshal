@@ -22,6 +22,27 @@ Before this split, every head read was computed by re-scanning the stream.
 | `sentimentBreakdown` | 2,966 ms | 133 ms |
 | `pullStats` | 2,033 ms | 81 ms |
 
+Those are SQL-level measurements. **Verified again through the deployed stack** after the change
+shipped (image `oshal-bot:latest`, settled stack, warm):
+
+| endpoint / call | before | after |
+|---|---|---|
+| `GET /api/world/entities?limit=60` | 17,850 ms cold / 9,870 ms warm | **13 ms** |
+| `GET /api/world/sentiment?days=90` | 2,966 ms | **56 ms** |
+| `GET /api/world/pulls?days=90` | 2,033 ms | **57 ms** |
+| `GET /api/world/metric?days=90` | — | **68 ms** |
+| `GET /api/world/neighbors?depth=1` | — | **111 ms** (graph, not the head) |
+| `metricsBatch(100 tickers × 12 metrics, 30d)` — the trading gate's read | 10,483 ms | **135 ms** (warm median of 5; 122–198 ms) |
+
+The whole surface now paints in roughly 130 ms of server time instead of ~12 s. Two caveats worth
+knowing rather than rediscovering:
+
+- **The first call in a fresh process costs ~3 s.** `ensureSeries` / `ensureArchive` run their
+  `CREATE ... IF NOT EXISTS` / `ALTER` / index checks once per process. That is one boot-time cost,
+  not a per-read cost — the second call is already ~50 ms.
+- **The catalog head is live**, not a snapshot: the `lastSeen` values returned by `/entities` track
+  the running feeds within minutes, which is `archiveItem` maintaining it on the write path.
+
 ## The three causes
 
 **1. The pre-aggregation was appended back into the stream it was meant to replace.**
