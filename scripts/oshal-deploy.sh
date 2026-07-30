@@ -7,6 +7,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Pass --build-arg GIT_SHA=$HEAD_SHA so the image carries its commit INSIDE the container (ENV, read by /api/version + the update-check daemon), not only in the docker label the runtime can't see. Also populates the OCI image.revision label that stayed "unknown".
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Bot tier recreates in BATCHES (recreate_bots; same OSHAL_UP_BATCH_SIZE/SETTLE knobs as oshal-up.sh, 0=single-shot): the one-shot force-recreate of ~34 bots is the same concurrent cold-start spike that OOM-crashed the 6 GB engine twice on 2026-07-23; rollback path batches too.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Initial — THE one verified deploy command, born from the 2026-07-19 deploy incident. Encodes every lesson: build from COMMITTED HEAD (git archive) and stamp the image with the commit; classify app services by their compose-declared image (oshal-bot:latest) so infra can never be swept into a recreate (the incident: a hand-typed name filter missed the oshal- prefix and force-recreated the DB); NEVER pipe `docker compose up` (SIGPIPE killed a recreate mid-flight); --remove-orphans (stale name conflict); api first + FULLY up (healthy + auto-load, the oshal-up.sh contract) then bots; deploy-parity-check is a HARD gate here (advisory in oshal-up); auto-rollback to the pre-deploy image on any post-recreate failure.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | The rollback path never checked ITSELF. `docker tag`, the api recreate and `recreate_bots` inside rollback() were fire-and-forget, and wait_api's failure was only LOGGED — so a rollback that left no serving api exited 1, the SAME code as a deploy that failed safely. That is not hypothetical: on 2026-07-29 the docker engine answered 500 on the network step, the forward deploy rolled back, the rollback's own api never came up, and the run ended `ROLLED BACK with parity drift — investigate` + exit 1 while the box sat with no api container — the operator found out from `docker ps`, not from the tool. Every rollback step is now checked and any failure yields a distinct **exit 3** with a named recovery order (oshal-up.sh, then api-bounce.sh, then parity). Exit 1 now MEANS "the previous image is serving". Guard: tests/unit/deploy-rollback-outcome.spec.ts. (Note for the record: the script was never the source of an exit-0 false green — it does exit non-zero; a piped invocation masks it, which is why CLAUDE.md says never pipe these.)
 # =============================================================================
 #
 # Usage:  bash scripts/oshal-deploy.sh [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
@@ -27,7 +28,8 @@
 #     parity clean + /health 200 + zero unhealthy app containers.
 #   - Any post-recreate failure triggers rollback to the pre-deploy image
 #     (tagged oshal-bot:deploy-rollback at start) unless --no-rollback.
-# EXIT:   0 deployed+verified   1 failed (rolled back if enabled)   2 preflight error
+# EXIT:   0 deployed+verified   1 failed, rollback restored a SERVING stack   2 preflight error
+#         3 failed AND the rollback did not restore a serving stack — the box needs hands
 
 set -uo pipefail
 
@@ -166,11 +168,35 @@ recreate_bots() {
 rollback() {
   [ "$NO_ROLLBACK" -eq 1 ] && { log "FAILED — rollback disabled, stack left as-is. See $RUN_LOG"; exit 1; }
   log "ROLLING BACK to ${PREV_ID:7:12}"
-  docker tag "$ROLLBACK_TAG" "$IMAGE"
-  "${DC[@]}" up -d --force-recreate --no-deps "$API_SERVICE" >>"$RUN_LOG" 2>&1
-  wait_api || log "rollback: api still not fully up — run scripts/oshal-up.sh"
-  recreate_bots
-  bash scripts/deploy-parity-check.sh --quiet && log "ROLLED BACK clean (parity ok)" || log "ROLLED BACK with parity drift — investigate"
+  # Every step of the rollback is CHECKED. Previously the api recreate and the bot recreate
+  # here were fire-and-forget, so a rollback that itself failed reported the same `exit 1` as a
+  # deploy that failed safely — and on 2026-07-29 that is exactly what happened: the docker
+  # engine returned 500 on the network step, the rollback's own api recreate never came up
+  # ("rollback: api still not fully up" was the ONLY signal), and the stack sat with no api
+  # container while the exit code said nothing more than "deploy failed".
+  local degraded=0
+  docker tag "$ROLLBACK_TAG" "$IMAGE" || { log "rollback: could not retag $ROLLBACK_TAG -> $IMAGE"; degraded=1; }
+  "${DC[@]}" up -d --force-recreate --no-deps "$API_SERVICE" >>"$RUN_LOG" 2>&1 \
+    || { log "rollback: api recreate FAILED (docker engine error?) — see $RUN_LOG"; degraded=1; }
+  wait_api || { log "rollback: api still not fully up — run scripts/oshal-up.sh"; degraded=1; }
+  recreate_bots || { log "rollback: bot recreate FAILED — see $RUN_LOG"; degraded=1; }
+  if bash scripts/deploy-parity-check.sh --quiet; then
+    log "ROLLED BACK clean (parity ok)"
+  else
+    log "ROLLED BACK with parity drift — investigate"; degraded=1
+  fi
+
+  if [ "$degraded" -eq 1 ]; then
+    log ""
+    log "✗✗ ROLLBACK DEGRADED — THE STACK IS NOT SERVING. This is NOT a safe failure."
+    log "   The deploy failed AND the rollback did not restore a working stack."
+    log "   Recover, in order:  bash scripts/oshal-up.sh   (ordered bring-up)"
+    log "                       bash scripts/api-bounce.sh (if the api is up but the host port is wedged)"
+    log "   Then confirm:       bash scripts/deploy-parity-check.sh"
+    log "   Full log: $RUN_LOG"
+    exit 3
+  fi
+  log "deploy failed, but the rollback restored the previous image cleanly — stack is serving."
   exit 1
 }
 
