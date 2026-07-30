@@ -103,6 +103,16 @@ talking. Add the file, re-import in the panel, tick it on.
 Shipped: Breakfast Crew, Cardboard Cosmo Crew, Neon Noodle Jam, Detective Dot, Bubblebop Reef, and
 Stupid Superheroes.
 
+## One thing that will bite you on a fresh deployment
+
+compose passes an **explicit allowlist** of environment variables into the api, and a variable it has
+no value for arrives as an **empty string**, not as `undefined`. Two consequences:
+
+- A knob that is not in the `x-bot-env` block simply does not exist inside the container. All of the
+  variables below are in it; a NEW one has to be added there too or it will be silently ignored.
+- Read every default with `||`, never `??`. `??` accepts `""` as a deliberate setting — which is how
+  an unset `VIDS_NODE_BLACKOUT` once meant "no blackout window at all" instead of the default.
+
 ## Environment reference
 
 | variable | default | what it does |
@@ -119,7 +129,7 @@ Stupid Superheroes.
 | `VIDS_NODE_PROBE_TIMEOUT_MS` | `120000` | how long to wait for the node to answer |
 | `VIDS_NODE_RECAP_IDLE_MIN` | `10` | treat the recap as running if its log is newer than this |
 | `VIDS_NODE_MAX_COMMIT_PCT` | `92` | refuse above this commit charge |
-| `VIDS_NODE_MIN_FREE_MB` | `512` | refuse below this available memory |
+| `VIDS_NODE_MIN_FREE_MB` | `512` | refuse below this available memory — **the operator's node needs 256**: it sits at ~450MB available and 53% commit while perfectly healthy |
 | `VIDS_NODE_MAX_CHROME` | `40` | refuse above this many chrome.exe processes |
 | `VIDS_NODE_LEASE_MINUTES` | `45` | how long the pump holds the node for one episode |
 
