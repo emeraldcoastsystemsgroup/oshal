@@ -1,9 +1,11 @@
 # ADR-045 — Two-tier graph database + an engine-agnostic connector (and the "add-a-DB → management-bot" pattern it establishes)
 
 - **Status:** Accepted — connector + both tiers + `/api/graph` + the swarm operational graph BUILT
-  and LIVE; two of three domain carve-outs (jobs, capture) shipped. The RCA-persona rewiring and
-  `subgraph()` were never built — see [Implementation — as built](#implementation--as-built).
-- **Date:** 2026-06-17 (status reconciled 2026-07-26)
+  and LIVE; two of three domain carve-outs (jobs, capture) shipped; the RCA/capture persona rewiring
+  DONE 2026-07-29 and `subgraph()` decided WON'T BUILD. One item is an open operator decision
+  (`world-data` is not a kernel skill). See
+  [Resolved 2026-07-29](#resolved-2026-07-29--the-ambiguous-middle-closed).
+- **Date:** 2026-06-17 (status reconciled 2026-07-26; closure pass 2026-07-29)
 - **Related:** [ADR-036 (bot-owned application architecture)](036-bot-owned-application-architecture.md),
   [ADR-041 (per-user storage targets / home base)](041-per-user-storage-targets.md),
   [ADR-042 (personal vs tenant tenancy)](042-iot-connector-tenancy.md),
@@ -11,6 +13,11 @@
   the RCA bots carry no product prefix (the dead-product prefix was dropped in a bot rename refactor).
 
 ## Context
+
+> **Editorial note (2026-07-29):** three of the four bot names below turned out to be phantoms —
+> registry/catalog rows with no persona and no container. The real owners are `rca-specialist` and
+> `capture-coordinator`; see [Resolved 2026-07-29](#resolved-2026-07-29--the-ambiguous-middle-closed).
+> The original text is kept as written because the *problem* it states is unchanged.
 
 The RCA / topology bots (`graph-analyst`, `advisor-bot`, `remediation-writer`, `alert-intake-bot`)
 reason over relationship-heavy data — "what did this outage touch", "what's central to this
@@ -151,15 +158,125 @@ it shipped — the under-claiming failure mode CLAUDE.md's anti-drift rule 4 nam
 - **Adoption layer 3 — two of three carve-outs.** *Jobs* — the `career-hunter` store package
   (`career-graph-routes`, cron mirror, insights AQL). *Capture* — `gov-contracting-cron.ts` mirrors
   each promoted lead into the tenant graph. *Communications/social* was never carved.
-- **Guards.** `graph-keys`, `graph-ingestion`, `graph-route-degradation`, `data-lifecycle` unit
-  specs, plus `scripts/graph-smoke.ts` against a live engine.
+- **The GDPR person-graph exporter.** `src/features/data-lifecycle/services/arango-person-graph-exporter.ts`
+  exports and deletes a person's whole graph, backed by `personGraphExists(sub)` (an existence probe
+  that deliberately does NOT provision) and `dropPersonGraph(sub)` on the connector. It closes the
+  `arangodb_person_graph` export gap. *(Added to this list 2026-07-29 — it shipped and the list
+  omitted it. Under-claiming costs the same credibility as over-claiming, CLAUDE.md anti-drift rule 4.)*
+- **Guards.** `graph-keys`, `graph-ingestion`, `graph-route-degradation`,
+  `graph-route-tenant-boundary`, `graph-adapter-read-only`, `data-lifecycle` unit specs, plus
+  `scripts/graph-smoke.ts` against a live engine.
 
 ### Not built
 
-- **The RCA-persona rewiring.** The personas were never pointed at the connector. `graph-analyst`,
-  `advisor-bot` and `alert-intake-bot` — named in Context — do not exist in `ai-lab/bot-personas/`.
-  `remediation-writer.yaml` still listed the dead **Memgraph** as a component until this change.
-- **`subgraph()`.** The shipped `GraphHandle` is `upsertNodes` / `upsertEdges` / `neighbors` /
-  `shortestPath` / `rawQuery`. Planned `query` shipped as `rawQuery`; `subgraph` was never added.
 - **An incident/intake auto-ingestion hook.** Ticket-lifecycle ingestion covers the general case;
-  no incident-specific hook exists.
+  no incident-specific hook exists. The `rca-specialist` persona now upserts incident topology
+  itself, which is the ADR-036 shape (the bot owns its domain) — a controller-side hook would be a
+  second writer.
+
+## Resolved 2026-07-29 — the ambiguous middle, closed
+
+Everything below was either "planned" with no owner or "not built" with no decision. Each item is
+now decided, and the two that are decisions rather than work say so.
+
+### `subgraph()` — WON'T BUILD
+
+`rawQuery` + `neighbors` cover every shipped consumer, verified against the code rather than assumed:
+
+- the **data-lifecycle exporter** wants a FULL dump, not a subgraph — two `rawQuery` calls,
+  `FOR n IN nodes RETURN …` and `FOR e IN edges RETURN …`;
+- **career-hunter's insights** want AGGREGATES — `COLLECT … WITH COUNT INTO`, `SORT … LIMIT` over
+  `edges` (`career-graph-routes.js`), which a vertices+edges subgraph would not answer any better;
+- **`world`** delegates straight to `neighbors` (`WorldIntelligenceService.neighbors` → `g.neighbors`).
+
+A third traversal primitive with no caller is dead API on the interface every future adapter has to
+implement. **Revisit trigger:** the deferred visual graph explorer, or the first consumer that needs
+vertices AND edges in one bounded response (a subgraph is not "a dump with a filter" — the bound is
+the point). Until then `GraphHandle` stays `upsertNodes` / `upsertEdges` / `neighbors` /
+`shortestPath` / `readQuery` / `rawQuery`.
+
+### The RCA-persona rewiring — DONE
+
+Done by this change. The three personas the ADR's Context named were **phantoms**: `graph-analyst`,
+`advisor-bot` and `alert-intake-bot` had registry/catalog rows but no persona YAML and no compose
+service, so none could ever be personified or dispatched. Their rows are removed (from
+`swarm-bot-registry-local.ts`, `swarm-bot-registry.ts`, and the default `oshal` catalog in
+`agent-profile-controller.ts`). The graph recipe went to the personas that do the work:
+
+- **`rca-specialist.yaml`** — incident topology: node kinds `incident|service|host|alert|change`,
+  edges `caused|depends_on|runs_on|touched`, read (`neighbors`/`path`/AQL `query`) before theorizing
+  about blast radius, write only what the ticket evidence supports.
+- **`capture-coordinator.yaml`** — capture teaming (this ADR's other named case): `opportunity`,
+  `agency`, `contact`, `team`, `incumbent`, `naics`, `vehicle` with `solicited_by`, `teams_with`,
+  `incumbent_on`, `contact_at`, `classified_as`, `awarded_via`. Facts only — an assumed
+  `teams_with` becomes a past-performance claim someone repeats to a contracting officer.
+- **`remediation-writer.yaml`** — the graph mention was REMOVED rather than upgraded. That persona
+  writes fix scripts from the RCA's findings; topology is the rca-specialist's deliverable, and a
+  second source of topology truth is how the two come to disagree. A component-list mention with no
+  recipe read as "done" while nothing was wired.
+
+Both personas already had `bash: auto` and `fetch: auto`, so no capability or tool grant changed.
+Persona YAML is bind-mounted — this reaches a running swarm without a rebuild.
+
+### `/api/graph/query` is now read-ONLY enforced
+
+The endpoint documented itself as "run a raw AQL read" while calling `rawQuery`, which hands the
+string to `db.query` — so a `REMOVE`/`INSERT` went through. Caller-scoped, so never a cross-tenant
+hole; a contract the code contradicted, and a bot that mis-writes its own topology poisons the next
+investigation. `GraphHandle.readQuery` now asks the ENGINE to plan the query (`db.explain`, whose
+plan carries `isModificationQuery`) and refuses a modifying one with `400 graph_read_only` before
+anything executes. Deliberately **not** an AQL keyword denylist (bypassable, and it rots with each
+AQL release) and deliberately **not** a read-only streaming transaction: arangojs attaches the
+transaction id to a single request, so a multi-batch cursor would silently fetch its later batches
+outside the transaction. `rawQuery` stays the trusted in-process escape hatch the exporter dumps
+through.
+
+### The tenant tier is HTTP-unreachable, on purpose
+
+`graph-routes.ts` only ever resolves `getPersonGraph(callerSub)`; `getTenantGraph` is in-process
+only (the swarm operational graph, the world tier). The connector's own doc comment defers tenant
+MEMBERSHIP to "upstream" — **and there is no upstream check today**, which is safe only because no
+HTTP path reaches that tier. `tests/unit/graph-route-tenant-boundary.spec.ts` now fails if a route
+starts honouring a `?tenant=` (or a tenant in the body or a header). Building that membership check
+is the prerequisite for ever exposing the shared tier over HTTP.
+
+### Open decision for the operator — `world-data` is not a kernel skill
+
+`world` reaches the graph TRANSITIVELY: the store package imports
+`@/features/world-data/world-intelligence-service` (a DEEP path, not even the barrel), and
+`world-data` is **not** a registered kernel skill. It survives in `dist/` only because unrelated
+app-layer core files happen to import it — `jarvis-brief-sections.ts` and the trading
+assess/research/schedule/strategy-lab dispatchers. That is precisely the documented silent-prune
+failure class (`tsconfig.server.json` excludes `src/features/**`; a re-export is the only pin), and
+the day trading's dispatchers carve out, the installed `world` package fails at mount.
+
+Two ways out, and it is the operator's call:
+
+1. **Promote `world-data` to a kernel skill** — declare it in `src/shared/kernel-skills/registry.ts`
+   and anchor it in `src/app/composition/kernel-skills.ts`. Cheap, but it also means committing to
+   the modules the package deep-imports (`world-intelligence-service`, `news-fetcher`,
+   `outlet-ratings`, `world-types`) or making the package import the barrel instead.
+2. **Move the slice into the `world` package** — ADR-093 kept the Layer-B engine core because core
+   callers exist; if those callers are the only reason, the honest resolution may be the reverse.
+
+Not decided here because it is a kernel-boundary question (ADR-093), not a graph question.
+
+### The `uses:` declaration gap — now gated
+
+`swarm-app-loader.readManifest` validates a declared `uses:` list but never REQUIRES declaration
+(the check is guarded on `uses !== undefined`), while `docs/apps/kernel-skills.md` says "declare what
+your code actually imports". So five installed packages imported a kernel skill invisibly.
+`scripts/check-kernel-skills.ts` grew **Phase 3**: for every store package, scan the COMPILED js for
+the declared kernel specifiers and assert each resolved skill id appears in `uses:`. Three details
+are load-bearing:
+
+- **compiled `.js`, never `.ts`** — TypeScript erases `import type`, so a `.ts` scan reports
+  `trading`'s `import type { ScheduleRecord } from '@/features/scheduling'` as a runtime dependency
+  it is not;
+- **declaration ⊇ imports, not equality** — `dnd` and `game-show` legitimately over-declare
+  (`tool-registry`); requiring equality would turn healthy packages red;
+- **`readManifest` was NOT changed.** That path runs at mount on live boxes; making it throw would
+  fail-closed five already-installed packages the moment they mount. A gate belongs before the ship,
+  not at the customer's boot.
+
+Absent a store checkout the phase prints `PHASE 3 SKIPPED` and why — loudly, even under `--quiet`.

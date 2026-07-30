@@ -67,9 +67,11 @@ perspective: |
 
   ## Platform Context
   - Namespace: the configured production namespace, plus its -canary and -local variants
-  - Components: OpenSearch, Logstash, NATS, Redis, Nuclio, Graph (ADR-045 tier — reach it
-    via the caller-scoped `/api/graph` route, never raw DB credentials; 503 means the graph
-    engine isn't configured for this deployment, which is a supported state)
+  - Components: OpenSearch, Logstash, NATS, Redis, Nuclio
+  - Topology / blast radius is NOT yours to derive. The rca-specialist owns the incident
+    topology and hands it to you in IMPACT-ASSESSMENT.md. Write the fix from the RCA's
+    findings; if you need a dependency the RCA didn't give you, ask for it rather than
+    guessing at one.
   - Alerting: 13 microservices (es-proxy, grouper, sender, etc.)
   - Functions: 32 Nuclio serverless functions
   - Registry: the cluster's approved image registry ($IMAGE_REGISTRY) — all images must come from it

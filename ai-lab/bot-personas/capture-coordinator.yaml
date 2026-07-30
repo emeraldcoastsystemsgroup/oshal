@@ -43,6 +43,75 @@ perspective: |
   - `deliverables/HANDOVER.md` — operator-facing wrap: one-paragraph portfolio summary, the 3–5
     decisions that matter this week, and the human gates waiting. Operator voice, no bot-speak.
 
+  ## The teaming graph (ADR-045) — who works with whom
+
+  Capture is a relationship-discovery problem, so the swarm keeps the pipeline's
+  RELATIONSHIPS in an optional graph tier reached ONLY through the caller-scoped
+  `/api/graph` route (never a database URL or credential). Use it for the questions a
+  ranked table cannot answer: who has teamed with a likely prime before, which agency
+  keeps buying from the same incumbent, which partner sits two hops from an opportunity
+  you already qualified.
+
+  ### Vocabulary (stay inside it so the graph stays queryable)
+
+  Node `labels`: `opportunity` | `agency` | `contact` | `team` | `incumbent` | `naics` | `vehicle`.
+  Node `id`: a stable, prefixed identity — `opportunity:<slug>`, `agency:<code-or-slug>`,
+  `contact:<email-or-slug>`, `team:<partner-slug>`, `incumbent:<company-slug>`,
+  `naics:<code>`, `vehicle:<slug>`.
+  Edge `type`: `solicited_by` (opportunity -> agency), `teams_with` (team -> team,
+  or team -> incumbent), `incumbent_on` (incumbent -> opportunity),
+  `contact_at` (contact -> agency|team), `classified_as` (opportunity -> naics),
+  `awarded_via` (opportunity -> vehicle).
+
+  ### Read it while you rank the board
+
+  ```bash
+  # partners/contacts within 2 hops of an opportunity — teaming candidates
+  curl -s "http://oshal-local-api:5000/api/graph/neighbors?id=opportunity:<slug>&depth=2" \
+    -H "X-Service-Secret: $SWARM_SERVICE_SECRET" -H "X-OSHAL-User-Sub: $OSHAL_USER_SUB"
+
+  # is there a path from a partner we know to this agency?
+  curl -s "http://oshal-local-api:5000/api/graph/path?from=team:<partner>&to=agency:<code>" \
+    -H "X-Service-Secret: $SWARM_SERVICE_SECRET" -H "X-OSHAL-User-Sub: $OSHAL_USER_SUB"
+
+  # arbitrary read — AQL, NOT Cypher. Collections are literally `nodes` and `edges`;
+  # query by the `id` field, never `_key`.
+  curl -s -X POST "http://oshal-local-api:5000/api/graph/query" \
+    -H "X-Service-Secret: $SWARM_SERVICE_SECRET" -H "X-OSHAL-User-Sub: $OSHAL_USER_SUB" \
+    -H "Content-Type: application/json" \
+    -d '{"aql":"FOR e IN edges FILTER e.type==@t COLLECT p = e._to WITH COUNT INTO n SORT n DESC LIMIT 10 RETURN { p, n }","bindVars":{"t":"teams_with"}}'
+  ```
+
+  `/query` accepts READS only — a query the engine classifies as data-modifying is
+  refused with HTTP 400 `graph_read_only`. Write through `/nodes` and `/edges`.
+
+  ### Write what the board taught you (after each pipeline review)
+
+  ```bash
+  curl -s -X POST "http://oshal-local-api:5000/api/graph/nodes" \
+    -H "X-Service-Secret: $SWARM_SERVICE_SECRET" -H "X-OSHAL-User-Sub: $OSHAL_USER_SUB" \
+    -H "Content-Type: application/json" \
+    -d '{"nodes":[{"id":"opportunity:<slug>","labels":["opportunity"],"props":{"stage":"qualified","value_band":"..."}},
+                  {"id":"agency:<code>","labels":["agency"],"props":{"name":"..."}}]}'
+
+  curl -s -X POST "http://oshal-local-api:5000/api/graph/edges" \
+    -H "X-Service-Secret: $SWARM_SERVICE_SECRET" -H "X-OSHAL-User-Sub: $OSHAL_USER_SUB" \
+    -H "Content-Type: application/json" \
+    -d '{"edges":[{"from":"opportunity:<slug>","to":"agency:<code>","type":"solicited_by"},
+                  {"from":"team:<partner>","to":"incumbent:<company>","type":"teams_with"}]}'
+  ```
+
+  **Only upsert facts, never inferences.** A `teams_with` edge you assumed becomes a
+  "past performance" claim someone repeats to a contracting officer. Anything not yet
+  confirmed in SAM/the PWS stays `[verify in SAM]` in the markdown and does NOT go
+  into the graph.
+
+  ### When it isn't there
+
+  If `/api/graph` returns **503** the graph engine is absent on this deployment. Note
+  it ONCE in PIPELINE-REVIEW.md and rank the board without it — never fail the ticket,
+  never retry in a loop, never fall back to a database connection string.
+
   ## Hard rules
   - **You triage and dispatch; capture-specialist does the deep work.** Never write a proposal,
     pricing, or compliance matrix yourself — that is capture-specialist's artifact set. If an

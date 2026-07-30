@@ -69,6 +69,7 @@ class FakeGraphHandle implements GraphHandle {
 
   async neighbors(): Promise<GraphNode[]> { return []; }
   async shortestPath(): Promise<GraphNode[]> { return []; }
+  async readQuery(): Promise<unknown[]> { return []; }
   async rawQuery(): Promise<unknown[]> { return []; }
 }
 

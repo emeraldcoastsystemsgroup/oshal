@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085/ADR-090 D8: the kernel-skills CI guard. Asserts every skill the kernel PROMISES packages (@/shared/kernel-skills) is actually re-exported by the build anchor and actually present in the built image. This is the guard that turns the google-calendar/notifications silent-prune class of bug into a red CI run instead of a mount-time failure inside a customer's installed app.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045/ADR-090 closure — PHASE 3, the PACKAGE side of the same contract. Phases 1-2 prove the kernel keeps its promises; nothing proved a package DECLARES what it imports. swarm-app-loader validates a `uses:` list when present but never requires one (the check is guarded on `uses !== undefined`), so five installed packages imported a kernel skill invisibly — exactly the state where a future prune breaks an app with no gate having gone red. Phase 3 scans each store package's COMPILED js for the declared kernel specifiers and asserts the skill id appears in its `uses:`. Lives here rather than in validate-manifests.ts because the specifier→skill-id mapping IS this file's subject (validate-manifests owns manifest/persona SHAPE for the in-repo dirs and never looks at a sibling checkout). Rule is declaration SUPERSET-OF imports, never equality — dnd and game-show legitimately over-declare. Scans .js and NEVER .ts: type-only imports are erased at compile time, so a .ts scan makes trading a false positive on its `import type` from @/features/scheduling.
  */
 
 /**
@@ -20,10 +21,17 @@
  *  checks a local build, `--image <tag>` checks inside the Docker image that would actually ship.
  *  This is the literal done-when from the backlog: the guard fails if a skill goes missing.
  *
+ *  **Phase 3 — the PACKAGE side (declaration ⊇ imports).** For every store package: whichever kernel
+ *  skills its COMPILED js actually imports must appear in its manifest `uses:`. Phases 1-2 hold the
+ *  kernel to its promises; this holds packages to declaring what they rely on, which is what makes
+ *  the promise checkable in the first place. Runs only when a store checkout is present (`--store`,
+ *  `OSHAL_STORE_DIR`, or the conventional sibling) and says loudly when it is not.
+ *
  * Usage:
  *   npx ts-node -r tsconfig-paths/register --transpile-only scripts/check-kernel-skills.ts
  *   … --dist .            # also assert ./dist/** after a local server build
  *   … --image oshal-ci:latest   # also assert /app/dist/** inside the image
+ *   … --store ../oshal-applications   # point Phase 3 at a specific store checkout
  *
  * Exit 0 = contract holds. Exit 1 = a package that imports the named skill would fail at mount.
  */
@@ -31,6 +39,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import yaml from 'js-yaml';
 
 import { KERNEL_SKILLS, type KernelSkillModule } from '@/shared/kernel-skills';
 
@@ -43,6 +52,7 @@ const args = process.argv.slice(2);
 const quiet = args.includes('--quiet');
 const distRoot = readFlag('--dist');
 const imageTag = readFlag('--image');
+const storeFlag = readFlag('--store');
 
 const failures: string[] = [];
 
@@ -78,6 +88,117 @@ function resolveSource(specifier: string): string | null {
 /** @description Log unless --quiet. @param msg - Line to print. */
 function say(msg: string): void {
   if (!quiet) console.log(msg);
+}
+
+/** @description Print regardless of --quiet. A skipped gate must be visible in a quiet CI log. @param msg - Line to print. */
+function shout(msg: string): void {
+  console.log(msg);
+}
+
+// ── Phase 3 helpers: which kernel skill does an import specifier belong to? ─────────────────
+/** Every declared kernel specifier, longest first, so `@/features/personal-graph` can never be
+ *  mistaken for a prefix hit on `@/features/personal-data`. */
+const SPECIFIER_TO_SKILL: ReadonlyArray<{ specifier: string; skill: string }> = KERNEL_SKILLS.flatMap(
+  (s) => s.modules.map((m) => ({ specifier: m.specifier, skill: s.id })),
+).sort((a, b) => b.specifier.length - a.specifier.length);
+
+/**
+ * @description Map one import specifier to the kernel skill it reaches, if any.
+ *
+ * A DEEP import counts: a package writing `@/features/graph/services/graph-keys` depends on the
+ * graph skill just as much as one importing the barrel, and the prune that would break it is the
+ * same prune. The `/` boundary is what keeps sibling slices with a shared prefix apart.
+ *
+ * @param specifier - The module specifier as written in the compiled js.
+ * @returns The kernel-skill id, or null when the specifier is not a kernel module.
+ */
+function skillForSpecifier(specifier: string): string | null {
+  for (const entry of SPECIFIER_TO_SKILL) {
+    if (specifier === entry.specifier || specifier.startsWith(`${entry.specifier}/`)) return entry.skill;
+  }
+  return null;
+}
+
+/** Matches `require("…")` and `from "…"` in compiled js, either quote style. */
+const SPECIFIER_RE = /require\(\s*['"]([^'"]+)['"]\s*\)|from\s+['"]([^'"]+)['"]/g;
+
+/**
+ * @description List every .js file in a package, skipping vendored dependencies.
+ *
+ * COMPILED js only, never .ts — TypeScript erases `import type`, so a .ts scan reports a
+ * type-only reference (trading's `import type { ScheduleRecord } from '@/features/scheduling'`)
+ * as a runtime dependency the package must declare. It isn't one: nothing is required at runtime.
+ *
+ * @param dir - Directory to walk.
+ * @returns Absolute paths of every .js file beneath it, node_modules excluded.
+ */
+function packageJsFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...packageJsFiles(full));
+    else if (entry.name.endsWith('.js')) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * @description Read a store package manifest's `uses:` list.
+ * @param manifestPath - Path to the package's oshal-app.yaml.
+ * @returns The declared kernel-skill ids (empty when the key is absent or malformed).
+ */
+function declaredUses(manifestPath: string): Set<string> {
+  const parsed = yaml.load(fs.readFileSync(manifestPath, 'utf8')) as { uses?: unknown } | null;
+  const uses = parsed?.uses;
+  if (!Array.isArray(uses)) return new Set();
+  return new Set(uses.filter((u): u is string => typeof u === 'string'));
+}
+
+/**
+ * @description Phase 3 — assert every store package DECLARES the kernel skills it imports.
+ *
+ * The loader validates a `uses:` list when one is present but never requires it, and it must stay
+ * that way: `readManifest` runs at mount on live boxes, so throwing there would fail-closed the
+ * already-installed packages. This is where the requirement belongs — a gate, before it ships.
+ *
+ * The rule is SUPERSET, not equality: a package may declare a skill it no longer imports (dnd and
+ * game-show do). Only an UNDECLARED import is a failure, because that is the one a prune breaks.
+ *
+ * @param storeDir - Root of the store checkout (contains one directory per package).
+ * @returns Nothing; violations are appended to `failures`.
+ */
+function checkStorePackages(storeDir: string): void {
+  let scanned = 0;
+  for (const entry of fs.readdirSync(storeDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+    const pkgDir = path.join(storeDir, entry.name);
+    const manifest = path.join(pkgDir, 'oshal-app.yaml');
+    if (!fs.existsSync(manifest)) continue;
+    scanned += 1;
+
+    const imported = new Map<string, string>(); // skill id → the file that proves it
+    for (const file of packageJsFiles(pkgDir)) {
+      const src = fs.readFileSync(file, 'utf8');
+      for (const m of src.matchAll(SPECIFIER_RE)) {
+        const skill = skillForSpecifier(m[1] ?? m[2] ?? '');
+        if (skill && !imported.has(skill)) imported.set(skill, path.relative(storeDir, file));
+      }
+    }
+
+    const declared = declaredUses(manifest);
+    const undeclared = [...imported.keys()].filter((s) => !declared.has(s)).sort();
+    if (undeclared.length) {
+      failures.push(
+        `store package '${entry.name}': imports kernel skill(s) it does not declare: ` +
+          `${undeclared.map((s) => `${s} (${imported.get(s)})`).join(', ')}. ` +
+          `Add them to \`uses:\` in ${entry.name}/oshal-app.yaml — docs/apps/kernel-skills.md: ` +
+          `"declare what your code actually imports". An undeclared import is invisible to the ` +
+          `prune guard, so the first carve that drops the skill breaks this app at MOUNT time.`,
+      );
+    }
+  }
+  say(`kernel-skills: scanned ${scanned} store package(s) in ${storeDir} for undeclared kernel imports`);
 }
 
 // ── Phase 1: source + anchor ────────────────────────────────────────────────
@@ -152,6 +273,24 @@ if (imageTag) {
     );
   }
   say(`kernel-skills: probed image ${imageTag}`);
+}
+
+// ── Phase 3: the package side (declaration ⊇ imports) ───────────────────────
+// A store checkout is optional on this box, so the phase is conditional — but a gate that skips
+// SILENTLY is not a gate, so the skip prints its reason even under --quiet.
+let storeDir = storeFlag && storeFlag !== '.' ? path.resolve(storeFlag) : process.env.OSHAL_STORE_DIR || '';
+if (!storeDir) {
+  const sibling = path.resolve(REPO_ROOT, '..', 'oshal-applications');
+  if (fs.existsSync(path.join(sibling, '.git'))) storeDir = sibling;
+}
+if (storeDir && fs.existsSync(storeDir)) {
+  checkStorePackages(storeDir);
+} else {
+  shout(
+    'kernel-skills: PHASE 3 SKIPPED — no store checkout found, so no package could be checked for ' +
+      'undeclared kernel-skill imports. Point it at one with --store <path> or OSHAL_STORE_DIR=<path> ' +
+      '(the conventional sibling ../oshal-applications is auto-detected). Phases 1-2 still ran.',
+  );
 }
 
 // ── Verdict ─────────────────────────────────────────────────────────────────

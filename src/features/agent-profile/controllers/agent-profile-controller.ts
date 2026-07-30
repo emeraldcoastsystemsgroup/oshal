@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | P1: Identity drift fix — synced seed profiles with SWARM_BOT_REGISTRY (16 bots), fixed rca-specialist UUID 0009→0016, added 4 missing bots
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Added all 47 legacy bot personas to seed roster so full catalog appears in address book (31 unported as offline)
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: dropped the two PHANTOM rows from the 'oshal' catalog — alert-intake-bot (0b145cab…) and graph-analyst (fc31e1c5…) have no persona YAML and no compose service, so they can never be personified or dispatched, and this list is what a plain deployment actually serves (BOT_CATALOG is unset everywhere, so the fallback resolves to 'oshal'). Also corrected the catalog's tooling comment: it advertised 'OpenSearch search, Memgraph cypher', neither of which exists in this stack — the real surfaces are /api/rag/search and the optional caller-scoped /api/graph tier (ArangoDB/AQL).
  */
 
 import { Request, Response } from 'express';
@@ -320,11 +321,15 @@ function getSeedAgentProfileFallback(agentId: string): Record<string, unknown> |
 const BOT_CATALOGS: Record<string, Array<{ id: string; name: string; role: string }>> = {
   // ── OSHAL: incident automation only ────────────────────────────────────────
   // Bots that handle the alert → ticket → investigation → remediation pipeline.
-  // Tools: curl, OpenSearch search, Memgraph cypher, execute_command.
+  // Tools: execute_command, curl against the swarm's own api (/api/rag/search for corpus
+  // retrieval, the optional caller-scoped /api/graph tier for topology — AQL, never Cypher).
+  // There is no OpenSearch and no external graph service in this stack.
+  // REMOVED 2026-07-29 (ADR-045 closure): `alert-intake-bot` (0b145cab…) and `graph-analyst`
+  // (fc31e1c5…) were PHANTOMS — catalog rows with no persona YAML and no compose service, so they
+  // could never be personified or dispatched, yet this list IS the default catalog (BOT_CATALOG is
+  // unset everywhere, so the fallback below serves 'oshal').
   oshal: [
     { id: 'a0000000-0000-0000-0000-000000000001', name: 'project-manager',         role: 'project-manager' },
-    { id: '0b145cab-5ba6-414b-92b8-cd7f56c86bc4', name: 'alert-intake-bot',         role: 'alert-intake' },
-    { id: 'fc31e1c5-bb5e-443f-b832-607de554e3f3', name: 'graph-analyst',      role: 'graph-analyst' },
     { id: '5ff13e77-3265-4a3d-a39b-eed65767ae26', name: 'remediation-writer', role: 'remediation-writer' },
     { id: 'a0000000-0000-0000-0000-00000000000b', name: 'incident-response-bot',   role: 'incident-responder' },
     { id: 'e0000000-0000-0000-0000-000000000100', name: 'incident-remediation-bot',role: 'incident-remediator' },
