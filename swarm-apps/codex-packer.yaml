@@ -71,6 +71,36 @@ ui:
       iframeUrl: /api/forge
       section: top
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SURFACE-BRIDGE ALLOW-LIST — "the packer chat lives in the right rail, the Forge is the view" IS
+# the chat↔surface bridge pattern, so declare it. These are the ONLY oshal-surface-bridge ops the
+# cockpit relay carries between the packer (chat rail) and the Forge surface (/api/forge). Absence
+# would relay NOTHING (fail-closed), which is what it did before this block existed.
+#
+# Every op below is one the Forge surface can ACTUALLY honor today (nothing aspirational):
+#   render_options → the interview's answer choices as clickable cards in the bridge dock
+#   propose        → a confirm/cancel card ("pack it now?"), the click returns as `submit`
+#   notify         → a banner in the dock's notices host
+#   set_content    → the dock's `packer-note` region (the running spec the packer echoes back)
+#   custom         → ONE name is handled: {"name":"refresh"} re-polls the live + pending trays
+#                    immediately after the packer writes a manifest (instead of waiting for the
+#                    15s poll). Any other custom name is logged and ignored by the surface.
+#   select/submit/event → the inbound half: a card click, a confirm, and the surface's own
+#                    `app-injected` signal after a successful one-click inject.
+# NOT declared, deliberately: set_field / field_change (the Forge has no bot-drivable form field —
+# its only input is a <input type=file>, which cannot be set programmatically) and navigate (moving
+# the operator's cockpit is not the packer's job).
+surface:
+  ops:
+    - render_options
+    - propose
+    - notify
+    - set_content
+    - custom
+    - select
+    - submit
+    - event
+
 # Focused chrome: the packer chat lives in the right rail, the Forge is the view.
 ribbon:
   hideFrameworkItems:
