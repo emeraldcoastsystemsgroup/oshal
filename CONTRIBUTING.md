@@ -64,10 +64,18 @@ pull requests** — it does not mean anyone can commit.
 | Read / clone / fork | Anyone |
 | Open an issue or PR (from a fork) | Anyone |
 | Push a branch to this repo | Collaborators only |
-| Commit directly to `main` | Nobody — protected branch, PR-only |
+| Commit directly to `main` | Nobody — a GitHub ruleset requires a pull request. Repo admins can bypass for an emergency hotfix; the project convention (CLAUDE.md Rule 0) is that they don't. |
+| Force-push or delete `main` | **Nobody, including admins** — the ruleset carries no bypass for either. Rewriting published history is not an available action. |
 | Approve a PR | Maintainers (repo collaborators with review rights) |
-| Merge a PR | Maintainers, after the `gate` check passes and the PR is approved |
-| Auto-merge | Disabled — every merge is a deliberate human/maintainer action |
+| Merge a PR | Maintainers, after the publish gate has run and a maintainer has read the diff. External PRs are never merged unread. |
+| Auto-merge | Disabled — every merge is a deliberate maintainer action |
+
+These are enforced server-side by branch rulesets, not by convention alone. Ask
+GitHub what is actually in force for the default branch:
+
+```bash
+gh api repos/emeraldcoastsystemsgroup/oshal/rules/branches/main
+```
 
 External PRs are reviewed like any other change: the publish gate runs, a
 maintainer reads the diff, and merge happens only on explicit approval. If your
@@ -218,5 +226,27 @@ vulnerability — email instead.
 
 ## License
 
-By contributing, you agree your contributions are licensed under the
-GNU Affero General Public License v3.0 or later (see [LICENSE](LICENSE)).
+oshal is **AGPL-3.0-or-later** ([LICENSE](LICENSE)) and stays that way. What the
+license does and does not restrict — including the things people wrongly assume
+it forbids — is documented in [docs/legal/licensing.md](docs/legal/licensing.md).
+
+**Contributions are governed by [CLA.md](CLA.md).** Read it once; it is short.
+You keep your copyright and you grant a license broad enough that the project's
+commercial exception can include your work — without that, contributed code
+could never ship in the commercial build. It also asks you to confirm your
+employer does not own what you wrote, which protects you as much as the project.
+
+Agreeing is one line in your pull request description:
+
+```
+I have read CLA.md and I agree to it. Signed-off-by: Your Name <you@example.com>
+```
+
+Commit with `git commit -s` so the same trailer lands on your commits. If you are
+contributing on behalf of a company and need a countersigned entity agreement,
+email **oss@oswarm.ai** before opening the PR.
+
+Attribution: your git authorship is the record and it is not rewritten. The
+single-alias convention in the file-header change logs
+([CLAUDE.md](CLAUDE.md#file-headers-change-log)) is a change-log format rule — it
+does not transfer or obscure the copyright recorded in git history.
