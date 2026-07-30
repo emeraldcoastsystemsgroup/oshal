@@ -5717,3 +5717,53 @@ hardcoded literals so allowing dotfiles cannot widen traversal.
 exposure, and each either sets `dotfiles` deliberately or is confirmed unreachable from a dot-segment
 path. A real deployment installed under a dot-directory would today serve no login page at all, with
 a 404 and no diagnostic.
+
+## Three follow-ups that were living only in COLLABORATE.md ⬜ (2026-07-30)
+
+`COLLABORATE.md` is gitignored by design (it is inter-agent coordination and the publish gate refuses
+it), so anything recorded *only* there is local to one working directory and disappears with it. These
+three were in that state; they are written down here so they survive.
+
+### 1. Two deliberately-deleted modules are back on disk as untracked files
+`src/app/routes/health-routes.ts` and `src/app/routes/intake-routes.ts` were removed by PR #26 as
+verified orphans — `git cat-file -e origin/main:<path>` confirms both are gone from `main` — but they
+exist in the working tree as untracked files (mtime 2026-07-29 23:57, most likely a branch-switch
+artifact from the shared checkout hopping across the deletion commit).
+
+This matters slightly more than an ordinary stray: `tsconfig.json` includes `src/**/*.ts`, so an
+untracked file there is still typechecked and compiled, and a future `git add -A` would resurrect a
+module that was deliberately removed. Left in place at the time because a deploy window was open and
+it was not worth introducing a variable mid-flight.
+
+- **Done when:** `rm src/app/routes/health-routes.ts src/app/routes/intake-routes.ts` (recoverable
+  from history if anyone disputes PR #26), and `git status --porcelain src/app/routes/` is empty.
+
+### 2. `bake-off` is merged to the store but not installed
+The `bake-off` package (store PR #18 — race one job across every configured lane, judge every output,
+report cost x quality) is on the store repo's `main` and **not hot-loaded** into the running stack.
+That was left as an operator action on purpose: installing an app mutates a live stack, and at the
+time the stack was mid-recovery from a failed deploy.
+
+- **Done when:** either it is installed and exercised once —
+  `docker cp ./bake-off/. oshal-local-api:/app/workspace-shared/deployed-apps/bake-off` then
+  `POST /api/swarm/apps/load` — or a decision is recorded that it stays catalog-only for now. Do it
+  only with the stack on a single image (`bash scripts/deploy-parity-check.sh` clean).
+- Note the package deliberately ships **no `schedules:`** — a cadence would mean N paid model calls
+  plus N paid grades per tick, which belongs behind an explicit opt-in, not shipped enabled.
+
+### 3. `oshal-app build` mutates the KERNEL source tree
+Building a store package transiently copies that package's `src-routes/*.ts` into the framework's
+`src/app/routes/`, i.e. a store-side build writes into kernel source — on a box where the api may be
+running under a hot-swap/tsx-watch override. No stray file was left behind when this was observed
+(verified: no package-shaped files under `src/app/routes/`, and `check-repo-separation.js` green), so
+this is a hazard rather than a known incident, and it was NOT established as the cause of the api exit
+seen during the same window.
+
+It is still the wrong shape: a store build should not be able to touch the kernel tree, and this is
+the same boundary `check-repo-separation.js` exists to protect.
+
+- **Done when:** the build compiles via a temp directory (or an explicit `--out`) instead of writing
+  into `src/app/routes/`, **or** — if the in-tree copy is load-bearing for how the framework compiler
+  resolves `@/` aliases — the window is made safe and loud: copy under a package-scoped subdirectory,
+  clean up in a `trap`, and refuse to run when the target path already holds a kernel-tracked file.
+  Either way a guard should prove that a store build leaves `git status` on the kernel tree unchanged.
