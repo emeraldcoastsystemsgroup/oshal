@@ -1,0 +1,13 @@
+[package]
+name = "oshal-wasm"
+description = "Raw-ABI WebAssembly wrapper around oshal-kernel. No wasm-bindgen, no npm build deps."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+oshal-kernel = { path = "../oshal-kernel" }
+
+[lib]
+crate-type = ["cdylib"]

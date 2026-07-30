@@ -1,0 +1,15 @@
+[package]
+name = "oshal-kernel"
+description = "Pure-Rust port of the ADR-116 futures indicator layer. No I/O, no FFI, no wasm — testable with plain `cargo test` on the host."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Deliberately none. The kernel is pure f64 arithmetic over slices; every transcendental
+# the TS source uses (exp/cos in the SuperSmoother coefficients) is computed by the CALLER
+# and passed in, so the kernel cannot drift from V8's libm. See ARCHITECTURE.md "Bit parity".
+
+[lib]
+crate-type = ["rlib"]

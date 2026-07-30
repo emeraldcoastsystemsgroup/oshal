@@ -1,0 +1,18 @@
+[workspace]
+members = ["crates/oshal-kernel", "crates/oshal-wasm"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+# Size + speed both matter for a .wasm artifact that ships in the image.
+# opt-level 3 over 's': this crate is the hot path, and the whole module is ~40KB either way.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -308,6 +308,7 @@ Still ahead: **multi-organization SaaS provisioning** (realm-per-tenant + billin
 | [CONTRIBUTING.md](CONTRIBUTING.md) | The branching contract, local dev, test conventions, PR expectations. |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, in-scope/out-of-scope, hardening defaults. |
 | [docs/adr/](docs/adr/) | Architecture decision log. Start with ADR-033 (multi-harness) and ADR-036 (bot-owned apps); use the index instead of a hand-maintained record count. |
+| [native/](native/README.md) | The compiled-kernel track — self-contained, own docs. Measures where a compiled language actually pays here (the numeric kernel: 4–8×) and where it does not (the I/O-bound control plane: nothing). Optional by construction; absent artifact falls back to TypeScript. |
 
 **Request queues:** [platform/core issues](https://github.com/emeraldcoastsystemsgroup/oshal/issues/new) · [app/store issues](https://github.com/emeraldcoastsystemsgroup/oshal-apps/issues/new).
 
