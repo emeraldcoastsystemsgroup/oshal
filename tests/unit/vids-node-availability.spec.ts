@@ -38,6 +38,17 @@ function fakePool(results: Array<{ rows: unknown[] }>): Pool {
 
 const IDLE_NODE = [{ clientId: 'node-1', status: 'online', healthy: true, capabilities: ['shell.exec'], activeTaskId: null, taskQueueDepth: 0 }];
 
+/** A one-minute blackout window six hours from now, so "not blacked out" holds at any hour. */
+function windowSixHoursFromNow(): string {
+  const zone = 'America/Chicago';
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+  const h = Number(p.find((x) => x.type === 'hour')?.value ?? 0);
+  const m = Number(p.find((x) => x.type === 'minute')?.value ?? 0);
+  const start = (h * 60 + m + 360) % 1440;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(start / 60))}:${pad(start % 60)}-${pad(Math.floor(((start + 1) % 1440) / 60))}:${pad((start + 1) % 60)}`;
+}
+
 describe('the blackout clock', () => {
   // 2026-07-29 23:30 UTC is 18:30 in Chicago — inside the recap's window.
   const at = (iso: string) => new Date(iso);
@@ -132,8 +143,10 @@ describe('the availability verdict', () => {
   beforeEach(() => {
     listClients.mockReset();
     delete process.env.VIDS_RENDER_CLIENT_ID;
-    // Neutralize the schedule so these cases test one signal each.
-    process.env.VIDS_NODE_BLACKOUT = '';
+    // Neutralize the schedule so these cases test one signal each. Note it is set to a REAL window
+    // six hours away, not to '': an empty value now correctly falls back to the default window, and
+    // clearing it would leave these cases passing or failing depending on the hour they ran at.
+    process.env.VIDS_NODE_BLACKOUT = windowSixHoursFromNow();
   });
   afterEach(() => { if (savedBlackout === undefined) delete process.env.VIDS_NODE_BLACKOUT; else process.env.VIDS_NODE_BLACKOUT = savedBlackout; });
 
@@ -211,5 +224,31 @@ describe('the render dispatch is gated too', () => {
 
   it('refuses rather than dispatching when the node is not free', () => {
     expect(src).toMatch(/if \(!free\.available\) return \{ ok: false, episodeId, error: `the render node is not free/);
+  });
+});
+
+/**
+ * Compose hands an unset variable to the container as an EMPTY STRING, not as undefined. Every
+ * default in the gate has to survive that, or a deployment that simply did not set a knob quietly
+ * loses the protection the knob defaults to.
+ */
+describe('an empty env var falls back to the default, not to "no setting"', () => {
+  const saved = process.env.VIDS_NODE_BLACKOUT;
+  afterEach(() => { if (saved === undefined) delete process.env.VIDS_NODE_BLACKOUT; else process.env.VIDS_NODE_BLACKOUT = saved; });
+
+  it('reads the source with || so "" cannot delete the recap window', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'vids-node-availability.ts'), 'utf8');
+    expect(src).toMatch(/process\.env\.VIDS_NODE_BLACKOUT \|\| '16:45-19:45'/);
+    expect(src).not.toMatch(/process\.env\.VIDS_NODE_BLACKOUT \?\?/);
+  });
+
+  it('still blacks out the recap window when the variable is empty', async () => {
+    process.env.VIDS_NODE_BLACKOUT = '';
+    listClients.mockReturnValue(IDLE_NODE);
+    // 23:30 UTC = 18:30 Chicago — inside the default window.
+    vi.setSystemTime(new Date('2026-07-29T23:30:00Z'));
+    const v = await checkVidsNodeAvailability(fakePool([{ rows: [] }]), { skipProbe: true });
+    vi.useRealTimers();
+    expect(v).toMatchObject({ available: false, check: 'blackout' });
   });
 });
