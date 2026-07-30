@@ -64,6 +64,7 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | [governance/](./governance/README.md) | RLS/RBAC policies, provisioning SQL, RLS runbook. |
 | intelligent-career-automation/ | Apply-agent specs and application-form playbook. |
 | [k8/](./k8/README.md) | Kubernetes setup docs and handover (the manifests themselves live in `ops/any-bot-k8s/`). |
+| [legal/](./legal/README.md) | Licensing, attribution, trademark, and inbound contribution terms — what AGPL-3.0 actually grants and requires, and the commercial exception. |
 | [little-monsters](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/little-monsters) | Little Monsters K-12 study app — carved out to the oshal-applications store (ADR-085): install, user guide, runbook, support, school deployment live in the package. |
 | [operations/](./operations/README.md) | Support / SLA / incident posture. |
 | release/ | Go-public: publish SOP, credential rotation, history scrub, prune list. |
