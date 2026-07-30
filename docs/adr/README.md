@@ -59,7 +59,7 @@ _Index last reconciled 2026-07-05 against the files on disk._
 | [017](017-localhost-swarm-inheritance-model.md) | LocalHost / Swarm Inheritance Model | Accepted | 2026-03-12 |
 | [018](018-swarm-processing-runtime-contract.md) | Swarm Processing Runtime Contract | Accepted | 2026-03-14 |
 | [019](019-per-bot-container-architecture.md) | Per-Bot Docker Container Architecture | Accepted | 2026-03-15 |
-| [020](020-openai-codex-runtime-provider-wiring.md) | OpenAI Codex Runtime Provider Wiring | Accepted | 2026-03-18 |
+| [020](020-openai-codex-runtime-provider-wiring.md) | OpenAI Codex Runtime Provider Wiring | Superseded by 033 | 2026-03-18 |
 | [021](021-per-round-output-tracking.md) | Per-Round Output Tracking in Multi-Round Dispatch | Accepted | 2026-03-23 |
 | [022](022-no-deterministic-fallback.md) | Escalation Instead of Deterministic Fallback on PM Parse Failure | Accepted | 2026-03-23 |
 | [023](023-dispatch-circuit-breaker.md) | Dispatch Circuit Breaker and Work Item Dedup | Accepted | 2026-03-25 |

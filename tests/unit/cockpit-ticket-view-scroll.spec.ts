@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the ticket-detail scroll fix: the pinned header must not consume the scroll area (.td-body is the sole flex/overflow scroll child) and the served src/api mirror must stay byte-identical to src/pages so a rebuild can't revert it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Corrected this spec's own false premise (comments + test names only; every assertion is unchanged and still green). src/api/cockpit/css/ticket-view.css is NOT "the served mirror": /cockpit is served from src/pages/cockpit (server.ts resolves cockpitDir there) and src/api is not statically mounted at all. It is an IMAGE mirror — Dockerfile.oshal does `COPY src/api/ ./src/api/`, so the stale copy travels into the image and is the artifact a future re-point could serve. The parity assertion is therefore still worth keeping; the reason it exists just isn't the one written here. Established while deleting the sibling src/api/cockpit/js/* stale forks, which had no such parity guard and had already drifted.
  */
 
 import { readFileSync } from 'node:fs';
@@ -76,8 +77,14 @@ describe('cockpit ticket-view detail scroll structure', () => {
   });
 });
 
-describe('cockpit ticket-view served mirror parity', () => {
-  it('keeps the src/api mirror byte-identical so an image rebuild cannot revert the fix', () => {
+// The src/api copy is an IMAGE mirror, not a served one: /cockpit is served from
+// src/pages/cockpit and src/api is never statically mounted (server.ts's express.static(apiDir)
+// is commented out). Dockerfile.oshal still does `COPY src/api/ ./src/api/`, so the copy ships
+// inside the image — a drifted mirror is the artifact that would resurrect the bug if anything
+// ever re-points at it. Its sibling JS forks (src/api/cockpit/js/*) had no parity guard and had
+// silently drifted to a different size; they were deleted rather than resynced.
+describe('cockpit ticket-view image mirror parity', () => {
+  it('keeps the src/api mirror byte-identical so a drifted image copy cannot revert the fix', () => {
     const source = readFileSync(path.join(root, SOURCE), 'utf8');
     const mirror = readFileSync(path.join(root, MIRROR), 'utf8');
     expect(mirror).toBe(source);
