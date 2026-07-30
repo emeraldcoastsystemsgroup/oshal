@@ -22,7 +22,21 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'SESSION_SECRET', readBy: 'connector-token crypto + LOCAL_AUTH session signing' },
   { name: 'LOCAL_AUTH', readBy: 'server.ts auth-mode selection (ADR-117)' },
   { name: 'APP_URL', readBy: 'absolute links in invitations and OAuth callbacks' },
+  // Added 2026-07-30 after a browser walk of a real customer deployment. server.ts read
+  // DISABLE_ONBOARDING_GATE the whole time and compose never forwarded it, so setting it in
+  // .env did nothing and every invited user on a single-app box was bounced out of their app
+  // into the platform provider wizard. TOTP_ISSUER had the same shape (silently stayed 'oshal').
+  { name: 'DISABLE_ONBOARDING_GATE', readBy: 'server.ts needsOnboarding — single-app boxes must skip the provider wizard' },
+  { name: 'TOTP_ISSUER', readBy: 'local-auth-routes 2FA enrolment — the name an authenticator app displays' },
 ];
+
+// This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:
+// 221 env vars are read on the api's request paths and 102 are not forwarded by compose. Most of
+// those are optional connector credentials that correctly default to unset — a blanket
+// "everything read must be forwarded" assertion would be 100 lines of noise and would be silenced
+// within a week. What belongs here is anything that changes how a DEPLOYMENT behaves, because
+// that is the class where "I set it in .env and nothing happened" is the symptom and a silent
+// default is the cause. Add to it whenever you add such a var.
 
 describe('compose forwards every env var the api actually reads', () => {
   const compose = fs.readFileSync(path.resolve(process.cwd(), 'docker-compose.oshal-local.yml'), 'utf8');

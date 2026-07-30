@@ -12,6 +12,8 @@
  * refusals, not the happy path.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Pool } from 'pg';
 
 /** The registry the gate reads. Mocked so no real remote client is needed. */
@@ -179,5 +181,35 @@ describe('the availability verdict', () => {
     listClients.mockReturnValue(IDLE_NODE);
     const v = await checkVidsNodeAvailability(fakePool([{ rows: [] }]), { skipProbe: true });
     expect(v).toMatchObject({ available: true, check: 'free', clientId: 'node-1' });
+  });
+});
+
+/**
+ * The gate has to sit on the DISPATCH, not only on the pump. `dispatchStoryboardedEpisode` is what
+ * every render path funnels through — the pump, an operator clicking render, and the reconciler,
+ * which sweeps every 20 seconds with nobody watching and would otherwise push a storyboarded episode
+ * straight into the nightly recap's window.
+ */
+describe('the render dispatch is gated too', () => {
+  const src = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'series-dispatch.ts'), 'utf8');
+
+  it('checks the node is free before EVERY enqueue, in both render paths', () => {
+    // Both dispatch functions reach the node. Compare position-by-position rather than once, so a
+    // future third path cannot quietly enqueue past the gate.
+    const checks = [...src.matchAll(/checkVidsNodeAvailability\(pool/g)].map((m) => m.index ?? -1);
+    const enqueues = [...src.matchAll(/remoteClientRegistry\.enqueueTask/g)].map((m) => m.index ?? -1);
+    expect(checks.length).toBeGreaterThanOrEqual(2);
+    // The assembly enqueue is post-production on clips the node already made, so it is not gated.
+    for (const check of checks) expect(enqueues.some((e) => e > check)).toBe(true);
+    expect(checks[0]).toBeLessThan(enqueues[0]);
+    expect(checks[1]).toBeLessThan(enqueues[1]);
+  });
+
+  it('skips the node probe there, so a 20s reconciler sweep never blocks on it', () => {
+    expect(src).toMatch(/checkVidsNodeAvailability\(pool, \{ skipProbe: true \}\)/);
+  });
+
+  it('refuses rather than dispatching when the node is not free', () => {
+    expect(src).toMatch(/if \(!free\.available\) return \{ ok: false, episodeId, error: `the render node is not free/);
   });
 });

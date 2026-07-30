@@ -8,12 +8,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 — graph services barrel.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export NODES/EDGES collection names for the data-lifecycle person-graph exporter (dump queries reference them instead of magic strings).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 domain ingestions: export GraphIngestionService + the singleton/subscription helpers and their event types.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: export GraphReadOnlyError + GRAPH_READ_ONLY_CODE so graph-routes can map a refused write to HTTP 400 by CODE rather than by matching message text.
  *
  * @module graph/services
  */
 export { GraphConnector, createGraphConnector } from './graph-connector';
 export { ArangoGraphAdapter, NODES, EDGES } from './arango-graph-adapter';
 export { personDbName, tenantDbName, nodeKey } from './graph-keys';
+export { GraphReadOnlyError, GRAPH_READ_ONLY_CODE } from './graph-types';
 export type { GraphNode, GraphEdge, GraphHandle, GraphConnectorConfig } from './graph-types';
 export {
   GraphIngestionService,

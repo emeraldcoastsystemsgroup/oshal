@@ -9,6 +9,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 — engine-agnostic graph types: GraphNode/GraphEdge + the GraphHandle interface every adapter implements.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: added readQuery + GraphReadOnlyError. POST /api/graph/query documents itself as "run a raw AQL READ", but the route called rawQuery, which hands the string straight to the engine — so a REMOVE/INSERT went through. It is scoped to the caller's own database (not a cross-tenant hole) but it contradicted its own contract, and a bot that mis-writes its own topology silently corrupts the next investigation. readQuery is the enforced read path the HTTP layer uses; rawQuery stays the in-process escape hatch for trusted core callers (the data-lifecycle exporter dumps with it).
  *
  * @module graph-types
  */
@@ -44,8 +45,41 @@ export interface GraphHandle {
   neighbors(nodeId: string, depth?: number): Promise<GraphNode[]>;
   /** The shortest path of nodes between two ids ([] if none). */
   shortestPath(fromId: string, toId: string): Promise<GraphNode[]>;
-  /** Escape hatch: run a raw engine query with bind vars. The NL→query layer uses this. */
+  /**
+   * Run a query the ENGINE has classified as non-modifying. Rejects with GraphReadOnlyError when
+   * the engine's own plan says the query writes. This is the path any caller-supplied query string
+   * must take (the HTTP layer uses it); `rawQuery` is for trusted in-process callers only.
+   */
+  readQuery(query: string, bindVars?: Record<string, unknown>): Promise<unknown[]>;
+  /**
+   * Escape hatch: run a raw engine query with bind vars, reads OR writes. Trusted in-process
+   * callers only (e.g. the data-lifecycle exporter's full dump) — never a string off the wire.
+   */
   rawQuery(query: string, bindVars?: Record<string, unknown>): Promise<unknown[]>;
+}
+
+/** Stable error code for a refused write on the read-only query path (the HTTP layer maps it to 400). */
+export const GRAPH_READ_ONLY_CODE = 'graph_read_only';
+
+/**
+ * Thrown by `readQuery` when the engine's query plan reports a data-modifying query.
+ *
+ * Deliberately NOT a keyword denylist: the engine parses and plans the query, and the plan says
+ * whether it writes. A denylist over AQL text is bypassable and rots with every language release.
+ */
+export class GraphReadOnlyError extends Error {
+  /** Machine-readable code the route matches on, so the mapping never depends on message text. */
+  readonly code = GRAPH_READ_ONLY_CODE;
+
+  /** @param detail - Optional engine-provided reason (e.g. which collections it would write). */
+  constructor(detail?: string) {
+    super(
+      'this endpoint accepts READ queries only — the engine classified this query as data-modifying' +
+        (detail ? ` (${detail})` : '') +
+        '. Use the node/edge upsert endpoints to write.',
+    );
+    this.name = 'GraphReadOnlyError';
+  }
 }
 
 /** Config for the connector — where the engine lives + its root credential. */

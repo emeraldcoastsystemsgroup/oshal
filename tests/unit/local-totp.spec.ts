@@ -23,6 +23,7 @@ import {
   totpCodeForStep,
   verifyTotpCode,
   getTotpState,
+  confirmTotpEnrolment,
 } from '@/features/local-auth/services/local-totp';
 
 /** RFC 6238 Appendix B uses this ASCII secret for the SHA-1 vectors. */
@@ -203,6 +204,47 @@ describe('secret at rest', () => {
     delete process.env.KEYCLOAK_CLIENT_SECRET;
     expect(() => encryptSecret(RFC_SECRET_B32)).toThrow(/SESSION_SECRET is required/);
     process.env.SESSION_SECRET = original;
+  });
+});
+
+describe('confirmTotpEnrolment', () => {
+  /** Captures the SQL and params a call issues, so we can assert what was WRITTEN. */
+  function capturingPool(secretEnc: string) {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const pool = {
+      query: async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (sql.includes('SELECT totp_secret_enc')) return { rows: [{ totp_secret_enc: secretEnc }] };
+        return { rows: [] };
+      },
+    };
+    return { pool: pool as unknown as Parameters<typeof confirmTotpEnrolment>[0], calls };
+  }
+
+  it('does NOT consume the time step, so the code on screen still signs you in', async () => {
+    // The regression this guards: recording the step at confirmation meant the very code the
+    // user had just typed was spent, and signing in seconds later was refused. First-run
+    // failure, found by a browser walk of the live deployment rather than by any unit test.
+    const secret = base32Encode(crypto.randomBytes(20));
+    const now = 1111111111000;
+    const code = totpCodeForStep(base32Decode(secret), currentStep(now));
+    const { pool, calls } = capturingPool(encryptSecret(secret));
+
+    expect(await confirmTotpEnrolment(pool, 'local-abc', code, now)).toBe(true);
+
+    const update = calls.find((c) => /UPDATE oshal_local_users/.test(c.sql));
+    expect(update, 'confirmation must write the enabled flag').toBeTruthy();
+    expect(update!.sql).toMatch(/totp_enabled = TRUE/);
+    expect(update!.sql).toMatch(/totp_last_step = NULL/);
+    // Nothing may smuggle the step in as a bound value either.
+    expect(update!.params).toEqual(['local-abc']);
+  });
+
+  it('still refuses a code that does not verify', async () => {
+    const secret = base32Encode(crypto.randomBytes(20));
+    const { pool, calls } = capturingPool(encryptSecret(secret));
+    expect(await confirmTotpEnrolment(pool, 'local-abc', '000000', 1111111111000)).toBe(false);
+    expect(calls.some((c) => /UPDATE/.test(c.sql))).toBe(false);
   });
 });
 

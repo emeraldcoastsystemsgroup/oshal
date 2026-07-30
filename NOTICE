@@ -1,0 +1,93 @@
+oshal — open swarm oshal
+Copyright (c) 2026 Emerald Coast Systems Group.
+
+Licensed under the GNU Affero General Public License, version 3 or later.
+The full text is in LICENSE. What it means in practice — including what it
+does NOT restrict — is in docs/legal/licensing.md.
+
+Contact: oss@oswarm.ai
+
+
+===============================================================================
+ATTRIBUTION — WHAT A FORK MUST KEEP
+===============================================================================
+
+The AGPL grants you broad freedom: run it, study it, modify it, redistribute
+it, and use it commercially, including inside a company. It does not grant
+permission to erase who wrote it.
+
+If you redistribute oshal or a modified version of it, or offer it to others
+over a network, all of the following must stay intact:
+
+  1. This NOTICE file.
+  2. The copyright notice above, and the per-file CHANGE LOG headers.
+  3. The LICENSE file, and the same AGPL-3.0-or-later terms on your version
+     (AGPL-3.0 section 5(c)).
+  4. Prominent notices stating that you changed it, and the date of change
+     (AGPL-3.0 section 5(a)).
+  5. An offer of the Corresponding Source to users interacting with your
+     version over a network (AGPL-3.0 section 13).
+
+Attribution that satisfies this file reads:
+
+    Based on oshal (https://github.com/emeraldcoastsystemsgroup/oshal),
+    copyright (c) 2026 Emerald Coast Systems Group, licensed
+    AGPL-3.0-or-later.
+
+Two things worth stating plainly, because they are the common misreadings:
+
+  * Copying this code and presenting it as your own original work is
+    copyright infringement. It does not become yours because the notices were
+    deleted, the files were renamed, or the identifiers were rewritten.
+  * In the United States, intentionally removing or altering copyright
+    management information — these notices, the copyright lines, the
+    per-file headers — is separately actionable under 17 U.S.C. section 1202,
+    independently of the license breach.
+
+Suspected misuse: oss@oswarm.ai
+
+
+===============================================================================
+TRADEMARK
+===============================================================================
+
+"oshal" and "open swarm oshal" are the names Emerald Coast Systems Group uses
+for this project, and common-law rights in those names are asserted.
+
+The AGPL licenses the code. It does not license the name — the license
+expressly permits an author to decline to grant trademark rights
+(AGPL-3.0 section 7(e)). You may fork and redistribute this code freely, but
+you may not name your fork oshal, or present it as being oshal or as endorsed
+by or affiliated with its maintainers, without written permission. Rename the
+fork and the AGPL's grants are entirely unaffected.
+
+
+===============================================================================
+THIRD-PARTY MATERIAL
+===============================================================================
+
+oshal is original work. Three qualifications, stated so that nobody has to
+guess what is carried here and what is not:
+
+  * Runtime dependencies are NOT redistributed by this repository.
+    node_modules/ is untracked; every dependency is fetched from its own
+    registry, under its own license, at install time. This repository
+    therefore carries no notice obligation for them.
+
+  * The agent harnesses are INVOKED, not vendored. Cline, OpenAI Codex CLI,
+    Anthropic Claude Code, and Google Gemini CLI are launched as external
+    subprocesses by the adapters in
+    src/features/llm-provider/services/ and any-bot/server/services/llm/.
+    Those adapters are original code that shells out to a CLI the operator
+    installs and authenticates themselves. None of the upstream harness
+    source is present in this tree, so no upstream notice travels with it.
+
+  * The speaker-diarization service vendors no source either — its container
+    downloads checksum-pinned model artifacts published upstream. Its
+    attributions, including the upstream license texts, are kept at
+    services/speaker-diarization/THIRD_PARTY_NOTICES.md.
+
+If you vendor third-party source into this tree, it must be
+AGPL-compatible and it must be recorded here in the same change. MIT and
+Apache-2.0 flow one way into AGPL with their notices retained; proprietary or
+EULA-governed code does not flow in at all.

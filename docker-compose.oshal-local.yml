@@ -890,6 +890,16 @@ services:
       # Post-login landing surface. Default is /chat; set to an app for a
       # single-app deployment (e.g. LANDING_PATH=/cockpit/?app=little-monsters).
       LANDING_PATH: ${LANDING_PATH:-}
+      # A single-app customer box must never show the platform provider wizard. The
+      # onboarding gate fires when NO LLM provider is active, which is exactly the posture of
+      # a CRM-only deployment (FORCE_LLM_PROVIDER=noop) — so every invited user was bounced
+      # from the app they were invited to into a 5-step "Welcome to OSHAL, Multi-Agent Control
+      # Plane" wizard they can do nothing with. server.ts read DISABLE_ONBOARDING_GATE the
+      # whole time; compose simply never passed it, so setting it in .env did nothing.
+      DISABLE_ONBOARDING_GATE: ${DISABLE_ONBOARDING_GATE:-}
+      # The name an authenticator app shows beside the account (RFC 6238 issuer). Same story:
+      # read by the 2FA enrolment route, never forwarded, so it silently stayed 'oshal'.
+      TOTP_ISSUER: ${TOTP_ISSUER:-}
       # Facebook connector (Utilities hub). The connector is "not configured" until
       # FACEBOOK_APP_ID/SECRET are set. FACEBOOK_REDIRECT_URI must match the URI
       # registered in the FB app (e.g. https://oshal.example.com/auth/facebook/callback).

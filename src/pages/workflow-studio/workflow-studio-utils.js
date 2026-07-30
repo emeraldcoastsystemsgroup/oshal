@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from workflow-studio.js (1000-line cap decomposition): canvas constants + pure helpers (field-group markup, inspector value parsing, JSON fetch, HTML escaping, clamp/clone/id) shared by the studio modules
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hoisted workflowTicketTypeSlug out of workflow-studio-data.js so the publish path and the Runs panel derive the ticketType join key from ONE function — a second copy that drifted would silently break the definition→runs join (workflow_runs.ticket_type is the only key, definitions are file-backed).
  */
 
 /** @description Node card width in world (unscaled canvas) pixels; used to center newly added nodes. */
@@ -195,6 +196,27 @@ export function clamp(value, min, max) {
  */
 export function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * @description Derives the queue slug a definition publishes under — which is also the
+ * `ticketType` every run of that workflow is recorded against (workflow_runs.ticket_type).
+ * Definitions are file-backed, so this slug is the ONLY join key from an authored definition
+ * to its run history; publish (workflow-studio-data.js) and the Runs panel
+ * (workflow-studio-runs.js) must therefore call this same function rather than each
+ * re-deriving it, or a drift in either copy silently empties the runs list.
+ * @param {{slug?: string, name?: string}} definition - The authored workflow definition.
+ * @returns {string} A publish-safe slug (lowercase/digits/dashes, <=64 chars, never empty).
+ */
+export function workflowTicketTypeSlug(definition) {
+  const raw = definition?.slug || definition?.name || 'workflow';
+  return (
+    String(raw)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64) || 'workflow'
+  );
 }
 
 /**

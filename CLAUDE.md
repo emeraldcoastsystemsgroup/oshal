@@ -411,7 +411,8 @@ Bots are declared in [src/app/extensions/swarm/swarm-bot-registry.ts](src/app/ex
 
 OSHAL has an **optional** graph tier for relationship-heavy data (RCA topology, jobs↔companies↔recruiters, capture teaming) where graph beats relational. It is an **extension layer**: absent by default (the connector returns `null` / `/api/graph` returns **503** when `ARANGO_URL` is unset), and the engine is just a URL — local, remote, on-prem, or a customer-landscape instance.
 
-- **Engine:** ArangoDB Community (`oshal-arangodb` in compose, host port 58529) — free multiple-databases-per-instance, no Enterprise license. Pin `arangojs ^8` (v10 is ESM-only; this project compiles CommonJS).
+- **Engine:** ArangoDB Community (`oshal-arangodb` in compose, host port 58529) — free multiple-databases-per-instance, no Enterprise license. The client is pinned `arangojs ^10.3.1` in package.json — v10 ships a CommonJS build under
+`arangojs/cjs/`, so the earlier "pin ^8, v10 is ESM-only" note was wrong and has been corrected.
 - **Two tiers (mirrors storage/tenancy):** a per-person graph (`getPersonGraph(sub)`) and a shared per-tenant graph (`getTenantGraph(tenant)`), each an **isolated ArangoDB database**. Names derive ONLY from sub/tenant ([graph-keys.ts](src/features/graph/services/graph-keys.ts)) — the isolation boundary; treat like the token broker.
 - **Engine-agnostic connector** ([src/features/graph/](src/features/graph/)): bots use the plain `GraphHandle` (`upsertNodes`/`upsertEdges`/`neighbors`/`shortestPath`/`rawQuery`). Swapping engines = one new adapter, nothing else. Live-verified via [scripts/graph-smoke.ts](scripts/graph-smoke.ts).
 - **Bots reach it via `/api/graph`** (auth-gated, caller-scoped — never raw DB creds), replacing the retired legacy graph route. Query language is **AQL**, not Cypher.

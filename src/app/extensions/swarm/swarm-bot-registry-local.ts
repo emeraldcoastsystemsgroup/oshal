@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Plan F item 3: added a2a-sample-agent (ea…0001) — the example outbound A2A dispatch target (harnessType 'a2a', endpoint from A2A_SAMPLE_AGENT_URL), mirrored IDENTICALLY from the canonical registry (register in BOTH). Inert until the endpoint env is set; operator+swarm scoped; narrow capabilities so the call-out never picks it.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | De-brand final pass: renamed this file (from its legacy-branded name to …-local.ts) and its export (to LOCAL_BOT_REGISTRY). This lean lineup is the DEFAULT active registry — getActiveRegistry() resolves here unless SWARM_REGISTRY=full opts into the fuller SWARM_BOT_REGISTRY. Same bots, same order; no behavior change. A stale legacy SWARM_REGISTRY value now falls through to this default (hot-swap-safe).
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Fix ADR-085 carve id collision: drone-operator moved b0100000-…001 → b00f0000-…001 (mirrors the canonical registry). portrait-studio's store package had taken b0100000-…001; operator-chosen resolution keeps portrait there and reverts drone-operator to its already-in-DB b00f0000 id. See scripts/swarm-app-bot-integrity-check.sh.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: removed the two PHANTOM platform-advisory rows, graph-analyst (e0…001) and advisor-bot (e0…200). Neither had a persona YAML in ai-lab/bot-personas/ nor a compose service, so neither could ever be personified or dispatched — yet this is the DEFAULT active registry and they held the only 'graph-query'/'opensearch-query' capabilities the queue manager's title-keyword hint asks for, so a graph/correlation ticket could bid to a bot with no home. Graph/topology reasoning moved to real personas (rca-specialist for incident topology, capture-coordinator for teaming), both now carrying the concrete /api/graph recipe.
  */
 
 import type { SwarmBotDefinition } from './swarm-bot-registry';
@@ -705,30 +706,16 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     apiType: 'codex-cli',
   },
   // ── Platform advisory (graph / RCA) ────────────────────────────────────────
-  {
-    agentId: 'e0000000-0000-0000-0000-000000000001',
-    name: 'graph-analyst',
-    port: 3051,
-    container: 'oshal-local-graph-analyst',
-    role: 'localhost/worker',
-    capabilities: ['graph-query', 'opensearch-query', 'correlation', 'rca', 'topology', 'impact-analysis'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
-  },
-  {
-    agentId: 'e0000000-0000-0000-0000-000000000200',
-    name: 'advisor-bot',
-    port: 3056,
-    container: 'oshal-local-advisor',
-    role: 'localhost/platform-advisor',
-    capabilities: [
-      'oshal-platform-knowledge', 'opensearch-query', 'graph-query',
-      'incident-analysis', 'architecture-guidance', 'api-documentation',
-      'oshal-integration-knowledge', 'how-to-guidance',
-    ],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
-  },
+  // REMOVED 2026-07-29 (ADR-045 closure): `graph-analyst` (e0…001, container
+  // oshal-local-graph-analyst) and `advisor-bot` (e0…200, container oshal-local-advisor) were
+  // PHANTOMS — no persona YAML in ai-lab/bot-personas/, no compose service, no manifest, no
+  // heartbeat. A registry row with no persona can never be personified and a row with no
+  // container can never be dispatched, yet both were served in the default catalog and were the
+  // only holders of the 'graph-query'/'opensearch-query' capabilities the queue manager hints at.
+  // Graph/topology work now lives with rca-specialist (incident topology) and
+  // capture-coordinator (teaming) — real personas with real graph recipes. Do not re-add a bot
+  // here without a persona + a home (dedicated container or inline concierge): see
+  // docs/building-a-bot.md.
   // ── Research ───────────────────────────────────────────────────────────────
   // Switched to gemini-cli harness as a deliberate harness mix — Gemini's
   // 2.5 Pro / Flash models have strong web-research + long-context behavior
