@@ -34,7 +34,12 @@ Legend: `[x]` done+merged · `[~]` in flight (bot assigned) · `[ ]` queued (non
 - [x] **JSDoc coverage on the large orchestration files** — PR #22: `dispatchTicket` had none + 2 drifted `@param`s; documented, comments-only.
 - [x] **`/api/me` export gaps** — PR #23: **ALREADY BUILT** (Chroma + Arango exporters shipped 2026-07-19, caller-scoped, graceful). Added 10 behavioral guards.
 - [x] **Unit tests for the remaining critical bits** — folded into PR #21 (the three named seams now have direct specs).
-- [~] **File-cap holdouts** — **partly stale + wants review, NOT a blind bot.** `jarvis-ambient.js` is
+- [x] **File-cap holdouts** — ✅ PR #29. The premise was BOTH stale and understated: `jarvis-ambient.js`
+  was fine, but three OTHER files were genuinely over the cap and the gate could not see them —
+  eslint's `max-lines` was scoped to `src/**/*.ts{,x}`, so an 1850-code-line `.mjs` (1.85x the cap)
+  exited 0 for months. All three decomposed; `gate_lint` now lints `src tests scripts`, blocking.
+  Not a core-file refactor after all — no `server.ts`/queue-manager decomposition was needed.
+  <sub>superseded — the 2026-07-24 note this replaced, kept for context:</sub> **partly stale + wants review, NOT a blind bot.** `jarvis-ambient.js` is
   **466 lines, not 983**. ~15 files exceed 1000 *total* lines (server.ts 1639, swarm-app-service 1602,
   …) but the cap is *code* lines — needs the counts generator to find genuine violations, and
   decomposing core files (server.ts, queue-manager) is a reviewed refactor. **Deferred to a measured pass.**
@@ -45,16 +50,32 @@ Legend: `[x]` done+merged · `[~]` in flight (bot assigned) · `[ ]` queued (non
 
 ## Wave 3 — larger builds, non-human but each needs a scoped design pass first
 
-- [ ] **Workflow Studio: test-run + run history + run inspector** — author→publish→execute exists;
+- [x] **Workflow Studio: run history + run inspector** — ✅ ALREADY BUILT; PR #21 closed the real
+  residuals (runs panel scoped to the open workflow, run→cost-trace deep link, route-level authz
+  guard, and a guard pinning that all three publish modes emit `pipeline: 'graph'`). Draft test-run is
+  scoped OUT: it needs the studio compiler wired into the queue-manager, which CLAUDE.md forecloses.
+  <sub>superseded — the 2026-07-24 note this replaced, kept for context:</sub> author→publish→execute exists;
   observability of a published run does not. Done-when: a published workflow's runs are listable +
   inspectable from the studio surface.
 - [x] **Notification transports** — PR #26: notify slice already had 4 transports + a per-user router;
   added the real gaps — a severity→transport **policy**, an operator **email transport** (Gmail connector
   rail, no SMTP creds), an **inbound SMS webhook** (Twilio-signature-verified, route-auth allow-listed),
   and `/api/notify/alert`. 69/69 notification + 18/18 route-auth guards. Disabled-by-default, degrades clean.
-- [ ] **Cockpit surfaces for the shared services** (budgets / notify / DLQ / export) — they shipped
+- [x] **Cockpit surfaces for the shared services** (budgets / notify / DLQ / export) — ✅ PR #24. All
+  four have read surfaces under `src/pages/cockpit/tools/`, bind-mounted (no rebuild), plus five
+  route-level guard specs. Honest limits recorded: `/api/me` has no GET for stores/knownGaps or the
+  audit trail; `spendUsd: null` renders as a dash, never `0`, because budgets fail open. One NEW small
+  item fell out — the Settings "Cost Controls" localStorage decoy (relabel + link out, do NOT delete:
+  it is the only control over that live state).
+  <sub>superseded — the 2026-07-24 note this replaced, kept for context:</sub> they shipped
   headless; a surface makes composed processes observable. Done-when: each has a read surface.
-- [ ] **Graph adoption (ADR-045)** — the swarm operational graph + one domain carve so processes can
+- [x] **Graph adoption (ADR-045)** — ✅ PR #25 closed the backlog item so nothing stays in the
+  ambiguous middle: RCA/capture personas given concrete graph recipes, three PHANTOM bots deleted
+  (registry rows with no persona and no container), the seeded `graph-query` tool retargeted off dead
+  Memgraph/Cypher onto `/api/graph`+AQL, a `uses:` declaration guard added CI-side, and `subgraph()`
+  resolved as won't-build with a named revisit trigger. ONE item promoted to an open operator
+  decision: `world-data` reaches the graph without being a kernel skill.
+  <sub>superseded — the 2026-07-24 note this replaced, kept for context:</sub> the swarm operational graph + one domain carve so processes can
   reason across apps. Done-when: one real ingestion + NL-query path over the existing connector.
 - [ ] **Chat-channel surfaces** — Telegram inbound shipped → Discord / WhatsApp inbound so processes
   kick off from outside the cockpit. Done-when: one additional channel delivers an inbound message.
@@ -99,3 +120,45 @@ Legend: `[x]` done+merged · `[~]` in flight (bot assigned) · `[ ]` queued (non
 - [H] Registry installer fresh-install VM trial · public-launch gate + CI secret-scan proofs.
 - [H] OAuth app reviews: Gemini one-click login · Kid Lens `youtube.readonly` verification · SmartThings
   OAuth client · Plaid · Azure/Outlook.
+
+---
+
+## 2026-07-29 second reconciliation — what the fleet actually found
+
+**The burndown over-stated remaining work again, in the same direction as 2026-07-24.** Of the items
+worked this pass, three were **already built** and the honest deliverable was the missing residual or
+guard, not the feature: Workflow Studio run history/inspector, the `/api/me` Chroma+Arango exporters
+(found in the earlier pass), and the route-audit `PUBLIC_BY_DESIGN` staleness (already fixed; the real
+gap was the absent sync check). CLAUDE.md's anti-drift rule 4 is the lesson — "not yet built" about
+shipped code costs the same credibility as the reverse, and it wastes a lane.
+
+**The highest-value findings were not on this checklist at all.** They came from working *near* the
+listed items:
+
+- **Three separate holes in `.githooks/pre-push`** (PRs #20, #21, and a follow-up). The committed-HEAD
+  typecheck had been silently skipping for **every agent-worktree push**, and
+  `OSHAL_SKIP_PREPUSH_VERIFY=1` exited above the publish gate, so the documented override also
+  disabled the leak wall on a public repo. Worktree isolation is now the standard way lanes run, so the
+  default case for automated pushes was the publish gate and nothing else.
+- **`persona-evals` was making a live LLM call from the controller** (PR #22), clearing none of the
+  three budget/cost chokepoints and never reaching `chat_tasks` — the one LLM path that bypassed all
+  of them.
+- **`docs/security/SECURITY-HARDENING.md` claimed a reverted control** (PR #38). ADR-060's per-user
+  path layout was implemented and then reverted, leaving only `// ADR-060 reverted to flat` comments,
+  while the posture doc asserted filesystem isolation for about a month. Worse, `assertExistingTaskOwner`
+  — the *entire* defense on the swarm path — had no test. It has ten now, mutation-proved.
+- **`res.sendFile` dot-segment 404s** (PR #33) made two local-auth specs red *by default* for any
+  worktree run, primed to be misattributed to the next agent's own change.
+
+**A method note for whoever runs the next fleet.** Two "obvious" verification shortcuts are actively
+wrong in this repo: (1) subject/PR-number matching against `main` cannot tell you whether a stale
+branch landed, because the 2026-07-24 recreation kept content and discarded history — diff per file;
+(2) `wc -l` is not the cap metric, and a cold `npm ci` makes unrelated specs fail on 5s timeouts, so
+read `import` vs `tests` duration before calling a timeout a regression.
+
+**Still genuinely open and non-human-doable** (each now has its own tracked entry in
+`docs/BACKLOG.md`): the pre-push hook's remaining fail-open branches; `worktree-strays` being red by
+design mid-flight; auditing the rest of the tree for `sendFile` dot-segment exposure; the Settings
+cost-controls decoy; and the four orphan-boundary decisions (three with recommendations written up in
+`docs/architecture/three-orphan-boundary-decisions.md`, which need an operator yes/no rather than a
+bot).
