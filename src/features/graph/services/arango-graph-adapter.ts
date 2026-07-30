@@ -11,12 +11,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 — ArangoDB GraphHandle: upsert nodes/edges, neighbors traversal, shortest path, raw AQL. Node ids mapped to safe _keys; edges keyed by (from,type,to).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: readQuery — the enforced read-only path for caller-supplied AQL. Enforcement is the ENGINE's, not ours: ArangoDB's explain plan carries isModificationQuery, so we ask it to plan the query and refuse when the plan writes. Deliberately NOT an AQL keyword denylist (bypassable, and it rots with each language release) and deliberately not a streaming read-only transaction (arangojs's trx.step attaches the transaction id to ONE request, so a multi-batch cursor would silently fetch its later batches outside the transaction).
  *
  * @module arango-graph-adapter
  */
 import type { Database } from 'arangojs';
 import { createChildLogger } from '@/shared/logger';
-import type { GraphEdge, GraphHandle, GraphNode } from './graph-types';
+import { GraphReadOnlyError, type GraphEdge, type GraphHandle, type GraphNode } from './graph-types';
 import { nodeKey } from './graph-keys';
 
 const logger = createChildLogger({ module: 'arango-graph-adapter' });
@@ -82,7 +83,27 @@ export class ArangoGraphAdapter implements GraphHandle {
     return (await cursor.all()) as GraphNode[];
   }
 
-  /** @description Run a raw AQL query (the NL→query layer's escape hatch). @param query - AQL. @param bindVars - binds. @returns rows. */
+  /**
+   * @description Run caller-supplied AQL that the ENGINE agrees is a read. The query is planned
+   * first (`explain`); ArangoDB's plan reports `isModificationQuery`, so a REMOVE/INSERT/UPDATE/
+   * REPLACE/UPSERT is refused before it can touch data. That keeps the HTTP contract ("run a raw
+   * AQL read") true without inventing a keyword denylist we would have to maintain against AQL.
+   * @param query - AQL text supplied by the caller.
+   * @param bindVars - AQL bind variables (planning needs them; a missing bind fails at explain).
+   * @returns the query's rows.
+   * @throws GraphReadOnlyError when the engine's plan says the query modifies data.
+   */
+  async readQuery(query: string, bindVars: Record<string, unknown> = {}): Promise<unknown[]> {
+    const { plan } = await this.db.explain(query, bindVars);
+    if (plan.isModificationQuery) {
+      const written = plan.collections.filter((c) => c.type === 'write').map((c) => c.name);
+      logger.warn({ written }, 'refused a data-modifying query on the read-only graph path');
+      throw new GraphReadOnlyError(written.length ? `would write: ${written.join(', ')}` : undefined);
+    }
+    return this.rawQuery(query, bindVars);
+  }
+
+  /** @description Escape hatch for trusted IN-PROCESS callers: raw AQL, reads or writes. Never hand it a string off the wire — use readQuery. @param query - AQL. @param bindVars - binds. @returns rows. */
   async rawQuery(query: string, bindVars: Record<string, unknown> = {}): Promise<unknown[]> {
     const cursor = await this.db.query(query, bindVars);
     return cursor.all();

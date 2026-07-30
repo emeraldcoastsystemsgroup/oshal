@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from queue-manager-service.ts (1000-line cap decomposition): the incident-RCA dispatch pipeline — dispatchIncidentTicket (2-bot worker/queue-reviewer loop with bot-node dispatch + localhost fallback and the undici-timeout shadow-fetch) and finalizeIncidentByMode (ADR-069 §2b MODE→disposition finalization). Free function with an explicit IncidentDispatchDeps interface, same pattern as dispatch-manifest-worker.ts / dispatch-graph-worker.ts; QueueManagerService keeps a thin private delegator.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired legacy-platform pre-flight: dropped its context-fetch import + env gates, and collapsed the worker prompt to its unconditional "no pre-fetched alarm/topology context" tooling section (the dead OpenSearch/graph curl block is gone). There is no OpenSearch/Memgraph; the bot investigates from the ticket + workspace + persona-granted tools.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING (controller half): the RCA pipeline's dispatchToBot now stamps each BotNodeClient.execute with the target's authoritative provider/model/configVersion (pushOnDispatchFields, shared with dispatch-manifest-worker) when OSHAL_PUSH_ON_DISPATCH is on. Fail-open + default OFF → byte-identical legacy dispatch; the localhost /api/send-message fallback is untouched (it hits the inline api, not a bot node).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: entry 2 stripped the dead OpenSearch/graph curl BLOCK but left the STEPS still ordering the worker to "query the graph and OpenSearch … (use curl commands below)" against commands that no longer existed — a self-contradicting prompt. Steps 2/3 now reference the real optional tier conditionally, and the tooling section names the ONE surface that exists (caller-scoped /api/graph, AQL not Cypher, 503 = absent) while saying outright that no OpenSearch and no external graph service is reachable.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -261,7 +262,8 @@ export async function dispatchIncidentTicket(
       '### Step 2: Root Cause Analysis',
       'From the timeline, identify the most probable root cause. Assign confidence (high/medium/low).',
       'List contributing factors. Add one alternative hypothesis with lower confidence.',
-      'Query the graph and OpenSearch for corroborating evidence (use curl commands below).',
+      'If the graph tier is available (see "Investigation tooling"), look for corroborating',
+      'topology — but never treat an absent graph as a missing prerequisite.',
       '→ IMMEDIATELY write **deliverables/RCA-REPORT.md** with:',
       '  - Root cause statement (one sentence)',
       '  - Confidence level',
@@ -271,7 +273,7 @@ export async function dispatchIncidentTicket(
       '  - What additional data would increase certainty',
       '',
       '### Step 3: Impact Assessment',
-      'Use the topology data and graph to map blast radius.',
+      'Map blast radius from the ticket evidence, plus the graph neighborhood when the tier is up.',
       'Which systems are upstream/downstream? How many users/services affected?',
       '→ IMMEDIATELY write **deliverables/IMPACT-ASSESSMENT.md** with:',
       '  - Affected systems list (specific names)',
@@ -296,10 +298,17 @@ export async function dispatchIncidentTicket(
       '',
       '## Investigation tooling',
       '',
-      'No pre-fetched alarm/topology context is available in this environment.',
+      'No pre-fetched alarm/topology context is available in this environment. There is no',
+      'OpenSearch and no external graph service on this deployment — do not curl one.',
       'Use only the ticket description, the workspace files, and any tools your',
       'persona explicitly grants. If you need data the ticket does not contain,',
       'state "insufficient data — request: [what is missing]" and stop.',
+      '',
+      'ONE optional platform surface exists, reached only through the swarm api (ADR-045):',
+      '  curl -s "http://oshal-local-api:5000/api/graph/neighbors?id=service:<name>&depth=2" \\',
+      '    -H "X-Service-Secret: $SWARM_SERVICE_SECRET" -H "X-OSHAL-User-Sub: $OSHAL_USER_SUB"',
+      'It also serves POST /query (AQL reads — NOT Cypher), GET /path, and POST /nodes|/edges.',
+      'HTTP 503 means this deployment has no graph engine: note it once and continue without it.',
       '',
 
       '## Rules',

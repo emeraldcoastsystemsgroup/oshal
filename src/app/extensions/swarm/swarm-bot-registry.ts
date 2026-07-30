@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Plan F item 3: added optional a2aEndpointEnv to SwarmBotDefinition (declares WHICH env var carries an external A2A agent's endpoint — URLs stay out of source) and the a2a-sample-agent example entry (ea…0001, harnessType 'a2a', endpoint from A2A_SAMPLE_AGENT_URL). Operator+swarm scoped (ADR-087: out of Jarvis until the outbound gateway is proven) with deliberately narrow capabilities so the call-out never picks it until an operator points it at a real endpoint.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Fix ADR-085 carve id collision: drone-operator moved b0100000-…001 → b00f0000-…001. The portrait-studio store package had reused b0100000-…001, so the live DB had that id as portrait-artist (active) and drone-operator displaced to b00f0000-…001 (inactive). Operator-chosen resolution: portrait keeps b0100000, drone-operator reverts to its (already-in-DB) b00f0000 id. Surfaced by scripts/swarm-app-bot-integrity-check.sh.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Registry parity: codex-packer (the Bot Forge, a0…030) existed ONLY in the local registry, so SWARM_REGISTRY=full silently dropped the Forge bot while its app manifest, ribbon tab, and chat surface all stayed up. Added the same inline entry here (container oshal-api, claude-code, operator+swarm scoped per ADR-087); parity guarded by codex-packer-created-bot.spec.ts.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: removed the PHANTOM advisor-bot row (e0…200) — no persona YAML, no compose service, no manifest, no heartbeat, so it could never be personified or dispatched. Removed from BOTH registries in the same change so the two cannot drift (the mirrored-registry rule cuts both ways).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -737,18 +738,9 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     harnessType: 'codex-cli',
     apiType: 'openai-codex',
   },
-  {
-    agentId: 'e0000000-0000-0000-0000-000000000200',
-    name: 'advisor-bot',
-    port: 3056,
-    container: 'advisor-bot',
-    role: 'localhost/platform-advisor',
-    capabilities: [
-      'oshal-platform-knowledge', 'opensearch-query', 'graph-query',
-      'incident-analysis', 'architecture-guidance', 'api-documentation',
-      'oshal-integration-knowledge', 'how-to-guidance',
-    ],
-  },
+  // REMOVED 2026-07-29 (ADR-045 closure): `advisor-bot` (e0…200) was a PHANTOM — no persona YAML,
+  // no compose service, no manifest, no heartbeat. Removed from BOTH registries together so the
+  // two can't drift. See swarm-bot-registry-local.ts for the full note.
   {
     agentId: 'a0000000-0000-0000-0000-00000000000c',
     name: 'research-bot',
