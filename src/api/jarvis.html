@@ -1773,6 +1773,19 @@ function setSpeakerCaptureSuspended(suspended){
   document.dispatchEvent(new CustomEvent(suspended ? 'jarvis:speaker-capture-suspend' : 'jarvis:speaker-capture-resume', { detail:{ reason:'push-to-talk' } }));
 }
 function resumeAmbientAfterPushToTalk(){ setTimeout(()=>{ ambientController?.resume(); setSpeakerCaptureSuspended(false); },250); }
+/* An empty transcript is NOT the same as "you mumbled". The server already distinguishes an
+   unconfigured STT provider from a failed call from a genuinely silent clip and says so in the
+   envelope (`fallback`) — but this surface used to print "Didn't catch that" for all of them,
+   so on a deployment with no transcription service configured the user retries forever and
+   blames their own diction. Pure on purpose: unit-tested from the HTML source (see
+   tests/unit/jarvis-voice-failure-message.spec.ts). */
+function voiceFailureMessage(envelope, httpOk, httpStatus){
+  const env=(envelope&&envelope.data)||envelope||{};
+  if(!httpOk&&httpStatus===401) return 'Session expired — reload the page to sign in again';
+  if(env.fallback==='unconfigured') return 'Voice input isn’t set up on this deployment — type your question instead';
+  if(env.fallback==='failed'||!httpOk) return 'Transcription failed — try again, or type';
+  return 'Didn’t catch that — try again, or type';
+}
 async function transcribeAndSend(blob){
   setMode('thinking'); setStatus('Transcribing…');
   try{
@@ -1780,8 +1793,11 @@ async function transcribeAndSend(blob){
     const r=await fetch('/api/voice/transcribe',{ method:'POST', credentials:'include', body:fd });
     const j=await r.json().catch(()=>({}));
     const text=String(j.text||j.transcript||(j.data&&(j.data.text||j.data.transcript))||'').trim();
-    if(text){ showCenterUserCopy(text); handleInput(text); }
-    else { setMode('idle'); setStatus('Didn’t catch that — try again, or type',true); }
+    if(text){ showCenterUserCopy(text); handleInput(text); return; }
+    setMode('idle');
+    const detail=String((j&&j.data&&j.data.message)||j.message||'').trim();
+    if(detail) console.warn('[jarvis] transcription returned no text:',detail); // operator detail, not the user's problem
+    setStatus(voiceFailureMessage(j, r.ok, r.status), true);
   }catch(e){ setMode('idle'); setStatus('Transcription failed — try again or type below',true); }
 }
 async function startListening(){
