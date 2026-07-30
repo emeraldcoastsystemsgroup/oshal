@@ -1,6 +1,9 @@
 # ADR-060: Per-User Task Storage Isolation
 
-- **Status:** Accepted (2026-06-20)
+- **Status:** **Reverted in implementation** (accepted 2026-06-20; the per-user path layout was
+  reverted, the isolation goal is met elsewhere — see
+  [Reverted: where the isolation actually lives](#reverted-where-the-isolation-actually-lives) at the
+  end of this ADR, which supersedes the Decision and Implementation sections below).
 - **Supersedes / relates to:** ADR-056 (ticketed data-access broker), ADR-057 (personal-data schema). This ADR extends per-user isolation from data records to the **filesystem** where bots do task work.
 
 ## Context
@@ -115,3 +118,91 @@ envelope:
 Note: the `WORKSPACE_DIR` for both the API and the bots is `/app/workspace-shared` (the mounted
 volume code-server serves), so the `users/<sub>/<taskId>` layout is consistent and visible across
 API, bot, and the workspace browser.
+
+## Reverted: where the isolation actually lives
+
+**The per-user path layout above was reverted and is NOT what the system does.** Everything from
+"Decision" through "Implementation" describes a layout that no code produces. This section is the
+as-built truth; read it instead.
+
+### What the code does today
+
+Both write paths use the **flat** `<root>/<taskId>` layout:
+
+- `ToolExecutorService.ensureWorkspacePath` — `tool-executor-service.ts` (the flat join, with the
+  revert rationale in a comment at the same site).
+- any-bot `TaskController.createTask` — flat in all three branches (`forceTaskId`, `ticketId`,
+  UUID), `any-bot/server/controllers/TaskController.js`.
+
+**Why it was reverted:** the flat layout is assumed by roughly a dozen READER modules —
+`task-folder-service.ts` (7 sites), `task-explorer-workspace-service.ts`,
+`workspace-bootstrap-service.ts`, `runtime-trace-analyzer-service.ts`,
+`token-chase-read-service.ts`, `claude-code-provider.ts`, `tool-runtime-context.ts`,
+`jarvis-visuals.ts`, plus the any-bot deliverable/handover readers. Moving only the two WRITERS
+(which is all the two helpers below could do) makes bots write to `users/<sub>/<id>` while the
+verifier, task explorer, Token Chase capture reader, and handover readers still look in
+`<root>/<id>` — deliverables silently vanish. That is a functional regression wearing a security
+fix's clothes.
+
+**The two helpers this ADR specified are deleted** (`user-scoped-workspace-path.ts`,
+`any-bot/server/utils/user-workspace-path.js`). They had no importer after the revert, and a
+security-shaped module that nothing calls is worse than no module: it reads as a control that
+exists.
+
+### Why the layout was not the boundary anyway
+
+Every bot container mounts the **same** workspace volume read-write —
+`oshal_workspace:/app/workspace-shared:rw` in `docker-compose.oshal-local.yml`, ~40 services. A bot
+holding a shell in `users/<subB>/<task>` reaches `users/<subA>` with `../..`. A directory layout on a
+shared read-write mount is **attribution, not enforcement**. This ADR's claim that a bot "cannot
+write another user's namespace by construction of the cwd" was true only for the TS file tools,
+which are separately guarded by the path-escape check in `resolveWorkspacePath` — never for the
+shell tool or a spawned CLI harness.
+
+### The controls that actually hold the line
+
+1. **Cross-owner directory reuse is rejected.** The workspace directory is keyed by the workspace
+   folder id — the ROOT TICKET UUID on the swarm path (`queue-manager-service.ts` sets
+   `workspaceTaskId`), falling back to a ticket `externalId` that carries a UNIQUE index
+   (`idx_tickets_external_unique` in `ticket-schema.ts`). Two users therefore cannot *organically*
+   land in one directory. Where an id could be reused across owners, the owner binding rejects it:
+   `assertExistingTaskOwner` in `bot-node-execution-handler.ts` (before any `createTask` or
+   execution) and `assertTaskOwnerBinding` in `TaskController.js` (ticket-workspace reuse). Both
+   throw `TASK_OWNER_MISMATCH` and fail closed across the owned / ownerless / anonymous boundaries.
+2. **Brokered credentials do not linger in a shared workspace.** `BaseCliHarnessAdapter`'s
+   `acquireUserScopingLease` / `applyUserScoping` / `wipeOwnedUserScoping` write
+   `.oshal-cred-<provider>` and `.oshal-user-sub` at mode `0600`, serialize requests that share a
+   cwd behind a per-workspace lease, and unlink exactly the files this invocation created
+   (dev/ino/mtime/size verified) in a `finally` — "issue → use → wipe" (ADR-040). This closes the
+   cross-user credential-exposure path that was this ADR's strongest motivation, and unlike a path
+   layout it does so independently of where the directory sits.
+3. **API / DB layers.** Owner-or-operator checks on ticket, workspace, and task-message routes
+   (404 on mismatch), `owner_sub` columns, and RLS (ADR-076).
+
+### Guards
+
+- `tests/unit/bot-node-workspace-owner-binding.spec.ts` — the swarm-path binding: cross-owner
+  rejection, no task creation or execution on mismatch, owner stamping on creation, folder-id
+  derivation precedence, and TS/JS owner-normalization parity. This one is load-bearing: the
+  handler's `createTask({ forceTaskId })` branch has no owner assert of its own.
+- `tests/unit/any-bot-task-owner-scope.spec.ts` — `assertTaskOwnerBinding` and its durable
+  persistence.
+- `tests/cred-wipe.spec.ts`, `tests/harness-adapter-behavior.spec.ts` — the lease / wipe cycle.
+- `tests/unit/ticket-isolation-routes.spec.ts`, `tests/unit/task-message-isolation-routes.spec.ts` —
+  the route layer.
+
+### If per-user file partitioning is revisited
+
+Done-when, all of it or none:
+
+1. One resolver every workspace path flows through — **readers included** — not a helper the two
+   writers call.
+2. Each of the ~12 reader modules listed above migrated to it, with a compatibility branch for
+   pre-existing flat directories.
+3. A real boundary underneath it, because a layout on a shared read-write mount is not one:
+   per-owner subpath mounts, per-owner volumes, or a filesystem jail per bot container.
+4. A guard proving a bot cannot traverse out of its own namespace — the property this ADR asserted
+   but never demonstrated.
+
+Without item 3 the work buys attribution and tidier browsing, not isolation. Track it as backlog,
+not as a security gap.

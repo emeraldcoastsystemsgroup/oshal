@@ -78,14 +78,29 @@ Applied to:
 - **Memory listing** (`src/app/routes/memory-routes.ts`): the agent-memory and
   knowledge-document listing routes (which can expose other users' conversational context and
   ingested sources) are now operator-only.
-- **Per-user task storage on disk** (`ADR-060`; `tool-executor-service.ts`,
-  `workspace-service.ts`, `user-scoped-workspace-path.ts`): a bot's working directory for a NEW
-  task is now placed under the owning user's namespace — `<root>/users/<owner>/<taskId>` (or
-  `<root>/_shared/<taskId>` for ownerless system/swarm tasks) — instead of a flat shared root.
-  The owner is resolved from the task's ticket. Brokered credential drops (`.oshal-cred-*`) and
-  deliverables therefore land in the owner's directory, closing the shared-filesystem exposure.
-  Pre-existing flat task dirs are detected and preserved (no orphaned work). This makes isolation
-  hold at all three layers: API, database, and filesystem.
+- **Task workspace owner binding** (`ADR-060`, revised; `bot-node-execution-handler.ts`,
+  `any-bot/server/controllers/TaskController.js`, `base-cli-harness-adapter.ts`). ADR-060's
+  per-user *path* layout (`<root>/users/<owner>/<taskId>`) was **reverted** — the layout is still
+  flat `<root>/<taskId>`, and an earlier revision of this section wrongly described the layout as
+  shipped. A directory layout was never the boundary in any case: every bot container mounts the
+  same workspace volume read-write (`oshal_workspace:/app/workspace-shared:rw`), so a nested path
+  is reachable with `../..`. What actually enforces the isolation:
+  - **Cross-owner directory reuse is rejected.** The workspace directory is keyed by the workspace
+    folder id — the root ticket UUID on the swarm path, or a ticket `externalId` under a UNIQUE
+    index — so two users cannot organically share one. Where an id could be reused across owners,
+    `assertExistingTaskOwner` (before any task creation or execution) and `assertTaskOwnerBinding`
+    (ticket-workspace reuse) throw `TASK_OWNER_MISMATCH`, failing closed across the owned /
+    ownerless / anonymous boundaries.
+  - **Brokered credentials cannot linger for the next occupant.** `.oshal-cred-*` /
+    `.oshal-user-sub` are written at mode `0600` under a per-workspace exclusive lease and unlinked
+    (stat-identity verified) in a `finally` — "issue → use → wipe" (ADR-040). This closes the
+    cross-user credential-exposure path that motivated ADR-060, independently of the layout.
+
+  Isolation therefore holds at the API and database layers, and on disk by owner binding rather
+  than by path partitioning. Guards: `tests/unit/bot-node-workspace-owner-binding.spec.ts`,
+  `tests/unit/any-bot-task-owner-scope.spec.ts`, `tests/cred-wipe.spec.ts`. See ADR-060's
+  "Reverted: where the isolation actually lives" for the reader-migration and per-owner-mount
+  done-when if partitioning is revisited.
 - **Workspaces** (`src/app/routes/workspace-routes.ts` + store/schema/migration `052`): added an
   `owner_sub` column (schema auto-applies on boot; migration `052-workspace-owner-sub.sql` is the
   recorded form). Create stamps the owner from the session; get/update/delete/ensure-path enforce

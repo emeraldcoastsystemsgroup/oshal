@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Renamed the task-controller bridge parameter to anyBotTaskController: the identifier still carried the retired pre-OSHAL product name, contradicting the rename rollout the docs describe. Pure rename, no behavior change.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING (bot half): BEFORE executing, parse the optional provider/model/configVersion the controller stamped on this dispatch (parseCarriedDispatchConfig) and reconcile it against the live active provider (reconcileDispatchProviderConfig) through the injected dispatchConfigRuntime seam (bot-node-runtime's getActiveProvider/setActiveProvider). A drifted bot self-corrects before running; an un-switchable carried provider fails open. Absent seam OR absent carried config = the runtime is never touched (byte-identical legacy execution).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review fix: the gap-b reconcile switched the SHARED active provider unconditionally, but the any-bot AgenticController resolves the provider live per-turn, so a concurrent dispatch could switch a running task mid-loop (silent provider swap + cost mis-attribution). Added an activeExecutions in-flight counter: the reconcile now only switches when this is the sole in-flight execution; otherwise it defers (logs) and runs on the current provider.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Comment accuracy at the owner-stamping call: it claimed ADR-060's per-user path layout ("the bot writes into <root>/users/<sub>/<taskId>"), which was reverted — the dir is flat <root>/<taskId>. Restated why the stamp is load-bearing regardless: assertExistingTaskOwner has nothing to compare against on the NEXT dispatch if userSub is dropped, and TaskController's forceTaskId branch carries no owner assert of its own. Behavior unchanged; the check is now pinned by tests/unit/bot-node-workspace-owner-binding.spec.ts.
  */
 
 /**
@@ -260,7 +261,12 @@ export function createBotNodeExecutionHandler(
           assertExistingTaskOwner(existing, userSub);
           task = { id: effectiveTaskId };
         } else {
-          // ADR-060: thread the owner so the bot writes into <root>/users/<sub>/<taskId>.
+          // Stamp the owner on the new task record. ADR-060's per-user PATH layout was reverted
+          // (the dir stays flat <root>/<taskId>), so this binding — not the path — is what stops
+          // the NEXT dispatch for a different user from being handed this workspace: the
+          // assertExistingTaskOwner above has nothing to compare against if userSub is dropped
+          // here. TaskController's forceTaskId branch has no owner assert of its own.
+          // Pinned by tests/unit/bot-node-workspace-owner-binding.spec.ts.
           task = await deps.anyBotTaskController.createTask(`Swarm execution for ${agentId}`, 'act', { forceTaskId: effectiveTaskId, userSub });
           if (task.id !== effectiveTaskId) task.id = effectiveTaskId;
         }
