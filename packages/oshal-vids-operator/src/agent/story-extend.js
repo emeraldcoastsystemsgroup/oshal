@@ -218,25 +218,12 @@ class StoryExtendRunner {
     const page = await ctx.newPage();
     try {
       await page.goto(CREATE_URL, { waitUntil: 'domcontentloaded' });
-      // Getting-started dialog → the Veo card (fallback: the editor right-rail button).
-      try {
-        const card = page.locator('button:has-text("Generate 8-second")').first();
-        await card.waitFor({ state: 'visible', timeout: 40000 });
-        await card.click();
-      } catch {
-        const rail = page.locator('[aria-label="Generate an AI video clip"]').first();
-        await rail.waitFor({ state: 'visible', timeout: 20000 });
-        await rail.click();
-      }
+      await this._dismissStartDialog(page);
+      await this._openVeoPanel(page);
       if (o.image) {
-        // Mode → "Animate an image" FIRST, THEN the hidden file input (recap SOP order;
-        // the input only exists in that mode, and the native dialog must never open).
-        const mode = page.locator('[role=combobox][aria-label="Mode"]').first();
-        await mode.waitFor({ state: 'visible', timeout: 30000 });
-        await mode.click();
-        const opt = page.locator('[role=option]:has-text("Animate an image")').first();
-        await opt.waitFor({ state: 'visible', timeout: 15000 });
-        await opt.click();
+        // Mode FIRST, THEN the hidden file input (recap SOP order; the input only exists in
+        // that mode, and the native dialog must never open).
+        await this._setMode(page, 'Animate an image');
         await page.waitForTimeout(800);
         await this._setFile(page, o.image);
         await page.waitForTimeout(4500);
@@ -281,34 +268,86 @@ class StoryExtendRunner {
 
   /** @description Open the Veo "AI video clip" panel (getting-started card or the right-rail button). The rail icon TOGGLES the panel — clicking it while the panel is already open (e.g. scene 2+ in storyboard mode, right after a render) closes it and strands the run (live-found 2026-07-06). Skip when a prompt box is already visible; recover once if a click left it closed. @param {object} page Playwright page @returns {Promise<void>} */
   async _openVeoPanel(page) {
-    if (await page.locator('textarea:visible').count().catch(() => 0)) return; // panel already open
+    if (await this._promptBox(page).count().catch(() => 0)) return; // panel already open
     try {
       const card = page.locator('button:has-text("Generate 8-second")').first();
-      await card.waitFor({ state: 'visible', timeout: 15000 });
+      await card.waitFor({ state: 'visible', timeout: 8000 });
       await card.click();
       return;
-    } catch { /* not on the getting-started dialog */ }
+    } catch { /* the pre-Omni getting-started card is gone in the 2026-07-30 UI */ }
     const rail = page.locator('[aria-label="Generate an AI video clip"]').first();
     await rail.waitFor({ state: 'visible', timeout: 20000 });
     await rail.click();
     await page.waitForTimeout(1500);
-    if (!(await page.locator('textarea:visible').count().catch(() => 0))) {
+    if (!(await this._promptBox(page).count().catch(() => 0))) {
       await rail.click(); // the first click toggled it closed — reopen
       await page.waitForTimeout(1500);
     }
   }
 
-  /** @description Switch the Veo Mode combobox to a target option. @param {object} page Playwright page @param {string} mode option label @returns {Promise<void>} */
+  /**
+   * @description Dismiss the Omni start dialog that Vids began showing on every new project
+   * (observed 2026-07-30). It is MODAL: while it is up, the right-rail "Generate an AI video clip"
+   * button is visible but not clickable, so the old flow died on a 30s click timeout with no
+   * explanation. "Blank vid" is the dialog's own way of saying "just open the editor".
+   * @param {object} page Playwright page
+   * @returns {Promise<void>} nothing
+   */
+  async _dismissStartDialog(page) {
+    for (const sel of ['button:has-text("Blank vid")', '[aria-label="Close"]']) {
+      const el = page.locator(sel).filter({ visible: true }).first();
+      if (await el.count().catch(() => 0)) {
+        await el.click({ timeout: 10000 }).catch(() => { /* fall through to Escape */ });
+        break;
+      }
+    }
+    await page.keyboard.press('Escape').catch(() => { /* nothing focused */ });
+    await page.waitForTimeout(2500);
+  }
+
+  /**
+   * @description The generation prompt box. Vids replaced the old `textarea` with a
+   * contenteditable `div[role=textbox]` ("Add your image, then describe what should happen in your
+   * vid") on 2026-07-30; both are matched so this works either side of that change.
+   * @param {object} page Playwright page
+   * @returns {object} a Playwright locator for the prompt box
+   */
+  _promptBox(page) {
+    return page.locator('textarea:visible, div[role=textbox]:visible').first();
+  }
+
+  /**
+   * @description Choose how the clip is generated. Vids replaced the Mode combobox with TABS —
+   * Create / Edit / Animate — on 2026-07-30. "Animate an image" is the Animate tab; anything else
+   * is Create. The old combobox is still tried first so a node on the previous UI keeps working.
+   * @param {object} page Playwright page
+   * @param {string} mode option label ("Animate an image" | "Create from scratch")
+   * @returns {Promise<void>} nothing
+   */
   async _setMode(page, mode) {
     try {
       const combo = page.locator('[role=combobox][aria-label="Mode"]').first();
-      await combo.waitFor({ state: 'visible', timeout: 20000 });
+      await combo.waitFor({ state: 'visible', timeout: 5000 });
       await combo.click();
       const opt = page.locator(`[role=option]:has-text("${mode}")`).first();
       await opt.waitFor({ state: 'visible', timeout: 8000 });
       await opt.click();
       await page.waitForTimeout(700);
-    } catch { /* mode already correct or single-mode UI */ }
+      return;
+    } catch { /* the combobox is gone — fall through to the tabs */ }
+    const tabName = /animate/i.test(mode) ? 'Animate' : 'Create';
+    try {
+      const tab = page.locator(`button[role=tab]:has-text("${tabName}")`).first();
+      await tab.waitFor({ state: 'visible', timeout: 20000 });
+      await tab.click({ timeout: 10000 });
+      await page.waitForTimeout(2500);
+      // The inspiration gallery covers the controls on a fresh panel; collapse it when offered.
+      const gallery = page.locator('button:has-text("Hide gallery")').filter({ visible: true }).first();
+      if (await gallery.count().catch(() => 0)) {
+        await gallery.click({ timeout: 6000 }).catch(() => { /* already hidden */ });
+        await page.waitForTimeout(1200);
+      }
+    } catch { /* single-mode UI */ }
   }
 
   /** @description Set a still on the hidden file input across any same-origin frame. @param {object} page Playwright page @param {string} file absolute image path @returns {Promise<void>} */
@@ -332,13 +371,23 @@ class StoryExtendRunner {
 
   /** @description Enter the prompt: bulk-fill instantly, then REAL keystrokes for the tail. fill() alone sometimes leaves Generate disabled (no key events); per-char typing of a full v3 prompt (~1600 chars) blows the 30s action timeout over CDP — the hybrid does both jobs. @param {object} page Playwright page @param {string} text prompt @returns {Promise<void>} */
   async _typePrompt(page, text) {
-    const box = page.locator('textarea:visible').first();
+    const box = this._promptBox(page);
     await box.waitFor({ state: 'visible', timeout: 20000 });
     await box.click();
     const t = String(text);
     const tail = t.slice(-8);
     const head = t.slice(0, -8);
-    await box.fill(head, { timeout: 30000 });
+    // `fill()` only works on real form controls. The 2026-07-30 UI's contenteditable needs the text
+    // inserted through the keyboard/clipboard path instead, or it stays empty and Generate never enables.
+    const isFormControl = await box.evaluate((el) => el.tagName === 'TEXTAREA' || el.tagName === 'INPUT').catch(() => true);
+    if (isFormControl) {
+      await box.fill(head, { timeout: 30000 });
+    } else {
+      await box.evaluate((el) => { el.focus(); }).catch(() => { /* click already focused it */ });
+      await page.evaluate((s) => document.execCommand('insertText', false, s), head).catch(async () => {
+        await box.pressSequentially(head.slice(0, 400), { delay: 1, timeout: 30000 });
+      });
+    }
     await box.pressSequentially(tail, { delay: 25, timeout: 30000 });
     await page.waitForTimeout(1000);
   }
