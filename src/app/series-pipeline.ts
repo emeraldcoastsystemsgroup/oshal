@@ -140,6 +140,8 @@ export function validateWrittenSeries(
       v.push({ where: `ep ${ep.ordinal}`, rule: `expected ${expected.scenesPerEpisode} scenes, got ${scenes.length}` });
     }
     let prevShot = '';
+    /** shot type -> the scene number that already used it, across the WHOLE episode. */
+    const shots = new Map<string, number>();
     for (const s of scenes) {
       const at = `ep ${ep.ordinal} scene ${s.n}`;
       if (!s.camera?.trim()) v.push({ where: at, rule: 'no camera line' });
@@ -160,6 +162,19 @@ export function validateWrittenSeries(
       // Consecutive scenes must not open on the same shot type.
       const shot = (s.camera ?? '').toLowerCase().split(/\s+/).slice(0, 2).join(' ');
       if (shot && shot === prevShot) v.push({ where: at, rule: `same shot type as the previous scene ("${shot}") — vary the camera` });
+      if (shot) {
+        const twin = shots.get(shot);
+        // NOT just consecutive. In a four-scene joke the setup and the punchline both want "everyone
+        // together", so scene 1 and scene 4 kept coming back as the same wide shot — the consecutive
+        // check waved them through and the storyboard's near-duplicate gate then rejected the episode
+        // AFTER four images had been paid for. Three of the pump's first seven episodes died exactly
+        // there (2026-07-30). Frames are expensive; scripts are cheap — so it is caught here now.
+        if (twin !== undefined) {
+          v.push({ where: at, rule: `same shot type as scene ${twin} ("${shot}") — every scene needs a different camera, not just a different neighbour` });
+        } else {
+          shots.set(shot, s.n);
+        }
+      }
       prevShot = shot;
     }
   }

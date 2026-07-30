@@ -224,3 +224,23 @@ describe('a show opens its episodes with its own cached intro', () => {
     expect(renderer).toMatch(/intro MISSING on this node, continuing without it/);
   });
 });
+
+/**
+ * Two rules learned from the pump's first six unattended hours (7 episodes, 4 delivered).
+ */
+describe('what the first unattended run taught', () => {
+  const pipeline = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'series-pipeline.ts'), 'utf8');
+  const pump = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'series-pump.ts'), 'utf8');
+
+  it('rejects a repeated shot type ACROSS the episode, not just between neighbours', () => {
+    // Three of the first seven episodes died at the storyboard's near-duplicate gate on scene 1 vs 4
+    // — the setup and the punchline both wanting "everyone together". The consecutive-only check
+    // waved that through and four images had already been paid for.
+    expect(pipeline).toMatch(/const shots = new Map<string, number>\(\)/);
+    expect(pipeline).toMatch(/same shot type as scene \$\{twin\}/);
+  });
+
+  it('never reports a delivery with an empty link as though it had one', () => {
+    expect(pump).toMatch(/link \? null : 'delivered to the node content folder/);
+  });
+});
