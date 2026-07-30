@@ -16,6 +16,7 @@
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - generate via site-lab-report.js, deploy via deploy-oswarm-site.sh, log to %LOCALAPPDATA%\oshal\lab-report-publish.log, email ONLY on failure.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Self-locating (ADR-115 trunk cutover): $repo derives from the script's own location instead of the hardcoded archive path - pointed at the archive, the nightly deploy would have overwritten the live site with the STALE pre-launch page every weekday. Cloudflare auth stays where it always was: wrangler's own profile config, never in the repo.
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Wait for the api before generating, and stop emailing on a blip. This job fires at 17:20 while the 17:00 daily-recap leg is still mid-flight; on a saturated box node took 32s just to load dotenv and the first api call died on connect, so a healthy lab emailed a failure (2026-07-27, 2026-07-30). Now: a bounded health wait on 127.0.0.1 up front (the ::1 detour is the very thing that times out), and the generator itself retries transient calls. Only a failure that survives all of that is worth a human's attention.
 #>
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -29,6 +30,17 @@ function FailMail($why) {
 
 Log '--- nightly lab report publish starting ---'
 Set-Location $repo
+
+# 0) Wait for the api. It is normally already up - this covers the case where the box is still
+#    saturated by the 17:00 recap leg. 127.0.0.1, never localhost: a stale wslrelay squats ::1
+#    here and the happy-eyeballs detour is what fails first under load.
+$apiOk = $false
+for ($i = 0; $i -lt 12; $i++) {
+  try { if ((Invoke-WebRequest 'http://127.0.0.1:35457/api/health' -TimeoutSec 15 -UseBasicParsing).StatusCode -eq 200) { $apiOk = $true; break } } catch {}
+  Start-Sleep -Seconds 15
+}
+if (-not $apiOk) { FailMail 'the api never answered /api/health on 127.0.0.1:35457 after 3 minutes - the stack is down or wedged (bash scripts/api-bounce.sh)' }
+if ($i -gt 0) { Log ("api answered after {0}s of waiting" -f ($i * 15)) }
 
 # 1) Generate. A non-zero exit means the lab/api was unreachable or empty - never deploy that.
 $gen = node scripts/site-lab-report.js 2>&1 | Out-String
