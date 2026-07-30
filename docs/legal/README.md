@@ -7,6 +7,7 @@ fit together.
 | Document | What it covers |
 |---|---|
 | [licensing.md](licensing.md) | The canonical licensing answer — what AGPL-3.0 grants, what it requires, what it does **not** restrict, the commercial license, the open-core boundary, and trademark. |
+| [copyright-registration.md](copyright-registration.md) | Registering the work with the US Copyright Office — why it is the precondition to any enforcement, how to generate the deposit, the field sheet, and the ownership decisions to settle first. |
 | [../../LICENSE](../../LICENSE) | The GNU Affero General Public License v3.0 text. |
 | [../../NOTICE](../../NOTICE) | Copyright, what a fork must keep, trademark, and the third-party material statement. |
 | [../../CLA.md](../../CLA.md) | Inbound contribution terms — the grant that lets the commercial exception include contributed work. |

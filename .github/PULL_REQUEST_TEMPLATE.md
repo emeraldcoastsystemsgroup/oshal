@@ -57,9 +57,10 @@
 - [ ] Live-validated the harness's actual flag set against `--help`
       (don't copy-paste from another adapter blind).
 
-## Licensing (required for contributions from outside the maintainer org)
+## Licensing (required for every contributor who is not the maintainer)
 
-<!-- Delete this section only if you are a maintainer. -->
+<!-- Contribution here is by invitation; if you are a maintainer, delete this
+     section. If you were invited as a collaborator, fill it in. -->
 - [ ] I have read [CLA.md](../CLA.md) and I agree to it.
 - [ ] My commits are signed off (`git commit -s`).
 - [ ] Every contribution here is my original work, or is separately identified
