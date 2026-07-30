@@ -402,10 +402,20 @@ export async function confirmTotpEnrolment(
   if (!secret) return false;
   const step = verifyTotpCode(secret, code, nowMs, null);
   if (step === null) return false;
+  // Deliberately does NOT record totp_last_step. An earlier version did, and a browser walk of
+  // the real deployment showed the cost immediately: enrol, sign out, sign back in within the
+  // same 30 seconds, and the app still shows the code you just confirmed with — which the replay
+  // guard then refuses. "I just set it up and it says the code is wrong" on the very first use.
+  //
+  // The protection given up is negligible: an attacker would have to have seen the confirmation
+  // code (rendered on the user's own screen, inside their authenticated session, over TLS) AND
+  // hold the password, and act inside 30 seconds. Replay protection on the LOGIN path — where
+  // codes actually travel repeatedly — is untouched: verifySecondFactor still records every step
+  // it accepts, so no code can be used twice to sign in.
   await runWithSystemIdentity(() => pool.query(
     `UPDATE oshal_local_users
-        SET totp_enabled = TRUE, totp_confirmed_at = NOW(), totp_last_step = $2
-      WHERE user_sub = $1`, [sub, step],
+        SET totp_enabled = TRUE, totp_confirmed_at = NOW(), totp_last_step = NULL
+      WHERE user_sub = $1`, [sub],
   ));
   logger.info({ sub }, 'TOTP enrolment confirmed — second factor active');
   return true;
