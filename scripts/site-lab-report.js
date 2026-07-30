@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — nightly Strategy Lab report generator for the public site (operator ask 2026-07-17: "I want the report published nightly on the oshal website"). Reads the lab over the api's auth'd routes (the trading-regression-suite lane), renders a SELF-CONTAINED static page to site/oswarm.ai/lab/index.html: latest-session movers, the full permutation matrix, and the earnings-gate twin-vs-base table. SIMULATED DATA ONLY by design — every walk is the lab's synthetic $100k notional; the operator's real paper/live book equity and positions are deliberately never read here, so nothing private can leak onto the public page.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Brand naming pass (operator directive 2026-07-24): user-facing product name is lowercase "oshal" — never "Open Swarm" alone. Template title/h1/disclaimer/footer updated; footer home link reads oshal.ai.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Stop emailing a bare "fetch failed" for a busy box (2026-07-27 + 2026-07-30 both died this way while the api was up and healthy). Three changes: (a) default BASE is 127.0.0.1, not localhost — a stale wslrelay squats the IPv6 loopback here, and the ::1 detour costs ~300ms per call and can exceed undici's connect timeout under load; (b) every GET retries transient failures (connect error / 5xx / 429) with linear backoff, so one blip mid-run no longer discards 59 strategies' worth of work; (c) errors report undici's full cause chain — the old code logged err.message, which is the literal string "fetch failed" with the real reason (ECONNREFUSED vs timeout) hidden in .cause. Auth/4xx stay fatal: retrying a 401 just delays the same email.
  *
  * Usage: node scripts/site-lab-report.js            (writes site/oswarm.ai/lab/index.html)
  *        node scripts/site-lab-report.js --stdout   (print the HTML instead of writing)
@@ -17,8 +18,19 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-const BASE = process.env.OSHAL_BASE_URL || 'http://localhost:35457';
+// 127.0.0.1, never `localhost`: this box's IPv6 loopback is intermittently squatted (see the
+// wslrelay runbook), and the happy-eyeballs detour is exactly what times out under nightly load.
+const BASE = process.env.OSHAL_BASE_URL || 'http://127.0.0.1:35457';
 const OUT = path.join(__dirname, '..', 'site', 'oswarm.ai', 'lab', 'index.html');
+/** Reads a numeric env override. `?? default` on a parsed number, NOT `|| default` — an
+ *  explicit 0 (used by the guard to run the retry paths without sleeping) is a real value. */
+const envNum = (name, dflt) => {
+  const n = Number(process.env[name]);
+  return process.env[name] === undefined || process.env[name] === '' || Number.isNaN(n) ? dflt : n;
+};
+const ATTEMPTS = Math.max(1, envNum('LAB_REPORT_ATTEMPTS', 4));
+const BACKOFF_MS = Math.max(0, envNum('LAB_REPORT_BACKOFF_MS', 10000));
+const TIMEOUT_MS = Math.max(1000, envNum('LAB_REPORT_TIMEOUT_MS', 30000));
 
 /** Auth headers — PAT first (human lane), service secret + sub second (bot lane). */
 function authHeaders() {
@@ -30,10 +42,61 @@ function authHeaders() {
   throw new Error('no auth: set OSHAL_CLI_TOKEN or SWARM_SERVICE_SECRET + OSHAL_USER_SUB/OSHAL_OPERATOR_SUBS');
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Flattens an Error's `cause` chain into one readable line.
+ * @description undici throws `TypeError: fetch failed` and buries the reason that actually
+ *   matters — ECONNREFUSED, ConnectTimeoutError, socket hang up — one level down in `.cause`.
+ *   Logging `err.message` alone is how two nights of failures reported nothing diagnosable.
+ * @param {unknown} err the thrown error
+ * @returns {string} e.g. "fetch failed <- Connect Timeout Error (ECONNREFUSED)"
+ */
+function describeError(err) {
+  const parts = [];
+  for (let e = err; e instanceof Error && parts.length < 5; e = e.cause) {
+    parts.push(e.code ? `${e.message} (${e.code})` : e.message);
+  }
+  return parts.length ? parts.join(' <- ') : String(err);
+}
+
+/**
+ * True when a failure is worth retrying rather than emailing about.
+ * @description A busy box (the 17:00 recap leg overlaps this job) produces connect errors and
+ *   5xx/429; those clear on their own. A 401/404 is a real defect — retrying only delays the
+ *   same alert by a minute, so those propagate immediately.
+ * @param {Error & {status?: number}} err the failure under consideration
+ * @returns {boolean} whether to try again
+ */
+function isTransient(err) {
+  if (typeof err.status === 'number') return err.status >= 500 || err.status === 429;
+  return true; // connect/timeout/abort — the transport never delivered a verdict
+}
+
+/**
+ * GETs a lab route, retrying transient failures with linear backoff.
+ * @description Retries live HERE rather than around the whole run: `collect()` makes one call
+ *   per strategy, so a single blip 50 strategies in used to throw away the entire report.
+ * @param {string} p api path, e.g. '/api/trading/lab/strategies'
+ * @returns {Promise<any>} the parsed JSON body
+ * @throws {Error} after ATTEMPTS transient failures, or immediately on a fatal one
+ */
 async function get(p) {
-  const r = await fetch(`${BASE}${p}`, { headers: authHeaders() });
-  if (!r.ok) throw new Error(`${p} HTTP ${r.status}`);
-  return r.json();
+  let last;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    try {
+      const r = await fetch(`${BASE}${p}`, { headers: authHeaders(), signal: AbortSignal.timeout(TIMEOUT_MS) });
+      if (!r.ok) throw Object.assign(new Error(`${p} HTTP ${r.status}`), { status: r.status });
+      return await r.json();
+    } catch (err) {
+      last = err;
+      if (!isTransient(err) || attempt === ATTEMPTS) break;
+      const wait = BACKOFF_MS * attempt;
+      console.warn(`site-lab-report: ${p} attempt ${attempt}/${ATTEMPTS} — ${describeError(err)}; retrying in ${Math.round(wait / 1000)}s`);
+      await sleep(wait);
+    }
+  }
+  throw new Error(`${p} after ${ATTEMPTS} attempt(s): ${describeError(last)}`);
 }
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -182,4 +245,10 @@ async function main() {
   console.log(`site-lab-report: wrote ${OUT} (${rows.length} strategies, ${Buffer.byteLength(html)} bytes)`);
 }
 
-main().catch((err) => { console.error(`site-lab-report FAILED: ${err.message}`); process.exit(1); });
+// Exported for the regression guard (tests/unit/site-lab-report-fetch-resilience.spec.ts).
+// The dispatch below is gated on require.main so importing this file is side-effect free.
+module.exports = { describeError, isTransient, get, BASE };
+
+if (require.main === module) {
+  main().catch((err) => { console.error(`site-lab-report FAILED: ${err.message}`); process.exit(1); });
+}
