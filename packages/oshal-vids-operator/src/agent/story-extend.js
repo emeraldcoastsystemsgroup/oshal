@@ -432,6 +432,12 @@ class StoryExtendRunner {
     // generated"). Fail FAST on it — waiting the full window reads as a mystery stall.
     const refusal = page.getByText(/can.?t be generated|couldn.?t be generated|against (our|the) (policies|terms)|try a different prompt/i).first();
     let lastWake = 0;
+    // Srcs that appeared AFTER Generate but which we have not accepted yet. Keeping them as
+    // candidates instead of folding them into `seen` is what makes a fast render survive: the old
+    // code absorbed anything arriving before minMs as a gallery ghost and could then never return
+    // it, so a clip that rendered in 90s timed out with the finished video visible on screen
+    // (live 2026-07-30, the Omni pipeline is quicker than Veo 3.1 was).
+    const candidates = [];
     while (Date.now() < deadline) {
       if (this.isAborted()) throw new Error('aborted');
       const entries = await this._videoEntries(page);
@@ -440,10 +446,13 @@ class StoryExtendRunner {
         if (mine) return mine.src;
       }
       for (const { src } of entries) {
-        if (seen.has(src)) continue;
-        if (Date.now() - start < minMs || key) { seen.add(src); continue; } // ghost, or keyed mode: only the fingerprint counts
-        return src;
+        if (seen.has(src) || candidates.includes(src)) continue;
+        candidates.push(src);
       }
+      // The fingerprint is preferred but no longer required: the Omni panel does not always quote
+      // the prompt back in an aria-label. In a FRESH project tab, a video src that was not present
+      // before Generate and has outlived the ghost window is this scene's render.
+      if (candidates.length && Date.now() - start >= minMs) return candidates[candidates.length - 1];
       if (await refusal.count().catch(() => 0)) throw new Error('render refused (content-policy card shown)');
       // In a fresh tab the finished clip stays an UNMOUNTED thumbnail (timed out 3x
       // with the render on screen) — after a realistic render time, poke the newest
