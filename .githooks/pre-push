@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Verify the COMMIT, not the working tree, before it reaches main. On 2026-07-14 a hook-rejected commit was retried after a concurrent session cleared the shared index, so it shipped ONE file: the importers of a new module landed while the module itself never did, and main did not compile for ~40 minutes. Nothing caught it because typecheck/tests were green LOCALLY — against files that were on disk but not in git. This is the only check that can catch that class.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the PUBLISH GATE as the FIRST step (this repo is now public and has no scrubber in front of it). It runs on every push, including docs-only pushes the typecheck skips, and is NOT bypassable via OSHAL_SKIP_PREPUSH_VERIFY.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Made SEQ 2's promise true. OSHAL_SKIP_PREPUSH_VERIFY=1 exited at the very top of the script, BEFORE the publish gate — so the one documented escape hatch for a slow/unrunnable typecheck also silently disabled the leak wall on a public repo. The skip check now sits after the gate: you may skip the typecheck, never the gate.
 # =============================================================================
 #
 # Exports committed HEAD to a scratch tree and typechecks THAT. Rule 0a: one worktree, one index,
@@ -13,11 +14,6 @@
 #
 # Skip (rare, deliberate): OSHAL_SKIP_PREPUSH_VERIFY=1 git push
 set -uo pipefail
-
-if [ "${OSHAL_SKIP_PREPUSH_VERIFY:-0}" = "1" ]; then
-  echo "pre-push: HEAD verification SKIPPED (OSHAL_SKIP_PREPUSH_VERIFY=1)" >&2
-  exit 0
-fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT" || exit 0
@@ -34,6 +30,15 @@ if [ -f "${REPO_ROOT}/scripts/publish-gate.sh" ]; then
     echo "✗ pre-push BLOCKED by the publish gate — this repo is PUBLIC (see above)." >&2
     exit 1
   fi
+fi
+
+# ── The typecheck escape hatch — deliberately BELOW the publish gate ─────────
+# Skipping a slow or unrunnable HEAD typecheck is a supported (rare) choice; skipping the leak
+# wall on a public repo is not. This check used to sit at the top of the file, which quietly made
+# the flag do both.
+if [ "${OSHAL_SKIP_PREPUSH_VERIFY:-0}" = "1" ]; then
+  echo "pre-push: HEAD typecheck SKIPPED (OSHAL_SKIP_PREPUSH_VERIFY=1) — publish gate still ran." >&2
+  exit 0
 fi
 
 # Nothing to verify if there are no TS/JS sources in the push range (docs-only pushes are common
