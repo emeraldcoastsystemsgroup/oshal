@@ -255,18 +255,37 @@ what it needs in the runtime.**
 
 | item | mechanism | state |
 |---|---|---|
-| Single executable | Node SEA (built in since 22) — no `pkg` | designed |
+| Single executable | Node SEA (built in since 22) — no `pkg` | **mechanism proven** |
 | No-Docker single-user install | `node:sqlite` (built in since 22) | designed |
 | Desktop shell | Tauri, reusing this folder's Rust toolchain | designed |
 | Faster first boot | bundle the ~80MB ONNX embedding model | designed |
 
-`scripts/build-executable.js` already exists and uses the older esbuild → `pkg` chain, but marks
-express / pg / ioredis / pino as `--external`, so its output still needs a `node_modules` beside it —
-it is not yet self-contained.
+**The SEA mechanism is built and verified.** `node native/build-exe.js` produces `oshal-kernel.exe`
+(85.9 MB, Node-runtime-dominated) carrying the compiled kernel *inside* it as a `node:sea` asset.
+Confirmed self-contained by copying the single file into an empty directory — no `node_modules`, no
+`.wasm`, no repo — and getting `kernel origin: embedded (SEA asset)` and `40/40` bit-exact parity.
 
-**None of these requires a compiled language for the platform.** That is the finding that scoped the
+That proves bundle → blob → inject works here on a target with **zero native dependencies and zero
+external services**. It does not prove the controller can be packaged, and the remaining work is not
+the SEA step:
+
+- `pg-native`, `better-sqlite3`, `canvas`, `sharp` are compiled `.node` binaries. A packer can carry
+  the bytes; the OS loader cannot `dlopen` them from a virtual filesystem.
+- **The controller still needs Postgres and Redis running** — the actual barrier to "installable", and
+  a database problem rather than a packaging one. A perfect single binary whose install instructions
+  open with "first, set up Docker" has not solved anything.
+
+`scripts/build-executable.js` (the older esbuild → `pkg` chain) is worth one correction, because the
+obvious reading is wrong: its output is **not** non-self-contained because of its `--external` flags.
+`pkg` runs after esbuild and re-resolves pure-JS modules into its own snapshot, so marking express /
+pg / ioredis external merely defers the job to a tool that handles it. It needs files beside it
+because its own closing output says so (`dist/pages/`, `dist/config-seed/`, `dist/ai-lab/`), because
+of the four native modules above, and because of Postgres/Redis.
+
+**None of this requires a compiled language for the platform.** That is the finding that scoped the
 whole effort to the numeric kernel: the installable-app problem and the performance problem are
-different problems, and only one of them was ever about compilation.
+different problems, and only one of them was ever about compilation. The kernel executable is
+evidence for that split — it is a real single file precisely *because* it has no servers to talk to.
 
 ## See also
 
