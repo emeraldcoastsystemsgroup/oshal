@@ -58,7 +58,11 @@ series — general-purpose chatbots — converted pilots to implementation at a 
 ninety-five percent is the complement of a *task-specific* figure inside a perception funnel. A
 contemporaneous instrument runs the other way: AI at Wharton with GBK Collective surveyed 800 senior
 decision-makers at U.S. firms above $50 million in revenue and found 74 percent reporting positive
-return (Wharton and GBK Collective). Both measure perception.
+return (Wharton and GBK Collective). Both measure perception, but not with equal grounds for
+skepticism: GBK Collective is a commercial marketing-and-analytics firm co-founded by a Wharton
+faculty member, and the "AI at Wharton" byline lends an academic association its funding and purpose
+do not otherwise carry. NANDA is more forthcoming about its own limits, hedged headline number
+included, despite its own institutional motive to frame current tooling as failing.
 
 **A correction this paper owes its own earlier draft.** An earlier version cited RAND for the claim
 that more than eighty percent of AI projects fail, twice the rate of non-AI IT projects. **That claim
@@ -176,7 +180,11 @@ consultants without AI (Dell'Acqua et al.). Jagged means not legible from inside
 putting the model on the default path requires an operator to make exactly that judgment,
 continuously.
 
-The clinical literature shows the same shape with consequences attached. Povyakalo and colleagues
+None of what follows in this paragraph is about software. It is included because the clinical
+literature shows the same shape with consequences that are easier to see than a botched merge, and
+the pattern it documents — automation improving the average while degrading the expert — is what
+Section VI licenses demotion against, not evidence about coding agents specifically. Povyakalo and
+colleagues
 found computer-aided detection *reduced* the sensitivity of the most discriminating mammography
 readers on difficult cancers while helping less discriminating ones (Povyakalo et al.). Budzyń and
 colleagues found adenoma detection in standard non-AI colonoscopy fell from 28.4 to 22.4 percent
@@ -236,9 +244,11 @@ whether the statement is true.
 **(iv) The predicate must be demonstrably non-vacuous over the enumerated option space.** This
 condition is new, and exists because the first three are satisfied by `return true`. They require
 the predicate to be enumerable, cheap, checkable and model-independent; they never required it to be
-*adequate*. Beg and colleagues report generated verification annotations frequently "syntactically
-valid but semantically weak, such as trivially true conditions or overly conservative constraints"
-that "do not meaningfully contribute to proving functional correctness" (Beg et al.).
+*adequate*. The failure mode is definitional, not something a citation is needed to establish: a
+predicate that always passes satisfies (i)–(iii) trivially and proves nothing. (An earlier draft
+attributed a supporting quotation on generated-verification-annotation weakness to Beg et al.; a
+second adversarial pass found that source does not contain the claim, and it is withdrawn rather than
+repeated unverified — see the closing notes.)
 
 **The fifth variable: adversarial optimisation pressure against the verifier.** Conditions (i)–(iii)
 hold identically in two systems that made opposite choices. Kimi k1.5 held the reference answer and
@@ -280,14 +290,18 @@ summary is the sentence this paper should have started from: "deterministic gate
 task success, but they can deterministically prevent a known class of silent policy-violating writes
 at the action boundary" (Reddy et al.).
 
-Qiu and colleagues demote the model to "a specialized tool to handle bounded, complex sub-tasks
-within the workflow, but never to decide the workflow's path," reporting 35.56 percent against an
-18.00 percent baseline on the same Claude-Sonnet-4 backbone, constraint violations down 96.0 percent
-— eleven against 275 — and two production deployments (Qiu et al.).
+Qiu and colleagues demote the model so "it is no longer the central decision-maker but is invoked as
+a specialized tool at specific nodes of the blueprint to handle complex but bounded sub-tasks,"
+reporting 35.56 percent against an 18.00 percent baseline on the same Claude-Sonnet-4 backbone,
+constraint violations down 96.0 percent — eleven against 275 — and two production deployments (Qiu et
+al.).
 
-Huang and colleagues build a hybrid in which "rule-based verifiers are applied first, and model-based
-verifiers are used only for those cases deemed incorrect" (Huang et al.). The deterministic artifact
-takes the default path; the model works the residual.
+Huang and colleagues test a hybrid in which "the rule-based verifier first classifies responses, and
+the model-based verifier provides supplementary judgment only when the rule-based verifier flags a
+response as incorrect," recovering a few points of recall over the rule-based verifier alone (Huang et
+al.). Their own framing is more cautionary than triumphant — the source is a study of verifier
+*pitfalls*, not a case for hybrids as a default — but the shape it demonstrates is the one argued for
+here: rules first, model on the residual.
 
 **Two instances where deletion did happen, and what they share.** Kaivola and colleagues made formal
 verification "the primary validation vehicle" for the Intel Core i7 execution cluster and "dropped
@@ -303,7 +317,7 @@ removal, and it is much narrower than a business process.
 |---|---|---|---|
 | Reddy et al. | τ²-bench airline | Gate + retain | +12.4pp, *P* = 0.0012, replicated |
 | Qiu et al. | Agentic workflows | Demote to sub-tasks | 35.56% vs 18.00%; violations −96% |
-| Huang et al. | Verifiable reasoning | Rules first, model on residual | Hybrid beats either alone |
+| Huang et al. | Verifiable reasoning | Rules first, model on residual | Hybrid recall a few points above rules alone; source frames this as a pitfall study |
 | Kaivola et al. | i7 execution cluster | **Delete** | Coverage testing dropped entirely |
 | Yang et al. (CompCert) | Compiler middle end | **Delete** | Zero wrong-code in 6 CPU-years |
 | *Specification harvested from model traffic, then deleted* | — | — | **No instances** |
@@ -536,10 +550,11 @@ For an operator, the claim reduces to four commitments.
 3. **Prove non-vacuity before trusting a green check.** A passing oracle certifies conformance to the
    oracle. Enumerate the option space against the predicate and show it discriminates.
 4. **Ship an expiry review and a re-entry path with every predicate.** Adequacy decays — Huang and
-   colleagues measure rule-based recall falling from roughly 0.95 for weaker generators to around 0.92
-   for long-chain-of-thought models. Where churn is high, demotion relocates the model call rather
-   than eliminating it, which given falling inference cost drains it of economic force in exactly
-   those cases.
+   colleagues find rule-based recall meaningfully lower for long-chain-of-thought generators (around
+   0.92) than for the weaker generators their verifier was built against, evidence that a predicate's
+   fit degrades as the thing it's checking changes. Where churn is high, demotion relocates the model
+   call rather than eliminating it, which given falling inference cost drains it of economic force in
+   exactly those cases.
 
 And one discipline borrowed from Parnas, a hostile witness on the *sequence* — "the people who
 commission the building of a software system do not know exactly what they want and are unable to
@@ -616,12 +631,14 @@ Then consider what the terminal step rests on. Testing survived verification in 
 every defect Csmith found in CompCert lay outside the verified slice, and the authors conclude that
 "verification does not obviate testing, but rather complements it" (Yang et al.). Fonseca and
 colleagues exhibited a verified system whose specification gap admitted implementations that "return
-incorrect results" and "still verified" after a seven-line patch, invisible to expert readers for
-eight months (Fonseca et al.). In the maintained-rule literature the largest instance ran eight years
-without stabilising: XCON grew from 250 rules in 1979 to over 6,200 by 1987, roughly half changing
-annually, consuming about four worker-years per year of knowledge addition in perpetuity, with its
-practitioners recanting in print — "It is difficult now to believe Rl will ever be done" (Bachant and
-McDermott 21).
+incorrect results" and "still verified" after a seven-line patch (Fonseca et al.) — a defect class
+formal verification is supposed to catch, surviving it anyway. In the maintained-rule literature the
+largest instance took years to stabilise: XCON grew from roughly 250 rules in 1979 to on the order of
+2,500 within a decade, a sustained and expensive expansion. (An earlier draft of this paragraph cited
+a more dramatic 6,200-rule figure, an annual-churn rate, a per-year maintenance-cost figure, and a
+direct quotation from Bachant and McDermott; none of the four survived a second adversarial check
+against the primary text, and they are withdrawn rather than repeated unverified — see the closing
+notes.)
 
 The selection argument is the sharpest form. If the volatility that makes a team reach for a general
 model is the same volatility that prevents an extracted artifact from stabilising, the conditions
@@ -653,9 +670,9 @@ across a full hardware cycle, the claim is wrong. Conversely, if a firm profitab
 in a domain with drifting option space, the boundary in Section VIII is wrong in the other direction.
 
 **F3 — Predicate decay outruns its benefit.** If harvested predicates in ordinary business domains
-show churn on the XCON scale — roughly half changing annually, maintenance exceeding the inference
-displaced — the conditions select for cases too volatile to be worth doing and the residue shrinks to
-nothing.
+show churn on the XCON scale — sustained, expensive annual revision, maintenance exceeding the
+inference displaced — the conditions select for cases too volatile to be worth doing and the residue
+shrinks to nothing.
 
 ### XVII. Remaining Vulnerabilities
 
@@ -730,9 +747,6 @@ Granting Final Approval of Class Action Settlement, 20 July 2026.
 Bastani, Hamsa, Osbert Bastani, Alp Sungu, Haosen Ge, Özge Kabakcı, and Rei Mariman. "Generative AI
 without Guardrails Can Harm Learning: Evidence from High School Mathematics." *Proceedings of the
 National Academy of Sciences*, 2025.
-
-Beg, et al. "On the Semantic Weakness of Generated Verification Annotations." *arXiv*, 2026,
-arxiv.org/abs/2602.13851.
 
 Belson, David, and Sam Rhea. "The Crawl before the Fall … of Referrals." *The Cloudflare Blog*, 1
 July 2025.
@@ -819,7 +833,8 @@ He, Horace, et al. "Defeating Nondeterminism in LLM Inference." *Thinking Machin
 
 Hood, Amy. Remarks. Microsoft Fiscal Year 2026 Fourth Quarter Earnings Conference Call, 29 July 2026.
 
-Huang, et al. "Rule-Based and Model-Based Verifiers in Reasoning: A Hybrid Study." *arXiv*, 2025,
+Huang, Yuzhen, Weihao Zeng, Xingshan Zeng, Qi Zhu, and Junxian He. "From Accuracy to Robustness: A
+Study of Rule- and Model-based Verifiers in Mathematical Reasoning." *arXiv*, 2025,
 arxiv.org/abs/2505.22203.
 
 Kaivola, Roope, et al. "Replacing Testing with Formal Verification in Intel Core i7 Processor
@@ -911,8 +926,9 @@ Povyakalo, Andrey A., Eugenio Alberdi, Lorenzo Strigini, and Peter Ayton. "How t
 between Computer-Aided and Computer-Hindered Decisions." *Medical Decision Making*, vol. 33, no. 1,
 2013, pp. 98–107.
 
-Qiu, et al. "Deterministic Workflow Blueprints with Demoted Model Execution." *arXiv*, 2025,
-arxiv.org/abs/2508.02721.
+Qiu, Libin, Yuhang Ye, Zhirong Gao, Xide Zou, Junfu Chen, Ziming Gui, Weizhi Huang, Xiaobo Xue, Wenkai
+Qiu, and Kun Zhao. "Blueprint First, Model Second: A Framework for Deterministic LLM Workflow."
+*arXiv*, 2025, arxiv.org/abs/2508.02721.
 
 Reddy, Challaram, and Basu. "Reason Less, Verify More: Deterministic Gates Recover a Silent
 Policy-Violation Failure Mode in Tool-Using LLM Agents." *arXiv*, 8 July 2026,
@@ -995,7 +1011,7 @@ Tool-Agent-User Interaction in Real-World Domains." *arXiv*, 17 June 2024, arxiv
 
 ---
 
-### Notes on sources and provenance (delete before submission)
+### Notes on sources and provenance
 
 **Format.** Times New Roman 12 pt, double-spaced throughout including Works Cited, one-inch margins,
 half-inch first-line indents, right-aligned running head `Murphy 1`, four-line heading block flush
@@ -1015,16 +1031,45 @@ stabilization — deterministic from the first line, so the direction is inverte
 an inferential step — an existence theorem satisfied by a CPU running an if-statement; (9) the SR
 26-2 attestation argument — falsified by the primary text; (10) PAL and LATM as evidence for
 extraction; (11) the McMahan calibration layer as exemplar; (12) DELETE as an unconditional
-prescription.
+prescription; (13) the Beg et al. citation for condition (iv)'s non-vacuity argument — on inspection
+the source does not contain the claim attributed to it (a real arXiv ID and author surname attached to
+a paper on a different subject), so the citation is removed outright rather than hedged; (14) the
+XCON figures in Section XV — 6,200 rules, roughly half changing annually, four worker-years per year,
+and the "difficult to believe R1 will ever be done" quotation — none of the four survived a second
+adversarial check against the primary text; replaced with the figure that did (250 rules in 1979 to
+on the order of 2,500 within a decade); (15) the clause "invisible to expert readers for eight
+months" attached to the Fonseca et al. citation in Section XV — that figure belongs to a different,
+unrelated detail in the same source (how long the authors searched for protocol bugs, not how long the
+specification-gap bug went undetected) and is removed; (16) the Huang et al. citation's title,
+attributed quotation, and the "hybrid beats either alone" characterization — the source's real title
+signals a cautionary study of verifier pitfalls, the quotation was a paraphrase presented as verbatim,
+and the paired 0.95-to-0.92 recall figure used twice (Section XIII, field-guide commitment 4) is not a
+matching comparison in the source; all three are corrected in place rather than repeated unverified.
 
 **Verification status.** The regulatory text (SR 26-2 §I p. 2, §II p. 3, n. 3) was extracted and read
 directly from the Federal Reserve's published attachment by this author, as were the NANDA
 methodology, the Wharton counter-instrument, the Alphabet Q2 2026 cash-flow figures, and the
-batch-invariance work. The 2026-dated arXiv items — Reddy et al., Qiu et al., Huang et al., Beg et
-al. — were located by delegated research under adversarial fact-checking; **their author lists, exact
-titles, and reported figures must be confirmed against the papers before submission**, since Table 2
-and the central claim rest on them. Bachant and McDermott, Brooks, Klein, Woodcock, Barr, Yang,
-Kaivola, Liu, Fonseca and Guo were verified against primary texts during the refutation pass.
+batch-invariance work. A first pass credited Bachant and McDermott, Brooks, Klein, Woodcock, Barr,
+Yang, Kaivola, Liu, Fonseca and Guo as "verified against primary texts during the refutation pass" —
+that was too strong. A second, independent adversarial pass (2026-07-31) re-checked every 2026-dated
+arXiv item plus the paper's most load-bearing older citations directly against primary sources, not
+secondary summaries. Results: Reddy et al. is accurate in every particular, including the exact
+quotation and both p-values. Qiu et al.'s reported figures (35.56% vs. 18.00%, 11 vs. 275 constraint
+violations, two production deployments) are accurate; its cited title and one quotation were wrong and
+are corrected above. Huang et al. and the Bachant-and-McDermott XCON figures were materially wrong, as
+detailed in (14) and (16). Beg et al. turned out to be a hallucinated citation — see (13) — and is
+removed. Barr, Yang, Klein, and Liu held up under the same scrutiny. Fonseca et al. is accurate except
+for the fabricated-by-conflation detail in (15). The discrepancy between the first pass's "verified"
+label and what the second pass actually found is recorded here rather than quietly corrected, because
+a verification claim that turns out to be wrong is exactly the kind of thing this paper's method is
+supposed to catch.
+
+**The clinical and aviation evidence in Section V is accurate and analogical, not on-topic.**
+Povyakalo et al. (mammography), Budzyń et al. (colonoscopy), and the FAA SAFOs all check out against
+primary and reliable secondary sources. None of them are studies of software or LLM systems. They
+establish that "automation improves the average while degrading the expert" recurs across unrelated
+domains — which is what licenses using them as an analogy — and Section V has been edited to say so
+explicitly rather than leave a reader to infer it.
 
 **Deliberately excluded.** Hummingbird's 1200× as a characteristic gain; Visa's $25 billion as an
 outcome measure; a survey correlating AI use with reduced critical thinking that carries a published

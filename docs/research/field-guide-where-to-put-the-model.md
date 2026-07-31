@@ -43,7 +43,9 @@ they performed 19 percentage points *worse* than colleagues working without AI**
 Jagged means you can't see the boundary from inside the task. Putting the model on the default path
 asks every operator to make that judgment call, continuously, under time pressure.
 
-And it lands hardest on your experts. Computer-aided detection *reduced* the sensitivity of the
+None of the following is about software — it's medicine and aviation, included because the pattern
+is the same and the stakes make it legible. And it lands hardest on your experts. Computer-aided
+detection *reduced* the sensitivity of the
 **most discriminating** mammography readers on difficult cancers while helping the weaker ones
 (Povyakalo et al.). Adenoma detection in standard non-AI colonoscopy fell from 28.4% to 22.4% after
 endoscopists began routine AI use (Budzyń et al. 2025). Lisanne Bainbridge named the mechanism in
@@ -69,7 +71,7 @@ teams who didn't.
 |---|---|
 | **Deterministic pre-execution gates** on τ²-bench's airline domain (Reddy et al. 2026) | 29.6% → **42.0%** (+12.4pp), *P* = 0.0012, **replicated** on disjoint seeds (+12.3pp, *P* = 0.0008) |
 | **Model demoted** to bounded sub-tasks, never deciding the workflow's path (Qiu et al. 2025) | **35.56%** vs 18.00% baseline, same backbone; constraint violations down **96%** (11 vs 275); two production deployments |
-| **Rules first, model only on the residual** the rules reject (Huang et al. 2025) | Hybrid beats either component alone |
+| **Rules first, model only on the residual** the rules reject (Huang et al. 2025) | Hybrid recall a few points above rules alone — though the source frames this as a study of verifier pitfalls, not a case for hybrids |
 
 The Reddy team's own summary is the sentence to put on the wall:
 
@@ -144,11 +146,11 @@ most scrutinised code benchmark in the field (Liu et al. 2023). Experts stated t
 criterion 164 times and were wrong 11% of the time. Get a second ratifier.
 
 **(iv) Is the predicate demonstrably non-vacuous?**
-This is the condition everyone skips, and it exists because `return true` satisfies the other three.
-Generated verification annotations are frequently *"syntactically valid but semantically weak, such
-as trivially true conditions or overly conservative constraints"* (Beg et al. 2026). **A green check
-certifies conformance to the check.** Enumerate your option space against the predicate and prove it
-discriminates.
+This is the condition everyone skips, and it exists because `return true` satisfies the other three
+without proving anything. **A green check certifies conformance to the check.** Enumerate your option
+space against the predicate and prove it discriminates. (An earlier draft cited a study on generated
+verification annotations here; a second check found the source didn't say what was attributed to it,
+so it's cut rather than repeated unverified — the point doesn't need a citation to hold.)
 
 **And one variable that isn't a condition: is anything trying to fool the verifier?** Two frontier
 labs faced identical conditions and made opposite choices — one built two learned judges, one refuses
@@ -182,8 +184,8 @@ can maintain.
    the residual, **differential monitor over live traffic** so drift is visible.
 3. **Prove non-vacuity** before trusting a green check.
 4. **Ship an expiry review and a re-entry path with every predicate.** Adequacy decays — rule-based
-   recall measured falling from ~0.95 to ~0.92 as generators got stronger (Huang et al.). Put a date
-   on it and a named owner.
+   recall measured meaningfully lower for long-chain-of-thought generators (~0.92) than for the
+   weaker generators a verifier was built against (Huang et al.). Put a date on it and a named owner.
 
 Plus one discipline from Parnas: **every predicate ships an explicit declaration of what it doesn't
 cover.**
@@ -192,10 +194,11 @@ cover.**
 
 ## 8. What could go wrong, honestly
 
-**Your rule base could rot.** DEC's XCON went from 250 rules in 1979 to over 6,200 by 1987, with
-roughly **half of them changing annually** and about four worker-years per year of maintenance
-forever. Its own team wrote: *"It is difficult now to believe R1 will ever be done."* If your churn
-looks like that, the predicate isn't worth building.
+**Your rule base could rot.** DEC's XCON grew from about 250 rules in 1979 to on the order of 2,500
+within a decade — a real, expensive, sustained expansion of a rule base nobody fully controlled. (A
+more dramatic rule count, an annual-churn figure, and a maintenance-cost estimate circulated in an
+earlier draft of this guide and didn't survive a second check against the source; they're cut rather
+than repeated unverified.) If your churn looks anything like that, the predicate isn't worth building.
 
 **Two facts cut the other way.** seL4 found re-verification under a *fixed* specification is "roughly
 proportional to the size of the change," and that one class of change stops happening entirely after
@@ -238,6 +241,8 @@ tells you within a fortnight whether the rest is worth doing.
 
 *Numbers in this guide are drawn from the sources cited in
 [Demote, Don't Delete](./position-paper-light-ai.md), which also prints the strongest case against
-this advice without rebuttal. The 2026-dated results (Reddy, Qiu, Huang, Beg) came through delegated
-research with adversarial fact-checking and should be confirmed against the papers before you build a
-business case on them.*
+this advice without rebuttal and documents a second, independent verification pass against primary
+sources (2026-07-31) in its closing notes. That pass found Reddy et al. and Qiu et al.'s core numbers
+accurate; corrected Huang et al.'s title, a quotation, and a recall figure; and pulled a citation
+(Beg et al.) that turned out not to say what it was cited for. Read those notes before you build a
+business case on any of this.*
