@@ -111,6 +111,7 @@ x-bot-env: &bot-env
   APP_URL: ${APP_URL:-http://localhost:35457}
   # Per-host OIDC login origins (fixes cross-host login loop). Unset = single-host.
   OIDC_BASE_URLS: ${OIDC_BASE_URLS:-}
+  HOST_APP_MAP: ${HOST_APP_MAP:-}
   # SESSION_SECRET (the master connector-token AES key) is deliberately NOT in the
   # shared bot anchor — token-broker security: bots get short-lived per-user tokens
   # from the controller, never the master key. It lives on oshal-api (the controller)

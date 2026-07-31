@@ -138,6 +138,7 @@
  * 133 | maintainer@emeraldcoastsystemsgroup.com   | Update-check daemon wired: registerUpdateRoutes (public GET /api/version — the platform's first runtime self-identity — + auth-gated GET /api/updates) and startUpdateCheckCron (daily deployed-apps-vs-store + running-commit-vs-upstream check; detection only, UPDATE_CHECK_ENABLED=0 disables). Guard: tests/unit/update-check.spec.ts.
  * 134 | maintainer@emeraldcoastsystemsgroup.com   | Update-check completion: registerUpdateRoutes now receives swarmAppService.loadApp so the operator-gated POST /api/updates/apps/:name/apply can hot-reload a re-installed package (installer runs with repo/ref from the INSTALLED manifest, never the caller); new-update transitions notify the operator via the notification center.
  * 135 | maintainer@emeraldcoastsystemsgroup.com   | Registered app.get('/login', loginHandler) after the global authMiddleware: the stock express-openid-connect login route is disabled (routes.login=false in @/shared/middleware/oidc) because it hardcoded returnTo=baseURL — every login-restart path (callback retry, state-mismatch recovery, cockpit 401 guard) forgot the original URL, so /cockpit/?app=<name> deep links landed on the bare cockpit after recovery. Guards: tests/login-returnto.spec.ts + tests/unit/login-returnto.spec.ts.
+ * 136 | maintainer@emeraldcoastsystemsgroup.com   | Root landing resolves HOST_APP_MAP (new host-app-map.ts) before falling back to LANDING_PATH, so a themed app subdomain (dnd.oshal.ai, trading.oshal.ai, littlemonsters.oshal.ai, ...) lands straight on its app instead of the generic ribbon. Unset = unchanged prior behavior. Guard: tests/unit/host-app-map.spec.ts.
  */
 
 require('dotenv').config();
@@ -153,6 +154,7 @@ import { createChildLogger } from '@/shared/logger';
 import { registerCodeServerBridgeRoutes, buildCodeServerRedirectUrl } from './routes/code-server-bridge-routes';
 import { registerDebugRoutes } from './routes/debug-routes';
 import { createAppContext } from './composition-root';
+import { resolveHostLandingPath } from './host-app-map';
 import { 
   createTaskRoutes, 
   createMessageRoutes, 
@@ -795,9 +797,15 @@ function createApp(): express.Application {
   // shaped by the user's authorizations. An explicit ?app=<name> in any URL is always
   // respected (RibbonNav reads it per page load) — only the no-app default changed. Set
   // LANDING_PATH to point a single-app deployment elsewhere, e.g.
-  // LANDING_PATH=/cockpit/?app=little-monsters.
+  // LANDING_PATH=/cockpit/?app=little-monsters. A themed subdomain (dnd.oshal.ai,
+  // trading.oshal.ai, ...) is resolved from HOST_APP_MAP first — see host-app-map.ts;
+  // LANDING_PATH stays the single-host fallback when no host entry matches.
   app.get('/', requiresAuth, async (req, res) => {
-    const landingPath = process.env.LANDING_PATH || '/cockpit/';
+    const landingPath = resolveHostLandingPath(
+      process.env.HOST_APP_MAP,
+      req.hostname,
+      process.env.LANDING_PATH || '/cockpit/',
+    );
     // First-run gate: every user sees onboarding once, and a working LLM is mandatory.
     if (await needsOnboarding(req)) {
       const qIdx = req.originalUrl.indexOf('?');
