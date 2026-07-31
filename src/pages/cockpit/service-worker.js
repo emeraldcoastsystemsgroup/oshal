@@ -28,12 +28,13 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Cache v24 also delivers immersive assistant suppression and prevents disabled chat frames from booting hidden tasks.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped to v25: cockpit shell gains zen (full-window focus) mode (index.html buttons + layout.css rules + app.js wiring) and the login double-refresh fix (controllerchange reload now skipped on FIRST claim — a freshly-fetched page has nothing stale to reload for). Evict so installed PWAs pick both up in one (final) reload.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped to v26: the index.html auth-lapse guard now carries ?returnTo=<current path+query> into /login so a session-expiry relogin returns to the same surface (?app= deep links included) instead of the bare cockpit. Evict so installed PWAs pick up the new shell.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped to v27 for ribbon.css + app.js: the portrait-phone drawer kept the desktop's pinned home/bottom trays, so the pinned tray starved the scrollable app tray to about one visible row — the drawer is now one scrolling column; and tapping the already-active view now closes the drawer (setActive's no-op early return skipped switchView's close). Evict so phones stop rendering the stale drawer from stale-while-revalidate cache.
  */
 
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v26';
+const CACHE_VERSION = 'oshal-cockpit-v27';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data
