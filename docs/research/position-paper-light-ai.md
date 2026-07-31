@@ -17,9 +17,9 @@ attestation. Both halves were wrong, and they were shown to be wrong by a system
 refute them.
 
 The regulatory argument was falsified by the primary text of the one instrument it cited. The
-deletion argument was falsified by something stronger than absence: three independent research
-groups built exactly the artifact this paper prescribed, in the domains this paper had chosen, and
-every one of them **kept the model**.
+deletion argument was falsified by something stronger than absence: independent research groups
+built or tested exactly the artifact this paper prescribed, in the domains this paper had chosen,
+and every one of them **kept the model**.
 
 What survives is narrower, better evidenced, and — this is the part that surprised its author — has
 replicated effect sizes behind it that the discarded version never had. The architecture is right.
@@ -27,8 +27,8 @@ The terminal step was wrong. Section XV prints the case against this paper at fu
 opponent's voice and without rebuttal, because a position that cannot survive its own best
 refutation is advocacy rather than argument.
 
-Twelve claims from earlier drafts are withdrawn outright; they are listed in the closing notes so
-the revision is auditable rather than silent.
+Eighteen claims from earlier drafts have been withdrawn or corrected across two adversarial passes;
+they are listed in the closing notes so the revision is auditable rather than silent.
 
 ### I. What Is Not in Dispute
 
@@ -96,7 +96,7 @@ Sculley and colleagues gave the structural version: only a small fraction of a r
 system is machine learning. The rest is data collection, feature extraction, verification,
 configuration, monitoring, resource and process management, serving infrastructure, and glue — with
 their estimate for a mature system at most five percent ML code and at least ninety-five percent
-glue (Sculley et al. 2503).
+glue (Sculley et al. 2507).
 
 The second failure belongs to the language-model era. The transformer solved sequence modeling at
 scale (Vaswani et al.), and the industry wrapped it in a chat window. Chat is an interface idiom, not
@@ -220,26 +220,29 @@ Four conditions license it, and a fifth variable governs whether it holds.
 property of a domain. Bachant and McDermott's selection argument cuts at it directly: "if the domain
 were less volatile, the task would not require a knowledge-based system," and "whenever an expert
 system finds itself on a boundry, its public encourages it to extend the boundary" (Bachant and
-McDermott 21–22, 28). A demoted call site can notice that its option space has stopped being
-enumerable; a deleted one cannot. That asymmetry is most of the argument for demotion.
+McDermott 21–22, 28; these two quotations could not be re-checked in the second verification pass —
+the primary text was unobtainable — and are retained with that status stated in the closing notes).
+A demoted call site can notice that its option space has stopped being enumerable; a deleted one
+cannot. That asymmetry is most of the argument for demotion.
 
 **(ii) The correctness rule already exists as a written rule that predates the model.** Narrowed
 from an earlier draft's "exists *or can be constructed*," and the narrowing is a real cost: where
 the predicate must be authored from scratch, this paper makes no claim, and accepts Brooks without
 qualification — "the hardest part of the software task is arriving at a complete and consistent
-specification" (Brooks 12). What is required is *evaluation-time* independence: the predicate takes
-only the data on hand as arguments at decision time and is ratifiable against a criterion a domain
-expert holds apart from the model's behaviour. Discovery by prototype is not disqualifying; Brooks
-prescribes that sequence in the same paragraph in which he denies ex-ante specification is possible,
-calling for "rapid prototyping of systems as part of the iterative specification of requirements"
-(15).
+specification" (Brooks, "Program Verification" section). What is required is *evaluation-time*
+independence: the predicate takes only the data on hand as arguments at decision time and is
+ratifiable against a criterion a domain expert holds apart from the model's behaviour. Discovery by
+prototype is not disqualifying; Brooks calls for "rapid prototyping of systems as part of the
+iterative specification of requirements" (Brooks, sec. 5.2 of the 1986 technical report — the 1987
+*Computer* reprint rewords this sentence slightly; see closing notes).
 
 **(iii) A domain expert can ratify the criterion.** Now the *weakest* condition, not the safest.
 EvalPlus found 18 defects across 11 percent of HumanEval's 164 human-written ground-truth solutions
 — ten of them cases where the reference implementation "incorrectly implement[s] the desired
-functionality" — standing roughly two years undetected in the most scrutinised code benchmark in the
-field (Liu et al.). Condition (iii) asks whether a human *can* state the criterion. It does not ask
-whether the statement is true.
+functionality" (Liu et al.) — defects that by release-date chronology had stood roughly two years in
+the most scrutinised code benchmark in the field (HumanEval shipped in 2021, EvalPlus in 2023; the
+two-year figure is that arithmetic, not the paper's own claim). Condition (iii) asks whether a human
+*can* state the criterion. It does not ask whether the statement is true.
 
 **(iv) The predicate must be demonstrably non-vacuous over the enumerated option space.** This
 condition is new, and exists because the first three are satisfied by `return true`. They require
@@ -273,8 +276,12 @@ criterion to exist?" That converts a classification problem this paper's earlier
 administer into a design problem engineers already know how to do.
 
 It also disposes of a defence this paper cannot make. Determinism does not confer robustness under
-pressure: in the same study a *model-based* verifier holds at 0.0–1.1 percent across every
-reward-hacking pattern tested. Robustness is an implementation property, and it licenses "use a
+pressure: in Huang and colleagues' verifier study, the strongest *model-based* verifier tested is
+fooled by only 0.0–1.1 percent of reward-hacking attempts across the representative patterns — while
+other model-based verifiers in the same study fall to the same attacks at rates up to thirty-five to
+sixty-two percent (Huang et al.). (An earlier draft attributed the 0.0–1.1 figure to "the same
+study," meaning DeepSeek-R1; it belongs to Huang and colleagues' Table 4, and to its best verifier
+only — see the closing notes.) Robustness is an implementation property, and it licenses "use a
 robust verifier," not "remove the model."
 
 ### VIII. What the Record Actually Shows
@@ -550,11 +557,10 @@ For an operator, the claim reduces to four commitments.
 3. **Prove non-vacuity before trusting a green check.** A passing oracle certifies conformance to the
    oracle. Enumerate the option space against the predicate and show it discriminates.
 4. **Ship an expiry review and a re-entry path with every predicate.** Adequacy decays — Huang and
-   colleagues find rule-based recall meaningfully lower for long-chain-of-thought generators (around
-   0.92) than for the weaker generators their verifier was built against, evidence that a predicate's
-   fit degrades as the thing it's checking changes. Where churn is high, demotion relocates the model
-   call rather than eliminating it, which given falling inference cost drains it of economic force in
-   exactly those cases.
+   colleagues find rule-based recall for long-chain-of-thought generators averaging around 0.92,
+   "much lower than other weaker models," evidence that a predicate's fit degrades as the thing it
+   checks changes. Where churn is high, demotion relocates the model call rather than eliminating
+   it, which given falling inference cost drains it of economic force in exactly those cases.
 
 And one discipline borrowed from Parnas, a hostile witness on the *sequence* — "the people who
 commission the building of a software system do not know exactly what they want and are unable to
@@ -670,9 +676,9 @@ across a full hardware cycle, the claim is wrong. Conversely, if a firm profitab
 in a domain with drifting option space, the boundary in Section VIII is wrong in the other direction.
 
 **F3 — Predicate decay outruns its benefit.** If harvested predicates in ordinary business domains
-show churn on the XCON scale — sustained, expensive annual revision, maintenance exceeding the
-inference displaced — the conditions select for cases too volatile to be worth doing and the residue
-shrinks to nothing.
+show churn on the XCON scale — order-of-magnitude rule growth sustained over years, maintenance
+exceeding the inference displaced — the conditions select for cases too volatile to be worth doing
+and the residue shrinks to nothing.
 
 ### XVII. Remaining Vulnerabilities
 
@@ -697,8 +703,8 @@ exactly right.
 What it no longer argues is that the model should be removed. Every published instance of putting a
 deterministic correctness predicate into an agentic transaction path retains the model: gating its
 writes, confining it to bounded sub-tasks, or working the residual the rules reject. Those instances
-carry replicated, statistically significant gains — twelve points on the airline domain, a
-ninety-six percent reduction in constraint violations, two production deployments — which is more
+carry real gains — a replicated, statistically significant twelve points on the airline domain; a
+ninety-six percent reduction in constraint violations; two production deployments — which is more
 than the deletion thesis ever had. Unconditional removal belongs to fixed discrete domains: an
 execution cluster, a compiler.
 
@@ -766,7 +772,7 @@ Governors of the Federal Reserve System, 2026.
 
 Brooks, Frederick P., Jr. "No Silver Bullet: Essence and Accidents of Software Engineering."
 Technical Report TR86-020, Dept. of Computer Science, University of North Carolina at Chapel Hill,
-Sept. 1986, pp. 12, 15. Reprinted in *Computer*, vol. 20, no. 4, Apr. 1987, pp. 10–19.
+Sept. 1986. Reprinted in *Computer*, vol. 20, no. 4, Apr. 1987, pp. 10–19.
 
 Brynjolfsson, Erik, Bharat Chandar, and Ruyu Chen. *Canaries in the Coal Mine? Six Facts about the
 Recent Employment Effects of Artificial Intelligence*. Stanford Digital Economy Lab, 2025.
@@ -949,7 +955,7 @@ Information Processing Systems 28*, Curran Associates, 2015, pp. 2503–11.
 SGLang Team. "Towards Deterministic Inference in SGLang and Reproducible RL Training." *LMSYS Org
 Blog*, 22 Sept. 2025.
 
-Shen, Judy Hanwen, and Alex Tamkin. "How AI Impacts Skill Formation." *arXiv*, 3 Feb. 2026,
+Shen, Judy Hanwen, and Alex Tamkin. "How AI Impacts Skill Formation." *arXiv*, 28 Jan. 2026,
 arxiv.org/abs/2601.20245.
 
 Shepard, D., and R. Salimans. "AutomationBench." *arXiv*, 2026, arxiv.org/abs/2604.18934.
@@ -1041,28 +1047,75 @@ on the order of 2,500 within a decade); (15) the clause "invisible to expert rea
 months" attached to the Fonseca et al. citation in Section XV — that figure belongs to a different,
 unrelated detail in the same source (how long the authors searched for protocol bugs, not how long the
 specification-gap bug went undetected) and is removed; (16) the Huang et al. citation's title,
-attributed quotation, and the "hybrid beats either alone" characterization — the source's real title
-signals a cautionary study of verifier pitfalls, the quotation was a paraphrase presented as verbatim,
-and the paired 0.95-to-0.92 recall figure used twice (Section XIII, field-guide commitment 4) is not a
-matching comparison in the source; all three are corrected in place rather than repeated unverified.
+attributed quotation, and the "hybrid beats either alone" characterization — the source's original
+title (v1: "Pitfalls of Rule- and Model-based Verifiers — A Case Study on Mathematical Reasoning,"
+retitled "From Accuracy to Robustness…" in v2, which the Works Cited entry follows) signals a
+cautionary study of verifier pitfalls; the quotation was a paraphrase presented as verbatim; and the
+paired 0.95-to-0.92 recall figure used in both documents (Section XIII here, and the field guide's
+commitment 4) stitched a baseline from an unrelated table onto a real 0.92 — the source's own claim
+is that long-chain-of-thought recall averages around 0.92, "much lower than other weaker models,"
+which is what both documents now say; (17) the claim that "in the same study a model-based verifier
+holds at 0.0–1.1 percent across every reward-hacking pattern tested" — "the same study" pointed at
+DeepSeek-R1, whose Nature paper contains no such measurement; the figure is Huang and colleagues'
+Table 4, it describes their single strongest verifier over the representative patterns, and other
+model-based verifiers in the same study are hacked at rates up to 35–62 percent — corrected in place
+with the attribution and the qualifier; (18) "standing roughly two years undetected" attributed to
+Liu et al. — the two-year figure appears nowhere in that paper; it is release-date arithmetic
+(HumanEval 2021, EvalPlus 2023), now labeled as such in both places it appears.
 
 **Verification status.** The regulatory text (SR 26-2 §I p. 2, §II p. 3, n. 3) was extracted and read
 directly from the Federal Reserve's published attachment by this author, as were the NANDA
 methodology, the Wharton counter-instrument, the Alphabet Q2 2026 cash-flow figures, and the
 batch-invariance work. A first pass credited Bachant and McDermott, Brooks, Klein, Woodcock, Barr,
 Yang, Kaivola, Liu, Fonseca and Guo as "verified against primary texts during the refutation pass" —
-that was too strong. A second, independent adversarial pass (2026-07-31) re-checked every 2026-dated
-arXiv item plus the paper's most load-bearing older citations directly against primary sources, not
-secondary summaries. Results: Reddy et al. is accurate in every particular, including the exact
-quotation and both p-values. Qiu et al.'s reported figures (35.56% vs. 18.00%, 11 vs. 275 constraint
-violations, two production deployments) are accurate; its cited title and one quotation were wrong and
-are corrected above. Huang et al. and the Bachant-and-McDermott XCON figures were materially wrong, as
-detailed in (14) and (16). Beg et al. turned out to be a hallucinated citation — see (13) — and is
-removed. Barr, Yang, Klein, and Liu held up under the same scrutiny. Fonseca et al. is accurate except
-for the fabricated-by-conflation detail in (15). The discrepancy between the first pass's "verified"
-label and what the second pass actually found is recorded here rather than quietly corrected, because
-a verification claim that turns out to be wrong is exactly the kind of thing this paper's method is
-supposed to catch.
+that was too strong, and the second pass (2026-07-31, independent, against primary sources rather
+than secondary summaries) both exposed it and replaced it. What that pass actually established:
+
+*Accurate in full:* Reddy et al. (every figure, both p-values, the quotation verbatim). Yao et al.
+(both pass^k figures and both quoted fragments verbatim). Xu et al. (~30% matches the current
+version; the December 2024 v1 reported 24%). Xie et al. (both figures exact). Dell'Acqua et al. (all
+five figures). Peng et al. (55.8%). Menzies et al. (quotation verbatim, 171 projects). Ouyang et al.
+(all six non-determinism figures exact). Mirzadeh et al. (up to 65%, as characterization). Stanford
+HAI's 280-fold over twenty-three months (the report's own framing). The PARC/CAST 60 percent figure,
+which the second pass initially could not access, was subsequently verified against the FAA-hosted
+report itself: "Over 60% of the accident reports reviewed by the WG identified a manual handling
+error as a factor in the accident" (p. 31). Gond et al., Shen and Tamkin, and Shepard and Salimans
+all exist as cited and say what they are cited for (one correction: Shen and Tamkin's arXiv dates are
+28 Jan./1 Feb. 2026, not 3 Feb.).
+
+*Verbatim quotations confirmed:* Brooks (both — though the inline page numbers did not survive: the
+"hardest part" sentence sits in the program-verification subsection, not near the cited page, and the
+prototyping sentence is exact to the 1986 technical report while the 1987 *Computer* reprint inserts
+"prototyping is"; inline citations now point at sections, not pages). Guo et al. (both). Woodcock et
+al. (the adoption sentence; "biased toward those who saw value" is an accurate characterization of
+its stated selection bias, not a quotation, and is not punctuated as one). Kaivola et al. (both
+fragments; "some twenty person years" per the abstract). Klein et al. (both sentences; the 165,000
+figure is the sum of Table 1's two refinement proofs rather than a printed number — the paper's own
+inclusive total is 200,000 lines — and "roughly proportional" is the paper's best case,
+behaviour-preserving changes, which is what "under a fixed specification" glosses). Barr et al.
+(exact, p. 507). Liu et al. (figures and quotation exact; the two-year claim was external arithmetic,
+per (18)). Fonseca et al. (both fragments exact; the conflated clause removed, per (15)).
+
+*Corrected or removed:* Qiu et al. (figures accurate; cited title and quotation corrected). Huang et
+al., per (16) and (17). Bachant and McDermott's XCON figures, per (14). Beg et al., removed, per
+(13). One page citation corrected: Sculley et al.'s 5%/95% sentence is real but sits on p. 2507, not
+p. 2503 — and it is the source's hedged "might end up being," which the body's "estimate" language
+reflects.
+
+*Not re-checked:* the two Bachant and McDermott quotations in Section VI condition (i) — the primary
+text was unobtainable in the second pass (AAAI's archive was down; the publisher copies are
+paywalled), and a source that has already produced one unverifiable quotation and four failed figures
+does not get the benefit of the doubt: they are retained only with this label, and the "boundry"
+spelling is preserved as it appeared in the first pass's transcription, provenance unknown. Also not
+re-checked: the survey, macroeconomic, cognitive, labour-market, commons, and financial citations of
+Sections I–II and XI–XII (Bick, Acemoglu, Census, Bastani, Shen–Tamkin aside, Kosmyna, Brynjolfsson,
+Autor–Thompson, Afrouzi, Macnamara, Longpre, Stack Exchange, del Rio-Chanona, Burtch, Miller,
+Belson–Rhea, Villalobos, PJM, LBNL, Federal Reserve, SEC filings, Odlyzko, and the model-collapse
+literature). Those sections are explicitly load-relieved — Section II says the thesis "rests on
+Sections IV through X" — and their figures should be treated as reported, not re-verified. The
+discrepancy between the first pass's "verified" label and what the second pass actually found is
+recorded here rather than quietly corrected, because a verification claim that turns out to be wrong
+is exactly the kind of thing this paper's method is supposed to catch.
 
 **The clinical and aviation evidence in Section V is accurate and analogical, not on-topic.**
 Povyakalo et al. (mammography), Budzyń et al. (colonoscopy), and the FAA SAFOs all check out against
