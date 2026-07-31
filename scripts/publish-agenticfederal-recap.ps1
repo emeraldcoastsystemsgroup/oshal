@@ -109,4 +109,19 @@ if (-not $SkipDeploy) {
   if (-not $idxOk) { Fail "prod verify: index.json does not lead with $Date after deploy" }
   Note "VERIFIED: $url is live and index.json leads with $Date"
 }
+
+# 8) MIRROR to the company site. This step did not exist until 2026-07-31, so emeraldcoastsystemsgroup
+# .com/demos only ever moved when someone updated it BY HAND - it sat on the July 24 session while
+# agenticfederal was publishing nightly, and the operator found it a week stale. A second surface that
+# only a human remembers to update is a surface that is always wrong. Mirroring failure is NOTED, never
+# fatal: the primary site is already published and verified above, and a company-site hiccup must not
+# fail the nightly run behind it.
+try {
+  $mirror = Join-Path $PSScriptRoot 'publish-ecsg-recap.ps1'
+  if (Test-Path $mirror) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $mirror -Date $Date -Out $Out 2>&1 | ForEach-Object { Note $_ }
+    if ($LASTEXITCODE -ne 0) { Note "company-site mirror FAILED (agenticfederal is published + verified; re-run publish-ecsg-recap.ps1 -Date $Date)" }
+  } else { Note "company-site mirror script not found at $mirror - skipped" }
+} catch { Note "company-site mirror error: $($_.Exception.Message)" }
+
 Note "DONE: $Date published to agenticfederal.us"
