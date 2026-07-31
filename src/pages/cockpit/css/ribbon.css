@@ -249,6 +249,11 @@
 @media (max-width: 640px) {
   .mobile-menu-btn { display: inline-flex; }
 
+  /* The drawer is ONE scrolling menu, not the desktop three-tray rail. Keeping
+     the home/bottom trays pinned (flex-shrink:0) here let the pinned bottom
+     tray — base essentials + the appended platform pins — eat most of a
+     portrait phone's height, starving the scrollable app tray down to a
+     single visible row. On a phone the whole drawer scrolls instead. */
   .ribbon-nav {
     position: fixed;
     top: 0;
@@ -262,9 +267,16 @@
     border-radius: 0;
     align-items: stretch;
     padding-top: 16px;
+    padding-bottom: 0;
     box-shadow: 8px 0 30px rgba(0, 0, 0, 0.45);
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain; /* don't chain the drawer's scroll to the page */
   }
   .ribbon-nav.mobile-open { transform: translateX(0); }
+  /* The decorative glass highlight is anchored to the scroll origin, so once
+     the drawer scrolls it ends in a visible seam — drop it on the phone. */
+  .ribbon-nav::before { content: none; }
   /* No hover-expand on touch; keep full width + always-visible labels. */
   .ribbon-nav:hover { width: 240px; }
   .ribbon-nav .ribbon-label {
@@ -273,8 +285,21 @@
     font-size: 14px;
   }
   .ribbon-btn { width: 100%; height: 46px; min-height: 46px; padding: 0 18px; }
+  /* All three trays flow in the one scrolling column: the middle tray stops
+     being its own scroll region and contributes its full height instead. */
+  .ribbon-scroll {
+    flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
+  }
   /* Drawer uses 16px top padding — bleed the pinned home tray's tint to match. */
   .ribbon-home { margin-top: -16px; padding-top: 16px; }
+  /* The tray tint runs to the drawer's true bottom edge (incl. the home-
+     indicator safe area) via its own padding, since the nav no longer pads. */
+  .ribbon-bottom {
+    margin-bottom: 0;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
   /* No hover on touch: keep group headers at full height with visible text
      (they'd otherwise stay stuck in the collapsed thin-divider state). */
   .ribbon-group-label {
