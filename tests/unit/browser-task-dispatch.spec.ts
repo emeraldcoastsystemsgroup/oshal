@@ -9,9 +9,13 @@
  *   prompt (no app vocabulary of its own), passes the chosen worker's callback URL to a prompt-builder
  *   form, honors an explicit node pick, treats a wedged (non-draining) worker as unavailable, and
  *   returns a clean error (never throws) when no browser-capable node is connected.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:04:00 | Isolated
+ *   device-ownership environment variables around the generic browser-task dispatch tests so the
+ *   owner-scoped picker contract is deterministic after suites that exercise operator or legacy
+ *   unowned-device compatibility flags.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hoisted = vi.hoisted(() => {
   const enqueued: Array<{ clientId: string; env: any }> = [];
@@ -35,6 +39,8 @@ import { dispatchBrowserTask } from '@/app/browser-task-dispatch';
  *  is owner-scoped (tests/unit/device-access-dispatch.spec.ts owns that rule), so a rail test has to
  *  say who is asking — an unattributed dispatch is denied on purpose. */
 const OWNER = 'owner-sub-1';
+const ENV_KEYS = ['OSHAL_OPERATOR_SUBS', 'OSHAL_OPERATOR_EMAILS', 'OSHAL_ALLOW_LEGACY_UNOWNED', 'APPLY_EDGE_CLIENT_ID', 'APPLY_EDGE_HOSTNAME'] as const;
+const savedEnv: Record<string, string | undefined> = {};
 
 const NODE_A = {
   clientId: 'node-a', tailnetHostname: 'edge-node-1', status: 'online', healthy: true, ownerSub: OWNER,
@@ -42,8 +48,21 @@ const NODE_A = {
 };
 
 beforeEach(() => {
+  for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
+  delete process.env.OSHAL_OPERATOR_SUBS;
+  delete process.env.OSHAL_OPERATOR_EMAILS;
+  delete process.env.OSHAL_ALLOW_LEGACY_UNOWNED;
+  delete process.env.APPLY_EDGE_CLIENT_ID;
+  process.env.APPLY_EDGE_HOSTNAME = 'edge-node-1';
   hoisted.enqueued.length = 0;
   hoisted.state.clients = [structuredClone(NODE_A)];
+});
+
+afterEach(() => {
+  for (const key of ENV_KEYS) {
+    if (savedEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedEnv[key];
+  }
 });
 
 describe('dispatchBrowserTask — the generic browser-task rail', () => {
