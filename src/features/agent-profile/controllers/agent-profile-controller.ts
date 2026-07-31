@@ -12,9 +12,12 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Added all 47 legacy bot personas to seed roster so full catalog appears in address book (31 unported as offline)
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: dropped the two PHANTOM rows from the 'oshal' catalog — alert-intake-bot (0b145cab…) and graph-analyst (fc31e1c5…) have no persona YAML and no compose service, so they can never be personified or dispatched, and this list is what a plain deployment actually serves (BOT_CATALOG is unset everywhere, so the fallback resolves to 'oshal'). Also corrected the catalog's tooling comment: it advertised 'OpenSearch search, Memgraph cypher', neither of which exists in this stack — the real surfaces are /api/rag/search and the optional caller-scoped /api/graph tier (ArangoDB/AQL).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:07:00 | Added
+ *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
+ *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  */
 
-import { Request, Response } from 'express';
+import { Request, Response, type RequestHandler } from 'express';
 import { BaseController } from '@/app/base-controller';
 import {
   BulkAgentProfileRequestSchema,
@@ -36,7 +39,7 @@ export class AgentProfileController extends BaseController {
    * @description GET /api/agents - List lightweight summaries for all persisted agents.
    * Falls back to seed agent definitions when the database is empty or unavailable.
    */
-  listAgents = this.asyncHandler(async (_req: Request, res: Response) => {
+  listAgents: RequestHandler = this.asyncHandler(async (_req: Request, res: Response) => {
     let agents: Array<Record<string, unknown>> = [];
     try {
       const dbAgents = await this.agentProfileService.listAgents();
@@ -64,7 +67,7 @@ export class AgentProfileController extends BaseController {
    * @description GET /api/agents/:agentId/profile - Read the persisted profile for one agent.
    * Falls back to a seed-derived stub when the database is unavailable.
    */
-  getAgentProfile = this.asyncHandler(async (req: Request, res: Response) => {
+  getAgentProfile: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentId = readRouteParam(req.params.agentId);
 
     let profile: Record<string, unknown> | null = null;
@@ -91,7 +94,7 @@ export class AgentProfileController extends BaseController {
   /**
    * @description PUT /api/agents/:agentId/profile - Persist a narrow agent-profile update.
    */
-  updateAgentProfile = this.asyncHandler(async (req: Request, res: Response) => {
+  updateAgentProfile: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentId = readRouteParam(req.params.agentId);
     const { profile } = UpdateAgentProfileRequestSchema.parse(req.body);
     const updated = await this.agentProfileService.updateAgentProfile(agentId, profile);
@@ -109,7 +112,7 @@ export class AgentProfileController extends BaseController {
   /**
    * @description GET /api/agents/bulk/profile-status - Return per-bot bulk-config eligibility and readiness.
    */
-  listBulkConfigStatus = this.asyncHandler(async (_req: Request, res: Response) => {
+  listBulkConfigStatus: RequestHandler = this.asyncHandler(async (_req: Request, res: Response) => {
     const statuses = await this.agentProfileService.listBulkConfigStatus();
     return this.success(res, { statuses });
   });
@@ -117,7 +120,7 @@ export class AgentProfileController extends BaseController {
   /**
    * @description POST /api/agents/bulk/configure-all - Apply a template profile to all eligible bots.
    */
-  configureAllProfiles = this.asyncHandler(async (req: Request, res: Response) => {
+  configureAllProfiles: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { profile, includeExcluded } = BulkAgentProfileRequestSchema.parse(req.body);
     const result = await this.agentProfileService.configureAllProfiles(profile, includeExcluded);
     return this.success(res, {
@@ -129,7 +132,7 @@ export class AgentProfileController extends BaseController {
   /**
    * @description POST /api/agents/bulk/configure-all-unset - Apply a template only where target fields are blank.
    */
-  configureUnsetProfiles = this.asyncHandler(async (req: Request, res: Response) => {
+  configureUnsetProfiles: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { profile, includeExcluded } = BulkAgentProfileRequestSchema.parse(req.body);
     const result = await this.agentProfileService.configureUnsetProfiles(profile, includeExcluded);
     return this.success(res, {
@@ -141,7 +144,7 @@ export class AgentProfileController extends BaseController {
   /**
    * @description POST /api/agents/:agentId/profile/avatar - Persist a bot avatar image in the agent metadata row.
    */
-  uploadAgentAvatar = this.asyncHandler(async (req: Request, res: Response) => {
+  uploadAgentAvatar: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentId = readRouteParam(req.params.agentId);
     const file = validateFile(req.file, {
       maxSize: 2 * 1024 * 1024,

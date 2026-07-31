@@ -13,10 +13,13 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Default useStoredCursor and persistCursor to false on process endpoint to prevent stale cursor pagination
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added listRuns and listWorkItems endpoints for operator visibility dashboard
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Prevented the GitHub process shortcut from checkpointing before ticket processing completes
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:07:00 | Added
+ *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
+ *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  */
 
 import { randomUUID } from 'crypto';
-import { Request, Response } from 'express';
+import { Request, Response, type RequestHandler } from 'express';
 import { z } from 'zod';
 import { BaseController } from '@/app/base-controller';
 import { TicketInteractionModeSchema, buildExternalTicketWorkflow, buildExternalTicketHierarchy } from '@/entities/ticket';
@@ -137,7 +140,7 @@ export class SwarmOrchestrationController extends BaseController {
    * @param res - Express response
    * @returns HTTP response with run-level processing summary
    */
-  processProvider = this.asyncHandler(async (req: Request, res: Response) => {
+  processProvider: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const startedAt = Date.now();
     const { provider } = ProviderParamSchema.parse(req.params);
     const parsedBody = SwarmProcessRequestSchema.parse(req.body || {}) as SwarmProcessingInput;
@@ -191,7 +194,7 @@ export class SwarmOrchestrationController extends BaseController {
    * @param res - Express response
    * @returns HTTP response containing run record or 404 when not found
    */
-  getRun = this.asyncHandler(async (req: Request, res: Response) => {
+  getRun: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const startedAt = Date.now();
     const { runId } = RunParamSchema.parse(req.params);
 
@@ -228,7 +231,7 @@ export class SwarmOrchestrationController extends BaseController {
    * @param res - Express response
    * @returns HTTP response with single work item pulled from Plane or error details
    */
-  smokeTest = this.asyncHandler(async (_req: Request, res: Response) => {
+  smokeTest: RequestHandler = this.asyncHandler(async (_req: Request, res: Response) => {
     const startedAt = Date.now();
 
     this.logger.info('Plane connectivity smoke test initiated');
@@ -281,7 +284,7 @@ export class SwarmOrchestrationController extends BaseController {
    * @param res - Express response
    * @returns HTTP response with matching escalation records
    */
-  listEscalations = this.asyncHandler(async (req: Request, res: Response) => {
+  listEscalations: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const startedAt = Date.now();
     const query: SwarmEscalationQuery = EscalationQuerySchema.parse(req.query);
 
@@ -303,7 +306,7 @@ export class SwarmOrchestrationController extends BaseController {
    * @param res - Express response
    * @returns HTTP response with recent run records
    */
-  listRuns = this.asyncHandler(async (req: Request, res: Response) => {
+  listRuns: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { limit } = RunListQuerySchema.parse(req.query);
     const runs = await this.processingService.listRuns(limit);
     return this.success(res, { runs, count: runs.length });
@@ -315,7 +318,7 @@ export class SwarmOrchestrationController extends BaseController {
    * @param res - Express response
    * @returns HTTP response with work items including execution output and verification results
    */
-  listWorkItems = this.asyncHandler(async (req: Request, res: Response) => {
+  listWorkItems: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const query = WorkItemQuerySchema.parse(req.query);
 
     if (!this.workItemRepository) {
@@ -350,7 +353,7 @@ export class SwarmOrchestrationController extends BaseController {
    * @param res - Express response
    * @returns HTTP response with processing run result
    */
-  submitTickets = this.asyncHandler(async (req: Request, res: Response) => {
+  submitTickets: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { tickets: rawTickets, policy } = SubmitTicketsRequestSchema.parse(req.body);
 
     const tickets = rawTickets.map((t) => {
