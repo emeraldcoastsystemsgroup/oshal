@@ -121,7 +121,7 @@ The cap is a reservation against physical RAM — what you give the engine, Wind
 ```powershell
 $cs = Get-CimInstance Win32_ComputerSystem
 $os = Get-CimInstance Win32_OperatingSystem
-[math]::Round($cs.TotalPhysicalMemory/1GB,2)          # total physical
+([math]::Round($cs.TotalPhysicalMemory/1GB,2))        # total physical
 Get-Process | Sort-Object WorkingSet64 -Descending |
   Select-Object -First 10 Name, @{n='WS_GB';e={[math]::Round($_.WorkingSet64/1GB,2)}}
 ```
