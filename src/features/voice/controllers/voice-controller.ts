@@ -5,9 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Voice controller using BaseController pattern
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log formatting while keeping controller API unchanged
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:10:00 | Added
+ *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
+ *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  */
 
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { BaseController } from '@/shared/api';
 import { validateBody, validateFile } from '@/shared/api';
 import { VoiceService } from '../services/voice-service';
@@ -31,7 +34,7 @@ export class VoiceController extends BaseController {
    * 
    * Expects multipart/form-data with audio file.
    */
-  transcribe = this.handle(async (req: Request, res: Response, next: NextFunction) => {
+  transcribe: RequestHandler = this.handle(async (req: Request, res: Response, next: NextFunction) => {
     // Validate uploaded file
     const audioFile = validateFile(req.file, {
       required: true,
@@ -54,7 +57,7 @@ export class VoiceController extends BaseController {
    * 
    * Expects JSON body with text and optional voice.
    */
-  synthesize = this.handle(async (req: Request, res: Response, next: NextFunction) => {
+  synthesize: RequestHandler = this.handle(async (req: Request, res: Response, next: NextFunction) => {
     // Validate request body
     const { text, voice, providerId } = validateBody(req, SynthesizeRequestSchema);
 
@@ -71,7 +74,7 @@ export class VoiceController extends BaseController {
    * @description Handler for GET /api/voice/voices
    * Returns list of available voices for TTS.
    */
-  getVoices = this.handle(async (req: Request, res: Response, next: NextFunction) => {
+  getVoices: RequestHandler = this.handle(async (req: Request, res: Response, next: NextFunction) => {
     // Delegate to service
     const result = await this.measure('getAvailableVoices', () =>
       this.service.getAvailableVoices()
