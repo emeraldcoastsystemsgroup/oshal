@@ -3498,7 +3498,7 @@ ROADMAP + framework-developer-guide reconciled in the same 2026-07-24 change.
 - **Done when:** every tracked source file carries the Change Log header and exported members
   carry `@description` (+ `@param`/`@returns` where applicable). Track any residual gaps here.
 
-### Harden inline controller bots (token-broker rollout, phase 2)
+### Harden inline controller bots (token-broker rollout, phase 2) 🟨 LARGELY CLOSED 2026-08-01
 - **What:** The per-app chat bots `social-writer`/`storage-assistant`/`deck-builder` — and the
   pre-existing `codex-packer`/`project-manager` — run INLINE in the
   `oshal-api` (controller) container, which holds `SESSION_SECRET` (the master connector-token
@@ -3513,6 +3513,37 @@ ROADMAP + framework-developer-guide reconciled in the same 2026-07-24 change.
 - **Done when:** controller-resident bots cannot read `SESSION_SECRET`/decrypt another user's
   tokens — either they carry no `Bash` (per-bot `allowedTools` without it) or they run in
   dedicated non-controller containers; verified by attempting an env read from a bot tool call.
+
+**Shipped 2026-08-01 — the `allowedTools` half of the done-when, plus a control the item missed.**
+`resolveHarnessForAgent` resolves a per-bot scope from the registry `container`
+([controller-inline-scope.ts](../src/features/llm-provider/services/controller-inline-scope.ts)) and
+threads it into the harness factory, so this is per-bot wiring, not the global env:
+1. **No shell for inline bots.** The deployment-wide `CLAUDE_ALLOWED_TOOLS` is filtered
+   (`Bash`/`BashOutput`/`KillBash`/`KillShell`/`Shell`, case-insensitively) for any bot whose
+   container is the api. Read/Write/Edit/Glob/Grep/WebFetch survive, so `codex-packer` still emits
+   its persona + manifest. Bot-node bots keep the full incident "SWAT team" set — the restriction is
+   inline-only and additive by construction.
+2. **Platform-plane credentials scrubbed from the child env.** `SESSION_SECRET` was ALREADY scrubbed
+   from every bot spawn (`BaseCliHarnessAdapter.SECRET_ENV_KEYS`) — the item's premise was partly
+   stale. What was NOT scrubbed, and matters more, is `REMOTE_CLIENT_SHARED_SECRET`: it lives only on
+   the api service, and it is MACHINE TRUST on the worker plane, meaning it skips per-device
+   ownership. An injected inline bot holding it could enqueue a shell-exec task on ANY user's
+   desktop. It is now deleted for inline spawns, along with
+   `REMOTE_CLIENT_CONTROL_PLANE_TOKEN`/`ALERT_WEBHOOK_TOKEN`/`WORLD_INGEST_TOKEN`/`TV_PAIRING_SECRET`.
+   Deliberately NOT scrubbed: `SWARM_SERVICE_SECRET` (personas legitimately call the api with it) and
+   provider API keys (the CLI *is* the LLM caller).
+- **Still open (why this is 🟨 not ✅):** a codex-harness inline bot has a shell by construction —
+  the vendor CLI owns its own permission model and compose sets `CODEX_SANDBOX_MODE:
+  danger-full-access` — so for those the env scrub is the load-bearing control and the tool list is
+  not. `DATABASE_URL` also still reaches inline spawns (removing it risks breaking bot shell-outs
+  that were not audited here; the api role is the non-superuser `oshal_app`, so RLS applies).
+  The complete answer is this done-when's OTHER option: move inline bots into dedicated
+  non-controller containers. That is a topology change with a compose + registry migration behind
+  it, not a wrap-up edit. **Live verification of the done-when's own test** ("attempt an env read
+  from a bot tool call") still needs a deployed stack.
+- **Guard:** `tests/unit/inline-bot-no-shell.spec.ts` (13 cases; 6 targeted mutations proven red
+  2026-08-01, including unwiring the scope in `provider-runtime` and dropping `extraSecretEnvKeys`
+  from either `super()` branch of the claude adapter).
 
 ### Bot-node `/api/swarm-execute` is unauthenticated + host-published (security audit 2026-06-16) — ✅ CLOSED 2026-07-15
 - **What:** [bot-node-server.ts](../src/app/bot-node-server.ts) `POST /api/swarm-execute` runs LLM
@@ -3757,6 +3788,33 @@ repos as folders; you drill into them.
 - **Done when:** every bot endpoint call carries the **authenticated caller's identity** (`userSub`) **and** an enforced **entitlement check** (RBAC / ownership / per-bot ACL) before execution; Jarvis/orchestrator delegation **propagates the caller's privilege and never escalates to the bot's**; a restricted user **provably cannot invoke or reach** a bot/tool outside their entitlement, even through Jarvis; covered by tests in the security-review/isolation suite. Ties to the per-app/per-bot scoping noted in [[oshal-iot-tenancy-design]] and the isolation audit.
 
 **Verified 2026-07-19:** OPEN — `/api/swarm-execute` has the service-secret + fail-closed identity payloads, but no per-caller entitlement check at execute time.
+
+**Status 2026-08-01 — the endpoint layer is now covered; delegation shape and the live proof remain.**
+- ✅ `POST /api/swarm-execute` (bot node): `createExecuteEntitlementGate` runs after the machine-auth
+  gate. Default mode is **enforce** (K6) — unknown values fail closed, `warn`/`off` are explicit
+  opt-outs.
+- ✅ `executeBotOrInline` (controller chokepoint): `assertExecuteEntitlement`, which is what covers
+  INLINE bots — they resolve to a null endpoint and never reach the bot-node HTTP gate.
+- ✅ **`POST /api/send-message` + `POST /api/tasks/:taskId/messages` — the gap this line named and
+  nothing had closed.** The route honoured a caller-supplied `body.agentId` VERBATIM and called
+  `ctx.orchestrator.processMessage` directly, never through `executeBotOrInline`. Its IDOR guard
+  checks the THREAD, not the BOT, so a signed-in non-operator could reach exactly the ADR-087
+  operator+swarm machinery K7 scoped (`oshal-developer`, `devops-bot`, `vault-bot`,
+  `security-analyst`, `code-developer`, `tester-bot`, …) by naming its agentId on a task they
+  legitimately own. The resolved agentId now runs through the SAME pure decision, BEFORE any ticket
+  is created or any LLM work starts, and a denial answers 403 `caller_not_entitled_to_agent`.
+  `direct` is set only for genuine interactive identity callers, so a valid service-secret call
+  remains swarm/queue dispatch — the `dispatch-manifest-worker`/`dispatch-incident-worker` localhost
+  fallback and the headless CLI are unaffected.
+  Guard: `tests/unit/send-message-entitlement.spec.ts` (7 cases; the denial-path mutation proven red).
+- ⬜ **Still open:** the done-when's *delegation* clause — "Jarvis/orchestrator delegation propagates
+  the caller's privilege and never escalates to the bot's" — is satisfied in the paths above only
+  because every one of them threads the caller's own sub. A bot-to-bot call-out (ADR-083) that
+  re-enters on the service secret still presents as swarm dispatch, which is trusted by design; if a
+  future call-out lets a USER-initiated turn fan out to a bot the user is not entitled to, that is
+  the next hole. ⬜ Also open: the live restricted-user proof ("a restricted user provably cannot
+  reach a bot outside their entitlement, even through Jarvis") on a deployed stack with
+  `OSHAL_OPERATOR_SUBS` populated — the unit guards prove the decision, not the deployment.
 
 ### Biometric unlock module — "you can only access Jarvis if you are who you say you are" ⬜ (cool, deferred)
 - **Why:** an optional identity-verification gate for privileged access — **face scan** (stand in front of the Ring camera / phone) and/or **voice recognition** — before granting Jarvis or a high-privilege bot. Pairs with the bot-endpoint privilege model (a passed biometric challenge becomes a condition for high-privilege actions) and the smart-home edge-node (Ring camera access, ADR-047).

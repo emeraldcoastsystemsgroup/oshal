@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Object-level authorization (IDOR fix): GET /:taskId/messages and the send handlers now check the caller may access the task before reading its history or posting to it. A task's owner is its ticket's owner (resolveTaskOwner); the check fails SAFE — unresolved/unowned tasks (incl. brand-new conversations) are allowed, only a clearly-different owner is denied (404). Previously any authenticated user could read another user's chat history or inject into their thread by supplying its taskId.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Split message read/write guards so history reads fail closed when RLS hides another user's task.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Chat-path token broker list += 'twilio' so the communications-bot's phone/text leg (scripts/oshal-twilio.js) receives the caller's own SID:AuthToken secret in conversational threads.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | EXECUTE-TIME ENTITLEMENT ON THE OTHER BOT ENDPOINT (BACKLOG "Bot-endpoint privilege model - authorize the ACTUAL endpoint call", which names /api/send-message explicitly). This route honoured a caller-supplied body.agentId VERBATIM and called ctx.orchestrator.processMessage directly, never through executeBotOrInline - so the gate K6 flipped to enforce covered /api/swarm-execute and the executeBotOrInline chokepoint but NOT here. A signed-in non-operator could reach exactly the ADR-087 operator+swarm machinery K7 scoped (oshal-developer, devops-bot, vault-bot, security-analyst, code-developer, ...) by naming its agentId on a task they legitimately own; the IDOR guard above checks the THREAD, not the bot. The resolved agentId now runs through assertExecuteEntitlement with `direct` set ONLY for genuine interactive identity callers - a valid service-secret call is swarm dispatch and stays trusted, so the manifest/incident-worker localhost fallback and the headless CLI are byte-identical - and CallerNotEntitledError maps to 403 caller_not_entitled_to_agent. Guard: tests/unit/send-message-entitlement.spec.ts.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -18,6 +19,7 @@ import { createChildLogger } from '@/shared/logger';
 import { DEFAULT_CHAT_AGENT_ID, resolveProjectManagerTicketExecutionContext } from '@/features/chat-orchestration';
 import { resolveBotCreds } from './connector-token-broker';
 import { canAccessResource, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { assertExecuteEntitlement, CallerNotEntitledError } from '@/app/bot-node-execute-entitlement';
 import { connectorProvidersForManifestWorker } from '@/app/manifest-worker-connector-scope';
 import type { AppContext } from '../composition-root';
 
@@ -57,6 +59,36 @@ async function callerMayReadMessages(ctx: AppContext, req: Request, taskId: stri
   }
   const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
   return owner ? canAccessResource(req, owner) : false;
+}
+
+/**
+ * @description Execute-time entitlement for THIS endpoint (BACKLOG "Bot-endpoint privilege
+ * model"). The service secret proves a trusted machine is calling and the IDOR guard proves the
+ * caller owns the THREAD; neither says the caller is entitled to the BOT they just named. Reuses
+ * the same decision the bot-node HTTP gate and executeBotOrInline run, so there is no policy
+ * copy to drift.
+ *
+ * `direct` is what separates the two caller classes the model already distinguishes:
+ *   - a valid service-secret call is swarm/queue dispatch threading a ticket owner's sub for the
+ *     token broker (dispatch-manifest-worker / dispatch-incident-worker fall back to this route
+ *     over localhost) -> NOT direct, trusted, unchanged;
+ *   - an OIDC session or PAT caller is interactive per-user delegation -> direct, entitlement-checked.
+ *
+ * @param req - The inbound request (identity + service-secret facts).
+ * @param resolvedAgentId - The bot the request will actually execute on.
+ * @param taskId - Task id for the denial audit line.
+ * @throws CallerNotEntitledError in enforce mode (the default) on an explicit mismatch.
+ */
+function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, taskId: string): void {
+  const isMachineCall = hasValidServiceSecret(req);
+  const sessionSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub ?? null;
+  assertExecuteEntitlement({
+    userSub: isMachineCall ? getTrustedServiceUserSub(req) ?? sessionSub : sessionSub,
+    direct: !isMachineCall && Boolean(sessionSub),
+    targetAgentId: resolvedAgentId,
+    taskId,
+    surface: 'POST /api/send-message',
+  });
 }
 
 /**
@@ -122,6 +154,9 @@ function handleSendMessage(ctx: AppContext) {
         ? agentId.trim()
         : '';
       const resolvedAgentId = await resolveMessageAgentId(ctx, taskId, requestedAgentId);
+      // Runs BEFORE ticket creation and before any LLM work: an unentitled caller must not
+      // create a ticket, consume budget, or reach a broker on the way to being refused.
+      assertSendMessageEntitlement(req, resolvedAgentId, taskId);
       const resolvedContext = await resolveProjectManagerTicketExecutionContext(
         {
           taskStore: ctx.taskStore,
@@ -203,6 +238,16 @@ function handleSendMessage(ctx: AppContext) {
         ticketTitle: executionContext.ticketTitle ?? null,
       });
     } catch (error) {
+      // A denial is an authorization outcome, not a server fault: 403 with the same machine
+      // code the bot-node gate returns, logged at WARN (the gate already logged the audit line).
+      if (error instanceof CallerNotEntitledError) {
+        logger.warn(
+          { taskId, targetAgentId: error.targetAgentId, durationMs: Date.now() - startTime },
+          'send-message refused: caller is not entitled to the named agent',
+        );
+        res.status(403).json({ success: false, error: error.code });
+        return;
+      }
       logger.error({ err: error, taskId, durationMs: Date.now() - startTime }, 'Failed to process message');
       if (executionContext.ticketCreated && executionContext.ticketId) {
         res.status(202).json({

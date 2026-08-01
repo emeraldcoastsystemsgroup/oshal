@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | HarnessAdapter contract — formal interface for all agent runtime harnesses (Cline, Codex CLI, Claude Code)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: HarnessTask.creds carries the caller's short-lived per-user access tokens (OSHAL_CRED_*) written into the workspace as .oshal-cred-<provider> files, so shelled tools use a provided token instead of decrypting oshal_connections with SESSION_SECRET.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | HarnessFactoryConfig gains container + allowedTools + scrubEnvKeys so resolveHarnessForAgent can hand a CONTROLLER-INLINE bot a least-privilege harness (BACKLOG "Harden inline controller bots"): no shell tool, and the platform-plane credentials the api container holds deleted from the child env. All three are optional and absent for bot-node bots, so their harnesses are built byte-identically.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added 'a2a' to the HarnessType union (outbound A2A gateway, BACKLOG Plan F item 3) — an external A2A agent as a dispatch target; the typed HARNESS_FACTORIES record forces its factory entry. HarnessFactoryConfig gains botName + a2aEndpointEnv so the a2a factory can derive the per-bot credential env (A2A_OUTBOUND_TOKEN_<BOTKEY>) and the registry-declared endpoint env without hardcoding either.
  */
 
@@ -279,6 +280,28 @@ export interface HarnessFactoryConfig {
 
   /** Path or name of the CLI binary. */
   cliBinaryPath?: string;
+
+  /**
+   * The compose container the bot's registry entry declares. Present so a factory can tell a
+   * CONTROLLER-INLINE bot (container 'oshal-api' — runs inside the api process's container,
+   * which holds the platform's own credentials) from a bot-node bot, and scope it accordingly.
+   * See services/controller-inline-scope.ts for the policy.
+   */
+  container?: string;
+
+  /**
+   * Explicit tool allowlist for tool-gated CLIs (claude-code `--allowedTools`). When set it
+   * OVERRIDES the process-level CLAUDE_ALLOWED_TOOLS — that is what lets an inline bot run
+   * without a shell on a deployment whose env grants one to every bot node.
+   */
+  allowedTools?: string;
+
+  /**
+   * Extra environment keys the adapter must delete from the spawned CLI's environment, on top
+   * of the always-scrubbed master/connector secrets. Used to keep platform-plane credentials
+   * out of an inline bot's subprocess.
+   */
+  scrubEnvKeys?: readonly string[];
 
   /** API key / bearer token (provider-specific). */
   apiKey?: string;

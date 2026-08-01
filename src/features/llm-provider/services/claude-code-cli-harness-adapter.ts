@@ -70,6 +70,13 @@ export interface ClaudeCodeCliHarnessConfig {
   allowedTools?: string;
 
   /**
+   * Extra env keys deleted from the spawned CLI's environment on top of the always-scrubbed
+   * master/connector secrets. Set for controller-INLINE bots — see
+   * services/controller-inline-scope.ts.
+   */
+  scrubEnvKeys?: readonly string[];
+
+  /**
    * Path to a JSON MCP server config file passed via `--mcp-config`.
    * Default: CLAUDE_MCP_CONFIG env var, then /app/config-seed/claude-code-mcp.json.
    * Set to empty string to skip MCP entirely.
@@ -152,7 +159,9 @@ export class ClaudeCodeCliHarnessAdapter extends BaseCliHarnessAdapter {
     super(
       'claude-code-cli-harness-adapter',
       streaming ? inactivityMs : batchAbsoluteMs,
-      streaming ? { idleReset: true, maxDurationMs: streamCeilingMs } : undefined,
+      streaming
+        ? { idleReset: true, maxDurationMs: streamCeilingMs, extraSecretEnvKeys: config.scrubEnvKeys }
+        : { extraSecretEnvKeys: config.scrubEnvKeys },
     );
 
     this.binaryPath = config.binaryPath
@@ -193,6 +202,7 @@ export class ClaudeCodeCliHarnessAdapter extends BaseCliHarnessAdapter {
       allowedTools: this.allowedTools,
       mcpConfigPath: this.mcpConfigPath || '(none)',
       extraDirs: this.extraDirs,
+      scrubbedEnvKeys: config.scrubEnvKeys?.length ?? 0,
     }, 'ClaudeCodeCliHarnessAdapter initialized');
   }
 

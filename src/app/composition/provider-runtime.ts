@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ARCHITECTURAL FIX: Removed all direct HTTP LLM providers — ALL calls route through Cline CLI (see ADR-005)
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Refresh OpenAI Codex credentials from persisted/shared seed sources before provider resolution so Docker workers can pick up new OAuth without restart
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'a2a' outbound harness (Plan F item 3): factory builds A2AHarnessAdapter from the registry-declared endpoint env (a2aEndpointEnv, default A2A_OUTBOUND_ENDPOINT_URL) + per-bot token env, wraps it in HarnessLLMBridge, and injects the costUnknown stamper. resolveHarnessForAgent now forwards botName/a2aEndpointEnv so per-bot config never hardcodes URLs or tokens.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Least-privilege harnesses for CONTROLLER-INLINE bots (BACKLOG "Harden inline controller bots"). resolveHarnessForAgent now reads the registry entry's `container` and, when it is the api itself, folds resolveControllerInlineScope into the factory config: a shell-free allowedTools list (overriding the deployment-wide CLAUDE_ALLOWED_TOOLS, which grants Bash to every bot) and the platform-plane env keys the adapter must scrub from the child process. The claude-code and codex-cli factories forward both. Bot-node bots pass no container-derived scope, so their harnesses are built byte-identically. Guard: tests/unit/inline-bot-no-shell.spec.ts.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Switched the seven deep harness-adapter imports to the new sanctioned '@/features/llm-provider/harness' entry point (barrel split, TODO-BOUNDARY-FINDING 2026-07-19) — behavior unchanged; this file stays the harness stack's sole composition root.
  */
 
@@ -23,7 +24,13 @@ import path from 'path';
 import { createChildLogger } from '@/shared/logger';
 import type { AgentProfileService } from '@/features/agent-profile';
 import type { Pool } from 'pg';
-import { AnthropicProvider, getDefaultModel, LLMService, NoopProvider } from '@/features/llm-provider';
+import {
+  AnthropicProvider,
+  getDefaultModel,
+  LLMService,
+  NoopProvider,
+  resolveControllerInlineScope,
+} from '@/features/llm-provider';
 // eslint-disable-next-line no-restricted-imports -- two-runtimes: LLM execution runtime, deliberately off the barrel graph (barrel split, TODO-BOUNDARY-FINDING)
 import { GovernedProvider } from '@/features/llm-provider/services/governed-provider';
 // eslint-disable-next-line no-restricted-imports -- two-runtimes: LLM execution runtime, deliberately off the barrel graph (barrel split, TODO-BOUNDARY-FINDING)
@@ -157,6 +164,9 @@ export const HARNESS_FACTORIES: Record<HarnessType, HarnessFactory> = {
     const adapter = new CodexCliHarnessAdapter({
       model: cfg.modelId,
       binaryPath: cfg.cliBinaryPath ?? process.env.CODEX_CLI_PATH,
+      // Controller-inline bots: keep the api container's platform-plane credentials out of the
+      // codex subprocess. Undefined for bot-node bots (no behaviour change there).
+      scrubEnvKeys: cfg.scrubEnvKeys,
     });
     return new HarnessLLMBridge(adapter);
   },
@@ -215,6 +225,11 @@ export const HARNESS_FACTORIES: Record<HarnessType, HarnessFactory> = {
     const adapter = new ClaudeCodeCliHarnessAdapter({
       model: claudeModel,
       binaryPath: process.env.CLAUDE_CLI_PATH ?? process.env.CLAUDE_CODE_CLI_PATH ?? 'claude',
+      // Controller-inline bots run in the api container: no shell tool, and the platform-plane
+      // credentials scrubbed from the child env. Both undefined for bot-node bots, which keep
+      // the process-level CLAUDE_ALLOWED_TOOLS (the incident "SWAT team" posture).
+      allowedTools: cfg.allowedTools,
+      scrubEnvKeys: cfg.scrubEnvKeys,
     });
     const primary = new HarnessLLMBridge(adapter);
     return withProviderStallFallback(primary, cfg, 'claude-code');
@@ -887,6 +902,29 @@ export function createProviderResolver(
 
 // ── Per-agent harness override ─────────────────────────────────────────────────
 
+/** The registry fields harness resolution reads. Structural, so both registries satisfy it. */
+export interface HarnessRegistryEntry {
+  agentId?: string;
+  name?: string;
+  container?: string;
+  harnessType?: string;
+  apiType?: string;
+  capabilities?: string[];
+  a2aEndpointEnv?: string;
+}
+
+/**
+ * @description Default registry reader for {@link resolveHarnessForAgent}. A LAZY require
+ * rather than a static import, so this composition root adds no eager edge onto the swarm
+ * extension (the two-runtimes boundary the controller-runtime-boundary guard pins).
+ * @returns The active registry entries.
+ */
+function defaultLoadHarnessRegistry(): HarnessRegistryEntry[] {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getActiveRegistry } = require('@/app/extensions/swarm/swarm-bot-registry');
+  return getActiveRegistry() as HarnessRegistryEntry[];
+}
+
 /**
  * @description Resolves a per-bot harness override based on the bot's `harnessType` field
  * in the active swarm registry.  Returns null when no override is configured — the caller
@@ -906,6 +944,11 @@ export function createProviderResolver(
  *
  * @param agentId - The bot's agent ID.
  * @param compositionLogger - Scoped logger.
+ * @param resolveAgentCapabilities - Capability resolver handed to the factory.
+ * @param loadRegistry - Registry reader; defaults to {@link defaultLoadHarnessRegistry}.
+ *   Injectable ONLY so a guard spec can drive this resolution: the default's
+ *   `require('@/...')` alias does not resolve under the vitest transform, which silently made
+ *   the whole function untestable (it returned null on every call).
  * @returns LLMService instance for the harness, or null.
  */
 export function resolveHarnessForAgent(
@@ -914,19 +957,10 @@ export function resolveHarnessForAgent(
   resolveAgentCapabilities: AgentCapabilityResolver = async (resolvedAgentId: string) => (
     resolveAgentCapabilitiesFromSwarmRegistry(resolvedAgentId)
   ),
+  loadRegistry: () => HarnessRegistryEntry[] = defaultLoadHarnessRegistry,
 ): LLMService | null {
   try {
-    // Dynamic import avoided — use lazy require for the registry
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getActiveRegistry } = require('@/app/extensions/swarm/swarm-bot-registry');
-    const registry = getActiveRegistry() as Array<{
-      agentId?: string;
-      name?: string;
-      harnessType?: string;
-      apiType?: string;
-      capabilities?: string[];
-      a2aEndpointEnv?: string;
-    }>;
+    const registry = loadRegistry();
     // Primary: match the explicit registry agentId (UUID).
     // Fallback: match by process BOT_NAME/AGENT_ID env when the caller passes a DB-seeded UUID
     //           that differs from the registry UUID (e.g. the per-container default chat agent).
@@ -955,11 +989,25 @@ export function resolveHarnessForAgent(
     const defaults = HARNESS_RUNTIME_DEFAULTS[harnessKey] ?? HARNESS_RUNTIME_DEFAULTS.cline;
     const modelId = defaults.resolveModel(resolveRuntimeModelName);
     const cliBinaryPath = defaults.resolveBinary();
+    // Controller-inline least privilege (BACKLOG "Harden inline controller bots"): a bot whose
+    // registry container IS the api executes inside the process that holds the platform's own
+    // credentials, so it gets a shell-free tool list and an env scrub. { inline: false } for
+    // every bot-node bot, leaving both fields undefined.
+    const inlineScope = resolveControllerInlineScope(entry.container);
+    if (inlineScope.inline) {
+      compositionLogger.info(
+        { agentId, container: entry.container, allowedTools: inlineScope.allowedTools },
+        'resolveHarnessForAgent: controller-inline bot — shell tools removed and platform-plane env scrubbed',
+      );
+    }
     return factory({
       providerId: entry.harnessType,
       apiType: entry.apiType,
       modelId,
       cliBinaryPath,
+      container: entry.container,
+      allowedTools: inlineScope.allowedTools,
+      scrubEnvKeys: inlineScope.scrubEnvKeys,
       resolveAgentCapabilities,
       // The a2a harness derives its per-bot credential env from the bot name and
       // reads its endpoint from the registry-declared env var; harmless elsewhere.

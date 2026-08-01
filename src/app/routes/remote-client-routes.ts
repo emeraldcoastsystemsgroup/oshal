@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Scope the device LIST + single-device read to the caller (closes the documented residual of the 2026-07-09 ownership pass). A device list is a list of real people computers, and it also hands out the clientId that PINS dispatch - so an unscoped list was the discovery half of the cross-user leaf-node dispatch hole closed the same day in device-access.ts. Session callers now see only devices canAccessResource admits (operators still see the fleet); machine callers - the node daemon and the platform dispatchers - are unchanged because they must route work across every device. A denied single read 404s rather than 403s so ids cannot be probed for existence. Guard: tests/unit/remote-client-device-ownership.spec.ts.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: close two cross-user execution paths that the owner-scoped DISPATCHER fix (31a51352) does not cover, found by an adversarial design review. (1) MESH TASK INJECTION: the subscribeAgent callback converts an inbound envelope into registry.enqueueTask, and toTaskEnvelope accepts a verbatim embedded payload.task with arbitrary intent/input (codex.exec at danger-full-access). handleSendSwarmMessage is device-gated on the SENDER clientId and then calls sendDirect() on an UNCHECKED body toAgentId - so a user who legitimately owns one node could name another user node and execute on their desktop, bypassing requireDeviceAccess AND the dispatcher gate. New mayInjectTask() guards the CONVERSION (covers direct + broadcast; the sender agent id is server-derived from the authenticated device, never body-supplied): device-to-device traffic must pass canUseDevice, non-device senders are platform traffic and unchanged, and a refused envelope is still delivered as an inert MESSAGE, never as execution. (2) OWNERSHIP TAKEOVER: adopting an EXISTING but unbound device was open to any signed-in user - with OSHAL_ALLOW_LEGACY_UNOWNED on, canAccessResource admits everyone against a null owner and registry.register() lets a supplied ownerSub overwrite, so re-registering someone else clientId made you its permanent owner and every later gate then agreed. Only an operator may adopt an existing unbound device; first-time enrollment registers a NEW clientId, and the node own machine-trust re-registration is unaffected. Guards: tests/unit/remote-client-device-ownership.spec.ts.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Worker-plane auth hardening (docs/backlog/hardening.md #7, backward compatible — enrolled shared-secret nodes keep working): (1) the swarm-wide shared-secret compare is now constant-time via timingSafeSecretEquals (sha256-digest both sides + crypto.timingSafeEqual) — `===` was a timing oracle on a public origin; (2) a router-LOCAL, flag-gated (OSHAL_RATE_LIMIT_REMOTE_CLIENTS, default OFF = no-op) rate limiter mounts ahead of auth, keyed PER CALLER on the /:clientId path segment (never per shared IP — behind cloudflared/NAT an IP key pools the fleet into one bucket) — closes the operator-action-queue rate-limit item without touching over-cap server.ts; (3) the shared-secret branch is formally DEPRECATED in favour of per-node tokens (`Bearer oshal_pat_…` → the upstream cli-token middleware authenticates the node's OWNER; the session branch + requireDeviceAccess then bind it to its own devices — issue = POST /api/join/enroll or POST /api/cli-tokens, verify = createCliTokenAuthMiddleware): the branch now warns once per boot and stamps x-oshal-shared-secret-deprecated on its responses so re-enrollment progress is observable. Guard: tests/unit/remote-client-auth.spec.ts (worker plane proven on a node token with NO shared secret configured).
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | SHARED SECRET RETIREMENT (docs/backlog/hardening.md #7). Three legs. (a) FAIL-CLOSED SWITCH: REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true refuses the swarm-wide-secret branch outright (401 code shared_secret_retired) so a deployment can prove no node still depends on it; default false keeps field nodes working, and the branch stays loudly deprecated either way. (b) PER-NODE BINDING ENFORCEMENT: a node-bound token (cli-token-routes node_client_id) is already confined to its own /:clientId plane by the auth middleware, but POST /register carries the device identity in the BODY - handleRegisterClient now refuses a body clientId that is not the presented token's, so a device credential cannot enrol, and take delivery of work for, a sibling machine. (c) ROTATION SURFACE: POST /:clientId/token/rotate mints the successor credential and revokes every prior generation in one call (owner-or-operator session, or the node presenting its own current token). Guard: tests/unit/remote-client-node-token.spec.ts.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Rate-limiter keying fix (adversarial review): the per-clientId limiter mounted BEFORE auth let an unauthenticated flood mint a fresh bucket per fabricated clientId (bypass) and let a known clientId be 429-starved by anonymous traffic. Moved it AFTER authorizeRemoteClient — the clientId is now proven and unauthenticated floods are rejected before touching a legit node's bucket (the global 1000/min/IP limiter bounds those).
  */
 
@@ -21,6 +22,7 @@ import { randomUUID } from 'crypto';
 import { promises as fsp } from 'fs';
 import { basename, resolve, sep } from 'path';
 import { Router, raw, type NextFunction, type Request, type Response } from 'express';
+import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { canAccessResource, getCaller, isOperator, requireOperator } from '@/shared/middleware/authz';
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -45,6 +47,8 @@ import {
 // Deep import mirrors the sanctioned server.ts precedent for the hardening presets module.
 import { makeLimiter } from '@/features/security';
 import {
+  sharedSecretRetired,
+  nodeTokenBindingMatches,
   RemoteClientClaimResponseSchema,
   RemoteClientRegistryService,
   RemoteClientTaskCompletionSchema,
@@ -68,6 +72,7 @@ import {
   subscribeRemoteTaskResults,
   type RemoteTaskResultLandingRepository,
 } from './remote-client-task-results';
+import { readNodeTokenBinding, rotateNodeToken } from './cli-token-routes';
 
 const logger = createChildLogger({ module: 'remote-client-routes' });
 
@@ -115,6 +120,8 @@ export const remoteClientRegistry = new RemoteClientRegistryService();
 const registry = remoteClientRegistry;
 
 interface RemoteClientRouteOptions {
+  /** Token store backing per-node credential rotation. Absent -> the rotate route 503s. */
+  pool?: Pool;
   meshCommunicationService?: MeshCommunicationService;
   runtimeRegistryService?: AgentRuntimeRegistryService;
   orchestrator?: RemoteChatOrchestrator;
@@ -126,6 +133,7 @@ interface RemoteClientRouteOptions {
 }
 
 interface RemoteClientRouteContext {
+  pool?: Pool;
   meshCommunicationService?: MeshCommunicationService;
   runtimeRegistryService?: AgentRuntimeRegistryService;
   orchestrator?: RemoteChatOrchestrator;
@@ -140,6 +148,7 @@ interface RemoteClientRouteContext {
 export function createRemoteClientRoutes(options: RemoteClientRouteOptions = {}): Router {
   const router = Router();
   const context: RemoteClientRouteContext = {
+    pool: options.pool,
     meshCommunicationService: options.meshCommunicationService,
     runtimeRegistryService: options.runtimeRegistryService,
     orchestrator: options.orchestrator,
@@ -194,6 +203,10 @@ export function createRemoteClientRoutes(options: RemoteClientRouteOptions = {})
   router.post('/:clientId/swarm/send', requireDeviceAccess, (req, res) => void handleSendSwarmMessage(req, res, context));
   router.post('/:clientId/chat', requireDeviceAccess, (req, res) => void handleChatTurn(req, res, context));
   router.post('/:clientId/owner', (req, res) => void handleSetOwner(req, res));
+  // Per-node credential rotation (hardening #7). requireDeviceAccess already binds a session
+  // caller to their own device; a node presenting its OWN current node token passes the same
+  // gate as its owner, which is what lets an edge daemon rotate itself unattended.
+  router.post('/:clientId/token/rotate', requireDeviceAccess, (req, res) => void handleRotateNodeToken(req, res, context));
 
   // Scoped per-task workspace sync. A node can read/write ONLY the shared task
   // folder for a task it currently holds (in-flight). Never the whole volume.
@@ -262,6 +275,19 @@ function authorizeRemoteClient(req: Request, res: Response, next: NextFunction):
     sharedSecret.length > 0 &&
     (timingSafeSecretEquals(headerValue, sharedSecret) || timingSafeSecretEquals(bearer, sharedSecret))
   ) {
+    // Fail-closed posture: once every node is re-enrolled onto a per-node token, the operator
+    // sets REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true and the swarm-wide value stops being a
+    // credential at all. Refusing here (rather than deleting the branch) is what makes the
+    // retirement provable on a live fleet: flip it, watch for this log line, flip back if a
+    // node still needs re-enrolling.
+    if (sharedSecretRetired()) {
+      logger.warn(
+        { path: req.path, method: req.method },
+        'refused swarm-wide shared secret: REMOTE_CLIENT_REQUIRE_NODE_TOKEN is on - re-enrol this node (POST /api/join/enroll) for a per-node token',
+      );
+      res.status(401).json({ error: 'Unauthorized', code: 'shared_secret_retired' });
+      return;
+    }
     (req as RemoteAuthedRequest).remoteClientAuthMode = 'secret';
     warnSharedSecretDeprecationOnce();
     res.setHeader('x-oshal-shared-secret-deprecated', '1');
@@ -342,6 +368,71 @@ async function handleSetOwner(req: Request, res: Response): Promise<void> {
 }
 
 /**
+ * @description POST /:clientId/token/rotate - issues this device's NEXT worker-plane
+ * credential and revokes every prior generation in the same call (hardening #7: the
+ * swarm-wide shared secret had no rotation at all, and one leaked copy reached every
+ * person's desktop).
+ *
+ * Who may call it: requireDeviceAccess has already run, so the caller is the device's owner,
+ * an operator, or the node itself presenting its OWN current node token (its binding resolves
+ * to its owner's identity, which is what lets an edge daemon rotate unattended). A machine
+ * caller on the DEPRECATED swarm-wide secret is deliberately refused - letting the credential
+ * being retired mint its own replacement would defeat the point.
+ *
+ * The plaintext successor is returned exactly once. The presenting token is revoked with the
+ * rest, so a node must persist the new value before its next poll.
+ *
+ * @param req - Request (`/:clientId` names the device).
+ * @param res - Response carrying the minted token once.
+ * @param context - Route context (pool backs the token store).
+ */
+async function handleRotateNodeToken(
+  req: Request,
+  res: Response,
+  context: RemoteClientRouteContext,
+): Promise<void> {
+  const clientId = normalizeParam(req.params.clientId);
+  if (isMachineCaller(req)) {
+    logger.warn({ clientId }, 'Node-token rotation denied: the deprecated shared secret may not mint per-node credentials');
+    res.status(403).json({ error: 'Forbidden: rotate with a session or the device own node token', code: 'shared_secret_cannot_rotate' });
+    return;
+  }
+  if (!context.pool) {
+    res.status(503).json({ error: 'rotation_unavailable', message: 'This swarm has no database, so it cannot issue per-node tokens.' });
+    return;
+  }
+  const client = registry.getClient(clientId);
+  const { sub, email } = getCaller(req);
+  // Rotate FOR the device's owner, not for whoever asked: an operator rotating someone's node
+  // must not silently re-own its credential. An unowned device (operator-only by
+  // requireDeviceAccess) binds to the operator performing the enrolment.
+  const ownerSub = (client?.ownerSub ?? '').trim() || (sub ?? '').trim();
+  if (!ownerSub) {
+    res.status(400).json({ error: 'device_has_no_owner', message: 'Bind an owner (POST /:clientId/owner) before issuing a per-node token.' });
+    return;
+  }
+  try {
+    const minted = await rotateNodeToken(context.pool, {
+      clientId,
+      ownerSub,
+      email: ownerSub === sub ? email ?? null : null,
+      label: `node ${clientId}`,
+    });
+    res.status(201).json({
+      clientId,
+      ownerSub,
+      token: minted.token,
+      tokenId: minted.id,
+      revokedCount: minted.revokedCount,
+      expiresAt: minted.expiresAt,
+    });
+  } catch (error) {
+    logger.error({ err: error, clientId }, 'Per-node token rotation failed');
+    res.status(500).json({ error: 'rotation_failed' });
+  }
+}
+
+/**
  * @description Registers a new remote client and binds its direct swarm channel.
  * Ownership at registration: machine callers (the node daemon) self-assert their
  * ownerSub from the node's signed-in config. Session callers get ownerSub pinned
@@ -351,6 +442,22 @@ async function handleSetOwner(req: Request, res: Response): Promise<void> {
 async function handleRegisterClient(req: Request, res: Response, context: RemoteClientRouteContext): Promise<void> {
   try {
     const registration = RemoteClientRegistrationSchema.parse(req.body);
+
+    // Per-node binding, body edition (hardening #7). Every other worker-plane route carries the
+    // device in the URL, so the auth middleware's decideNodeTokenScope already confines a node
+    // token to its own /:clientId. /register does not - the identity is in the body - so without
+    // this a device credential could enrol a SIBLING clientId and then legitimately receive that
+    // machine's dispatched work. The ownership checks below do not catch it: the credential's
+    // owner may genuinely own both devices.
+    const nodeBinding = readNodeTokenBinding(req);
+    if (nodeBinding && !nodeTokenBindingMatches(nodeBinding.clientId, registration.clientId)) {
+      logger.warn(
+        { boundClientId: nodeBinding.clientId, declaredClientId: registration.clientId },
+        'Registration denied: node-bound token named a different device',
+      );
+      res.status(403).json({ error: 'Forbidden: this token is bound to another device', code: 'node_token_client_mismatch' });
+      return;
+    }
 
     if (!isMachineCaller(req)) {
       const existing = registry.getClient(registration.clientId);

@@ -8,9 +8,40 @@ code-health). Goal: production-readiness for the seed→platform vision ([ADR 03
 The numbered list below is kept as the audit record; items marked ✅/[DONE]/[COVERED] inline are
 closed. What is **genuinely still open** as security-net work:
 
-- **#4 Migration transactionality** — migrations still apply without BEGIN/COMMIT/ROLLBACK.
-- **#7 Remote-client auth** — still a shared-secret header compare; HMAC/JWT/mTLS before the A2A
-  surface goes public.
+- ~~**#4 Migration transactionality**~~ — **CLOSED, and this line was STALE.** Each migration and
+  its `app_migrations` history INSERT already run `BEGIN` / sql / INSERT / `COMMIT` on ONE pooled
+  client, with `ROLLBACK` + a loud filename error on failure and the run stopped before later files
+  (`database-bootstrap-service.ts`). A `-- oshal:no-transaction` pragma is the escape hatch for
+  CONCURRENTLY/VACUUM-class files, and the four legacy self-wrapping migrations are auto-detected so
+  the runner never double-wraps them. Guard: `tests/unit/migration-transactionality.spec.ts` — nine
+  behavioural cases plus a STATIC gate over the real `scripts/migrations` tree (a new file with a
+  non-transaction-safe statement and no pragma fails the build). Mutation-checked 2026-08-01:
+  turning the `ROLLBACK` into a `COMMIT` goes red.
+- **#7 Remote-client auth** — **CLOSED 2026-08-01 (per-node tokens), with the swarm-wide secret kept
+  as a loudly-deprecated compatibility path until every field node is re-enrolled.** What shipped:
+  - **Issuance.** `POST /api/join/enroll` with a `clientId` mints an `oshal_pat_` token BOUND to that
+    device (`oshal_cli_tokens.node_client_id`, migration `102`). Non-expiring by default, because it
+    is the node's steady-state credential — its bounds are scope, rotation and revocation.
+  - **Verification.** The global CLI-token middleware admits a bound token ONLY on paths
+    `decideNodeTokenScope` allows: its own `/api/remote-clients/<clientId>/**` plus the two
+    enrollment-handshake paths. Everywhere else the request stays unauthenticated and hits the
+    normal 401 — so a credential lifted off an edge machine is NOT the account credential an
+    unbound PAT is (no `/api/content`, no token minting, no sibling device). `POST /register`
+    carries the device in the body, so the router checks it against the binding separately.
+  - **Rotation.** `POST /api/remote-clients/:clientId/token/rotate` revokes EVERY live generation
+    for the device and mints its successor in one call. The deprecated shared secret may not rotate
+    (`shared_secret_cannot_rotate`) — the credential being retired cannot mint its replacement.
+  - **Retirement.** `REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true` makes the shared-secret branch answer
+    401 `shared_secret_retired`. Default `false` so field nodes keep working; while accepted the
+    branch warns once per boot and stamps `x-oshal-shared-secret-deprecated`, which is the
+    observable that tells an operator when the flip is safe.
+  - Constant-time compare + the per-caller rate limiter (2026-07-24) are unchanged.
+  Guard: `tests/unit/remote-client-node-token.spec.ts`. **Honest scope:** this is a per-node hashed
+  bearer credential with binding + rotation + revocation, not mTLS; the audit line asked for
+  "HMAC/JWT/mTLS", and the security property delivered — one credential per device, revocable
+  independently — is the one that mattered. mTLS remains a separate deployment decision.
+  **Still open:** re-enrolling the nodes in the field and then flipping the switch (a live-stack act,
+  see the deploy-time verification in the PR body).
 - **#15 Headscale hardened ACL** — authored, still not applied (live overlay ACL remains allow-all).
 - **#16 Headscale pre-auth key rotation** — plaintext key still in `scripts/start-local-agent.bat`.
 - **#17 Legacy credential rotation** — provider-side hygiene, NOT a repo exposure. ⚠ Re-verified

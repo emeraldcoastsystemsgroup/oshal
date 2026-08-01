@@ -60,6 +60,26 @@ OIDC issuer / connector / LLM provider and harvesting brokered tokens). The
 `docker-compose.incident-lab.yml` override is intentionally left at `"0"` (it talks to a
 self-signed internal OpenSearch).
 
+### 1.4a Worker-plane (remote-client) auth: per-node tokens (2026-08-01)
+The desktop/worker plane authenticated with `REMOTE_CLIENT_SHARED_SECRET` — ONE value shared by
+every node, and MACHINE TRUST, so a request bearing it skipped the per-device ownership gate
+entirely. One leaked copy therefore reached every person's computer, and it could not be rotated for
+a single machine. It is now replaced by per-node tokens (issue, verify, rotate, revoke) with the
+shared secret kept as a loudly-deprecated compatibility path and a fail-closed switch
+(`REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true`) to retire it. Full description, including the deliberate
+scope limits, in [hardening-backlog #7](../backlog/hardening.md).
+
+### 1.4b Execute-time entitlement now covers the OTHER bot endpoint (2026-08-01)
+`POST /api/send-message` (and its `/api/tasks/:taskId/messages` alias) honoured a caller-supplied
+`agentId` verbatim and called the orchestrator directly, bypassing `executeBotOrInline` — so the
+entitlement gate that defaults to ENFORCE covered `/api/swarm-execute` and the controller chokepoint
+but not this route. Its IDOR guard checks the THREAD, not the BOT, so a signed-in non-operator could
+reach the ADR-087 operator+swarm machinery (`oshal-developer`, `devops-bot`, `vault-bot`,
+`security-analyst`, `code-developer`, …) by naming its agentId on a task they legitimately own. The
+resolved agentId now runs through `assertExecuteEntitlement` before any ticket is created or any LLM
+work starts; service-secret (swarm/queue dispatch) callers are unchanged. Guard:
+`tests/unit/send-message-entitlement.spec.ts`.
+
 ### 1.4 Object-level authorization / IDOR (partially closed)
 A new shared authorization layer — `src/shared/middleware/authz.ts` — provides:
 - `getCaller(req)` — caller identity from the validated OIDC session only (never request body).
@@ -211,11 +231,35 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
    (`assertPublicHttpUrl`) is called before the `chatComplete` and `/models` fetches in
    `byo-llm-routes.ts`; it rejects internal hostnames and any host resolving to a
    private/loopback/link-local/CGNAT/metadata address (incl. `169.254.169.254`).
-4. **Web hardening** — **PARTIAL**: `helmet` (headers only, CSP intentionally off pending a
-   UI-tested pass) and a public-origin-only `express-rate-limit` (1000/min per external IP;
-   internal/no-XFF traffic skipped so the swarm is never throttled) are wired in `server.ts`.
-   Still open: a tested CSP, `express.json({ limit })`, and per-route throttles on `/login` /
-   `/api/jarvis`.
+4. **Web hardening** — **CLOSED 2026-08-01.** `helmet` + the public-origin-only
+   `express-rate-limit` (1000/min per external IP; internal/no-XFF traffic skipped so the swarm is
+   never throttled) were already wired in `server.ts`. The three named residuals:
+   - **A tested CSP.** `cspFromEnv()` no longer returns `false`. The strict policy now ships by
+     DEFAULT on the non-blocking `Content-Security-Policy-Report-Only` header, so every response
+     carries a real policy and the `/api/security/csp-report` collector learns the actual allowlist
+     — a report-only policy cannot break a surface, which is why the previous "CSP off pending a
+     UI-tested pass" caution was costing observability for nothing. `OSHAL_STRICT_CSP=on` enforces
+     (blocking header); `OSHAL_CSP=off` is the kill switch. Directives pinned: `default-src 'self'`,
+     `object-src 'none'`, `base-uri`/`form-action`/`frame-ancestors`/`frame-src` `'self'`,
+     `worker-src 'self' blob:`, `upgrade-insecure-requests`, and `script-src` WITHOUT
+     `'unsafe-inline'` unless a nonce is supplied. Inline `style=` is still permitted (styles cannot
+     exfiltrate the way scripts can — the documented pragmatic step). The collector dedupes by
+     `directive|blockedUri|documentUri` so report-only on a cockpit full of inline scripts cannot
+     bury real faults. **Remaining, and it is now measurable:** nonce/externalise the cockpit's
+     inline `<script>` blocks until the report-only log is clean, then flip to enforce.
+   - **`express.json({ limit })`.** The global parser is now `createGlobalJsonParser()`
+     (`features/security/hardening/body-limits.ts`): an explicit, env-tunable limit
+     (`OSHAL_JSON_BODY_LIMIT`, default `100kb` — the same bound express applied implicitly, now
+     stated and tested) plus the three reserved prefixes that own their own parsers
+     (`/api/remote-clients` screenshots, `/api/vision` base64 images, `/api/hooks` — which must keep
+     the EXACT bytes for its HMAC verifier).
+   - **Per-route throttles.** `expensiveOpLimiter` now mounts on `/api/jarvis` as well as
+     `/api/intake` — every Jarvis turn is an LLM call and the route is reachable by any signed-in
+     user. `/login` needed nothing: the credential-checking endpoint is
+     `POST /api/local-auth/login`, which already has its own attempt lockout (429).
+   Guard: `tests/unit/web-hardening-csp-body.spec.ts` — asserts the PARSED directive map and which
+   header carries it (not a header string), and that an oversized body 413s while a reserved prefix
+   passes through unparsed.
 5. **Webhooks** — **CLOSED (fail-closed)**: `alertmanager-routes.ts` and `world-routes.ts`
    now reject all requests when `ALERT_WEBHOOK_TOKEN` / `WORLD_INGEST_TOKEN` is unset (was
    fail-open). `ALERT_DEFAULT_INTAKE=backlog`. To re-enable the receivers, set the token and
@@ -257,6 +301,26 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
      authoritative guidance, so one injected run seeds future tickets.
    - There are still **no adversarial-prompt tests** of any kind, and the three real defenses
      above have no regression tests, so a refactor can delete them silently.
+   - **Inline (controller-resident) bots hardened 2026-08-01.** A bot whose registry `container` is
+     the api runs inside the process that holds the platform's own credentials, so a prompt
+     injection there reaches the CONTROL plane rather than one worker. Two controls now apply,
+     resolved per bot in `resolveHarnessForAgent` from
+     `features/llm-provider/services/controller-inline-scope.ts`:
+     (a) **no shell** — the deployment-wide `CLAUDE_ALLOWED_TOOLS` (which grants `Bash` to every
+     bot) is filtered for inline bots, keeping Read/Write/Edit/Glob/Grep/WebFetch so `codex-packer`
+     can still emit a persona + manifest; and (b) **no platform-plane credentials in the child
+     env** — `REMOTE_CLIENT_SHARED_SECRET` / `REMOTE_CLIENT_CONTROL_PLANE_TOKEN` /
+     `ALERT_WEBHOOK_TOKEN` / `WORLD_INGEST_TOKEN` / `TV_PAIRING_SECRET` are deleted alongside the
+     already-scrubbed `SESSION_SECRET`. The worker-plane secret is the sharp one: it is MACHINE
+     TRUST that skips per-device ownership, so an injected inline bot holding it could enqueue a
+     shell-exec task on ANY user's desktop — a worse outcome than reading the master key.
+     Bot-node bots are untouched (their containers never carry these vars, and the incident "SWAT
+     team" tool set is deliberate). **Honest residual:** a codex-harness inline bot still has a
+     shell by construction (the vendor CLI owns its own permission model and compose sets
+     `CODEX_SANDBOX_MODE: danger-full-access`), so for those the env scrub is the load-bearing
+     control. The complete answer is the BACKLOG done-when's other option — dedicated
+     non-controller containers — which is a topology change. Guard:
+     `tests/unit/inline-bot-no-shell.spec.ts`.
 10. ~~**Bootstrap PAT minting was a cross-user takeover path** — `POST /api/cli-tokens` honored
     the `x-oshal-user-sub` assertion for any sub behind the fleet-wide `SWARM_SERVICE_SECRET`
     and minted a **non-expiring** token. Every bot container carries that secret, and a PAT
