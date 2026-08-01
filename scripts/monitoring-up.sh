@@ -4,6 +4,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Bring-up for the ADR-119 monitoring overlay. Three things went wrong by hand on the 2026-08-01 drill and are now mechanical: (1) the Alertmanager bearer token had to be pasted into a TRACKED config file — it is now written from .env into the gitignored .env.alertmanager-token and mounted, so the secret never approaches git; (2) Prometheus defaulted to 9090, which oshal-headscale already holds on this box, so the stack came up half-bound; (3) the receiver is fail-closed, so a missing ALERT_WEBHOOK_TOKEN made the whole ladder silently unreachable — this script refuses to start rather than bring up a monitoring stack that cannot deliver.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | SIGHUP prometheus + alertmanager after `compose up -d`. Editing a bind-mounted prometheus.yml / alert-rules.yml / alertmanager.yml does not change the SERVICE DEFINITION, so compose recreates nothing and the running process keeps the config it parsed at startup — the container then holds the new file and the old config at once. That silently wasted the first run of the 2026-08-01 drill (rules debugged that were never loaded). SIGHUP is the documented reload for both and preserves Prometheus's TSDB.
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
@@ -67,6 +68,18 @@ fi
 
 echo "monitoring: prometheus :$PROMETHEUS_PORT  alertmanager :$ALERTMANAGER_PORT  cadvisor :$CADVISOR_PORT"
 docker compose -f "$COMPOSE_FILE" up -d
+
+# Reload the two config-driven services. `compose up -d` recreates only when the SERVICE
+# DEFINITION changes — editing a bind-mounted prometheus.yml / alert-rules.yml / alertmanager.yml
+# changes the file inside the container but NOT the config the process already parsed, so
+# `up -d` is a silent no-op and you debug rules that were never loaded. (Cost me the first run of
+# the 2026-08-01 drill: the container held the new file and the old config simultaneously.)
+# SIGHUP is the documented reload for both and keeps Prometheus's TSDB, unlike a restart.
+for svc in oshal-local-prometheus oshal-local-alertmanager; do
+  if docker ps --format '{{.Names}}' | grep -qx "$svc"; then
+    docker kill -s HUP "$svc" >/dev/null 2>&1 && echo "  reloaded $svc (SIGHUP)"
+  fi
+done
 
 echo
 echo "Prometheus   http://127.0.0.1:${PROMETHEUS_PORT}/targets"

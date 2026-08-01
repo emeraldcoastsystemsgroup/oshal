@@ -156,14 +156,23 @@ describe('the exporter both runtimes serve', () => {
     expect(/^oshal_up\{([^}]*)\} 1$/.test(sample), `label block not closed: ${sample}`).toBe(true);
   });
 
-  it('start time is derived from uptime, so it is stable across scrapes (restart detection)', () => {
-    const first = renderRuntimeMetrics({ runtime: 'swarm', instance: 'a' });
-    const second = renderRuntimeMetrics({ runtime: 'swarm', instance: 'a' });
-    const startOf = (body: string): number =>
-      Number(/oshal_process_start_time_seconds\{[^}]*\} ([\d.eE+-]+)/.exec(body)![1]);
-    // changes(...)[10m] must count RESTARTS, not scrapes. A jittery start time would make
-    // SwarmContainerRestartLoop fire continuously on a perfectly stable container.
-    expect(Math.abs(startOf(first) - startOf(second))).toBeLessThan(1);
+  it('start time is EXACTLY constant across scrapes and across a clock jump (restart detection)', () => {
+    // SwarmContainerRestartLoop is changes(oshal_process_start_time_seconds[10m]) > 2, so this
+    // gauge must count RESTARTS, not scrapes. The first cut of this guard allowed "within 1
+    // second" and passed while the real exposition jittered 1-3 MILLISECONDS per scrape —
+    // enough for changes() to count every scrape, which put all 34 bots into a pending
+    // restart-loop alert two minutes after the rules went live (2026-08-01 drill). Exact
+    // equality is the only tolerance that catches that.
+    const startOf = (body: string): string =>
+      /oshal_process_start_time_seconds\{[^}]*\} ([\d.eE+-]+)/.exec(body)![1];
+    const a = startOf(renderRuntimeMetrics({ runtime: 'swarm', instance: 'a' }));
+    const b = startOf(renderRuntimeMetrics({ runtime: 'swarm', instance: 'a' }));
+    expect(b).toBe(a);
+    // ...and it must not track the wall clock: an hour-long jump changes nothing, because the
+    // process did not restart. This is what pins it as a per-process constant rather than a
+    // quantity re-derived from Date.now() on every scrape.
+    const later = startOf(renderRuntimeMetrics({ runtime: 'swarm', instance: 'a' }, Date.now() + 3_600_000));
+    expect(later).toBe(a);
   });
 
   describe('cgroup memory ceiling', () => {
