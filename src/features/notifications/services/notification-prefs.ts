@@ -15,6 +15,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — NotifyChannel union, UserNotificationPref shape, read/list/upsert over user_notification_prefs (read fails OPEN to null so a prefs-table hiccup never mutes/blocks a producer), and the timezone-aware quiet-hours predicate (wrap-midnight supported).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added 'voice' to NOTIFY_CHANNELS (migration 099 widens the DB CHECK in step): the welcome wizard's "call me" opt-in needs a per-user voice channel; until now voice existed only at the operator env tier. rowToPref needs no change — the widened union makes stored 'voice' rows valid instead of degrading to 'none'.
  *
  * @module features/notifications/services/notification-prefs
  */
@@ -24,7 +25,7 @@ import { createChildLogger } from '@/shared/logger';
 const logger = createChildLogger({ module: 'notifications:prefs' });
 
 /** Every channel a user can route a topic to. `none` = an explicit "do not notify me". */
-export const NOTIFY_CHANNELS = ['email', 'sms', 'telegram', 'none'] as const;
+export const NOTIFY_CHANNELS = ['email', 'sms', 'voice', 'telegram', 'none'] as const;
 
 /** A user's chosen delivery channel for one topic. */
 export type NotifyChannel = (typeof NOTIFY_CHANNELS)[number];

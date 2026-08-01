@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the self-scoped /api/notify endpoints the new cockpit Notifications surface consumes, which had none (only the operator /operator + /alert rails were pinned): GET/POST /prefs and POST /test. Pins 401 before Postgres is touched, that the persisted/read sub comes ONLY from the session (a body-supplied userSub cannot redirect another user's notifications), that /test is confirm-gated (428) so a page load can never send, and that a non-delivered test answers 409 carrying the real reason — the surface reports that reason verbatim, so a 200-on-skip here would put a green tick on a send that never happened.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Channel list widened with 'voice' (migration 099, the welcome-wizard "call me" opt-in).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -104,7 +105,7 @@ describe('GET /api/notify/prefs — the topic list the Notifications surface ren
     const res = await hit(appFor(ME, pool), '/prefs');
     expect(res.status).toBe(200);
     expect(res.body?.defaultChannel).toBe('email');
-    expect(res.body?.channels).toEqual(['email', 'sms', 'telegram', 'none']);
+    expect(res.body?.channels).toEqual(['email', 'sms', 'voice', 'telegram', 'none']);
   });
 
   it("reports defaultChannel 'none' when the caller has no gmail.send connection (never a fake default)", async () => {

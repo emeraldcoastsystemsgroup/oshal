@@ -27,6 +27,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: topics are normalized to lowercase before validation/persist (TOPIC_RE was /i while producers readUserPref with an exact-match WHERE — a mixed-case topic saved fine but was a silent no-op pref that never suppressed anything).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Ops-rails notify surface: POST /api/notify/operator — requiresOperator + confirm:true-gated ad-hoc alert through the deployment operator transport (notifyOperator). It can page a human, so it is confirm-gated (428 without confirm) and operator-only; 200 on delivery, 502 with the transport result when the send was skipped/failed (an operator paging rail must fail loud when nothing went out).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added buildOperatorEmailRail (operator Gmail via the connector broker → NOTIFY_EMAIL_TO; undefined => email transport no-ops) and POST /api/notify/alert — operator + confirm:true-gated severity-routed alert via notifyBySeverity, injecting the email rail so critical/error levels can reach an inbox. Fails loud (502) when no configured transport delivered.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Welcome-wizard notifications opt-in support: (1) smsSender falls back to the DEPLOYMENT's Twilio (env SID/token/from via TwilioSmsTransport, destination overridden to pref.phone — the same env-injection trick telegramSender uses) when the user has no personal Twilio connection, so a family user who just types their number can get texts; the user's own connected Twilio still wins. (2) NEW voiceSender — the per-user 'voice' channel (migration 099): TwilioVoiceTransport over env creds with TWILIO_TO_NUMBER overridden to pref.phone. (3) Sender factories exported for the unit specs.
  *
  * @module notify-routes
  */
@@ -42,6 +43,8 @@ import { callerSub } from './caller-sub';
 import {
   NotificationRouter,
   TelegramTransport,
+  TwilioSmsTransport,
+  TwilioVoiceTransport,
   NOTIFY_CHANNELS,
   NOTIFY_SEVERITIES,
   listUserPrefs,
@@ -103,19 +106,38 @@ function emailSender(pool: AppContext['pool']): UserChannelSender {
   };
 }
 
-/** SMS sender: the user's OWN Twilio via scripts/oshal-twilio.js (spawned only when creds exist). */
-function smsSender(pool: AppContext['pool']): UserChannelSender {
+/** True when the deployment's own Twilio env credentials can carry a send (SID + token + from). */
+export function envTwilioConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean((env.TWILIO_ACCOUNT_SID || '').trim() && (env.TWILIO_AUTH_TOKEN || '').trim() && (env.TWILIO_FROM_NUMBER || '').trim());
+}
+
+/**
+ * SMS sender. The user's OWN connected Twilio (via scripts/oshal-twilio.js) wins when present;
+ * otherwise the DEPLOYMENT's env Twilio carries the text to pref.phone — the destination is
+ * injected as TWILIO_TO_NUMBER over a TwilioSmsTransport, the same sanctioned env-override
+ * trick telegramSender uses for the chat id. Without the fallback a family user had to
+ * register their own Twilio account just to get a text.
+ */
+export function smsSender(pool: AppContext['pool']): UserChannelSender {
   return {
     channel: 'sms',
     async available(userSub, pref) {
       if (!pref?.phone) { logger.info({ userSub }, 'notify sms skipped — no destination phone saved in prefs'); return false; }
-      const ok = await twilioReady(pool, userSub);
-      if (!ok) logger.info({ userSub }, 'notify sms skipped — no connected Twilio account (clean skip, nothing spawned)');
-      return ok;
+      if (await twilioReady(pool, userSub)) return true;
+      if (envTwilioConfigured()) return true;
+      logger.info({ userSub }, 'notify sms skipped — no connected Twilio account and no deployment Twilio env (clean skip, nothing spawned)');
+      return false;
     },
-    send(userSub, pref, message) {
-      const cli = path.resolve(process.cwd(), 'scripts', 'oshal-twilio.js');
+    async send(userSub, pref, message) {
       const body = (message.shortText || message.subject).slice(0, 640);
+      if (!(await twilioReady(pool, userSub))) {
+        // Deployment-Twilio fallback: env creds, per-user destination.
+        const t = new TwilioSmsTransport({ env: { ...process.env, TWILIO_TO_NUMBER: pref?.phone || '' } });
+        const r = await t.send({ text: body });
+        logger.info({ userSub, delivered: r.delivered }, 'notify sms sent via deployment Twilio (env fallback)');
+        return { delivered: r.delivered, ...(r.id ? { id: r.id } : {}), ...(r.error ? { error: r.error } : {}) };
+      }
+      const cli = path.resolve(process.cwd(), 'scripts', 'oshal-twilio.js');
       return new Promise((resolve) => {
         const proc = spawn('node', [cli, 'sms', pref!.phone!, body, '--confirm'], {
           env: { ...process.env, OSHAL_USER_SUB: userSub, OSHAL_MESSAGE_SEND_CONFIRM: 'true' },
@@ -129,6 +151,29 @@ function smsSender(pool: AppContext['pool']): UserChannelSender {
         });
         proc.on('error', (e) => { logger.error({ userSub, err: (e as Error).message, stack: (e as Error).stack }, 'notify sms spawn failed'); resolve({ delivered: false, error: 'twilio-spawn-failed' }); });
       });
+    },
+  };
+}
+
+/**
+ * Voice sender — the per-user 'voice' channel (migration 099): the deployment's Twilio
+ * calls pref.phone and SPEAKS the message (TwiML <Say>). Voice has no per-user-account
+ * tier (nobody registers a personal Twilio to receive a call), so this is env-creds-only
+ * with the destination injected per user, mirroring the telegram chat-id override.
+ */
+export function voiceSender(): UserChannelSender {
+  return {
+    channel: 'voice',
+    async available(userSub, pref) {
+      if (!pref?.phone) { logger.info({ userSub }, 'notify voice skipped — no destination phone saved in prefs'); return false; }
+      if (!envTwilioConfigured()) { logger.info({ userSub }, 'notify voice skipped — deployment Twilio env not configured'); return false; }
+      return true;
+    },
+    async send(userSub, pref, message) {
+      const t = new TwilioVoiceTransport({ env: { ...process.env, TWILIO_TO_NUMBER: pref?.phone || '' } });
+      const r = await t.send({ text: (message.shortText || message.subject).slice(0, 640) });
+      logger.info({ userSub, delivered: r.delivered }, 'notify voice call attempted via deployment Twilio');
+      return { delivered: r.delivered, ...(r.id ? { id: r.id } : {}), ...(r.error ? { error: r.error } : {}) };
     },
   };
 }
@@ -169,7 +214,7 @@ export function buildNotificationRouter(ctx: AppContext): NotificationRouter {
   const pool = ctx.pool;
   return new NotificationRouter({
     pool,
-    senders: { email: emailSender(pool), sms: smsSender(pool), telegram: telegramSender() },
+    senders: { email: emailSender(pool), sms: smsSender(pool), voice: voiceSender(), telegram: telegramSender() },
     defaultChannel: async (userSub) => ((await gmailReady(pool, userSub)) ? 'email' : 'none'),
   });
 }

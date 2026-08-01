@@ -18,6 +18,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — NotificationRouter (pref resolution with Gmail-else-none default, America/Chicago quiet hours, injected per-user sender registry, never-throw outcomes) + the UserChannelSender/UserNotifyMessage/NotifyOutcome contracts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolveRouting now falls back to the user's DEFAULT_TOPIC ('default') row before the injected default channel: the welcome wizard writes ONE opt-in row that should govern every topic the user hasn't customized — without this, a wizard "text me" answer only ever covered the literal topic 'default' and every real producer topic silently kept the Gmail-else-none default. Topic-specific rows still win, and the fallback row's quiet hours apply when it is the one that resolved.
  *
  * @module features/notifications/services/notification-router
  */
@@ -33,6 +34,13 @@ import {
 } from './notification-prefs';
 
 const logger = createChildLogger({ module: 'notifications:router' });
+
+/**
+ * The catch-all topic the welcome wizard (and any generic opt-in surface) writes: a saved
+ * row for this topic routes every topic the user has not customized. Topic-specific rows
+ * always win over it; it wins over the injected Gmail-else-none default.
+ */
+export const DEFAULT_TOPIC = 'default';
 
 /** One user-facing notification. `shortText` is the SMS-sized nudge; email gets subject+body. */
 export interface UserNotifyMessage {
@@ -100,15 +108,21 @@ export class NotificationRouter {
 
   /**
    * @description Resolve the effective routing for (user, topic): the saved pref row when
-   * one exists, else the injected default (email-if-Gmail-else-none) with enabled=true and
-   * no quiet window. Split out so producers can preview routing without sending.
+   * one exists, else the user's DEFAULT_TOPIC row (the wizard's one-answer opt-in — its
+   * channel, destinations, AND quiet hours apply), else the injected default
+   * (email-if-Gmail-else-none) with enabled=true and no quiet window. Split out so
+   * producers can preview routing without sending.
    * @param userSub - OIDC subject to route for.
    * @param topic - Producer topic key.
-   * @returns The effective channel/enabled plus the raw pref row (null when defaulted).
+   * @returns The effective channel/enabled plus the pref row that resolved (null when defaulted).
    */
   async resolveRouting(userSub: string, topic: string): Promise<{ channel: NotifyChannel; enabled: boolean; pref: UserNotificationPref | null }> {
     const pref = await readUserPref(this.deps.pool, userSub, topic);
     if (pref) return { channel: pref.channel, enabled: pref.enabled, pref };
+    if (topic !== DEFAULT_TOPIC) {
+      const fallback = await readUserPref(this.deps.pool, userSub, DEFAULT_TOPIC);
+      if (fallback) return { channel: fallback.channel, enabled: fallback.enabled, pref: fallback };
+    }
     return { channel: await this.deps.defaultChannel(userSub), enabled: true, pref: null };
   }
 

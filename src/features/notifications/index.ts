@@ -13,6 +13,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preference center: export the per-user prefs store (user_notification_prefs) + quiet-hours math + the per-user NotificationRouter (injected senders; operator transports unchanged).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the EmailTransport, the severity → transport policy (NotifySeverity/notifyBySeverity/transportsForSeverity/DEFAULT_SEVERITY_POLICY), and the inbound-SMS parse + Twilio-signature verification helpers.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export the platform-credential SMTP mailer (smtpConfigured/sendTransactionalMail) — the variable-recipient transactional sibling the invite flow needs (ADR-117); the OAuth EmailTransport rail stays the fixed-destination operator path.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export DEFAULT_TOPIC — the catch-all pref topic the welcome wizard writes; producers and specs reference the constant instead of a literal.
  *
  * @module features/notifications
  */
@@ -43,5 +44,5 @@ export {
 export type { InboundSms, RawFormValue } from './services/inbound-sms';
 export { NOTIFY_CHANNELS, readUserPref, listUserPrefs, upsertUserPref, hourInTimeZone, isQuietHours } from './services/notification-prefs';
 export type { NotifyChannel, PgLike, UserNotificationPref } from './services/notification-prefs';
-export { NotificationRouter } from './services/notification-router';
+export { NotificationRouter, DEFAULT_TOPIC } from './services/notification-router';
 export type { UserNotifyMessage, NotifyOutcome, UserChannelSender, NotificationRouterDeps } from './services/notification-router';

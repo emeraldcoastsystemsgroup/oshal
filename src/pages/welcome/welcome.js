@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #4: dropped 'payments' from the money capability card's hot-load apps — the app carved to the store and is no longer core-loadable by manifest name; the card's finance+trading loads are unchanged.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | First-run fix — the Configuration Status step was a dead end that ended walkthroughs. It sat BEFORE the steps that fix anything, showed a demoralizing score built from optional integrations, and its "Fix" links opened /cockpit#… in a new tab that 302'd right back to /welcome (guarded surface) at a hash the cockpit never routed on. Now: required and optional are split (meter reads required-only), an unmet item the wizard can fix jumps IN-wizard via gotoStep() instead of opening a bouncing tab, items with nothing useful to click render no button at all, and all interpolation goes through escHtml. Renamed to "Setup status" — "Configuration" read like a wall rather than a checklist.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the percentage from the onboarding step entirely (operator: "20% completed doesn't sound good"). Scoring required-only fixed the ARITHMETIC but not the framing — and made the worst case read worse, since a short required list only yields 0% / 50% / 100%, so a user whose bots were still booting now saw 0%. This screen is the first thing a stranger sees, before they have been offered any chance to act: any score is a grade for work never asked of them. Replaced with a forward-looking checklist ("What your swarm needs" / "Just N things") whose lead line branches on whether the wizard can actually FIX the gap (next step) or it self-clears (bots still booting) — the old single message promised a walkthrough the next step could not deliver for the bot case. The meter stays on the cockpit dashboard, where 100% on an operating swarm is a health signal rather than a verdict on a newcomer.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | New 'notify' step (operator ask 2026-07-31): a per-user text/call/email opt-in that walks through the setup — pick a channel, save a phone number, fire a real confirm-gated test — writing the 'default' topic row via POST /api/notify/prefs (the DEFAULT_TOPIC fallback in the NotificationRouter makes that one answer govern every topic the user hasn't customized). Explicitly declining writes channel 'none'; just clicking Next writes nothing. Saves are best-effort and the step never gates navigation (outward-acting channels are per-user opt-in, default OFF).
  */
 
 /**
@@ -22,6 +23,7 @@ let STEPS = [
   { id: 'setup',    title: 'Connect an AI model',   render: renderQuickSetup },
   { id: 'capabilities', title: 'Choose what it does', render: renderCapabilities },
   { id: 'connect',  title: 'Connect your accounts', render: renderConnectAccounts },
+  { id: 'notify',   title: 'Stay in the loop',      render: renderNotifyStep },
   { id: 'done',     title: "You're All Set!",       render: renderDone },
 ];
 
@@ -546,6 +548,129 @@ async function renderConnectAccounts(container) {
       btn.textContent = 'Opened — finish in the new tab';
     });
   });
+}
+
+/**
+ * @description "Stay in the loop" step — the per-user notification opt-in (text / call /
+ * email / no thanks). Saves ONE row for the 'default' topic via POST /api/notify/prefs;
+ * the NotificationRouter's DEFAULT_TOPIC fallback makes that answer govern every topic
+ * the user hasn't customized. Text/call reveal a phone walk-through with a real
+ * confirm-gated test send. Explicit "No thanks" writes channel 'none'; just clicking
+ * Next writes nothing. Never gates navigation.
+ */
+async function renderNotifyStep(container) {
+  container.innerHTML = `<div class="step-content step-connect"><h2>Stay in the loop</h2><div class="config-loading">Loading…</div></div>`;
+
+  let saved = null;
+  try {
+    const d = await (await fetch('/api/notify/prefs', { credentials: 'include' })).json();
+    saved = (d.prefs || []).find((p) => p.topic === 'default') || null;
+  } catch { /* first visit or guest — render the fresh form */ }
+
+  const CHOICES = [
+    { key: 'sms',   icon: '📱', label: 'Text me',  needsPhone: true },
+    { key: 'voice', icon: '📞', label: 'Call me',  needsPhone: true },
+    { key: 'email', icon: '✉️', label: 'Email me', needsPhone: false },
+    { key: 'none',  icon: '🔕', label: 'No thanks', needsPhone: false },
+  ];
+  let chosen = saved ? saved.channel : null;
+
+  const draw = () => {
+    const chips = CHOICES.map((c) => {
+      const on = chosen === c.key;
+      return `<button class="conn-chip${on ? ' conn-chip--on' : ''}" data-notify-choice="${c.key}">${c.icon} ${escHtml(c.label)}${on ? ' ✓' : ''}</button>`;
+    }).join('');
+    const needsPhone = chosen === 'sms' || chosen === 'voice';
+    container.innerHTML = `
+      <div class="step-content step-connect">
+        <h2>Stay in the loop <span class="optional-tag">optional</span></h2>
+        <p>When something worth knowing happens — a job finishes, a digest lands, an alert fires —
+           oshal can reach you off-screen. Your choice here covers everything unless you customize a
+           specific topic later; nothing is sent without it. Telegram can be added later in Settings.</p>
+        <div class="conn-chips">${chips}</div>
+        ${needsPhone ? `
+        <div class="setup-group" style="margin-top:1rem;max-width:22rem;">
+          <label for="notifyPhone">Your mobile number</label>
+          <input id="notifyPhone" type="tel" placeholder="+15551234567" value="${escHtml((saved && saved.phone) || '')}" autocomplete="tel" />
+          <div style="margin-top:0.6rem;">
+            <button class="btn btn-sm btn-primary" id="notifySave">Save</button>
+            <button class="btn btn-sm" id="notifyTest" ${saved && saved.phone && saved.channel === chosen ? '' : 'disabled'}>Send me a test</button>
+            <span class="setup-msg" id="notifyMsg"></span>
+          </div>
+        </div>` : ''}
+        ${chosen === 'email' ? `<p class="setup-msg" id="notifyEmailNote">Uses your connected Gmail — connect Google on the previous step if you haven't.</p>
+          <button class="btn btn-sm btn-primary" id="notifySave" style="margin-top:0.4rem;">Save</button>
+          <button class="btn btn-sm" id="notifyTest" ${saved && saved.channel === 'email' ? '' : 'disabled'}>Send me a test</button>
+          <span class="setup-msg" id="notifyMsg"></span>` : ''}
+        ${chosen === 'none' ? `<p class="setup-msg">Got it — nothing will be sent. Click Next to continue.</p>` : ''}
+        <div class="connect-footer"><span class="setup-msg">You can change this any time — or skip with Next.</span></div>
+      </div>`;
+    bind();
+  };
+
+  const setMsg = (text, cls) => {
+    const el = container.querySelector('#notifyMsg');
+    if (el) { el.textContent = text; el.className = 'setup-msg' + (cls ? ' ' + cls : ''); }
+  };
+
+  const savePref = async (channel, phone) => {
+    const body = { topic: 'default', channel, enabled: true, phone: phone || null, telegramChatId: (saved && saved.telegramChatId) || null };
+    const res = await fetch('/api/notify/prefs', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || ('save failed (' + res.status + ')'));
+    saved = d.pref || body;
+  };
+
+  const bind = () => {
+    container.querySelectorAll('[data-notify-choice]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        chosen = btn.getAttribute('data-notify-choice');
+        if (chosen === 'none') {
+          // An explicit decline is a real answer — persist it so even the email default stays quiet.
+          try { await savePref('none', null); } catch { /* best-effort; never blocks Next */ }
+        }
+        draw();
+      });
+    });
+    const saveBtn = container.querySelector('#notifySave');
+    if (saveBtn) saveBtn.addEventListener('click', async () => {
+      const phoneEl = container.querySelector('#notifyPhone');
+      const phone = phoneEl ? phoneEl.value.trim() : null;
+      if ((chosen === 'sms' || chosen === 'voice') && !/^\+[1-9]\d{6,14}$/.test(phone || '')) {
+        setMsg('Enter your number in international format, e.g. +15551234567', 'err');
+        return;
+      }
+      setMsg('Saving…');
+      try {
+        await savePref(chosen, phone);
+        setMsg('Saved ✓ — try a test!', 'ok');
+        const t = container.querySelector('#notifyTest');
+        if (t) t.disabled = false;
+      } catch (e) { setMsg(String(e.message || e), 'err'); }
+    });
+    const testBtn = container.querySelector('#notifyTest');
+    if (testBtn) testBtn.addEventListener('click', async () => {
+      testBtn.disabled = true;
+      setMsg(chosen === 'voice' ? 'Calling you…' : 'Sending…');
+      try {
+        const res = await fetch('/api/notify/test', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: true, topic: 'default' }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (res.ok && d.delivered) setMsg(chosen === 'voice' ? 'Your phone should ring ✓' : chosen === 'sms' ? 'Check your phone 📳' : 'Check your inbox ✓', 'ok');
+        else setMsg('Not delivered — ' + (d.reason || d.error || 'unknown') + '. You can finish setup later in Settings.', 'warn');
+      } catch { setMsg('Test failed to send — you can finish setup later in Settings.', 'warn'); }
+      testBtn.disabled = false;
+    });
+  };
+
+  draw();
 }
 
 function renderMarketplaceOnboarding(entries) {
