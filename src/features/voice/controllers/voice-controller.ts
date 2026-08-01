@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:10:00 | Added
  *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
  *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012: synthesize now honors the caller's SAVED per-user provider/voice via an injected prefs resolver — explicit body values always win; when the body names no provider, the saved provider (and, only then, its saved voice) applies; no resolver / no prefs → the swarm-default flow exactly as before. getVoices accepts ?providerId= so the picker can enumerate a specific provider's voices.
  */
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
@@ -17,14 +18,21 @@ import { VoiceService } from '../services/voice-service';
 import { SynthesizeRequestSchema } from '../schemas/voice-schemas';
 
 /**
+ * @description Resolves the caller's saved TTS preference (provider + voice), if any.
+ * Injected by the route layer (which owns the DB pool + caller identity); the controller
+ * stays storage-agnostic. Returning null means "no saved preference — default flow".
+ */
+export type TtsPrefsResolver = (req: Request) => Promise<{ providerId?: string | null; voiceId?: string | null } | null>;
+
+/**
  * @description Controller for voice-related endpoints (STT/TTS).
  * Extends BaseController to inherit standardized response handling,
  * error handling, logging, and timing.
- * 
+ *
  * Delegates all business logic to VoiceService.
  */
 export class VoiceController extends BaseController {
-  constructor(private service: VoiceService) {
+  constructor(private service: VoiceService, private prefsResolver?: TtsPrefsResolver) {
     super({ module: 'voice-controller' });
   }
 
@@ -61,9 +69,22 @@ export class VoiceController extends BaseController {
     // Validate request body
     const { text, voice, providerId } = validateBody(req, SynthesizeRequestSchema);
 
+    // JVV-012: a caller that names no provider gets their SAVED per-user selection (provider
+    // + voice). Explicit body values always win; the saved voice applies only alongside the
+    // saved provider (voice ids are provider-specific). No prefs → swarm default, unchanged.
+    let effectiveProviderId = providerId;
+    let effectiveVoice = voice;
+    if (!effectiveProviderId && this.prefsResolver) {
+      const prefs = await this.prefsResolver(req);
+      if (prefs?.providerId) {
+        effectiveProviderId = prefs.providerId;
+        if (!effectiveVoice && prefs.voiceId) effectiveVoice = prefs.voiceId;
+      }
+    }
+
     // Delegate to service
     const result = await this.measure('synthesizeSpeech', () =>
-      this.service.synthesizeSpeech(text, voice, providerId)
+      this.service.synthesizeSpeech(text, effectiveVoice, effectiveProviderId)
     );
 
     // Return standardized success response
@@ -75,9 +96,12 @@ export class VoiceController extends BaseController {
    * Returns list of available voices for TTS.
    */
   getVoices: RequestHandler = this.handle(async (req: Request, res: Response, next: NextFunction) => {
+    // Optional explicit provider (JVV-012 picker) — unknown ids fall back to the default.
+    const providerId = typeof req.query.providerId === 'string' ? req.query.providerId : undefined;
+
     // Delegate to service
     const result = await this.measure('getAvailableVoices', () =>
-      this.service.getAvailableVoices()
+      this.service.getAvailableVoices(providerId)
     );
 
     // Return standardized success response

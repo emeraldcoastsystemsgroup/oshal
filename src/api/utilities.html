@@ -64,6 +64,7 @@
   .statuspill { border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 800; padding: 5px 9px; white-space: nowrap; }
   .statuspill.ok { border-color: rgba(52,211,153,.45); color: var(--ok); background: rgba(52,211,153,.08); }
   .statuspill.warn { border-color: rgba(251,191,36,.5); color: #fbbf24; background: rgba(251,191,36,.08); }
+  .statuspill.err { border-color: rgba(239,68,68,.5); color: var(--err); background: rgba(239,68,68,.08); }
   .conn { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 12px; background: var(--card2); border-radius: 9px; }
   .connmeta { font-size: 12.5px; color: var(--text); }
   .connacts { font-size: 12px; color: var(--muted); white-space: nowrap; }
@@ -286,6 +287,9 @@ var CAT_ORDER = [
 ];
 
 var ALL_CONNECTORS = [];
+// Live grant health per provider id (G14): { status: 'ok'|'needs_reconnect'|'unknown', detail }.
+// Populated asynchronously by loadLiveness() — until then badges render from the row alone.
+var LIVENESS = {};
 
 function providerReady(p) {
   return !!(p.connected || p.configured || p.auth === 'token' || p.platformDefault);
@@ -293,7 +297,12 @@ function providerReady(p) {
 
 function connectorStatusPill(p) {
   var conns = (p.connections || []).length;
-  if (conns) return '<span class="statuspill ok">' + conns + ' connected</span>';
+  if (conns) {
+    // G14: "N connected" must mean the provider will HONOR the token, not that a row exists.
+    var live = LIVENESS[p.id];
+    if (live && live.status === 'needs_reconnect') return '<span class="statuspill err">needs reconnect</span>';
+    return '<span class="statuspill ok">' + conns + ' connected</span>';
+  }
   if (providerReady(p)) return '<span class="statuspill">ready</span>';
   return '<span class="statuspill warn">needs setup</span>';
 }
@@ -301,6 +310,12 @@ function connectorStatusPill(p) {
 function cardHtml(p) {
   var conns = p.connections || [];
   var body = '';
+  // G14: a dead grant gets a loud, actionable line — the fix, not a log dive.
+  var live = LIVENESS[p.id];
+  if (conns.length && live && live.status === 'needs_reconnect') {
+    body += '<div class="meta" style="color:var(--err);">⚠ ' + esc(p.label) + ' will no longer honor this connection' +
+      (live.detail ? ' — ' + esc(live.detail) : '') + '. Reconnect below (~30 seconds).</div>';
+  }
   // One row per connected account — label · email · owner · default — with per-account actions.
   conns.forEach(function(c) {
     var owner = c.tenantId ? '🏠 ' + esc(tenantName(c.tenantId)) : 'Personal';
@@ -528,7 +543,31 @@ async function load() {
     ALL_CONNECTORS = data.providers || [];
     renderConnectorSummary();
     renderConnectorList();
+    loadLiveness();
   } catch (e) { list.innerHTML = '<p class="sub">Could not load connectors.</p>'; }
+}
+
+/* G14: ask the server whether each provider will actually honor its stored grant (a real
+   refresh probe, cached ≤15 min server-side) and re-render badges. Failure to probe leaves
+   the row-based badges as-is — the probe only ever ADDS honesty, it never blanks the page. */
+async function loadLiveness() {
+  try {
+    var r = await (await fetch('/api/connect/liveness', { credentials: 'include' })).json();
+    var changed = false;
+    (r.providers || []).forEach(function (x) {
+      LIVENESS[x.provider] = { status: x.status, detail: x.detail || '' };
+      if (x.status === 'needs_reconnect') changed = true;
+    });
+    renderConnectorSummary();
+    renderConnectorList();
+    if (changed) {
+      var b = document.getElementById('banner');
+      if (b && !b.textContent) {
+        b.className = 'banner err'; b.style.display = 'block';
+        b.textContent = '⚠ A connected account needs to be RECONNECTED — its provider no longer honors the stored grant. Look for the "needs reconnect" badge below.';
+      }
+    }
+  } catch (e) { /* probe unavailable — row-based badges remain (honest default) */ }
 }
 
 function renderConnectorSummary() {
@@ -539,9 +578,15 @@ function renderConnectorSummary() {
   var accounts = rows.reduce(function(sum, p) { return sum + ((p.connections || []).length); }, 0);
   var ready = rows.filter(providerReady).length;
   var needsSetup = rows.filter(function(p) { return !providerReady(p); }).length;
+  // G14: providers whose live probe says the grant is dead leave "connected" and get their
+  // own count — "1 connected" must not include a token Google will refuse.
+  var needsReconnect = rows.filter(function(p) {
+    return !!p.connected && LIVENESS[p.id] && LIVENESS[p.id].status === 'needs_reconnect';
+  }).length;
   box.innerHTML = [
     summaryTile(accounts, 'accounts'),
-    summaryTile(connectedProviders, 'connected'),
+    summaryTile(connectedProviders - needsReconnect, 'connected'),
+    needsReconnect ? summaryTile(needsReconnect, 'need reconnect') : '',
     summaryTile(ready, 'ready'),
     summaryTile(needsSetup, 'needs setup'),
   ].join('');

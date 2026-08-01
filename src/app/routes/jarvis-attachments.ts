@@ -6,8 +6,9 @@
  *   - image → a factual description produced by /api/vision/describe (the visual analog of the
  *     voice transcript: the browser describes the photo first, exactly as it transcribes speech
  *     before sending), so the size-capped /ask body never carries base64 pixels.
- *   - doc   → the file's extracted text (text-based files read client-side; PDF/Office extraction
- *     is a documented follow-up — the repo has no binary extractor today).
+ *   - doc   → the file's extracted text (text-based files read client-side; PDF/Word binaries
+ *     extracted server-side via POST /api/vision/read-doc — an extraction FAILURE arrives as an
+ *     `unreadable` attachment and is rendered honestly below, never silently dropped).
  *
  * This module only assembles + bounds that text; it makes no network/LLM/DB calls. Keeping it a
  * pure function keeps the /ask handler small and keeps the heavy logic out of the near-cap route file.
@@ -17,6 +18,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — buildAttachmentEnrichment(): bounds + formats attached image descriptions and doc text into an authoritative-context block prepended to the Jarvis bot prompt, plus a short note for the persisted user turn so history/replay shows the attachment happened.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Honest extraction failures (ADR-110 follow-up / G-series honesty rule): a doc attachment marked `unreadable` (server-side PDF/DOCX extraction failed) now produces a named "couldn't read this file" section in the prompt block instead of being silently dropped — Jarvis tells the user the file was received but unreadable rather than answering as if it never existed. Unreadable docs count toward hasAny/turnNote.
  *
  * @module jarvis-attachments
  */
@@ -30,6 +32,10 @@ export interface JarvisAttachment {
   description?: string;
   /** Doc only: the file's extracted text. */
   text?: string;
+  /** Doc only: extraction failed server-side — render an honest "couldn't read" section. */
+  unreadable?: boolean;
+  /** Doc only: short human reason why extraction failed (bounded upstream). */
+  reason?: string;
 }
 
 /** The result of folding attachments into prompt + history material. */
@@ -68,6 +74,14 @@ export function buildAttachmentEnrichment(raw: unknown): AttachmentEnrichment {
       const desc = clip(att.description, MAX_IMAGE_DESC_CHARS);
       if (desc) imageParts.push(section(`Image ${imageParts.length + 1}`, att.name, desc));
     } else if (att.kind === 'doc') {
+      if (att.unreadable) {
+        // Honest degrade: the user attached a real file we could not extract. Name it and say
+        // so in the prompt — never silently pretend it wasn't attached.
+        const reason = clip(att.reason, 200);
+        docParts.push(section(`Document ${docParts.length + 1}`, att.name,
+          `(couldn't read this file${reason ? ` — ${reason}` : ''}. Tell the user you received it but could not read its contents; do not guess at them.)`));
+        continue;
+      }
       const { text, truncated } = clipDoc(att.text);
       if (text) docParts.push(section(`Document ${docParts.length + 1}`, att.name, text + (truncated ? '\n…(truncated)' : '')));
     }
@@ -98,6 +112,8 @@ function normalize(raw: unknown): JarvisAttachment[] {
       name: strOrUndef((item as { name?: unknown }).name),
       description: strOrUndef((item as { description?: unknown }).description),
       text: strOrUndef((item as { text?: unknown }).text),
+      unreadable: (item as { unreadable?: unknown }).unreadable === true,
+      reason: strOrUndef((item as { reason?: unknown }).reason),
     });
   }
   return out;

@@ -142,6 +142,7 @@
  * 138 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: retired the stale '/api/remote-clients hardening TODO = per-caller rate limiting' note - the limiter SHIPPED router-local in remote-client-routes.ts (seq 11: flag-gated OSHAL_RATE_LIMIT_REMOTE_CLIENTS, keyed per /:clientId, guard tests/unit/remote-client-auth.spec.ts), so the TODO was sending the next security wave to re-do finished work. No logic change.
  * 137 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G3 + G9: needsOnboarding now delegates to the pure onboardingRequired predicate (new onboarding-gate.ts) — DISABLE_ONBOARDING_GATE only suppresses the per-user wizard and can no longer waive the "a model must be connected" requirement; a deliberately model-less box declares OSHAL_NO_AI=true instead (a warn log names the exact fix when the gate fires despite the flag). Registered registerReadinessRoutes (new routes/readiness-routes.ts): GET /api/readiness reports per-capability ok|off|fail because /api/health is liveness-only and was being read as readiness. Guards: tests/unit/onboarding-gate.spec.ts + tests/unit/readiness-report.spec.ts.
  * 139 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E2): the /api/alerts mount now wires the pool-backed RcaSpendReader (routes/alertmanager-rca-spend.ts) into the intake's analyst budget gate — cost-ledger actuals meter auto-flow RCA dispatch; a pool-less run passes null and the gate is an explicit pass-through.
+ * 140 | maintainer@emeraldcoastsystemsgroup.com   | Jarvis UX trio wiring: /api/voice now receives ctx (JVV-012 per-user TTS prefs endpoints + prefs-honoring synthesize), and /api/connect gains the liveness router (INSTALLER-GAPS G14 — the Connections badge live token check) on the same auth-gated mount.
  */
 
 require('dotenv').config();
@@ -205,6 +206,7 @@ import { createProviderRoutes, listConfiguredProviders } from './routes/provider
 import { onboardingRequired } from './onboarding-gate';
 import { registerReadinessRoutes } from './routes/readiness-routes';
 import { createConnectorsRoutes, createFacebookDataDeletionRoute } from './routes/connectors-routes';
+import { createConnectorLivenessRoutes } from './routes/connector-liveness';
 import { createByoLlmRoutes } from './routes/byo-llm-routes';
 import { createFreeTierRoutes } from './routes/free-tier-routes';
 import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-pairing-routes';
@@ -1017,6 +1019,10 @@ function createApp(): express.Application {
   app.use('/api/connect/free-tier', requiresAuth, createFreeTierRoutes(ctx));
   // Connectors / Utilities hub — per-user provider authorization (Gmail, etc.)
   app.use('/api/connect', requiresAuth, createConnectorsRoutes(ctx));
+  // Live connection health (INSTALLER-GAPS G14): GET /api/connect/liveness probes whether the
+  // provider will actually HONOR the stored grant (forced refresh / account read, cached ≤15min)
+  // so the Connections screen's "connected" badge stops trusting a bare DB row.
+  app.use('/api/connect', requiresAuth, createConnectorLivenessRoutes(ctx));
   // Slack personal feed — live read of the caller's own channels/DMs via the 'slack' connector token.
   app.use('/api/slack', requiresAuth, createSlackRoutes(ctx));
   // (Feeds app /api/feeds surface carved to the app store, ADR-085 Wave 3 — the packaged
@@ -1338,7 +1344,8 @@ function createApp(): express.Application {
   registerSwarmExtensionRoutes(app, requiresAuth, ctx.swarm);
   app.use('/api/tasks', requiresAuth, createTaskRoutes(ctx));
   app.use('/api/stream', requiresAuth, createStreamRoutes(ctx));
-  app.use('/api/voice', requiresAuth, createVoiceRoutes());
+  // ctx → per-user TTS provider/voice prefs (JVV-012) ride the same auth-gated mount.
+  app.use('/api/voice', requiresAuth, createVoiceRoutes(ctx));
   // Swarm application REST + UI profile surfaces (gate middleware + instance
   // already set up before the app-owned route mounts).
   app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService));

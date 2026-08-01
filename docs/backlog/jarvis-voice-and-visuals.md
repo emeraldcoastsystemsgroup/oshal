@@ -330,11 +330,25 @@ implies that attribution is authentication.
 
 ### JVV-012 — selectable TTS connectors and rights-cleared private voices
 
-**Status: partial foundation / open product path.** The framework already has a pluggable `TTSProvider`
+**Status: selection slice SHIPPED 2026-08-01 (code; rides the next deploy) / private-voice path
+open.** Shipped: `GET /api/voice/providers` lists every registered TTS provider with its LIVE
+`getStatus` (unconfigured providers render as honest DISABLED options carrying the reason — never
+selectable, enforced again server-side by `POST /api/voice/prefs` → 400 `provider_not_configured`);
+per-user provider+voice persistence in `voice_user_prefs`
+(src/features/voice-providers/services/voice-prefs-store.ts — provider/voice IDs only, secrets stay
+server-side); `/api/voice/synthesize` honors the caller's saved selection whenever the body names no
+provider (explicit values always win), so Jarvis's existing speak path — and every other surface on
+the voice rail — uses the chosen voice with zero surface changes; and a **Spoken voice** section in
+the Jarvis settings panel (jarvis-ambient-ui.js): provider + voice selects, instant persist, and a
+Preview button (explicit-selection synthesis; browser-voice fallback; failures stated). Failure
+falls back through the existing server→browser speech chain without interrupting narration.
+Guards: tests/unit/voice-prefs.spec.ts (`tts-picker-persists-and-honored`,
+`unconfigured-provider-not-selectable`). Remaining open (unchanged below): the rights-reviewed
+local provider, consented private voice-profile path, and license recording.
+
+The framework already has a pluggable `TTSProvider`
 contract, provider registry, `/api/voice/synthesize`, `/api/voice/voices`, and browser, Gemini, and
-Google Cloud implementations. Jarvis currently calls the swarm default for server speech while its
-Voice button cycles only installed browser voices; it does not persist a per-user server provider and
-voice selection.
+Google Cloud implementations.
 
 Add provider/voice selection and preview to Jarvis settings, with owner-scoped preferences, explicit
 fallback status, health/cost metadata, and a connector boundary that never exposes provider secrets to

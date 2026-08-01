@@ -5094,6 +5094,23 @@ fully and **text-based** documents. These extend it:
 
 **Verified 2026-07-19:** PARTIAL — image describe + text docs are shipped AND deployed (supersedes the guard-deferred line above); the PDF/Office binary extractor for the jarvis path + per-image labels remain open.
 
+**Update 2026-08-01 — both remainders SHIPPED (code; rides the next deploy).** (1) PDF/Word
+extraction: `POST /api/vision/read-doc` over the new `src/features/doc-extract/` slice —
+pdf via the already-shipped `pdf-parse` dep, .docx via the already-shipped `yauzl`
+(word/document.xml → text), format sniffed magic-bytes-first, output bounded; the Jarvis
+**+ Add → document** picker now accepts .pdf/.docx and routes binaries through the server
+extractor. Extraction failure is HONEST end-to-end: the route answers `{ ok:false, reason }`,
+the surface attaches the named file with an `unreadable` flag, and the prompt assembler
+renders a "couldn't read this file" section instead of silently dropping it. The optional
+"ingest into the owner's private RAG collection" leg remains open (inline excerpt only).
+(2) Per-image labels: with 2+ photos the ONE describe call now emits `=== IMAGE k ===`
+sections parsed into `sections[]` (fail-open to the combined description), and the surface
+attaches one labeled description per photo — `[Image 1 — a.jpg]` / `[Image 2 — b.jpg]` in
+the prompt block, so "the first photo" vs "the second" resolves. Still a single accountable
+vision call (no per-image cost multiplication). Guards:
+tests/unit/jarvis-media-extraction.spec.ts (`extraction-failure-degrades-honestly`,
+`image-descriptions-present-in-assembly`) + tests/unit/vision-read-doc-route.spec.ts.
+
 ## A2A auth-failure limiter keyed on spoofable req.ip ✅ (security review LOW, 2026-07-19 — FIXED 2026-07-19)
 
 - **Context:** server.ts sets `trust proxy` true, so a rotating `X-Forwarded-For` defeats the
@@ -5887,12 +5904,22 @@ onboarding-gate requirement, mount modes, TaskController direct-path rejection, 
 message — see `oshal-app-private/gsquared-install-issues/INSTALLER-GAPS.md` for the ledger).
 These are the deliberately-deferred remainders:
 
-- **Connections screen trusts its own DB row for the "connected" badge (G14 leg 2).** "1
-  connected" means a row exists, not that Google will honor the token — a Testing-mode client's
-  revoked grant still shows green until the next send fails.
-  *Done when:* the connections list performs a live token check (on-demand refresh probe, or
-  cached ≤15 min) per provider, the badge distinguishes connected / needs-reconnect, and a spec
-  pins the needs-reconnect state for a `refresh 400` grant.
+- ~~**Connections screen trusts its own DB row for the "connected" badge (G14 leg 2).**~~
+  ✅ **SHIPPED 2026-08-01 (code; rides the next deploy).** "1 connected" used to mean a row
+  exists, not that Google would honor the token. Now: `GET /api/connect/liveness`
+  (src/app/routes/connector-liveness.ts, auth-gated, caller-scoped) probes each connected
+  provider — rows with a refresh token get a FORCED real refresh (`getValidAccessToken`
+  grew `opts.forceRefresh`; a dead Testing-mode grant surfaces as `refresh 400` →
+  `needs_reconnect` with the ~30-second fix named), refresh-token-less rows validate via the
+  account endpoint (unverifiable → honest `unknown`, never a false red); results cached
+  ≤15 min per (caller, provider), `?fresh=1` bypasses. `/utilities` calls it after the list
+  loads: a dead grant's pill flips to **needs reconnect** (distinct red badge), the card grows
+  an actionable warning line, the summary counts it out of "connected", and a banner points at
+  the badge. The invite flow's send-time distinction (leg 1) shipped earlier in
+  local-auth-routes.ts and now has its own guard. Guards:
+  tests/unit/connector-liveness.spec.ts (`connected-badge-reflects-live-check` — pins the
+  `refresh 400` → needs_reconnect state and that the probe provably forces a refresh) +
+  tests/unit/invite-reconnect-message.spec.ts (`reconnect-message-distinct-from-transport-missing`).
 
 - **`--apps` installs run no per-app smoke (G8).** An app installed with no engine reports
   success and misbehaves at runtime. `/api/readiness` now covers the engine leg globally, but an
