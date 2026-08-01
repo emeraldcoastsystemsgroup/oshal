@@ -29,6 +29,8 @@ resources:
     method: GET
     path: /urls/{id}
 metadata:
+  description: "VirusTotal — reads domain, ip, file, url via www.virustotal.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Security"
   icon: virustotal
   iconTitle: VirusTotal
   iconSource: simple-icons

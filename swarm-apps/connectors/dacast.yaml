@@ -33,6 +33,8 @@ resources:
       from: '{from}'
       to: '{to}'
 metadata:
+  description: "Dacast — reads vod, live, analytics via developer.dacast.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Media"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/dacast.com.ico

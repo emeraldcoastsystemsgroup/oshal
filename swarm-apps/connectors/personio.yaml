@@ -24,6 +24,8 @@ resources:
     query:
       limit: '100'
 metadata:
+  description: "Personio — reads employees, attendances via api.personio.de. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "HR & recruiting"
   iconVerified: true
   iconSource: simple-icons
   icon: personio

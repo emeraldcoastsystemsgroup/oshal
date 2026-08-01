@@ -28,6 +28,8 @@ resources:
       num_before: '{numBefore}'
       num_after: '{numAfter}'
 metadata:
+  description: "Zulip — reads users, streams, messages via your-org.zulipchat.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Communications"
   icon: zulip
   iconTitle: Zulip
   iconSource: simple-icons

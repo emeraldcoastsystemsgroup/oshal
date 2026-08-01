@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /merchants/{merchantId}/plans
 metadata:
+  description: "Braintree — reads customers, customer, transactions, transaction and 2 more via api.braintreegateway.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Payments"
   icon: braintree
   iconTitle: Braintree
   iconSource: simple-icons

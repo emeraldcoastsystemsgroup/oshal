@@ -35,6 +35,8 @@ resources:
       limit: '25'
     paginate: true
 metadata:
+  description: "WHOOP — reads me, recovery, cycles via api.prod.whoop.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Health"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/prod.whoop.com.ico

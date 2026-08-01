@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /boards
 metadata:
+  description: "Frill — reads ideas, announcements, boards via api.frill.co. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Support"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/frill.co.ico

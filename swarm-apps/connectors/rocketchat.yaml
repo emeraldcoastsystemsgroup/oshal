@@ -36,6 +36,8 @@ resources:
       X-User-Id: '{userId}'
       msgId: '{msgId}'
 metadata:
+  description: "Rocket.Chat — reads channels list, users list, chat get message via your-rocketchat.example.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Communications"
   icon: rocketdotchat
   iconTitle: Rocket.Chat
   iconSource: simple-icons

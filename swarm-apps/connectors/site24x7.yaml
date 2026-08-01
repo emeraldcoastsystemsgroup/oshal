@@ -21,6 +21,8 @@ resources:
     method: GET
     path: /current_status
 metadata:
+  description: "Site24x7 — reads monitors, current status via www.site24x7.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/site24x7.com.ico

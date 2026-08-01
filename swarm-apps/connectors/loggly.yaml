@@ -20,6 +20,8 @@ resources:
     method: GET
     path: /customer
 metadata:
+  description: "Loggly — reads fields, customer via yourcompany.loggly.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/loggly.com.ico

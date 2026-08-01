@@ -34,6 +34,8 @@ resources:
       exchangeId: '{exchangeId}'
       limit: '{limit}'
 metadata:
+  description: "CoinCap — reads assets, asset detail, rates, markets via api.coincap.io. No credential needed — a public API."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/coincap.io.ico

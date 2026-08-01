@@ -20,6 +20,8 @@ resources:
     method: GET
     path: /boards/{board_id}/items
 metadata:
+  description: "Miro — reads boards, board items via api.miro.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Design"
   icon: miro
   iconTitle: Miro
   iconSource: simple-icons

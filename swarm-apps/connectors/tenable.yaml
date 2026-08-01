@@ -38,6 +38,8 @@ resources:
     method: GET
     path: /workbenches/assets/{assetId}/vulnerabilities
 metadata:
+  description: "Tenable — reads scans, scan, assets, vulnerabilities and 1 more via cloud.tenable.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Security"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/tenable.com.ico

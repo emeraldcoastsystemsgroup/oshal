@@ -30,6 +30,8 @@ resources:
     query:
       id: '{q}'
 metadata:
+  description: "TheSportsDB — reads search teams, lookup team, next league events via www.thesportsdb.com. No credential needed — a public API."
+  category: "Sports"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/thesportsdb.com.ico

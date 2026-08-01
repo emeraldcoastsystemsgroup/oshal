@@ -27,6 +27,8 @@ resources:
     method: GET
     path: /departments
 metadata:
+  description: "Recruitee — reads offers, candidates, departments via api.recruitee.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "HR & recruiting"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/recruitee.com.ico

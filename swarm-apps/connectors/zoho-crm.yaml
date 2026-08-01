@@ -57,6 +57,8 @@ resources:
     method: GET
     path: /settings/modules
 metadata:
+  description: "Zoho CRM — reads leads, contacts, accounts, deals and 2 more via www.zohoapis.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "CRM"
   icon: zoho
   iconTitle: Zoho
   iconSource: simple-icons

@@ -37,6 +37,8 @@ resources:
     method: GET
     path: /public-ip-list
 metadata:
+  description: "Fastly — reads current user, services, service, service versions and 2 more via api.fastly.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   icon: fastly
   iconTitle: Fastly
   iconSource: simple-icons

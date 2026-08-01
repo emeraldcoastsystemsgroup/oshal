@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /datacenters
 metadata:
+  description: "Hetzner Cloud — reads servers, server, volumes, networks and 2 more via api.hetzner.cloud. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   icon: hetzner
   iconTitle: Hetzner
   iconSource: simple-icons

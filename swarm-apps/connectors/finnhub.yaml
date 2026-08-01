@@ -66,6 +66,7 @@ resources:
     safety:
       action: read
 metadata:
+  category: "Finance"
   description: Earnings actual-vs-consensus surprises, forward earnings + economic calendars with estimates. The consensus half of the fundamental event overlay.
   tags: [finance, market-data, fundamentals, events]
   website: https://finnhub.io

@@ -35,6 +35,8 @@ resources:
       q: '{q}'
       format: json
 metadata:
+  description: "LocationIQ — reads search, reverse, autocomplete via us1.locationiq.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Location & maps"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/us1.locationiq.com.ico

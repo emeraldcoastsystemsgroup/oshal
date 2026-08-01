@@ -49,6 +49,8 @@ resources:
     method: GET
     path: /videos/{videoId}/privacy/users
 metadata:
+  description: "Vimeo — reads me, videos, video, albums and 2 more via api.vimeo.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Media"
   icon: vimeo
   iconTitle: Vimeo
   iconSource: simple-icons

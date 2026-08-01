@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /items
 metadata:
+  description: "Chargebee — reads customers, customer, subscriptions, invoices and 2 more via yoursite.chargebee.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Payments"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/chargebee.com.ico

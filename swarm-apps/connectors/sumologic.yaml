@@ -42,6 +42,8 @@ resources:
       - limit
       - token
 metadata:
+  description: "Sumo Logic — reads collectors, search job, monitors, dashboards and 2 more via api.sumologic.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   icon: sumologic
   iconTitle: Sumo Logic
   iconSource: simple-icons

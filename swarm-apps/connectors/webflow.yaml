@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /collections/{collection_id}/items
 metadata:
+  description: "Webflow — reads sites, site collections, collection items via api.webflow.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Commerce"
   icon: webflow
   iconTitle: Webflow
   iconSource: simple-icons

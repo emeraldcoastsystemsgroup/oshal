@@ -23,6 +23,8 @@ resources:
     method: GET
     path: /balance
 metadata:
+  description: "Kickbox — reads verify, balance via api.kickbox.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Email"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/kickbox.com.ico

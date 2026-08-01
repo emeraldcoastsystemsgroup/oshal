@@ -29,6 +29,8 @@ resources:
       profile: '{profileId}'
       limit: '{limit}'
 metadata:
+  description: "Wise — reads profiles, borderless accounts, transfers via api.transferwise.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Finance"
   icon: wise
   iconTitle: Wise
   iconSource: simple-icons

@@ -49,6 +49,8 @@ resources:
       - page
       - per_page
 metadata:
+  description: "BetterStack Uptime — reads monitors, incidents, heartbeats, monitor groups and 1 more via uptime.betterstack.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   icon: betterstack
   iconTitle: Better Stack
   iconSource: simple-icons

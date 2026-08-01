@@ -37,6 +37,8 @@ resources:
     query:
       id: '{billId}'
 metadata:
+  description: "Bill.com — reads read customer, read vendor, read invoice, read bill via api.bill.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Payments"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/bill.com.ico

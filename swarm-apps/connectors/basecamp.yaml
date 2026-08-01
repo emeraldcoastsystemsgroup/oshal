@@ -20,6 +20,8 @@ resources:
     method: GET
     path: /people.json
 metadata:
+  description: "Basecamp — reads projects, people via 3.basecampapi.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Project management"
   icon: basecamp
   iconTitle: Basecamp
   iconSource: simple-icons

@@ -46,6 +46,8 @@ resources:
       per_page: '30'
     paginate: true
 metadata:
+  description: "Unsplash — reads me, my photos, my likes, search via api.unsplash.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Media"
   icon: unsplash
   iconTitle: Unsplash
   iconSource: simple-icons

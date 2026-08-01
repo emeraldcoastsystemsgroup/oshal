@@ -36,6 +36,8 @@ resources:
     path: /boards/{boardId}/pins
     paginate: true
 metadata:
+  description: "Pinterest — reads me, boards, pins, board pins via api.pinterest.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Social"
   icon: pinterest
   iconTitle: Pinterest
   iconSource: simple-icons

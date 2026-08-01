@@ -32,6 +32,8 @@ resources:
     query:
       sol: '{sol}'
 metadata:
+  description: "NASA Open APIs — reads apod, neo feed, mars photos via api.nasa.gov. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Knowledge"
   icon: nasa
   iconTitle: NASA
   iconSource: simple-icons

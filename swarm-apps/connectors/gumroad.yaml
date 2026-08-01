@@ -31,6 +31,8 @@ resources:
       after: '{after}'
       before: '{before}'
 metadata:
+  description: "Gumroad — reads me, products, get product, sales via api.gumroad.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Commerce"
   icon: gumroad
   iconTitle: Gumroad
   iconSource: simple-icons

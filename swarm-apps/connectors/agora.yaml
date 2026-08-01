@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /projects
 metadata:
+  description: "Agora — reads channel, projects via api.agora.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Communications"
   icon: agora
   iconTitle: Agora
   iconSource: simple-icons

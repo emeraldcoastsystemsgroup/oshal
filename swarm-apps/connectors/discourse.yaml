@@ -37,6 +37,8 @@ resources:
     method: GET
     path: /users/{username}.json
 metadata:
+  description: "Discourse — reads latest topics, top topics, topic, category topics and 2 more via your-forum.example.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Knowledge"
   icon: discourse
   iconTitle: Discourse
   iconSource: simple-icons

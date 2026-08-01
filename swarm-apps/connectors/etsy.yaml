@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /shops/{shop_id}/listings
 metadata:
+  description: "Etsy — reads shop, active listings, shop listings via openapi.etsy.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Commerce"
   icon: etsy
   iconTitle: Etsy
   iconSource: simple-icons

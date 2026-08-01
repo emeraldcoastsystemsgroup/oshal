@@ -34,6 +34,8 @@ resources:
     method: GET
     path: /projects/{ref}/secrets
 metadata:
+  description: "Supabase — reads organizations, projects, project api keys, project functions and 1 more via api.supabase.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Data infrastructure"
   icon: supabase
   iconTitle: Supabase
   iconSource: simple-icons

@@ -41,6 +41,8 @@ resources:
     method: GET
     path: /trending/movie/{window}
 metadata:
+  description: "Movies & TV (TMDB) — reads search movies, where to watch, recommendations, trending via api.themoviedb.org. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Media"
   icon: themoviedatabase
   iconTitle: The Movie Database
   iconSource: simple-icons

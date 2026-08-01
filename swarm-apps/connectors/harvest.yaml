@@ -31,6 +31,8 @@ resources:
     method: GET
     path: /users/me
 metadata:
+  description: "Harvest — reads time entries, projects, clients, me via api.harvestapp.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Productivity"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/harvestapp.com.ico

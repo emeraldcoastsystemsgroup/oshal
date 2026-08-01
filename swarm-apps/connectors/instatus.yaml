@@ -25,6 +25,8 @@ resources:
     method: GET
     path: '/{page_id}/components'
 metadata:
+  description: "Instatus — reads pages, incidents, components via api.instatus.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   icon: instatus
   iconTitle: Instatus
   iconSource: simple-icons

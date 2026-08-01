@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /templates
 metadata:
+  description: "PandaDoc — reads list documents, get document, list templates via api.pandadoc.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "E-signature & documents"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/pandadoc.com.ico

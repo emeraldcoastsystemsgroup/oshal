@@ -20,6 +20,8 @@ resources:
     method: GET
     path: /forms/{form_id}/submissions
 metadata:
+  description: "Getform — reads list forms, list form submissions via api.getform.io. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Forms"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/getform.io.ico

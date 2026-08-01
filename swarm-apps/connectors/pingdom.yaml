@@ -28,6 +28,8 @@ resources:
       from: '{from}'
       to: '{to}'
 metadata:
+  description: "Pingdom — reads checks, check, outage summary via api.pingdom.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   icon: pingdom
   iconTitle: Pingdom
   iconSource: simple-icons

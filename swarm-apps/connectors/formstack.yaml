@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /folder.json
 metadata:
+  description: "Formstack — reads list forms, get form, list folders via www.formstack.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Forms"
   icon: formstack
   iconTitle: Formstack
   iconSource: simple-icons

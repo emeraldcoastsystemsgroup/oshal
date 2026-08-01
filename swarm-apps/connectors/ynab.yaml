@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /budgets/{budget_id}/transactions
 metadata:
+  description: "YNAB — reads budgets, accounts, transactions via api.ynab.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Finance"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/ynab.com.ico

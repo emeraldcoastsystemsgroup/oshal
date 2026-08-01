@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /projects/{api_id}/feedbacks
 metadata:
+  description: "Usersnap — reads projects, project, feedbacks via api.usersnap.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Support"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/usersnap.com.ico

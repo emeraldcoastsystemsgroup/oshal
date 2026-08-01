@@ -28,6 +28,8 @@ resources:
       keyword: '{q}'
       subType: AIRPORT,CITY
 metadata:
+  description: "Amadeus — reads flight offers, locations via test.api.amadeus.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Travel"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/test.api.amadeus.com.ico

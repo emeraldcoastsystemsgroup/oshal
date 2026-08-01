@@ -28,6 +28,8 @@ resources:
     method: GET
     path: /products/{id}
 metadata:
+  description: "WooCommerce — reads products, orders, customers, product via yourstore.example.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Commerce"
   icon: woocommerce
   iconTitle: WooCommerce
   iconSource: simple-icons

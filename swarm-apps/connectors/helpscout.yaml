@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /users
 metadata:
+  description: "Help Scout — reads conversations, conversation, conversation threads, mailboxes and 2 more via api.helpscout.net. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Support"
   icon: helpscout
   iconTitle: Help Scout
   iconSource: simple-icons

@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /contacts
 metadata:
+  description: "LiveAgent — reads tickets, agents, contacts via your.ladesk.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Support"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/liveagent.com.ico

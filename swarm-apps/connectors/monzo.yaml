@@ -38,6 +38,8 @@ resources:
     query:
       current_account_id: '{accountId}'
 metadata:
+  description: "Monzo — reads whoami, accounts, balance, transactions and 1 more via api.monzo.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Finance"
   icon: monzo
   iconTitle: Monzo
   iconSource: simple-icons

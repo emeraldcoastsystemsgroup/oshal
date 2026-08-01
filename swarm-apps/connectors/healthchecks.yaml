@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /badges
 metadata:
+  description: "Healthchecks.io — reads checks, check flips, badges via healthchecks.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/healthchecks.io.ico

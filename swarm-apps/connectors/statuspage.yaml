@@ -40,6 +40,8 @@ resources:
     path: /pages/{pageId}/subscribers
     paginate: true
 metadata:
+  description: "Statuspage — reads pages, page, components, incidents and 1 more via api.statuspage.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   icon: statuspage
   iconTitle: Statuspage
   iconSource: simple-icons

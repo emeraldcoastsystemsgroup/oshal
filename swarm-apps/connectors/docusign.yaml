@@ -30,6 +30,8 @@ resources:
     method: GET
     path: /folders
 metadata:
+  description: "DocuSign — reads list envelopes, get envelope, list templates, list folders via demo.docusign.net. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "E-signature & documents"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/docusign.com.ico

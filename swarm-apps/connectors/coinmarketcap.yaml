@@ -28,6 +28,8 @@ resources:
       symbol: '{symbol}'
       convert: '{convert}'
 metadata:
+  description: "CoinMarketCap — reads listings latest, quotes latest via pro-api.coinmarketcap.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Finance"
   icon: coinmarketcap
   iconTitle: CoinMarketCap
   iconSource: simple-icons

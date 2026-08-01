@@ -21,6 +21,8 @@ resources:
     method: GET
     path: '/company/{company_id}/positions'
 metadata:
+  description: "Breezy HR — reads companies, positions via api.breezy.hr. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "HR & recruiting"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/breezy.hr.ico

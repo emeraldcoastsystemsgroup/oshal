@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /document/{document_id}
 metadata:
+  description: "SignNow — reads user, list document groups, get document via api.signnow.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "E-signature & documents"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/signnow.com.ico

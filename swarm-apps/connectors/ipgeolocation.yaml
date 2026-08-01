@@ -31,6 +31,8 @@ resources:
     query:
       location: '{q}'
 metadata:
+  description: "IPGeolocation — reads ipgeo, timezone, astronomy via api.ipgeolocation.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Location & maps"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/ipgeolocation.io.ico

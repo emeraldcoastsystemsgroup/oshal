@@ -23,6 +23,8 @@ resources:
     path: /words.json/randomWord
     query: {}
 metadata:
+  description: "Wordnik — reads definitions, random word via api.wordnik.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Knowledge"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/wordnik.com.ico

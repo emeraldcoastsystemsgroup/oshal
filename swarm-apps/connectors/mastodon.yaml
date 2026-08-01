@@ -58,6 +58,8 @@ resources:
       - limit
       - exclude_replies
 metadata:
+  description: "Mastodon — reads verify credentials, home timeline, public timeline, notifications and 2 more via mastodon.social. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Social"
   icon: mastodon
   iconTitle: Mastodon
   iconSource: simple-icons

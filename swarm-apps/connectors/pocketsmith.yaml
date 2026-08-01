@@ -26,6 +26,8 @@ resources:
     method: GET
     path: /users/{id}/transactions
 metadata:
+  description: "PocketSmith — reads me, accounts, transactions via api.pocketsmith.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Finance"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/pocketsmith.com.ico

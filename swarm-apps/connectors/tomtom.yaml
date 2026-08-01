@@ -21,6 +21,8 @@ resources:
     method: GET
     path: /routing/1/calculateRoute/{locations}/json
 metadata:
+  description: "TomTom — reads search, calculate route via api.tomtom.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Location & maps"
   icon: tomtom
   iconTitle: TomTom
   iconSource: simple-icons

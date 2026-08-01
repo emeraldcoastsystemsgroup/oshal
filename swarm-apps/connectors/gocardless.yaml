@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /accounts/{id}/transactions/
 metadata:
+  description: "GoCardless Bank Account Data — reads institutions, account, transactions via bankaccountdata.gocardless.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Payments"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/bankaccountdata.gocardless.com.ico

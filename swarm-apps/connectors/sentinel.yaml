@@ -35,6 +35,8 @@ resources:
     query:
       api-version: '2023-11-01'
 metadata:
+  description: "Microsoft Sentinel — reads incidents, incident, bookmarks via management.azure.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Security"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/management.azure.com.ico

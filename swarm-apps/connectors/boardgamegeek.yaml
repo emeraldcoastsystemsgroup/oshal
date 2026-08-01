@@ -30,6 +30,8 @@ resources:
     query:
       type: boardgame
 metadata:
+  description: "BoardGameGeek — reads thing, search, hot via boardgamegeek.com. No credential needed — a public API."
+  category: "Games"
   icon: boardgamegeek
   iconTitle: BoardGameGeek
   iconSource: simple-icons

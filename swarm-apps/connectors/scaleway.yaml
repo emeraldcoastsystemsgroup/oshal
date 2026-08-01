@@ -33,6 +33,8 @@ resources:
     method: GET
     path: /instance/v1/zones/{zone}/security_groups
 metadata:
+  description: "Scaleway — reads servers, server, volumes, images and 1 more via api.scaleway.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   icon: scaleway
   iconTitle: Scaleway
   iconSource: simple-icons

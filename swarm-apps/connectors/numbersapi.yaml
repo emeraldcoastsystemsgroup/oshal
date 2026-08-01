@@ -27,6 +27,8 @@ resources:
     path: /random/trivia
     query: {}
 metadata:
+  description: "Numbers API — reads number fact, math fact, random trivia via numbersapi.com. No credential needed — a public API."
+  category: "Knowledge"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/numbersapi.com.ico

@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /emails/{emailId}
 metadata:
+  description: "Buttondown — reads newsletters, subscribers, emails, get email via api.buttondown.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Marketing"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/buttondown.com.ico

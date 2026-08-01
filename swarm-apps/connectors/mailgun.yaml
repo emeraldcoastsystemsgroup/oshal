@@ -49,6 +49,8 @@ resources:
     query:
       limit: null
 metadata:
+  description: "Mailgun — reads domains, events, stats, bounces and 1 more via api.mailgun.net. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Email"
   icon: mailgun
   iconTitle: Mailgun
   iconSource: simple-icons

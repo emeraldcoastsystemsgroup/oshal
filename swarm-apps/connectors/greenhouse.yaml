@@ -36,6 +36,8 @@ resources:
     query:
       per_page: '100'
 metadata:
+  description: "Greenhouse — reads candidates, jobs, applications, users via harvest.greenhouse.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "HR & recruiting"
   iconVerified: true
   iconSource: simple-icons
   icon: greenhouse

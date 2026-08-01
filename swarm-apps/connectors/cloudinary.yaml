@@ -31,6 +31,8 @@ resources:
     method: GET
     path: /usage
 metadata:
+  description: "Cloudinary — reads image resources, video resources, usage via api.cloudinary.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Media"
   icon: cloudinary
   iconTitle: Cloudinary
   iconSource: simple-icons

@@ -32,6 +32,8 @@ resources:
     method: GET
     path: /tournaments
 metadata:
+  description: "PandaScore — reads matches, teams, players, tournaments via api.pandascore.co. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Sports"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/pandascore.co.ico

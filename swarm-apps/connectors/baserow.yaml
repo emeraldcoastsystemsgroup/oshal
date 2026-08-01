@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /database/fields/table/{table_id}/
 metadata:
+  description: "Baserow — reads applications, rows, fields via api.baserow.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Productivity"
   icon: baserow
   iconTitle: Baserow
   iconSource: simple-icons

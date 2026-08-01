@@ -32,6 +32,8 @@ resources:
     method: GET
     path: /users/{user_id}
 metadata:
+  description: "Mattermost — reads me, teams, channel, channel posts and 1 more via your-mattermost.example.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Communications"
   icon: mattermost
   iconTitle: Mattermost
   iconSource: simple-icons

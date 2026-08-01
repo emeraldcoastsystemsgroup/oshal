@@ -37,6 +37,8 @@ resources:
     method: GET
     path: /country
 metadata:
+  description: "Bunny.net — reads pull zones, pull zone, storage zones, dns zones and 2 more via api.bunny.net. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Media"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/bunny.net.ico

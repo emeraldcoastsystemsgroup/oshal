@@ -35,6 +35,8 @@ resources:
       limit: null
       start: null
 metadata:
+  description: "Customer.io — reads campaigns, segments, newsletters, broadcasts and 1 more via api.customer.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Marketing"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/customer.io.ico

@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /ticker
 metadata:
+  description: "Blockchain.com — reads rawaddr, rawtx, ticker via blockchain.info. No credential needed — a public API."
+  category: "Finance"
   icon: blockchaindotcom
   iconTitle: Blockchain.com
   iconSource: simple-icons

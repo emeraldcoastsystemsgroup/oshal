@@ -28,6 +28,8 @@ resources:
     method: GET
     path: /projects/{project_id}/branches/{branch_id}/databases
 metadata:
+  description: "Neon — reads projects, project, branches, databases via console.neon.tech. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Data infrastructure"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/console.neon.tech.ico

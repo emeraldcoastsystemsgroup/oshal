@@ -36,6 +36,8 @@ resources:
     query:
       api-version: 2019-01-01-preview
 metadata:
+  description: "Microsoft Defender for Cloud — reads assessments, alerts, secure scores, compliance via management.azure.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Security"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/management.azure.com.ico

@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /form/{id}/submissions
 metadata:
+  description: "Jotform — reads list forms, get form, get form submissions via api.jotform.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Forms"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/jotform.com.ico

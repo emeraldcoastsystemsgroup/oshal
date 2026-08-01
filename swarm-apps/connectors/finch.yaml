@@ -28,6 +28,8 @@ resources:
     method: GET
     path: /employment/{individualId}
 metadata:
+  description: "Finch — reads directory, company, individual, employment via api.tryfinch.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "HR & recruiting"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/tryfinch.com.ico

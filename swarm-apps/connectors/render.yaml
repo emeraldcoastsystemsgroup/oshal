@@ -40,6 +40,8 @@ resources:
     path: /postgres
     paginate: true
 metadata:
+  description: "Render — reads services, service, deploys, owners and 1 more via api.render.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   icon: render
   iconTitle: Render
   iconSource: simple-icons

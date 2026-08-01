@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /teammates
 metadata:
+  description: "Front — reads conversations, conversation, conversation messages, inboxes and 2 more via api2.frontapp.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Communications"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/api2.frontapp.com.ico

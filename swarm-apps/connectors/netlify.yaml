@@ -22,6 +22,8 @@ resources:
     query:
       per_page: '100'
 metadata:
+  description: "Netlify — reads me, sites via api.netlify.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Developer tools"
   icon: netlify
   iconTitle: Netlify
   iconSource: simple-icons

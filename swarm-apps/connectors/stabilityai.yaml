@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /engines/list
 metadata:
+  description: "Stability AI — reads account, balance, engines via api.stability.ai. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "AI"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/stability.ai.ico

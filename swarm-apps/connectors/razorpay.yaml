@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /invoices
 metadata:
+  description: "Razorpay — reads customers, payments, payment, orders and 2 more via api.razorpay.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Payments"
   icon: razorpay
   iconTitle: Razorpay
   iconSource: simple-icons

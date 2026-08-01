@@ -26,6 +26,8 @@ resources:
     method: GET
     path: /gallery/all
 metadata:
+  description: "DeviantArt — reads whoami, browse popular, gallery all via www.deviantart.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Social"
   icon: deviantart
   iconTitle: DeviantArt
   iconSource: simple-icons

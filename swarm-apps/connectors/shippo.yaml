@@ -35,6 +35,8 @@ resources:
     method: GET
     path: /tracks/{carrier}/{trackingNumber}
 metadata:
+  description: "Shippo — reads addresses, shipments, get shipment, tracking via api.goshippo.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Commerce"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/goshippo.com.ico

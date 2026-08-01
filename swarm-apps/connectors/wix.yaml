@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /members/v1/members/{member_id}
 metadata:
+  description: "Wix — reads site properties, members, member via www.wixapis.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Commerce"
   icon: wix
   iconTitle: Wix
   iconSource: simple-icons

@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /end-users
 metadata:
+  description: "Dixa — reads conversations, agents, end users via dev.dixa.io. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Support"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/dev.dixa.io.ico

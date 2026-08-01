@@ -30,6 +30,8 @@ resources:
       currentPage: '{currentPage}'
       pageSize: '{pageSize}'
 metadata:
+  description: "api.video — reads videos, video, live streams via ws.api.video. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Media"
   icon: xiaohongshu
   iconTitle: Xiaohongshu
   iconSource: simple-icons

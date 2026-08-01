@@ -38,6 +38,8 @@ resources:
     query:
       q: '{q}'
 metadata:
+  description: "WeatherAPI — reads current, forecast, search, astronomy via api.weatherapi.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Weather"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/weatherapi.com.ico

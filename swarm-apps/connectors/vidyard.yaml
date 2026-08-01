@@ -26,6 +26,8 @@ resources:
       page: '{page}'
       per_page: '{per_page}'
 metadata:
+  description: "Vidyard — reads players, videos via api.vidyard.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Media"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/vidyard.com.ico

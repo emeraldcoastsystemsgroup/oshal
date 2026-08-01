@@ -27,6 +27,8 @@ resources:
     method: GET
     path: /athletes/{athleteId}/stats
 metadata:
+  description: "Strava — reads me, activities, stats via www.strava.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Health"
   icon: strava
   iconTitle: Strava
   iconSource: simple-icons

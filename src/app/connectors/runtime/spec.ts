@@ -86,6 +86,12 @@ export interface ConnectorSpec {
   /** Optional catalog metadata. Keeps the spec self-describing without mounting/enabling it. */
   metadata?: {
     description?: string;
+    /**
+     * Marketplace shelf label. 51 specs already declared this and the runtime IGNORED it (the
+     * marketplace only read `description`), so a hand-curated category had no effect — see
+     * runtime/curation.ts, which is now the one place a category is resolved.
+     */
+    category?: string;
     tags?: string[];
     icon?: string;
     iconTitle?: string;
