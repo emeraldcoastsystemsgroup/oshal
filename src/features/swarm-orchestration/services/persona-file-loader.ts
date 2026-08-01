@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fixed UUID-based persona lookup — scans YAML files and matches agent_id field when UUID is provided instead of name
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Honored absolute BOT_PERSONA_FILE paths so swarm containers can load exact runtime personas
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Search deployed-apps package personas/ dirs after the kernel dir — a runtime-injected store bot's persona was invisible here, so it silently executed on the DEFAULT profile persona (same package-dir blind spot the authorization seeder fixed in swarm-app-service seq 16)
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
@@ -50,8 +51,9 @@ const DEFAULT_PERSONA_DIR = 'ai-lab/bot-personas';
  *
  * Search order:
  * 1. Exact path if provided as absolute
- * 2. `{personaDir}/{agentName}.yaml`
- * 3. `{personaDir}/{agentId}.yaml` (UUID-based lookup)
+ * 2. `{personaDir}/{agentName}.yaml` (UUID-style ids scan the dir matching agent_id)
+ * 3. Each `{deployedAppsRoot}/<package>/personas/` dir, same matching — runtime-injected
+ *    store bots (ADR-085) bundle their persona beside the manifest, not in the kernel dir
  *
  * @param agentIdOrName - Agent name (e.g., "project-manager") or UUID
  * @param personaDir - Directory containing persona YAML files
@@ -62,6 +64,25 @@ export function loadPersonaFromFile(
   personaDir?: string,
 ): BotPersona | null {
   const dir = resolvePersonaDir(personaDir);
+  const kernelPersona = searchDirForPersona(agentIdOrName, dir);
+  if (kernelPersona) return kernelPersona;
+
+  for (const packagePersonaDir of listDeployedPackagePersonaDirs()) {
+    const packagePersona = searchDirForPersona(agentIdOrName, packagePersonaDir);
+    if (packagePersona) return packagePersona;
+  }
+
+  logger.debug({ agentIdOrName, searchDir: dir }, 'No persona file found');
+  return null;
+}
+
+/**
+ * @description Search one directory for a persona matching the agent id or name.
+ * @param agentIdOrName - Agent name or UUID.
+ * @param dir - Directory to search.
+ * @returns Parsed persona, or null when the directory has no match.
+ */
+function searchDirForPersona(agentIdOrName: string, dir: string): BotPersona | null {
   const candidates = buildCandidatePaths(agentIdOrName, dir);
 
   for (const candidatePath of candidates) {
@@ -77,8 +98,28 @@ export function loadPersonaFromFile(
     }
   }
 
-  logger.debug({ agentIdOrName, searchDir: dir }, 'No persona file found');
   return null;
+}
+
+/**
+ * @description List every deployed-apps package personas/ directory. The root mirrors
+ * DEPLOYED_APPS_DIR in swarm-app-routes (CLINE_WORKSPACE_ROOT-relative) — an app layer
+ * constant this feature slice cannot import.
+ * @returns Existing `<deployedAppsRoot>/<package>/personas` paths (empty when the root is absent).
+ */
+function listDeployedPackagePersonaDirs(): string[] {
+  const workspaceRoot = process.env.CLINE_WORKSPACE_ROOT
+    || process.env.WORKSPACE_ROOT
+    || '/app/workspace-shared';
+  const root = join(resolve(workspaceRoot), 'deployed-apps');
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(root, entry.name, 'personas'))
+      .filter((personasDir) => existsSync(personasDir));
+  } catch {
+    return [];
+  }
 }
 
 /**
