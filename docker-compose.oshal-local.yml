@@ -955,6 +955,16 @@ services:
       # The name an authenticator app shows beside the account (RFC 6238 issuer). Same story:
       # read by the 2FA enrolment route, never forwarded, so it silently stayed 'oshal'.
       TOTP_ISSUER: ${TOTP_ISSUER:-}
+      # Operator notification transports (twilio-sms / twilio-voice in notify-routes) and
+      # the Telegram inbound channel (chat-channel-routes webhook). Read by the api the
+      # whole time, never forwarded — the same "set it in .env and nothing happened" class
+      # as DISABLE_ONBOARDING_GATE above (guard: tests/unit/compose-env-passthrough.spec.ts).
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      TWILIO_TO_NUMBER: ${TWILIO_TO_NUMBER:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       # Facebook connector (Utilities hub). The connector is "not configured" until
       # FACEBOOK_APP_ID/SECRET are set. FACEBOOK_REDIRECT_URI must match the URI
       # registered in the FB app (e.g. https://oshal.example.com/auth/facebook/callback).

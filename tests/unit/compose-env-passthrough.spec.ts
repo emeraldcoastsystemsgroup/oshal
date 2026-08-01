@@ -31,6 +31,12 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // container, every deliberately no-AI box starts bouncing its users to /welcome again and
   // /api/readiness reports the engine as broken instead of declared-off.
   { name: 'OSHAL_NO_AI', readBy: 'server.ts needsOnboarding + routes/readiness-routes.ts — the declared no-AI posture' },
+  // Comms go-live 2026-07-31: the operator set these in .env and the container never saw
+  // them (fourth instance of the class). SID/token gate the twilio-sms/twilio-voice
+  // notification transports; the bot token gates the whole Telegram inbound channel.
+  { name: 'TWILIO_ACCOUNT_SID', readBy: 'notify-routes twilio transports' },
+  { name: 'TWILIO_AUTH_TOKEN', readBy: 'notify-routes twilio transports' },
+  { name: 'TELEGRAM_BOT_TOKEN', readBy: 'chat-channel-routes — the Telegram inbound channel' },
   { name: 'TOTP_ISSUER', readBy: 'local-auth-routes 2FA enrolment — the name an authenticator app displays' },
 ];
 
