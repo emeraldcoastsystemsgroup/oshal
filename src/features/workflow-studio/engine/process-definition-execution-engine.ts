@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ProcessDefinitionExecutionEngine — general-purpose graph walker that executes any ProcessDefinition
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Real parallel-split/join fan-out (concurrent; escalate on branch failure); ai-decision dispatches to a bot; durable/resumable execution (ExecuteOptions.resumeState + onCheckpoint before each node); agent-cluster node executor (ranked cluster + reviewer gate).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ExecuteOptions.onStep observer: emits one EngineStepEvent per executed node (timing, input variables, output, agent) so the dispatch worker can persist run history. Guarded (emitStep catches) so an observer failure can never break a run; threaded through parallel regions.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | buildTicketContext falls back to ticket.description for body — swarm tickets carry description, so every published-queue dispatch was sending "(no description provided)" to the worker bot instead of the operator's brief.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -135,7 +136,8 @@ export class ProcessDefinitionExecutionEngine {
     return {
       externalId: String(ticket.externalId ?? ticket.ticketId ?? state.runId),
       title: String(ticket.title ?? 'Engine Ticket'),
-      body: ticket.body as string | undefined,
+      // Swarm tickets carry `description`, engine-native callers carry `body` — accept both.
+      body: (ticket.body ?? ticket.description) as string | undefined,
       labels: (ticket.labels as string[]) ?? [],
       provider: String(ticket.provider ?? 'direct'),
       parentExternalId: ticket.parentExternalId as string | undefined,
