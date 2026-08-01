@@ -44,6 +44,12 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
   guided capture (deterministic plan + a live phone HUD with WALK/PAN arrows), and the
   Wi-Fi/RF coverage overlay — plus the honest deferred list. Installed as a swarm-app
   bundle (manifest + `spaces-operator` persona + registered bot), not standalone code.
+- [payroll.md](./payroll.md) — **BUILT (ADR-123):** Payroll operator guide — `?app=payroll`
+  runs payroll for one company: employees with 2020+ W-4 profiles, pay runs with a deterministic
+  engine (no LLM computes a dollar), printable stubs, and quarterly-liability + W-2-preview
+  reports. Covers the void-run correction model, the mid-year prior-YTD switch, the tax-year-2026
+  OBBBA box-12 TT/TP reporting, and the honest state-coverage table — including which states
+  deliberately are NOT shipped and why. Records payroll; moves no money and files nothing.
 - [trading/](./trading/README.md) — the trading advisor / autopilot stack.
 - [kalshi/](./kalshi/README.md) — the Kalshi prediction-markets edge engine (`?app=kalshi` +
   the Money-group cockpit tile). Includes the honest verdict on the calibration study.
