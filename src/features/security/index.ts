@@ -40,8 +40,25 @@ export { scanTrivy, buildTrivyArgs, parseTrivyReport, mapTrivySeverity, TRIVY_CA
 // FSD deep-import burn-down (2026-07-24): hardening middleware presets surfaced through the barrel.
 export { hmacWebhookGuard } from './hardening/webhook-hmac';
 export { makeLimiter, internalMeshLimiter, expensiveOpLimiter } from './hardening/rate-limit-presets';
+export {
+  createGlobalJsonParser,
+  isReservedBodyParserPath,
+  jsonBodyLimit,
+  DEFAULT_JSON_BODY_LIMIT,
+  RESERVED_BODY_PARSER_PREFIXES,
+} from './hardening/body-limits';
 export { shouldSkipGlobalRateLimit } from './hardening/global-rate-limit-skip';
-export { cspFromEnv } from './hardening/strict-csp';
+export {
+  cspFromEnv,
+  cspMode,
+  buildStrictCsp,
+  shouldLogCspReport,
+  resetCspReportDedupe,
+  DEFAULT_CSP_REPORT_URI,
+  type CspMode,
+  type CspHelmetValue,
+  type StrictCspOptions,
+} from './hardening/strict-csp';
 
 export const ALL_KINDS: ScanKind[] = ['posture', 'runtime', 'ledger', 'audit', 'image'];
 

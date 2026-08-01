@@ -95,16 +95,22 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
   /** Runaway backstop used only with idleReset: absolute wall-clock cap regardless of
    *  activity. 0/undefined disables the cap. */
   protected readonly maxDurationMs: number | undefined;
+  /** Per-instance additions to SECRET_ENV_KEYS. Controller-INLINE bots run in the api
+   *  container, which holds platform-plane credentials (the worker-plane shared secret, the
+   *  webhook ingest tokens) that no bot tool needs; the composition root passes them here so
+   *  the scrub stays one code path. Empty for bot-node bots — behaviour unchanged. */
+  protected readonly extraSecretEnvKeys: readonly string[];
 
   constructor(
     loggerModule: string,
     defaultTimeoutMs: number,
-    opts?: { idleReset?: boolean; maxDurationMs?: number },
+    opts?: { idleReset?: boolean; maxDurationMs?: number; extraSecretEnvKeys?: readonly string[] },
   ) {
     this.logger = createChildLogger({ module: loggerModule });
     this.defaultTimeoutMs = defaultTimeoutMs;
     this.idleReset = opts?.idleReset === true;
     this.maxDurationMs = opts?.maxDurationMs && opts.maxDurationMs > 0 ? opts.maxDurationMs : undefined;
+    this.extraSecretEnvKeys = opts?.extraSecretEnvKeys ?? [];
   }
 
   abstract run(task: HarnessTask): Promise<HarnessResult>;
@@ -170,6 +176,11 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
     // from EVERY bot spawn env so untrusted swarm code can't `printenv` them — the bot uses
     // the controller-provided short-lived per-user token instead. Always runs.
     for (const k of BaseCliHarnessAdapter.SECRET_ENV_KEYS) delete env[k];
+    // Per-instance additions (controller-inline bots): the api container's platform-plane
+    // credentials. REMOTE_CLIENT_SHARED_SECRET is the sharp one — it is machine trust on the
+    // worker plane, so it SKIPS per-device ownership and would let an injected inline bot
+    // enqueue a shell task on any user's desktop.
+    for (const k of this.extraSecretEnvKeys) delete env[k];
     const normalizedUserSub = typeof userSub === 'string' && userSub.trim()
       ? userSub.trim().slice(0, 512)
       : undefined;

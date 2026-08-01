@@ -5,11 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added remote-client feature barrel export
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export remote-client-auth (timing-safe shared-secret compare + per-caller rate-limit key) for the worker-plane auth hardening
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export node-token-scope (per-node worker-plane token confinement + the shared-secret retirement switch, hardening #7)
  */
 
 export * from './types';
 export * from './services/device-access';
 export * from './services/remote-client-auth';
+export * from './services/node-token-scope';
 export * from './services/remote-client-config';
 export * from './services/mcp-stdio-client';
 export * from './services/remote-client-control-plane-client';

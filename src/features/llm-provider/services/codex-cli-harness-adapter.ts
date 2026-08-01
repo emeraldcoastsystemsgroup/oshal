@@ -87,6 +87,15 @@ export interface CodexCliHarnessConfig {
    * Default: CODEX_SANDBOX_MODE env or `danger-full-access`.
    */
   sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access';
+
+  /**
+   * Extra env keys deleted from the spawned CLI's environment on top of the always-scrubbed
+   * master/connector secrets. Set for controller-INLINE bots, whose subprocess would otherwise
+   * inherit the api container's platform-plane credentials — see
+   * services/controller-inline-scope.ts. Codex always has a shell, so for inline codex bots
+   * this scrub is the load-bearing control.
+   */
+  scrubEnvKeys?: readonly string[];
 }
 
 /**
@@ -166,7 +175,11 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
     const maxDurationMs = process.env.CODEX_MAX_DURATION_MS
       ? parseInt(process.env.CODEX_MAX_DURATION_MS, 10)
       : DEFAULT_MAX_DURATION_MS;
-    super('codex-cli-harness-adapter', timeoutMs, { idleReset: true, maxDurationMs });
+    super('codex-cli-harness-adapter', timeoutMs, {
+      idleReset: true,
+      maxDurationMs,
+      extraSecretEnvKeys: config.scrubEnvKeys,
+    });
 
     this.binaryPath = config.binaryPath
       ?? process.env.CODEX_CLI_PATH

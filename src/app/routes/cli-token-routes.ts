@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Optional token expiry (enables short-lived phone-pairing tokens for the Spaces mobile ingest, ADR-111). Added a nullable expires_at column (ALTER … ADD COLUMN IF NOT EXISTS — existing PATs stay non-expiring, expires_at IS NULL) and made the auth middleware reject an expired token: the lookup now requires `(expires_at IS NULL OR expires_at > NOW())`, so an elapsed pairing token authenticates on NO route. Extracted the mint path into an exported insertCliToken(pool, {sub,email,label,ttlMs}) helper — single source of the column set now that expiry exists — and pointed POST / at it. Consumed by the auth-gated POST /api/spaces/pair mint endpoint.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | guc-strict fix: the auth middleware's token lookup ran with NO request identity (it IS the identity-stamper — chicken-and-egg), so once OSHAL_DB_GUC_STRICT=deny went live the FORCE-RLS oshal_cli_tokens SELECT returned zero rows and EVERY PAT 401'd on every route. Lookup + the best-effort last_used_at update now run under runWithSystemIdentity — the sanctioned trusted-path sentinel the deny log itself prescribes; safe because the read is proof-of-possession (keyed on the 48-hex token hash) and returns only that row. Guard: tests/unit/token-middleware-rls.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Closed the bootstrap-mint escalation. POST / previously accepted the x-oshal-user-sub assertion for ANY sub and minted a NON-EXPIRING PAT, so any holder of the fleet-wide SWARM_SERVICE_SECRET (every bot container carries it) could mint a permanent credential for an arbitrary user and then authenticate as them on every requiresAuth route — including /api/content and /api/linkedin-assistant, which the service secret alone cannot reach. That turned a per-request impersonation into persistent account takeover, which matters because a prompt-injected bot is an untrusted principal holding that secret. Header-asserted (session-less) mints are now (a) operator-only via isOperatorIdentity — fail-closed on an empty allowlist — and (b) time-boxed by OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS (default 30) using the existing expires_at column, so even the operator bootstrap is no longer a permanent credential. Session-authenticated mints (the cockpit path) are unchanged and still non-expiring. swarm-cli's service-secret login keeps working for the operator. Guard: tests/unit/cli-token-auth.spec.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | PER-NODE WORKER-PLANE TOKENS (docs/backlog/hardening.md #7 - retire the swarm-wide REMOTE_CLIENT_SHARED_SECRET). A token may now be BOUND to one device (node_client_id; migration 102 plus the lazy-DDL ALTER): the auth middleware admits such a token ONLY on the paths decideNodeTokenScope allows (its own /api/remote-clients/<clientId> plane plus the two enrollment-handshake paths) and stamps the binding on the request, so a credential lifted off an edge machine is NOT the account credential an unbound PAT is - it cannot reach /api/content, cannot mint tokens, and cannot touch a sibling device. rotateNodeToken revokes every live token for a device and mints its successor in ONE call (the rotation a compose-file secret structurally cannot offer). Unbound PATs behave identically. Guard: tests/unit/remote-client-node-token.spec.ts.
  */
 import { Router, type RequestHandler, type Request, type Response } from 'express';
 import crypto from 'crypto';
@@ -15,6 +16,7 @@ import { createChildLogger } from '@/shared/logger';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { getCaller, getTrustedServiceUserSub, isOperator, isOperatorIdentity } from '@/shared/middleware/authz';
+import { decideNodeTokenScope } from '@/features/remote-client';
 
 const logger = createChildLogger({ module: 'cli-tokens' });
 
@@ -82,14 +84,20 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
         created_at   TIMESTAMPTZ DEFAULT NOW(),
         last_used_at TIMESTAMPTZ,
         revoked_at   TIMESTAMPTZ,
-        expires_at   TIMESTAMPTZ
+        expires_at   TIMESTAMPTZ,
+        node_client_id TEXT
       )`,
       // Additive migration for databases created before expiry existed — a NULL expires_at
       // is a non-expiring PAT, so existing rows are unaffected.
       `ALTER TABLE oshal_cli_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+      // Per-node binding (hardening #7; recorded form scripts/migrations/102-cli-token-node-binding.sql).
+      // NULL = an ordinary account PAT, which every pre-existing row is, so they are unaffected.
+      `ALTER TABLE oshal_cli_tokens ADD COLUMN IF NOT EXISTS node_client_id TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_oshal_cli_tokens_node_client
+         ON oshal_cli_tokens (node_client_id) WHERE node_client_id IS NOT NULL`,
       ...buildOwnerRlsPolicyStatements('oshal_cli_tokens', 'user_sub'),
     ],
-    requirements: [{ table: 'oshal_cli_tokens', columns: ['id', 'user_sub', 'token_hash', 'revoked_at', 'expires_at'] }],
+    requirements: [{ table: 'oshal_cli_tokens', columns: ['id', 'user_sub', 'token_hash', 'revoked_at', 'expires_at', 'node_client_id'] }],
   });
 }
 
@@ -132,16 +140,35 @@ export function createCliTokenAuthMiddleware(pool: Pool): RequestHandler {
       // read to nothing and every valid PAT is rejected. Proof-of-possession keyed on the hash.
       const { rows } = await runWithSystemIdentity(() =>
         pool.query(
-          `SELECT id, user_sub, email FROM oshal_cli_tokens
+          `SELECT id, user_sub, email, node_client_id FROM oshal_cli_tokens
             WHERE token_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
             LIMIT 1`,
           [hashCliToken(token)],
         ),
       );
-      const row = rows[0] as { id: string; user_sub: string; email: string | null } | undefined;
+      const row = rows[0] as
+        { id: string; user_sub: string; email: string | null; node_client_id: string | null } | undefined;
       if (!row) {
         logger.warn({ path: req.path }, 'rejected unknown/revoked CLI token');
         return next();
+      }
+      // Per-node confinement (hardening #7): a DEVICE credential is not an ACCOUNT credential.
+      // A token bound to a clientId authenticates only on that device's worker plane and the
+      // enrollment handshake; anywhere else it leaves the request unauthenticated, so it hits
+      // the normal 401 exactly like an unknown token. Unbound PATs skip this entirely.
+      if (row.node_client_id) {
+        const scope = decideNodeTokenScope({ boundClientId: row.node_client_id, path: req.path });
+        if (!scope.allowed) {
+          logger.warn(
+            { path: req.path, boundClientId: row.node_client_id, tokenId: row.id, reason: scope.reason },
+            'refused node-bound CLI token off its own device plane',
+          );
+          return next();
+        }
+        (req as { oshalNodeToken?: NodeTokenBinding }).oshalNodeToken = {
+          clientId: row.node_client_id,
+          tokenId: row.id,
+        };
       }
       (req as { oidc?: unknown }).oidc = {
         isAuthenticated: () => true,
@@ -174,6 +201,12 @@ export interface CliTokenMintInput {
   label?: string;
   /** Lifetime in ms; when > 0 the token auto-expires (used by short-lived phone pairing). */
   ttlMs?: number;
+  /**
+   * Binds the token to ONE remote-client device (hardening #7). A bound token authenticates
+   * only on that device's worker plane plus the enrollment handshake - never as a general
+   * account credential. Omit for an ordinary PAT.
+   */
+  nodeClientId?: string | null;
 }
 
 /** Result of a mint — the plaintext token is present exactly once and is never persisted. */
@@ -184,6 +217,8 @@ export interface MintedCliToken {
   createdAt: string;
   /** ISO expiry, or null for a non-expiring PAT. */
   expiresAt: string | null;
+  /** The device this token is confined to, or null for an ordinary account PAT. */
+  nodeClientId: string | null;
 }
 
 /**
@@ -200,16 +235,80 @@ export async function insertCliToken(pool: Pool, input: CliTokenMintInput): Prom
   const token = generateCliToken();
   const label = cleanLabel(input.label);
   const expiresAt = input.ttlMs && input.ttlMs > 0 ? new Date(Date.now() + input.ttlMs) : null;
+  const nodeClientId = typeof input.nodeClientId === 'string' && input.nodeClientId.trim().length > 0
+    ? input.nodeClientId.trim().slice(0, 200)
+    : null;
   await pool.query(
-    `INSERT INTO oshal_cli_tokens (id, user_sub, email, label, token_hash, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, input.sub, input.email ?? null, label, hashCliToken(token), expiresAt],
+    `INSERT INTO oshal_cli_tokens (id, user_sub, email, label, token_hash, expires_at, node_client_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, input.sub, input.email ?? null, label, hashCliToken(token), expiresAt, nodeClientId],
   );
   return {
     id, token, label,
     createdAt: new Date().toISOString(),
     expiresAt: expiresAt ? expiresAt.toISOString() : null,
+    nodeClientId,
   };
+}
+
+/** The device binding a request's credential carries, stamped by the auth middleware. */
+export interface NodeTokenBinding {
+  /** The clientId this credential is confined to. */
+  clientId: string;
+  /** Token row id (audit + rotation target); never the token itself. */
+  tokenId: string;
+}
+
+/** Request shape the node-binding stamp lives on. */
+type NodeBoundRequest = Request & { oshalNodeToken?: NodeTokenBinding };
+
+/**
+ * @description Reads the per-node binding the CLI-token middleware stamped on this request,
+ * or null when the caller is a session / service / unbound-PAT caller. Route guards use it to
+ * refuse a device credential that names one device and acts on another - the POST /register
+ * case, where the device identity travels in the body instead of the URL.
+ * @param req - The inbound request.
+ * @returns The binding, or null when the caller is not a node-bound token.
+ */
+export function readNodeTokenBinding(req: Request): NodeTokenBinding | null {
+  return (req as NodeBoundRequest).oshalNodeToken ?? null;
+}
+
+/**
+ * @description Rotates a device's worker-plane credential: revokes EVERY live token bound to
+ * that clientId for that owner, then mints its successor - one call, so there is never a
+ * window with two valid generations. Owner-scoped in SQL, so rotating on someone's behalf
+ * requires naming that owner's sub explicitly.
+ * @param pool - Postgres pool backing the token store.
+ * @param input - Device clientId, the owner sub the token belongs to, optional label/email/ttl.
+ * @returns The minted successor (plaintext present exactly once) plus how many were revoked.
+ */
+export async function rotateNodeToken(
+  pool: Pool,
+  input: { clientId: string; ownerSub: string; email?: string | null; label?: string; ttlMs?: number },
+): Promise<MintedCliToken & { revokedCount: number }> {
+  const clientId = String(input.clientId ?? '').trim();
+  const ownerSub = String(input.ownerSub ?? '').trim();
+  if (clientId.length === 0 || ownerSub.length === 0) {
+    throw new Error('rotateNodeToken requires both clientId and ownerSub');
+  }
+  const revoked = await pool.query(
+    `UPDATE oshal_cli_tokens SET revoked_at = NOW()
+       WHERE node_client_id = $1 AND user_sub = $2 AND revoked_at IS NULL`,
+    [clientId, ownerSub],
+  );
+  const minted = await insertCliToken(pool, {
+    sub: ownerSub,
+    email: input.email ?? null,
+    label: input.label ?? `node ${clientId}`,
+    ttlMs: input.ttlMs,
+    nodeClientId: clientId,
+  });
+  logger.info(
+    { clientId, ownerSub, revokedCount: revoked.rowCount ?? 0, tokenId: minted.id },
+    'node token rotated - prior generations revoked',
+  );
+  return { ...minted, revokedCount: revoked.rowCount ?? 0 };
 }
 
 /**

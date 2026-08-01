@@ -139,6 +139,7 @@
  * 134 | maintainer@emeraldcoastsystemsgroup.com   | Update-check completion: registerUpdateRoutes now receives swarmAppService.loadApp so the operator-gated POST /api/updates/apps/:name/apply can hot-reload a re-installed package (installer runs with repo/ref from the INSTALLED manifest, never the caller); new-update transitions notify the operator via the notification center.
  * 135 | maintainer@emeraldcoastsystemsgroup.com   | Registered app.get('/login', loginHandler) after the global authMiddleware: the stock express-openid-connect login route is disabled (routes.login=false in @/shared/middleware/oidc) because it hardcoded returnTo=baseURL — every login-restart path (callback retry, state-mismatch recovery, cockpit 401 guard) forgot the original URL, so /cockpit/?app=<name> deep links landed on the bare cockpit after recovery. Guards: tests/login-returnto.spec.ts + tests/unit/login-returnto.spec.ts.
  * 136 | maintainer@emeraldcoastsystemsgroup.com   | Root landing resolves HOST_APP_MAP (new host-app-map.ts) before falling back to LANDING_PATH, so a themed app subdomain (dnd.oshal.ai, trading.oshal.ai, littlemonsters.oshal.ai, ...) lands straight on its app instead of the generic ribbon. Unset = unchanged prior behavior. Guard: tests/unit/host-app-map.spec.ts.
+ * 139 | maintainer@emeraldcoastsystemsgroup.com   | WEB HARDENING CLOSE-OUT (docs/security/SECURITY-HARDENING.md §4 - a tested CSP, an explicit express.json limit, per-route throttles). (1) CSP: cspFromEnv now DEFAULTS to the strict policy in non-blocking report-only mode instead of no header at all, so every response carries a policy and the collector below learns the real allowlist; enforcement stays OSHAL_STRICT_CSP=on, OSHAL_CSP=off is the kill switch. (2) The violation collector dedupes by directive|blockedUri|documentUri (shouldLogCspReport) - report-only on a cockpit full of inline scripts would otherwise log the same finding on every page load from every browser. (3) The global JSON parser moves to createGlobalJsonParser: the same 100kb bound and the same three reserved prefixes, now explicit, env-tunable (OSHAL_JSON_BODY_LIMIT) and unit-testable. (4) expensiveOpLimiter also mounts on /api/jarvis (the LLM cost surface named in the backlog) alongside /api/intake. Guard: tests/unit/web-hardening-csp-body.spec.ts.
  * 138 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: retired the stale '/api/remote-clients hardening TODO = per-caller rate limiting' note - the limiter SHIPPED router-local in remote-client-routes.ts (seq 11: flag-gated OSHAL_RATE_LIMIT_REMOTE_CLIENTS, keyed per /:clientId, guard tests/unit/remote-client-auth.spec.ts), so the TODO was sending the next security wave to re-do finished work. No logic change.
  * 137 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G3 + G9: needsOnboarding now delegates to the pure onboardingRequired predicate (new onboarding-gate.ts) — DISABLE_ONBOARDING_GATE only suppresses the per-user wizard and can no longer waive the "a model must be connected" requirement; a deliberately model-less box declares OSHAL_NO_AI=true instead (a warn log names the exact fix when the gate fires despite the flag). Registered registerReadinessRoutes (new routes/readiness-routes.ts): GET /api/readiness reports per-capability ok|off|fail because /api/health is liveness-only and was being read as readiness. Guards: tests/unit/onboarding-gate.spec.ts + tests/unit/readiness-report.spec.ts.
  * 139 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E2): the /api/alerts mount now wires the pool-backed RcaSpendReader (routes/alertmanager-rca-spend.ts) into the intake's analyst budget gate — cost-ledger actuals meter auto-flow RCA dispatch; a pool-less run passes null and the gate is an explicit pass-through.
@@ -314,6 +315,9 @@ import {
   expensiveOpLimiter,
   shouldSkipGlobalRateLimit,
   cspFromEnv,
+  cspMode,
+  createGlobalJsonParser,
+  shouldLogCspReport,
 } from '@/features/security';
 // RLS request-identity binding for the GUC-aware pool wrapper (canonical RLS path).
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -391,14 +395,13 @@ function createApp(): express.Application {
 
   // ── Security headers ──────────────────────────────────────────────────────
   // helmet sets X-Content-Type-Options, frameguard, Referrer-Policy, HSTS, etc.
-  // CSP is intentionally OFF here: the cockpit UI uses inline scripts/styles, so a
-  // strict CSP needs a separate, browser-tested pass to avoid breaking the surface.
-  // CSP is staged: cspFromEnv() === false (disabled, today's behavior) until
-  // OSHAL_STRICT_CSP=on. With OSHAL_CSP_REPORT_ONLY=on it emits a NON-BLOCKING
-  // Content-Security-Policy-Report-Only header so we learn which inline scripts +
-  // external origins the cockpit uses before ever enforcing. Reports POST to
-  // OSHAL_CSP_REPORT_URI (default /api/security/csp-report, collector below).
+  // CSP: the strict policy ships in NON-BLOCKING report-only mode by DEFAULT (the cockpit
+  // still uses inline <script>, and report-only cannot break a surface — it only reports what
+  // would have been refused, to the collector below). OSHAL_STRICT_CSP=on enforces once the
+  // inline scripts are nonced/externalised; OSHAL_CSP=off restores no-header-at-all. The
+  // posture is logged at boot so an audit never has to infer it.
   app.use(helmet({ contentSecurityPolicy: cspFromEnv() }));
+  logger.info({ cspMode: cspMode() }, 'Content-Security-Policy posture');
 
   // ── Rate limiting (public origin only) ────────────────────────────────────
   // Backstops brute-force / cost-abuse on internet traffic (which arrives through
@@ -503,17 +506,11 @@ function createApp(): express.Application {
     sharedUiJsDir,
   } = resolveUiAssetPaths();
 
-  // Remote-client task results carry screenshots (screen.capture → ~1-2MB PNG), which blow past the
-  // default 100kb json limit (413). Signed webhooks must also retain the exact request bytes until
-  // their route-local HMAC verifier runs. Reserve those paths for their own parsers below; every
-  // other route keeps the tight default limit.
-  app.use((req, res, next) => (
-    req.path.startsWith('/api/remote-clients')
-      || req.path.startsWith('/api/vision')
-      || req.path.startsWith('/api/hooks')
-      ? next()
-      : express.json()(req, res, next)
-  ));
+  // Global JSON body limit: explicit, env-tunable (OSHAL_JSON_BODY_LIMIT, default 100kb) and
+  // unit-tested. The three reserved prefixes install their own parsers at their own mounts —
+  // screenshots/base64 images need headroom, and signed webhooks must keep the exact bytes for
+  // their HMAC verifier. See features/security/hardening/body-limits.ts.
+  app.use(createGlobalJsonParser());
 
   // CSP violation collector (UNauthenticated on purpose — the browser posts these
   // and won't carry a session). No-op-ish: it just logs what the report-only CSP
@@ -526,14 +523,14 @@ function createApp(): express.Application {
       try {
         const body: any = req.body || {};
         const r = body['csp-report'] || body.body || body;
-        logger.warn(
-          {
-            directive: r?.['violated-directive'] || r?.effectiveDirective,
-            blockedUri: r?.['blocked-uri'] || r?.blockedURL,
-            documentUri: r?.['document-uri'] || r?.documentURL,
-          },
-          'CSP report-only violation',
-        );
+        const directive = r?.['violated-directive'] || r?.effectiveDirective;
+        const blockedUri = r?.['blocked-uri'] || r?.blockedURL;
+        const documentUri = r?.['document-uri'] || r?.documentURL;
+        // Report-only fires on EVERY page load from EVERY browser, so log each distinct
+        // finding once per process — an un-deduped collector buries real faults.
+        if (shouldLogCspReport(`${directive}|${blockedUri}|${documentUri}`)) {
+          logger.warn({ directive, blockedUri, documentUri }, 'CSP violation reported (first occurrence)');
+        }
       } catch {
         /* never let a malformed report error the endpoint */
       }
@@ -912,6 +909,10 @@ function createApp(): express.Application {
   // (left OFF by default — 30/min/IP would throttle the AI Test Lab's burst intake;
   // enable + tune OSHAL_RATE_LIMIT_EXPENSIVE_MAX once the swarm's burst profile is known).
   app.use('/api/intake', expensiveOpLimiter);
+  // /api/jarvis is the other named cost surface in the hardening backlog: every turn is an LLM
+  // call, and it is reachable by any signed-in user (plus the trusted-service identity). Same
+  // flag-gated preset — a no-op unless OSHAL_RATE_LIMIT_EXPENSIVE=on, so merging changes nothing.
+  app.use('/api/jarvis', expensiveOpLimiter);
   registerFastIntakeRoutes(app, requiresAuth, ctx.ticketService as any);
 
   // Extended health endpoint with stats (public). NB: this is LIVENESS only — it says
@@ -1446,6 +1447,8 @@ function createApp(): express.Application {
   // Higher json limit here so node task-complete bodies with screenshots (screen.capture) aren't
   // rejected with 413. Scoped to this router only (the global parser above skips these paths).
   app.use('/api/remote-clients', express.json({ limit: '25mb' }), createRemoteClientRoutes({
+    // Backs POST /:clientId/token/rotate (per-node worker-plane credentials, hardening #7).
+    pool: ctx.pool,
     meshCommunicationService: ctx.swarm.meshCommunicationService,
     runtimeRegistryService: ctx.swarm.runtimeRegistryService,
     orchestrator: ctx.orchestrator,

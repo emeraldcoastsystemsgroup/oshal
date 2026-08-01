@@ -16,6 +16,17 @@
  */
 
 export {
+  CONTROLLER_INLINE_CONTAINERS,
+  CONTROLLER_INLINE_SCRUB_ENV_KEYS,
+  DEFAULT_INLINE_ALLOWED_TOOLS,
+  SHELL_TOOL_NAMES,
+  isControllerInlineContainer,
+  resolveControllerInlineScope,
+  stripShellTools,
+  type ControllerInlineScope,
+} from './services/controller-inline-scope';
+
+export {
   LLMService,
   type TokenUsage,
   type CostResult,

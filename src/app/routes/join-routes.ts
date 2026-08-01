@@ -33,6 +33,7 @@
  *   pairing (ADR-111) — so the node exchanges it for a SERVER-VERIFIED sub and registers bound to
  *   that user. No swarm secret is handed to a person, and the binding cannot be spoofed by the node.
  *   The mount relaxes to requiresAuth; the two secret-bearing endpoints self-gate to operator.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | POST /enroll accepts a clientId and mints a token BOUND to that device (hardening #7: cli-token node_client_id). A bound token is not an account credential - it authenticates only on that device's worker plane plus the enrollment handshake - which is what lets an edge machine hold a long-lived worker-plane credential instead of the swarm-wide REMOTE_CLIENT_SHARED_SECRET, and lets it be rotated (POST /api/remote-clients/:clientId/token/rotate) and revoked per node. Bound enrollments also get a longer default TTL, because the token IS the node's steady-state credential rather than a 60-minute handoff. Omitting clientId keeps the previous unbound behaviour verbatim.
  *
  * @module join-routes
  */
@@ -144,38 +145,62 @@ export function createJoinRoutes(apiDir: string, pool?: Pool): Router {
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     if (!pool) { res.status(503).json({ error: 'enrollment_unavailable', message: 'This swarm has no database, so it cannot issue enrollment tokens.' }); return; }
 
-    const body = (req.body ?? {}) as { computerName?: unknown; ttlMinutes?: unknown };
+    const body = (req.body ?? {}) as { computerName?: unknown; ttlMinutes?: unknown; clientId?: unknown };
     const computerName = String(body.computerName ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
-    const ttlMinutes = clampEnrollTtlMinutes(body.ttlMinutes);
+    // Naming a clientId asks for a DEVICE-SCOPED credential rather than an account PAT: the
+    // resulting token works only on that device's worker plane, so it is safe to leave on the
+    // edge machine as its steady-state credential (hardening #7).
+    const clientId = String(body.clientId ?? '').trim().slice(0, 200);
+    // A DEVICE-bound token is the node's steady-state credential, not a 60-minute handoff, so
+    // it does not expire by default: an edge machine that is off for a week must still come back
+    // without a human. Its bounds are SCOPE (one device's plane), rotation and revocation - all
+    // three of which the swarm-wide secret lacked. An explicit ttlMinutes still wins.
+    const explicitTtl = body.ttlMinutes !== undefined && body.ttlMinutes !== null;
+    const ttlMinutes = explicitTtl || !clientId ? clampEnrollTtlMinutes(body.ttlMinutes) : 0;
     const { url, loopback } = resolveControlPlaneUrl(req);
 
     try {
       const minted = await insertCliToken(pool, {
         sub, email,
-        label: computerName ? `node enrollment: ${computerName}` : 'node enrollment',
-        ttlMs: ttlMinutes * 60 * 1000,
+        label: clientId
+          ? `node ${clientId}`
+          : (computerName ? `node enrollment: ${computerName}` : 'node enrollment'),
+        ttlMs: ttlMinutes > 0 ? ttlMinutes * 60 * 1000 : undefined,
+        nodeClientId: clientId || null,
       });
       // The token is the credential — it is returned to its owner exactly once and never logged.
-      logger.info({ id: minted.id, sub, ttlMinutes, computerName: computerName || null }, 'node enrollment token minted');
+      logger.info(
+        { id: minted.id, sub, ttlMinutes, computerName: computerName || null, nodeClientId: minted.nodeClientId },
+        'node enrollment token minted',
+      );
       res.status(201).json({
         enrollment: {
           id: minted.id,
           token: minted.token,
           expiresAt: minted.expiresAt,
-          ttlMinutes,
+          ttlMinutes: ttlMinutes > 0 ? ttlMinutes : null,
           controlPlaneUrl: url,
+          // Present = the token is confined to this device and can replace the swarm-wide
+          // secret on it; null = an ordinary short-lived account token for the handshake only.
+          nodeClientId: minted.nodeClientId,
         },
         // How the node proves who owns it — no swarm-wide secret involved in THIS step.
         verifyUrl: `${url}/api/cli-tokens/whoami`,
         install: {
           // An already-installed node: this is all it needs to bind itself to you.
           existingNode: `set OSHAL_ENROLLMENT_TOKEN=${minted.token} && installer\\Open-Swarm-Node.cmd`,
-          // A brand-new install still needs the swarm's join code as well: the worker plane
-          // (register / heartbeat / claim) authenticates with REMOTE_CLIENT_SHARED_SECRET today, and
-          // only an operator can hand that out. Retiring it in favour of a per-node token is tracked
-          // in docs/BACKLOG.md ("node-token auth for the remote-client plane").
+          // With a clientId supplied, the minted token IS the worker-plane credential: set it as
+          // REMOTE_CLIENT_CONTROL_PLANE_TOKEN and the node authenticates every register/heartbeat/
+          // claim call with a per-device, revocable, rotatable credential. Without one, the node
+          // still needs an operator's join code (which embeds the swarm-wide secret) - the exact
+          // dependency REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true retires.
           newInstall: `powershell -ExecutionPolicy Bypass -File installer\\lib\\install-node.ps1 -JoinCode <OSJOIN1...> -EnrollmentToken "${minted.token}"`,
-          note: 'A new computer also needs a join code from an operator; this enrollment code is what binds the computer to YOU.',
+          workerPlaneToken: minted.nodeClientId
+            ? `set REMOTE_CLIENT_CONTROL_PLANE_TOKEN=${minted.token}`
+            : null,
+          note: minted.nodeClientId
+            ? 'This token is bound to this computer only. It replaces the swarm-wide shared secret on it, and you can rotate or revoke it without touching any other machine.'
+            : 'A new computer also needs a join code from an operator; this enrollment code is what binds the computer to YOU.',
         },
         warning: loopback
           ? 'You are browsing over localhost, so this points at localhost and only works on this machine. Open the cockpit from the swarm machine\'s LAN address and enroll again.'
