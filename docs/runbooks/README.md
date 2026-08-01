@@ -32,6 +32,13 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Build / release / CI
 
+- [pre-deploy-checklist.md](./pre-deploy-checklist.md) — what to check **before and after**
+  `scripts/oshal-deploy.sh`: the unpushed/stray checks, the migration traps (filename-keyed ledger;
+  a migration that catches its own privilege error is recorded applied and never retries), the
+  behaviour changes an older box inherits on the new image (entitlement `enforce`,
+  `TOOL_AUTH_GOOGLE_SEARCH` off, `BOT_DATABASE_URL`), and the things a deploy does NOT move —
+  individually bind-mounted files and workspace-volume store packages. Carries a per-cycle log of
+  the deploy-time proofs `main` is waiting on.
 - [local-ci.md](./local-ci.md) — **the automatic daily gate**: `scripts/ci-local.sh` runs every
   gate (typecheck / unit / gitleaks / e2e-green / image build / smoke / trivy) on the operator's
   machine for $0; windowless daily task, email only on failure. Proven all-green 2026-07-09.
