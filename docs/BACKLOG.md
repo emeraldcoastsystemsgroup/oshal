@@ -178,7 +178,7 @@ snapshots by ADR-095 design — the chat explains this and points at the Lab's b
 Earlier studio deferrals stand: RAG-corpus graduation for the research findings, streamed
 narration, futures.
 
-## Seven agent-worktree branches pushed but not landed (+ the push gap that stranded them)
+## Seven agent-worktree branches pushed but not landed (+ the push gap that stranded them) ✅ CLOSED 2026-08-01
 
 **Deferred 2026-07-26** — found while auditing the ADR-045 graph tier; the branches were
 discovered only because a gitignored path turned up in a background grep.
@@ -211,6 +211,62 @@ none may sit as a permanently open branch; (2) `.claude/worktrees/` is empty and
 shows one entry, run only after the branches land; (3) a guard exists that makes an unpushed
 agent-worktree commit loud rather than silent — a `git worktree list` + ahead-of-origin check in
 `ci-local.sh` or the session-close path, so this cannot recur undetected.
+
+**✅ All three legs closed 2026-08-01.**
+
+- **Leg 1 — the seven are gone.** None of the seven names resolves to a ref any more, local or
+  remote (`harden/graceful-degradation`, `test/critical-path-guards`,
+  `feat/run-trace-token-duration`, `feat/api-me-chroma-arango-export`,
+  `fix/workflow-studio-bridge-fire`, `feat/notification-transports`, `docs/jsdoc-orchestration`).
+- **Leg 2 — one worktree.** `.claude/worktrees/` is empty; `git worktree list` shows the single
+  primary checkout.
+- **Leg 3 — the guard exists, and it is the half that was missing.**
+  `scripts/check-worktree-strays.sh` (shipped first) covers **linked worktrees** and deliberately
+  skips the primary checkout, so the shapes that actually strand work here were still invisible: a
+  commit on the shared checkout's branch, a local branch ref left ahead of origin, and a detached
+  HEAD carrying a commit — the push-by-SHA recipe's failure mode, where a stale branch pointer
+  pushes "successfully" and only GitHub's 422 "no commits between" ever complains. New
+  `scripts/check-unpushed-commits.sh` judges every local ref plus any detached HEAD against every
+  origin remote-tracking ref, wired as the `unpushed-commits` gate in `ci-local.sh` (run
+  unconditionally beside `secret-scan`, so ref state is still judged when the HEAD export fails).
+  Because every PR here squash-merges, the hard part is not detection but not crying wolf: a naive
+  ahead-of-origin count flags 37 refs on this box. Four classes, all printed by name — STRANDED
+  (fails), stale ref (a no-op merge into `origin/main`, or every patch-id already upstream per
+  `git cherry`), pre-scrub orphan (no merge base; the trunk history restarts 2026-07-29), and
+  `archive/*` (deliberate local-only history that must never be pushed). No origin refs, or no
+  `origin/main`, exits 2 UNAVAILABLE rather than 0. Guard:
+  `tests/unit/unpushed-commit-guard.spec.ts` — 12 cases on throwaway bare-origin + clone fixtures
+  (the real repo's ref state is never read), 9 mutations proven red.
+
+**Full remote-branch sweep, 2026-08-01 — nothing else is stranded.** Every `origin/*` branch
+(60, excluding `main` and the read-only `pull/*` refs) was checked two ways: does merging it into
+`origin/main` produce `origin/main`'s exact tree, and does `git cherry` find each of its commits'
+patch-ids already upstream. **All 60 are content-landed**, and every one traces to a merged PR by
+commit subject — including `fix/pump-tuning-from-first-run`, whose subject was reworded on the way
+in (PR #53) and which therefore looked absent under a naive subject search. All 60 remote branches
+were deleted; nothing unmerged was touched. Local refs ahead of origin: 35 pre-scrub orphans, 1
+`archive/*`, and 1 stale ref (`chore/extract-coder-bot`, landed via PR #19 and then deliberately
+removed by PR #31 when coder-bot was extracted to its own repo — merging it back would re-add the
+carved-out directory, so it is a delete, not a land).
+
+**`origin/fix/psycopg2-dockerfile` — the "next rebuild cannot reach Postgres" claim is now FALSE,
+and the branch is deleted.** The claim was TRUE when written: `psycopg2-binary` had been
+pip-installed into a running container during the career-engine SQLite→Postgres cutover and was not
+in the image. The fix landed on `main` on 2026-07-30 inside the **PR #58 squash** (`7381978`), which
+carried the Dockerfile commit `8ac4c7d` ahead of the light-AI paper commits — which is why no
+separate "psycopg2" PR exists and why a patch-id search for the branch reported it unlanded.
+Evidence: `7381978`'s diff produces Dockerfile blob `7bcefc4`, byte-identical to the branch tip's
+blob, and `origin/main`'s `Dockerfile.oshal` still carries
+`pip3 install … python-docx anthropic psycopg2-binary` with the original justification comment
+intact. `main`'s Dockerfile is a strict superset (it also gained the `oshal-verify.sh` /
+`swarm-routability-check.sh` COPY trio), so merging the branch was a no-op. **An image rebuilt from
+`main` today installs the Postgres driver.** No action required at deploy time.
+
+**Where the deploy-time proofs live now:** the deploy-time legs scattered across this file (K5's role
+verification, K6's denial-log re-check, ADR-119 P4's container-kill drill, the store packages needing
+re-registration, the bind-mounted `jarvis.html` copy) are consolidated as one operator procedure in
+[runbooks/pre-deploy-checklist.md](runbooks/pre-deploy-checklist.md). The done-when text here stays
+authoritative; the runbook is the order to do it in.
 
 ## ADR-045 graph tier — the pieces that were never built
 
