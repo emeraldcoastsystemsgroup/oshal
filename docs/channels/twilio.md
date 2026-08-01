@@ -41,6 +41,19 @@ Multi-account selection via `OSHAL_CONNECTION_LABEL` / `_EMAIL` / `_ID`; `accoun
 The declarative catalog spec ([swarm-apps/connectors/twilio.yaml](../../swarm-apps/connectors/twilio.yaml))
 consumes the same broker secret as HTTP Basic for `/api/connectors/twilio` GET resources.
 
+## US carrier reality (learned live, 2026-08-01)
+
+- **Voice works immediately.** The first live proof on this platform was a call: trial account,
+  API-provisioned number, verified destination — phone rang, TwiML spoke. Voice has no A2P gate.
+- **SMS to US numbers is carrier-gated by A2P 10DLC.** An unregistered local number returns
+  `undelivered` with **error 30034** regardless of code correctness — Twilio accepts the message
+  and the carrier drops it. The fix is a paid account + A2P brand/campaign registration in the
+  Twilio console. On this platform that registration is deliberately DEFERRED to the ECSG
+  account migration (BACKLOG "HUMAN: migrate platform SaaS accounts to real ECSG accounts") —
+  when SMS shows 30034, do not debug the stack and do not register A2P on the demo trial.
+- **Trial accounts** can only reach verified numbers (`OutgoingCallerIds`) and prepend a
+  "sent from a Twilio trial account" notice to every message.
+
 ## Not built yet
 
 WhatsApp-via-Twilio (same adapter, different endpoint), inbound SMS → Jarvis (a true chat
