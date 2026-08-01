@@ -44,9 +44,33 @@ Out of scope:
   (report those upstream — `@google/gemini-cli`, `cline`, etc.)
 - Findings from automated scanners without a working PoC against an
   actually-deployed OSHAL instance
-- Social-engineering / phishing scenarios that don't exploit OSHAL code
+- Social-engineering / phishing of a HUMAN operator, and a human jailbreaking
+  their OWN bot with their own session and authority — neither crosses a trust
+  boundary. This is NOT a carve-out for prompt injection: indirect / second-order
+  injection and confused-deputy attacks (untrusted content — a ticket body, a
+  fetched page, a tool result, another user's data — steering a bot to act with
+  authority it should not have, or on another user's behalf) ARE in scope. See the
+  Threat model note below.
 - Self-XSS in cockpit UI when the attacker already has the operator's
   authenticated session
+
+## Threat model — the model is an untrusted principal
+
+Assume the model can be talked into anything. A persona's guardrails, refusals, and
+"please don't" instructions are not a security control, and "the prompt convinced the
+bot to misbehave" is not, by itself, a finding *or* out of scope — it is the starting
+assumption. Authority lives **outside** the model: route auth (`requiresAuth`), the
+caller-scoped DB roles (`oshal_app` for the api and `oshal_bot` for bots — both
+NOSUPERUSER, NOBYPASSRLS, under `FORCE ROW LEVEL SECURITY`), per-user token brokering,
+the fail-closed tool-approval gate, owner binding on task workspaces, and operator-only
+privileged mints.
+
+A report showing a bot **crossing one of those deterministic boundaries** — reading
+another user's data, minting another user's credentials, running an unapproved tool, or
+escaping owner binding — is in scope regardless of how the model was persuaded to try. A
+report that merely shows a bot *saying* something off-policy, with no boundary crossed, is
+a quality issue, not a vulnerability. This boundary is recorded in
+[ADR-122](docs/adr/122-model-is-untrusted-principal.md).
 
 ## Hardening defaults
 

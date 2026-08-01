@@ -41,7 +41,7 @@ You'll be prompted for the controller URL and a credential. Two ways in:
 | You have | What happens |
 |---|---|
 | A **personal access token** (`oshal_pat_…`) | stored in your context and used as `Authorization: Bearer` |
-| The deployment's **service secret** + your user sub | it **bootstrap-mints a PAT** and stores *that* — the machine-wide secret is never written to disk |
+| The deployment's **service secret** + an **operator** user sub | it **bootstrap-mints a time-boxed PAT** (default 30-day TTL) and stores *that* — the machine-wide secret is never written to disk. Non-operator subs get `403 operator_required` |
 | A dev server with `MOCK_OIDC=true` | nothing needed |
 
 Credentials are kept in kubeconfig-style **contexts** at `~/.oshal/config.json` (mode 0600).

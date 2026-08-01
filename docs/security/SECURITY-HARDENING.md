@@ -1,6 +1,6 @@
 # Security Hardening — open-shal swarm
 
-Status as of 2026-06-27. This document tracks the security posture of the multi-user
+Status as of 2026-08-01. This document tracks the security posture of the multi-user
 platform: what has been hardened, the configuration required to activate it, the FIPS
 crypto posture, and the remaining backlog. It is the operator-facing companion to the
 full audit findings.
@@ -24,6 +24,16 @@ connection can no longer cross users on any Tier-1/Tier-2 table. Deferred (still
 app-layer only): `personal_graph_*`, `chat_messages`, `agent_memories`,
 `knowledge_memory_documents`, `lm_*` student tables. See ADR-076 and
 [governance/RLS-RUNBOOK.md](../governance/RLS-RUNBOOK.md).
+
+**Worker bots are non-superuser too (K5, 2026-08-01).** Bot-node containers previously
+inherited the operator's `DATABASE_URL`, which on legacy `.env`s was the RLS-bypassing
+superuser — so a prompt-injected bot was itself an RLS bypass around the per-user isolation
+the platform is sold on. As of migration `099-bot-db-role.sql` (wave PR #85), bots read
+their own `BOT_DATABASE_URL` and connect as a dedicated `oshal_bot` role (NOSUPERUSER,
+NOBYPASSRLS, DML-only, owns nothing), so **no production runtime identity — api or bot — is a superuser
+or RLS-exempt**. Verified live 2026-08-01 (bot containers report `oshal_bot`). Guard:
+`tests/unit/bot-db-least-privilege.spec.ts`. (Residual: `docker-compose.incident-lab.yml`
+still hands throwaway LAB bots a lab-DB superuser — tracked in BACKLOG K5.)
 
 ---
 
@@ -261,6 +271,16 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
     already implies full impersonation" — assumed every secret-holder is trusted; bots are
     secret-holders and are injectable, which is what made per-request impersonation into a
     persistent credential.
+    **Deployed + re-verified 2026-08-01:** PR #83 (commit `d75ef87`) is merged to main and
+    live (image rebuilt 2026-08-01). The exploit was re-run against the running stack — a plain
+    bot minting a PAT for an arbitrary victim now returns `403 operator_required` where it
+    previously minted a non-expiring token. The generalized trust-boundary decision is recorded
+    in [ADR-122](../adr/122-model-is-untrusted-principal.md).
+    **Operator note (30-day re-login):** because bootstrap PATs now expire, a `swarm-cli login
+    --secret` session must re-authenticate roughly every `OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS`
+    (default 30) days; raise that env var for a longer-lived automation token, or use a session
+    (cockpit) mint, which stays non-expiring. See
+    [runbooks/headless-swarm-cli.md](../runbooks/headless-swarm-cli.md).
 9. ~~**Latent** — default `MOCK_OIDC=false` in code and remove the dev-secret fallback
    (both currently overridden by `.env`, harmless here, a footgun on a fresh deploy).~~
    **Done 2026-07-31:** the compose interpolation default is now `MOCK_OIDC:-false` (the

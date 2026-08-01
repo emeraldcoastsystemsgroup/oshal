@@ -17,6 +17,13 @@ OSHAL pipelines and surfaces. One file per procedure.
   self-healing pipeline: intake route, approval gate, and container actions.
 - [market-remediation.md](./market-remediation.md) — market remediation runbook (competitive
   scoreboard gap closure).
+- [security-incident-bot-injection.md](./security-incident-bot-injection.md) — detection →
+  containment → eradication → recovery when a bot is suspected of being prompt-injected into
+  crossing a trust boundary (minting/using another user's credentials, running an unapproved
+  tool, reaching another user's data). Boundary-first (revoke tokens, rotate the fleet secret,
+  quarantine the bot, purge the wormable memory vector) with a re-run-the-exploit verify step.
+  The trust model is [ADR-122](../adr/122-model-is-untrusted-principal.md); reference incident
+  is the PR #83 PAT takeover.
 - [docker-engine-memory-sizing.md](./docker-engine-memory-sizing.md) — how much engine RAM the
   **full swarm plus a concurrent build** needs (they share one VM, so their peaks add), the
   `Exited (137)` OOM signature that looks like a crash but isn't, and the safe cap-change procedure

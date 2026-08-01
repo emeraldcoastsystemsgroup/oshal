@@ -31,10 +31,21 @@ swarm-cli login          # prompts: controller URL, then token OR service secret
   sent as `Authorization: Bearer …`. The server middleware resolves a PAT to its owner's
   identity, so **every** `requiresAuth` route accepts it — RLS, ownership, and operator
   checks all see the token's owner.
-- **Bootstrap**: a login with the service secret + sub automatically **mints a PAT and
-  stores that** — the machine-wide secret is never written to disk. (`serviceSecretOr`
-  on `/api/cli-tokens` makes this headless bootstrap possible; it is not an escalation
-  because the secret already implies full impersonation.)
+- **Bootstrap** (`swarm-cli login --secret`): an **operator** login with the service
+  secret + sub **mints a PAT and stores that** — the machine-wide secret is never written
+  to disk. As of PR #83 this session-less path is **operator-only** (the asserted sub must
+  be on `OSHAL_OPERATOR_SUBS` / `OSHAL_OPERATOR_EMAILS`; a non-operator sub gets
+  `403 operator_required`) and the minted token is **time-boxed** by
+  `OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS` (default 30 days). The earlier "not an escalation —
+  the secret already implies full impersonation" reasoning was retired: every bot container
+  carries `SWARM_SERVICE_SECRET` and a bot is prompt-injectable, so an unbounded bootstrap
+  mint was a permanent cross-user credential (see [SECURITY-HARDENING.md](../security/SECURITY-HARDENING.md)
+  item 10). Guard: `tests/unit/cli-token-auth.spec.ts`.
+- **Operator note — the 30-day re-login.** Because a bootstrap PAT now expires, a headless
+  or CI node that logged in via `--secret` must re-run `swarm-cli login` roughly every 30
+  days; a sudden 401 on a previously-working node is usually the bootstrap token expiring,
+  not a server fault. Raise `OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS` to lengthen the window, or
+  mint a token from a cockpit **session** (which stays non-expiring) and carry that instead.
 - Credentials live in kubeconfig-style **contexts** (`<stateDir>/config.json`, 0600).
   `--context <name>` targets others; `swarm-cli logout` forgets one. Precedence:
   **flags > env (`OSHAL_CLI_TOKEN`, `SWARM_SERVICE_SECRET`+`OSHAL_USER_SUB`,
