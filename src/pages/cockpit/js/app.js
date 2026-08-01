@@ -45,6 +45,7 @@
  * 40 | maintainer@emeraldcoastsystemsgroup.com   | Prevented immersive profiles from restoring disabled hidden chat sessions or creating background tasks.
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Zen (full-window focus) mode wiring: header arrows-out button + floating exit button toggle body.zen-mode (all cockpit chrome hidden, surface gets the whole window); Esc exits when no modal is open; state survives same-tab reloads via sessionStorage so the once-per-deploy service-worker reload doesn't kick the operator back to chrome.
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | Mobile drawer closes on ANY ribbon-item tap: tapping the already-active view hit setActive's no-op early return, so switchView (and its drawer close) never ran and the drawer stayed open. Delegated listener on #ribbonContainer so it survives ribbon re-renders.
+ * 43 | maintainer@emeraldcoastsystemsgroup.com   | Honor `?ticket=<id>` on load: seed CockpitViewController.pendingTicketSelection and open the Tickets view so a global-search ticket hit lands on the RECORD. Every ticket hit previously linked to bare /cockpit/ - the right screen, the wrong (or no) row - and that is the half of the deep-link contract the API cannot fix by itself. Seeded before the first render rather than via focusTicket after it, because the post-render call races TicketView's list fetch and selects nothing.
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -85,6 +86,22 @@ function applyGlobalAssistantPolicy(hidden) {
     document.getElementById('jarvisOrbPanel')?.remove();
   }
   window.dispatchEvent(new CustomEvent(ASSISTANT_VISIBILITY_EVENT, { detail: { hidden } }));
+}
+
+/**
+ * @description Read the `?ticket=<id>` deep-link parameter. This is the cockpit end of the global
+ * search deep-link contract (features/global-search/services/deep-link.ts): a search hit for a
+ * ticket must open THAT ticket's detail pane, not the unfiltered board. `?app=` remains the
+ * authoritative app selector - this parameter only preselects a row inside the Tickets view, and it
+ * is never cached, so a plain /cockpit/ visit is unaffected.
+ * @returns {string} The requested ticket id, or '' when the parameter is absent or unreadable.
+ */
+function readRequestedTicketId() {
+  try {
+    return (new URLSearchParams(window.location.search).get('ticket') || '').trim();
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -308,7 +325,12 @@ class CockpitApp {
     this.ribbon = new RibbonNav('ribbonContainer', (viewId) => this.switchView(viewId));
     void this.ribbon.ready.then(() => {
       if (this.pendingView || this.viewController.currentView) return;
-      const initialView = this.ribbon?.getActive?.() || 'tickets';
+      const requestedTicketId = readRequestedTicketId();
+      const initialView = requestedTicketId ? 'tickets' : (this.ribbon?.getActive?.() || 'tickets');
+      // Seed the selection BEFORE the first render so TicketView picks it up from
+      // initialSelectedTicketId on its own load pass. Calling focusTicket AFTER switchView races
+      // the list fetch and selects nothing.
+      if (requestedTicketId) this.viewController.pendingTicketSelection = requestedTicketId;
       void this.switchView(initialView);
     });
   }

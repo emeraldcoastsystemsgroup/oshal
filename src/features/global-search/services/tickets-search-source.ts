@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Global search: tickets adapter — ILIKE over title/description on the tickets table, HARD-scoped to owner_sub = caller (the same ownership column cockpit-routes scopes by; the GUC/RLS pool is the backstop, not the line). Score = ILIKE+recency fallback (tickets have no native ranking).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Emit kind:'ticket' and the CANONICAL deep link (deepLinkFor -> /cockpit/?ticket=<id>) instead of the bare '/cockpit/' path. The old link opened the ticket LIST — a hit for a two-year-old ticket dropped the operator on an unfiltered board with no indication which row it meant.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import type { SearchHit, SearchSource } from './search-source';
 import { buildSnippet, escapeIlike, ilikeRecencyScore } from './search-ranking';
+import { deepLinkFor } from './deep-link';
 
 const logger = createChildLogger({ module: 'global-search-tickets' });
 
@@ -65,7 +67,8 @@ export class TicketsSearchSource implements SearchSource {
           id: row.ticket_id,
           title: row.title,
           snippet: buildSnippet(inTitle ? row.description || row.title : row.description, query),
-          url: '/cockpit/',
+          kind: 'ticket',
+          url: deepLinkFor('ticket', row.ticket_id),
           score: ilikeRecencyScore(inTitle, ts, now),
           source: this.name,
           ts,

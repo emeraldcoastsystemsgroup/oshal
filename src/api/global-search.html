@@ -54,6 +54,12 @@
   .hit .t a:hover { color: var(--accent); }
   .hit .s { color: var(--muted); font-size: 13px; margin-top: 3px; overflow-wrap: anywhere; }
   .hit .m { color: var(--muted); font-size: 11.5px; margin-top: 5px; display: flex; gap: 10px; }
+  /* Typed-result pill: the hit KIND (ticket / app / connector / bot / doc / entity), so a reader
+     can tell a bot row from a ticket row without reading the group header again. */
+  .hit .m .kind { border: 1px solid var(--line); border-radius: 999px; padding: 0 7px;
+    text-transform: uppercase; letter-spacing: .04em; font-size: 10px; line-height: 17px; }
+  /* An unlinked row is dimmer AND explains itself. Never a dead title with no reason. */
+  .hit .nolink { font-style: italic; opacity: .85; }
   .empty { color: var(--muted); text-align: center; padding: 40px 0; }
   kbd { background: var(--chip); border: 1px solid var(--line); border-radius: 5px;
     padding: 1px 6px; font-size: 12px; }
@@ -83,10 +89,16 @@
   const $status = document.getElementById('status');
   const $results = document.getElementById('results');
 
-  // Where a hit's "source" groups under, and what the group header reads as.
+  // Group headers. Labels are presentation only; the KIND and the no-surface reason come from
+  // GET /api/search/sources so this file never restates the deep-link contract (a restated
+  // contract is a contract that drifts).
   const GROUP_LABELS = {
-    tickets: 'Tickets', chat: 'Chat history', personal: 'Personal data', rag: 'Knowledge base',
+    tickets: 'Tickets', chat: 'Chat history', apps: 'Apps', bots: 'Bots',
+    connectors: 'Connections', personal: 'Personal data', rag: 'Knowledge base',
   };
+  // kind -> the reason that kind has no deep link, as declared by the API. Populated by
+  // loadSources(); an unlinked row is explained from this, never left silently unclickable.
+  const NO_SURFACE = {};
   const selected = new Set(); // empty = all sources
 
   function esc(s) {
@@ -107,7 +119,11 @@
       if (!r.ok) return;
       const { sources } = await r.json();
       $chips.innerHTML = '';
-      for (const name of sources || []) {
+      for (const entry of sources || []) {
+        // The route returns {name, kind, deepLink, noSurfaceReason} records.
+        const name = typeof entry === 'string' ? entry : entry.name;
+        if (!name) continue;
+        if (entry && entry.kind && entry.noSurfaceReason) NO_SURFACE[entry.kind] = entry.noSurfaceReason;
         const el = document.createElement('span');
         el.className = 'chip';
         el.textContent = GROUP_LABELS[name] || name;
@@ -141,9 +157,17 @@
           ? '<a href="' + esc(url) + '" target="_top">' + esc(h.title) + '</a>'
           : esc(h.title);
         const ts = h.ts ? new Date(h.ts).toLocaleString() : '';
+        // A row with no link says WHY. The reason is the API's declared one for that kind; the
+        // fallback text still tells the reader it is deliberate rather than broken.
+        const why = url ? '' : (NO_SURFACE[h.kind]
+          || 'This record has no cockpit surface to open.');
         return '<div class="hit"><div class="t">' + title + '</div>'
           + (h.snippet ? '<div class="s">' + esc(h.snippet) + '</div>' : '')
-          + '<div class="m"><span>' + esc(GROUP_LABELS[source] || source) + '</span>'
+          + (why ? '<div class="s nolink" title="' + esc(why) + '">no surface to open \u2014 '
+            + esc(why) + '</div>' : '')
+          + '<div class="m">'
+          + (h.kind ? '<span class="kind">' + esc(h.kind) + '</span>' : '')
+          + '<span>' + esc(GROUP_LABELS[source] || source) + '</span>'
           + (ts ? '<span>' + esc(ts) + '</span>' : '') + '</div></div>';
       }).join('');
       sec.innerHTML = '<h2>' + esc(GROUP_LABELS[source] || source)

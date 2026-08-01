@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Global search: personal-data vault adapter — substring match over the caller's OWN decrypted entity labels/attrs via the per-user SQLite vault (owner-keyed handle + ownerSub-filtered reads, same pattern as personal-routes). Disabled PIS (ENABLE_PERSONAL_INTELLIGENCE unset) = clean logged skip, never fake data.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Emit kind:'entity'. The url stays null BY DECLARATION via NO_SURFACE_REASON (owner-key-encrypted vault, no browse surface) rather than as a bare null.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -15,6 +16,7 @@ import {
 } from '@/features/personal-data';
 import type { SearchHit, SearchSource } from './search-source';
 import { buildSnippet } from './search-ranking';
+import { deepLinkFor } from './deep-link';
 
 const logger = createChildLogger({ module: 'global-search-personal' });
 
@@ -72,7 +74,8 @@ export class PersonalDataSearchSource implements SearchSource {
           id: entity.id,
           title: label || `(${entity.type})`,
           snippet: buildSnippet(inLabel ? attrsText || label : attrsText, query) || entity.type,
-          url: null,
+          kind: 'entity',
+          url: deepLinkFor('entity', entity.id),
           score: inLabel ? 1.0 : 0.6,
           source: this.name,
           ts: null,

@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Global search: chat-history adapter — ILIKE over chat_tasks titles AND chat_messages text. chat_messages carries no owner column, so message hits are scoped by an INNER JOIN to the caller's OWN chat_tasks rows (owner_sub = caller) — never queried bare. Deduped per task (best hit wins), ILIKE+recency scored.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Emit kind:'chat' and the CANONICAL deep link (deepLinkFor -> /chat?taskId=<id>) instead of the bare '/chat' path, which started a BRAND-NEW conversation and lost the one the user searched for.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import type { SearchHit, SearchSource } from './search-source';
 import { buildSnippet, escapeIlike, ilikeRecencyScore } from './search-ranking';
+import { deepLinkFor } from './deep-link';
 
 const logger = createChildLogger({ module: 'global-search-chat' });
 
@@ -69,7 +71,8 @@ export class ChatSearchSource implements SearchSource {
           id: row.task_id,
           title: row.title || '(untitled conversation)',
           snippet: buildSnippet(row.body, query),
-          url: '/chat',
+          kind: 'chat',
+          url: deepLinkFor('chat', row.task_id),
           score: ilikeRecencyScore(row.matched_title, ts, now),
           source: this.name,
           ts,

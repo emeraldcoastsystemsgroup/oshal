@@ -4876,6 +4876,21 @@ mobile-ux fix. Context: `docs/evidence/gap-list-build-2026-07-15.md` and the `@g
 
 **Verified 2026-07-19:** OPEN — no tool-budgets/notify/dlq/export surfaces (DLQ has an operator surface, so partial there).
 
+**DONE — corrected 2026-08-01 (wave17-cockpit):** the done-when was already MET and this entry was
+stale. `5d5db19` (PR #24) shipped all four bind-mounted tool surfaces —
+`src/pages/cockpit/tools/{budgets,notify,dlq,my-data}.html` — registered in
+`src/pages/cockpit/js/components/RibbonNav.js` (Budgets / Notifications / Dead Letters / My Data)
+and served by the cockpit's own `requiresAuth` `express.static` mount, so they need no Express route
+and no image rebuild. Dead Letters is operator-only in the rail AND server-side. Budgets is
+read-only over `/api/budgets` + `/api/budgets/spend` with an operator-wide `/api/budgets/state`
+view; notify does per-topic channel prefs + a test send; DLQ does list + requeue + JSON export;
+my-data does export + the two-step delete. What was genuinely missing was a GUARD for the DLQ
+surface specifically — added now as `tests/unit/dlq-surface.spec.ts`
+(**dlq-surface-shows-real-entries**): drives the real router over a stubbed `oshal_queue_dlq`,
+asserts what/why/when/how-many reach the payload, that a non-operator is refused BEFORE the store is
+read, that a malformed id never reaches SQL, and — the anti-drift half — that `dlq.html` renders
+every field the route's own response carries and offers NO action the router does not expose.
+
 **Verified 2026-07-19 (completion-day):** PARTIAL — the operator DATA rails now exist (routes, not cockpit surfaces): `GET /api/budgets/state` (`3173f104`, requiresOperator — every cap + trailing-window spend + recent `oshal_budget_events`), `POST /api/notify/operator` (`07a9aef0`, requiresOperator + `confirm:true`→428, fails LOUD 502 when the transport skips so a monitoring operator is never fooled by a silent no-op), and `GET /api/queue/dlq/export` (`bf738100`, requiresOperator — downloadable JSON over the SAME `DeadLetterService.listEntries`, not a second surface). Each is operator-gated inside an already-`requiresAuth` mount (route-auth inventory unchanged, 5/5 green) and ships its guard spec. The entry's done-when — bind-mounted **cockpit tool surfaces** (like `tool-global-search`/`tool-run-trace`) — stays OPEN; these routes are the accountable data layer such a surface would consume. DLQ now has list + requeue + export.
 
 ### Connector write-actions: marketplace surfacing + audit read endpoint + interactive-approval UX
@@ -4914,6 +4929,45 @@ Guards: `tests/unit/connectors/connector-write-actions.spec.ts`,
   pg_trgm indexes on the searched text columns, with a measured before/after latency recorded.
 
 **Verified 2026-07-19:** OPEN — no pg_trgm migration, no canonical deep-link contract.
+
+**DONE 2026-08-01 (wave17-cockpit):** both clauses shipped.
+1. **Deep-link contract** — `src/features/global-search/services/deep-link.ts` is now the ONLY
+   place a hit's URL is minted. `SearchHit` gained a required `kind`
+   (ticket/chat/app/connector/bot/doc/entity); `deepLinkFor(kind, id)` is exhaustive over the union
+   via a `never` check, so a new kind without a builder is a COMPILE error rather than an unlinked
+   row found in production. Two adapters used to return a bare surface path (`'/cockpit/'`,
+   `'/chat'`) — the right screen, the wrong row — and two returned an unexplained `null`; both
+   are gone. Unlinked kinds are now declared in `NO_SURFACE_REASON` **with the reason**, which
+   `GET /api/search/sources` publishes as `{name, kind, deepLink, noSurfaceReason}` so the surface
+   explains an unlinked hit from the API instead of from its own copy of the rules. The cockpit end
+   of the contract shipped too: `?ticket=` in `src/pages/cockpit/js/app.js` (seeds
+   `pendingTicketSelection` → `TicketView.focusTicket`) and `?connector=` in
+   `src/api/utilities.html` (scrolls + outlines the matching card).
+2. **Three new typed adapters** — `apps`, `bots`, `connectors`, each owning its own visibility
+   rule IN the adapter (apps mirror `isVisibleToCaller`; bots apply ADR-087 `accessRoles` through
+   the shared `roleCanAccess` at the caller's effective role; connectors pin `user_sub = $1` and
+   never name a token column). The app/bot listers are injected UNFILTERED from the route on
+   purpose — pre-narrowing in `SwarmAppService` would make two filters where only one is auditable.
+3. **`scripts/migrations/101-global-search-trgm.sql`** — `pg_trgm` GIN indexes on the columns the
+   adapters actually ILIKE, plus `(owner_sub, updated_at DESC)` composites. Idempotent,
+   `to_regclass`-guarded, no `CONCURRENTLY` (the runner wraps each migration in one transaction).
+4. **Measured, and the measurement changed the story.**
+   `scripts/measure-global-search-latency.js` benchmarks in a throwaway database it creates and
+   drops — it never touches a production index. Medians:
+   chat **215.32 → 5.41 ms (39.8×)** at 100k rows/50 owners; tickets **154.45 → 1.39 ms
+   (111.5×)** at 100k rows/single owner; connectors 7.70 → 2.30 ms (3.3×) single-owner.
+   Honest reading, recorded in the doc: the **trigram** index is decisive only on `chat_messages`
+   (no owner column → whole-table text scan); the tickets win is the **composite btree**, not the
+   trigram (`EXPLAIN` shows no trigram in the tickets plan in any scenario); and two cells are
+   mildly NEGATIVE (−3 ms on sub-8 ms operations) where the planner picks the index on a small
+   table — kept because the shape that regresses is the shape that was already fast.
+   Full table + reproduce commands: [global-search-deep-link-contract.md](architecture/global-search-deep-link-contract.md).
+   Guards: `tests/unit/global-search-deep-links.spec.ts` —
+   **search-results-carry-resolvable-deeplinks** (each link's parameter asserted against the REAL
+   surface source that reads it, so deleting a handler goes red) and **search-is-caller-scoped**
+   (a second user's person-scoped app, an operator-only bot, and another sub's connections all
+   proven absent; the SQL adapters assert the bound parameter AND the owner predicate, not a
+   substring).
 
 ### Token Chase: auto keep-winner then re-baseline loop + per-run judge budget cap
 - **Reason:** step 4 (LLM-judge assessor) + 4b (judged savings report) shipped, but a winning variant is not

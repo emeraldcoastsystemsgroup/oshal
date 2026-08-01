@@ -114,6 +114,9 @@
     /* Chip row already wraps; ensure chips don't overflow */
     .chip { flex-shrink: 0; }
   }
+  /* A card reached by ?connector=<provider> from a global-search hit. Outlined, not recoloured,
+     so the connected/needs-setup pill keeps meaning exactly what it meant before. */
+  .card.deeplinked { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
@@ -307,6 +310,32 @@ function connectorStatusPill(p) {
   return '<span class="statuspill warn">needs setup</span>';
 }
 
+// ── Global-search deep-link target (?connector=<provider>) ───────────────────
+// The search deep-link contract (features/global-search/services/deep-link.ts) links a
+// `connector` hit to /utilities?connector=<provider>. Landing the reader on a page of thirty
+// cards would be the same half-answer a bare '/cockpit/' ticket link used to be, so each card
+// carries a stable id and the requested one is scrolled to and outlined once.
+function connectorCardId(providerId) {
+  return 'conn-card-' + String(providerId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+function requestedConnectorId() {
+  try {
+    return (new URLSearchParams(window.location.search).get('connector') || '').trim();
+  } catch (e) { return ''; }
+}
+
+// Called after every connector-list render: the list re-renders on search/filter input, so the
+// highlight has to be re-applied rather than set once at load.
+function focusRequestedConnector() {
+  var want = requestedConnectorId();
+  if (!want) return;
+  var el = document.getElementById(connectorCardId(want));
+  if (!el) return;
+  el.classList.add('deeplinked');
+  try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { el.scrollIntoView(); }
+}
+
 function cardHtml(p) {
   var conns = p.connections || [];
   var body = '';
@@ -357,7 +386,7 @@ function cardHtml(p) {
       '<div class="tokrow"><button class="btn connect" onclick="saveByoLlm()">Save &amp; validate</button>' +
       '<button class="btn ghost" onclick="testByoLlm()">Test</button>' +
       '<span id="bl-msg" class="meta" style="align-self:center;"></span></div>';
-    return '<div class="card col"><div class="cardhead"><div class="ico">' + icon(p.id) + '</div>' +
+    return '<div class="card col" id="' + connectorCardId(p.id) + '"><div class="cardhead"><div class="ico">' + icon(p.id) + '</div>' +
       '<div class="info"><div class="name">' + esc(p.label) + '</div></div>' + connectorStatusPill(p) + '</div>' + body + '</div>';
   }
   // Connect / add-another affordance.
@@ -397,7 +426,7 @@ function cardHtml(p) {
   } else if (!p.configured) {
     body += '<div class="meta">Not configured — needs an OAuth client + the redirect URI registered.</div>';
   }
-  return '<div class="card col"><div class="cardhead"><div class="ico">' + icon(p.id) + '</div>' +
+  return '<div class="card col" id="' + connectorCardId(p.id) + '"><div class="cardhead"><div class="ico">' + icon(p.id) + '</div>' +
     '<div class="info"><div class="name">' + esc(p.label) + '</div></div>' + connectorStatusPill(p) + '</div>' + body + '</div>';
 }
 
@@ -620,6 +649,7 @@ function renderConnectorList() {
     html += '<div class="cat">' + c[1] + '</div>' + items.map(cardHtml).join('');
   });
   list.innerHTML = html || '<p class="sub">No connectors match.</p>';
+  focusRequestedConnector();
 }
 
 async function disconnect(id) {
