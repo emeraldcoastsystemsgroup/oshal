@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prometheus Alertmanager webhook -> incident ticket intake for swarm self-healing
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): intake now runs Stage A canonicalization + Stage C consolidation (@/features/alert-triage) — a refire on an open incident UPDATES that ticket (updateCount/lastSeen/priority-escalation) instead of the old silent skipped++; unapproved alertnames are counted as noise per-alertname instead of vanishing; identity-less alerts drop counted; and GET /intake-stats (same fail-closed bearer guard) serves the FR-A3 decision counters. severityToPriority/targetOf moved into the feature so create + escalate rank severities identically
  */
 
 /**
@@ -14,38 +15,38 @@
  *   cAdvisor/Prometheus watch the oshal-* containers
  *     -> Alertmanager fires on a rule (container down, restart loop, unhealthy)
  *       -> POST /api/alerts/alertmanager (this route)
- *         -> approved? create incident ticket (externalProvider: 'prometheus')
+ *         -> approved? consolidate (ADR-119 P1): refire of an open incident updates
+ *            that ticket; otherwise create one (externalProvider: 'prometheus')
  *           -> incident-rca pipeline investigates + proposes a fix
  *             -> ticket lands at the approve-or-close gate (human-in-the-loop)
  *
  * "Approved alert" gate: only firing alerts whose alertname is in
  * ALERT_APPROVED_NAMES (comma-separated) become tickets. If that env var is
- * unset, every firing alert is accepted (dev default) and logged.
+ * unset, every firing alert is accepted (dev default) and logged. Unapproved
+ * alerts are COUNTED as noise per alertname (FR-A3) — never an uncounted vanish.
  *
  * Auth: machine-to-machine, so this router is mounted WITHOUT the OIDC
  * requiresAuth guard. It self-guards with a shared bearer token when
  * ALERT_WEBHOOK_TOKEN is set (recommended). Alertmanager sends it via its
- * http_config bearer_token / authorization config.
+ * http_config bearer_token / authorization config. GET /intake-stats shares the
+ * same fail-closed guard (see tests/helpers/unguarded-route-allowlist.ts —
+ * keeping the whole family self-guarded keeps the route-auth inventory truthful).
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { hmacWebhookGuard } from '@/features/security';
 import type { TicketService } from '@/features/ticketing';
-import { TicketTypeSchema, type TicketPriority } from '@/entities/ticket';
+import {
+  AlertConsolidationService,
+  AlertIntakeStats,
+  canonicalizeAlert,
+  type CanonicalAlert,
+  type RawAlertmanagerAlert,
+} from '@/features/alert-triage';
+import { TicketTypeSchema } from '@/entities/ticket';
 
 const logger = createChildLogger({ module: 'alertmanager-routes' });
-
-/** One alert inside an Alertmanager v4 webhook payload. */
-interface AlertmanagerAlert {
-  status?: 'firing' | 'resolved';
-  labels?: Record<string, string>;
-  annotations?: Record<string, string>;
-  startsAt?: string;
-  endsAt?: string;
-  generatorURL?: string;
-  fingerprint?: string;
-}
 
 /** Alertmanager v4 webhook envelope. */
 interface AlertmanagerPayload {
@@ -53,46 +54,17 @@ interface AlertmanagerPayload {
   status?: 'firing' | 'resolved';
   groupLabels?: Record<string, string>;
   commonLabels?: Record<string, string>;
-  alerts?: AlertmanagerAlert[];
-}
-
-/** Map an alert severity label to a ticket priority. */
-function severityToPriority(severity?: string): TicketPriority {
-  switch ((severity || '').toLowerCase()) {
-    case 'critical':
-    case 'page':
-      return 'urgent';
-    case 'warning':
-    case 'major':
-      return 'high';
-    case 'minor':
-      return 'medium';
-    case 'info':
-    case 'none':
-      return 'low';
-    default:
-      return 'medium';
-  }
-}
-
-/** Best-effort human label for the failing target (container > pod > instance). */
-function targetOf(labels: Record<string, string>): string {
-  return (
-    labels.container ||
-    labels.container_name ||
-    labels.name ||
-    labels.pod ||
-    labels.instance ||
-    labels.job ||
-    'unknown-target'
-  );
+  alerts?: RawAlertmanagerAlert[];
 }
 
 /** Build the incident ticket body from the alert. */
-function buildDescription(alert: AlertmanagerAlert, intakeStatus: 'approved' | 'backlog'): string {
+function buildDescription(
+  alert: RawAlertmanagerAlert,
+  canonical: CanonicalAlert,
+  intakeStatus: 'approved' | 'backlog',
+): string {
   const labels = alert.labels ?? {};
   const ann = alert.annotations ?? {};
-  const target = targetOf(labels);
   const labelLines = Object.entries(labels)
     .map(([k, v]) => `- **${k}:** ${v}`)
     .join('\n');
@@ -102,8 +74,8 @@ function buildDescription(alert: AlertmanagerAlert, intakeStatus: 'approved' | '
     : 'Intake: APPROVED — auto-flows into the incident-rca pipeline now; the proposed remediation is gated at the approve-or-close step before any container action.';
 
   return [
-    `**Alert:** ${labels.alertname || 'unnamed alert'}`,
-    `**Target:** ${target}`,
+    `**Alert:** ${canonical.alertname || 'unnamed alert'}`,
+    `**Target:** ${canonical.target || 'unknown-target'}`,
     `**Severity:** ${labels.severity || 'unknown'}`,
     `**Fired at:** ${alert.startsAt || 'unknown'}`,
     '',
@@ -126,7 +98,8 @@ function buildDescription(alert: AlertmanagerAlert, intakeStatus: 'approved' | '
 /**
  * @description Mounts the Alertmanager webhook intake route.
  * @param ticketService - The DB-backed ticket service (multi-tenant, persistent).
- * @returns Express router exposing POST / (mount at /api/alerts/alertmanager).
+ * @returns Express router exposing POST /alertmanager + GET /intake-stats
+ *   (mount at /api/alerts).
  */
 export function createAlertmanagerRoutes(ticketService: TicketService): Router {
   const router = Router();
@@ -171,6 +144,12 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
 
   const webhookToken = (process.env.ALERT_WEBHOOK_TOKEN || '').trim();
 
+  // ADR-119 P1: intake decision counters (FR-A3) + the Stage C consolidator.
+  // TicketService structurally satisfies TriageTicketGateway — the feature slice
+  // stays decoupled from the ticketing slice (FSD same-layer rule).
+  const stats = new AlertIntakeStats();
+  const consolidation = new AlertConsolidationService(ticketService);
+
   // Shared-secret guard for machine-to-machine posting (Alertmanager bearer token).
   // FAIL-CLOSED: with no ALERT_WEBHOOK_TOKEN configured the receiver rejects everything.
   // This endpoint is mounted WITHOUT the OIDC wall, so an unset token previously let any
@@ -194,8 +173,9 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
 
   /**
    * POST /api/alerts/alertmanager
-   * Alertmanager webhook receiver. Accepts the v4 payload, opens one incident
-   * ticket per approved firing alert (deduped by fingerprint while active).
+   * Alertmanager webhook receiver. Accepts the v4 payload; each approved firing
+   * alert consolidates onto the open ticket for its incident key or opens one
+   * (ADR-119 P1 — ten identical alerts are ONE ticket carrying updateCount=9).
    */
   // Defense-in-depth body integrity on top of the bearer `guard`. No-op until
   // ALERT_WEBHOOK_HMAC_SECRET is set, so default behavior is unchanged. NOTE before
@@ -214,104 +194,99 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
     const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
 
     if (alerts.length === 0) {
-      res.json({ success: true, created: 0, skipped: 0, message: 'no alerts in payload' });
+      res.json({ success: true, created: 0, consolidated: 0, message: 'no alerts in payload' });
       return;
     }
 
     const created: string[] = [];
-    let skipped = 0;
+    const consolidated: string[] = [];
+    let noise = 0;
+    let dropped = 0;
     let resolved = 0;
     let backlogged = 0;
 
     for (const alert of alerts) {
-      const labels = alert.labels ?? {};
-      const alertname = labels.alertname || 'UnnamedAlert';
-      const fingerprint = alert.fingerprint || `${alertname}:${targetOf(labels)}`;
+      // Stage A: canonicalize + identity gate (FR-A1/A2). Identity-less alerts are
+      // unactionable — dropped AND counted (reason=no_identity), never invisible.
+      const canonical = canonicalizeAlert(alert);
+      if (!canonical) {
+        stats.record('dropped');
+        dropped += 1;
+        continue;
+      }
 
-      // Resolved alerts: don't open work; just dedupe-tag a note for the trace.
-      if (alert.status === 'resolved') {
+      // Resolved alerts: don't open work; count the decision for the trace (FR-A3).
+      // Resolved-handling (member resolution, ALERT_AUTO_RESOLVE) is P3 (FR-E4).
+      if (canonical.status === 'resolved') {
+        stats.record('resolved');
         resolved += 1;
-        logger.info({ alertname, fingerprint }, 'Alert resolved (no ticket action)');
+        logger.info({ alertname: canonical.alertname, fingerprint: canonical.fingerprint }, 'Alert resolved (no ticket action)');
         continue;
       }
 
-      // "Approved alert" gate.
-      if (approvedNames && !approvedNames.has(alertname)) {
-        skipped += 1;
-        logger.info({ alertname }, 'Alert not in ALERT_APPROVED_NAMES; skipping');
+      // "Approved alert" gate — unclaimed alerts are NOISE: counted per alertname
+      // (queryable via GET /intake-stats) so the allowlist can be tuned from
+      // evidence. This replaces the pre-P1 uncounted vanish (FR-B2-lite/FR-A3).
+      if (approvedNames && !approvedNames.has(canonical.alertname)) {
+        stats.record('noise', canonical.alertname);
+        noise += 1;
+        logger.info({ alertname: canonical.alertname }, 'Alert not in ALERT_APPROVED_NAMES — counted as noise, no ticket');
         continue;
       }
 
-      // Dedupe: don't reopen if an active ticket already exists for this alert.
+      // approved => auto-flows into incident-rca; backlog => waits for operator triage.
+      const intakeStatus = resolveIntakeStatus(canonical.alertname, canonical.labels);
+
+      // Stage C: consolidate (FR-C2/C3/C4/C5/C6). Refire of an open incident updates
+      // that ticket; otherwise a new ticket opens (recurrence-linked within the TTL).
       try {
-        const existing = await ticketService.findActiveTicketByMetadataKey('alertFingerprint', fingerprint);
-        if (existing) {
-          skipped += 1;
-          logger.info({ alertname, fingerprint, ticketId: existing.ticketId }, 'Active ticket already exists for alert; skipping');
-          continue;
+        const outcome = await consolidation.intake(canonical, {
+          title: `[${canonical.severity}] ${canonical.alertname || 'UnnamedAlert'} on ${canonical.target || 'unknown-target'}`,
+          ticketType,
+          description: buildDescription(alert, canonical, intakeStatus),
+          intakeStatus,
+          externalUrl: alert.generatorURL ?? null,
+        });
+        if (outcome.decision === 'created') {
+          stats.record('created');
+          created.push(outcome.ticketId);
+          if (intakeStatus === 'backlog') backlogged += 1;
+          logger.info(
+            { ticketId: outcome.ticketId, alertname: canonical.alertname, target: canonical.target, intake: intakeStatus },
+            'Opened incident ticket from Prometheus alert',
+          );
+        } else {
+          stats.record('consolidated');
+          consolidated.push(outcome.ticketId);
         }
       } catch (err) {
-        logger.warn({ err, alertname }, 'Dedupe lookup failed; proceeding to create');
-      }
-
-      const severity = labels.severity || 'warning';
-      const target = targetOf(labels);
-      // approved => auto-flows into incident-rca; backlog => waits for operator triage.
-      const intakeStatus = resolveIntakeStatus(alertname, labels);
-
-      try {
-        const ticket = await ticketService.createTicket({
-          title: `[${severity}] ${alertname} on ${target}`,
-          ticketType,
-          description: buildDescription(alert, intakeStatus),
-          // Trusted monitoring provider: ticket-service honors the status we pass
-          // (approved auto-flows into incident-rca; backlog waits). Any fix is still
-          // gated at the pipeline's approve-or-close step regardless.
-          externalProvider: 'prometheus',
-          externalId: fingerprint,
-          externalUrl: alert.generatorURL ?? null,
-          status: intakeStatus,
-          workspaceId: null,
-          assignedAgentId: null,
-          parentTicketId: null,
-          priority: severityToPriority(severity),
-          labels: [
-            'prometheus',
-            'incident',
-            'self-healing',
-            'rca-requested',
-            `severity:${severity}`,
-            `target:${target}`,
-            `intake:${intakeStatus}`,
-          ],
-          metadata: {
-            source: 'prometheus',
-            alertFingerprint: fingerprint,
-            alertname,
-            severity,
-            target,
-            intake: intakeStatus,
-            startsAt: alert.startsAt ?? null,
-            rawLabels: labels,
-          },
-        });
-        created.push(ticket.ticketId);
-        if (intakeStatus === 'backlog') backlogged += 1;
-        logger.info({ ticketId: ticket.ticketId, alertname, target, intake: intakeStatus }, 'Opened incident ticket from Prometheus alert');
-      } catch (err) {
-        logger.error({ err, alertname }, 'Failed to create incident ticket from alert');
+        logger.error({ err, alertname: canonical.alertname }, 'Failed to intake alert into the ticket queue');
       }
     }
 
     res.json({
       success: true,
       created: created.length,
+      consolidated: consolidated.length,
+      noise,
+      dropped,
+      resolved,
       backlogged,
       autoFlowed: created.length - backlogged,
       ticketIds: created,
-      skipped,
-      resolved,
+      consolidatedTicketIds: consolidated,
     });
+  });
+
+  /**
+   * GET /api/alerts/intake-stats
+   * FR-A3: every intake decision, queryable — totals per decision class plus the
+   * per-alertname noise breakdown ("top noise sources"). Same fail-closed bearer
+   * guard as the webhook: the /api/alerts family mounts outside the OIDC wall and
+   * must never be open by omission.
+   */
+  router.get('/intake-stats', guard, (_req: Request, res: Response) => {
+    res.json({ success: true, stats: stats.snapshot() });
   });
 
   return router;

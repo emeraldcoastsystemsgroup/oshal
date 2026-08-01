@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | VALID_TRANSITIONS: allow in_process_discovery → customer_action — the incident-rca Mode A/B disposition was rejected here, silently downgrading proposed-solution/human-action incidents to 'escalated' via the pipeline's catch (found by the 2026-07-08 adversarial double-check, live-proven against the running DB)
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ (migration 081): 'dead_letter' reachable from approved / every dispatchable in_process_* phase / approval_required / escalated (the two quarantine triggers are a dispatch-failure mid-flight and the Nth escalation cycle), leaves only via operator requeue (approved) or backlog/cancelled. buildStatusTransitionMetadata backstops dead_letter transitions with reason/source/nextAction the same way it already backstops escalations, so a reason-less quarantine is structurally impossible.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 graph ingestion: createTicket and assignAgent now emit sanitized ticket-created / agent-assigned events onto the shared ticketEvents bus (ids/title/status only — never the description), giving the swarm operational graph an observable lifecycle seam without instrumenting call sites. Status transitions were already emitted by the stores.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestTicketByMetadataKey delegation — the consolidation stage's open-vs-recurrence decision (newest ticket per incident key, any status; FR-C5)
  */
 
 import {
@@ -224,6 +225,20 @@ export class TicketService {
    */
   async findActiveTicketByMetadataKey(key: string, value: string): Promise<InternalTicket | null> {
     return this.ticketStore.findActiveByMetadataKey(key, value);
+  }
+
+  /**
+   * @description Finds the most recently created ticket (any status, terminal included)
+   * whose `metadata.<key>` equals the given value. The alert-triage consolidation stage
+   * (ADR-119 P1) uses this to decide between updating the open incident ticket for an
+   * incident key and opening a recurrence-linked successor after the prior went terminal
+   * (spec FR-C5).
+   * @param key - Metadata field name.
+   * @param value - Metadata value to match exactly.
+   * @returns Newest matching ticket record or null.
+   */
+  async findLatestTicketByMetadataKey(key: string, value: string): Promise<InternalTicket | null> {
+    return this.ticketStore.findLatestByMetadataKey(key, value);
   }
 
   /**

@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Seed initial ticket_status_history rows during ticket creation so brand-new tickets have an immediate lifecycle record
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Normalized historical Change Log attribution to the mandated project author identifier
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ: deriveStateFields maps 'dead_letter' → state_group 'escalated' (would otherwise fall through to 'backlog' and violate the state-group CHECK); linkedChatTaskStatusForTerminalTicket treats dead_letter like escalated (linked chat task → failed).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestByMetadataKey (newest match, any status) — the consolidation stage's open-vs-recurrence decision needs the newest ticket per incident key, not findActiveByMetadataKey's oldest non-cancelled
  */
 
 import type { Pool, PoolClient, QueryResult } from 'pg';
@@ -240,6 +241,28 @@ export class PostgresTicketStore implements ITicketStore {
        WHERE metadata ->> $1 = $2
          AND status <> 'cancelled'
        ORDER BY created_at ASC
+       LIMIT 1`,
+      [key, value],
+    ));
+    return result.rows.length ? this.mapRow(result.rows[0]) : null;
+  }
+
+  /**
+   * @description Find the newest ticket (any status, terminal included) whose
+   * `metadata.<key>` equals the given value — the alert-triage consolidation lookup
+   * (ADR-119 P1): open ⇒ the refire consolidates onto it; terminal ⇒ a recurrence-linked
+   * successor is opened (FR-C5).
+   * @param key - Metadata field name.
+   * @param value - Metadata value to match exactly.
+   * @returns Newest matching ticket record or null.
+   */
+  async findLatestByMetadataKey(key: string, value: string): Promise<InternalTicket | null> {
+    await this.ensureSchema();
+    logger.debug({ key, value }, 'Finding latest ticket by metadata key');
+    const result = await this.withRls((q) => q.query(
+      `SELECT * FROM tickets
+       WHERE metadata ->> $1 = $2
+       ORDER BY created_at DESC
        LIMIT 1`,
       [key, value],
     ));

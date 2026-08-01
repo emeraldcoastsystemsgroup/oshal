@@ -1,9 +1,13 @@
 # Alert Triage & Consolidation — Functional Specification (intelligent-processing intake)
 
-**Status: SPEC (target behavior — not yet built).** This document specifies the noise-gate,
-deduplication/consolidation, and bundling behavior for the self-healing alert intake. Nothing in it
-describes shipped code except the "As-built baseline" section; the build phases and their done-when
-criteria live in [BACKLOG.md](../BACKLOG.md) ("Alert triage & consolidation").
+**Status: P1 BUILT (2026-07-31); P2/P3 remain target behavior.** Stage A (canonicalize +
+identity gate), Stage C (identity-based consolidation, recurrence linking, escalate-only
+severity), the FR-A3 intake counters (`GET /api/alerts/intake-stats`), and FR-E1's structural
+"RCA once" are shipped in [src/features/alert-triage/](../../src/features/alert-triage/) wired
+into [alertmanager-routes.ts](../../src/app/routes/alertmanager-routes.ts), with named guards in
+`tests/unit/alert-triage-consolidation.spec.ts`. Stage B (claim registry), Stage D (bundling),
+and Stage E's dispatch gates are still spec-only; the build phases and their done-when criteria
+live in [BACKLOG.md](../BACKLOG.md) ("Alert triage & consolidation").
 
 - **Operator directive (2026-07-28):** non-noisy alerts get put into the queue; duplicates get
   bundled and consolidated. This is the analyst + self-healing portion of the platform.
@@ -19,7 +23,8 @@ criteria live in [BACKLOG.md](../BACKLOG.md) ("Alert triage & consolidation").
 
 ## 1. Problem
 
-Today's intake is per-alert, and the analyst pays for it:
+The pre-P1 intake was per-alert, and the analyst paid for it (P1 fixed items 1 and 3 below —
+refires now consolidate visibly and noise is counted; items 2, 4 and 5 stand until P2/P3):
 
 1. **Dedup is a silent skip.** A refire while a ticket is open is dropped with only a log line.
    The ticket shows no count and no last-seen, so a 50-refire crash loop and a one-shot blip are
@@ -283,7 +288,9 @@ Each phase ships these as named specs that go red if the behavior regresses:
 
 - **P1 — Consolidation.** Stages A/C + counters (A3) + FR-E1. Touches the intake route +
   ticket-service metadata only; highest value for the smallest diff (kills silent skips and
-  duplicate-storm tickets). Guards 1–3, 10, 11.
+  duplicate-storm tickets). Guards 1–3, 10, 11. **Built 2026-07-31** (guard 10 ships its
+  empty-key-fingerprint-fallback half; the multi-alertname-rule rejection lands with the P3
+  claim registry, which is where per-rule key templates first exist).
 - **P2 — Bundling.** Stage D + root candidate. Guards 4–5.
 - **P3 — Dispatch gates.** Stage B registry hardening + E2/E3/E4. Guards 6–9.
 
