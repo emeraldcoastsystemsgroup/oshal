@@ -3197,6 +3197,27 @@ enable/disable cycle. Note before starting: an Express router cannot simply be r
 stack, so the honest shape is probably a stable per-provider mount that delegates to the gate rather
 than a real unmount — decide that first, or the "lazy" in the title will not survive contact.
 
+### connectors-routes.ts is past the decomposition threshold (967 code lines)
+
+- **Reason:** CLAUDE.md says stop and propose a plan at 800 code lines. The file was already at 943
+  when the multi-account work landed and is now 967 — under the 1000 hard cap, but the multi-account
+  change should have proposed this instead of adding to it. Recording it rather than leaving the next
+  person to discover it at 1001.
+- **The shape it wants** (mechanical, no behaviour change): the file is really four things wearing one
+  hat. (1) The PROVIDERS registry + per-provider client-credential resolution + redirect/scope
+  handling — roughly 600 of the 967 lines, pure data plus small pure functions, and the part that
+  grows every time a connector is added. (2) The OAuth ceremony (state signing, PKCE, exchangeCode,
+  the flavor branches). (3) The Express routes. (4) `getValidAccessToken`, which several other modules
+  import from here — note that `connector-token-broker.ts`, `connector-action-routes.ts` and
+  `linkedin-assistant-routes.ts` all import it, so moving it is the one step with real blast radius
+  and wants its own commit.
+- **Done when:** the registry + creds move to a `connector-providers.ts` and the ceremony to a
+  `connector-oauth.ts`, `connectors-routes.ts` keeps only the router, every importer of
+  `getValidAccessToken` still resolves (re-export from the old path if that keeps the diff honest),
+  and `npm run test:unit -- tests/unit/connector-multi-account.spec.ts
+  tests/unit/connector-token-lookup-scope.spec.ts` stays green with no test edits — a decomposition
+  that needs its guards rewritten was not a decomposition.
+
 ### ✅ Multi-account-per-provider — DONE 2026-08-01 (ADR-113 section 4 unblocked)
 
 - **Was:** `oshal_connections` declared `UNIQUE (user_sub, provider)` in the runtime CREATE TABLE.
