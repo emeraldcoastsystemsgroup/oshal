@@ -833,11 +833,10 @@ services:
       WORLD_FIREHOSE_EVERY_N_PULSES: ${WORLD_FIREHOSE_EVERY_N_PULSES:-8}
       # Speed-read (cheap, all feeds) vs deep-dive (metered LLM). Deep-dive budget is allocated across feeds
       # by a learned novelty signal; per-feed wall-clock budget isolates slow feeds; classify is chunked.
-      # OFF: the deep-dive classifier spawns a claude-code/codex CLI per chunk, and even ONE
-      # serialized call can't finish batch sentiment within its 120s timeout — it fails 100% to
-      # lexicon fallback (zero LLM value) while burning a heavyweight process and climbing memory,
-      # which flaps the api healthcheck. Re-enable only after sentiment moves off the agent-CLI
-      # path onto a lightweight API call (ADR-061). See memory oshal-world-deepdive-cpu-spiral.
+      # (History: an earlier note here said re-enable required moving classify off the agent CLI —
+      # each call was timing out at 120s. Measured false as of 2026-08-01: with MAX_THINKING_TOKENS=0
+      # + minified JSON a chunk completes in ~5s, and re-enabled live classify ran 14 spawns with 0
+      # timeouts. The CLI path stays; total calls are bounded by WORLD_CLASSIFY_BUDGET_* below.)
       WORLD_DEEPDIVE_ENABLED: ${WORLD_DEEPDIVE_ENABLED:-true}
       WORLD_DEEPDIVE_BUDGET: ${WORLD_DEEPDIVE_BUDGET:-3}
       WORLD_DEEPDIVE_METER: ${WORLD_DEEPDIVE_METER:-true}
