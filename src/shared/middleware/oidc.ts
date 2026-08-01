@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Returned 401 for unauthenticated API/fetch requests to avoid concurrent OIDC state overwrites during login redirects
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Generic OIDC issuer support: set OIDC_ISSUER_URL (+ OIDC_CLIENT_ID/SECRET) to use ANY OIDC IdP — primarily Microsoft Entra ID for K-12 (https://login.microsoftonline.com/{tenant}/v2.0). Falls back to the Keycloak realm construction when unset. No Docker http-patching for cloud issuers.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Per-host OIDC baseURL (OIDC_BASE_URLS): run one auth() instance per sibling subdomain keyed on req.hostname, so each host logs in against its own /callback. Fixes the cross-host login loop where the mid-login state cookie was set on one host (e.g. oshal) but the callback landed on the APP_URL host (littlemonster). Unset = single-host (APP_URL), prior behavior.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | SESSION_COOKIE_DOMAIN is now resolved PER HOST (resolveCookieDomainForHost, comma-separated list supported): a fixed domain was applied to every per-host auth instance, so on a host outside that domain (dnd.oshal.ai vs .agenticfederal.us) the browser rejected the transient state cookie (express-openid-connect's transientHandler inherits session cookie domain) and every login died at /callback with "checks.state argument is missing". A host that matches no configured domain now gets a host-only cookie.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Harden /callback: a failed token exchange (reused single-use auth code from a replayed/stale callback URL, lost transient cookie, or clock skew) used to escape as an unhandled Express 500 ('id_token not present in TokenSet') and show users a broken page. Now caught in authMiddleware → restart a clean interactive login once (cookie-guarded against loops); a second failure falls through to the normal handler.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Raise OIDC httpTimeout to 15s (default 5s). A transient slow response from the issuer's discovery endpoint (Issuer.discover) surfaced to satellite users as a raw "Timeout awaiting request for 5000ms" white page on /login. Override via OIDC_HTTP_TIMEOUT_MS.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Deep links survive login recovery: the stock /login route hardcodes returnTo=baseURL, so every recovery path that restarts a login (guardedCallback retry, state-mismatch restart, the cockpit 401 guard) forgot the original URL — a /cockpit/?app=<name> shortcut double-logged-in and landed on the bare cockpit. routes.login=false disables the stock route; createOidcMiddleware now returns a loginHandler honoring a sanitized same-origin ?returnTo (mock mode included), guardedCallback re-derives returnTo from the callback state, and the state-decode helpers move here from server-auth-helpers so both layers share one implementation.
@@ -331,6 +332,36 @@ function patchHttpForDockerRouting(internalHost: string, port: number): void {
  *   auth instance per sibling subdomain so each logs in against itself.
  * @returns ConfigParams for the auth() middleware
  */
+/**
+ * @description Resolves which configured session-cookie domain (if any) applies to the
+ * host an auth instance serves. SESSION_COOKIE_DOMAIN accepts a comma-separated list of
+ * domains (e.g. ".agenticfederal.us,.oshal.ai"); the instance's hostname is matched
+ * against each (exact or dot-suffix, case-insensitive) and the first hit wins. No match
+ * returns undefined — a HOST-ONLY cookie — because a Set-Cookie whose Domain does not
+ * cover the serving host is silently rejected by the browser, which also kills the OIDC
+ * transient state cookie (transientHandler inherits the session cookie's domain) and
+ * fails every login on that host at /callback with "checks.state argument is missing".
+ * @param configured - Raw SESSION_COOKIE_DOMAIN value (single domain or comma-separated list)
+ * @param baseURL - The origin the auth instance serves (its hostname is matched)
+ * @returns The matching cookie domain to set, or undefined for a host-only cookie
+ */
+export function resolveCookieDomainForHost(configured: string | undefined, baseURL: string): string | undefined {
+  if (!configured) return undefined;
+  let hostname: string;
+  try {
+    hostname = new URL(baseURL).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  for (const raw of configured.split(',')) {
+    const domain = raw.trim().toLowerCase();
+    if (!domain) continue;
+    const bare = domain.startsWith('.') ? domain.slice(1) : domain;
+    if (hostname === bare || hostname.endsWith(`.${bare}`)) return domain;
+  }
+  return undefined;
+}
+
 function buildOidcConfig(env: ReturnType<typeof resolveOidcEnv>, baseURL: string): ConfigParams {
   const { browserIssuerBaseURL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET, SESSION_SECRET } = env;
   const hasClientSecret = KEYCLOAK_CLIENT_SECRET.length > 0;
@@ -380,10 +411,15 @@ function buildOidcConfig(env: ReturnType<typeof resolveOidcEnv>, baseURL: string
       rollingDuration: 60 * 60,
       absoluteDuration: 24 * 60 * 60,
       // Share the login session across sibling subdomains (e.g. littlemonster +
-      // oshal under .agenticfederal.us) so one sign-in covers the whole platform
-      // and connectors whose callback lands on a different host work. Host-only
-      // when SESSION_COOKIE_DOMAIN is unset.
-      ...(process.env.SESSION_COOKIE_DOMAIN ? { cookie: { domain: process.env.SESSION_COOKIE_DOMAIN } } : {}),
+      // oshal under .agenticfederal.us, or the *.oshal.ai app bundles) so one
+      // sign-in covers each family. Resolved PER HOST: a domain that does not
+      // cover this instance's hostname must not be set at all — the browser
+      // rejects the cookie AND the transient state cookie that inherits it,
+      // which breaks login outright. Host-only when nothing matches.
+      ...(() => {
+        const domain = resolveCookieDomainForHost(process.env.SESSION_COOKIE_DOMAIN, baseURL);
+        return domain ? { cookie: { domain } } : {};
+      })(),
     },
   };
 }
