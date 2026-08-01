@@ -1,14 +1,15 @@
-/**
- * Minimal ambient typing for the pdf-parse v1 library entry (the package ships no types).
- * We import `pdf-parse/lib/pdf-parse.js` directly: the package's index.js runs debug-mode
- * code paths when it thinks it is the process entry; the lib module is the parser itself.
- */
+// Ambient declaration so tsc accepts the runtime dependency `pdf-parse` (no @types published).
+// The doc-extract service imports the lib entry directly to bypass pdf-parse's index.js debug mode,
+// which reads a sample file from disk at import time.
 declare module 'pdf-parse/lib/pdf-parse.js' {
   interface PdfParseResult {
     text: string;
     numpages: number;
-    info?: Record<string, unknown>;
+    numrender: number;
+    info: unknown;
+    metadata: unknown;
+    version: string;
   }
-  function pdfParse(buffer: Buffer, options?: Record<string, unknown>): Promise<PdfParseResult>;
-  export = pdfParse;
+  function pdfParse(data: Buffer | Uint8Array, options?: Record<string, unknown>): Promise<PdfParseResult>;
+  export default pdfParse;
 }

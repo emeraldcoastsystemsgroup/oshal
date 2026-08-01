@@ -1,7 +1,7 @@
 {
   "name": "oshal-control-plane",
   "version": "2.1.0-beta.1",
-  "description": "OSHAL — Open Swarm Harness Agent LLM. Docker-first multi-agent orchestration platform with pluggable harnesses (Cline, Codex, Claude Code, Gemini), per-bot persona quality gates, and a typed harness extension framework.",
+  "description": "OSHAL \u2014 Open Swarm Harness Agent LLM. Docker-first multi-agent orchestration platform with pluggable harnesses (Cline, Codex, Claude Code, Gemini), per-bot persona quality gates, and a typed harness extension framework.",
   "license": "AGPL-3.0-or-later",
   "author": "oshal maintainers <maintainer@emeraldcoastsystemsgroup.com>",
   "homepage": "",
@@ -51,7 +51,7 @@
     "test:mock-oidc:ui": "MOCK_OIDC=true PLAYWRIGHT_PORT=4458 PLAYWRIGHT_REUSE_SERVER=false npx playwright test --ui",
     "test:surfaces:docker": "node scripts/validate-app-surfaces-docker.mjs",
     "test:clickthrough:docker": "node scripts/validate-app-clickthrough-docker.mjs",
-    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --pretty false",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --pretty false && node ./node_modules/typescript/bin/tsc -p tsconfig.server.json --noEmit --pretty false",
     "lint": "eslint src tests scripts",
     "lint:strict": "eslint src --max-warnings 0",
     "build:chat": "vite build --config vite.config.ts",
