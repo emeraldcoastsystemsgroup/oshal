@@ -77,8 +77,25 @@ function wrap76(s) { return s.replace(/.{1,76}/g, '$&\r\n'); }
 
 function sign(n) { const x = Number(n); return `${x >= 0 ? '+' : ''}${x}`; }
 function signMoney(n) { const x = Number(n); return `${x >= 0 ? '+' : '-'}$${Math.abs(x)}`; }
-function composeBody(d) {
-  if (!d) return 'OSHAL Daily Trade Recap\n\nVideo recap attached.';
+/**
+ * @description Composes the recap email body. The closing paragraph describes what is ACTUALLY
+ * attached: promising "video attached" on a numbers-only night (render node down, upstream API
+ * outage, no headroom to render) is exactly the kind of small lie that erodes trust in every other
+ * number in the mail. Callers pass hasVideo so the words match the payload.
+ * @param d - The deck-data results block for the report day.
+ * @param hasVideo - Whether a video attachment is actually going out with this mail.
+ * @param note - Optional operations note explaining a late or degraded report.
+ * @returns The plain-text email body.
+ */
+function composeBody(d, hasVideo, note) {
+  const tail = hasVideo
+    ? ['A ~36-second charted video recap (PowerPoint deck + narration) is attached',
+       'as a compressed preview. Rendered on the render node via the',
+       'daily-trade-recap workflow (remote-node A2A dispatch).']
+    : ['No video accompanies this edition — the numbers above are the full report,',
+       'and the deck and PDF are in the archive. Every figure comes from the trading',
+       'ledger, not the broker\'s live equity.'];
+  if (!d) return ['OSHAL Daily Trade Recap', '', ...(note ? [note, ''] : []), ...tail].join('\n');
   return [
     `OSHAL — Daily Trade Recap, ${d.date || ''}`, '',
     `The desk finished ${Number(d.pl) >= 0 ? 'UP' : 'DOWN'} ${signMoney(d.pl)} (${sign(d.pct)}%).`,
@@ -86,9 +103,8 @@ function composeBody(d) {
     `  Open positions:   ${d.positions}  (unrealized ${signMoney(d.unrealized)})`,
     `  Fills today:      ${d.fills}  — every trade tied to a signal`,
     `  Leaders:          ${d.leaders}`, '',
-    'A ~36-second charted video recap (PowerPoint deck + narration) is attached',
-    'as a compressed preview. Rendered on the PARENTPC swarm node via the',
-    'daily-trade-recap workflow (remote-node A2A dispatch).',
+    ...(note ? [note, ''] : []),
+    ...tail,
   ].join('\n');
 }
 
@@ -144,7 +160,8 @@ async function main() {
   const attach = input.attachment || `${OUT}/recap-email.mp4`;
   const data = loadRecapData(input);
   const subject = `OSHAL Daily Trade Recap${data && data.date ? ` — ${data.date}` : ''}`;
-  const body = composeBody(data);
+  // The body must describe the mail that is actually being sent, not the mail we usually send.
+  const body = composeBody(data, fs.existsSync(attach), input.note || process.env.RECAP_NOTE || '');
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const client = await pool.connect();
