@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pre-OSS: rebranded legacy "Kevin" agent identity/namespace to neutral OSHAL
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Leak fix: /api/redis-visibility and /api/qm/activity disconnect their per-request ioredis clients in finally — error paths previously abandoned clients that reconnected forever (2026-07-05 leak audit)
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed for the 1000-code-line cap: startup sequences + route registrations extracted to app-modules/* with identical behavior and registration order; /api/swarm-execute kept inline (tests/unit/live-weather-email-wiring.spec.ts asserts on this file's source)
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): registered routes-self-heal (POST /api/self-heal/apply — the deterministic, fail-closed remediation endpoint the controller's auto-apply engine calls; role-gated to the self-healing node, appended after the existing registrations so the order contract is untouched)
  */
 
 /**
@@ -62,6 +63,7 @@ const {
 } = require('./app-modules/routes-pages-config-explorer');
 const { registerOpsObservabilityRoutes } = require('./app-modules/routes-ops-observability');
 const { registerTicketChatRoutes } = require('./app-modules/routes-ticket-chat');
+const { registerSelfHealApplyRoutes } = require('./app-modules/routes-self-heal');
 
 class Application {
   constructor() {
@@ -372,6 +374,9 @@ class Application {
     registerOpsObservabilityRoutes(this);
 
     registerTicketChatRoutes(this);
+
+    // ADR-119 P4 (A2): deterministic self-heal apply endpoint (fail-closed, role-gated).
+    registerSelfHealApplyRoutes(this);
   }
 
   /**

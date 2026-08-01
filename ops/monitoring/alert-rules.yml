@@ -11,6 +11,15 @@
 #
 # The `severity` label maps to ticket priority; `container` maps to the heal
 # target. `alertname` is what the ALERT_APPROVED_NAMES allowlist matches on.
+#
+# AUTONOMY (ADR-119 P4, 2026-08-01): the four container-health rules carry
+# `intake: auto` — level A1 of the autonomy ladder. Their consolidated incidents
+# auto-flow into incident-rca ANALYSIS (metered by the P3 budget/flap gates);
+# the proposed fix still stops at the approve-or-close gate unless the
+# deployment also opts into A2 (SELF_HEAL_AUTO_APPLY=true, bounded, worker
+# containers only). Remove the label on any rule to walk it back to A0
+# (observe: park in backlog for hand-promotion). SwarmApiUnreachable stays A0
+# by design — core-plane recovery is watchdog territory, never this loop's.
 # =============================================================================
 
 groups:
@@ -25,6 +34,7 @@ groups:
         labels:
           severity: critical
           team: swarm-ops
+          intake: auto  # A1 (ADR-119): unattended analysis; action stays gated
         annotations:
           summary: "Swarm container {{ $labels.name }} is down or unreported"
           description: >-
@@ -39,6 +49,7 @@ groups:
         labels:
           severity: warning
           team: swarm-ops
+          intake: auto  # A1 (ADR-119): unattended analysis; action stays gated
         annotations:
           summary: "Swarm container {{ $labels.name }} is restart-looping"
           description: >-
@@ -55,6 +66,7 @@ groups:
         labels:
           severity: warning
           team: swarm-ops
+          intake: auto  # A1 (ADR-119): unattended analysis; action stays gated
         annotations:
           summary: "Swarm container {{ $labels.name }} memory > 92%"
           description: >-
@@ -62,10 +74,10 @@ groups:
             OOM-kill risk. Check for a leak or raise the limit.
 
       # Sustained high CPU on a swarm container.
-      # NOTE: intake defaults to BACKLOG for every alert (ALERT_DEFAULT_INTAKE),
-      # so tickets park in the queue and the operator promotes backlog->approved
-      # by hand. To make ONE rule auto-flow into incident-rca anyway, add the
-      # label `intake: auto` (uncommented below as the override example).
+      # NOTE: without a per-rule label, intake follows ALERT_DEFAULT_INTAKE (the
+      # cautious deployment sets `backlog`: tickets park and the operator
+      # promotes by hand). The per-rule `intake: auto` label below is the A1
+      # opt-in — delete it to walk this rule back to A0.
       - alert: SwarmContainerHighCPU
         expr: |
           sum by (name) (rate(container_cpu_usage_seconds_total{name=~"oshal-local-.+"}[5m])) > 0.95
@@ -73,7 +85,7 @@ groups:
         labels:
           severity: warning
           team: swarm-ops
-          # intake: auto   # uncomment to auto-flow this specific rule into RCA
+          intake: auto  # A1 (ADR-119): unattended analysis; action stays gated
         annotations:
           summary: "Swarm container {{ $labels.name }} CPU pinned > 95%"
           description: >-

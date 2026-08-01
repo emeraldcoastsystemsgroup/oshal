@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D, FR-D3/FR-D6): the dependency map answering "are these two targets connected within N hops". Default is a STATIC map derived from the compose topology (api -> db/redis/chroma; every other oshal-local-* container is a worker depending on api + redis), extendable via an ALERT_DEPENDENCY_MAP JSON file (fail-open to the built-ins on a bad file — a broken override must not disable bundling). DependencyResolver is the engine-agnostic seam: the ADR-045 graph tier MAY answer the same question via a depth-bounded /api/graph read behind this interface (FR-D6), but is never a requirement
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P4 (ADR-119 A2): exported isCoreInfraTarget over the SAME api/infra name sets this map already owns — the absolute "core infra never auto-applies" guard reuses these names instead of re-typing them (one source of truth for what counts as the watchdog tier)
  */
 
 import { readFileSync } from 'node:fs';
@@ -72,6 +73,21 @@ const DEFAULT_DEPENDENCY_EDGES: ReadonlyArray<readonly [string, string]> = [
 
 /** @description What every worker/bot container depends on (compose topology). */
 const WORKER_DEPENDENCIES: ReadonlyArray<string> = [SWARM_API_TARGET, 'oshal-local-redis'];
+
+/**
+ * @description Is this target part of the core-infra/watchdog tier (the control-plane api
+ * or an infra leaf — db, redis, chroma, arango, vault, ollama, code-server, …)? ADR-119 A2:
+ * these containers may NEVER be auto-applied against, regardless of the kill switch or any
+ * other setting — core-plane recovery belongs to the external watchdog, never to the
+ * ticket loop (the loop cannot open tickets when its own control plane is down). Reuses
+ * this map's own name sets — never re-type these names elsewhere.
+ * @param raw - Raw target label (normalized here).
+ * @returns True for the api and every infra service.
+ */
+export function isCoreInfraTarget(raw: string): boolean {
+  const target = normalizeTarget(raw);
+  return target === SWARM_API_TARGET || SWARM_INFRA_TARGETS.has(target);
+}
 
 /**
  * @description Is this target a swarm worker/bot container (an `oshal-local-*` name that is

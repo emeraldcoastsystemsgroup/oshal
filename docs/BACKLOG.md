@@ -3,7 +3,7 @@
 Tracking items deferred from the OSHAL build session. Each item has the
 deferral reason and the "done" condition so future work isn't ambiguous.
 
-## Alert triage & consolidation — intelligent-processing intake (P1–P3 built 2026-07-31; P4 pending)
+## Alert triage & consolidation — intelligent-processing intake (P1–P4 built; P4 code+guards 2026-08-01, live drill pending)
 
 **Specified 2026-07-28** (operator directive: non-noisy alerts flow to the queue, duplicates get
 bundled and consolidated — the analyst + self-healing portion). The functional specification is
@@ -84,6 +84,66 @@ change:
    escalates to a human instead of re-applying; an alert naming core infra (api/db/redis) NEVER
    auto-applies (guard); with the kill switch off, A2 behaves exactly as A1 (guard); every
    auto-apply is audited on the ticket with its verification result.
+   **CODE + GUARDS BUILT 2026-08-01** (the live drill below is the remaining done-when half —
+   it needs the running stack + monitoring overlay and is the operator's deploy-time proof):
+   - **A1**: the four container-health rules in `ops/monitoring/alert-rules.yml` now carry
+     `intake: auto` (per-rule opt-in, removable per rule to walk back to A0);
+     `SwarmApiUnreachable` deliberately does not (watchdog territory). Analysis auto-flows
+     through the P3 gates; the proposal still parks at the approve-or-close gate.
+   - **A2**: `SelfHealAutoApplyEngine` (`src/features/alert-triage/services/auto-apply.ts`),
+     consulted by the incident pipeline's Mode-A finalizer (`dispatch-incident-worker.ts`,
+     threaded via `QueueManagerService.setAutoApplyGate` — the setBudgetService hook shape).
+     Bounds, all mandatory: `SELF_HEAL_AUTO_APPLY` kill switch default FALSE (off = A1
+     byte-identical); sanctioned classes = `restart-container` ONLY, declared by the exact
+     `REMEDIATION-CLASS:` line-2 marker on RCA-REPORT.md (`readRcaRemediationClass`,
+     fail-closed — no marker, no apply; target always from the incident's own alert
+     evidence, never from LLM text); core infra NEVER applies (`isCoreInfraTarget` reuses
+     the dependency-map name sets, re-checked at the execution boundary); once per incident
+     key per `ALERT_CONSOLIDATION_TTL` (in-process ledger + the durable recurrenceOf
+     predecessor audit; recurrence → `escalated`, never a restart loop); global
+     `SELF_HEAL_APPLY_HOURLY_CAP` (default 3, reservation shape mirroring RcaBudgetGate;
+     over cap parks visibly); verification-before-complete (`SELF_HEAL_VERIFY_TIMEOUT`
+     default 120s — the ticket completes ONLY on observed health; failed verify/apply →
+     `escalated` + `needs-attention`, audited). Execution path: the controller (no docker
+     socket, no shell-out) POSTs the app-layer executor
+     (`src/app/self-heal-remediation-executor.ts`, `SELF_HEAL_NODE_URL`) → the self-healing
+     bot node's NEW deterministic `POST /api/self-heal/apply`
+     (`any-bot/server/app-modules/routes-self-heal.js` — fail-CLOSED on
+     `SWARM_SERVICE_SECRET`, role-gated to the self-healing node, same `selfHealingTools`
+     whitelist as the LLM tool path, no LLM anywhere). Audit rides `incident.autoApply` +
+     the `flags[]` seam (`auto-applied`, `auto-apply:verify-failed`,
+     `auto-apply-parked:hourly-cap`, `auto-apply-blocked:recurrence`,
+     `auto-apply-blocked:core-infra`) mirrored onto labels.
+   - **Named guards** (`tests/unit/alert-triage-autonomy.spec.ts`, all call/behavior
+     assertions): kill-switch-default-off, A1-analysis-never-remediates (incl. the
+     alert-rules config half), core-infra-never-applies, once-per-key-per-ttl,
+     hourly-cap-parks, verify-fail-blocks-complete, audit-trail-present,
+     remediation-class-marker. P1's 11 + P2's 8 + P3's 13 stay green.
+   - **LIVE CONTAINER-KILL DRILL (operator, deploy-time proof — the remaining done-when):**
+     1. Deploy this code (`bash scripts/oshal-deploy.sh`) + bring up the monitoring overlay
+        (`docker compose -f docker-compose.monitoring.yml up -d`) and the self-healing node
+        (`docker compose -f docker-compose.oshal-local.yml --profile incident up -d
+        self-healing-bot`). Ensure `.env` has `ALERT_WEBHOOK_TOKEN` (matching
+        alertmanager.yml) and `SWARM_SERVICE_SECRET` set.
+     2. **A1 leg (kill switch still off):** `docker stop oshal-local-research-bot`. Observe,
+        touching nothing: SwarmContainerDown fires (~1–2 min) → ONE intelligent-processing
+        ticket, `intake:approved` → incident-rca runs → ticket lands `customer_action` with
+        `disposition: proposed_solution` and an RCA-REPORT.md whose line 2 is
+        `REMEDIATION-CLASS: restart-container`. Zero human touches before the gate; nothing
+        restarted (`docker ps` shows research-bot still down). Then `docker start
+        oshal-local-research-bot` and close the ticket by hand.
+     3. **A2 leg:** set `SELF_HEAL_AUTO_APPLY=true` on the api service, recreate the api,
+        repeat the kill. Observe: same flow, but the ticket reaches `complete` unattended
+        with `incident.autoApply.outcome=applied-verified`, label `auto-applied`, and the
+        container back up (restarted by the self-healing node — check its logs for
+        `[self-heal-apply] restart requested`).
+     4. **Recurrence bound:** inside 24h (`ALERT_CONSOLIDATION_TTL`), kill the same
+        container again. Observe: the NEW ticket (recurrence-linked) ends `escalated`
+        carrying `auto-apply-blocked:recurrence` — no second restart.
+     5. **Core-infra bound:** with A2 still on, `docker stop oshal-local-chromadb` (infra,
+        non-fatal to the api). Observe: analysis runs, ticket parks at `customer_action`
+        with `auto-apply-blocked:core-infra`; the container is NOT auto-restarted — restart
+        it by hand. Flip `SELF_HEAL_AUTO_APPLY` back off when the drill is done.
 
 Non-goal recorded deliberately: no accumulate-then-flush delay of the FIRST alert of an incident —
 detection latency beats group tidiness in a self-healing loop (spec §10). ADR-119's A3 non-goal

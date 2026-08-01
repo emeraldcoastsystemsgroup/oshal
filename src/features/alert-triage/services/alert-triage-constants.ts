@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): the ONE constants module for triage defaults (spec §9.8 — the source platform shipped a knob whose documented default and read-site default disagreed; every triage stage reads its defaults from here)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): the bundling knobs — ALERT_CORRELATION_WINDOW (FR-D1, default 15m), ALERT_CORRELATION_DEPTH (FR-D3, default 3 — the depth the source platform actually deployed), ALERT_MAX_MEMBERS (FR-D5 — the P1 member cap becomes the spec's configurable knob), the correlation-window predicate, and the bundle-candidate listing bound. All read at intake time with fail-safe fallbacks via one shared parser
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage B + E): the dispatch-gate knobs — ALERT_RCA_HOURLY_BUDGET_USD (FR-E2, default $10/h — the source platform's shipped default), the flap-damping trio ALERT_FLAP_THRESHOLD/_WINDOW/_QUIET (FR-E3, defaults 5/30m/10m), ALERT_AUTO_RESOLVE (FR-E4, default OFF — a knob that ships only with its guard, spec §9.9), plus the budget gate's non-env constants (reservation TTL, p95 sample bound, first-run reserve fallback). Same fail-safe read-at-intake-time posture as P1/P2
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P4 (ADR-119 A2): the autonomy knobs — SELF_HEAL_AUTO_APPLY (the kill switch, default FALSE; off = A1 exactly), SELF_HEAL_APPLY_HOURLY_CAP (global sliding-hour apply cap, default 3, 0 parks everything visibly) and SELF_HEAL_VERIFY_TIMEOUT (post-apply verification window, default 120s, min 1). Every knob ships with a named guard in tests/unit/alert-triage-autonomy.spec.ts (§9.9)
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -262,4 +263,50 @@ export function flapQuietSeconds(): number {
 export function autoResolveEnabled(): boolean {
   const raw = (process.env.ALERT_AUTO_RESOLVE ?? '').trim().toLowerCase();
   return raw === 'true' || raw === '1' || raw === 'yes';
+}
+
+/**
+ * @description Default global sliding-hour auto-apply cap (ADR-119 A2 bound 2): at most
+ * this many unattended applies across ALL incidents per hour, so a correlated failure
+ * (one bad image everywhere) becomes one escalation, not a fleet-wide restart storm.
+ */
+export const SELF_HEAL_APPLY_HOURLY_CAP_DEFAULT = 3;
+
+/**
+ * @description Default verification window in seconds (ADR-119 A2 bound 3): after an
+ * auto-apply the target must be OBSERVED healthy inside this window or the ticket
+ * escalates instead of completing.
+ */
+export const SELF_HEAL_VERIFY_TIMEOUT_DEFAULT_SECONDS = 120;
+
+/**
+ * @description Resolves the A2 kill switch from `SELF_HEAL_AUTO_APPLY` (ADR-119). Default
+ * **false** — explicit per-deployment opt-in, per the automation directive: with the
+ * switch off, A2 behaves exactly as A1 (proposals queue at the approve gate, nothing
+ * applies). Only the explicit affirmatives enable it; anything else is off.
+ * @returns True when bounded unattended remediation is enabled.
+ */
+export function autoApplyEnabled(): boolean {
+  const raw = (process.env.SELF_HEAL_AUTO_APPLY ?? '').trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'yes';
+}
+
+/**
+ * @description Resolves the global hourly apply cap from `SELF_HEAL_APPLY_HOURLY_CAP`
+ * (ADR-119 A2 bound 2). `0` is a real value — it parks every apply at the gate (visibly);
+ * unset/invalid → 3.
+ * @returns Applies allowed per sliding hour.
+ */
+export function autoApplyHourlyCap(): number {
+  return envKnobNumber('SELF_HEAL_APPLY_HOURLY_CAP', SELF_HEAL_APPLY_HOURLY_CAP_DEFAULT, { integer: true });
+}
+
+/**
+ * @description Resolves the post-apply verification window in seconds from
+ * `SELF_HEAL_VERIFY_TIMEOUT` (ADR-119 A2 bound 3). Minimum 1 — a zero window would make
+ * every verification fail and could never be the deliberate setting; unset/invalid → 120.
+ * @returns Verification window in seconds.
+ */
+export function autoApplyVerifyTimeoutSeconds(): number {
+  return envKnobNumber('SELF_HEAL_VERIFY_TIMEOUT', SELF_HEAL_VERIFY_TIMEOUT_DEFAULT_SECONDS, { integer: true, min: 1 });
 }

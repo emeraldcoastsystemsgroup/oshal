@@ -53,6 +53,7 @@
  * 48 | maintainer@emeraldcoastsystemsgroup.com   | Wired crash-safe intake reconciliation to idempotent internal ticket materialization
  * 49 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the boot registry→profile sync Promise.all (syncProviderModel per bot) in runWithSystemIdentity — the detached boot sync ran identity-less; under OSHAL_DB_GUC_STRICT=deny that scoped the agents-table writes to nothing (guc warn-audit: named syncProviderModel + an all-internal non-stitched sibling of the same Promise.all).
  * 50 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 51 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): wired the SelfHealAutoApplyEngine into QueueManagerService (setAutoApplyGate, project-manager only, next to setBudgetService — the sanctioned hook shape) over the app-layer self-heal remediation executor (the deterministic HTTP seam to the self-healing bot node's docker socket). Kill switch SELF_HEAL_AUTO_APPLY stays the runtime gate (default OFF), so wiring this changes nothing until a deployment opts in.
  */
 
 import type { Pool } from 'pg';
@@ -102,6 +103,8 @@ import type { ITaskStore } from '@/entities/task';
 import { SwitchFrameworkService } from '@/features/tool-switch';
 import { SelectorCompositionService } from '@/features/selector-composition';
 import { BudgetService } from '@/features/cost-governance';
+import { SelfHealAutoApplyEngine } from '@/features/alert-triage';
+import { createSelfHealRemediationExecutor } from '@/app/self-heal-remediation-executor';
 import {
   PlaneTicketWritebackAdapter,
   GitHubTicketWritebackAdapter,
@@ -892,6 +895,15 @@ export function createSwarmExtensionBindings(
     // Cost-governance: spend budgets + runaway kill switch checked pre-dispatch each poll
     // cycle. BudgetService fails OPEN on any infra gap, so wiring it never bricks dispatch.
     queueManagerService.setBudgetService(new BudgetService(pool));
+    // ADR-119 P4 (A2): the bounded auto-apply gate for Mode-A incident verdicts. The
+    // engine owns every bound (kill switch SELF_HEAL_AUTO_APPLY default OFF, sanctioned
+    // classes, absolute core-infra refusal, once-per-key-per-TTL, hourly cap,
+    // verify-before-complete); the executor is the deterministic HTTP seam to the
+    // self-healing bot node (the ONE container with the docker socket). Wiring is inert
+    // until a deployment flips the kill switch — off means A1 semantics exactly.
+    queueManagerService.setAutoApplyGate(
+      new SelfHealAutoApplyEngine(ticketService, createSelfHealRemediationExecutor()),
+    );
     // Queue DLQ (migration 081): persisted poison-ticket policy. Records failed dispatch
     // cycles (via the rollback hook) + system escalation cycles (via its own ticketEvents
     // listener — start() attaches exactly this one instance) and quarantines at
