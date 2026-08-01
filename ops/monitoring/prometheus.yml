@@ -1,13 +1,36 @@
 # =============================================================================
 # Prometheus config — OSHAL swarm self-monitoring
 # =============================================================================
-# Scrapes cAdvisor (per-container health/cpu/mem of the oshal-local-* stack) and
-# the oshal-api /api/health endpoint. Alert rules in alert-rules.yml fire into
+# Scrapes each oshal runtime container's own /metrics exposition and turns the
+# results into the ADR-119 self-healing alerts: alert-rules.yml fires into
 # Alertmanager, which webhooks them to the swarm's own incident intake at
 # POST /api/alerts/alertmanager -> incident-rca pipeline -> self-healing.
 #
 # Runs via docker-compose.monitoring.yml on the oshal-local_oshal network, so it
-# reaches the other containers by their compose service DNS names.
+# reaches the other containers by their container names.
+#
+# WHY THE SWARM SCRAPES ITSELF INSTEAD OF cADVISOR (live drill, 2026-08-01)
+# -------------------------------------------------------------------------
+# The container-health rules used to key on `container_last_seen{name=~"oshal-local-.+"}`.
+# On this deployment cAdvisor emits 58 `container_last_seen` series and NOT ONE of
+# them has a `name` label or corresponds to an oshal container: Docker Desktop 29.x
+# uses the containerd image store (storage driver `overlayfs`), so cAdvisor's docker
+# factory dies for EVERY container in getRwLayerID —
+#   "failed to identify the read-write layer ID ... open
+#    /rootfs/var/lib/docker/image/overlayfs/layerdb/mounts/<id>/mount-id: no such file"
+# — and a container whose handler fails to construct produces no series at all.
+# Reproduced against cAdvisor v0.49.1 AND v0.52.1, with and without --docker_only,
+# --store_container_labels, --containerd-namespace=moby, and with disk metrics off.
+# So there were no labels to "rewrite the rules onto": the `absent(...)` branch fired
+# forever, SwarmContainerDown was a standing alarm carrying no target, and a genuinely
+# stopped container was never identified.
+#
+# Each runtime now serves GET /metrics (src/shared/observability/runtime-metrics.ts) and
+# is its OWN labelled scrape target. That is portable (Docker Desktop, plain Linux, k8s),
+# needs no privileged host mounts, and gives the alert an exact `container` identity —
+# which ADR-119 P1's identity gate REQUIRES and P2/P4 need to bundle and to bound
+# core-infra. cAdvisor stays in the compose for disk/network detail on hosts where it
+# works; nothing load-bearing depends on it.
 # =============================================================================
 
 global:
@@ -30,16 +53,82 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # Per-container metrics for the whole swarm (the heart of self-monitoring)
+  # ── The control plane ──────────────────────────────────────────────────────
+  # tier=core bounds what the self-healing loop may act on: core-plane recovery is
+  # watchdog territory (a dead api cannot open its own ticket), so SwarmApiUnreachable
+  # stays autonomy level A0 and SwarmContainerDown deliberately excludes this job.
+  - job_name: oshal-core
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - oshal-local-api:5000
+        labels:
+          tier: core
+    relabel_configs:
+      # `container` is the heal target AND the incident-key identity: canonicalizeAlert
+      # (src/features/alert-triage/services/canonical-alert.ts resolveTarget) reads
+      # labels.container FIRST, and the Stage D dependency map is keyed on exactly these
+      # oshal-local-* container names. Derived from the address so it can never drift.
+      - source_labels: [__address__]
+        regex: '([^:]+)(?::\d+)?'
+        target_label: container
+        replacement: '$1'
+
+  # ── The worker fleet ───────────────────────────────────────────────────────
+  # Every bot container that runs the oshal-bot image. A target listed here but never
+  # started (a compose `profiles:` service the deployment does not run) does NOT raise a
+  # false alarm: SwarmContainerDown requires the target to have been up at some point in
+  # the last hour (see alert-rules.yml), so "never started" and "died" are distinct.
+  - job_name: oshal-swarm-bots
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - oshal-local-task-manager:5000
+          - oshal-local-code-developer:5000
+          - oshal-local-devops:5000
+          - oshal-local-self-healing:5000
+          - oshal-local-code-reviewer:5000
+          - oshal-local-documentation-writer:5000
+          - oshal-local-research-bot:5000
+          - oshal-local-tester-bot:5000
+          - oshal-local-test-engineer:5000
+          - oshal-local-system-architect:5000
+          - oshal-local-queue-bot:5000
+          - oshal-local-weather-bot:5000
+          - oshal-local-facebook-bot:5000
+          - oshal-local-email-bot:5000
+          - oshal-local-oshal-developer:5000
+          - oshal-local-jarvis-bot:5000
+          - oshal-local-eats-bot:5000
+          - oshal-local-rides-bot:5000
+          - oshal-local-shopping-bot:5000
+          - oshal-local-spotify-bot:5000
+          - oshal-local-travel-bot:5000
+          - oshal-local-movies-bot:5000
+          - oshal-local-social-writer-bot:5000
+          - oshal-local-storage-bot:5000
+          - oshal-local-deck-builder-bot:5000
+          - oshal-local-finance-bot:5000
+          - oshal-local-trading-bot:5000
+          - oshal-local-identity-bot:5000
+          - oshal-local-general-bot:5000
+          - oshal-local-home-bot:5000
+          - oshal-local-cloud-ops-bot:5000
+          - oshal-local-rca-specialist:5000
+          - oshal-local-incident-response:5000
+          - oshal-local-incident-remediation:5000
+        labels:
+          tier: worker
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '([^:]+)(?::\d+)?'
+        target_label: container
+        replacement: '$1'
+
+  # Per-container disk/network detail where the host permits it. On Docker Desktop's
+  # containerd image store this job scrapes fine but yields nothing for oshal containers
+  # (see the header). NOTHING in alert-rules.yml depends on it — that dependency is the
+  # bug this file's header documents.
   - job_name: cadvisor
     static_configs:
       - targets: ['cadvisor:8080']
-
-  # oshal-api application health. The handler returns JSON, not Prometheus text,
-  # so this is a liveness probe via the `up` metric (target reachable or not).
-  # When you add a real /metrics endpoint later, point a scrape job at it and the
-  # error-based alerts in alert-rules.yml light up automatically.
-  - job_name: oshal-api-health
-    metrics_path: /api/health
-    static_configs:
-      - targets: ['oshal-api:5000']

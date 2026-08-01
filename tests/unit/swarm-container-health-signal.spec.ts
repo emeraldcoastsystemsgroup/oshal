@@ -1,0 +1,327 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the second live break (container-kill drill, 2026-08-01): the container-health rules matched cAdvisor series this deployment never emits, so SwarmContainerDown was a standing false alarm with no target and a genuinely stopped container was never identified. Pins the whole signal chain as a CLOSED LOOP — every metric a rule names must actually be produced by renderRuntimeMetrics() or be Prometheus's own `up`; every scrape target must be a real compose container and every runtime container must be a target; every alert must carry {{ $labels.container }}; and the Alertmanager grouping/inhibition must key on that same label. A rule written against a metric nobody exports can no longer ship.
+ */
+
+/**
+ * The swarm's container-health signal chain, guarded end to end.
+ *
+ * The defect this exists for was not a bug in any one file — every file was internally
+ * consistent. The rules named `container_last_seen{name=~"oshal-local-.+"}`, that series
+ * existed in cAdvisor's documentation, and nothing anywhere checked that the deployment
+ * actually PRODUCED it. So the guard is deliberately a cross-file closed loop: the exporter,
+ * the scrape config, the rules, the Alertmanager label contract, and the compose topology all
+ * have to agree, and the exporter's REAL OUTPUT is the authority for what a rule may name.
+ */
+
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import yaml from 'js-yaml';
+import { describe, expect, it } from 'vitest';
+
+import {
+  PROMETHEUS_CONTENT_TYPE,
+  _resetMemoryLimitCache,
+  containerMemoryLimitBytes,
+  renderRuntimeMetrics,
+} from '../../src/shared/observability';
+
+const ROOT = process.cwd();
+const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8');
+
+const PROMETHEUS_YML = 'ops/monitoring/prometheus.yml';
+const ALERT_RULES_YML = 'ops/monitoring/alert-rules.yml';
+const ALERTMANAGER_YML = 'ops/monitoring/alertmanager.yml';
+const STACK_COMPOSE = 'docker-compose.oshal-local.yml';
+
+interface ScrapeConfig {
+  job_name: string;
+  metrics_path?: string;
+  static_configs?: Array<{ targets: string[]; labels?: Record<string, string> }>;
+  relabel_configs?: Array<Record<string, unknown>>;
+}
+interface AlertRule {
+  alert: string;
+  expr: string;
+  for?: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+}
+
+const prometheusCfg = yaml.load(read(PROMETHEUS_YML)) as { scrape_configs: ScrapeConfig[] };
+const ruleGroups = (yaml.load(read(ALERT_RULES_YML)) as { groups: Array<{ name: string; rules: AlertRule[] }> }).groups;
+const alertmanagerCfg = yaml.load(read(ALERTMANAGER_YML)) as {
+  route: { group_by: string[] };
+  inhibit_rules: Array<{ equal: string[] }>;
+};
+const allRules = ruleGroups.flatMap((g) => g.rules);
+
+/** The jobs whose targets are oshal runtimes (the ones the alert rules are allowed to use). */
+const RUNTIME_JOBS = ['oshal-core', 'oshal-swarm-bots'];
+
+/** Every metric name the exporter actually serves, taken from its real output. */
+function exportedMetricNames(): Set<string> {
+  const body = renderRuntimeMetrics({ runtime: 'swarm', instance: 'guard' });
+  const names = new Set<string>();
+  for (const line of body.split('\n')) {
+    const m = /^([a-zA-Z_:][a-zA-Z0-9_:]*)\{/.exec(line);
+    if (m) names.add(m[1]);
+  }
+  return names;
+}
+
+/**
+ * Metric selectors a PromQL expression references. Label matchers (`{...}`), vector-matching
+ * label lists (`on (container)`, `by (...)`, …) and range selectors (`[1h]`) are stripped
+ * FIRST — a label name is not a metric name, and counting one as a metric would make this
+ * guard cry wolf on correct PromQL, which is how a guard gets disabled.
+ */
+function metricsReferencedBy(expr: string): string[] {
+  const reserved = new Set([
+    'and', 'or', 'unless', 'on', 'ignoring', 'by', 'without', 'group_left', 'group_right', 'offset', 'bool',
+    'rate', 'increase', 'changes', 'absent', 'absent_over_time', 'max_over_time', 'min_over_time',
+    'avg_over_time', 'sum', 'max', 'min', 'avg', 'count', 'time', 'delta', 'idelta', 'irate', 'clamp_max',
+  ]);
+  const stripped = expr
+    .replace(/\{[^}]*\}/g, '{}')
+    .replace(/\[[^\]]*\]/g, '')
+    .replace(/\b(on|ignoring|by|without|group_left|group_right)\s*\([^)]*\)/g, ' $1 ');
+  const found = new Set<string>();
+  for (const m of stripped.matchAll(/[a-zA-Z_:][a-zA-Z0-9_:]*/g)) {
+    if (!reserved.has(m[0]) && !/^\d/.test(m[0])) found.add(m[0]);
+  }
+  return [...found];
+}
+
+/** Container names of every compose service that runs the oshal-bot runtime image. */
+function composeRuntimeContainers(): string[] {
+  const compose = read(STACK_COMPOSE).split('\n');
+  const names: string[] = [];
+  let inServices = false;
+  let current: { name?: string; hasOwnImage?: boolean } | null = null;
+  const flush = (): void => {
+    if (current?.name && !current.hasOwnImage) names.push(current.name);
+  };
+  for (const line of compose) {
+    if (/^services:\s*$/.test(line)) { inServices = true; continue; }
+    if (inServices && /^[a-zA-Z]/.test(line)) { flush(); current = null; inServices = false; }
+    if (!inServices) continue;
+    if (/^ {2}[A-Za-z0-9_.-]+:\s*$/.test(line)) { flush(); current = {}; continue; }
+    if (!current) continue;
+    const nameMatch = /^ {4}container_name:\s*(\S+)/.exec(line);
+    if (nameMatch) current.name = nameMatch[1];
+    // A service declaring its own `image:` is third-party infra (postgres, redis, …) and
+    // serves no /metrics; the oshal runtimes inherit the image from the x-bot-common anchor.
+    if (/^ {4}image:\s*\S+/.test(line)) current.hasOwnImage = true;
+  }
+  flush();
+  // The speaker-diarization sidecar is a python service built from its own Dockerfile —
+  // it inherits no image line but is not an oshal runtime.
+  return names.filter((n) => n !== 'oshal-local-speaker-diarization');
+}
+
+/** Target host names (port stripped) declared for a scrape job. */
+function targetsOf(jobName: string): string[] {
+  const job = prometheusCfg.scrape_configs.find((c) => c.job_name === jobName);
+  expect(job, `prometheus.yml must declare the ${jobName} scrape job`).toBeTruthy();
+  return (job!.static_configs ?? []).flatMap((s) => s.targets).map((t) => t.split(':')[0]);
+}
+
+describe('the exporter both runtimes serve', () => {
+  it('renders a well-formed Prometheus text exposition (HELP + TYPE + sample per metric)', () => {
+    const body = renderRuntimeMetrics({ runtime: 'bot-node', instance: 'research-bot' }, 1_700_000_000_000);
+    const lines = body.trimEnd().split('\n');
+    const samples = lines.filter((l) => !l.startsWith('#'));
+    expect(samples.length).toBeGreaterThanOrEqual(5);
+    for (const sample of samples) {
+      // name{labels} value — a malformed line makes Prometheus reject the ENTIRE scrape,
+      // which would present exactly as the outage this whole change is fixing.
+      const parsed = /^([a-zA-Z_:][a-zA-Z0-9_:]*)\{([^}]*)\} (-?[\d.eE+]+)$/.exec(sample);
+      expect(parsed, `unparseable exposition line: ${sample}`).toBeTruthy();
+      expect(Number.isFinite(Number(parsed![3])), `non-numeric value: ${sample}`).toBe(true);
+      expect(lines).toContain(`# HELP ${parsed![1]} ${lines.find((l) => l.startsWith(`# HELP ${parsed![1]} `))?.slice(`# HELP ${parsed![1]} `.length)}`);
+      expect(lines.some((l) => l.startsWith(`# TYPE ${parsed![1]} `)), `${parsed![1]} has no # TYPE`).toBe(true);
+    }
+    expect(body.endsWith('\n'), 'the exposition must end with a newline').toBe(true);
+    expect(PROMETHEUS_CONTENT_TYPE).toContain('text/plain');
+  });
+
+  it('escapes label values so one odd container name cannot void the whole scrape', () => {
+    const body = renderRuntimeMetrics({ runtime: 'bot-node', instance: 'we"ird\\bot' });
+    const sample = body.split('\n').find((l) => l.startsWith('oshal_up'))!;
+    expect(sample).toContain('instance_name="we\\"ird\\\\bot"');
+    expect(/^oshal_up\{([^}]*)\} 1$/.test(sample), `label block not closed: ${sample}`).toBe(true);
+  });
+
+  it('start time is derived from uptime, so it is stable across scrapes (restart detection)', () => {
+    const first = renderRuntimeMetrics({ runtime: 'swarm', instance: 'a' });
+    const second = renderRuntimeMetrics({ runtime: 'swarm', instance: 'a' });
+    const startOf = (body: string): number =>
+      Number(/oshal_process_start_time_seconds\{[^}]*\} ([\d.eE+-]+)/.exec(body)![1]);
+    // changes(...)[10m] must count RESTARTS, not scrapes. A jittery start time would make
+    // SwarmContainerRestartLoop fire continuously on a perfectly stable container.
+    expect(Math.abs(startOf(first) - startOf(second))).toBeLessThan(1);
+  });
+
+  describe('cgroup memory ceiling', () => {
+    it('reads the cgroup v2 byte value', () => {
+      _resetMemoryLimitCache();
+      expect(containerMemoryLimitBytes((p) => (p.endsWith('memory.max') ? '2147483648\n' : (() => { throw new Error('nope'); })()), false)).toBe(2147483648);
+    });
+
+    it('treats cgroup v2 "max" as no limit (0), not as NaN', () => {
+      _resetMemoryLimitCache();
+      expect(containerMemoryLimitBytes((p) => {
+        if (p.endsWith('memory.max')) return 'max\n';
+        throw new Error('no v1');
+      }, false)).toBe(0);
+    });
+
+    it('rejects the cgroup v1 "unlimited" sentinel instead of reporting it as a real limit', () => {
+      _resetMemoryLimitCache();
+      // 9223372036854771712 is the classic v1 no-limit value. Treating it as a limit makes
+      // the HighMemory ratio ~0 forever — a silent alert, which is worse than a loud one.
+      expect(containerMemoryLimitBytes((p) => {
+        if (p.endsWith('memory.max')) throw new Error('no v2');
+        return '9223372036854771712\n';
+      }, false)).toBe(0);
+    });
+
+    it('reports 0 when there is no cgroupfs at all (bare metal)', () => {
+      _resetMemoryLimitCache();
+      expect(containerMemoryLimitBytes(() => { throw new Error('ENOENT'); }, false)).toBe(0);
+      _resetMemoryLimitCache();
+    });
+  });
+});
+
+describe('alert rules may only name metrics the swarm actually exports', () => {
+  const exported = exportedMetricNames();
+
+  it.each(allRules.map((r) => [r.alert, r.expr] as const))(
+    '%s references only exported series or Prometheus built-ins',
+    (alert, expr) => {
+      for (const metric of metricsReferencedBy(expr)) {
+        expect(
+          exported.has(metric) || metric === 'up',
+          `${alert} keys on "${metric}", which no oshal runtime exports and which Prometheus does not `
+            + 'synthesize. This is exactly how container_last_seen{name=...} shipped: a plausible metric '
+            + 'name that this deployment never produces, so the rule silently matched nothing.',
+        ).toBe(true);
+      }
+    },
+  );
+
+  it('no rule keys on cAdvisor container_* series or the dead `name` label', () => {
+    for (const rule of allRules) {
+      expect(rule.expr, `${rule.alert} still references a cAdvisor container_* series`).not.toMatch(/\bcontainer_[a-z_]+\{/);
+      expect(rule.expr, `${rule.alert} still matches on the cAdvisor \`name\` label`).not.toMatch(/\bname\s*=~?\s*"/);
+    }
+  });
+
+  it('every alert carries the container identity ADR-119 P1 requires', () => {
+    for (const rule of allRules) {
+      const text = `${rule.annotations?.summary ?? ''} ${rule.annotations?.description ?? ''}`;
+      // P1's identity gate DROPS an alert with no resolvable target, and P2/P4 need the target
+      // to bundle and to bound core-infra. An alert whose annotations cannot even name the
+      // container is the target-less alarm this change removes.
+      expect(text, `${rule.alert} never names {{ $labels.container }}`).toContain('$labels.container');
+    }
+  });
+
+  it('SwarmContainerDown cannot fire for a target that was never up', () => {
+    const down = allRules.find((r) => r.alert === 'SwarmContainerDown')!;
+    // Without this conjunct, every compose `profiles:` bot a deployment does not run becomes a
+    // permanent alert — re-creating the standing false alarm from the other direction.
+    expect(down.expr).toMatch(/max_over_time\(\s*up\{[^}]*\}\[\d+[smhd]\]\s*\)\s*>\s*0/);
+  });
+
+  it('the worker rules never act on the core plane (A0 stays A0)', () => {
+    for (const rule of ruleGroups.find((g) => g.name === 'swarm-container-health')!.rules) {
+      expect(rule.expr, `${rule.alert} must scope to job="oshal-swarm-bots"`).toContain('job="oshal-swarm-bots"');
+      expect(rule.expr, `${rule.alert} must not act on the core job`).not.toContain('job="oshal-core"');
+      expect(rule.labels?.intake, `${rule.alert} is an A1 worker rule and must declare intake: auto`).toBe('auto');
+    }
+    const api = allRules.find((r) => r.alert === 'SwarmApiUnreachable')!;
+    expect(api.expr).toContain('job="oshal-core"');
+    expect(api.labels?.intake, 'SwarmApiUnreachable is A0 — core-plane recovery is watchdog territory').toBeUndefined();
+  });
+});
+
+describe('the scrape targets match the deployment', () => {
+  it('every runtime job scrapes /metrics and derives the container label from the address', () => {
+    for (const jobName of RUNTIME_JOBS) {
+      const job = prometheusCfg.scrape_configs.find((c) => c.job_name === jobName)!;
+      expect(job.metrics_path, `${jobName} must scrape /metrics, not a JSON health endpoint`).toBe('/metrics');
+      const derives = (job.relabel_configs ?? []).some((r) => r.target_label === 'container');
+      expect(derives, `${jobName} must relabel a container identity onto every target`).toBe(true);
+    }
+  });
+
+  it('the api target is /metrics — /api/health returns JSON and Prometheus cannot parse it', () => {
+    // The original bug: a JSON body is a scrape FAILURE, so `up` was pinned to 0 and
+    // SwarmApiUnreachable fired forever on a healthy box.
+    const raw = read(PROMETHEUS_YML);
+    expect(raw).not.toMatch(/metrics_path:\s*\/api\/health/);
+    expect(targetsOf('oshal-core')).toEqual(['oshal-local-api']);
+  });
+
+  it('every scrape target is a real container in the deployment compose', () => {
+    const containers = new Set(composeRuntimeContainers());
+    for (const jobName of RUNTIME_JOBS) {
+      for (const target of targetsOf(jobName)) {
+        expect(containers.has(target), `${target} is scraped but is not a container in ${STACK_COMPOSE}`).toBe(true);
+      }
+    }
+  });
+
+  it('every oshal runtime container in compose is a scrape target', () => {
+    const scraped = new Set(RUNTIME_JOBS.flatMap((j) => targetsOf(j)));
+    for (const container of composeRuntimeContainers()) {
+      expect(
+        scraped.has(container),
+        `${container} runs the oshal runtime but nothing scrapes it — it can go down unnoticed. `
+          + `Add it to the oshal-swarm-bots job in ${PROMETHEUS_YML}.`,
+      ).toBe(true);
+    }
+  });
+});
+
+describe('the Alertmanager label contract', () => {
+  it('groups and inhibits on `container`, never on the cAdvisor `name` label', () => {
+    expect(alertmanagerCfg.route.group_by).toContain('container');
+    expect(alertmanagerCfg.route.group_by).not.toContain('name');
+    for (const rule of alertmanagerCfg.inhibit_rules) {
+      // `equal: ['name']` on a label no series carries means Alertmanager treats every alert
+      // as equal — it inhibited alerts for unrelated containers, silently.
+      expect(rule.equal).toContain('container');
+      expect(rule.equal).not.toContain('name');
+    }
+  });
+
+  it('the webhook bearer token is mounted from a file, never inlined in the tracked config', () => {
+    const raw = read(ALERTMANAGER_YML);
+    expect(raw).toContain('credentials_file:');
+    expect(raw, 'a literal `credentials:` value would put the webhook secret in git').not.toMatch(/^\s*credentials:\s*\S/m);
+  });
+});
+
+describe('both runtimes expose the scrape endpoint', () => {
+  /** Source with comments stripped — a mention in prose must never satisfy this guard. */
+  const code = (rel: string): string =>
+    read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  it.each([
+    ['src/app/server.ts', 'swarm'],
+    ['src/app/bot-node-server.ts', 'bot-node'],
+  ])('%s mounts GET /metrics and renders it with the shared exporter', (file, runtime) => {
+    const source = code(file);
+    expect(source).toMatch(/app\.get\(\s*'\/metrics'/);
+    expect(source).toContain('renderRuntimeMetrics(');
+    expect(source).toContain(`runtime: '${runtime}'`);
+    expect(source).toContain('PROMETHEUS_CONTENT_TYPE');
+  });
+});

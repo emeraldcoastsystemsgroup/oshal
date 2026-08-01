@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Privilege-model rollout (BACKLOG "Bot-endpoint privilege model"): the entitlement gate's default mode flipped off → WARN in bot-node-execute-entitlement.ts (OSHAL_EXECUTE_ENTITLEMENT was wired nowhere, so 'off default' meant the built gate never ran anywhere) — comments here updated to match; no wiring change in this file. The warn→enforce flip stays an explicit operator env act.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap close: mounted PUT /api/llm-provider (bot-node-llm-provider-route.ts) behind authorizeBotNodeCall — the endpoint BotNodeClient.switchProvider always targeted but which 404'd on every bot-node worker (ConfigSyncService.pushToBot returned pushed:false fleet-wide). A non-push change broadcasts up on swarm.config-change (X-Config-Source: oshal-push suppresses — echo-loop guard). Provider/model reporting (/api/health, swarm-execute + replay-call attribution defaults, startup logs) now reads the runtime's LIVE getActiveProvider() instead of boot-time consts, so a switch is immediately visible.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING: /api/swarm-execute now forwards the carried providerId/model/configVersion (the controller's push-on-dispatch stamp) into the envelope payload so the execution handler reconciles the runtime before executing. Additive + type-guarded — absent/malformed fields are simply not forwarded (the handler's parseCarriedDispatchConfig then treats it as the legacy absent path). No behavior change unless the controller stamps them (OSHAL_PUSH_ON_DISPATCH).
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /metrics (Prometheus text exposition, @/shared/observability). The 2026-08-01 container-kill drill proved cAdvisor emits zero series for any docker container on Docker Desktop's containerd/overlayfs image store, so every container_last_seen rule matched nothing and SwarmContainerDown was a target-less standing false alarm. Each worker now IS a labelled scrape target, so `up == 0` identifies the exact container that went down and the restart/memory/CPU rules key on the process's own gauges.
  */
 
 /**
@@ -36,6 +37,7 @@ import express from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { installProcessCrashGuards } from '@/shared/services/process-crash-guards';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { PROMETHEUS_CONTENT_TYPE, renderRuntimeMetrics } from '@/shared/observability';
 import {
   RedisMeshTransport,
   AgentRuntimeRegistryService,
@@ -228,6 +230,15 @@ async function start(): Promise<void> {
     provider: activeLlm().provider, model: activeLlm().model,
     timestamp: new Date().toISOString(),
   }));
+  // Prometheus scrape target — the series the ADR-119 container-health rules key on.
+  // Same exposure class as /health (process liveness, start time, CPU, RSS); no persona,
+  // no workspace paths, no credentials. cAdvisor cannot see these containers at all on
+  // Docker Desktop's containerd image store, so the worker reports its own health.
+  app.get('/metrics', (_req, res) => {
+    res.type(PROMETHEUS_CONTENT_TYPE).send(
+      renderRuntimeMetrics({ runtime: 'bot-node', instance: botName }),
+    );
+  });
 
   // ── PUT /api/llm-provider — ADR-034 push-down target + broadcast-up trigger ──
   // The controller's ConfigSyncService.pushToBot → BotNodeClient.switchProvider PUTs

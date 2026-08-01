@@ -256,3 +256,4 @@ scripts/publish-gate.local.patterns
 *.ogg
 *.opus
 Recording*.m4a
+.env.alertmanager-token

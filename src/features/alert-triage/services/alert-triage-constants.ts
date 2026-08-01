@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): the bundling knobs — ALERT_CORRELATION_WINDOW (FR-D1, default 15m), ALERT_CORRELATION_DEPTH (FR-D3, default 3 — the depth the source platform actually deployed), ALERT_MAX_MEMBERS (FR-D5 — the P1 member cap becomes the spec's configurable knob), the correlation-window predicate, and the bundle-candidate listing bound. All read at intake time with fail-safe fallbacks via one shared parser
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage B + E): the dispatch-gate knobs — ALERT_RCA_HOURLY_BUDGET_USD (FR-E2, default $10/h — the source platform's shipped default), the flap-damping trio ALERT_FLAP_THRESHOLD/_WINDOW/_QUIET (FR-E3, defaults 5/30m/10m), ALERT_AUTO_RESOLVE (FR-E4, default OFF — a knob that ships only with its guard, spec §9.9), plus the budget gate's non-env constants (reservation TTL, p95 sample bound, first-run reserve fallback). Same fail-safe read-at-intake-time posture as P1/P2
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P4 (ADR-119 A2): the autonomy knobs — SELF_HEAL_AUTO_APPLY (the kill switch, default FALSE; off = A1 exactly), SELF_HEAL_APPLY_HOURLY_CAP (global sliding-hour apply cap, default 3, 0 parks everything visibly) and SELF_HEAL_VERIFY_TIMEOUT (post-apply verification window, default 120s, min 1). Every knob ships with a named guard in tests/unit/alert-triage-autonomy.spec.ts (§9.9)
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added ALERT_INTAKE_OWNER_SUB — the synthetic machine owner the alert intake writes under. The live container-kill drill proved the whole ladder could not create a single ticket: the webhook carries no user identity, so the request-identity middleware stamped anonymous non-operator and the owner-RLS WITH CHECK refused every INSERT ("new row violates row-level security policy for table tickets"). This is the identity; the route stamps it on the connection and createIncidentTicket stamps the matching owner_sub — one constant so the two halves can never drift.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -21,6 +22,40 @@ const logger = createChildLogger({ module: 'alert-triage-constants' });
  * generalizes to the incident key").
  */
 export const ALERT_INCIDENT_KEY_FIELD = 'incidentKey';
+
+/**
+ * @description The synthetic owner sub every alert-born ticket is created under — and the
+ * identity the machine intake path stamps on its database connection, so the two halves of
+ * the owner RLS predicate agree (`owner_sub = current_setting('oshal.current_sub')`).
+ *
+ * WHY THIS EXISTS: the Alertmanager webhook is a MACHINE caller. It authenticates with a
+ * shared bearer token and there is no human behind it, so the request-identity middleware
+ * stamps anonymous non-operator — and under the enforce-stage owner policy
+ * (docs/governance/rls-policies-enforce.sql) an anonymous connection cannot insert into
+ * `tickets` at all. Proven live on 2026-08-01: a valid, authenticated, claim-passing alert
+ * reached `createIncidentTicket` and the INSERT was refused with
+ * "new row violates row-level security policy for table tickets".
+ *
+ * THE RAIL THIS FOLLOWS is the A2A gateway's `ownerSubForA2aAgent()` (`a2a:<agentId>`,
+ * src/features/a2a-gateway): an authenticated machine caller gets a SYNTHETIC, namespaced
+ * owner sub and runs `isOperator: false`, so every per-owner rail (RLS, budgets, "my
+ * tickets", DLQ attribution) applies to it with no special-casing.
+ *
+ * DELIBERATELY NOT the two alternatives:
+ *   - `runWithSystemIdentity` (operator, owner-less) would hand a token-holding webhook
+ *     operator-wide visibility: Stage D's bundle scan lists recent tickets of the queue's
+ *     type, so an operator-stamped intake could correlate an alert onto ANOTHER tenant's
+ *     ticket, and the resulting row would have no owner for any per-owner rail to attribute.
+ *     Non-operator scopes that scan to alert-born tickets, which is exactly Stage C/D's
+ *     intended blast radius.
+ *   - the deployment operator's sub (OSHAL_OPERATOR_SUBS) would attribute machine-authored
+ *     work to a human who did not cause the alert.
+ *
+ * The `prometheus` suffix matches the `externalProvider: 'prometheus'` already stamped on
+ * every alert-born ticket, so owner and provenance agree. It is a namespace, not a knob:
+ * making it configurable would let a deployment point machine writes at a real user's sub.
+ */
+export const ALERT_INTAKE_OWNER_SUB = 'alert:prometheus';
 
 /**
  * @description Default recurrence window in seconds (FR-C5): a refire whose incident key

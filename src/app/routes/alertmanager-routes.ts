@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): intake now runs Stage A canonicalization + Stage C consolidation (@/features/alert-triage) — a refire on an open incident UPDATES that ticket (updateCount/lastSeen/priority-escalation) instead of the old silent skipped++; unapproved alertnames are counted as noise per-alertname instead of vanishing; identity-less alerts drop counted; and GET /intake-stats (same fail-closed bearer guard) serves the FR-A3 decision counters. severityToPriority/targetOf moved into the feature so create + escalate rank severities identically
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): a firing alert that did not consolidate now BUNDLES onto an open related incident (same target, or dependency-connected within ALERT_CORRELATION_DEPTH, inside ALERT_CORRELATION_WINDOW) instead of opening a sibling ticket — the api-down drill is ONE ticket with members + rootCandidate, not three tickets and three RCA bills. `bundled` joins the response counts and the FR-A3 stats; outcome tallying extracted so the handler stays within the function cap
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage B + E): the claim REGISTRY replaces the inline ALERT_APPROVED_NAMES set as the noise gate — rules {match, incidentKey?, intake?, bundleHints?} from ALERT_CLAIMS_FILE, with ALERT_APPROVED_NAMES surviving as a pure-claim shorthand (identical behavior) and no registry at all keeping the accept-all dev default. A claim's key template re-keys the canonical alert (Stage A hand-off), its intake slots between the per-alert label (SRE wins) and the env defaults, and its rootFilter rides to genesis. ALERT_UNCLAIMED_POLICY=backlog parks unclaimed alerts instead of dropping them. Resolved events now DO something (FR-E4): consolidation.intakeResolved marks members / opt-in self-closes. The route accepts an optional RcaSpendReader so the app layer can wire the FR-E2 budget gate's cost-ledger actuals
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | LIVE FIX (container-kill drill, 2026-08-01): the intake could not create a ticket AT ALL — "new row violates row-level security policy for table tickets". Alertmanager is a machine caller with no user identity, so the global request-identity middleware stamped anonymous non-operator and the owner-RLS WITH CHECK refused every INSERT; every P1–P4 guard passed because they all stub the ticket gateway. The authenticated intake now runs under runWithRequestIdentity({ sub: ALERT_INTAKE_OWNER_SUB, isOperator: false }) — the A2A gateway's synthetic-machine-sub rail (ownerSubForA2aAgent), NOT the operator sentinel — and the consolidation service stamps the same sub as owner_sub. Least-privilege on purpose: a non-operator intake scopes Stage D's bundle scan to alert-born tickets instead of every tenant's. Applied AFTER the bearer + HMAC guards so an unauthenticated caller never reaches the machine identity
  */
 
 /**
@@ -45,7 +46,9 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { hmacWebhookGuard } from '@/features/security';
 import type { TicketService } from '@/features/ticketing';
+import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import {
+  ALERT_INTAKE_OWNER_SUB,
   AlertBundlingService,
   AlertClaimRegistry,
   AlertConsolidationService,
@@ -259,6 +262,27 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
   };
 
   /**
+   * POST-AUTH IDENTITY RE-ENTRY (the 2026-08-01 live fix).
+   *
+   * server.ts mounts the global RLS request-identity middleware ABOVE every /api route, and
+   * for this machine-to-machine webhook `getCaller(req).sub` is null and `isOperator(req)` is
+   * false — so the GUC pool stamps `oshal.current_sub=''`, `oshal.is_operator='off'` and the
+   * enforce-stage owner policy on `tickets` refuses the INSERT outright. Same defect, same
+   * fix as a2a-routes.ts: once the caller has PROVEN possession of the shared secret, re-enter
+   * the identity store as the synthetic machine sub that owns alert-born work.
+   *
+   * Deliberately `isOperator: false`. The machine gets exactly its own rows: Stage C's
+   * incident-key lookup and Stage D's bundle scan then see alert-born tickets and nothing
+   * else, so a webhook token can never correlate an alert onto a user's personal ticket.
+   *
+   * Placed AFTER `guard` (and after the HMAC guard on the POST) so an unauthenticated caller
+   * is rejected while still anonymous and never touches the machine identity.
+   */
+  const asMachineIdentity = (_req: Request, _res: Response, next: NextFunction): void => {
+    runWithRequestIdentity({ sub: ALERT_INTAKE_OWNER_SUB, isOperator: false }, () => next());
+  };
+
+  /**
    * POST /api/alerts/alertmanager
    * Alertmanager webhook receiver. Accepts the v4 payload; each approved firing
    * alert consolidates onto the open ticket for its incident key (ADR-119 P1 —
@@ -278,7 +302,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
     prefix: 'sha256=',
   });
 
-  router.post('/alertmanager', guard, hmacGuard, async (req: Request, res: Response) => {
+  router.post('/alertmanager', guard, hmacGuard, asMachineIdentity, async (req: Request, res: Response) => {
     const payload = (req.body || {}) as AlertmanagerPayload;
     const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
 

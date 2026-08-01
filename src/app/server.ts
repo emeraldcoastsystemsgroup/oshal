@@ -145,6 +145,7 @@
  * 139 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E2): the /api/alerts mount now wires the pool-backed RcaSpendReader (routes/alertmanager-rca-spend.ts) into the intake's analyst budget gate — cost-ledger actuals meter auto-flow RCA dispatch; a pool-less run passes null and the gate is an explicit pass-through.
  * 140 | maintainer@emeraldcoastsystemsgroup.com   | Jarvis UX trio wiring: /api/voice now receives ctx (JVV-012 per-user TTS prefs endpoints + prefs-honoring synthesize), and /api/connect gains the liveness router (INSTALLER-GAPS G14 — the Connections badge live token check) on the same auth-gated mount.
  * 141 | maintainer@emeraldcoastsystemsgroup.com   | Global search grew the app/bot/connector result kinds: createGlobalSearchRoutes now receives swarmAppService.listApps as an injected, deliberately UNFILTERED lister (the features slice cannot reach the service, and AppsSearchSource owns the tested caller-visibility rule - pre-filtering here would make two filters where only one can be audited).
+ * 142 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /metrics (Prometheus text exposition, @/shared/observability), mounted with /health above the OIDC middleware. The oshal-api-health scrape target pointed at /api/health, which returns JSON — Prometheus cannot parse it, so the scrape FAILED every cycle, `up` was pinned to 0 and SwarmApiUnreachable fired forever on a healthy box (found in the 2026-08-01 live drill). A real exposition makes that target's `up` mean what the rule claims it means, and gives the container-health rules series the swarm itself guarantees.
  */
 
 require('dotenv').config();
@@ -322,6 +323,8 @@ import {
 } from '@/features/security';
 // RLS request-identity binding for the GUC-aware pool wrapper (canonical RLS path).
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
+// Prometheus exposition for the swarm's own container-health rules (ADR-119).
+import { PROMETHEUS_CONTENT_TYPE, renderRuntimeMetrics } from '@/shared/observability';
 import { gucEnabled } from '@/shared/services/database/guc-pool';
 
 // OpenAPI/Swagger imports
@@ -628,6 +631,18 @@ function createApp(): express.Application {
   app.get('/health', (_req, res) => {
     logger.info('GET /health');
     res.json({ status: 'ok' });
+  });
+
+  // Prometheus scrape target (public by design, same class as /health — process liveness,
+  // start time, CPU and RSS only; no user data, no config, no secrets). This is what the
+  // ADR-119 container-health rules key on: /api/health returns JSON, which Prometheus cannot
+  // parse, so the oshal-api-health target was permanently `up=0` and SwarmApiUnreachable was
+  // a permanent false alarm (found in the 2026-08-01 live drill). Placed with /health, above
+  // the OIDC middleware, so a scrape never redirects to a login.
+  app.get('/metrics', (_req, res) => {
+    res.type(PROMETHEUS_CONTENT_TYPE).send(
+      renderRuntimeMetrics({ runtime: 'swarm', instance: process.env.BOT_NAME || 'oshal-api' }),
+    );
   });
 
   // Branding config — UI reads this to display the correct product name

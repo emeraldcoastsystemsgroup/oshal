@@ -5,28 +5,51 @@
 # existing oshal-local network so it can scrape the swarm containers and POST
 # alerts to oshal-api.
 #
-# Bring up AFTER the main stack:
-#   docker compose -f docker-compose.oshal-local.yml up -d
-#   docker compose -f docker-compose.monitoring.yml up -d
+# Bring up AFTER the main stack, THROUGH THE SCRIPT — it writes the gitignored
+# Alertmanager bearer-token file, refuses to start without ALERT_WEBHOOK_TOKEN (the
+# receiver is fail-closed, so a missing token means silent total unreachability), and
+# picks a Prometheus port that does not collide with oshal-headscale:
+#   bash scripts/oshal-up.sh
+#   bash scripts/monitoring-up.sh
 #
-# UIs:
-#   Prometheus   -> http://localhost:9090   (Status > Targets, Alerts)
+# UIs (PROMETHEUS_PORT defaults to 9091 via the script — 9090 is oshal-headscale on
+# the reference dev box):
+#   Prometheus   -> http://localhost:9091   (Status > Targets, Alerts)
 #   Alertmanager -> http://localhost:9093
 #   cAdvisor     -> http://localhost:8080
 #
-# The loop: cAdvisor -> Prometheus (alert-rules.yml) -> Alertmanager
-#           -> POST oshal-api:5000/api/alerts/alertmanager -> incident ticket
-#           -> incident-rca pipeline -> propose fix -> approve/close gate.
+# The loop: each oshal runtime's GET /metrics -> Prometheus (alert-rules.yml)
+#           -> Alertmanager -> POST oshal-api:5000/api/alerts/alertmanager
+#           -> incident ticket -> incident-rca pipeline -> propose fix
+#           -> approve/close gate.
 # =============================================================================
 
 name: oshal-monitoring
 
 services:
+  # SUPPLEMENTARY ONLY — per-container disk/network detail on hosts where cAdvisor
+  # can enumerate docker containers. NOTHING in alert-rules.yml depends on it.
+  #
+  # On Docker Desktop 29.x (containerd image store, storage driver `overlayfs`) it
+  # enumerates NOTHING: every container handler dies in getRwLayerID because
+  # /var/lib/docker/image/overlayfs/layerdb does not exist in that layout, so the
+  # oshal containers produce zero series and zero labels. Verified 2026-08-01 against
+  # v0.49.1 and v0.52.1, with and without --docker_only, --store_container_labels,
+  # --containerd-namespace=moby, and with disk metrics disabled. That is why the
+  # container-health rules moved onto the swarm's own /metrics exposition — see the
+  # header of ops/monitoring/prometheus.yml.
+  #
+  # --docker_only trims the noise this produces here (58 root/kind cgroup series that
+  # identify nothing); --store_container_labels is what a WORKING host needs so
+  # container_label_com_docker_compose_service is available for correlation.
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: oshal-local-cadvisor
     restart: unless-stopped
     privileged: true
+    command:
+      - '--docker_only=true'
+      - '--store_container_labels=true'
     ports:
       - "${CADVISOR_PORT:-8080}:8080"
     volumes:
@@ -67,6 +90,7 @@ services:
       - "${ALERTMANAGER_PORT:-9093}:9093"
     volumes:
       - ./ops/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./.env.alertmanager-token:/etc/alertmanager/webhook-token:ro
       - mon_alertmanager_data:/alertmanager
     depends_on:
       - prometheus
