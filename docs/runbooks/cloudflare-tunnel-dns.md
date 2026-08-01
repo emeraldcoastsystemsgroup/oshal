@@ -121,8 +121,12 @@ Adding one is four steps, repeatable per app — no code change needed after the
 2. **`OIDC_BASE_URLS`** (env, not `.env.example`): append the new origin, comma-separated —
    e.g. `https://oshal.ai,https://dnd.oshal.ai`. Skipping this reproduces the exact cross-host
    login loop this var was built to fix (see the file header of `src/shared/middleware/oidc.ts`).
-   If sessions need to carry across these subdomains, `SESSION_COOKIE_DOMAIN` also needs a
-   common suffix — a wrong value here is its own login-loop failure mode.
+   If sessions should be shared across a subdomain family, add its apex to
+   `SESSION_COOKIE_DOMAIN` (comma-separated list, e.g. `.agenticfederal.us,.oshal.ai`) —
+   it is resolved per host, and a host matching no entry gets a host-only cookie. (Before
+   the per-host resolution, one fixed value here broke logins on every host outside it
+   with `checks.state argument is missing` at /callback — the browser rejects a Set-Cookie
+   whose Domain doesn't cover the serving host, taking the OIDC state cookie with it.)
 3. **`HOST_APP_MAP`** (env): append `hostname=appName` — the `appName` is the manifest `name:`
    field (NOT always the display name — e.g. the trading app's manifest name is
    `intelligent-trades`, not `trading`). Example:
