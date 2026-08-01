@@ -8,6 +8,9 @@
   adds .is-operator — the API + RLS gate the writes regardless. For guests / regular users the
   same rows render read-only (Open where working, greyed where not). Anonymous visitors never
   see this cold: the route wears createGuestWelcomeMat, so they land on /guest first.
+  The Discover section below the installed list is the ADR-085 D7 store browse: rows come from
+  the store's machine-derived marketplace.json via GET /api/swarm/apps/catalog (never hand-typed
+  here), and Install (operator-only, enforced by the API) posts /api/swarm/apps/install-remote.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -227,6 +230,18 @@
 
     <div id="errorBox"></div>
     <div id="apps" class="apps"></div>
+
+    <!-- Discover — the store catalog (ADR-085 D7). Rows come from the store repo's
+         machine-derived marketplace.json via GET /api/swarm/apps/catalog — names, suites,
+         versions, and descriptions are never hand-typed here. Install (operator-only chrome;
+         the API gate enforces regardless) calls POST /api/swarm/apps/install-remote. -->
+    <div class="section-header" style="margin-top: 44px; margin-bottom: 14px;">
+      <div class="section-kicker">Discover</div>
+      <h1 style="font-size: 1.35rem;">From the app store</h1>
+      <div class="sub">Packages published in the store that aren&rsquo;t installed on this swarm yet.
+        <span class="op-only">Install fetches the package into <code>deployed-apps/</code> and hot-loads it live.</span></div>
+    </div>
+    <div id="discover" class="apps"></div>
   </div>
 
   <script type="module">
@@ -270,6 +285,17 @@
     // Codex Packer's real entry is the builder chat, NOT ?app=codex-packer (default app + a bare toolbar).
     const CODEX_PACKER_LAUNCH = '/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000030';
 
+    // ADR-097 suite shelves — shared by the installed list and the Discover catalog below.
+    const SUITES = [
+      ['platform', 'Platform'],
+      ['ai-productivity', 'AI Productivity'],
+      ['ai-knowledge', 'AI Knowledge'],
+      ['ai-finance', 'AI Finance'],
+      ['ai-creative', 'AI Creative'],
+      ['ai-home', 'AI Home &amp; Lifestyle'],
+      ['ai-engineering', 'AI Engineering'],
+    ];
+
     // name -> latest store version, filled from the update-check daemon (GET /api/updates).
     // Best-effort: the page renders identically when the report is empty or the fetch fails.
     let storeUpdates = {};
@@ -293,7 +319,9 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         storeUpdates = updates;
+        installedNames = new Set((data.apps || []).map((a) => a.name));
         render(data.apps || []);
+        renderDiscover(); // installed set changed — the Discover list subtracts it
       } catch (err) {
         showError('Failed to load apps: ' + err.message);
       }
@@ -373,15 +401,6 @@
 
       // ADR-097: group by the app's ONE primary suite (manifest `suite:`). Platform pinned first;
       // "More" catches pre-097 installed packages with no suite yet. Working-first rank holds within a group.
-      const SUITES = [
-        ['platform', 'Platform'],
-        ['ai-productivity', 'AI Productivity'],
-        ['ai-knowledge', 'AI Knowledge'],
-        ['ai-finance', 'AI Finance'],
-        ['ai-creative', 'AI Creative'],
-        ['ai-home', 'AI Home &amp; Lifestyle'],
-        ['ai-engineering', 'AI Engineering'],
-      ];
       const bySuite = new Map(SUITES.map(([key]) => [key, []]));
       const more = [];
       for (const a of sorted) (bySuite.get(a.suite) || more).push(a);
@@ -504,7 +523,89 @@
       }
     });
 
+    // ── Discover: the store catalog (ADR-085 D7) ─────────────────────────────
+    const discoverEl = document.getElementById('discover');
+    let installedNames = new Set();
+    let storeCatalog = null; // last GET /api/swarm/apps/catalog payload
+
+    async function fetchCatalog() {
+      try {
+        const res = await fetch('/api/swarm/apps/catalog');
+        storeCatalog = res.ok ? await res.json() : { available: false, reason: `HTTP ${res.status}`, apps: [] };
+      } catch (err) {
+        storeCatalog = { available: false, reason: err.message, apps: [] };
+      }
+      renderDiscover();
+    }
+
+    function renderDiscover() {
+      if (!storeCatalog) return; // catalog not fetched yet — installed list will re-render us
+      if (!storeCatalog.available) {
+        // Honest degrade — a private store without OSHAL_STORE_TOKEN says so, it never errors.
+        discoverEl.innerHTML = `<div class="empty">Store catalog unavailable: ${escapeHtml(storeCatalog.reason || 'unknown')}</div>`;
+        return;
+      }
+      const rows = (storeCatalog.apps || []).filter((a) => !installedNames.has(a.name));
+      if (!rows.length) {
+        discoverEl.innerHTML = '<div class="empty">Everything the store publishes is already installed on this swarm.</div>';
+        return;
+      }
+      const rowHtml = (a) => {
+        const installable = a.status === 'ready';
+        const initial = escapeHtml(String(a.displayName || a.name || '?').trim().charAt(0).toUpperCase() || '?');
+        return `
+        <div class="app-row" data-store-name="${escapeHtml(a.name)}">
+          <div class="app-ico">${initial}</div>
+          <div class="app-main">
+            <div class="app-titleline">
+              <span class="app-name">${escapeHtml(a.displayName)}</span>
+              ${a.version ? `<span class="app-version">v${escapeHtml(a.version)}</span>` : ''}
+              <span class="status-badge status-${installable ? 'active' : 'coming'}">${escapeHtml(a.status)}</span>
+            </div>
+            <div class="app-desc">${escapeHtml(a.description)}</div>
+          </div>
+          <div class="app-right">
+            <div class="op-actions">
+              ${installable
+                ? '<button data-act="install">Install</button>'
+                : `<button disabled title="Not installable yet — store status is ${escapeHtml(a.status)}">Install</button>`}
+            </div>
+          </div>
+        </div>`;
+      };
+      // Same ADR-097 suite shelves as the installed list; "More" catches unshelved entries.
+      const bySuite = new Map(SUITES.map(([key]) => [key, []]));
+      const more = [];
+      const sorted = [...rows].sort((x, y) => String(x.displayName).localeCompare(String(y.displayName)));
+      for (const a of sorted) (bySuite.get(a.suite) || more).push(a);
+      discoverEl.innerHTML = SUITES.map(([key, label]) => [label, bySuite.get(key)])
+        .concat([['More', more]])
+        .filter(([, group]) => group.length > 0)
+        .map(([label, group]) => `
+          <div class="suite-section">
+            <h3 class="suite-header">${label} <span class="suite-count">${group.length}</span></h3>
+            <div class="app-list">${group.map(rowHtml).join('')}</div>
+          </div>`)
+        .join('');
+
+      discoverEl.querySelectorAll('button[data-act="install"]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const name = btn.closest('.app-row').dataset.storeName;
+          if (!confirm(`Install "${name}" from the app store? The package is fetched into deployed-apps/ and hot-loaded live.`)) return;
+          btn.disabled = true; btn.textContent = 'Installing…';
+          try {
+            await call('POST', '/api/swarm/apps/install-remote', { name });
+            await fetchApps();    // the new app appears in the installed list …
+            renderDiscover();     // … and drops out of Discover
+          } catch (_) {
+            btn.disabled = false; btn.textContent = 'Install';
+          }
+        });
+      });
+    }
+
     fetchApps();
+    fetchCatalog();
   </script>
 </body>
 </html>

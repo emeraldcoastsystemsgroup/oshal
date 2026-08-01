@@ -10,6 +10,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | `install` honors OSHAL_STORE_TOKEN (fallback GITHUB_TOKEN) for private store repos: token injected into the clone URL from env only — never a flag, never printed (clean repo in all output, scrubbed from git error text). Lets the update-check apply route and headless installs reach the private oshal-applications store.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: validate `uses:` (kernel skills) shape, and warn when an author lists the `presentations` APP as a dependency when they mean the always-present deck-generation SKILL. Skill IDs are deliberately NOT re-listed here — the authoritative fail-closed check is server-side (readManifest) + CI (check-kernel-skills.ts); a second list in this CLI would drift.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-097 store follow-up: `init` scaffold stamps `suite:` (the app's ONE primary catalog shelf) so generated packages never land unshelved; `validate` warns on a missing suite and errors on a non-string one. The suite ENUM is deliberately NOT re-listed here — the authoritative fail-closed value check is server-side (swarm-app-loader against SWARM_APP_SUITES), same no-second-source reasoning as `uses:`.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11 done-when 6: `uninstall`'s impact scan now mirrors the SERVER's tool semantics (tool-ownership.ts) — tools PROVIDED = the manifest's tools[].name only (never ui.static[].toolName, those are ribbon surface ids); other installed packages whose dependencies.tools name one are TOOL DEPENDENTS and BLOCK the uninstall exactly like app-level dependents (--force overrides). A dependent blocks, it never RETAINS the tool — under --force the tool goes with its owner, same as the server.
  *
  * The npm-of-OSHAL-apps helper. An OSHAL app package is a folder with a definition
  * file (oshal-app.yaml — the package.json analog), personas, compiled routes, migrations,
@@ -474,8 +475,10 @@ function buildPackage(pkgDirInput, opts) {
 }
 
 /**
- * Uninstall an installed package from the deploy dir — DEPENDENCY-AWARE (ADR-085 §5):
- * blocked while another installed package's manifest (or install stamp) depends on it;
+ * Uninstall an installed package from the deploy dir — DEPENDENCY-AWARE (ADR-085 §5 + D11):
+ * blocked while another installed package's manifest (or install stamp) depends on it,
+ * OR names one of its provided tools in dependencies.tools (tool dependents block exactly
+ * like app dependents — the server's uninstall-impact rule, mirrored here);
  * orphaned dependencies are REPORTED, never auto-removed; requires --yes (impact shown
  * first). Schema is never dropped — if the package ships migrations/uninstall.sql the
  * command prints how to apply it (explicit opt-in, data-loss gate).
@@ -487,19 +490,38 @@ function uninstallPackage(name, opts) {
     console.error(C.red(`"${name}" is not installed in ${dest}`));
     return 1;
   }
-  // Impact: scan the OTHER installed packages' declared deps.
-  const dependents = [];
-  const readDeps = (dir) => {
-    try {
-      const m = yaml.load(fs.readFileSync(path.join(dir, 'oshal-app.yaml'), 'utf8')) || {};
-      return (m.dependencies && Array.isArray(m.dependencies.apps)) ? m.dependencies.apps : [];
-    } catch { return []; }
+  // Impact: scan the OTHER installed packages' declared deps — apps AND tools, mirroring
+  // the SERVER's semantics (SwarmAppService.uninstallImpact / tool-ownership.ts). The CLI
+  // scans the deploy dir (its offline view) where the server scans the ACTIVE registry rows;
+  // what counts as provided/depended and what BLOCKS is byte-for-byte the same rule.
+  const readManifestObj = (dir) => {
+    try { return yaml.load(fs.readFileSync(path.join(dir, 'oshal-app.yaml'), 'utf8')) || {}; } catch { return {}; }
   };
+  const readDeps = (dir) => {
+    const m = readManifestObj(dir);
+    return (m.dependencies && Array.isArray(m.dependencies.apps)) ? m.dependencies.apps : [];
+  };
+  // D11 server parity: PROVIDED = the manifest's tools[].name ONLY — deliberately NOT
+  // ui.static[].toolName (ribbon surface ids, not registry tools; the server's
+  // providedToolNames() draws the same line). DEPENDED = dependencies.tools.
+  const providedTools = (dir) => {
+    const m = readManifestObj(dir);
+    return (Array.isArray(m.tools) ? m.tools : []).map((t) => t && t.name).filter(Boolean);
+  };
+  const dependedTools = (dir) => {
+    const m = readManifestObj(dir);
+    return (m.dependencies && Array.isArray(m.dependencies.tools)) ? m.dependencies.tools : [];
+  };
+  const provided = new Set(providedTools(target));
+  const dependents = [];
+  const toolDependents = []; // [{ app, tools }] — same shape as the server's computeToolDependents
   for (const entry of fs.readdirSync(dest)) {
     if (entry === name) continue;
     const dir = path.join(dest, entry);
     if (!fs.existsSync(path.join(dir, 'oshal-app.yaml'))) continue;
     if (readDeps(dir).includes(name)) dependents.push(entry);
+    const overlap = provided.size ? dependedTools(dir).filter((t) => provided.has(t)) : [];
+    if (overlap.length) toolDependents.push({ app: entry, tools: overlap });
   }
   const myDeps = readDeps(target);
   const orphans = myDeps.filter((dep) =>
@@ -509,9 +531,17 @@ function uninstallPackage(name, opts) {
 
   console.log(C.bold(`\nuninstall impact — ${name}`));
   console.log(`  dependents: ${dependents.length ? C.red(dependents.join(', ')) : C.green('none')}`);
+  console.log(`  tools provided: ${provided.size ? [...provided].join(', ') : C.dim('none')}`);
+  console.log(`  tool dependents: ${toolDependents.length ? C.red(toolDependents.map((d) => `${d.app} needs tool(s) ${d.tools.join(', ')}`).join('; ')) : C.green('none')}`);
   console.log(`  would-be orphans (NOT auto-removed): ${orphans.length ? C.yellow(orphans.join(', ')) : C.dim('none')}`);
-  if (dependents.length && !opts.force) {
-    console.error(C.red(`\n✗ blocked: ${dependents.join(', ')} depend(s) on ${name}. Remove them first or pass --force.`));
+  // A tool dependent BLOCKS exactly like an app-level dependent (server rule). It never causes
+  // the tool to be RETAINED — under --force the tool goes with its owner; a dangling dependency
+  // is the dependent's problem, a dangling executor would be everyone's.
+  if ((dependents.length || toolDependents.length) && !opts.force) {
+    const parts = [];
+    if (dependents.length) parts.push(`${dependents.join(', ')} depend(s) on ${name}`);
+    if (toolDependents.length) parts.push(toolDependents.map((d) => `${d.app} needs tool(s) ${d.tools.join(', ')}`).join('; '));
+    console.error(C.red(`\n✗ blocked: ${parts.join('; ')}. Remove them first or pass --force.`));
     return 1;
   }
   if (!opts.yes) {
