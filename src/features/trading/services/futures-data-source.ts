@@ -4,11 +4,13 @@
  *
  * A `FuturesDataSource` fetches OHLCV bars for a dated contract. Two implementations ship:
  *
- *  - `MockFuturesDataSource` — deterministic synthetic bars over continuous weekday sessions. Lets the
- *    whole pipeline — ingest → completeness → store → paper order — run end-to-end with NO credentials
- *    and NO vendor. A `dropRate` deliberately punches holes so the completeness validator can be
- *    exercised. (The real ~23h-session-with-maintenance-break shape is deferred to the exchange session
- *    calendar — BACKLOG — so mock + expected-count stay internally consistent for now.)
+ *  - `MockFuturesDataSource` — deterministic synthetic bars over the REAL Globex session shape
+ *    (futures-session-calendar.ts): the ~23h Sun-18:00→Fri-17:00 wall-clock week with the daily
+ *    17:00–18:00 maintenance halt, holiday closures, and 13:00 early closes. Lets the whole
+ *    pipeline — ingest → completeness → store → paper order — run end-to-end with NO credentials
+ *    and NO vendor, in the SAME wall-clock timestamp convention Kibot data carries (see
+ *    FuturesBar.t), so mock and real bars finally mean the same session hours. A `dropRate`
+ *    deliberately punches holes so the completeness validator can be exercised.
  *
  *  - `KibotFuturesDataSource` — a REAL HTTP client against Kibot's data API (login → history → CSV),
  *    reusing the data entitlement the friend already pays for while deleting the desktop downloader and
@@ -24,6 +26,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FuturesDataSource contract; deterministic MockFuturesDataSource (seeded random walk, weekday sessions, dropRate holes); credential-gated KibotFuturesDataSource (login→history→CSV, timeout-guarded fetch, integrity check on read).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | parseKibotCsv infers the row shape per line (comma/semicolon, slash/compact dates, embedded HHMMSS) instead of trusting the caller's timeframe — the old daily branch column-shifted minute rows into NaN-open fabricated bars when a minute file was fetched at 1Day. File source now refuses (loudly, zero bars) to serve a daily file at an intraday timeframe and always resamples by data granularity.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review hardening: exact column counts with trailing-delimiter tolerance (a stray 7th field could flip a daily row into the intraday map, making volume the close), blank OHLC fields rejected (Number('') is 0 — a fabricated $0 price), calendar-rollover dates rejected, BOM/whitespace tolerated, malformed-row drop counter; file source classifies granularity on the WHOLE file (not the fetch window) and applies the volume floor to AGGREGATED bars after resampling (pre-filtering could shift a bucket's true open/low).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Mock source emits the true Globex session (futures-session-calendar) instead of continuous 24h weekdays — maintenance halt, weekend close, holidays, early closes — in the wall-clock stamp convention real Kibot bars carry, making mock-vs-real session behavior comparable for the first time.
  *
  * @module futures-data-source
  */
@@ -33,6 +36,7 @@ import { join } from 'node:path';
 import { createChildLogger } from '@/shared/logger';
 import type { Timeframe } from './market-data';
 import { barMinutes, type FuturesBar, type FuturesContract } from './futures-contract';
+import { isSessionBucket } from './futures-session-calendar';
 
 const logger = createChildLogger({ module: 'futures-data-source' });
 
@@ -87,8 +91,8 @@ export interface MockSourceOptions {
 }
 
 /**
- * Deterministic synthetic bar generator — same inputs always yield the same bars. Weekday sessions
- * only, one maintenance-break hour skipped per day.
+ * Deterministic synthetic bar generator — same inputs always yield the same bars, emitted only for
+ * buckets the Globex session calendar says trade (wall-clock convention, matching Kibot).
  */
 export class MockFuturesDataSource implements FuturesDataSource {
   readonly name = 'mock';
@@ -118,9 +122,7 @@ export class MockFuturesDataSource implements FuturesDataSource {
     let price = this.opts.startPrice || 4000 + (hashSeed(contract.root) % 2000);
     const bars: FuturesBar[] = [];
     for (let t = Math.floor(start / barMs) * barMs; t < end; t += barMs) {
-      const d = new Date(t);
-      const dow = d.getUTCDay();
-      if (dow === 0 || dow === 6) continue;
+      if (!isSessionBucket(t, barMs)) continue;
       const ret = (rng() - 0.5) * 2 * this.opts.volatility;
       const open = price;
       price = Math.max(1, price * (1 + ret));

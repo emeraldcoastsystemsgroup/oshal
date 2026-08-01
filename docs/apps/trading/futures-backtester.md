@@ -206,14 +206,17 @@ column-shift misparsed minute data and its 19 roll seams were unadjusted.
   absolute price levels before the last contract are shifted; percentage-based reasoning on early
   history is distorted. Ratio adjustment is not implemented (the trader's NT continuous contracts
   use difference — parity is the point).
-- **Sessions are approximated as continuous 24h weekdays** (inherited from the instrument model).
-  A real CME session + holiday calendar is BACKLOG; until then the entry-window filter is the only
-  thing keeping trades inside sensible hours.
-- **Mock and real bars use different clock conventions.** `FuturesBar.t` is the bar-OPEN stamp; the
-  simulator derives the CLOSE stamp from the next bar. Kibot carries exchange-local wall time in
-  the UTC fields (making the default entry window the real US day session); the mock emits true
-  UTC. Mock-vs-real comparisons of session-dependent behavior are invalid until the mock adopts
-  the wall-time convention (BACKLOG).
+- **Sessions are the real Globex week** *(since 2026-07-31 — `futures-session-calendar.ts`)*: the
+  ~23h Sun-18:00→Fri-17:00 wall-clock session with the 17:00–18:00 maintenance halt and rule-computed
+  US holidays drives the expected-bar count, the gap detector, and the mock source. Honest residue:
+  per-year one-off exchange notices (special closures, shortened Good Friday sessions) are not
+  modeled; the completeness threshold absorbs them. The entry-window filter still bounds trade hours
+  inside the session.
+- **Mock and real bars share ONE clock convention** *(since 2026-07-31)*: `FuturesBar.t` is the
+  bar-OPEN stamp whose UTC fields carry EXCHANGE-LOCAL WALL TIME — Kibot's shape, now documented on
+  the type and emitted identically by the mock (Sunday-18:00 opens, no 17:00-hour bars). The
+  simulator derives the CLOSE stamp from the next bar. Session-dependent behavior (the 09:30–15:45
+  entry window included) is comparable across sources.
 - **MFE on a stopped bar uses the full bar range.** If a long's bar rallies before reversing through
   the stop, that high counts as favorable excursion — which is what NT's trade tracker does, but it
   means MFE on the exit bar is bar-resolution, not tick-resolution.

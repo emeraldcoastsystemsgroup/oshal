@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guards for the ADR-116 futures instrument model: month-code round trips, third-Friday/roll dates, symbol parse/format (incl. multi-char roots MES/MYM), contiguous contract enumeration over a range, expected-bar count, active-contract lookup.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Energy-root guards: CL/MCL metadata, the WTI preceding-month expiry rule (CLZ25 → 2025-11-20, matching the real data file's final bar; weekend-25th step-back via CLF17; January's prior-year reach), monthly gap-free tiling, and ES unaffected.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | expectedBarCount guards rewritten for the session calendar: daily = trading days (closures out, early closes in), hourly = real session buckets — pinned against an independent hand-count of the ESM24 window, replacing the retired 24h-weekday placeholder assertions.
  */
 import { describe, it, expect } from 'vitest';
 import {
   contractSymbol, parseFuturesSymbol, monthCode, monthNumFromCode, thirdFriday, rollDate,
   expiryDate, contractsForRange, activeContractAt, barMinutes, expectedBarCount, weekdaysBetween,
-  getFuturesRoot, FUTURES_ROOTS,
+  tradingDaysBetween, countSessionBuckets, getFuturesRoot, FUTURES_ROOTS,
 } from '../../src/features/trading';
 
 describe('month codes', () => {
@@ -80,18 +81,29 @@ describe('contract enumeration', () => {
   });
 });
 
-describe('expected-bar count', () => {
-  it('daily count equals weekdays in the active window', () => {
-    const c = contractsForRange('ES', new Date('2024-01-01T00:00:00Z'), new Date('2024-12-31T00:00:00Z'))
-      .find((x) => x.symbol === 'ESM24')!;
-    const es = getFuturesRoot('ES')!;
-    expect(expectedBarCount(c, '1Day', es)).toBe(weekdaysBetween(c.activeStart, c.activeEnd));
+describe('expected-bar count (session-calendar-driven)', () => {
+  const c = contractsForRange('ES', new Date('2024-01-01T00:00:00Z'), new Date('2024-12-31T00:00:00Z'))
+    .find((x) => x.symbol === 'ESM24')!;
+  const es = getFuturesRoot('ES')!;
+
+  it('daily count equals TRADING days: weekdays minus full closures (Good Friday sits in ESM24)', () => {
+    // ESM24 active window: 2024-03-07 (ESH24 roll) → 2024-06-13 (own roll) — 14 exact weeks,
+    // 70 weekdays, containing exactly ONE full closure (Good Friday 2024-03-29; Memorial Day
+    // 05-27 is an early close and still prints a daily bar). Hand-count: 69.
+    expect(expectedBarCount(c, '1Day', es)).toBe(69);
+    expect(expectedBarCount(c, '1Day', es)).toBe(weekdaysBetween(c.activeStart, c.activeEnd) - 1);
+    expect(expectedBarCount(c, '1Day', es)).toBe(tradingDaysBetween(c.activeStart, c.activeEnd));
   });
-  it('hourly count is 24× the daily count (continuous-session placeholder)', () => {
-    const c = contractsForRange('ES', new Date('2024-01-01T00:00:00Z'), new Date('2024-12-31T00:00:00Z'))
-      .find((x) => x.symbol === 'ESM24')!;
-    const es = getFuturesRoot('ES')!;
-    expect(expectedBarCount(c, '1Hour', es)).toBe(weekdaysBetween(c.activeStart, c.activeEnd) * 24);
+
+  it('hourly count is the hand-counted session-bucket total, NOT 24× weekdays', () => {
+    // 14 plain weeks × 115 Globex hours = 1610, minus the Good Friday closure (17 day-hours + the
+    // 6 evening hours that would have opened it) and the Memorial Day early close (13:00–17:00,
+    // −4): 1583. The retired placeholder said 70 weekdays × 24 = 1680 — 97 phantom bars, which is
+    // exactly the ~6% shortfall real Kibot data kept being graded incomplete by.
+    const expected = expectedBarCount(c, '1Hour', es);
+    expect(expected).toBe(1583);
+    expect(expected).toBe(countSessionBuckets(c.activeStart.getTime(), c.activeEnd.getTime(), 3_600_000));
+    expect(expected).toBeLessThan(weekdaysBetween(c.activeStart, c.activeEnd) * 24);
   });
 });
 

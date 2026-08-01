@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guards for the ADR-116 backtester: NT8 fill semantics (next-bar-open entries priced off the signal bar, intrabar stop triggers, gap-through fills at the open, next-bar market exits), stage-1 timed-exit mode, slippage/commission attribution, MFE/MAE in currency+percent, equity curve + drawdown, compounding, and the multi-market overlay's step-forward arithmetic.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the ensemble generation's confirmation exit: it fires under strict strength floors and never under disabled ones, fills at the next bar's open, is suppressed in stage-1 timed mode, never appears for the other generations, and the entry threshold is monotonically selective.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | De-vacuated the Strangle close-breach guard (BACKLOG, reviewer-flagged 2026-07-28): the old test filtered the rally fixture for exitName 'Strangle' and looped over an ALWAYS-EMPTY array — on that tape the latched level is enforced as a resting stop and every exit is the intrabar 'StrangleStop'. The new climb→fade→creep fixture makes the gate latch on a bar whose close is already beyond the tracked level, forcing the close-breach market exit, and the test now ASSERTS the path fires: ≥ 1 'Strangle' exit, next-bar-open fill, slippage paid.
  */
 import { describe, it, expect } from 'vitest';
 import { runFuturesBacktest, overlayEquityCurves, maxDrawdownOf } from '../../src/features/trading';
@@ -368,14 +369,74 @@ describe('regression guards — the defects the gapless fixture could not catch'
     }
   });
 
-  it('a Strangle close-breach exits ONE bar after the breach, not two', () => {
-    const bars = series(rallyPath());
-    const r = runWithTrades(bars, cfg());
+  /**
+   * A tape on which the Strangle CLOSE-BREACH (market-exit) path provably fires. On the plain
+   * rally fixture it never can: once the gate latches, every enforcement syncs the resting stop
+   * to the tracked level, and a level at the resting stop is always touched INTRABAR first
+   * (low ≤ close ≤ level = stop) — which is exactly why the old guard's filter was always empty.
+   * The only reachable breach is ON THE LATCH BAR, while the level is still tracked-but-unplaced,
+   * so the tape engineers a LATE latch below an old level:
+   *  - decline (arms the oscillator re-entry latch, so the climb produces an entry);
+   *  - +6/−5 alternating climb: every second close is a new high, so the Strangle level ratchets
+   *    up beneath price, while the down-legs hold the smoothed Laguerre RSI under ~95 — below the
+   *    gate threshold, so the gate CANNOT latch during the climb;
+   *  - a gentle fade to below the now-frozen level (straight declines pin LagRSI at ~0 — still
+   *    no latch), staying far above both the entry price and the initial stop;
+   *  - a monotone 0.25-step creep: LagRSI saturates to 100, crosses the 97 threshold, and the
+   *    gate latches on a bar whose close is ALREADY beyond the level → breach → market exit,
+   *    filled at the NEXT bar's open.
+   * trailMode 'none' keeps the chandelier from interposing a resting stop the fade could touch.
+   */
+  function strangleBreachSeries(): FuturesBar[] {
+    const p: Array<[number, number]> = [];
+    let px = 5000;
+    for (let i = 0; i < 30; i++) { px -= 4; p.push([px, 2]); }
+    for (let i = 0; i < 40; i++) { px += 6; p.push([px, 2]); px -= 5; p.push([px, 2]); }
+    for (let i = 0; i < 20; i++) { px -= 0.5; p.push([px, 0.25]); }
+    for (let i = 0; i < 16; i++) { px += 0.25; p.push([px, 0.25]); }
+    for (let i = 0; i < 4; i++) { px += 0.25; p.push([px, 0.25]); }
+    const t0 = Date.parse('2026-01-05T00:00:00.000Z');
+    return p.map(([c, range], i) => {
+      const o = i === 0 ? c : p[i - 1][0];
+      return { t: new Date(t0 + i * 3_600_000).toISOString(), o, h: Math.max(o, c) + range, l: Math.min(o, c) - range, c, v: 1000 };
+    });
+  }
+
+  const strangleBreachCfg = (over: Partial<BacktestConfig> = {}): BacktestConfig => cfg({
+    stops: {
+      useStrangleTrail: true, trailMode: 'none', strangleGateMode: 'adx-laguerre',
+      strangleAdxThreshold: 1, strangleLaguerreRsiThreshold: 97,
+    },
+    ...over,
+  });
+
+  it('the Strangle close-breach path FIRES and exits at the next bar\'s open — the guard that was vacuous', () => {
+    const bars = strangleBreachSeries();
+    const r = runFuturesBacktest(bars, [], strangleBreachCfg());
     const strangles = r.trades.filter((t) => t.exitName === 'Strangle');
+    // The assertion the old guard lacked: the filtered set must be NON-EMPTY, or the loop below
+    // certifies nothing. If the breach path regresses (engine or backtester side), this goes red.
+    expect(strangles.length).toBeGreaterThan(0);
     for (const t of strangles) {
-      // The fill is the open of the bar AFTER the breach bar — so the exit price is that open.
+      expect(t.exitBar).toBeGreaterThan(t.entryBar);
+      // Market order submitted at the breach close → fills at the NEXT bar's open, not the level.
       expect(t.exitPrice).toBeCloseTo(bars[t.exitBar].o, 10);
     }
+    // On this tape the breach must be the ONLY Strangle-family exit — an intrabar 'StrangleStop'
+    // here would mean a resting stop was placed at the level after all (the sync the fixture
+    // exists to avoid), i.e. the close-breach path silently degraded to a stop fill.
+    expect(r.trades.filter((t) => t.exitName === 'StrangleStop')).toHaveLength(0);
+  });
+
+  it('the Strangle breach fill pays slippage like every other market exit', () => {
+    const bars = strangleBreachSeries();
+    const clean = runFuturesBacktest(bars, [], strangleBreachCfg());
+    const slipped = runFuturesBacktest(bars, [], strangleBreachCfg({ costs: { slippageTicks: 2 } }));
+    const a = clean.trades.find((t) => t.exitName === 'Strangle');
+    const b = slipped.trades.find((t) => t.exitName === 'Strangle');
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(b!.exitPrice).toBeCloseTo(a!.exitPrice - 0.5, 10); // long sells 2 ticks worse
   });
 
   it('resting-stop fills carry a "Stop" label so the stop-efficiency fitness can count them', () => {

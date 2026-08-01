@@ -6,11 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guards for the ADR-116 data source + completeness validator: mock determinism, clean data reads complete with no interior gaps, dropRate produces gaps + missing bars, convergence test, patch list, and Kibot CSV parsing (intraday + daily).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | parseKibotCsv guards rewritten for the shape-inferred parser: all four real Kibot row formats (comma/semicolon × intraday/daily, incl. the CL compact-datetime), the column-shift regression that fabricated the LTF series, NaN-row rejection, and impossible-date rejection.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reviewer-driven attack cases: trailing-delimiter column-flip, non-time 7th-column rejection, blank-OHLC-as-$0 rejection, calendar-rollover rejection, BOM/whitespace tolerance; full-object assertions on the semicolon shapes.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Session-calendar era: the mock must emit the real Globex shape (no weekend, no 17:00 halt hour, no Good Friday), the halt/holiday must NOT read as gaps, and — the mutation guard — a genuinely missing mid-session hour still MUST. Clean-data completeness stays exactly 1 because mock and expected count now share one calendar.
  */
 import { describe, it, expect } from 'vitest';
 import {
   MockFuturesDataSource, assessContractCompleteness, contractsForRange, getFuturesRoot,
-  ingestConverged, patchList, parseKibotCsv, type ContractCompleteness,
+  ingestConverged, patchList, parseKibotCsv, type ContractCompleteness, type FuturesBar,
 } from '../../src/features/trading';
 
 const es = getFuturesRoot('ES')!;
@@ -26,10 +27,19 @@ describe('MockFuturesDataSource', () => {
     expect(a[0]).toEqual(b[0]);
     expect(a[a.length - 1]).toEqual(b[b.length - 1]);
   });
-  it('emits only weekday bars', async () => {
+  it('emits the Globex session shape: no Saturday, no 17:00 halt hour, no Good Friday', async () => {
     const bars = await new MockFuturesDataSource().fetchBars(esm24, '1Hour');
-    const weekend = bars.filter((x) => [0, 6].includes(new Date(x.t).getUTCDay()));
-    expect(weekend).toHaveLength(0);
+    expect(bars.length).toBeGreaterThan(0);
+    expect(bars.filter((x) => new Date(x.t).getUTCDay() === 6)).toHaveLength(0);
+    expect(bars.filter((x) => new Date(x.t).getUTCHours() === 17)).toHaveLength(0);
+    expect(bars.filter((x) => x.t.startsWith('2024-03-29'))).toHaveLength(0); // Good Friday closure
+  });
+
+  it('emits the Sunday 18:00 open — the evening segment is IN the session, not weekend-culled', async () => {
+    // 2024-04-07 is a plain Sunday inside the ESM24 window; its 18:00–23:00 hours must exist.
+    const bars = await new MockFuturesDataSource().fetchBars(esm24, '1Hour');
+    const sundayEvening = bars.filter((x) => x.t.startsWith('2024-04-07'));
+    expect(sundayEvening.map((x) => new Date(x.t).getUTCHours()).sort((a, b) => a - b)).toEqual([18, 19, 20, 21, 22, 23]);
   });
 });
 
@@ -52,6 +62,39 @@ describe('completeness — incomplete data', () => {
     expect(v.missing).toBeGreaterThan(0);
     expect(v.gaps.length).toBeGreaterThan(0);
     expect(v.complete).toBe(false);
+  });
+});
+
+describe('session-aware gap detection (the mutation guard for the calendar wiring)', () => {
+  /** Hand-built hourly bars over [fromIso, toIso) for every SESSION hour, no library help. */
+  function sessionBars(hours: string[]): FuturesBar[] {
+    return hours.map((t) => ({ t, o: 5000, h: 5001, l: 4999, c: 5000, v: 100 }));
+  }
+  // Tuesday 2024-04-09, hand-enumerated Globex hours: 00:00–16:00 day session, 18:00–23:00 evening.
+  const tuesdayHours = [
+    ...Array.from({ length: 17 }, (_, h) => `2024-04-09T${String(h).padStart(2, '0')}:00:00.000Z`),
+    ...Array.from({ length: 6 }, (_, i) => `2024-04-09T${String(18 + i).padStart(2, '0')}:00:00.000Z`),
+  ];
+  const window = { windowStart: new Date('2024-04-09T00:00:00Z'), windowEnd: new Date('2024-04-10T00:00:00Z') };
+
+  it('a full session day straddling the 17:00 halt has NO gap and completeness exactly 1', () => {
+    const v = assessContractCompleteness(esm24, '1Hour', es, sessionBars(tuesdayHours), window);
+    expect(v.expected).toBe(23);
+    expect(v.received).toBe(23);
+    expect(v.completeness).toBe(1);
+    expect(v.gaps).toHaveLength(0); // the halt hour is NOT missing data
+  });
+
+  it('a genuinely missing mid-session hour still reads as a gap — the guard that can go red', () => {
+    // Drop 10:00. If someone widens the session predicate (or gap counting regresses to "any
+    // adjacent buckets"), this stops detecting and goes red.
+    const holed = tuesdayHours.filter((t) => !t.includes('T10:'));
+    const v = assessContractCompleteness(esm24, '1Hour', es, sessionBars(holed), window);
+    expect(v.missing).toBe(1);
+    expect(v.gaps).toHaveLength(1);
+    expect(v.gaps[0].missingBars).toBe(1);
+    expect(v.gaps[0].fromIso).toBe('2024-04-09T09:00:00.000Z');
+    expect(v.gaps[0].toIso).toBe('2024-04-09T11:00:00.000Z');
   });
 });
 
