@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | (1) createPackagedThemeCssFallback — serve an active package's bundled ui/<id>.css at the legacy /cockpit/css/themes/<id>.css path (carve-out deleted core's copy; LM iframes lost every color variable). (2) POST /load stamps the caller as ownerSub — installing a person-scoped package left owner_sub NULL, so RLS hid the app row from every non-operator session and the profile fell back to a stale disk config.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 §5 data plane: uninstall-impact reports the live RAG collections the manifest's ragCollections globs match; DELETE /:name accepts ?dropData=true (OPERATOR-ONLY — destructive) which deletes them via the injected teardown port and returns droppedRagCollections.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11: uninstall-impact reports toolsProvided + toolDependents (active apps whose dependencies.tools name a tool this app provides) and blocked reflects them; the DELETE 409 body names the stranded tools.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7: wire the app-store remote rail (GET /catalog + operator-only POST /install-remote from app-store-remote.ts) BEFORE the /:name params so the literal segments aren't captured as app names.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -27,6 +28,7 @@ import {
 } from '@/features/swarm-apps';
 import { getCaller, isOperator } from '@/shared/middleware/authz';
 import { GUEST_TIERS, isGuestTier } from '@/shared/middleware/guest-capability-matrix';
+import { registerAppStoreRemoteRoutes } from './app-store-remote';
 
 const logger = createChildLogger({ module: 'swarm-app-routes' });
 
@@ -130,6 +132,11 @@ export function createSwarmAppRoutes(service: SwarmAppService): Router {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // ADR-085 D7: the store catalog (GET /catalog) + one-call install (POST /install-remote,
+  // operator-only). Registered before /:name so the literal segments aren't captured by the
+  // name param — same ordering rule as /pending above.
+  registerAppStoreRemoteRoutes(router, { loadApp: (p, meta) => service.loadApp(p, meta) });
 
   router.get('/:name', async (req: Request, res: Response) => {
     const name = String(req.params.name);

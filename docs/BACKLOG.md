@@ -404,9 +404,25 @@ reading before trusting any remaining backlog entry at face value:
   onto it plus `oshal-engineering` (kernel-RESIDENT — one of the signed-off never-carve six).
   It also now points at the Playwright-managed server instead of the live docker stack, so it
   actually **runs**: it had been silently skipping in CI, and wasn't even in the green suite. Added.
-- **D7 (OPTIONAL — the only Wave 0 item left).** `install-remote` API endpoint + cockpit Discover
-  surface. NOT a carve blocker: `oshal-app install` already pulls a package from the store on the
-  CLI. This is just the in-cockpit "browse and one-click install" affordance. Genuinely deferrable.
+- **~~D7 (OPTIONAL — the only Wave 0 item left)~~ ✅ DONE 2026-08-01.** `install-remote` API endpoint + cockpit Discover
+  surface. Was NOT a carve blocker (`oshal-app install` already pulled a package on the CLI) —
+  built as the in-cockpit "browse and one-click install" affordance it was specified to be.
+  **Built:** `GET /api/swarm/apps/catalog` serves the store repo's machine-derived
+  `marketplace.json` (OSHAL_STORE_TOKEN honored, same env-only posture as the update-check
+  daemon; an absent token against a private store degrades HONESTLY to `available:false` with a
+  reason — never an error loop) and **operator-only** `POST /api/swarm/apps/install-remote`
+  installs by name with the repo/ref/path pinned to the CATALOG entry — never caller-supplied,
+  so the endpoint can only install what the store publishes, and only entries the store marks
+  `status: ready`. Fetch/validate/stage rides the existing `scripts/oshal-app.js install` rail
+  (sparse clone, package validation, npm-style dep resolution, provenance stamp) into
+  `deployed-apps/`, registration rides the same `SwarmAppService.loadApp` as every other
+  install path, owner stamped from the session (the LM RLS lesson). The `/applications/` page
+  grew the **Discover** section: store rows (name/suite/version/description straight from the
+  catalog API, never hand-typed) minus the installed set, suite-shelved like the installed
+  list, one-click Install with the operator-chrome convention. Guards:
+  `tests/unit/app-store-remote.spec.ts` (catalog parse fail-soft-per-row/fail-closed-per-doc,
+  honest private-store degrade, catalog-pinned install fail-closed shapes, 403-before-installer
+  for non-operators).
 - **~~D9 — package shell-JS injection~~ ✅ DONE 2026-07-13 — but NOT as specified. We did not build
   shell-JS injection, and should not.** Operator decision 2026-07-13: **a package never runs
   JavaScript in the cockpit's authenticated origin.** Such a script could read any DOM content and
@@ -468,8 +484,13 @@ reading before trusting any remaining backlog entry at face value:
   count. `dependencies.connectors` stays a needs-declaration plus the UI allow-list. Revisit only if
   a `connectorsDir:` manifest field lands — the tool machinery then applies verbatim, since connector
   spec tools already live in the same `tools` table.
-  **Still open (small):** `oshal-app uninstall`'s CLI impact scan does not yet mirror the server's
-  tool semantics (done-when 6), and the ADR-085 addendum recording the above is unwritten.
+  **~~Still open (small)~~ ✅ CLOSED 2026-08-01:** `oshal-app uninstall`'s impact scan now mirrors
+  the server's tool semantics (done-when 6): provided = the manifest's `tools[].name` ONLY (never
+  `ui.static[].toolName` — the server's `providedToolNames` line), other installed packages'
+  `dependencies.tools` intersections are tool dependents, and they BLOCK absent `--force` — never
+  retain (guard: `tests/unit/oshal-app-cli-impact.spec.ts`, real CLI runs against a temp deploy
+  dir). The ADR-085 addendum recording the above corrections is written — see "Addendum — D11
+  tool ownership" in [the ADR](adr/085-remote-app-packages-and-registries.md).
 - **~~D12 — `toolsDir` is a declared-but-dead manifest field~~ ✅ DONE 2026-07-13 (warn now, remove
   next release — operator decision).** Nothing in core consumes `toolsDir`, so a package's bundled
   tool JS is NOT callable. The loader now WARNs on it, and the field leaves the store contract in the
@@ -4784,6 +4805,16 @@ mobile-ux fix. Context: `docs/evidence/gap-list-build-2026-07-15.md` and the `@g
 **Verified 2026-07-19:** OPEN — `resolveSkillProfileByApp` is still email-only; no `pattern` field on BotNodeClient.
 
 **Verified 2026-07-19 (completion-day):** RESOLVED by `c737c71c` — supersedes the OPEN stamp above: `BotNodeRequest` gains optional `app`/`capability`/`pattern` (backward-compatible); `executeBotOrInline` resolves the calling app's profile ONCE controller-side (bot holds no registry, ADR-036) — the inline path weaves the block into the text before `processMessage`, the remote path sets `request.pattern` so it rides `envelope.payload` to the bot node; `bot-node-execution-handler` appends `payload.pattern` in BOTH the verbatim (direct) and LAYERED prompt branches (the layered branch never reads `payload.text`, which is exactly why pre-composing into text could never reach it). Guard: `tests/unit/skill-profile-carrier.spec.ts` (6 cases, fails against pre-change code). The adjacent `loadApp` activate/deactivate framework gap was deliberately NOT touched — still open.
+
+**Verified 2026-08-01:** the adjacent `loadApp` activate/deactivate framework gap is **CLOSED** —
+`loadApp` now runs the entry's central fix verbatim: the resulting record's status drives
+`activate(record)` / `deactivate(record)`, so a manifest edit flipping `active → inactive` via
+`POST /api/swarm/apps/load` actually tears down bots/workflow/tools/schedules/guest-tier/
+skill-profiles instead of leaving them live behind an `inactive` row. `deactivate()` is
+idempotent, so the boot auto-load of an already-inactive app stays a safe no-op (the repository's
+status precedence — operator-applied inactive survives routine reloads — is unchanged). Guard:
+`tests/unit/swarm-app-status-flip.spec.ts` (asserts real teardown CALLS — bot-registry retraction,
+workflow deregistration, agent status writes — not substrings; red against pre-fix code).
 
 ### ADR-100 person-model: the deterministic in-Jarvis recall hook ✅ SHIPPED 2026-07-18 (`6342a53e`)
 

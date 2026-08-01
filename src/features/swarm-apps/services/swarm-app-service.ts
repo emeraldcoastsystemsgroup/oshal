@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | De-brand (visible leak): dropped the orphaned legacy-brand key from FRAMEWORK_ITEMS — RibbonNav had no catalog entry for it so it rendered nothing; the retired RCA-demo brand must not appear in the framework ribbon.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | toSummary now surfaces an `icon` (first static ribbon-tile codicon, else assistant icon, else null) via firstAppIcon() so the /applications console can render a real per-app icon instead of a first-initial placeholder.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Forward the manifest-owned hideAssistant policy so immersive app surfaces can suppress redundant global assistant chrome.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | Status-flip gap (BACKLOG, surfaced by the skill-profiles adversarial review): loadApp on a record whose resulting status is 'inactive' now calls deactivate() — a manifest edit flipping active→inactive used to call NEITHER activate nor deactivate, so the app read status='inactive' while its bots/workflow/tools/schedules/guest-tier/skill-profiles stayed live until a real toggle-off. deactivate() is idempotent, so the boot auto-load of an already-inactive app stays a safe no-op.
  */
 
 import type { Pool } from 'pg';
@@ -303,7 +304,10 @@ export class SwarmAppService {
 
   /**
    * @description Reads a manifest from disk, upserts the DB record, and
-   * if status=active, activates the bots and registers the UI surfaces.
+   * reconciles live registrations to the RESULTING status: active records
+   * activate (bots, UI surfaces, workflow, tools, schedules), inactive ones
+   * deactivate — so a manifest edit that flips the status actually takes
+   * effect on reload, not only on an explicit toggle.
    * @param manifestPath - absolute or cwd-relative path to the YAML file
    * @returns the resulting application record
    */
@@ -314,6 +318,14 @@ export class SwarmAppService {
     const record = await this.repo.upsert(manifest, manifestPath, toolNames, scopeMeta);
     if (record.status === 'active') {
       await this.activate(record);
+    } else {
+      // Status-flip gap (BACKLOG / ADR-090-addendum adversarial review): a manifest edit that
+      // flips an app to `status: inactive` re-runs loadApp, and this branch used to do NOTHING —
+      // the row read 'inactive' while the app's bots/workflow/tools/schedules/guest-tier/
+      // skill-profiles all stayed live until a real toggle-off. Deactivating on the resulting
+      // record closes it for every activate-scoped resource at once; deactivate() is idempotent,
+      // so the boot auto-load of an already-inactive app remains a safe no-op.
+      await this.deactivate(record);
     }
     await this.refreshOwnershipCache();
     logger.info({ name: record.name, status: record.status }, 'App loaded');

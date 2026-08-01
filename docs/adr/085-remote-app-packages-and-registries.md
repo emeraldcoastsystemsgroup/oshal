@@ -282,3 +282,84 @@ bootable swarm exists at every step.
   first package `little-monsters/`, declarative parts).
 - `little-monsters` as the first standalone package repo (the P2 proof).
 - The remote `marketplace.json` schema + an example apps repo.
+
+---
+
+## Addendum — D11 tool ownership: what building it corrected (done 2026-07-13, recorded 2026-08-01)
+
+Wave-0 gap D11 ("tools/connectors ref-count graph") shipped, and it was hiding a **live
+production bug**. This addendum records the corrections to this ADR's own §4/§5 design that the
+build forced, so nobody re-derives the discarded plan from the ADR text above.
+
+### The live bug the build surfaced
+
+Tool names are **GLOBAL**: `runtime_tool_executors` is keyed by `tool_name` and the runtime
+upsert is `ON CONFLICT (tool_name) DO UPDATE` — so two manifests declaring one name means
+whichever loads LAST silently owns the executor, and load order is `readdirSync`
+(alphabetical, i.e. decided by filename). `purchasing.yaml` and `travel.yaml` both declared
+`explain-pick` with different endpoints; travel sorted last; the **shopping** concierge's
+`explain-pick` was live-routing to `POST /api/travel/chat` in production — and a unit test
+asserted the collision as correct. Travel's tool was renamed `explain-travel-pick` and the
+live rows repaired.
+
+### Correction 1 — the ownership anchors are not anchors
+
+§4's registry design implied stored ownership. In reality the two stored "anchors"
+**disagree under exactly the collision they would be needed for**: `tools.registered_by` is
+written on INSERT only (first-writer-wins) while the `swarm-app:<name>` tag is in the update
+field map (last-writer-wins) — and neither is multi-valued. `swarm_applications.tool_names`
+is additionally polluted by `ui.static[].toolName` (ribbon **surface ids**, not registry
+tools). **Ownership is therefore derived from the ACTIVE MANIFESTS at query time**
+(`tool-ownership.ts` — `tools:` block only) **and from nothing else.**
+
+### Correction 2 — a dependent BLOCKS an uninstall; it never RETAINS the tool
+
+The original done-when implied retention-by-dependent (ref-counts keeping a shared tool
+alive). That would let ANY installed package — third-party included — pin another app's
+executor alive past its owner's removal simply by naming it in `dependencies.tools`, leaving
+a runnable `cli` executor with **no owning app**. Instead: a tool dependent **blocks** the
+uninstall exactly like an app-level dependent (`uninstallImpact.toolDependents`, the DELETE
+409 naming the stranded tools); under `--force` the tool goes with its owner. A dangling
+dependency is the dependent's problem; a dangling executor would be everyone's.
+
+### What the invariant actually is: uniqueness, not provider ref-counting
+
+`loadApp` fails **closed** on a tool name another ACTIVE app provides, so teardown can never
+strand a survivor and no package can co-opt a core tool's name; provider ref-counting (§4/§7
+as written for tools) would have shipped dead paths. Teardown still refuses to remove a tool
+another active app provides — defence in depth for a pre-guard database.
+`dependencies.tools` fails closed but **resiliently** (the registry read is best-effort — a
+90s bootstrap timeout must not fail-close every installed app at boot).
+
+### The second write door, closed
+
+`POST /api/tools/runtime/register` and `DELETE /api/tools/runtime/:toolName` sit behind
+`serviceSecretOr(requiresAuth)` — reachable by any signed-in user and every bot node — and
+went straight past manifest ownership (repoint an app's tool at an arbitrary endpoint, or
+remove it outright). Both now 409, naming the owning app (`manifestToolOwner()`). Without
+this the rest of D11 would have been theatre.
+
+### Connector ref-counting — out of scope, by observation
+
+Apps **cannot provide** connectors today (fixed core spec dirs; no manifest field for a
+package spec dir), so there is no second owner to count. `dependencies.connectors` stays a
+needs-declaration plus the UI allow-list. Revisit only if a `connectorsDir:` manifest field
+lands — the tool machinery then applies verbatim, since connector spec tools already live in
+the same `tools` table.
+
+### CLI parity (D11 done-when 6, closed 2026-08-01)
+
+`oshal-app uninstall`'s impact scan mirrors the server's semantics over its offline view (the
+deploy dir): provided = `tools[].name` only (never `ui.static[].toolName`), other packages'
+`dependencies.tools` intersections are **tool dependents**, and they block absent `--force` —
+the same block-never-retain rule. The CLI was aligned to the server, not the reverse.
+
+### D7 closed (2026-08-01)
+
+The last Wave-0 item — §3's `POST /api/swarm/apps/install-remote` + the cockpit Discover
+surface — is built: the catalog is the store repo's machine-derived `marketplace.json`
+(served via `GET /api/swarm/apps/catalog`, `OSHAL_STORE_TOKEN`-aware with an honest degrade),
+and install-remote is **operator-only** and **catalog-pinned** — the repo/ref/path always
+come from the store's own entry, never the caller, so the endpoint can only install what the
+store publishes. Fetch/validate/stage runs through the same `scripts/oshal-app.js install`
+rail as CLI installs; registration through the same `SwarmAppService.loadApp`.
