@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prometheus Alertmanager webhook -> incident ticket intake for swarm self-healing
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): intake now runs Stage A canonicalization + Stage C consolidation (@/features/alert-triage) — a refire on an open incident UPDATES that ticket (updateCount/lastSeen/priority-escalation) instead of the old silent skipped++; unapproved alertnames are counted as noise per-alertname instead of vanishing; identity-less alerts drop counted; and GET /intake-stats (same fail-closed bearer guard) serves the FR-A3 decision counters. severityToPriority/targetOf moved into the feature so create + escalate rank severities identically
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): a firing alert that did not consolidate now BUNDLES onto an open related incident (same target, or dependency-connected within ALERT_CORRELATION_DEPTH, inside ALERT_CORRELATION_WINDOW) instead of opening a sibling ticket — the api-down drill is ONE ticket with members + rootCandidate, not three tickets and three RCA bills. `bundled` joins the response counts and the FR-A3 stats; outcome tallying extracted so the handler stays within the function cap
  */
 
 /**
@@ -16,7 +17,10 @@
  *     -> Alertmanager fires on a rule (container down, restart loop, unhealthy)
  *       -> POST /api/alerts/alertmanager (this route)
  *         -> approved? consolidate (ADR-119 P1): refire of an open incident updates
- *            that ticket; otherwise create one (externalProvider: 'prometheus')
+ *            that ticket; else bundle (ADR-119 P2): a RELATED alert — same target or
+ *            dependency-connected within the correlation window — attaches to the
+ *            open incident as a member; otherwise create one (externalProvider:
+ *            'prometheus')
  *           -> incident-rca pipeline investigates + proposes a fix
  *             -> ticket lands at the approve-or-close gate (human-in-the-loop)
  *
@@ -42,11 +46,61 @@ import {
   AlertIntakeStats,
   canonicalizeAlert,
   type CanonicalAlert,
+  type ConsolidationOutcome,
   type RawAlertmanagerAlert,
 } from '@/features/alert-triage';
 import { TicketTypeSchema } from '@/entities/ticket';
 
 const logger = createChildLogger({ module: 'alertmanager-routes' });
+
+/** Per-request intake tally backing the webhook response counts. */
+interface IntakeTally {
+  created: string[];
+  consolidated: string[];
+  bundled: string[];
+  noise: number;
+  dropped: number;
+  resolved: number;
+  backlogged: number;
+}
+
+/**
+ * @description Records one consolidation outcome on the response tally and the FR-A3
+ * counters (created / consolidated / bundled), keeping the webhook handler under the
+ * function cap.
+ * @param tally - The per-request tally (mutated).
+ * @param stats - The FR-A3 intake counters.
+ * @param outcome - What the consolidation service did with the alert.
+ * @param intakeStatus - The alert's resolved intake policy.
+ * @param canonical - The canonical alert (for the log line).
+ */
+function tallyOutcome(
+  tally: IntakeTally,
+  stats: AlertIntakeStats,
+  outcome: ConsolidationOutcome,
+  intakeStatus: 'approved' | 'backlog',
+  canonical: CanonicalAlert,
+): void {
+  if (outcome.decision === 'created') {
+    stats.record('created');
+    tally.created.push(outcome.ticketId);
+    if (intakeStatus === 'backlog') tally.backlogged += 1;
+    logger.info(
+      { ticketId: outcome.ticketId, alertname: canonical.alertname, target: canonical.target, intake: intakeStatus },
+      'Opened incident ticket from Prometheus alert',
+    );
+  } else if (outcome.decision === 'bundled') {
+    stats.record('bundled');
+    tally.bundled.push(outcome.ticketId);
+    logger.info(
+      { ticketId: outcome.ticketId, alertname: canonical.alertname, target: canonical.target },
+      'Alert bundled onto open related incident (ADR-119 Stage D)',
+    );
+  } else {
+    stats.record('consolidated');
+    tally.consolidated.push(outcome.ticketId);
+  }
+}
 
 /** Alertmanager v4 webhook envelope. */
 interface AlertmanagerPayload {
@@ -174,8 +228,10 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
   /**
    * POST /api/alerts/alertmanager
    * Alertmanager webhook receiver. Accepts the v4 payload; each approved firing
-   * alert consolidates onto the open ticket for its incident key or opens one
-   * (ADR-119 P1 — ten identical alerts are ONE ticket carrying updateCount=9).
+   * alert consolidates onto the open ticket for its incident key (ADR-119 P1 —
+   * ten identical alerts are ONE ticket carrying updateCount=9), bundles onto an
+   * open RELATED incident (ADR-119 P2 — the api-down drill is ONE ticket with
+   * members + rootCandidate), or opens a new ticket.
    */
   // Defense-in-depth body integrity on top of the bearer `guard`. No-op until
   // ALERT_WEBHOOK_HMAC_SECRET is set, so default behavior is unchanged. NOTE before
@@ -194,16 +250,11 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
     const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
 
     if (alerts.length === 0) {
-      res.json({ success: true, created: 0, consolidated: 0, message: 'no alerts in payload' });
+      res.json({ success: true, created: 0, consolidated: 0, bundled: 0, message: 'no alerts in payload' });
       return;
     }
 
-    const created: string[] = [];
-    const consolidated: string[] = [];
-    let noise = 0;
-    let dropped = 0;
-    let resolved = 0;
-    let backlogged = 0;
+    const tally: IntakeTally = { created: [], consolidated: [], bundled: [], noise: 0, dropped: 0, resolved: 0, backlogged: 0 };
 
     for (const alert of alerts) {
       // Stage A: canonicalize + identity gate (FR-A1/A2). Identity-less alerts are
@@ -211,7 +262,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
       const canonical = canonicalizeAlert(alert);
       if (!canonical) {
         stats.record('dropped');
-        dropped += 1;
+        tally.dropped += 1;
         continue;
       }
 
@@ -219,7 +270,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
       // Resolved-handling (member resolution, ALERT_AUTO_RESOLVE) is P3 (FR-E4).
       if (canonical.status === 'resolved') {
         stats.record('resolved');
-        resolved += 1;
+        tally.resolved += 1;
         logger.info({ alertname: canonical.alertname, fingerprint: canonical.fingerprint }, 'Alert resolved (no ticket action)');
         continue;
       }
@@ -229,7 +280,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
       // evidence. This replaces the pre-P1 uncounted vanish (FR-B2-lite/FR-A3).
       if (approvedNames && !approvedNames.has(canonical.alertname)) {
         stats.record('noise', canonical.alertname);
-        noise += 1;
+        tally.noise += 1;
         logger.info({ alertname: canonical.alertname }, 'Alert not in ALERT_APPROVED_NAMES — counted as noise, no ticket');
         continue;
       }
@@ -237,8 +288,10 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
       // approved => auto-flows into incident-rca; backlog => waits for operator triage.
       const intakeStatus = resolveIntakeStatus(canonical.alertname, canonical.labels);
 
-      // Stage C: consolidate (FR-C2/C3/C4/C5/C6). Refire of an open incident updates
-      // that ticket; otherwise a new ticket opens (recurrence-linked within the TTL).
+      // Stage C + D: consolidate or bundle (FR-C2..C6, FR-D1..D7). Refire of an open
+      // incident updates that ticket; a RELATED alert attaches to the open incident
+      // inside the correlation window; otherwise a new ticket opens (recurrence-linked
+      // within the TTL).
       try {
         const outcome = await consolidation.intake(canonical, {
           title: `[${canonical.severity}] ${canonical.alertname || 'UnnamedAlert'} on ${canonical.target || 'unknown-target'}`,
@@ -247,18 +300,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
           intakeStatus,
           externalUrl: alert.generatorURL ?? null,
         });
-        if (outcome.decision === 'created') {
-          stats.record('created');
-          created.push(outcome.ticketId);
-          if (intakeStatus === 'backlog') backlogged += 1;
-          logger.info(
-            { ticketId: outcome.ticketId, alertname: canonical.alertname, target: canonical.target, intake: intakeStatus },
-            'Opened incident ticket from Prometheus alert',
-          );
-        } else {
-          stats.record('consolidated');
-          consolidated.push(outcome.ticketId);
-        }
+        tallyOutcome(tally, stats, outcome, intakeStatus, canonical);
       } catch (err) {
         logger.error({ err, alertname: canonical.alertname }, 'Failed to intake alert into the ticket queue');
       }
@@ -266,15 +308,17 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
 
     res.json({
       success: true,
-      created: created.length,
-      consolidated: consolidated.length,
-      noise,
-      dropped,
-      resolved,
-      backlogged,
-      autoFlowed: created.length - backlogged,
-      ticketIds: created,
-      consolidatedTicketIds: consolidated,
+      created: tally.created.length,
+      consolidated: tally.consolidated.length,
+      bundled: tally.bundled.length,
+      noise: tally.noise,
+      dropped: tally.dropped,
+      resolved: tally.resolved,
+      backlogged: tally.backlogged,
+      autoFlowed: tally.created.length - tally.backlogged,
+      ticketIds: tally.created,
+      consolidatedTicketIds: tally.consolidated,
+      bundledTicketIds: tally.bundled,
     });
   });
 

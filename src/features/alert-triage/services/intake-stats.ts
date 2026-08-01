@@ -4,14 +4,15 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119) FR-A3: every intake decision is counted — created/consolidated/noise/dropped/resolved, with a per-alertname noise breakdown so the claim allowlist can be tuned from evidence. Replaces the previous uncounted vanish of unapproved alerts (spec §1 problem 3: "noise handling is a binary allowlist … there is no record of what was dropped")
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): `bundled` joins the decision set — the counter slot P1 reserved, now that the bundling stage actually increments it (spec §9.9 — no counter ships before something moves it)
  */
 
 /**
- * @description One intake decision class (FR-A3). `bundled` joins the set in P2 when the
- * bundling stage can actually increment it (spec §9.9 — no counter ships before something
- * moves it).
+ * @description One intake decision class (FR-A3). `bundled` = an arrival recorded as a NEW
+ * member of an open related incident (Stage D attach); a refire of an already-bundled
+ * member counts as `consolidated`.
  */
-export type AlertIntakeDecision = 'created' | 'consolidated' | 'noise' | 'dropped' | 'resolved';
+export type AlertIntakeDecision = 'created' | 'consolidated' | 'bundled' | 'noise' | 'dropped' | 'resolved';
 
 /** @description Point-in-time view of the intake counters, served by GET /intake-stats. */
 export interface AlertIntakeStatsSnapshot {
@@ -34,6 +35,7 @@ export class AlertIntakeStats {
   private readonly counts: Record<AlertIntakeDecision, number> = {
     created: 0,
     consolidated: 0,
+    bundled: 0,
     noise: 0,
     dropped: 0,
     resolved: 0,

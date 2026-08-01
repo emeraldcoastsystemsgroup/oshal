@@ -3,7 +3,7 @@
 Tracking items deferred from the OSHAL build session. Each item has the
 deferral reason and the "done" condition so future work isn't ambiguous.
 
-## Alert triage & consolidation — intelligent-processing intake (P1 built 2026-07-31; P2–P4 pending)
+## Alert triage & consolidation — intelligent-processing intake (P1+P2 built 2026-07-31; P3–P4 pending)
 
 **Specified 2026-07-28** (operator directive: non-noisy alerts flow to the queue, duplicates get
 bundled and consolidated — the analyst + self-healing portion). The functional specification is
@@ -31,6 +31,20 @@ change:
    `SwarmContainerDown` on the api + one dependent-bot alert inside the correlation window) opens
    ONE ticket with members + attach reasons recorded at attach time and the api as
    `rootCandidate`, and exactly one RCA dispatch occurs for the bundle.
+   **BUILT 2026-07-31**: Stage D in `src/features/alert-triage/` (`alert-bundling.ts` +
+   `dependency-map.ts` + the attach path in `alert-consolidation.ts`) — arrivals correlate
+   against OPEN incidents inside `ALERT_CORRELATION_WINDOW`, never only the arriving batch
+   (FR-D1); same-target (FR-D2) + static compose-topology dependency bundling at
+   `ALERT_CORRELATION_DEPTH` hops with the ADR-045 graph as an optional `DependencyResolver`
+   seam (FR-D3/D6, `ALERT_DEPENDENCY_MAP` override file); the ordered root-candidate policy
+   (root filter → deepest dependency → earliest firstSeen) recorded as `rootCandidate` with
+   its winning reason (FR-D4 — per-rule root-filter declarations arrive with the P3 claim
+   registry); attach-time members carry `attachReason` under the `ALERT_MAX_MEMBERS` cap with
+   a visible overflow counter (FR-D5); attach NEVER promotes or re-dispatches — an auto-flow
+   member landing on a backlog bundle sets `needs-attention` instead (FR-D7). Named guards in
+   `tests/unit/alert-triage-bundling.spec.ts` (api-down-drill-one-bundle, rca-dispatched-once,
+   bundling-window-boundary, dependency-depth-limit, attach-never-promotes,
+   root-candidate-policy, member-cap, dependency-map-override).
 3. **P3 Dispatch gates** (claim registry hardening, RCA budget, flap damping, resolved handling).
    **Done when:** an over-budget auto-flow parks visibly as `analysis-skipped:budget` and a
    promote overrides; 6 refires in 30m defers dispatch with a `flapping` flag; with
