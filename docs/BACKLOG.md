@@ -1276,6 +1276,19 @@ claimed number) + `TWILIO_TO_NUMBER` (the verified cell) → one live SMS proof 
 SID+token into the `/utilities` Twilio card for the BYO bot path → deploy → the three-leg cockpit
 smoke above.
 
+**Update 2026-08-01 — VOICE LEG LIVE-PROVEN; SMS paused by directive.** The trial number
+**+13082704875** was provisioned via the Twilio API and written to `.env` (TO = the verified
+operator cell); compose now forwards `TWILIO_*`/`TELEGRAM_*` into the api (PR #75, passthrough
+guard extended) and the api was recreated — env verified in-container. A live voice call was
+DELIVERED and human-confirmed ("it rang", caller ID matched the provisioned number). SMS was
+attempted and carrier-rejected with **error 30034** (unregistered US A2P 10DLC) — the fix is a
+paid-account upgrade + campaign registration, and per operator directive 2026-08-01 that is
+**PAUSED**: no further spend on the demo Twilio account; A2P registration happens on the ECSG
+account after the SaaS migration (see "HUMAN: migrate platform SaaS accounts" below). Telegram:
+webhook registered on the public URL, bot @The_oshal_bot answers; the operator /start link tap
+is still pending. Remaining for the done-when: the three-leg cockpit browser smoke (voice will
+pass; SMS waits on the migration), the BYO `/utilities` card paste, and inbound SMS.
+
 ### ~~Absorb, don't fight — import OpenClaw / markdown skills~~ ✅ BUILT 2026-07-11 (high-leverage, on-thesis)
 - The operator's instinct: "take md files into our bots and absorb the thing through integration." Correct and
   cheap. OSHAL already ingests markdown into RAG (ChromaDB corpus); an OpenClaw **skill** is markdown +
@@ -5674,3 +5687,28 @@ These are the deliberately-deferred remainders:
   answer"). A live probe needs an authenticated call and costs tokens, so it must be explicit.
   *Done when:* `oshal-verify.sh --live` (PAT via env) sends one real chat message, asserts a
   non-stub answer, and strict mode documents when to use it (customer handover, post-deploy).
+
+## HUMAN: migrate platform SaaS accounts to real ECSG accounts (operator-led; record it) ⬜ PAUSED BY DESIGN
+
+- **Context (operator, 2026-08-01):** the platform's SaaS accounts were opened personally while
+  the business was still being established. The business is now established. Everything current
+  stays AS-IS for beta/demo — deliberately frozen: **no upgrades, no paid tiers, no
+  double-dipping** (e.g. Twilio A2P registration is deliberately NOT being done on the demo
+  trial account — it happens once, on the ECSG account).
+- **The move, when unpaused:** re-create each account under ECSG ownership
+  (`maintainer@emeraldcoastsystemsgroup.com`, [partner-app-registration Rule 0](partner-app-registration.md)),
+  re-mint keys, re-link the swarm (`.env` + connector re-consents), and **record the re-linking
+  end-to-end for YouTube** — the "stand up a swarm's integrations from scratch" video is part of
+  the deliverable, not an afterthought.
+- **Known inventory (verify + complete at execution):** Twilio (trial), Plaid (sandbox), GCP
+  project `tactical-gate-256211` (Vertex/Veo SA + Google APIs — at execution this supersedes the
+  earlier deliberate "GCP stays on the personal gmail" exception), Telegram bot (@The_oshal_bot),
+  Google OAuth clients (login + connector), Cloudflare (zones / tunnel / Pages), DigitalOcean,
+  model-provider keys (OpenRouter, Groq, Mistral, Cerebras), and the connector apps
+  (Dropbox / Spotify / SmartThings / Meta / LinkedIn / X — most already registered under the
+  business email; verify each). **Out of scope:** personal brokerage/trading accounts
+  (Schwab, Alpaca) — those are the operator's own by nature.
+- **Done when:** every platform SaaS credential in `.env` / config-seed traces to an ECSG-owned
+  account; the old personal accounts are drained and closed or explicitly designated demo-only;
+  the re-linking session is recorded and published; and Twilio A2P registration is completed on
+  the ECSG account (which unblocks the SMS leg above).
