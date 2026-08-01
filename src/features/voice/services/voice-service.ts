@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | synthesizeSpeech now accepts an optional providerId override for preview-any-provider UX on the voice settings page
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Non-auth provider errors (bad audio, rate-limit, etc.) now return `fallback: 'failed'` in the envelope instead of bubbling to a 500 — the client always gets a structured payload to render
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added safe STT provider override and timestamp-segment request options for deterministic diarization alignment.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 voice picker rails: listTtsProviders() reports every registered provider with its LIVE getStatus (configured true/false + reason — the UI renders unconfigured ones as honest disabled states) and voices for the configured ones; getAvailableVoices() accepts an optional explicit providerId so the picker can enumerate a non-default provider's voices.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -241,12 +242,12 @@ export class VoiceService {
    *
    * @returns Envelope matching GetVoicesResponseSchema (`voices` + `source`).
    */
-  async getAvailableVoices(): Promise<{
+  async getAvailableVoices(providerId?: string): Promise<{
     voices: Array<{ id: string; name: string; gender: string; language: string }>;
     source: string;
     providerId: string;
   }> {
-    const provider = this.ttsRegistry.resolveForApp();
+    const provider = (providerId && this.ttsRegistry.get(providerId)) || this.ttsRegistry.resolveForApp();
     const voices = await this.safeListVoices(provider);
     return {
       voices: voices.map((v) => ({
@@ -258,6 +259,58 @@ export class VoiceService {
       source: provider.id,
       providerId: provider.id,
     };
+  }
+
+  /**
+   * @description Every registered TTS provider with its LIVE configuration status, for the
+   * JVV-012 picker: configured providers include their voices (bounded); unconfigured ones
+   * carry the honest reason so the UI can render a disabled state — never a selectable lie.
+   * Provider secrets never leave this layer; only ids/labels/status travel to the browser.
+   *
+   * @returns Providers (registration order) + the swarm-default provider id.
+   */
+  async listTtsProviders(): Promise<{
+    defaultProviderId: string;
+    providers: Array<{
+      id: string; displayName: string; kind: string;
+      configured: boolean; reason?: string;
+      voices: Array<{ id: string; name: string; gender: string; language: string }>;
+    }>;
+  }> {
+    const defaultProviderId = this.ttsRegistry.resolveForApp().id;
+    const providers = [] as Array<{
+      id: string; displayName: string; kind: string; configured: boolean; reason?: string;
+      voices: Array<{ id: string; name: string; gender: string; language: string }>;
+    }>;
+    for (const provider of this.ttsRegistry.list()) {
+      const status = await this.safeGetStatus(provider);
+      const voices = status.configured ? (await this.safeListVoices(provider)).slice(0, 400) : [];
+      providers.push({
+        id: provider.id,
+        displayName: provider.displayName,
+        kind: provider.kind,
+        configured: status.configured,
+        reason: status.reason,
+        voices: voices.map((v) => ({ id: v.id, name: v.displayName, gender: v.gender || 'UNSPECIFIED', language: v.languageCode })),
+      });
+    }
+    return { defaultProviderId, providers };
+  }
+
+  /**
+   * @description getStatus that can never crash the picker — a provider whose status probe
+   * throws is reported unconfigured with the error as the honest reason.
+   * @param provider TTS provider to probe.
+   * @returns The provider's status (or an unconfigured stand-in).
+   */
+  private async safeGetStatus(provider: TTSProvider): Promise<{ configured: boolean; reason?: string }> {
+    try {
+      const status = await provider.getStatus();
+      return { configured: status.configured === true, reason: status.reason };
+    } catch (error) {
+      logger.error({ err: error, providerId: provider.id }, 'getStatus failed — reporting unconfigured');
+      return { configured: false, reason: (error as Error).message };
+    }
   }
 
   /**

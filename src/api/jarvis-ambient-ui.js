@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Carved out of jarvis-ambient.js (over the 1000-code-line cap): the settings-panel HTML template, panel/form rendering, transcript viewer, modal focus/inert handling, and state copy now live here as AmbientClient prototype methods (JarvisAmbientUi.clientMethods, mixed in by jarvis-ambient.js). Pure decomposition — every method body is verbatim from the AmbientClient class; behavior is unchanged. Loads after jarvis-ambient-core.js and before jarvis-ambient.js.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 spoken-voice picker in the Jarvis settings panel: provider + voice selects (from GET /api/voice/providers — unconfigured providers render as honest DISABLED options with the reason as tooltip), instant per-user persist via POST /api/voice/prefs (server rejects unconfigured providers), and a Preview button that synthesizes a sample with the explicit selection (base64 audio playback; browser-voice fallback). Independent of the ambient form's save cycle — voice choices persist on change, ambient settings stay untouched.
  */
 
 (function attachJarvisAmbientUi(root) {
@@ -54,6 +55,15 @@
             <p class="jarvis-ambient__notice" data-ja-notice aria-live="polite"></p>
             <div class="jarvis-ambient__actions"><button type="button" class="jarvis-ambient__secondary" data-ja-close>Cancel</button><button type="submit" class="jarvis-ambient__primary">Save settings</button></div>
           </form>
+          <div class="jarvis-ambient__history" data-ja-voice-section>
+            <div><strong>Spoken voice</strong><small>Which speech engine reads answers aloud. Saved to your account — it follows you across devices. Greyed-out providers are not configured on this deployment.</small></div>
+            <div class="jarvis-ambient__history-controls">
+              <select data-ja-voice-provider aria-label="Speech provider"><option value="">Swarm default</option></select>
+              <select data-ja-voice-voice aria-label="Voice"><option value="">Provider default</option></select>
+              <button type="button" data-ja-voice-preview>Preview</button>
+            </div>
+            <p class="jarvis-ambient__limitation" data-ja-voice-status aria-live="polite"></p>
+          </div>
           <div class="jarvis-ambient__speaker-tools">
             <div><strong>Voice &amp; Speakers</strong><small>Enroll your voice, name unidentified people, or assign a private organization member.</small></div>
             <button type="button" data-ja-speakers-open>Manage voices</button>
@@ -77,6 +87,8 @@
         backdrop: find('[data-ja-backdrop]'), form: find('[data-ja-form]'), enabled: find('[data-ja-enabled]'),
         notice: find('[data-ja-notice]'), limitation: find('[data-ja-limitation]'), sync: find('[data-ja-sync]'),
         date: find('[data-ja-date]'), transcriptOutput: find('[data-ja-transcript-output]'), speakers: find('[data-ja-speakers]'),
+        voiceProvider: find('[data-ja-voice-provider]'), voiceVoice: find('[data-ja-voice-voice]'),
+        voicePreview: find('[data-ja-voice-preview]'), voiceStatus: find('[data-ja-voice-status]'),
       };
       this.ui.date.value = todayLocal();
     },
@@ -98,14 +110,140 @@
       this.on(this.element.querySelector('[data-ja-speakers-open]'), 'click', () => {
         this.emit('jarvis:speakers-open-requested', { settings: { ...this.settings } });
       });
+      // JVV-012 spoken-voice picker: change persists immediately (its own rail, not the
+      // ambient form's save cycle); Preview synthesizes with the explicit selection.
+      this.on(this.ui.voiceProvider, 'change', () => { this.renderVoiceOptions(null); void this.saveVoicePrefs(); });
+      this.on(this.ui.voiceVoice, 'change', () => void this.saveVoicePrefs());
+      this.on(this.ui.voicePreview, 'click', () => void this.previewVoice());
     },
 
     openSettings() {
       this.settingsReturnFocus = document.activeElement;
       this.renderSettings();
+      void this.loadVoiceSection();
       this.ui.backdrop.hidden = false;
       document.body.classList.add('jarvis-ambient-open');
       this.element.querySelector('[data-ja-close]').focus();
+    },
+
+    /* ── JVV-012 spoken-voice picker ──────────────────────────────────────── */
+
+    /** Populate the provider/voice selects from the server registry + the caller's saved
+     *  selection. Unconfigured providers render as DISABLED options carrying the honest
+     *  reason — visible but never selectable (the server enforces the same rule). */
+    async loadVoiceSection() {
+      const providerSel = this.ui.voiceProvider;
+      if (!providerSel || !this.ui.voiceVoice) return;
+      this.setVoiceStatus('Loading voices…');
+      try {
+        const res = await fetch('/api/voice/providers', { credentials: 'include' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        this.voiceProviders = Array.isArray(data.providers) ? data.providers : [];
+        const selected = data.selected || null;
+        providerSel.innerHTML = '';
+        const def = document.createElement('option');
+        def.value = '';
+        def.textContent = `Swarm default${data.defaultProviderId ? ` (${data.defaultProviderId})` : ''}`;
+        providerSel.appendChild(def);
+        this.voiceProviders.forEach((p) => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.configured ? p.displayName : `${p.displayName} — not configured`;
+          if (!p.configured) { opt.disabled = true; if (p.reason) opt.title = p.reason; }
+          providerSel.appendChild(opt);
+        });
+        providerSel.value = selected && selected.providerId ? selected.providerId : '';
+        if (providerSel.selectedIndex < 0) providerSel.value = '';
+        this.renderVoiceOptions(selected ? selected.voiceId : null);
+        this.setVoiceStatus('');
+      } catch (err) {
+        this.setVoiceStatus('Voice settings are unavailable right now.');
+      }
+    },
+
+    /** Fill the voice select for the chosen provider (empty + disabled when the provider
+     *  lists no voices — e.g. the browser engine enumerates client-side). */
+    renderVoiceOptions(selectedVoiceId) {
+      const providerSel = this.ui.voiceProvider;
+      const voiceSel = this.ui.voiceVoice;
+      if (!providerSel || !voiceSel) return;
+      const provider = (this.voiceProviders || []).find((p) => p.id === providerSel.value);
+      const voices = (provider && provider.voices) || [];
+      voiceSel.innerHTML = '';
+      const def = document.createElement('option');
+      def.value = '';
+      def.textContent = 'Provider default';
+      voiceSel.appendChild(def);
+      voices.forEach((v) => {
+        const opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = v.language ? `${v.name} (${v.language})` : v.name;
+        voiceSel.appendChild(opt);
+      });
+      voiceSel.value = selectedVoiceId || '';
+      if (voiceSel.selectedIndex < 0) voiceSel.value = '';
+      voiceSel.disabled = voices.length === 0;
+    },
+
+    /** Persist the selection per-user (empty provider = clear → swarm default). The server
+     *  re-validates configuration; render its honest refusal instead of pretending. */
+    async saveVoicePrefs() {
+      const providerId = this.ui.voiceProvider ? this.ui.voiceProvider.value || null : null;
+      const voiceId = this.ui.voiceVoice ? this.ui.voiceVoice.value || null : null;
+      try {
+        const res = await fetch('/api/voice/prefs', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providerId, voiceId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+        this.setVoiceStatus(providerId ? 'Saved — answers will be read in this voice.' : 'Saved — using the swarm default voice.');
+      } catch (err) {
+        this.setVoiceStatus(`Could not save the voice choice: ${err.message || 'unknown error'}`);
+      }
+    },
+
+    /** Hear the current selection: synthesize a sample with the EXPLICIT provider/voice
+     *  (previews work before saving lands) and play it; browser-voice directive falls back
+     *  to speechSynthesis; failures are stated, not swallowed. */
+    async previewVoice() {
+      const providerId = this.ui.voiceProvider ? this.ui.voiceProvider.value || undefined : undefined;
+      const voice = this.ui.voiceVoice ? this.ui.voiceVoice.value || undefined : undefined;
+      this.setVoiceStatus('Preparing a preview…');
+      try {
+        const res = await fetch('/api/voice/synthesize', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'Hi — this is how I will sound when I read your answers.', providerId, voice }),
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((payload && (payload.message || payload.error)) || `HTTP ${res.status}`);
+        const d = (payload && payload.data) || {};
+        if (d.audioData) {
+          const mime = d.format && d.format.indexOf('/') >= 0 ? d.format : `audio/${d.format || 'wav'}`;
+          const audio = new Audio(`data:${mime};base64,${d.audioData}`);
+          audio.onended = () => this.setVoiceStatus('');
+          audio.onerror = () => this.setVoiceStatus('Preview audio could not play.');
+          await audio.play();
+          this.setVoiceStatus('Playing preview…');
+          return;
+        }
+        if (d.fallback === 'browser' && 'speechSynthesis' in window) {
+          const utterance = new SpeechSynthesisUtterance('Hi — this is how I will sound when I read your answers.');
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(utterance);
+          this.setVoiceStatus('Playing preview (browser voice)…');
+          return;
+        }
+        this.setVoiceStatus(d.message || 'This provider cannot synthesize right now.');
+      } catch (err) {
+        this.setVoiceStatus(`Preview failed: ${err.message || 'unknown error'}`);
+      }
+    },
+
+    /** One-line status under the voice controls. */
+    setVoiceStatus(text) {
+      if (this.ui.voiceStatus) this.ui.voiceStatus.textContent = text || '';
     },
 
     closeSettings() {

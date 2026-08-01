@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — VisionDescribeService: turns attached image(s) into a factual text description via the swarm's OpenRouter key driving a vision-capable chat model. This is the VISUAL analog of speech-to-text (/api/voice/transcribe): a controller-side transform that lets the Codex-CLI Jarvis brain (which is text-only) reason over a photo the user attached. Fail-closed when no OpenRouter credential; records the vendor-reported cost to chat_tasks like every other accountable LLM call.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cost observability (migration 090): thread the already-measured OpenRouter call duration into recordCost so the per-call ledger row carries latency alongside the vendor-reported tokens/cost.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Per-image labeled descriptions (ADR-110 follow-up): with 2+ images the ONE describe call now instructs the model to delimit each image's description with an exact marker line, and the response is split into `sections[]` (one per image, in order) so the surface can attach a labeled description per photo ("the first photo" vs "the second"). Parsing is fail-open: markers missing/miscounted → sections omitted and the combined description behaves exactly as before. Still a single accountable call — no per-image cost multiplication.
  */
 
 import type { Pool } from 'pg';
@@ -50,6 +51,35 @@ export interface VisionDescribeResult {
   model: string;
   cost: number;
   imageCount: number;
+  /** With 2+ images: one description per image, in attachment order — present only when the
+   *  model honored the section markers (fail-open: absent → use `description` combined). */
+  sections?: string[];
+}
+
+/** Exact per-image delimiter the model is instructed to emit (and the parser splits on). */
+const IMAGE_SECTION_MARKER = /^===\s*IMAGE\s+(\d+)\s*===\s*$/gim;
+
+/**
+ * @description Split a multi-image describe response into one description per image using
+ * the `=== IMAGE k ===` marker lines the prompt requested. Fail-open by design: when the
+ * model didn't produce exactly one section per image, returns undefined and callers fall
+ * back to the combined description (previous behavior, unchanged).
+ * @param text - The model's full response text.
+ * @param imageCount - How many images were sent (expected section count).
+ * @returns Ordered per-image descriptions, or undefined when parsing can't be trusted.
+ */
+export function parseImageSections(text: string, imageCount: number): string[] | undefined {
+  if (imageCount < 2) return undefined;
+  const parts = text.split(IMAGE_SECTION_MARKER);
+  // split() with one capture group yields: [preamble, '1', body1, '2', body2, ...]
+  const sections: string[] = [];
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    const index = Number(parts[i]);
+    const body = String(parts[i + 1] || '').trim();
+    if (index !== sections.length + 1 || !body) return undefined;
+    sections.push(body);
+  }
+  return sections.length === imageCount ? sections : undefined;
 }
 
 /**
@@ -110,11 +140,12 @@ export class VisionDescribeService {
     if (!description) throw new Error('vision describe: model returned no description');
 
     await this.recordCost(parsed, req, model, Date.now() - started);
+    const sections = parseImageSections(description, images.length);
     logger.info(
-      { imageCount: images.length, model, durationMs: Date.now() - started, cost: parsed.usage?.cost ?? 0 },
+      { imageCount: images.length, model, durationMs: Date.now() - started, cost: parsed.usage?.cost ?? 0, sectioned: !!sections },
       'vision describe complete',
     );
-    return { description, model, cost: Number(parsed.usage?.cost ?? 0), imageCount: images.length };
+    return { description, model, cost: Number(parsed.usage?.cost ?? 0), imageCount: images.length, sections };
   }
 
   /** Validate + bound the image list; throws on anything that isn't a base64 image data URL. */
@@ -133,12 +164,20 @@ export class VisionDescribeService {
   /** Build the multimodal user content: the framing instruction + each image part. */
   private buildContent(question: string | undefined, images: VisionImageInput[]): OpenRouterContentPart[] {
     const ask = (question || '').trim();
+    // With 2+ images the model must delimit each description so the surface can label them
+    // per photo ("the first photo" vs "the second") — see parseImageSections (fail-open).
+    const sectioning = images.length > 1
+      ? ` There are ${images.length} images, in order. Describe EACH image separately: begin each `
+        + "image's description with a line containing exactly \"=== IMAGE k ===\" (k = 1.."
+        + `${images.length}, matching the attachment order), then that image's description.`
+      : '';
     const instruction =
       'You describe attached images for an assistant that cannot see them, so it can answer the user. '
       + 'Describe the image(s) in thorough, factual detail: any visible text (transcribe it), objects, '
       + 'layout, colors, charts/tables, and notable details. Do NOT identify or name real people; refer '
       + 'to them generically. Report only what is visible — never invent. '
       + (ask ? `Focus on what is relevant to the user's request: "${ask}".` : 'Give a complete general description.')
+      + sectioning
       + ' Output plain text.';
     const parts: OpenRouterContentPart[] = [{ type: 'text', text: instruction }];
     for (const img of images) parts.push({ type: 'image_url', image_url: { url: img.dataUrl } });

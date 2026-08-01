@@ -39,6 +39,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Plaid becomes a first-class hub connector (new auth:'link' mode) instead of the app-private oshal_finance_items store ADR-048 gave Finance. Adds the 'plaid' PROVIDERS entry (finance category, stub OAuth fields — its ceremony is the Link widget), the 'link' auth-model + 'plaid' flavor union members, the /list `configured` link-branch (isPlaidConfigured), and registers the Plaid Link routes (connector-plaid-link.ts) before the generic /:provider/* handlers. Tokens land in oshal_connections (per-user AES-GCM) and read back via getValidAccessToken's no-refresh_token branch, so an app REFERENCES Plaid via the broker rather than forking its own store. NB: file at the decomposition threshold — all substantive Plaid logic lives in connector-plaid-link.ts, this is a small wiring seam only.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the key derivation - SESSION_SECRET unset now throws at the call site instead of silently deriving a well-known AES key any reader of this public repo can compute. Guard: tests/unit/no-dev-secret-fallback.spec.ts.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto default-ON boot posture: after ensureDekSchema, log LOUD (error) when OSHAL_ENVELOPE_CRYPTO is on (now the default) but SESSION_SECRET is unset — connector token crypto will throw at the kek() boundary, so surface the misconfig at boot rather than on the first connect. Imported envelopeEnabled for the check.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G14: getValidAccessToken accepts opts.forceRefresh — when a refresh token exists, skip the still-valid-expiry shortcut and exercise a REAL provider refresh, so the connector-liveness probe learns whether the provider still honors the grant (revoked Testing-mode Google → `refresh 400`) instead of trusting the DB row. Default path (no flag) is byte-for-byte unchanged.
  * -----------------------------------------------------------------------------
  *
  * @module connectors-routes
@@ -1202,13 +1203,17 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
  * @description Return a valid access token for a user's connection, refreshing it
  * via the stored refresh token when expired. Exported so in-process bots/tools
  * (e.g. the email summarizer) can act on a connected account without re-consent.
+ * `opts.forceRefresh` skips the still-valid early return when a refresh token exists —
+ * the G14 liveness probe uses it to ask the PROVIDER whether the grant is still honored
+ * (a revoked Testing-mode Google grant throws `refresh 400` here) instead of trusting
+ * the DB expiry column.
  * @param pool - db pool
  * @param userSub - the connection owner's OIDC sub
  * @param provider - provider id (e.g. 'google')
  * @returns a usable access token, or null if not connected / unrefreshable
  */
 export async function getValidAccessToken(
-  pool: any, userSub: string, provider: string, opts?: ConnectionSelector,
+  pool: any, userSub: string, provider: string, opts?: ConnectionSelector & { forceRefresh?: boolean },
 ): Promise<string | null> {
   const def = PROVIDERS[provider];
   if (!def) return null;
@@ -1216,8 +1221,10 @@ export async function getValidAccessToken(
   const row = await resolveConnectionRow(pool, userSub, provider, opts);
   if (!row) return null;
   const owner = ownerSub(row); // whose DEK encrypts this row's tokens (grantor for shared)
-  // Still-valid access token (>60s headroom)?
-  if (row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60_000) {
+  // Still-valid access token (>60s headroom)? A liveness probe (forceRefresh) only trusts
+  // this shortcut when there is no refresh token to exercise.
+  const skipCachedToken = opts?.forceRefresh === true && !!row.refresh_token;
+  if (!skipCachedToken && row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60_000) {
     return decryptToken(pool, owner, row.access_token);
   }
   if (!row.refresh_token) return row.access_token ? decryptToken(pool, owner, row.access_token) : null;

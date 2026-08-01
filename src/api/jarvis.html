@@ -407,7 +407,7 @@
           </div>
           <input id="camInput" type="file" accept="image/*" capture="environment" hidden />
           <input id="imgInput" type="file" accept="image/*" multiple hidden />
-          <input id="docInput" type="file" accept=".txt,.md,.markdown,.csv,.json,.log,.text,.yml,.yaml,.tsv,.xml,.html,.rtf,text/*" multiple hidden />
+          <input id="docInput" type="file" accept=".txt,.md,.markdown,.csv,.json,.log,.text,.yml,.yaml,.tsv,.xml,.html,.rtf,.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*" multiple hidden />
 
           <div class="chips" id="chips"><span class="spin"><span class="dot"></span> loading…</span></div>
         </section>
@@ -1287,10 +1287,19 @@ async function handleInput(text) {
       const imgs = atts.filter(a=>a.kind==='image'), docs = atts.filter(a=>a.kind==='doc');
       if (imgs.length) {
         setStatus('Looking at your photo…');
-        const description = await describeImages(imgs, text);   // throws → caught below, attachments kept
-        outAttachments.push({ kind:'image', name: imgs.length===1 ? imgs[0].name : (imgs.length+' photos'), description });
+        const vis = await describeImages(imgs, text);   // throws → caught below, attachments kept
+        if (imgs.length > 1 && Array.isArray(vis.sections) && vis.sections.length === imgs.length) {
+          // Per-image labeled descriptions (ADR-110 follow-up): one attachment per photo so
+          // Jarvis can talk about "the first photo" vs "the second". Fail-open: when the
+          // model didn't honor the section markers we fall back to one combined description.
+          imgs.forEach((im, i) => outAttachments.push({ kind:'image', name: im.name, description: vis.sections[i] }));
+        } else {
+          outAttachments.push({ kind:'image', name: imgs.length===1 ? imgs[0].name : (imgs.length+' photos'), description: vis.description });
+        }
       }
-      for (const d of docs) outAttachments.push({ kind:'doc', name:d.name, text:d.text });
+      for (const d of docs) outAttachments.push(d.unreadable
+        ? { kind:'doc', name:d.name, unreadable:true, reason:d.reason||'' }   // honest "couldn't read" travels to the prompt
+        : { kind:'doc', name:d.name, text:d.text });
       pendingAttachments = []; renderAttachStrip();   // consumed for this turn — clear the strip
       setStatus('Thinking…');
     }
@@ -1912,6 +1921,42 @@ function readDocText(file){
   });
 }
 
+function fileToDataUrl(file){
+  return new Promise((resolve,reject)=>{
+    const fr = new FileReader();
+    fr.onload = ()=> resolve(String(fr.result||''));
+    fr.onerror = ()=> reject(new Error('could not read file'));
+    fr.readAsDataURL(file);
+  });
+}
+
+/* PDF / Word binaries can't be read client-side — detect them for the server extractor. */
+function isBinaryDoc(file){
+  const n = (file.name||'').toLowerCase();
+  if (/\.(pdf|docx)$/.test(n)) return true;
+  const t = (file.type||'').toLowerCase();
+  return t === 'application/pdf' || t === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+}
+
+/* Server-side extraction for PDF/Word binaries (ADR-110 follow-up). ALWAYS returns an
+   attachment: an unreadable file becomes an HONEST one (named + unreadable flag, which the
+   server renders as "couldn't read this file" in the prompt) — never a silent drop. */
+async function extractBinaryDoc(f){
+  const name = f.name || 'document';
+  try {
+    const dataUrl = await fileToDataUrl(f);
+    const r = await fetch('/api/vision/read-doc', {
+      method:'POST', credentials:'include', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ name, dataUrl, mime: f.type||'' }),
+    });
+    const j = await r.json().catch(()=>({}));
+    if (r.ok && j.ok && (j.text||'').trim()) return { id:attachId(), kind:'doc', name, text:j.text };
+    return { id:attachId(), kind:'doc', name, unreadable:true, reason:(j && (j.reason || j.message || j.error)) || ('HTTP '+r.status) };
+  } catch (e) {
+    return { id:attachId(), kind:'doc', name, unreadable:true, reason: e.message || 'could not reach the document reader' };
+  }
+}
+
 async function addImageFiles(files){
   let imgCount = pendingAttachments.filter(a=>a.kind==='image').length;
   for (const f of files){
@@ -1926,9 +1971,22 @@ async function addImageFiles(files){
 async function addDocFiles(files){
   for (const f of files){
     if (pendingAttachments.length>=MAX_ATTACH) break;
+    if (isBinaryDoc(f)){
+      // PDF / Word → the server extractor (pdf-parse / docx). Bigger cap: binary, not text.
+      if (f.size > 8*1024*1024){ setStatus('That document is too large (max 8MB).', true); continue; }
+      setStatus('Reading ' + (f.name || 'document') + '…');
+      pendingAttachments.push(await extractBinaryDoc(f));
+      renderAttachStrip();
+      continue;
+    }
     if (f.size > 2*1024*1024){ setStatus('That document is too large (max 2MB of text).', true); continue; }
-    try { const text = await readDocText(f); if (text.trim()) pendingAttachments.push({ id:attachId(), kind:'doc', name:f.name||'document.txt', text }); }
-    catch { /* skip unreadable doc */ }
+    const name = f.name || 'document.txt';
+    try {
+      const text = await readDocText(f);
+      if (text.trim()) pendingAttachments.push({ id:attachId(), kind:'doc', name, text });
+      else pendingAttachments.push({ id:attachId(), kind:'doc', name, unreadable:true, reason:'no readable text found in the file' });
+    }
+    catch { pendingAttachments.push({ id:attachId(), kind:'doc', name, unreadable:true, reason:'could not read file' }); }
   }
   renderAttachStrip(); showTyper();
 }
@@ -1940,14 +1998,16 @@ function renderAttachStrip(){
   if (!pendingAttachments.length){ strip.setAttribute('hidden',''); strip.innerHTML=''; return; }
   strip.removeAttribute('hidden');
   strip.innerHTML = pendingAttachments.map(a=>{
-    const media = a.kind==='image' ? `<img class="attach-thumb" src="${a.dataUrl}" alt="">` : `<span class="attach-doc-ic">📄</span>`;
-    return `<span class="attach-chip" data-id="${a.id}">${media}<span class="attach-name">${esc(a.name)}</span>`
+    const media = a.kind==='image' ? `<img class="attach-thumb" src="${a.dataUrl}" alt="">` : `<span class="attach-doc-ic">${a.unreadable?'⚠️':'📄'}</span>`;
+    return `<span class="attach-chip" data-id="${a.id}">${media}<span class="attach-name">${esc(a.name)}${a.unreadable?' (couldn’t read)':''}</span>`
       + `<button type="button" class="attach-x" data-x="${a.id}" title="Remove" aria-label="Remove ${esc(a.name)}">✕</button></span>`;
   }).join('');
   strip.querySelectorAll('.attach-x').forEach(b=> b.addEventListener('click', ()=> removeAttachment(b.getAttribute('data-x'))));
 }
 
-/* Describe attached images via the accountable server route; returns the combined description. */
+/* Describe attached images via the accountable server route. Returns the whole payload:
+   { description, sections? } — sections is one labeled description per image when the
+   model honored the per-image markers (2+ images), else absent (combined fallback). */
 async function describeImages(images, question){
   const r = await fetch('/api/vision/describe', {
     method:'POST', credentials:'include', headers:{ 'Content-Type':'application/json' },
@@ -1956,7 +2016,7 @@ async function describeImages(images, question){
   const j = await r.json().catch(()=>({}));
   if (r.status===503) throw new Error(j.message || 'image understanding isn’t configured');
   if (!r.ok || !j.description) throw new Error(j.message || j.error || ('HTTP '+r.status));
-  return j.description;
+  return j;
 }
 
 function attachNoteText(atts){
