@@ -20,6 +20,7 @@
 # 13 | maintainer@emeraldcoastsystemsgroup.com   | Hardened per the 10-finding adversarial review before first run: single-instance lock (overlap destroyed e2e datastores); timeouts on every external command (hung trivy pull = invisible zombie); secret-scan runs on a git-archive HEAD export, --network none (working-tree scan tripped on the operator's live .env; unpinned image could exfil it); e2e gate blanks all broker/trading env so dotenv cannot back-fill LIVE keys into the mock-auth test server; datastore ports bound 127.0.0.1 (were LAN-exposed 0.0.0.0); trivy scans a docker-save tarball instead of holding the docker socket; image-smoke gate restores the retired quickstart coverage (image boots + serves + ticket + swarm apps loaded); alert exec fixed (MSYS path mangling silently killed failure emails); scoped dangling-image/builder prune (disk creep threatened the live stack's VM disk).
 # 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045/ADR-090 closure: pass the store checkout to the kernel-skills gate so its new PHASE 3 (every store package DECLARES the kernel skills its compiled js imports) can actually run. The script autodetects the conventional sibling, but --head mode runs from a temp git-archive export with no sibling, so the path comes from the REAL repo (OSHAL_STORE_DIR overrides). Absent store = the script's loud PHASE 3 SKIPPED line, never a silent pass.
 # 15 | maintainer@emeraldcoastsystemsgroup.com   | gate_lint scans `src tests scripts`, not `src` alone. The 1000-code-line cap covers source, tests, and logic-bearing config, but eslint's max-lines rule was scoped to src/**/*.ts{,x} — so the three files actually over the cap (an 1850-code-line chat modal .mjs, a 1044-line RAG popup .mjs, a 1006-line Playwright spec) exited 0 under the old command. The rule now also covers src JS, tests/, and scripts/, and this gate looks there; timeout raised 600->900 for the wider tree.
+# 16 | maintainer@emeraldcoastsystemsgroup.com   | New `unpushed-commits` gate: scripts/check-unpushed-commits.sh fails when a local ref carries commits that exist nowhere but this disk. The worktree-strays gate (entry 10) covers linked worktrees only and skips the PRIMARY checkout by design, so the shapes that actually strand work here were invisible — a commit on the shared checkout's branch, a local branch left ahead of origin, and a detached HEAD carrying a commit (the push-by-SHA recipe's failure mode, where a stale branch pointer pushes "successfully" while the real commit stays local). Runs unconditionally next to secret-scan rather than inside the NODE_GATES_OK block: ref state is repo plumbing and stays judgeable even when the HEAD export fails, which is exactly when work is most likely to be sitting uncommitted-or-unpushed.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -243,6 +244,16 @@ gate_worktree_strays() {
   (cd "$REPO_DIR" && timeout 60 bash scripts/check-worktree-strays.sh);
 }
 
+# Unpushed-commit guard: the other half of the same failure mode. check-worktree-strays.sh skips the
+# primary checkout and only sees worktrees with a branch checked out; this one judges EVERY local ref
+# (and any detached HEAD) against origin, and separates genuinely stranded work from squash-landed
+# refs and pre-scrub orphan history so the red state is always actionable. --fetch keeps it from
+# crying wolf on stale remote-tracking refs. Runs against the REPO, not the HEAD export: ref state is
+# repo plumbing, not tree content.
+gate_unpushed_commits() {
+  (cd "$REPO_DIR" && timeout 180 bash scripts/check-unpushed-commits.sh --fetch);
+}
+
 # BLOCKING (2026-07-24): the governance counters reached 0 (324 warnings burned down —
 # FSD deep imports rewritten to slice barrels, no-console converted to the pino logger or
 # justified-disabled, harness second-barrel lint-exempt). The gate now FAILS on any new
@@ -432,6 +443,7 @@ else
   SKIP_E2E=1
 fi
 run_gate secret-scan gate_secrets
+run_gate unpushed-commits gate_unpushed_commits
 if [ "$SKIP_E2E" != "1" ]; then run_gate e2e-green gate_e2e; fi
 if [ "$SKIP_IMAGE" != "1" ]; then
   run_gate image-build gate_image
