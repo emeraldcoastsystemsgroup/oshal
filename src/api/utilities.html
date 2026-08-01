@@ -229,7 +229,11 @@
       These power your <strong>chat and Jarvis</strong> turns. Tool-running bot work (tickets, file and
       shell actions) still runs on the harness logins above.
     </div>
-    <div id="freeTierCards"><p class="sub" style="margin:0;">Loading free providers…</p></div>
+    <!-- The SHARED platform lane. Its verdict lives only in this api process's memory, so it is
+       reported separately from the caller's own lanes and labelled as such - a dead shared lane
+       used to be visible nowhere but the logs. -->
+  <div id="ftPlatform" class="meta" style="margin:2px 0 8px;"></div>
+  <div id="freeTierCards"><p class="sub" style="margin:0;">Loading free providers…</p></div>
   </div>
 
   <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">LLM providers <span style="font-weight:400;font-size:12px;">— embedded in any-bot, run under the Cline wrapper</span></h2>
@@ -1175,27 +1179,81 @@ async function loadFreeTier() {
   renderFreeTier();
 }
 
+/** Compact "in 4m" / "3d ago" rendering for the rotation timestamps. */
+function ftDuration(ms) {
+  var v = Math.max(0, Math.round(ms / 1000));
+  if (v < 60) return v + 's';
+  if (v < 3600) return Math.round(v / 60) + 'm';
+  if (v < 86400) return Math.round(v / 3600) + 'h';
+  return Math.round(v / 86400) + 'd';
+}
+
 async function refreshFreeTierState() {
   FT_CONNECTED = {};
   var sum = document.getElementById('ftSummary');
+  var plat = document.getElementById('ftPlatform');
   try {
-    var data = await (await fetch('/api/connect/free-tier/list', { credentials: 'include' })).json();
-    for (var i = 0; i < (data.connections || []).length; i++) {
-      var c = data.connections[i];
+    // /rotation, NOT /list or /resolve: /resolve markUsed()s and would perturb the LRU order this
+    // panel is reporting, and it is polled. /rotation is read-only and probes nothing.
+    var data = await (await fetch('/api/connect/free-tier/rotation', { credentials: 'include' })).json();
+    for (var i = 0; i < (data.lanes || []).length; i++) {
+      var c = data.lanes[i];
       FT_CONNECTED[c.providerId] = c;
     }
-    var s = data.summary || { connected: 0, active: 0, cooledDown: 0 };
+    var s = data.summary || { connected: 0, active: 0, cooledDown: 0, neverUsed: 0, stale: 0 };
     if (sum) {
       if (s.connected > 0) {
         sum.className = 'meta connected';
         sum.textContent = s.connected + ' connected · ' + s.active + ' active'
-          + (s.cooledDown ? ' · ' + s.cooledDown + ' cooling down' : '');
+          + (s.cooledDown ? ' · ' + s.cooledDown + ' cooling down' : '')
+          + (s.stale ? ' · ' + s.stale + ' not picked in a day' : '')
+          + (s.neverUsed ? ' · ' + s.neverUsed + ' never used' : '');
       } else {
         sum.className = 'meta';
         sum.textContent = 'None connected — a free default is already available, but connecting your own raises your limits.';
       }
     }
-  } catch (e) { if (sum) sum.textContent = 'Status unavailable.'; }
+    if (plat) plat.innerHTML = ftPlatformHtml(data.platform);
+  } catch (e) {
+    if (sum) sum.textContent = 'Status unavailable.';
+    if (plat) plat.textContent = '';
+  }
+}
+
+/**
+ * The shared platform lane. Three honest states, none of them guessed: live / walled / unknown.
+ * 'unknown' means this api process has no cached verdict - it has not resolved the lane recently -
+ * and it is shown as unknown rather than assumed healthy. The verdict is per-process by nature
+ * (one in-memory cache per replica), which the row says out loud.
+ */
+function ftPlatformHtml(pl) {
+  if (!pl) return '';
+  if (!pl.configured) {
+    return 'Shared platform lane: <b>not configured</b> — no OPENROUTER_API_KEY on this box, so the '
+      + 'invisible free default is off and every turn uses your own lanes or the bot\'s provider.';
+  }
+  var badge = pl.verdict === 'live'
+    ? '<span class="statuspill ok">live</span>'
+    : (pl.verdict === 'walled'
+      ? '<span class="statuspill warn">quota-walled</span>'
+      : '<span class="statuspill">not probed recently</span>');
+  var detail = '';
+  if (pl.verdict === 'live' && pl.model) {
+    detail = ' on <b>' + esc(pl.model) + '</b>';
+  } else if (pl.verdict === 'walled') {
+    detail = ' — every free model was refused; requests fall through to the bot\'s own provider';
+  } else {
+    detail = ' — this api process has no cached verdict, so its health is genuinely unknown '
+      + '(checking it costs real quota, so this panel will not)';
+  }
+  var expiry = pl.verdictExpiresAt
+    ? ' · re-checks in ' + ftDuration(pl.verdictExpiresAt - Date.now())
+    : '';
+  var cat = (pl.catalogSize != null) ? ' · ' + pl.catalogSize + ' free models discovered' : '';
+  var last = (pl.verdict !== 'live' && pl.lastLiveModel)
+    ? ' · last live: ' + esc(pl.lastLiveModel) : '';
+  return 'Shared platform lane ' + badge + detail + expiry + cat + last
+    + ' · <span title="One in-memory verdict cache per api process">as seen by this api process</span>';
 }
 
 function renderFreeTier() {
@@ -1206,13 +1264,28 @@ function renderFreeTier() {
     var pill = !c ? ''
       : (c.cooledDown
         ? '<span class="statuspill warn">cooling down</span>'
-        : '<span class="statuspill ok">connected</span>');
+        : (c.stale
+          ? '<span class="statuspill warn">not picked in a day</span>'
+          : '<span class="statuspill ok">connected</span>'));
+    // WHY a lane is down and WHEN it returns - a bare "cooling down" pill left an operator with
+    // nothing to act on, and a lane rotation had quietly stopped choosing looked entirely healthy.
+    var health = '';
+    if (c) {
+      var bits = [];
+      if (c.cooledDown && c.cooldownRemainingMs) bits.push('back in ' + ftDuration(c.cooldownRemainingMs));
+      if (c.lastStatus) bits.push('last result: ' + esc(c.lastStatus));
+      if (c.neverUsed) bits.push('never picked by rotation yet');
+      else if (c.staleMs != null) bits.push('last picked ' + ftDuration(c.staleMs) + ' ago');
+      if (c.model) bits.push('model ' + esc(c.model));
+      if (bits.length) health = '<div class="meta">' + bits.join(' · ') + '</div>';
+    }
     var action = c
       ? '<button class="btn disconnect" data-ftdis="' + p.id + '">Disconnect</button>'
       : (p.oauth
         ? '<button class="btn connect" data-ftoauth="' + p.id + '">Connect</button>'
         : '<button class="btn connect" data-ftopen="' + p.id + '">Connect</button>');
     return '<div class="conn" style="flex-direction:column;align-items:stretch;gap:8px;">'
+      + health
       + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">'
       +   '<div><span class="connmeta"><strong>' + ftEsc(p.label) + '</strong></span> ' + pill
       +     '<div class="meta">' + ftEsc(p.freeBlurb || p.note || '') + '</div></div>'

@@ -1720,7 +1720,7 @@ verified working. Sources today: **openrouter** (PKCE OAuth), **gemini** (AI Stu
    Postgres-connected rows via `freeTierToHarnessConfig()`, so it runs on a bare checkout.
 2. ✅ largely done via the 07-10/11 hardening (`d4f27a38`, runtime `:free` discovery, probe caches,
    walled→null, operator exemption, hard `:free`-only guard on the platform key).
-3. ⬜ **Make rotation observable** — surface `markUsed` / `reportRateLimit` / `reportSuccess` state in the
+3. ✅ **Make rotation observable** — surface `markUsed` / `reportRateLimit` / `reportSuccess` state in the
    cockpit so a dead lane is visible instead of silently skipped. (The platform rotation lane's
    in-memory verdict is still surfaced nowhere — that half stays open.) **De-orphaned 2026-07-12:**
    `/free-models` is now linked from the welcome wizard's model step ("connect your own free AI
@@ -1748,6 +1748,35 @@ verified working. Sources today: **openrouter** (PKCE OAuth), **gemini** (AI Stu
   entry + a live-probe check.
 
 **Verified 2026-07-19:** PARTIAL — `/free-models` is linked, but per-lane rotation health is still surfaced nowhere (step 3 stays open); the cerebras COMPAT follow-up is DONE (optimizer-providers.ts:47).
+
+**DONE 2026-08-01 (wave17-cockpit) — step 3 closed; this entry's LAST open clause.**
+`GET /api/connect/free-tier/rotation` (auth-gated, caller-scoped through
+`listFreeTierConnections`) plus the per-lane detail in the Utilities free-lanes card.
+
+- **Per-lane, a dead lane is now visible instead of silently skipped**: `cooldownRemainingMs`
+  (when it comes back), `lastStatus` (why it left), and the new `lastUsedAt` → `stale` /
+  `neverUsed`. That last one is the signal the entry was really asking for: a lane the rotation has
+  quietly stopped picking has no cooldown and no error, so under the old binary
+  connected/cooling-down pill it looked **identical to a healthy one**.
+- **The shared platform lane is readable at last.** `platformVerdict` / `freeCatalog` /
+  `lastLivePlatformModel` were module-level with no accessor, so "the shared lane is walled until
+  14:05" was a fact only the logs knew. New `freeTierRuntimeSnapshot()` reads them **without
+  probing** — and non-probing is the whole design constraint, because calling
+  `platformFreeConnection()` from a polled surface spends up to `MAX_PLATFORM_PROBES` real
+  completions of the shared key's daily free-request quota. The surface would have burned the
+  resource it reports on. `/resolve` is unusable here for the mirror-image reason: it `markUsed()`s,
+  so polling it would make the reading change the reading.
+- **Three honest platform states, no guessing**: `live` / `walled` / `unknown`. `unknown` means this
+  api process holds no cached verdict; it is rendered as unknown rather than assumed healthy, and
+  the row says the verdict is per-process (one in-memory cache per replica).
+- No key crosses the boundary — the snapshot returns the model id and the verdict, never the key.
+- Guard: `tests/unit/free-lane-rotation-observability.spec.ts` —
+  **free-lane-rotation-is-observable-and-read-only**, 9 tests, 10 targeted mutations each proven
+  red (including the two that matter most: the read issuing `markUsed`, and the read probing the
+  platform lane).
+
+Still open on this entry: step 4 (wiring Token Chase's variant lanes to the live-verified free
+providers first-class). Untouched here.
 
 ### Plan C — multi-tenancy as infra, with two isolation tiers ⬜
 The operator's model is right and already half-expressed in ADR-078. Make the tier explicit.
@@ -4988,7 +5017,7 @@ Guards: `tests/unit/connectors/connector-write-actions.spec.ts`,
    the shared `roleCanAccess` at the caller's effective role; connectors pin `user_sub = $1` and
    never name a token column). The app/bot listers are injected UNFILTERED from the route on
    purpose — pre-narrowing in `SwarmAppService` would make two filters where only one is auditable.
-3. **`scripts/migrations/101-global-search-trgm.sql`** — `pg_trgm` GIN indexes on the columns the
+3. **`scripts/migrations/103-global-search-trgm.sql`** — `pg_trgm` GIN indexes on the columns the
    adapters actually ILIKE, plus `(owner_sub, updated_at DESC)` composites. Idempotent,
    `to_regclass`-guarded, no `CONCURRENTLY` (the runner wraps each migration in one transaction).
 4. **Measured, and the measurement changed the story.**
