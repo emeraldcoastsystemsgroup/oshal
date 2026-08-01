@@ -6,6 +6,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Invitations send with NO mail password. The first hosted customer box had no SMTP, so an invited user simply never got an email and the admin had to notice the copy-link banner - the operator did not, and the invitee waited. Invite delivery now tries two rails in order: SMTP when a deployment configures its own server (explicit beats inherited), else the platform's EXISTING Gmail connector - the same OAuth grant every other outbound message in the swarm already uses, resolved through the same NOTIFY_EMAIL_SENDER_SUB / OSHAL_OPERATOR_SUBS identity notify-routes uses. sendGmail is reused, not re-implemented, so the header-injection fence still applies. The public-URL check moved FIRST because an emailed invite needs an absolute link (the copyable path still works without one - the browser knows its origin), and both rails failing is not an error: the admin screen always shows the link. Guard: local-auth-routes.spec rail-order case, mutation-proven.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | LOCAL_AUTH mode (ADR-117): a controlled invited-user login for deployments with no external IdP. createLocalAuthMiddlewareSet is the third sibling of the OIDC/mock middleware sets (server.ts picks it when LOCAL_AUTH=true): a session-cookie injector that fabricates the SAME req.oidc shape as the PAT/TV/guest injectors, a requiresAuth that answers API requests 401-JSON and browser documents with a /login redirect (reusing shouldReturnUnauthorizedResponse — one discrimination rule), and a loginHandler that serves the first-party credential page. createLocalAuthRoutes carries the flows: bootstrap-first-admin (the installer is the first login), email invitations with a copyable-link fallback when SMTP is absent, one-time accept (set password), login with per-ip+email rate limiting and account-enumeration-proof errors, logout, and the operator/trusted-service user administration API the CRM admin screen proxies to. Fail-closed at boot: LOCAL_AUTH+MOCK_OIDC together, or a missing SESSION_SECRET, throw instead of silently degrading to open auth.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | servePage passes dotfiles:'allow' to res.sendFile. Express defaults to 'ignore', which 404s when ANY segment of the resolved path starts with a dot — so /login, /invite and /2fa returned 404 for any checkout under `.claude/worktrees/<name>`, which is exactly how every agent worktree is laid out. Two page-serving specs went red for anyone running the suite from a worktree (and a future agent would misattribute them to their own change), and a real deployment under a dot-segment path would serve no login page at all. Safe: `file` is one of three hardcoded literals and `resolved` comes from resolveLoginPage's fixed candidate list, so no caller-supplied path reaches sendFile.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G14: a broken Google grant (token refresh rejected — getValidAccessToken throws `refresh 400`) now produces a DISTINCT emailDetail telling the admin to reconnect on the Connections screen, instead of the generic transport failure. On the G-Squared box the first two real invitations silently returned emailSent:false because a Testing-mode Google client had invalidated the refresh token for gmail.send hours after connecting, and the only signal was a container-log warning a prior triage had dismissed. The admin-facing message now names the fix (~30s reconnect) so no log dive is needed.
  */
 
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -297,9 +298,20 @@ async function sendViaConnectedGmail(pool: Pool, mail: { to: string; subject: st
     logger.info({ to: mail.to }, 'invitation sent via the Gmail connector rail');
     return { ok: true };
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
     logger.error({ err, to: mail.to }, 'invitation send via Gmail connector failed');
-    return { ok: false, detail };
+    // A rejected token refresh (`refresh 400/401` from getValidAccessToken) means the stored
+    // grant is dead — a connection row EXISTS but Google will no longer honor it. Google
+    // applies a reauthentication policy to sensitive scopes (gmail.send) on Testing-mode
+    // OAuth clients, so this happens on a working box hours after connecting (G-Squared
+    // incident, INSTALLER-GAPS G14). Tell the admin the actual fix, not "no transport".
+    if (/refresh 4\d\d/.test(raw)) {
+      return {
+        ok: false,
+        detail: 'the operator\'s Google connection needs to be RECONNECTED (token refresh rejected by Google — expected periodically for Testing-mode clients with gmail.send). Fix: Connections screen -> Google -> reconnect (~30 seconds)',
+      };
+    }
+    return { ok: false, detail: raw };
   }
 }
 

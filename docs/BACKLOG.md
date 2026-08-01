@@ -5569,3 +5569,38 @@ The pump is live and producing (six shows, 1/day each). Three things it delibera
   registrar copy is referenced from a field the check reads), `daily-trade-recap` and every other
   package with a `personas/` directory loads unchanged, and a spec pins BOTH the refusal of an
   undeclared bot and the acceptance of a declared external copy.
+
+## Installer-gaps hardening — deferred remainders (G-Squared incident, 2026-07-31)
+
+The G1/G2/G3/G4/G7/G9/G12/G14 core landed (oshal-verify.sh, /api/readiness, OSHAL_NO_AI,
+onboarding-gate requirement, mount modes, TaskController direct-path rejection, invite reconnect
+message — see `oshal-app-private/gsquared-install-issues/INSTALLER-GAPS.md` for the ledger).
+These are the deliberately-deferred remainders:
+
+- **Connections screen trusts its own DB row for the "connected" badge (G14 leg 2).** "1
+  connected" means a row exists, not that Google will honor the token — a Testing-mode client's
+  revoked grant still shows green until the next send fails.
+  *Done when:* the connections list performs a live token check (on-demand refresh probe, or
+  cached ≤15 min) per provider, the badge distinguishes connected / needs-reconnect, and a spec
+  pins the needs-reconnect state for a `refresh 400` grant.
+
+- **`--apps` installs run no per-app smoke (G8).** An app installed with no engine reports
+  success and misbehaves at runtime. `/api/readiness` now covers the engine leg globally, but an
+  app's own advertised AI features (e.g. intelligent-sales `structure-note` returning a
+  structured draft) go unprobed.
+  *Done when:* a store package can declare a `smoke:` block in `oshal-app.yaml`,
+  `oshal-verify.sh --apps a,b` executes each installed package's smoke, and the install fails
+  naming the app whose advertised feature cannot run.
+
+- **`noop` answers with text instead of a disabled state (G2 remainder).** Surfaces advertising
+  AI render stub *answers* on a declared no-AI box because the noop provider RETURNS TEXT — the
+  `if (!raw)` offline fallbacks fail open (see memory: a customer rep saw internal board context
+  echoed back). OSHAL_NO_AI now declares the posture server-side; surfaces still need to read it.
+  *Done when:* with OSHAL_NO_AI=true, chat/Jarvis/app surfaces render an explicit "AI is
+  disabled on this deployment" state instead of noop text, pinned by a spec per surface class.
+
+- **`oshal-verify.sh` has no live chat probe (G1 remainder).** The verifier proves provider +
+  credential + heartbeat, not an actual end-to-end generation ("a real chat call returns a real
+  answer"). A live probe needs an authenticated call and costs tokens, so it must be explicit.
+  *Done when:* `oshal-verify.sh --live` (PAT via env) sends one real chat message, asserts a
+  non-stub answer, and strict mode documents when to use it (customer handover, post-deploy).

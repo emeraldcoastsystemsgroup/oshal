@@ -364,7 +364,26 @@ bash scripts/install.sh --with-keys --skip-build
 
 ## Verifying it works
 
-The installer verifies automatically. To re-run the **full 15-point check suite** later
+The installer ends with a **postflight capability verification** (`scripts/oshal-verify.sh`) and
+fails loudly, naming the broken leg, if the box cannot do what it advertises — a green container
+count is not success. Re-run it any time:
+
+```bash
+bash scripts/oshal-verify.sh                      # strict: any broken leg fails
+bash scripts/oshal-verify.sh --pre-onboarding     # fresh box: wizard-pending legs warn only
+```
+
+It reads `GET /api/readiness` — per-capability status (`llm` / `bots` / `credentials` /
+`voice` / `db`, each `ok|off|fail`) that runbooks should use instead of `/api/health`, which is
+liveness-only and reports `ok` on a box with no engine. A deliberately model-less box declares
+that posture with `--no-ai` at install (writes `OSHAL_NO_AI=true`); undeclared "no model" is a
+verification failure, not a quiet default.
+
+**Never copy a credential file (`~/.claude`, `~/.codex`, `~/.gemini`) between machines** — one
+OAuth grant serves one machine; the other host's refresh rotates the token and both logins die.
+Log in on the box itself.
+
+To re-run the **full 15-point check suite** later
 (needs a real provider, since some checks exercise the tutor LLM):
 
 ```bash
