@@ -20,12 +20,12 @@
   a{color:#7fb4ff} footer{margin-top:3rem;color:#6b7280;font-size:.82rem}
 </style></head><body><main>
 <h1>oshal Strategy Lab</h1>
-<p class="sub">Nightly forward-walk report · generated 2026-07-28 22:20 UTC · 59 strategies under test</p>
+<p class="sub">Nightly forward-walk report · generated 2026-07-31 22:20 UTC · 59 strategies under test</p>
 <div class="disc"><strong>What this is:</strong> oshal's strategy lab walks every saved configuration forward one real market session per night, out-of-sample, from a synthetic $100,000 notional. <strong>What this is not:</strong> real-money performance (no live account data appears here), a track record, or investment advice. All figures are gross of slippage and commissions; backtest columns are in-sample and overfit-prone by nature — the forward columns are the honest ones, and they are short. Strategies are ranked to be <em>studied</em>, not followed.</div>
 <h2>Latest session</h2>
-<p class="note">Latest walked session: <strong>2026-07-28</strong> · 59 strategies walked</p>
-  <div class="movers"><div><h3>Session winners</h3><ol><li><span class="nm">sweep4/ensemble-t16-c0</span> <span class="up">+0.65%</span></li><li><span class="nm">sweep4/ensemble-t16-c30</span> <span class="up">+0.51%</span></li><li><span class="nm">sweep4/ensemble-t12-c0</span> <span class="up">+0.45%</span></li><li><span class="nm">sweep4/gravity-t16-c0</span> <span class="up">+0.45%</span></li><li><span class="nm">sweep4/gravity-t8-c0</span> <span class="up">+0.42%</span></li></ol></div>
-  <div><h3>Session losers</h3><ol><li><span class="nm">sweep4/momentum-t12-c0</span> <span class="dn">-0.02%</span></li><li><span class="nm">sweep4/momentum-t8-c0</span> <span class="dn">-0.01%</span></li><li><span class="nm">thesis/shelter-cad10</span> <span class="up">+0.02%</span></li><li><span class="nm">thesis/shelter-cad1</span> <span class="up">+0.02%</span></li><li><span class="nm">sweep4/momentum-t12-c30</span> <span class="up">+0.06%</span></li></ol></div></div>
+<p class="note">Latest walked session: <strong>2026-07-31</strong> · 59 strategies walked</p>
+  <div class="movers"><div><h3>Session winners</h3><ol><li><span class="nm">ira/balanced-cad10-c80</span> <span class="up">+1.34%</span></li><li><span class="nm">30% gravity+core / 20% momentum / 50% SPY core</span> <span class="up">+0.59%</span></li><li><span class="nm">sweep4/momentum-t12-c60</span> <span class="up">+0.57%</span></li><li><span class="nm">ira/conservative-cad10-c80</span> <span class="up">+0.56%</span></li><li><span class="nm">ira/conservative-cad5-c80</span> <span class="up">+0.56%</span></li></ol></div>
+  <div><h3>Session losers</h3><ol><li><span class="nm">thesis/defensive-cad10</span> <span class="dn">-0.32%</span></li><li><span class="nm">thesis/defensive-cad1</span> <span class="dn">-0.20%</span></li><li><span class="nm">sweep4/ensemble-t16-c0</span> <span class="dn">-0.19%</span></li><li><span class="nm">sweep4/ensemble-t12-c0</span> <span class="dn">-0.14%</span></li><li><span class="nm">sweep4/ensemble-t8-c0</span> <span class="dn">-0.12%</span></li></ol></div></div>
 <h2>Earnings-gate A/B</h2>
 <p class="note">Earnings-gate twin rows have not been seeded yet.</p>
 <h2>Knob permutation grid — rank × topN × corePct over the armed base (36)</h2>
@@ -34,253 +34,253 @@
     <td class="nm">sweep4/blend-t16-c0</td>
     <td>59.54</td><td>0.107</td><td>3.65</td><td>-5.00</td>
     <td>1.88</td><td>14.13</td><td class="up">+24.71</td>
-    <td>7</td><td class="dn">-0.87</td>
-    <td class="up">+0.32</td>
+    <td>10</td><td class="dn">-1.69</td>
+    <td class="up">+0.15</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t16-c0</td>
     <td>55.95</td><td>0.100</td><td>2.53</td><td>-4.44</td>
     <td>2.25</td><td>12.09</td><td class="up">+21.12</td>
-    <td>7</td><td class="dn">-0.78</td>
-    <td class="up">+0.45</td>
+    <td>10</td><td class="dn">-1.26</td>
+    <td class="up">+0.09</td>
   </tr>
 <tr>
     <td class="nm">sweep4/blend-t16-c30</td>
     <td>52.01</td><td>0.096</td><td>4.17</td><td>-3.93</td>
     <td>1.77</td><td>14.75</td><td class="up">+17.18</td>
-    <td>7</td><td class="dn">-0.67</td>
-    <td class="up">+0.29</td>
+    <td>10</td><td class="dn">-1.02</td>
+    <td class="up">+0.31</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t16-c30</td>
     <td>49.64</td><td>0.091</td><td>3.09</td><td>-3.53</td>
     <td>2.00</td><td>12.87</td><td class="up">+14.81</td>
-    <td>7</td><td class="dn">-0.58</td>
-    <td class="up">+0.39</td>
+    <td>10</td><td class="dn">-0.71</td>
+    <td class="up">+0.25</td>
   </tr>
 <tr>
     <td class="nm">sweep4/blend-t12-c0</td>
     <td>47.88</td><td>0.089</td><td>2.83</td><td>-3.55</td>
     <td>1.93</td><td>10.67</td><td class="up">+13.05</td>
-    <td>7</td><td class="dn">-0.38</td>
-    <td class="up">+0.21</td>
+    <td>10</td><td class="dn">-0.90</td>
+    <td class="up">+0.09</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t16-c0</td>
     <td>45.40</td><td>0.087</td><td>3.79</td><td>-4.00</td>
     <td>1.51</td><td>18.75</td><td class="up">+10.57</td>
-    <td>7</td><td class="dn">-0.93</td>
-    <td class="up">+0.16</td>
+    <td>10</td><td class="dn">-1.25</td>
+    <td class="up">+0.34</td>
   </tr>
 <tr>
     <td class="nm">sweep4/blend-t16-c60</td>
     <td>44.24</td><td>0.085</td><td>6.68</td><td>-4.39</td>
     <td>1.51</td><td>15.96</td><td class="up">+9.41</td>
-    <td>7</td><td class="dn">-0.46</td>
-    <td class="up">+0.25</td>
+    <td>10</td><td class="dn">-0.33</td>
+    <td class="up">+0.47</td>
   </tr>
 <tr>
     <td class="nm">sweep4/blend-t12-c30</td>
     <td>43.79</td><td>0.083</td><td>3.78</td><td>-3.06</td>
     <td>1.78</td><td>12.12</td><td class="up">+8.96</td>
-    <td>7</td><td class="dn">-0.28</td>
-    <td class="up">+0.22</td>
+    <td>10</td><td class="dn">-0.40</td>
+    <td class="up">+0.28</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t16-c30</td>
     <td>41.84</td><td>0.081</td><td>4.19</td><td>-4.16</td>
     <td>1.48</td><td>17.95</td><td class="up">+7.01</td>
-    <td>7</td><td class="dn">-0.63</td>
-    <td class="up">+0.20</td>
+    <td>10</td><td class="dn">-0.63</td>
+    <td class="up">+0.46</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t16-c60</td>
     <td>41.79</td><td>0.080</td><td>6.11</td><td>-4.23</td>
     <td>1.55</td><td>14.64</td><td class="up">+6.96</td>
-    <td>7</td><td class="dn">-0.43</td>
-    <td class="up">+0.32</td>
+    <td>10</td><td class="dn">-0.16</td>
+    <td class="up">+0.44</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t12-c0</td>
     <td>39.63</td><td>0.076</td><td>2.78</td><td>-3.77</td>
     <td>1.60</td><td>13.42</td><td class="up">+4.80</td>
-    <td>7</td><td class="dn">-0.58</td>
-    <td class="dn">-0.02</td>
+    <td>10</td><td class="dn">-1.01</td>
+    <td class="up">+0.38</td>
   </tr>
 <tr>
     <td class="nm">sweep4/blend-t12-c60</td>
     <td>39.21</td><td>0.076</td><td>6.43</td><td>-4.18</td>
     <td>1.47</td><td>14.70</td><td class="up">+4.38</td>
-    <td>7</td><td class="dn">-0.24</td>
-    <td class="up">+0.22</td>
+    <td>10</td><td class="up">+0.02</td>
+    <td class="up">+0.45</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t12-c0</td>
     <td>38.33</td><td>0.073</td><td>2.03</td><td>-3.21</td>
     <td>2.13</td><td>9.95</td><td class="up">+3.50</td>
-    <td>7</td><td class="dn">-0.63</td>
-    <td class="up">+0.18</td>
+    <td>10</td><td class="dn">-1.05</td>
+    <td class="up">+0.04</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t16-c60</td>
     <td>38.33</td><td>0.076</td><td>6.78</td><td>-4.82</td>
     <td>1.33</td><td>17.73</td><td class="up">+3.50</td>
-    <td>7</td><td class="dn">-0.47</td>
-    <td class="up">+0.21</td>
+    <td>10</td><td class="dn">-0.15</td>
+    <td class="up">+0.54</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t12-c30</td>
     <td>37.88</td><td>0.074</td><td>4.19</td><td>-3.40</td>
     <td>1.54</td><td>14.40</td><td class="up">+3.05</td>
-    <td>7</td><td class="dn">-0.44</td>
-    <td class="up">+0.06</td>
+    <td>10</td><td class="dn">-0.50</td>
+    <td class="up">+0.48</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t12-c30</td>
     <td>37.11</td><td>0.071</td><td>3.08</td><td>-2.93</td>
     <td>1.84</td><td>11.33</td><td class="up">+2.28</td>
-    <td>7</td><td class="dn">-0.49</td>
-    <td class="up">+0.19</td>
+    <td>10</td><td class="dn">-0.55</td>
+    <td class="up">+0.24</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t12-c60</td>
     <td>36.01</td><td>0.071</td><td>6.75</td><td>-4.40</td>
     <td>1.34</td><td>15.77</td><td class="up">+1.18</td>
-    <td>7</td><td class="dn">-0.32</td>
-    <td class="up">+0.14</td>
+    <td>10</td><td class="dn">-0.03</td>
+    <td class="up">+0.57</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t12-c60</td>
     <td>35.70</td><td>0.070</td><td>6.09</td><td>-4.13</td>
     <td>1.44</td><td>13.94</td><td class="up">+0.87</td>
-    <td>7</td><td class="dn">-0.34</td>
-    <td class="up">+0.22</td>
+    <td>10</td><td class="dn">-0.05</td>
+    <td class="up">+0.43</td>
   </tr>
 <tr>
     <td class="nm">sweep4/blend-t8-c0</td>
     <td>34.84</td><td>0.067</td><td>1.65</td><td>-2.65</td>
     <td>1.95</td><td>8.24</td><td class="up">+0.01</td>
-    <td>7</td><td class="dn">-0.41</td>
+    <td>10</td><td class="dn">-0.88</td>
     <td class="up">+0.22</td>
   </tr>
 <tr>
     <td class="nm">sweep4/blend-t8-c30</td>
     <td>34.39</td><td>0.067</td><td>3.21</td><td>-2.52</td>
     <td>1.76</td><td>10.47</td><td class="dn">-0.44</td>
-    <td>7</td><td class="dn">-0.33</td>
-    <td class="up">+0.23</td>
+    <td>10</td><td class="dn">-0.42</td>
+    <td class="up">+0.37</td>
   </tr>
 <tr>
     <td class="nm">sweep4/blend-t8-c60</td>
     <td>34.29</td><td>0.068</td><td>6.10</td><td>-3.87</td>
     <td>1.42</td><td>13.84</td><td class="dn">-0.54</td>
-    <td>7</td><td class="dn">-0.24</td>
-    <td class="up">+0.23</td>
+    <td>10</td><td class="up">+0.04</td>
+    <td class="up">+0.51</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t8-c60</td>
     <td>30.82</td><td>0.062</td><td>6.72</td><td>-4.09</td>
     <td>1.26</td><td>14.45</td><td class="dn">-4.01</td>
-    <td>7</td><td class="dn">-0.33</td>
-    <td class="up">+0.14</td>
+    <td>10</td><td class="up">+0.13</td>
+    <td class="up">+0.50</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t8-c30</td>
     <td>28.17</td><td>0.057</td><td>4.17</td><td>-3.01</td>
     <td>1.40</td><td>12.24</td><td class="dn">-6.66</td>
-    <td>7</td><td class="dn">-0.47</td>
-    <td class="up">+0.07</td>
+    <td>10</td><td class="dn">-0.25</td>
+    <td class="up">+0.38</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t8-c60</td>
     <td>28.04</td><td>0.057</td><td>6.12</td><td>-3.93</td>
     <td>1.24</td><td>13.35</td><td class="dn">-6.79</td>
-    <td>7</td><td class="dn">-0.14</td>
-    <td class="up">+0.31</td>
+    <td>10</td><td class="up">+0.15</td>
+    <td class="up">+0.44</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t16-c60</td>
     <td>27.97</td><td>0.057</td><td>6.04</td><td>-4.24</td>
     <td>1.16</td><td>14.31</td><td class="dn">-6.86</td>
-    <td>7</td><td class="up">+0.23</td>
-    <td class="up">+0.40</td>
+    <td>10</td><td class="up">+0.55</td>
+    <td class="up">+0.38</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t12-c60</td>
     <td>27.64</td><td>0.057</td><td>5.99</td><td>-4.10</td>
     <td>1.19</td><td>13.45</td><td class="dn">-7.19</td>
-    <td>7</td><td class="up">+0.17</td>
-    <td class="up">+0.32</td>
+    <td>10</td><td class="up">+0.66</td>
+    <td class="up">+0.40</td>
   </tr>
 <tr>
     <td class="nm">sweep4/momentum-t8-c0</td>
     <td>26.11</td><td>0.053</td><td>2.01</td><td>-3.68</td>
     <td>1.44</td><td>10.37</td><td class="dn">-8.72</td>
-    <td>7</td><td class="dn">-0.64</td>
-    <td class="dn">-0.01</td>
+    <td>10</td><td class="dn">-0.68</td>
+    <td class="up">+0.23</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t8-c60</td>
     <td>25.71</td><td>0.053</td><td>6.02</td><td>-3.90</td>
     <td>1.16</td><td>13.04</td><td class="dn">-9.12</td>
-    <td>7</td><td class="up">+0.03</td>
-    <td class="up">+0.30</td>
+    <td>10</td><td class="up">+0.58</td>
+    <td class="up">+0.41</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t8-c30</td>
     <td>23.88</td><td>0.049</td><td>3.11</td><td>-2.56</td>
     <td>1.46</td><td>9.82</td><td class="dn">-10.95</td>
-    <td>7</td><td class="dn">-0.14</td>
-    <td class="up">+0.36</td>
+    <td>10</td><td class="dn">-0.22</td>
+    <td class="up">+0.24</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t16-c30</td>
     <td>22.80</td><td>0.047</td><td>3.04</td><td>-3.13</td>
     <td>1.19</td><td>12.32</td><td class="dn">-12.03</td>
-    <td>7</td><td class="up">+0.52</td>
-    <td class="up">+0.51</td>
+    <td>10</td><td class="up">+0.49</td>
+    <td class="up">+0.09</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t12-c30</td>
     <td>22.56</td><td>0.046</td><td>2.97</td><td>-2.91</td>
     <td>1.32</td><td>9.89</td><td class="dn">-12.27</td>
-    <td>7</td><td class="up">+0.41</td>
-    <td class="up">+0.37</td>
+    <td>10</td><td class="up">+0.60</td>
+    <td class="up">+0.13</td>
   </tr>
 <tr>
     <td class="nm">sweep4/gravity-t8-c0</td>
     <td>19.70</td><td>0.040</td><td>1.64</td><td>-2.75</td>
     <td>1.56</td><td>7.80</td><td class="dn">-15.13</td>
-    <td>7</td><td class="dn">-0.11</td>
-    <td class="up">+0.42</td>
+    <td>10</td><td class="dn">-0.60</td>
+    <td class="up">+0.03</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t8-c30</td>
     <td>19.38</td><td>0.040</td><td>2.99</td><td>-2.53</td>
     <td>1.29</td><td>8.72</td><td class="dn">-15.45</td>
-    <td>7</td><td class="up">+0.16</td>
-    <td class="up">+0.35</td>
+    <td>10</td><td class="up">+0.46</td>
+    <td class="up">+0.15</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t16-c0</td>
     <td>17.61</td><td>0.037</td><td>3.26</td><td>-2.25</td>
     <td>1.10</td><td>11.11</td><td class="dn">-17.22</td>
-    <td>7</td><td class="up">+0.90</td>
-    <td class="up">+0.65</td>
+    <td>10</td><td class="up">+0.43</td>
+    <td class="dn">-0.19</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t12-c0</td>
     <td>17.42</td><td>0.036</td><td>2.36</td><td>-1.77</td>
     <td>1.35</td><td>7.57</td><td class="dn">-17.41</td>
-    <td>7</td><td class="up">+0.74</td>
-    <td class="up">+0.45</td>
+    <td>10</td><td class="up">+0.62</td>
+    <td class="dn">-0.14</td>
   </tr>
 <tr>
     <td class="nm">sweep4/ensemble-t8-c0</td>
     <td>13.03</td><td>0.028</td><td>1.54</td><td>-1.25</td>
     <td>1.32</td><td>5.48</td><td class="dn">-21.80</td>
-    <td>7</td><td class="up">+0.36</td>
-    <td class="up">+0.40</td>
+    <td>10</td><td class="up">+0.40</td>
+    <td class="dn">-0.12</td>
   </tr></tbody></table></div>
 <h2>Operator theses — defensive shelter, small/mid medtech, AI-infrastructure, T-bill hide-out</h2>
     <div class="tw"><table><thead><tr><th>strategy</th><th>total %</th><th>avg day %</th><th>best day %</th><th>worst day %</th><th>sharpe</th><th>max DD %</th><th>alpha vs SPY</th><th>fwd sessions</th><th>fwd %</th><th>last session %</th></tr></thead>
@@ -288,57 +288,57 @@
     <td class="nm">thesis/aiinfra-cad1</td>
     <td>86.66</td><td>0.144</td><td>3.45</td><td>-5.80</td>
     <td>1.98</td><td>9.92</td><td class="up">+51.83</td>
-    <td>7</td><td class="up">+0.15</td>
-    <td class="up">+0.12</td>
+    <td>10</td><td class="up">+0.04</td>
+    <td class="up">+0.25</td>
   </tr>
 <tr>
     <td class="nm">thesis/aiinfra-cad10</td>
     <td>68.36</td><td>0.119</td><td>3.53</td><td>-4.79</td>
     <td>2.12</td><td>9.46</td><td class="up">+33.53</td>
-    <td>7</td><td class="up">+0.43</td>
-    <td class="up">+0.12</td>
+    <td>10</td><td class="up">+0.23</td>
+    <td class="up">+0.14</td>
   </tr>
 <tr>
     <td class="nm">thesis/medtech-cad1</td>
     <td>9.11</td><td>0.022</td><td>3.07</td><td>-2.56</td>
     <td>0.49</td><td>10.85</td><td class="dn">-25.72</td>
-    <td>7</td><td class="dn">-1.65</td>
-    <td class="up">+0.14</td>
+    <td>9</td><td class="dn">-0.66</td>
+    <td class="up">+0.06</td>
   </tr>
 <tr>
     <td class="nm">thesis/defensive-cad10</td>
     <td>8.29</td><td>0.018</td><td>1.00</td><td>-1.20</td>
     <td>1.38</td><td>3.23</td><td class="dn">-26.54</td>
-    <td>7</td><td class="up">+0.85</td>
-    <td class="up">+0.37</td>
+    <td>9</td><td class="up">+0.26</td>
+    <td class="dn">-0.32</td>
   </tr>
 <tr>
     <td class="nm">thesis/medtech-cad10</td>
     <td>4.41</td><td>0.011</td><td>2.55</td><td>-2.37</td>
     <td>0.31</td><td>8.38</td><td class="dn">-30.42</td>
-    <td>7</td><td class="dn">-0.81</td>
-    <td class="up">+0.11</td>
+    <td>10</td><td class="up">+0.04</td>
+    <td class="up">+0.08</td>
   </tr>
 <tr>
     <td class="nm">thesis/defensive-cad1</td>
     <td>3.86</td><td>0.009</td><td>0.50</td><td>-0.99</td>
     <td>0.67</td><td>3.41</td><td class="dn">-30.97</td>
-    <td>7</td><td class="up">+0.68</td>
-    <td class="up">+0.37</td>
+    <td>10</td><td class="dn">-0.08</td>
+    <td class="dn">-0.20</td>
   </tr>
 <tr>
     <td class="nm">thesis/shelter-cad1</td>
     <td>2.56</td><td>0.006</td><td>0.21</td><td>-0.49</td>
     <td>1.29</td><td>0.83</td><td class="dn">-32.27</td>
-    <td>7</td><td class="up">+0.02</td>
-    <td class="up">+0.02</td>
+    <td>9</td><td class="dn">-0.06</td>
+    <td class="up">+0.00</td>
   </tr>
 <tr>
     <td class="nm">thesis/shelter-cad10</td>
     <td>2.19</td><td>0.005</td><td>0.24</td><td>-0.32</td>
     <td>1.17</td><td>0.96</td><td class="dn">-32.64</td>
-    <td>7</td><td class="up">+0.03</td>
-    <td class="up">+0.02</td>
+    <td>9</td><td class="dn">-0.06</td>
+    <td class="dn">-0.00</td>
   </tr></tbody></table></div>
 <h2>Retirement cadence — slow-rotation sleeves (5/10-session, conservative/balanced)</h2>
     <div class="tw"><table><thead><tr><th>strategy</th><th>total %</th><th>avg day %</th><th>best day %</th><th>worst day %</th><th>sharpe</th><th>max DD %</th><th>alpha vs SPY</th><th>fwd sessions</th><th>fwd %</th><th>last session %</th></tr></thead>
@@ -346,85 +346,85 @@
     <td class="nm">ira/balanced-cad5-c40</td>
     <td>47.84</td><td>0.090</td><td>4.16</td><td>-4.61</td>
     <td>1.66</td><td>14.58</td><td class="up">+13.01</td>
-    <td>7</td><td class="dn">-0.85</td>
-    <td class="up">+0.25</td>
+    <td>10</td><td class="dn">-0.35</td>
+    <td class="up">+0.27</td>
   </tr>
 <tr>
     <td class="nm">ira/balanced-cad5-c60</td>
     <td>42.76</td><td>0.082</td><td>6.15</td><td>-5.01</td>
     <td>1.48</td><td>15.84</td><td class="up">+7.93</td>
-    <td>7</td><td class="dn">-0.61</td>
-    <td class="up">+0.26</td>
+    <td>10</td><td class="dn">-0.03</td>
+    <td class="up">+0.41</td>
   </tr>
 <tr>
     <td class="nm">ira/balanced-cad5-c80</td>
     <td>38.20</td><td>0.076</td><td>8.24</td><td>-5.39</td>
     <td>1.26</td><td>17.21</td><td class="up">+3.37</td>
-    <td>7</td><td class="dn">-0.37</td>
-    <td class="up">+0.25</td>
+    <td>10</td><td class="up">+0.33</td>
+    <td class="up">+0.56</td>
   </tr>
 <tr>
     <td class="nm">ira/balanced-cad10-c40</td>
     <td>34.88</td><td>0.069</td><td>4.43</td><td>-4.77</td>
     <td>1.36</td><td>14.57</td><td class="up">+0.05</td>
-    <td>7</td><td class="dn">-0.61</td>
-    <td class="up">+0.26</td>
+    <td>10</td><td class="dn">-0.12</td>
+    <td class="up">+0.27</td>
   </tr>
 <tr>
     <td class="nm">ira/balanced-cad10-c60</td>
     <td>34.78</td><td>0.069</td><td>6.37</td><td>-5.00</td>
     <td>1.29</td><td>15.67</td><td class="dn">-0.05</td>
-    <td>7</td><td class="dn">-0.45</td>
-    <td class="up">+0.26</td>
+    <td>10</td><td class="up">+0.13</td>
+    <td class="up">+0.41</td>
   </tr>
 <tr>
     <td class="nm">ira/balanced-cad10-c80</td>
     <td>34.41</td><td>0.070</td><td>8.37</td><td>-5.39</td>
     <td>1.17</td><td>16.88</td><td class="dn">-0.42</td>
-    <td>7</td><td class="dn">-0.30</td>
-    <td class="up">+0.25</td>
+    <td>9</td><td class="dn">-0.15</td>
+    <td class="up">+1.34</td>
   </tr>
 <tr>
     <td class="nm">ira/conservative-cad5-c80</td>
     <td>32.70</td><td>0.066</td><td>8.17</td><td>-4.88</td>
     <td>1.18</td><td>15.98</td><td class="dn">-2.13</td>
-    <td>7</td><td class="dn">-0.24</td>
-    <td class="up">+0.22</td>
+    <td>10</td><td class="up">+0.43</td>
+    <td class="up">+0.56</td>
   </tr>
 <tr>
     <td class="nm">ira/conservative-cad10-c80</td>
     <td>31.97</td><td>0.065</td><td>8.13</td><td>-4.87</td>
     <td>1.17</td><td>15.75</td><td class="dn">-2.86</td>
-    <td>7</td><td class="dn">-0.22</td>
-    <td class="up">+0.22</td>
+    <td>10</td><td class="up">+0.46</td>
+    <td class="up">+0.56</td>
   </tr>
 <tr>
     <td class="nm">ira/conservative-cad5-c60</td>
     <td>30.85</td><td>0.062</td><td>6.05</td><td>-4.01</td>
     <td>1.32</td><td>13.59</td><td class="dn">-3.98</td>
-    <td>7</td><td class="dn">-0.37</td>
-    <td class="up">+0.21</td>
+    <td>10</td><td class="up">+0.16</td>
+    <td class="up">+0.41</td>
   </tr>
 <tr>
     <td class="nm">ira/conservative-cad5-c40</td>
     <td>29.98</td><td>0.060</td><td>4.02</td><td>-3.15</td>
     <td>1.53</td><td>11.10</td><td class="dn">-4.85</td>
-    <td>7</td><td class="dn">-0.46</td>
-    <td class="up">+0.20</td>
+    <td>10</td><td class="dn">-0.09</td>
+    <td class="up">+0.25</td>
   </tr>
 <tr>
     <td class="nm">ira/conservative-cad10-c60</td>
     <td>29.65</td><td>0.060</td><td>5.95</td><td>-3.98</td>
     <td>1.32</td><td>12.97</td><td class="dn">-5.18</td>
-    <td>7</td><td class="dn">-0.26</td>
-    <td class="up">+0.21</td>
+    <td>10</td><td class="up">+0.26</td>
+    <td class="up">+0.41</td>
   </tr>
 <tr>
     <td class="nm">ira/conservative-cad10-c40</td>
     <td>27.59</td><td>0.055</td><td>3.90</td><td>-3.13</td>
     <td>1.52</td><td>10.18</td><td class="dn">-7.24</td>
-    <td>7</td><td class="dn">-0.30</td>
-    <td class="up">+0.20</td>
+    <td>10</td><td class="up">+0.06</td>
+    <td class="up">+0.25</td>
   </tr></tbody></table></div>
 <h2>Hand-authored strategies</h2>
     <div class="tw"><table><thead><tr><th>strategy</th><th>total %</th><th>avg day %</th><th>best day %</th><th>worst day %</th><th>sharpe</th><th>max DD %</th><th>alpha vs SPY</th><th>fwd sessions</th><th>fwd %</th><th>last session %</th></tr></thead>
@@ -432,15 +432,15 @@
     <td class="nm">Armed production (gravity rotation + SPY:60) <span class="tag">armed</span></td>
     <td>36.41</td><td>—</td><td>—</td><td>—</td>
     <td>1.47</td><td>13.94</td><td class="up">+1.05</td>
-    <td>12</td><td class="dn">-1.26</td>
-    <td class="up">+0.22</td>
+    <td>15</td><td class="dn">-0.97</td>
+    <td class="up">+0.43</td>
   </tr>
 <tr>
     <td class="nm">Fundamental event overlay + wider indicator base (design)</td>
     <td>—</td><td>—</td><td>—</td><td>—</td>
     <td>—</td><td>—</td><td class="">—</td>
-    <td>10</td><td class="dn">-1.51</td>
-    <td class="up">+0.22</td>
+    <td>13</td><td class="dn">-1.22</td>
+    <td class="up">+0.43</td>
   </tr></tbody></table></div>
 <footer>Built nightly by the oshal swarm after the lab's post-close forward walk. Columns: total/avg/best/worst/sharpe/maxDD/alpha are the latest full backtest; fwd = out-of-sample sessions walked and the return over them; last session = the newest walked day. <a href="/">← oshal.ai</a></footer>
 </main></body></html>

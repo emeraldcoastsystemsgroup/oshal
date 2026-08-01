@@ -66,9 +66,9 @@ class ComputerUseAgent {
     console.log(`[vids ${this.runId}]`, JSON.stringify(entry).slice(0, 300));
   }
 
-  pause() { this.paused = true; this.emit('paused', {}); }
-  resume() { this.paused = false; this.emit('resumed', {}); }
-  abort() { this.aborted = true; }
+  pause() { this.paused = true; Desktop.pauseTyping(); this.emit('paused', {}); }
+  resume() { this.paused = false; Desktop.resumeTyping(); this.emit('resumed', {}); }
+  abort() { this.aborted = true; Desktop.cancelTyping('agent_aborted'); }
 
   emit(type, data) {
     try { this.onEvent({ type, ts: new Date().toISOString(), ...data }); } catch { /* ignore */ }

@@ -49,6 +49,11 @@ your real screen; the step log narrates each action. **Pause / Abort** stop it
 instantly — keep your hands off the mouse while it works.
 
 - **Voice** uses the browser's built-in Speech Recognition (Chrome) — no key.
+- **Paired typing** is an opt-in control-panel mode. After the agent reads a
+  screenshot and focuses a field, every ordinary physical keypress advances one
+  character from the prepared text. Real mouse movement pauses immediately;
+  `F8` pauses/resumes and `F9`/`Esc` cancels the current text. Clipboard paste
+  remains the default.
 - **Surface dev** (hot reload): `cd web && npm run dev` (proxies to the backend).
 - The built surface is served from `web/dist`; if it isn't built, the server falls
   back to the legacy single-file panel in `src/ui/`.
@@ -159,6 +164,8 @@ ADR-074 `workflow:creative-story` schedule (e.g. `0 */6 * * *`).
 | `VIDS_CHROME_PATH` | autodetect | override the Chrome executable |
 | `CODEX_CLI_PATH` | autodetect | path to the Codex CLI / `bin/codex.js` the bot uses |
 | `VIDS_CODEX_SERVICE_TIER` | unset | override Codex `service_tier` (e.g. `fast`) when a global `config.toml` value is rejected |
+| `VIDS_PAIRED_TYPING` | unset | set `1` to enable paired typing at launch (the panel toggle is preferred) |
+| `VIDS_PAIRED_TYPE_TIMEOUT_MS` | `0` | optional timeout for one paired text action; `0` waits until completed/cancelled |
 | `VIDS_DATA_DIR` | `~/.oshal-vids` | where the learning store (runs, healed selectors, examples) lives |
 | `VIDS_EXAMPLES_URL` | unset | optional URL of an external Veo-prompt example gallery (JSON) to ground on |
 | `VIDS_SWARM_URL` | unset | OSHAL control-plane base URL for `worker` mode *(P4)* |

@@ -12,6 +12,7 @@ const { spawn } = require('child_process');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
+const { pairedTyper } = require('./paired-typer');
 
 // PowerShell prelude: DPI-aware + load Forms/Drawing + a user32 shim for clicks.
 const PRELUDE = `
@@ -116,11 +117,40 @@ $i=0
     await ps(double ? `${once};Start-Sleep -Milliseconds 60;${once}` : once);
   },
 
-  /** Type arbitrary text reliably via clipboard paste (handles any characters). */
+  /**
+   * Type arbitrary text. Normal mode uses clipboard paste. In paired mode each
+   * physical non-modifier keypress advances one prepared character.
+   */
   async type(text) {
+    if (pairedTyper.snapshot().enabled) return pairedTyper.type(text);
     const safe = String(text).replace(/'/g, "''");
     await ps(`Set-Clipboard -Value '${safe}'`);
     await this.key('^v');
+  },
+
+  async setPairedTyping(enabled) {
+    return enabled ? pairedTyper.enable() : pairedTyper.disable();
+  },
+
+  pairedTypingState() {
+    return pairedTyper.snapshot();
+  },
+
+  onPairedTyping(listener) {
+    pairedTyper.on('state', listener);
+    return () => pairedTyper.off('state', listener);
+  },
+
+  pauseTyping() {
+    pairedTyper.pause();
+  },
+
+  resumeTyping() {
+    pairedTyper.resume();
+  },
+
+  cancelTyping(reason = 'operator') {
+    pairedTyper.cancel(reason);
   },
 
   /** Send a SendKeys combo, e.g. '^a' (ctrl+a), '{ENTER}', '%{F4}'. */
@@ -150,5 +180,10 @@ $i=0
     await ps(`Start-Process '${safe}'; Start-Sleep -Milliseconds 4000; [U32]::ShowWindow([U32]::GetForegroundWindow(), 3) | Out-Null`, 20_000);
   },
 };
+
+// Headless/worker opt-in. The control-panel toggle is preferred.
+if (process.env.VIDS_PAIRED_TYPING === '1') {
+  pairedTyper.enable().catch(() => {});
+}
 
 module.exports = { Desktop };

@@ -3,7 +3,7 @@ import { useBackend } from './useBackend.js';
 import { useVoice } from './useVoice.js';
 
 export default function App() {
-  const { connected, running, chat, enableControl, send, control } = useBackend();
+  const { connected, running, pairedTyping, chat, enableControl, send, control, setPairedTyping } = useBackend();
   const [input, setInput] = useState('');
   const [enabling, setEnabling] = useState(false);
 
@@ -30,6 +30,15 @@ export default function App() {
             {enabling ? 'Enabling…' : 'Enable control'}
           </button>
         ) : null}
+        {connected && !running && (
+          <button
+            className={pairedTyping.enabled ? 'paired on' : 'paired'}
+            onClick={() => setPairedTyping(!pairedTyping.enabled)}
+            title="Each ordinary keypress types the next prepared character"
+          >
+            {pairedTyping.enabled ? 'Paired typing on' : 'Pair typing'}
+          </button>
+        )}
       </header>
 
       <div className="chat" ref={ref}>
@@ -52,7 +61,16 @@ export default function App() {
         />
         <button className="primary" onClick={() => submit()}>Send</button>
       </div>
-      {running && <div className="footnote">I'm driving the mouse — keep your hands off. Hit Stop to take over.</div>}
+      {running && pairedTyping.enabled && (
+        <div className={`footnote ${pairedTyping.status === 'paused' ? 'paused' : ''}`}>
+          {pairedTyping.status === 'typing'
+            ? `Paired typing ${pairedTyping.completed}/${pairedTyping.total} — press ordinary keys; F8 pauses and F9 cancels`
+            : pairedTyping.status === 'paused'
+              ? `Paired typing paused (${pairedTyping.reason || 'operator'}) — press F8 to resume`
+              : 'I’m reading the screen and moving to the next field…'}
+        </div>
+      )}
+      {running && !pairedTyping.enabled && <div className="footnote">I'm driving the mouse — keep your hands off. Hit Stop to take over.</div>}
     </div>
   );
 }
