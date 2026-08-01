@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pre-OSS: rebranded legacy "Kevin" agent identity/namespace to neutral OSHAL
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Moved the inline auto-approval expression to controllers/tool-approval-policy.js and called it here. No behaviour change — the extraction exists because this is the only gate between an injected prompt and shell execution on the unattended path, it was a bare one-liner with a misleading flag name (callers pass `execute_command`, this read `commandExecution`), and this file is at the size cap so the rule could not be documented in place. The policy module carries the explanation and tests/unit/tool-approval-policy.spec.ts pins it.
  */
 
 /**
@@ -20,6 +21,7 @@ const logger = require('../utils/logger');
 // every entry point is a no-op and this call site is byte-identical to before). See
 // services/token-chase/TokenChaseCapture.js for the zero-impact contract.
 const { tokenChase } = require('../services/token-chase/TokenChaseCapture');
+const { shouldAutoApproveTool } = require('./tool-approval-policy');
 
 function normalizeRuntimeIdentity(value, maxLength) {
   if (typeof value !== 'string') return null;
@@ -710,8 +712,9 @@ class AgenticController {
           const toolMetadata = this.tools.getMetadata(toolName);
           const requiresApproval = toolMetadata.requiresApproval;
 
-          // Check if we should auto-approve
-          const shouldAutoApprove = autoApprove.commandExecution && !requiresApproval;
+          // Check if we should auto-approve. Policy (and the reason the flag name looks wrong)
+          // lives in tool-approval-policy.js — read it before changing anything here.
+          const shouldAutoApprove = shouldAutoApproveTool(autoApprove, toolName, requiresApproval);
 
           // Generate timestamp ONCE for both broadcast and database
           const toolUseTimestamp = Date.now();

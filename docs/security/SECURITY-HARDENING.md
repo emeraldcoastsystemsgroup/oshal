@@ -224,6 +224,43 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
 8. **Bot safety** — flip tool approval to fail-closed for unregistered tools, remove the
    blanket `use_mcp_tool` auto-approve on swarm dispatch, and fence external/tool-result content
    as untrusted to blunt prompt injection.
+   **Partly addressed 2026-07-31** by the injection blast-radius audit. Corrections and status:
+   - The blanket auto-approve on swarm dispatch is **already inert, by accident**.
+     `AgenticController` read `autoApprove.commandExecution`; every caller
+     (`AgentDispatchEngine`, `ClineCLIWrapper`, the front door) sends per-tool keys such as
+     `execute_command`. Nothing is auto-approved on the unattended path. That is the right
+     posture reached by a key-name mismatch, so **renaming the key to match the callers would
+     silently enable shell + file writes + MCP for prompt-injectable bots.** The decision now
+     lives in `any-bot/server/controllers/tool-approval-policy.js` with that history recorded,
+     pinned by `tests/unit/tool-approval-policy.spec.ts` (behaviour unchanged).
+   - **Still open:** unregistered *non-exec* tools graceful-allow unless
+     `OSHAL_TOOL_AUTH_STRICT=true`, which no compose file sets; and `ToolAuthInterceptor` is
+     wired only when `switchFrameworkService` is supplied — otherwise `task-orchestrator`
+     returns the raw executor with no auth at all.
+   - **Still open, and the largest one:** no fencing of untrusted content anywhere on the
+     ticket-dispatch path. `assemblePromptForAnyBot` joins persona, org memory, handovers and
+     the raw ticket body into a single string at one trust level. The pattern to lift is
+     already in-tree at `jarvis-orchestrator.ts` (untrusted-data preamble + `<untrusted-…>`
+     fencing + length cap + deterministic server-side re-binding); `a2a-rpc-service.ts` and
+     `coder-bot/src/assistant.js` are smaller working examples. Note also that swarm memory is
+     **wormable** — `SwarmMemoryService` re-injects stored agent output into later prompts as
+     authoritative guidance, so one injected run seeds future tickets.
+   - There are still **no adversarial-prompt tests** of any kind, and the three real defenses
+     above have no regression tests, so a refactor can delete them silently.
+10. ~~**Bootstrap PAT minting was a cross-user takeover path** — `POST /api/cli-tokens` honored
+    the `x-oshal-user-sub` assertion for any sub behind the fleet-wide `SWARM_SERVICE_SECRET`
+    and minted a **non-expiring** token. Every bot container carries that secret, and a PAT
+    authenticates on every `requiresAuth` route (including `/api/content` and
+    `/api/linkedin-assistant`, which the service secret alone cannot reach) — so a single
+    prompt-injected bot could mint permanent credentials for an arbitrary user.~~
+    **Done 2026-07-31:** session-less mints are operator-only via `isOperatorIdentity`
+    (fail-closed on an empty allowlist) and time-boxed by `OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS`
+    (default 30 days, reusing the existing `expires_at` column). Session mints are unchanged.
+    `swarm-cli login --secret` still works for an operator. Guard:
+    `tests/unit/cli-token-auth.spec.ts`. The prior rationale — "not an escalation, the secret
+    already implies full impersonation" — assumed every secret-holder is trusted; bots are
+    secret-holders and are injectable, which is what made per-request impersonation into a
+    persistent credential.
 9. ~~**Latent** — default `MOCK_OIDC=false` in code and remove the dev-secret fallback
    (both currently overridden by `.env`, harmless here, a footgun on a fresh deploy).~~
    **Done 2026-07-31:** the compose interpolation default is now `MOCK_OIDC:-false` (the
