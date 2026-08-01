@@ -5205,16 +5205,24 @@ deferred (`do what you can, backlog the rest`):
   staged optimizer sweeps both percentages per market and the exit-mix table is reported beside the
   P&L.
 - **Stop-stack remainder.** The %ATR buffer variant the dictation asked for (code ships fixed tick
-  buffers). **Done when:** it is a config the intraday backtester can sweep.
-- **Vacuous guard (pre-existing, reviewer-flagged 2026-07-28): the backtester's doubly-deferred
-  Strangle-exit regression test iterates an always-empty array.** On the synthetic rally fixture the
-  latched level is always hit INTRABAR (relabelled `StrangleStop`), never close-breached, so the
-  `exitName === 'Strangle'` loop body never runs — under old and new defaults alike. The property IS
-  guarded at the engine level (`futures-stop-engine.spec.ts` "close breach … market-exits NEXT bar")
-  and the path IS reachable on real data (the canonical ES run shows `Strangle=2` exits), but the
-  backtester-level guard is dead. **Done when:** a fixture forces a close-breach without an intrabar
-  touch (the level must sit inside the prior bar's clamp margin so the resting stop lands below it)
-  and the test asserts on at least one `Strangle` exit, next-bar-open fill.
+  buffers). **Done when:** it is a config the intraday backtester can sweep. *(2026-07-31 note: still
+  open by choice — it adds an ATR input to the engine's per-bar contract and deserves its own change
+  with its own guards; the two data-plumbing lanes below took priority.)*
+- ~~**Vacuous guard (pre-existing, reviewer-flagged 2026-07-28): the backtester's doubly-deferred
+  Strangle-exit regression test iterates an always-empty array.**~~ **FIXED 2026-07-31.** The old
+  test filtered the rally fixture for `exitName === 'Strangle'` and looped over an always-empty
+  array. Investigation while fixing it sharpened the diagnosis: after the gate latches, every
+  enforcement SYNCS the resting stop to the tracked level, so a level at the stop is always touched
+  intrabar first (`low ≤ close ≤ level = stop`) — the close-breach can only fire ON THE LATCH BAR,
+  while the level is tracked but not yet placed. (The BACKLOG's original "level inside the prior
+  bar's clamp margin" geometry is unreachable for the same reason — the ratchet's scan span always
+  contains the current bar, so a proposed level never clears the clamp.) The new fixture in
+  `futures-backtester.spec.ts` engineers a LATE latch below an old frozen level (+6/−5 alternating
+  climb keeps smoothed LagRSI under the 97 gate threshold while the level ratchets; a fade drops
+  price below the frozen level with LagRSI ≈ 0; a monotone creep saturates LagRSI → latch on a
+  breach-eligible bar) and ASSERTS ≥ 1 `Strangle` exit, next-bar-open fill, slippage paid, zero
+  intrabar `StrangleStop` leakage. Mutation-proven on both sides of the boundary: sabotaging the
+  backtester's `marketExitPending` wiring or the engine's breach detection each goes red (2 tests).
 - **Six-stage optimization pipeline (his method, our rails).** Entry → StopLoss → Trail → Targets →
   EmergencyExit → Sizing, prior-stage winners locked; stage 1 = entries alone with a fixed-bar exit
   optimizing AvgMFE/AvgMAE (his `ATCMaxAvgMfeMinAvgMae` fitness — a pure function to port); walk-forward
@@ -5236,18 +5244,26 @@ deferred (`do what you can, backlog the rest`):
   Lower priority now that the file source covers ES/CL. **Done when:** `KIBOT_USER`/`KIBOT_PASSWORD`
   are set, the param/CSV spelling is confirmed, and one contract ingests over HTTP with a passing
   completeness check.
-- **Kibot DAILY files use a different format than the minute files** — `YYYYMMDD;O;H;L;C;V`
-  (semicolon, compact date) vs the minute files' `MM/DD/YYYY,HH:MM,O,H,L,C,V`. `parseKibotCsv` reads
-  only the comma form, so daily archives silently parse to zero bars. **Done when:** the parser
-  detects the delimiter/date form and a spec covers both, or the daily path is explicitly rejected
-  with a clear error.
+- ~~**Kibot DAILY files use a different format than the minute files**~~ — **SHIPPED in PR #67
+  (2026-07-27, "futures real-data closeout") but never struck here — reconciled 2026-07-31.**
+  `parseKibotCsv` now infers the row shape PER LINE (comma/semicolon × intraday/daily, incl. the CL
+  compact-datetime form), `futures-data-completeness.spec.ts` covers all four formats plus the
+  column-shift and trailing-delimiter attack rows, and the file source refuses (loudly, zero bars)
+  to serve a daily file at an intraday timeframe.
 - **Schwab futures data feed** (operator: "we probably get a feed from Schwab, less granular"). A
   `SchwabFuturesDataSource` reusing the existing per-user Schwab market-data plumbing. **Done when:** a
   futures symbol returns bars through the Schwab connection, with granularity/entitlement documented.
-- **Exchange session + holiday calendar.** Sessions are approximated as continuous 24h weekdays, so a
-  holiday reads as a small expected-empty gap and the mock uses a continuous session. **Done when:** a real
-  CME/CBOT session+holiday calendar drives `expectedBarCount`, the gap detector discounts the daily
-  maintenance break + holidays, and the mock emits the true ~23h session.
+- ~~**Exchange session + holiday calendar.**~~ **SHIPPED 2026-07-31** —
+  `futures-session-calendar.ts`: the Globex ~23h week (Sun 18:00 → Fri 17:00 wall, daily 17:00–18:00
+  maintenance halt) plus a rule-computed US holiday schedule (full closures vs 13:00 early closes,
+  weekend observance, Good Friday via Easter math, Juneteenth from 2022). All three done-when legs
+  landed: `expectedBarCount` counts real session buckets (a 5-year hourly ES set stops reading ~6%
+  incomplete), the gap detector counts only missing SESSION buckets (the halt stopped being a
+  phantom daily gap), and the mock emits the true session shape. 16 hand-pinned calendar guards +
+  4 mutations proven red. Honest residue: the holiday table is the RECURRING schedule — per-year
+  exchange notices (one-off closures, shortened Good Friday sessions) are not modeled and are
+  absorbed by the 0.98 completeness threshold; the expiry/roll date math still approximates business
+  days as weekdays.
 - ~~**Intraday backtester (F3 remainder).**~~ **SHIPPED 2026-07-27** —
   `futures-backtester.ts` + `futures-fitness.ts` + `scripts/oshal-futures-backtest.ts`: bar-walk
   simulation with NT8 fill semantics (next-bar-open entries priced off the signal bar, intrabar stop
@@ -5263,17 +5279,24 @@ deferred (`do what you can, backlog the rest`):
   documents walk-forward as policy but never implemented it — do not inherit that gap. **Done when:**
   a staged sweep runs over real bars, each stage scored by its own fitness, and a frozen-constant
   OOS run on unseen periods is reported beside the in-sample result.
-- **Continuous / back-adjusted contract construction — NOW A BLOCKER FOR RESULTS, not just research.**
-  The backtest runner clamps each contract to its front-month window (without that clamp Kibot returns
-  back-month quotes and the series is fabricated), but the remaining roll SEAM is a real price jump the
-  simulator books as phantom P&L. The runner detects material seams and warns, so no silent wrong number
-  ships — but any multi-year result needs back-adjustment first. **Done when:** a `buildContinuous(root,…)`
-  produces a panama/ratio back-adjusted series, verified across a roll, and the runner consumes it.
-- **Bar-timestamp convention reconciliation.** Kibot stuffs exchange-local time into UTC fields;
-  `MockFuturesDataSource` emits true UTC — so the 09:30–15:45 entry window means different wall-clock
-  hours on the two sources and cross-source comparisons are invalid. **Done when:** `FuturesBar.t`'s
-  convention is documented and enforced, both sources agree, and a spec pins the admissible bars for a
-  known session.
+- ~~**Continuous / back-adjusted contract construction — NOW A BLOCKER FOR RESULTS, not just
+  research.**~~ **SHIPPED in PR #67 (2026-07-27) but never struck here — reconciled 2026-07-31.**
+  `futures-continuous.ts` `buildContinuousSeries(root,…)` stitches front-month windows, measures
+  every roll seam (overlap-median on identical timestamps via an unclamped basis probe, adjacent-bar
+  fallback, 'gap' classification for missing intermediate contracts that is NEVER folded into
+  offsets), and panama-adjusts by default; `futures-continuous.spec.ts` verifies across rolls and
+  the runner consumes it (`--adjust none` to inspect raw seams). Roll convention: contract windows
+  roll a configurable `rollDaysBeforeExpiry` (default 8 calendar days) before expiry; adjustment is
+  panama/DIFFERENCE only — ratio adjustment is deliberately not implemented because the source
+  trader's NinjaTrader continuous contracts use difference adjustment and parity with his numbers
+  is the point.
+- ~~**Bar-timestamp convention reconciliation.**~~ **DONE 2026-07-31**, as part of the session
+  calendar. The convention is documented on `FuturesBar.t` and in `futures-session-calendar.ts`:
+  the UTC fields carry EXCHANGE-LOCAL WALL TIME (the Kibot shape; DST-free session math). The mock
+  now emits that convention through the same calendar (Sunday-18:00 opens, no 17:00 hour), so both
+  sources mean the same wall-clock hours and the entry window is comparable across them;
+  `futures-session-calendar.spec.ts` + the mock guards pin the admissible buckets for known
+  sessions, holidays, and early closes.
 - **Durable paper futures book + stop-trigger simulation.** The paper broker is in-memory (resets on
   restart) and accepts stop/stop_limit/trailing_stop as working without triggering them. **Done when:**
   the book persists (Postgres) and stop-family orders trigger against subsequent bars.

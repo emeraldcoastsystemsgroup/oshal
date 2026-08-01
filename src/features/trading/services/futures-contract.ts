@@ -11,9 +11,11 @@
  * This is where the friend's "how many hourly buckets must a whole contract have, given its rollover"
  * gap-checker concept lives — as a property of the instrument model, not a downstream patch step.
  *
- * Scope note: the expected-bar math approximates trading days as weekdays. A precise CME/CBOT holiday
- * + half-session calendar is deferred (see BACKLOG "Futures exchange session calendar") — until then,
- * completeness over holidays reports as expected-empty rather than a true gap. No I/O here; bar data
+ * Scope note: expected-bar math delegates to the Globex session + holiday calendar
+ * (futures-session-calendar.ts) — the ~23h Sun-18:00→Fri-17:00 wall-clock week with the 17:00–18:00
+ * maintenance halt and the rule-computed US holiday schedule. The EXPIRY/ROLL date math below still
+ * approximates business days as weekdays (an expiry landing ON an exchange holiday is not shifted);
+ * that residue is a different, far smaller item than the session shape. No I/O here; bar data
  * arrives from a FuturesDataSource and the store lives in the app layer.
  *
  * CHANGE LOG
@@ -22,15 +24,22 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — futures root registry (ES/MES/NQ/MNQ/YM/MYM/RTY/M2K), month codes, third-Friday expiry + configurable roll, contract enumeration over a range, active-contract lookup, weekday-approx expected-bar count. Foundation of the ADR-116 futures extension layer.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Energy roots: CL/MCL with all-12-month listing and the WTI expiry rule (3 business days before the 25th of the preceding month, per-root expiryRule field) — validated against the real CLZ25 file, whose last bar is the computed expiry day. Unblocks backtests on the crude minute data.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | expectedBarCount now counts REAL Globex session buckets (futures-session-calendar) instead of 24h weekdays — a five-year hourly ES contract set stops reading ~6% incomplete from phantom maintenance-halt/holiday buckets. Dropped the sessionHoursPerDay placeholder field the calendar supersedes; documented the wall-clock timestamp convention on FuturesBar.t.
  *
  * @module futures-contract
  */
 
 import type { Timeframe, OhlcvBar } from './market-data';
+import { countSessionBuckets, tradingDaysBetween } from './futures-session-calendar';
 
-/** One OHLCV bar stamped with its bar-open instant (ISO-8601 UTC) — the intraday shape futures need. */
+/** One OHLCV bar stamped with its bar-open instant — the intraday shape futures need. */
 export interface FuturesBar extends OhlcvBar {
-  /** Bar-open timestamp, ISO-8601 UTC (e.g. '2025-03-14T14:00:00.000Z'). */
+  /**
+   * Bar-open timestamp, ISO-8601 (e.g. '2025-03-14T14:00:00.000Z'). CONVENTION: the UTC fields
+   * carry EXCHANGE-LOCAL WALL TIME, not true UTC — Kibot stamps files that way, the mock source
+   * emits the same shape, and every session-math consumer (entry windows, the session calendar)
+   * reads it so. A 14:00 stamp means 2 p.m. on the exchange floor clock, year-round, DST-free.
+   */
   t: string;
 }
 
@@ -59,10 +68,6 @@ export interface FuturesRoot {
    * one). Weekday approximation, no holiday calendar — same scope note as the rest of the module.
    */
   expiryRule?: 'equity-index' | 'cl-energy';
-  /** Tradable hours per session — the expected-bar denominator. Currently a continuous-24h placeholder
-   *  (matches the mock's continuous weekday sessions); the real ~23h CME session + maintenance break
-   *  arrives with the session calendar (BACKLOG), which also teaches the gap detector to discount it. */
-  sessionHoursPerDay: number;
 }
 
 /** A single dated futures contract: its symbol, key dates, and the window it is the active front month. */
@@ -97,16 +102,16 @@ const MS_PER_DAY = 86_400_000;
 
 /** The built-in futures roots. Equity-index minis + micros; extend by appending a row. */
 export const FUTURES_ROOTS: Readonly<Record<string, FuturesRoot>> = Object.freeze({
-  ES:  { root: 'ES',  name: 'E-mini S&P 500',      exchange: 'CME',  currency: 'USD', multiplier: 50,  tickSize: 0.25, tickValue: 12.5,  months: QUARTERLY, sessionHoursPerDay: 24 },
-  MES: { root: 'MES', name: 'Micro E-mini S&P 500', exchange: 'CME',  currency: 'USD', multiplier: 5,   tickSize: 0.25, tickValue: 1.25,  months: QUARTERLY, sessionHoursPerDay: 24 },
-  NQ:  { root: 'NQ',  name: 'E-mini Nasdaq-100',    exchange: 'CME',  currency: 'USD', multiplier: 20,  tickSize: 0.25, tickValue: 5,     months: QUARTERLY, sessionHoursPerDay: 24 },
-  MNQ: { root: 'MNQ', name: 'Micro E-mini Nasdaq',  exchange: 'CME',  currency: 'USD', multiplier: 2,   tickSize: 0.25, tickValue: 0.5,   months: QUARTERLY, sessionHoursPerDay: 24 },
-  YM:  { root: 'YM',  name: 'E-mini Dow',           exchange: 'CBOT', currency: 'USD', multiplier: 5,   tickSize: 1,    tickValue: 5,     months: QUARTERLY, sessionHoursPerDay: 24 },
-  MYM: { root: 'MYM', name: 'Micro E-mini Dow',     exchange: 'CBOT', currency: 'USD', multiplier: 0.5, tickSize: 1,    tickValue: 0.5,   months: QUARTERLY, sessionHoursPerDay: 24 },
-  RTY: { root: 'RTY', name: 'E-mini Russell 2000',  exchange: 'CME',  currency: 'USD', multiplier: 50,  tickSize: 0.1,  tickValue: 5,     months: QUARTERLY, sessionHoursPerDay: 24 },
-  M2K: { root: 'M2K', name: 'Micro E-mini Russell',  exchange: 'CME',  currency: 'USD', multiplier: 5,   tickSize: 0.1,  tickValue: 0.5,   months: QUARTERLY, sessionHoursPerDay: 24 },
-  CL:  { root: 'CL',  name: 'Crude Oil (WTI)',       exchange: 'NYMEX', currency: 'USD', multiplier: 1000, tickSize: 0.01, tickValue: 10,  months: ALL_MONTHS, sessionHoursPerDay: 24, expiryRule: 'cl-energy' },
-  MCL: { root: 'MCL', name: 'Micro WTI Crude Oil',   exchange: 'NYMEX', currency: 'USD', multiplier: 100,  tickSize: 0.01, tickValue: 1,   months: ALL_MONTHS, sessionHoursPerDay: 24, expiryRule: 'cl-energy' },
+  ES:  { root: 'ES',  name: 'E-mini S&P 500',      exchange: 'CME',  currency: 'USD', multiplier: 50,  tickSize: 0.25, tickValue: 12.5,  months: QUARTERLY },
+  MES: { root: 'MES', name: 'Micro E-mini S&P 500', exchange: 'CME',  currency: 'USD', multiplier: 5,   tickSize: 0.25, tickValue: 1.25,  months: QUARTERLY },
+  NQ:  { root: 'NQ',  name: 'E-mini Nasdaq-100',    exchange: 'CME',  currency: 'USD', multiplier: 20,  tickSize: 0.25, tickValue: 5,     months: QUARTERLY },
+  MNQ: { root: 'MNQ', name: 'Micro E-mini Nasdaq',  exchange: 'CME',  currency: 'USD', multiplier: 2,   tickSize: 0.25, tickValue: 0.5,   months: QUARTERLY },
+  YM:  { root: 'YM',  name: 'E-mini Dow',           exchange: 'CBOT', currency: 'USD', multiplier: 5,   tickSize: 1,    tickValue: 5,     months: QUARTERLY },
+  MYM: { root: 'MYM', name: 'Micro E-mini Dow',     exchange: 'CBOT', currency: 'USD', multiplier: 0.5, tickSize: 1,    tickValue: 0.5,   months: QUARTERLY },
+  RTY: { root: 'RTY', name: 'E-mini Russell 2000',  exchange: 'CME',  currency: 'USD', multiplier: 50,  tickSize: 0.1,  tickValue: 5,     months: QUARTERLY },
+  M2K: { root: 'M2K', name: 'Micro E-mini Russell',  exchange: 'CME',  currency: 'USD', multiplier: 5,   tickSize: 0.1,  tickValue: 0.5,   months: QUARTERLY },
+  CL:  { root: 'CL',  name: 'Crude Oil (WTI)',       exchange: 'NYMEX', currency: 'USD', multiplier: 1000, tickSize: 0.01, tickValue: 10,  months: ALL_MONTHS, expiryRule: 'cl-energy' },
+  MCL: { root: 'MCL', name: 'Micro WTI Crude Oil',   exchange: 'NYMEX', currency: 'USD', multiplier: 100,  tickSize: 0.01, tickValue: 1,   months: ALL_MONTHS, expiryRule: 'cl-energy' },
 });
 
 /**
@@ -307,7 +312,8 @@ export function barMinutes(tf: Timeframe): number {
   }
 }
 
-/** Count weekdays (Mon–Fri) in [from, to), the trading-day approximation (no holiday calendar yet). */
+/** Count weekdays (Mon–Fri) in [from, to) — the expiry/roll business-day approximation. Expected-BAR
+ *  math no longer uses this; it counts real session buckets via futures-session-calendar. */
 export function weekdaysBetween(from: Date, to: Date): number {
   let n = 0;
   for (let t = utcMidnight(from); t < to.getTime(); t += MS_PER_DAY) {
@@ -324,20 +330,22 @@ function utcMidnight(d: Date): number {
 
 /**
  * @description Expected bar count for a contract's active window at a timeframe — the "whole contract"
- * denominator the completeness validator measures against. Approximates trading days as weekdays and
- * assumes a flat session length; precise exchange holidays/half-days are deferred (BACKLOG).
+ * denominator the completeness validator measures against. Counts REAL Globex session buckets
+ * (futures-session-calendar): the ~23h weekday session, the 17:00–18:00 maintenance halt, weekend
+ * close, full-closure holidays, and 13:00 early closes. Daily/weekly timeframes count trading days.
  * @param contract - The dated contract.
  * @param tf - Bar timeframe.
- * @param root - Root metadata (for sessionHoursPerDay).
+ * @param root - Root metadata. Reserved for per-exchange calendars (CME vs NYMEX notices can
+ *   diverge); every built-in root currently trades the shared Globex schedule.
  * @param windowStart - Optional clamp start (default contract.activeStart).
  * @param windowEnd - Optional clamp end (default contract.activeEnd).
  * @returns Expected number of bars over the (clamped) active window.
  */
 export function expectedBarCount(contract: FuturesContract, tf: Timeframe, root: FuturesRoot, windowStart?: Date, windowEnd?: Date): number {
+  void root;
   const from = new Date(Math.max((windowStart ?? contract.activeStart).getTime(), contract.activeStart.getTime()));
   const to = new Date(Math.min((windowEnd ?? contract.activeEnd).getTime(), contract.activeEnd.getTime()));
   if (to.getTime() <= from.getTime()) return 0;
-  const tradingDays = weekdaysBetween(from, to);
-  const bucketsPerDay = tf === '1Day' || tf === '1Week' ? 1 : Math.round((root.sessionHoursPerDay * 60) / barMinutes(tf));
-  return tradingDays * Math.max(1, bucketsPerDay);
+  if (tf === '1Day' || tf === '1Week') return tradingDaysBetween(from, to);
+  return countSessionBuckets(from.getTime(), to.getTime(), barMinutes(tf) * 60_000);
 }

@@ -60,11 +60,13 @@ indicators. F1–F4 are the rails; his rules drop into the ADR-095 strategy libr
   `user_sub`), RLS-enabled-but-open per migration 096, and benefits equities too.
 - Extending `BrokerProviderType` is the only change to shared equities types; equity order semantics are
   unchanged and the futures adapter carries its own multiplier/short handling.
-- **Honest limits (all tracked in BACKLOG):** sessions are approximated as continuous 24h weekdays until
-  a real exchange session/holiday calendar lands (which also teaches the gap detector to discount the
-  maintenance break); the paper book is in-memory; stop/trailing orders are accepted-working but not
-  trigger-simulated; there is no intraday backtester or live futures rail yet; and the actual strategy
-  must come from the friend.
+- **Honest limits (all tracked in BACKLOG):** ~~sessions are approximated as continuous 24h weekdays
+  until a real exchange session/holiday calendar lands~~ *(closed 2026-07-31 —
+  `futures-session-calendar.ts` drives the expected-bar count, the gap detector, and the mock with
+  the real Globex ~23h week + rule-computed holidays; per-year one-off exchange notices remain
+  unmodeled)*; the paper book is in-memory; stop/trailing orders are accepted-working but not
+  trigger-simulated; there is no ~~intraday backtester~~ *(shipped 2026-07-27)* or live futures rail
+  yet; and the actual strategy must come from the friend *(arrived — see the amendment below)*.
 
 ## Amendment 2026-07-28 — the strategy arrived, and its author answered
 

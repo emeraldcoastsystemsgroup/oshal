@@ -9,30 +9,32 @@
  * loop is, as he put it, "all the data the vendor has" — genuinely-absent thin/holiday sessions, not a
  * broken download.
  *
- * Weekend/holiday note: gap runs discount Saturday/Sunday buckets so the Friday-close → Sunday-open
- * halt never reads as missing data. Exchange holidays are still approximated as trading weekdays until
- * the session calendar lands (BACKLOG "Futures exchange session calendar") — so a holiday shows as a
- * small expected-empty gap, which the completeness threshold tolerates.
+ * Session/holiday note: gap runs count only buckets the Globex session calendar
+ * (futures-session-calendar.ts) says SHOULD trade — so the Friday-close → Sunday-open halt, the
+ * daily 17:00–18:00 maintenance break, full-closure holidays, and 13:00 early closes never read as
+ * missing data, while a genuinely absent mid-session hour still does.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-contract completeness (expected/received/missing/ratio), weekend-discounted interior gap-run detection, and the re-fetch convergence test that ends the patch loop when a re-download yields no new bars.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Gap detection is session-calendar-aware: interior runs count missing SESSION buckets, not missing weekday buckets — the daily maintenance halt stopped reading as a phantom one-bar gap every single trading day of real Kibot data, and holidays stopped reading as broken downloads.
  *
  * @module futures-completeness
  */
 
 import type { Timeframe } from './market-data';
 import { barMinutes, expectedBarCount, type FuturesBar, type FuturesContract, type FuturesRoot } from './futures-contract';
+import { countSessionBuckets } from './futures-session-calendar';
 
-/** A detected interior gap run — a stretch of missing bars inside the active window, weekend-discounted. */
+/** A detected interior gap run — a stretch of missing bars inside the active window, session-discounted. */
 export interface BarGap {
   /** Start of the gap (the last present bar before it), ISO-8601 UTC. */
   fromIso: string;
   /** End of the gap (the first present bar after it), ISO-8601 UTC. */
   toIso: string;
-  /** Estimated missing bars in the run (weekday buckets only). */
+  /** Estimated missing bars in the run (session buckets only). */
   missingBars: number;
 }
 
@@ -48,7 +50,7 @@ export interface ContractCompleteness {
   missing: number;
   /** received / expected, clamped to [0, 1]. */
   completeness: number;
-  /** Interior gap runs (weekday, intra-session), largest first. */
+  /** Interior gap runs (in-session buckets only), largest first. */
   gaps: BarGap[];
   /** True when completeness ≥ threshold (the contract is "whole enough"). */
   complete: boolean;
@@ -66,7 +68,7 @@ const MS_PER_DAY = 86_400_000;
  * @param root - Root metadata (session hours drive the expected count).
  * @param bars - The fetched bars (any order; filtered to the active window internally).
  * @param opts - Optional clamp window + completeness threshold.
- * @returns The completeness verdict, including weekend-discounted interior gap runs.
+ * @returns The completeness verdict, including session-discounted interior gap runs.
  */
 export function assessContractCompleteness(
   contract: FuturesContract,
@@ -102,27 +104,17 @@ function distinctBucketsInWindow(bars: FuturesBar[], barMs: number, winStart: nu
   return [...seen].sort((a, b) => a - b);
 }
 
-/** Interior gap runs between consecutive present buckets, discounting weekend buckets. */
+/** Interior gap runs between consecutive present buckets, counting only in-session buckets. */
 function detectGaps(buckets: number[], barMs: number): BarGap[] {
   const gaps: BarGap[] = [];
   for (let i = 1; i < buckets.length; i++) {
     const prev = buckets[i - 1];
     const cur = buckets[i];
     if (cur - prev <= barMs) continue;
-    const missing = countWeekdayBuckets(prev + barMs, cur, barMs);
+    const missing = countSessionBuckets(prev + barMs, cur, barMs);
     if (missing > 0) gaps.push({ fromIso: new Date(prev).toISOString(), toIso: new Date(cur).toISOString(), missingBars: missing });
   }
   return gaps;
-}
-
-/** Count bar slots in [fromMs, toMs) whose slot start lands on a weekday (Mon–Fri). */
-function countWeekdayBuckets(fromMs: number, toMs: number, barMs: number): number {
-  let n = 0;
-  for (let t = fromMs; t < toMs; t += barMs) {
-    const dow = new Date(t).getUTCDay();
-    if (dow !== 0 && dow !== 6) n++;
-  }
-  return n;
 }
 
 /**
