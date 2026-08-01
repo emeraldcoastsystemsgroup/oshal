@@ -74,13 +74,26 @@ resolves to "the accounts in this workspace." Absent → **All workspaces** (the
 desk). The scope lives in the URL/state, never cached, mirroring the cockpit's
 `?app=` contract.
 
-### 4. Multi-account-per-provider is a separate, deferred connector change
+### 4. Multi-account-per-provider is a separate connector change — SHIPPED 2026-08-01
 
-`oshal_connections` currently has `UNIQUE (user_sub, provider)` — one account per
-provider per user. True "two Gmails" needs that constraint relaxed (a connector-
-framework change), which is **out of scope here and deferred**. The workspace model is
-already forward-compatible: it keys on `connection_id`, so when a second Gmail becomes
-a distinct connection row, it simply becomes assignable to a workspace — no model change.
+*(As decided here: deferred, out of scope for Switchboard. Recorded as done because the
+sentence below described the constraint as present, and it no longer is.)*
+
+`oshal_connections` no longer carries `UNIQUE (user_sub, provider)`. Uniqueness is per
+ACCOUNT — partial unique indexes on `(user_sub, provider, account_key)` for personal rows
+and `(tenant_id, provider, account_key)` for shared ones — so a second Gmail is a distinct
+connection row. `scripts/migrations/101-connections-multi-account.sql` is the owner-role
+half of that change; the runtime bootstrap in `connector-tenancy.ts` mirrors it for a fresh
+local boot. Reaching the second account also needed the provider's account chooser on
+`/start` (Google's default `prompt=consent` re-authorises the already-signed-in account),
+and a deterministic resolution rule (`pickConnection`: explicit selector → the account the
+user marked default → the only candidate → a stable tiebreak, never recency).
+
+The workspace model was already forward-compatible and is unchanged: it keys on
+`connection_id`, so a second Gmail is simply assignable to a workspace. What Switchboard
+gains for free: `/api/connect/list` publishes `defaultConnectionId` + `multiAccount` per
+provider, and `/api/connect/:provider/access-token` selects an account by
+`?connection=` / `?label=` / `?email=`.
 
 ## Consequences
 
@@ -89,9 +102,9 @@ a distinct connection row, it simply becomes assignable to a workspace — no mo
   workspace scope everywhere for free; nothing new to bill or run (binds existing rails).
 - **Cost.** Switchboard owns a small schema + a settings surface; workspace scope must be
   threaded through each read/publish path as sections land.
-- **Deferred.** Multi-account-per-provider (relax the connections UNIQUE) and promoting
-  "workspace/identity grouping" to a core concept if another app ever needs it (YAGNI —
-  start app-owned, promote on the second consumer).
+- **Deferred.** Promoting "workspace/identity grouping" to a core concept if another app
+  ever needs it (YAGNI — start app-owned, promote on the second consumer).
+  *(Multi-account-per-provider, also deferred here, shipped 2026-08-01 — see section 4.)*
 - **Non-goal.** Switchboard does not become a second orchestration engine; the
   queue-manager + registry stay authoritative, and the communications-bot stays the
   single accountable executor.

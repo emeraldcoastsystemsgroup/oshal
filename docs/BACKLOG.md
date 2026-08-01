@@ -1121,6 +1121,24 @@ smoke procedure (docs/evidence/app-role-fresh-boot-cutover-2026-07-04.md).
 
 **Verified 2026-07-19:** OPEN — audit shows 0% categorized, 0% described, 52% iconed of 307 connectors.
 
+**2026-08-01 — CLOSED for category + description (icons remain).** The measurement was right and the
+runtime was hiding it: `inferCategory` in marketplace.ts ended in `return 'General'`, so every
+connector had a shelf label whether or not anyone had categorised it, and the 51 specs that DID
+declare `metadata.category` were ignored (the entry builder only read `metadata.description`, and
+`category` was not even in the `ConnectorSpec` type). One derivation now serves both the runtime
+catalog and the backfill CLI (`src/app/connectors/runtime/curation.ts`): category from the spec's own
+signals through an ordered rule table with **no catch-all** — undefined when nothing identifies the
+provider, which the CLI treats as a build failure and the runtime shelves as the deliberately
+wrong-looking `Uncategorized` plus one aggregated ERROR log; description derived from the spec's own
+resources, host and auth lane. `npm run connectors:curate` checks, `-- --write` backfills; the audit
+now reports full category + description coverage (read it from
+`npm run connectors:curation-audit`, never from a number typed here). Rule coverage was checked
+independently of the written values — with every declared category ignored, the rules alone still
+reach the whole catalog. **Still open:** verified icons (the audit's third measure) and `riskLevel`
+in the specs — riskLevel is computed at runtime from write/destructive counts, so declaring it in
+YAML would be a second source of truth; decide that before backfilling it.
+Guard: `tests/unit/connectors/connector-curation.spec.ts`.
+
 ### NOT doing: public/hosted SaaS readiness
 - Deliberately out of scope — it works against the self-host / you-own-it moat. Do not chase that score.
 
@@ -3171,6 +3189,45 @@ never a new app.
 
 **Verified 2026-07-19:** Phase 3/4 PARTIAL — cockpit enable/disable + tool (de)registration + the import CLI are done (Phase 4 import CLI confirmed shipped); enablement is deployment-level not per-user, and spec routes still boot-mount rather than lazy mount-on-enable.
 
+**Verified 2026-08-01:** lazy mount-on-enable is **still OPEN** and is now the last item here —
+`mountConnectorSpecRoutes` still mounts every enabled spec at boot. Not attempted this pass (a clean
+subset beat a sloppy sweep). **Done when:** enabling a connector mounts its router at that moment and
+disabling unmounts it, with a guard proving a disabled connector's route 404s BEFORE and AFTER an
+enable/disable cycle. Note before starting: an Express router cannot simply be removed from the
+stack, so the honest shape is probably a stable per-provider mount that delegates to the gate rather
+than a real unmount — decide that first, or the "lazy" in the title will not survive contact.
+
+### ✅ Multi-account-per-provider — DONE 2026-08-01 (ADR-113 section 4 unblocked)
+
+- **Was:** `oshal_connections` declared `UNIQUE (user_sub, provider)` in the runtime CREATE TABLE.
+  `ensureTenancySchema` dropped it again a moment later, so a fresh local boot worked by accident —
+  but the bootstrap does nothing under `OSHAL_SCHEMA_BOOTSTRAP=validate-only` and there was no
+  migration, so a migration-driven deployment kept the constraint and the second connect's
+  ON CONFLICT quietly UPDATED the first account. The user saw "connected". One account.
+  `scripts/migrations/101-connections-multi-account.sql` is the owner-role half; the runtime mirror
+  stays for a fresh local boot.
+- **Three more things had to be true.** REACHABLE: Google's default `prompt=consent` re-authorises
+  whichever account the browser is already signed into, so `/start` now forces the provider's account
+  chooser once the caller holds a connection (or asks with `?another=1`). DETERMINISTIC: resolution
+  fell back to the first row of an `updated_at DESC` list, and updated_at is rewritten by every token
+  refresh — so with two accounts and no marked default, "the user's Gmail token" changed identity
+  between two calls. SURVIVABLE: `DELETE /:provider` revoked ONE refresh token and then deleted them
+  all, leaving live grants at the provider for the rest.
+- **The resolution rule** (pure + exported as `pickConnection`): ownership-scope narrowing → an
+  explicit selector (connectionId, then label, then account email; a named selector that matches
+  nothing returns null, so a bot asks instead of acting on the wrong account) → the account the user
+  MARKED default → the only candidate → a stable tiebreak (household-first, then `created_at`, then
+  `connection_id`). Never recency. `upsertConnection` seeds exactly one default per (ownership scope,
+  provider) and both disconnect paths re-seed it, so the marked-default branch is the normal path.
+- **The seam for consumers** (switchboard's multi-source slice, store PR #29): `/api/connect/list`
+  publishes `defaultConnectionId` + `multiAccount` per provider alongside `connections[]`;
+  `/api/connect/:provider/access-token` already selects by `?connection=` / `?label=` / `?email=`;
+  and `resolveBotCreds` takes an optional per-provider selector, logging at WARN when a provider has
+  several accounts and nobody said which.
+- **Still open:** nothing in the kernel. Household (`tenant_id`-owned) connections are still removed
+  by a tenant admin only (ADR-042 Phase 3) — unchanged by this work.
+- Guard: `tests/unit/connector-multi-account.spec.ts`.
+
 ### ✅ Secrets out of bot containers — token broker DONE + VERIFIED (2026-06-15)
 - **Done:** `connector-token-broker.ts` `resolveBotCreds()` decrypts the caller's google/twitter
   tokens controller-side and threads them (`BotNodeRequest.creds` / `ProcessMessageOptions.creds`)
@@ -4713,6 +4770,17 @@ mobile-ux fix. Context: `docs/evidence/gap-list-build-2026-07-15.md` and the `@g
   unit tests cover the audit row + the skip path.
 - **Note 2026-07-19:** `social-routes` carved to the store (`d9f45cc0`) — the "social-routes sibling"
   clause now applies to the store package's social routes, not a kernel file.
+- **2026-08-01 — DONE (kernel half).** NEW `swarm-apps/connectors/linkedin.yaml` declares the member
+  share as a real action (`create-post`, POST /v2/ugcPosts, riskLevel high + approvalRequired, with a
+  paramsSchema pinning the author-URN shape); `buildPublisher` calls `runConnectorAction` against it.
+  Same brokered caller token and the same clean no-connection / missing-author-id skips, but params
+  are validated before any HTTP and the write is FAIL-CLOSED on the audit trail — if the pre-write
+  row cannot persist the post is refused rather than made invisibly. The confirm signal is passed
+  because the human gate is upstream (publish is only reachable from an approved draft). The store
+  package's social-routes sibling is still its own change, in its own repo.
+  Guard: `tests/unit/connectors/connector-write-actions.spec.ts` — the executor path is proven the
+  only way it can be: make the audit insert fail and assert NO provider call happens (a bespoke fetch
+  would post anyway).
 
 ### Bot registry cross-variant consistency — promoted concierges live only in the local registry
 - **Reason:** `social-writer` (and the 10 other concierges promoted to real bot-nodes 2026-07-09) are
@@ -4785,6 +4853,26 @@ mobile-ux fix. Context: `docs/evidence/gap-list-build-2026-07-15.md` and the `@g
   pending high-risk action from the surface.
 
 **Verified 2026-07-19:** PARTIAL — actions + riskLevel are surfaced in the marketplace and the 428 rail exists (connector-action-routes.ts:134); the `connector_action_audit` read endpoint + approve/deny UX remain open.
+
+**2026-08-01 — DONE.** (1) **Audit read:** `GET /api/connectors/actions/audit`
+(routes/connector-action-audit.ts) returns the CALLER's own trail with connector/status filters, a
+per-connector rollup and a page size capped at 200. `user_sub` is bound from the OIDC session into
+the predicate and can never come from request data; there is deliberately no cross-user variant (that
+is a different decision with a different gate). It mounts on the always-on marketplace router rather
+than inside `CONNECTOR_SPEC_ROUTES`, because reading what already happened must not depend on whether
+writes are currently switched on — and a deployment that never applied migration 083 gets an honest
+empty trail instead of a 500. (2) **428 UX:**
+`src/pages/cockpit/js/views/ConnectorActionRunner.js`, opened from the Discover card of any connector
+that declares write actions (the entry now carries `writeActions` — the declared `actions:` block,
+which the resource-derived `actions` never held). Run → the refusal is rendered in full (connector,
+action, risk, the exact params, "nothing has been sent") → Approve re-sends the IDENTICAL params plus
+the confirm flag, or Deny closes it. The panel never confirms on a first attempt. **Design note,
+deliberate:** the rail is STATELESS and the audit keeps only a params hash, so "approve" means the
+attempt in front of you — a past 428 cannot be replayed from the trail. Replaying one would need raw
+payload retention, which is exactly what the hash exists to avoid; do not add it without an ADR.
+(3) **The bespoke write:** LinkedIn publish now runs through the executor (see the entry above).
+Guards: `tests/unit/connectors/connector-write-actions.spec.ts`,
+`tests/unit/connectors/connector-action-confirm-ux.spec.ts`.
 
 ### Global search: deep-link contract + pg_trgm indexes
 - **Reason:** results link into surfaces via ad-hoc URLs and rank via an ILIKE+recency fallback; no trigram
@@ -6055,6 +6143,73 @@ These are the deliberately-deferred remainders:
   answer"). A live probe needs an authenticated call and costs tokens, so it must be explicit.
   *Done when:* `oshal-verify.sh --live` (PAT via env) sends one real chat message, asserts a
   non-stub answer, and strict mode documents when to use it (customer handover, post-deploy).
+
+
+## Payroll app (ADR-123) — deliberately deferred, with the reason ⬜ (2026-08-01)
+
+Payroll v1.1 shipped as a store package. Everything below was *chosen* not to build, not missed —
+each entry says why, so it is not silently re-litigated. Nothing here is required for the shipped
+scope to be correct; each is a coverage or product gap.
+
+1. **State withholding beyond the shipped set.** Four states ship verified tables (PA, IL, KY flat;
+   MO progressive) plus the nine no-wage-income-tax states; every other state falls back to an
+   operator-entered rate WITH a warning. **Deferred because** a wrong table is worse than an absent
+   one — the operator cannot tell it is wrong. **Done when:** the state's rule is in `STATE_RULES`
+   with a retrieved primary-source citation, a known-value test derived from that state's own worked
+   example (the Missouri pattern), and its removal from `KNOWN_UNSUPPORTED` if listed. Indiana needs
+   the mandatory county-tax table first; North Carolina needs its withholding rate (deliberately
+   higher than its tax rate) confirmed from NC-30.
+
+2. **Local/city taxes and state disability / paid-leave contributions.** Indiana counties, Ohio
+   municipalities, PA Act 32 EIT/LST, NYC and Yonkers, Maryland county piggyback, Michigan cities;
+   CA SDI, NY DBL/PFL, NJ TDI/FLI, WA PFML and Cares, MA/CT/OR/CO PFML. **Deferred because** these
+   are a second withholding dimension, not a rate tweak — for IN and MD the local piece is part of
+   the answer, which is why those states cannot ship at all. **Done when:** the engine carries a
+   jurisdiction list per employee and each shipped jurisdiction has a cited table plus a test.
+
+3. **Per-workweek hours.** FLSA overtime is computed per workweek and may never be averaged across
+   weeks, but a run line holds ONE hours figure for the whole period. Today the engine warns when a
+   multi-week period records more than 40 hours/week with no overtime. **Deferred because** the real
+   fix is a per-workweek (better: per-workday) child table, which is the same restructuring that
+   multiple pay rates and PTO need. **Done when:** hours are rows of (earnings code, rate, hours,
+   workweek), overtime is computed per workweek from them, and 29 CFR 516.2 daily/weekly records
+   exist for the retention period.
+
+4. **SSN, addresses and the employer EIN.** The W-2 output is a *preview* precisely because these
+   are absent. **Deferred because** SSN is the most sensitive field the platform would hold and
+   deserves encryption at rest, masked display, and audited reads — a security design, not a column.
+   **Done when:** those fields exist with that handling and the W-2 can be issued.
+
+5. **Employee self-service.** One login is the whole company; an employee cannot fetch their own
+   stub. **Deferred because** it needs a second identity class scoped to one `employee_id`, a
+   platform decision. **Done when:** an invited employee reads ONLY their own stubs and W-2 preview,
+   proven by an isolation spec that fails if they reach another employee's row.
+
+6. **Overpayment repayment across tax years.** **Deferred because** it is genuinely different from a
+   void: the employee had constructive receipt, so box 1 is NOT adjusted for a prior year — only
+   boxes 3–6 move, via W-2c, with a claim-of-right deduction. Getting it backwards is an IRS
+   violation, so approximating is worse than refusing. **Done when:** same-year and prior-year
+   repayment are separate transactions with a test asserting the prior-year case leaves box 1 alone.
+
+7. **Multiple garnishment orders with priority.** One CCPA-capped garnishment field exists; a second
+   order, priority ordering (support, then levy, then creditor), arrears multipliers and per-order
+   remittance do not. **Done when:** deductions are rows with type/priority/caps and each prints as
+   its own stub line.
+
+8. **Deposit schedule and due dates.** Reports are quarterly; federal deposits are monthly or
+   semiweekly by the lookback test, with a $100,000 next-day rule. **Done when:** a depositor status
+   setting drives a per-payday deposit amount and due date.
+
+9. **PTO/leave accrual, multiple pay rates, employer 401(k) match, workers' compensation, employer
+   benefit share, payment records (check number / ACH trace), bank-holiday pay-date shifting, and
+   1099 contractors.** **Deferred because** none changes a tax computation — they are additional
+   record types. **Done when:** each is a first-class type with its own stub or report presentation.
+
+10. **Money movement and filings.** No ACH/direct deposit, no tax deposits, no 941/940/W-2 filing.
+    **Deferred because** these are regulated activities better reached through a provider connector
+    (a Gusto connector already exists in the catalog) than reimplemented. **Done when:** a connector
+    performs the deposit/filing and the app records the confirmation — never when this app files.
+
 
 ## HUMAN: migrate platform SaaS accounts to real ECSG accounts (operator-led; record it) ⬜ PAUSED BY DESIGN
 

@@ -50,6 +50,19 @@ interface ConnectorMarketplaceDiskCache {
   entries: ConnectorMarketplaceEntry[];
 }
 
+/** One declared write action, flattened for a surface. */
+export interface ConnectorDeclaredAction {
+  name: string;
+  method: string;
+  urlTemplate: string;
+  riskLevel: ConnectorRiskLevel;
+  description: string;
+  /** True when the executor will answer 428 until the caller confirms. */
+  requiresConfirmation: boolean;
+  /** Top-level required param names from the action's paramsSchema. */
+  requiredParams: string[];
+}
+
 export interface ConnectorMarketplaceEntry {
   id: string;
   label: string;
@@ -85,6 +98,13 @@ export interface ConnectorMarketplaceEntry {
   writeCount: number;
   destructiveCount: number;
   actions: ConnectorActionProfile[];
+  /**
+   * The connector's DECLARED write actions (the `actions:` block), which the resource-derived
+   * `actions` above does not carry. A surface cannot offer the 428 confirm gate without the action
+   * name, its risk, and which params it requires — paramsSchema itself is intentionally not shipped
+   * (it can be large); the required-key list is what a form needs.
+   */
+  writeActions: ConnectorDeclaredAction[];
   audit: {
     pass: boolean;
     errors: number;
@@ -554,6 +574,7 @@ export class ConnectorMarketplaceService {
       writeCount,
       destructiveCount,
       actions,
+      writeActions: declaredActionsFor(spec),
       audit: {
         pass: audit.pass,
         errors: audit.issues.filter((issue) => issue.level === 'error').length,
@@ -673,6 +694,28 @@ function categoryFor(spec: ConnectorSpec, uncategorised?: string[]): string {
   if (derived) return derived;
   uncategorised?.push(spec.provider);
   return UNCATEGORIZED;
+}
+
+/**
+ * @description Flatten a spec's declared `actions:` block for a surface. medium/high risk (or an
+ * explicit approvalRequired) means the executor answers 428 until confirmed — the same rule
+ * connectorActionRequiresApproval applies, restated here so a surface never has to guess.
+ * @param spec - the parsed connector spec
+ * @returns the declared write actions, empty when the connector is read-only
+ */
+function declaredActionsFor(spec: ConnectorSpec): ConnectorDeclaredAction[] {
+  return (spec.actions ?? []).map((action) => {
+    const schema = (action.paramsSchema ?? {}) as { required?: unknown };
+    return {
+      name: action.name,
+      method: action.method,
+      urlTemplate: action.urlTemplate,
+      riskLevel: action.riskLevel as ConnectorRiskLevel,
+      description: action.description,
+      requiresConfirmation: action.riskLevel !== 'low' || action.approvalRequired === true,
+      requiredParams: Array.isArray(schema.required) ? schema.required.map(String) : [],
+    };
+  });
 }
 
 function riskLevel(spec: ConnectorSpec, writeCount: number): ConnectorRiskLevel {

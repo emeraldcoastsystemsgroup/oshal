@@ -16,3 +16,4 @@ export { AdvancedView } from './AdvancedView.js';
 export { OperationsView } from './OperationsView.js';
 export { LogsView } from './LogsView.js';
 export { ConnectorDiscoverView } from './ConnectorDiscoverView.js';
+export { openConnectorActionRunner } from './ConnectorActionRunner.js';
