@@ -231,18 +231,25 @@ turns a free background job into per-token spend.
 
 | Env | Effect | Default |
 |---|---|---|
-| `WORLD_PULSE_DEEP_SLICE` | **The dominant cost** — how many names get the full classify fan-out per pulse (rotates, so all are still covered over more pulses). `0` = all-lean (minimal classify). | `2` |
+| `WORLD_CLASSIFY_BUDGET_PER_HOUR` | **The hard ceiling** — max LLM classify calls per clock hour across ALL world paths (per-subject ingest + deep-dive + backtests). Exhausted → lexicon until the window rolls. Explicit `0` = no LLM. | `60` |
+| `WORLD_CLASSIFY_BUDGET_PER_DAY` | Same bucket's per-UTC-day backstop — bounds even a day of catch-up storms. | `400` |
+| `WORLD_PULSE_DEEP_SLICE` | **The dominant steady-state cost** — how many names get the full classify fan-out per pulse (rotates, so all are still covered over more pulses). `0` = all-lean (minimal classify). | `2` |
 | `WORLD_DEEPDIVE_BUDGET` | Max deep-dive items classified per cycle. | `3` |
 | `WORLD_FIREHOSE_EVERY_N_PULSES` | Run the publisher firehose (+ its classify) every Nth pulse. | `8` |
 | `WORLD_FIREHOSE_LIMIT` | Firehose feeds pulled per run. | `6` |
 | `WORLD_DEEPDIVE_ENABLED` | `false` kills deep-dive entirely (world intel falls back to lexicon — zero LLM cost). | `true` |
 
 > **`WORLD_CLASSIFY_CONCURRENCY` does NOT bound total LLM load** — it only limits per-subject chunk
-> concurrency. The schedule fans subjects out via the (currently hardcoded) `PULSE_SUBJECT_CONCURRENCY`
-> and `FEATURE_ROLLUP_CONCURRENCY` in `world-schedule-dispatch.ts`, so total concurrent CLI calls =
-> subjects × chunks. Reduce `WORLD_PULSE_DEEP_SLICE` to throttle, not the classify concurrency.
-> **TODO:** make those two fan-out constants env-configurable and add a global classify-concurrency
-> semaphore for a principled cap.
+> concurrency; total concurrent CLI calls = subjects × chunks via `PULSE_SUBJECT_CONCURRENCY` /
+> `FEATURE_ROLLUP_CONCURRENCY` in `world-schedule-dispatch.ts`. What bounds total CALLS is the
+> global classify budget above (2026-08-01, `classify-budget.ts` + `analyzeBatch`, guard
+> `tests/unit/world-classify-budget.spec.ts`): every LLM classify call takes a token from one shared
+> hour/day bucket, fail-closed to lexicon, denials logged once per window and counted in the pulse
+> completion record (`classifyBudget` in the `world refresh complete` line). This is the guard the
+> 2026-06-29 burn (27 CLI spawns/min for 9 h) proved missing. Two companion changes made each call
+> cheap enough to fit the pulse window: `MAX_THINKING_TOKENS=0` on the classify spawn + a minified
+> JSON instruction (measured on an in-container 8-item haiku chunk: 39.3 s / 4,277 output tokens →
+> 5.1 s / 414, same classification quality — the answer was the final ~350 tokens all along).
 
 ### "oshal-api is grinding" — triage
 

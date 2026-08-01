@@ -24,6 +24,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — deterministic world-refresh loop (enumerate tracked subjects → re-ingest+classify each via ingestFeeds), replacing the subject-less LLM dispatch that never pulled.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log the global classify-budget snapshot in the completion line — the 2026-06-29 burn ran 9 HOURS before a human noticed because spend was invisible; now every cycle's record says how much of the LLM budget the world layer has used and whether it was denied any.
  *
  * @module world-schedule-dispatch
  */
@@ -40,7 +41,7 @@ import {
   collectGovContracts,
   DEFAULT_FEED_IDS, FINANCE_FEED_IDS, PULSE_FEED_IDS,
   firehoseEnabled, firehoseFeeds, firehoseLimit, firehoseEveryNPulses,
-  deepDiveEnabled, deepDiveBudget, deepDiveMetered, feedBudgetMs,
+  deepDiveEnabled, deepDiveBudget, deepDiveMetered, feedBudgetMs, classifyBudgetSnapshot,
   DEFAULT_WORLD_TOPICS, tickerSubject, type WorldSubject,
   MARKET_SUBJECTS,
 } from '@/features/world-data';
@@ -275,7 +276,7 @@ export async function dispatchWorldSchedule(_ctx: AppContext, schedule: Schedule
       catch (e) { logger.warn({ err: e, entity: s.entity }, 'feature rollup failed'); }
     });
 
-    logger.info({ scheduleId: schedule.id, mode: pulse ? 'ticker-pulse' : 'depth-refresh', subjects: subjects.length, deepSlice: deep.size, rolled, ...totals }, 'world refresh complete');
+    logger.info({ scheduleId: schedule.id, mode: pulse ? 'ticker-pulse' : 'depth-refresh', subjects: subjects.length, deepSlice: deep.size, rolled, classifyBudget: classifyBudgetSnapshot(), ...totals }, 'world refresh complete');
     return { success: true, scheduleId: schedule.id, taskId: `world-refresh-${schedule.id}` };
   } catch (e) {
     logger.error({ err: e, scheduleId: schedule.id }, 'world refresh failed');

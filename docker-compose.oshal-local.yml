@@ -8,6 +8,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Enabled fail-closed native GitHub issue webhook intake on the API service
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Forward the operator-notification env (NOTIFY_TRANSPORT, TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID, TWILIO_* SMS/voice) into the api service — the pluggable notify harness and oshal-send-alert.js run there, and without the passthrough the host .env credentials never reached the process, so every transport silently no-opped in-container.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | World classify re-enable rails: forward WORLD_CLASSIFY_BUDGET_PER_HOUR/PER_DAY (the global LLM-call ceiling the 2026-06-29 burn proved missing), and default WORLD_CLASSIFY_PROVIDERS to claude alone — the codex default routed every other chunk to a CLI documented broken in this container (read-only-fs app-server), which silently lexicon-degraded half the classify work.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -843,15 +844,21 @@ services:
       WORLD_FEED_BUDGET_MS: ${WORLD_FEED_BUDGET_MS:-45000}
       WORLD_CLASSIFY_CHUNK: ${WORLD_CLASSIFY_CHUNK:-8}
       WORLD_CLASSIFY_CONCURRENCY: ${WORLD_CLASSIFY_CONCURRENCY:-1}
-      # Spread the deep-dive classify over BOTH CLIs (chunks round-robin) — 2x throughput, no single-provider
-      # bottleneck. Set to "claude" or "codex" to pin one. Optional Codex model override.
-      WORLD_CLASSIFY_PROVIDERS: ${WORLD_CLASSIFY_PROVIDERS:-codex}
+      # Classify provider(s), chunks round-robin. Default is claude ALONE: codex is the intended cheap
+      # indexer but is currently broken in the container (read-only-fs app-server) — a codex default
+      # silently lexicon-degrades every chunk routed to it. Set "codex,claude" once codex is fixed.
+      WORLD_CLASSIFY_PROVIDERS: ${WORLD_CLASSIFY_PROVIDERS:-claude}
       # Token-burn controls. WORLD_CLASSIFY_DISABLED=true → no LLM at all (free lexicon; keeps every non-LLM
       # signal). WORLD_PULSE_DEEP_SLICE = how many names get the full fan-out per pulse (the dominant LLM
-      # cost); lower = cheaper, 0 = all-lean. (Codex is the intended cheap indexer but is currently broken in
-      # the container — read-only-fs app-server; until fixed, keep claude/haiku or disable.)
+      # cost); lower = cheaper, 0 = all-lean.
       WORLD_CLASSIFY_DISABLED: ${WORLD_CLASSIFY_DISABLED:-false}
       WORLD_PULSE_DEEP_SLICE: ${WORLD_PULSE_DEEP_SLICE:-2}
+      # GLOBAL classify-call ceiling (the 2026-06-29 burn guard): max LLM classify calls per clock hour /
+      # UTC day across ALL world paths (per-subject ingest + firehose deep-dive + backtests). Exhausted →
+      # lexicon fallback until the window rolls; denials are logged once per window and counted in the
+      # pulse completion record. Explicit 0 = no LLM (same effect as WORLD_CLASSIFY_DISABLED).
+      WORLD_CLASSIFY_BUDGET_PER_HOUR: ${WORLD_CLASSIFY_BUDGET_PER_HOUR:-60}
+      WORLD_CLASSIFY_BUDGET_PER_DAY: ${WORLD_CLASSIFY_BUDGET_PER_DAY:-400}
       WORLD_CLASSIFY_CODEX_MODEL: ${WORLD_CLASSIFY_CODEX_MODEL:-}
       # Forward market-events calendar (earnings via Nasdaq, FOMC schedule, jobs report) on the 6h depth cycle.
       WORLD_EVENTS_ENABLED: ${WORLD_EVENTS_ENABLED:-true}
@@ -1133,16 +1140,10 @@ services:
       NOTIFY_EMAIL_TO: ${NOTIFY_EMAIL_TO:-}
       # Operator notifications (BACKLOG "Telegram notification bot" + Twilio transport go-live):
       # the pluggable notify harness (notifyOperator) and scripts/oshal-send-alert.js both run in
-      # THIS container, so the deployment-level channel credentials must be forwarded here. All
-      # default empty — an unconfigured transport is a documented no-op, never an error. BYO by the
-      # operator's own hand in the host .env (never through a chat transcript / never committed).
+      # THIS container. The TWILIO_*/TELEGRAM_* credentials are forwarded ONCE, further up this
+      # same env block (beside TOTP_ISSUER) — declaring them twice was a duplicated-mapping-key
+      # YAML error that turned live-weather-email-wiring.spec red. Transport selector only here.
       NOTIFY_TRANSPORT: ${NOTIFY_TRANSPORT:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
-      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
-      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
-      TWILIO_TO_NUMBER: ${TWILIO_TO_NUMBER:-}
       # Connector OAuth client. connectors-routes' providerCreds reads GOOGLE_CONNECT_* FIRST
       # and falls back to OIDC_CLIENT_*; only the fallback was ever forwarded, so on a box
       # with no OIDC (a LOCAL_AUTH customer deployment) every Google connector reported

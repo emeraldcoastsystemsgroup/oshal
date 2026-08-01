@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Created the world-data feature barrel (FSD deep-import burn-down): surfaces the world-intelligence service, feed/firehose ingestion, the collectors (market events, political/insider trades, short interest, gov contracts), and the subject/feed catalogs consumers were reaching via deep paths.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export classifyBudgetSnapshot — the pulse dispatch logs the global classify-budget counters each cycle so LLM burn is visible in the run record.
  */
 
 /**
@@ -15,7 +16,7 @@ export {
   createWorldIntelligenceService,
   type WorldIntelligenceService,
 } from './world-intelligence-service';
-export { ingestFeeds, speedReadFirehose, deepDiveFirehose } from './news-fetcher';
+export { ingestFeeds, speedReadFirehose, deepDiveFirehose, classifyBudgetSnapshot } from './news-fetcher';
 export { collectMarketEvents } from './market-events';
 export { collectPoliticalTrades } from './political-trades';
 export { collectInsiderTrades } from './insider-trades';

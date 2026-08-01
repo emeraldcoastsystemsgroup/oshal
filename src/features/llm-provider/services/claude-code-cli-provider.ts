@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ClaudeCodeCliProvider — harness provider wrapping the Claude Code CLI
  *                     |                           | Uses `claude -p --output-format json` for non-interactive calls
  *                     |                           | Auth handled via ANTHROPIC_API_KEY or Claude Code OAuth
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | config.extraEnv — per-provider env for the spawned CLI. Built for the world classify path: MAX_THINKING_TOKENS=0 there cut one measured 8-item haiku classify from 39.3s / 4,277 output tokens to 5.1s / 414 (the classification was in the FINAL 350 tokens all along; the rest was interleaved thinking a batch-JSON task doesn't need).
  */
 
 import { spawn } from 'child_process';
@@ -27,6 +28,10 @@ export interface ClaudeCodeCliProviderConfig {
   timeoutMs?: number;
   model?: string;
   permissionMode?: 'default' | 'plan' | 'bypassPermissions';
+  /** Extra env vars for the spawned CLI (e.g. MAX_THINKING_TOKENS=0 for batch-JSON tasks where
+   *  interleaved thinking is pure latency). Merged over process.env; ANTHROPIC_API_KEY is still
+   *  stripped afterwards — extraEnv cannot re-route auth off the OAuth session. */
+  extraEnv?: Record<string, string>;
 }
 
 /**
@@ -59,12 +64,14 @@ export class ClaudeCodeCliProvider {
   private readonly timeoutMs: number;
   private readonly model: string | null;
   private readonly permissionMode: string;
+  private readonly extraEnv: Record<string, string>;
 
   constructor(config: ClaudeCodeCliProviderConfig = {}) {
     this.binary = config.binaryPath || process.env.CLAUDE_CODE_CLI_PATH || 'claude';
     this.timeoutMs = config.timeoutMs || DEFAULT_TIMEOUT_MS;
     this.model = config.model || null;
     this.permissionMode = config.permissionMode || 'default';
+    this.extraEnv = config.extraEnv || {};
     logger.info({ binary: this.binary, timeoutMs: this.timeoutMs, model: this.model }, 'ClaudeCodeCliProvider initialized');
   }
 
@@ -103,8 +110,9 @@ export class ClaudeCodeCliProvider {
       logger.info({ cmd: cmd.slice(0, 120) }, 'ClaudeCodeCliProvider: spawning');
 
       // Strip ANTHROPIC_API_KEY so the claude CLI uses its OAuth session instead of
-      // an (possibly expired) API key from the environment.
-      const env = { ...process.env };
+      // an (possibly expired) API key from the environment. extraEnv merges BEFORE the
+      // strip on purpose — a caller's env tweak must not re-route auth onto the key.
+      const env = { ...process.env, ...this.extraEnv };
       delete env.ANTHROPIC_API_KEY;
 
       const child = spawn(cmd, [], {
