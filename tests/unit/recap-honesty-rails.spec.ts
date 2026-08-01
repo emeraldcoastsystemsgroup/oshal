@@ -116,6 +116,61 @@ describe('remote pull chunk window', () => {
   });
 });
 
+// 2026-07-30: pullFile re-ran ToBase64String(ReadAllBytes(file)) for EVERY chunk and discarded all
+// but ~14KB of the result. A 2.8MB piece is 278 chunks, so the node read 810MB and encoded 1.08GB
+// to deliver 2.8MB — quadratic, four times a night, and it presents as a node that looks idle
+// while the pull grinds for 26 minutes and then fails.
+describe('pull is linear, not quadratic (2026-07-30)', () => {
+  const pull = bodyOf(remoteNode, 'pullFile');
+
+  it('encodes the source exactly once, not once per chunk', () => {
+    // Comment prose describes the old quadratic loop, so count code only.
+    const code = pull.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    const encodes = code.match(/ToBase64String/g) || [];
+    expect(encodes, 'a second ToBase64String in code means the per-chunk re-encode is back').toHaveLength(1);
+  });
+
+  it('the per-chunk command reads the scratch file, never the source', () => {
+    const chunkCmd = /const cmd = \[([\s\S]*?)\]\.join/.exec(pull);
+    expect(chunkCmd, 'per-chunk command not found').toBeTruthy();
+    expect(chunkCmd![1], 'the chunk read must not touch remotePath — that is the quadratic bug')
+      .not.toMatch(/remotePath/);
+    expect(chunkCmd![1]).toMatch(/marker/);
+  });
+
+  it('serves chunks as byte-range reads of a staged scratch file', () => {
+    expect(pull).toMatch(/OpenRead/);
+    expect(pull).toMatch(/Seek\(\$\{offset\}/);
+  });
+
+  it('deletes the scratch file even when the transfer fails midway', () => {
+    expect(pull).toMatch(/cleanup/);
+    expect(pull).toMatch(/Remove-Item/);
+    // one cleanup on the failure path, one on the success path
+    expect((pull.match(/await cleanup\(\)/g) || []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('refuses a short chunk instead of splicing it into the file', () => {
+    expect(pull).toMatch(/got\.length !== take/);
+    expect(pull).toMatch(/throw new Error/);
+  });
+
+  it('keeps the chunk under the node\'s measured 20000-char stdout truncation', () => {
+    const clamp = /Math\.min\(num\(args\.chunkSize,\s*(\d+)\),\s*(\d+)\)/.exec(pull);
+    expect(clamp, 'chunkSize clamp not found — the truncation guard is unverified').toBeTruthy();
+    expect(Number(clamp![1]), 'default chunk must sit under the 20000 cap').toBeLessThan(20000);
+    expect(Number(clamp![2]), 'max chunk must sit under the 20000 cap').toBeLessThan(20000);
+  });
+});
+
+describe('the nightly runs the trunk driver, not the frozen archive', () => {
+  it('$RNJS resolves to the script\'s own repo first', () => {
+    // Every driver fix landed in the trunk while the nightly kept loading the archive's copy,
+    // which has neither the 07-28 chunk-window fix nor the 07-30 quadratic-pull fix.
+    expect(runner).toMatch(/\$RNJS\s*=\s*if \(Test-Path "\$PSScriptRoot\\codex-remote-node\.mjs"\)/);
+  });
+});
+
 describe('piece-name contract (runner, assembler and build goal must agree)', () => {
   const pieces = ['presenter-intro.mp4', 'presenter-overview.mp4', 'presenter-close.mp4', 'deck-narrated.mp4'];
   it.each(pieces)('%s appears in runner, assembler and goal', (piece) => {

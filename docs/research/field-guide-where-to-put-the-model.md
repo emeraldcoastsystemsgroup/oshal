@@ -114,10 +114,12 @@ Practical forms of this:
 - Force a bounded enum instead of free text wherever a decision is categorical
 - Force the model to emit its *inputs to* a decision, and compute the decision yourself
 
-One caution so you don't overclaim: **determinism is not what makes a verifier robust.** In the same
-study, a *model-based* verifier held at 0.0–1.1% failure across every reward-hacking pattern tested.
-Robustness is an implementation property. This licenses "use a robust verifier," not "verifiers must
-be deterministic."
+One caution so you don't overclaim: **determinism is not what makes a verifier robust.** In a
+separate verifier study (Huang et al.), the strongest *model-based* verifier tested was fooled by
+only 0.0–1.1% of reward-hacking attempts across the representative patterns — while other
+model-based verifiers in the same study fell for the same attacks at rates up to 35–62%. Robustness
+is an implementation property. This licenses "use a robust verifier," not "verifiers must be
+deterministic."
 
 ---
 
@@ -141,9 +143,10 @@ somewhere other than the model's behaviour.
 **(iii) Can a domain expert ratify the criterion?**
 Treat this as your **weakest** condition, not your safest. EvalPlus found 18 defects across **11% of
 HumanEval's 164 human-written ground-truth solutions** — ten of them cases where the reference
-implementation simply implemented the wrong thing — sitting undetected for roughly two years in the
-most scrutinised code benchmark in the field (Liu et al. 2023). Experts stated the correctness
-criterion 164 times and were wrong 11% of the time. Get a second ratifier.
+implementation simply implemented the wrong thing (Liu et al. 2023). By release-date arithmetic
+(HumanEval 2021, EvalPlus 2023) those defects had sat roughly two years in the most scrutinised code
+benchmark in the field. Experts stated the correctness criterion 164 times and were wrong 11% of the
+time. Get a second ratifier.
 
 **(iv) Is the predicate demonstrably non-vacuous?**
 This is the condition everyone skips, and it exists because `return true` satisfies the other three
@@ -172,6 +175,10 @@ split.
 So: **wrap prediction, don't replace it.** If someone on your team is trying to write rules that
 replace a fraud model, redirect them to the decision logic *around* the score.
 
+(Scope note: this section is a corollary of condition (ii) — an unobservable estimate has no
+pre-existing written correctness rule, so it can never qualify — not something the companion paper
+argues from evidence. The boundary is this guide's own extrapolation.)
+
 ---
 
 ## 7. The four commitments
@@ -184,8 +191,8 @@ can maintain.
    the residual, **differential monitor over live traffic** so drift is visible.
 3. **Prove non-vacuity** before trusting a green check.
 4. **Ship an expiry review and a re-entry path with every predicate.** Adequacy decays — rule-based
-   recall measured meaningfully lower for long-chain-of-thought generators (~0.92) than for the
-   weaker generators a verifier was built against (Huang et al.). Put a date on it and a named owner.
+   recall for long-chain-of-thought generators averages ~0.92, "much lower than other weaker models"
+   (Huang et al.). Put a date on it and a named owner.
 
 Plus one discipline from Parnas: **every predicate ships an explicit declaration of what it doesn't
 cover.**
@@ -242,7 +249,11 @@ tells you within a fortnight whether the rest is worth doing.
 *Numbers in this guide are drawn from the sources cited in
 [Demote, Don't Delete](./position-paper-light-ai.md), which also prints the strongest case against
 this advice without rebuttal and documents a second, independent verification pass against primary
-sources (2026-07-31) in its closing notes. That pass found Reddy et al. and Qiu et al.'s core numbers
-accurate; corrected Huang et al.'s title, a quotation, and a recall figure; and pulled a citation
-(Beg et al.) that turned out not to say what it was cited for. Read those notes before you build a
-business case on any of this.*
+sources (2026-07-31) in its closing notes. That pass found Reddy et al. accurate in every
+particular; found Qiu et al.'s core numbers accurate but corrected its cited title and a quotation;
+corrected Huang et al.'s title, a quotation, a misattributed verifier statistic, and a recall
+figure; pulled a citation (Beg et al.) that turned out not to say what it was cited for; and
+verified every remaining figure this guide uses — the benchmark numbers, the BCG and Copilot
+studies, the XCON growth figure, the seL4 and Menzies findings, and the 280-fold cost decline —
+directly against their primary sources. Read those notes before you build a business case on any of
+this.*

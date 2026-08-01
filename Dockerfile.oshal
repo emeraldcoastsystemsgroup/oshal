@@ -239,6 +239,12 @@ COPY scripts/swarm-bot-lifecycle.sh ./scripts/
 COPY scripts/bot-node-batch.sh ./scripts/
 COPY scripts/finalize-incident.sh ./scripts/
 COPY scripts/record-cost.sh ./scripts/
+# Postflight verification trio (INSTALLER-GAPS G1): oshal-install.sh registry mode
+# extracts these from the image (no repo on the host), and /api/readiness reads the
+# critical-bots list from /app/scripts to scope its heartbeat leg.
+COPY scripts/oshal-verify.sh ./scripts/
+COPY scripts/swarm-routability-check.sh ./scripts/
+COPY scripts/routability-critical-bots.txt ./scripts/
 # ALL OSHAL connector/app CLIs (walmart, uber, uber-rides, spotify, duffel, gcp,
 # plaid, trading, …) — baked so app search/booking survives a container recreate.
 # Glob picks up new oshal-*.js automatically (allowlisted in .dockerignore).

@@ -110,6 +110,19 @@ if (-not $SkipDeploy) {
   Note "VERIFIED: $url is live and index.json leads with $Date"
 }
 
+# 7b) JOURNAL THE DAY. The journal was only ever written by hand - knob turns and incidents - so a
+# quiet week left holes and the weekly write-up had nothing to say about days the platform worked
+# fine. One `report` entry per session, from the figures we just published. Idempotent per day, so
+# the nightly's normal recovery re-publish cannot stack duplicates. Non-fatal: the report is already
+# live, and a bookkeeping miss must not fail the run behind it.
+try {
+  $hasVideo = (Test-Path $video) -and ((Get-Item $video).Length -gt 1MB)
+  $jArgs = @('exec', '-e', "OSHAL_USER_SUB=$($env:OSHAL_USER_SUB)", 'oshal-local-api', 'node',
+             '/app/scripts/oshal-report-journal.js', "--day=$Date", "--video=$(if ($hasVideo) { 'true' } else { 'false' })")
+  $j = & docker @jArgs 2>&1 | Out-String
+  Note ("journal: " + (($j -split "`n" | Where-Object { $_ -match 'REPORT_JOURNAL' } | Select-Object -Last 1)))
+} catch { Note "journal entry failed (report is published): $($_.Exception.Message)" }
+
 # 8) MIRROR to the company site. This step did not exist until 2026-07-31, so emeraldcoastsystemsgroup
 # .com/demos only ever moved when someone updated it BY HAND - it sat on the July 24 session while
 # agenticfederal was publishing nightly, and the operator found it a week stale. A second surface that

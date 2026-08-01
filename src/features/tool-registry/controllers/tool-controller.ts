@@ -6,9 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of ToolController for Layer 1 Tools Framework
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixed logger import path to shared/logger; updated Change Log author/timestamp
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Routed ToolRegistryService dependency through services barrel export
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:10:00 | Added
+ *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
+ *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  */
 
-import { Request, Response } from 'express';
+import { Request, Response, type RequestHandler } from 'express';
 import { logger } from '@/shared/logger';
 import { BaseController } from '@/app/base-controller';
 import { ToolRegistryService } from '../services';
@@ -35,7 +38,7 @@ export class ToolController extends BaseController {
    * @description GET /api/tools - Retrieve all tools with optional filtering
    * Query params: name, type, category, authGroup, search, limit, offset
    */
-  getAllTools = this.asyncHandler(async (req: Request, res: Response) => {
+  getAllTools: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const filters = ToolFiltersSchema.parse(req.query);
     const tools = await this.service.getAllTools(filters);
     
@@ -49,7 +52,7 @@ export class ToolController extends BaseController {
   /**
    * @description GET /api/tools/:id - Retrieve a single tool by ID
    */
-  getToolById = this.asyncHandler(async (req: Request, res: Response) => {
+  getToolById: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const toolId = Array.isArray(id) ? id[0] : id;
     const tool = await this.service.getToolById(toolId);
@@ -64,7 +67,7 @@ export class ToolController extends BaseController {
   /**
    * @description POST /api/tools - Register a new tool
    */
-  createTool = this.asyncHandler(async (req: Request, res: Response) => {
+  createTool: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const input = CreateToolSchema.parse(req.body);
     const tool = await this.service.registerTool(input);
     
@@ -74,7 +77,7 @@ export class ToolController extends BaseController {
   /**
    * @description PUT /api/tools/:id - Update an existing tool
    */
-  updateTool = this.asyncHandler(async (req: Request, res: Response) => {
+  updateTool: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const toolId = Array.isArray(id) ? id[0] : id;
     const updates = UpdateToolSchema.parse(req.body);
@@ -90,7 +93,7 @@ export class ToolController extends BaseController {
   /**
    * @description DELETE /api/tools/:id - Delete a tool
    */
-  deleteTool = this.asyncHandler(async (req: Request, res: Response) => {
+  deleteTool: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const toolId = Array.isArray(id) ? id[0] : id;
     const deleted = await this.service.deleteTool(toolId);
@@ -105,7 +108,7 @@ export class ToolController extends BaseController {
   /**
    * @description GET /api/tools/metadata/categories - Get all unique categories
    */
-  getCategories = this.asyncHandler(async (req: Request, res: Response) => {
+  getCategories: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const categories = await this.service.getCategories();
     
     return this.success(res, { categories, count: categories.length });
@@ -114,7 +117,7 @@ export class ToolController extends BaseController {
   /**
    * @description GET /api/tools/metadata/auth-groups - Get all unique auth groups
    */
-  getAuthGroups = this.asyncHandler(async (req: Request, res: Response) => {
+  getAuthGroups: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const authGroups = await this.service.getAuthGroups();
     
     return this.success(res, { authGroups, count: authGroups.length });
@@ -124,7 +127,7 @@ export class ToolController extends BaseController {
    * @description GET /api/tools/search - Full-text search across tools
    * Query params: q (search term)
    */
-  searchTools = this.asyncHandler(async (req: Request, res: Response) => {
+  searchTools: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { q } = req.query;
     const query = Array.isArray(q) ? q[0] : q;
     if (!query || typeof query !== 'string') {

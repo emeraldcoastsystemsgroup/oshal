@@ -101,6 +101,41 @@ in the wrong zone. Use the dashboard, or a credential scoped to `agenticfederal.
 - **API "healthy" but `127.0.0.1:35457` dead (HTTP 000):** docker forward wedge after
   a reboot, not a tunnel/DNS issue → `bash scripts/api-bounce.sh`.
 
+## Adding a themed app subdomain (dnd.oshal.ai, trading.oshal.ai, ...)
+
+`HOST_APP_MAP` (src/app/host-app-map.ts, wired into the root `/` handler in server.ts) lets a
+subdomain land straight on one app instead of the generic ribbon — e.g. `dnd.oshal.ai` opens
+D&D directly, no `?app=dnd` needed. It reuses the SAME tunnel + origin as `oshal`/`littlemonster`
+above (`http://oshal-api:5000`) — this is one swarm instance wearing several front doors, not a
+separate deployment per app. Real per-tenant isolation is a different, unbuilt project
+(ADR-035); this is cosmetic/routing only.
+
+Adding one is four steps, repeatable per app — no code change needed after the first one:
+
+1. **Cloudflare Tunnel (dashboard-only, not in any repo file):** Zero Trust → Networks →
+   Tunnels → the tunnel already serving `oshal`/`littlemonster` → **Public Hostname** → Add a
+   hostname → Service `http://oshal-api:5000`. If the target zone (e.g. `oshal.ai`) isn't the
+   same zone the tunnel's `cert.pem` is scoped to, do NOT run `cloudflared tunnel route dns` —
+   see the NXDOMAIN failure mode above; add the DNS record from the dashboard instead (proxied
+   CNAME → `<tunnel-id>.cfargotunnel.com`).
+2. **`OIDC_BASE_URLS`** (env, not `.env.example`): append the new origin, comma-separated —
+   e.g. `https://oshal.ai,https://dnd.oshal.ai`. Skipping this reproduces the exact cross-host
+   login loop this var was built to fix (see the file header of `src/shared/middleware/oidc.ts`).
+   If sessions should be shared across a subdomain family, add its apex to
+   `SESSION_COOKIE_DOMAIN` (comma-separated list, e.g. `.agenticfederal.us,.oshal.ai`) —
+   it is resolved per host, and a host matching no entry gets a host-only cookie. (Before
+   the per-host resolution, one fixed value here broke logins on every host outside it
+   with `checks.state argument is missing` at /callback — the browser rejects a Set-Cookie
+   whose Domain doesn't cover the serving host, taking the OIDC state cookie with it.)
+3. **`HOST_APP_MAP`** (env): append `hostname=appName` — the `appName` is the manifest `name:`
+   field (NOT always the display name — e.g. the trading app's manifest name is
+   `intelligent-trades`, not `trading`). Example:
+   `dnd.oshal.ai=dnd,trading.oshal.ai=intelligent-trades,jobfinder.oshal.ai=career-hunter,littlemonsters.oshal.ai=little-monsters`.
+4. **Ship it:** these are env changes, so a container recreate is required (bind-mounted code
+   alone won't pick them up) — `bash scripts/oshal-deploy.sh` after the branch merges. Verify
+   with the quick health check pattern above, then confirm `https://<host>/` redirects to
+   `/cockpit/?app=<appName>` and login completes without looping.
+
 ## Diagnostics cheat-sheet
 
 ```bash

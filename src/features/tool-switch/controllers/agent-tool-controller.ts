@@ -7,9 +7,12 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixed logger import path to shared/logger; updated Change Log author/timestamp
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added endpoint for persisting unified per-tool runtime/auth configuration
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added malformed-agent validation and cockpit-compatible tool response fields for Session 69 stabilization
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:10:00 | Added
+ *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
+ *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  */
 
-import { Request, Response } from 'express';
+import { Request, Response, type RequestHandler } from 'express';
 import { BaseController } from '@/app/base-controller';
 import { SwitchFrameworkService } from '../services/switch-framework-service';
 import { SelectorCompositionService } from '@/features/selector-composition';
@@ -37,7 +40,7 @@ export class AgentToolController extends BaseController {
   /**
    * @description GET /api/agents/:agentId/tools - Get all tools and their auth modes for an agent
    */
-  getAgentTools = this.asyncHandler(async (req: Request, res: Response) => {
+  getAgentTools: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentIdStr = readRouteParam(req.params.agentId);
     if (!isUuidLike(agentIdStr)) {
       this.logger.warn({ agentId: agentIdStr }, 'Rejected malformed agent-tools request');
@@ -56,7 +59,7 @@ export class AgentToolController extends BaseController {
   /**
    * @description GET /api/agents/:agentId/tools/enabled - Get enabled tools for an agent
    */
-  getEnabledTools = this.asyncHandler(async (req: Request, res: Response) => {
+  getEnabledTools: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentIdStr = readRouteParam(req.params.agentId);
     if (!isUuidLike(agentIdStr)) {
       this.logger.warn({ agentId: agentIdStr }, 'Rejected malformed enabled-tools request');
@@ -76,7 +79,7 @@ export class AgentToolController extends BaseController {
    * @description PUT /api/agents/:agentId/tools/:toolId - Set auth mode for a specific tool
    * Body: { authMode: 'auto' | 'ask' | 'off' }
    */
-  setToolAuthMode = this.asyncHandler(async (req: Request, res: Response) => {
+  setToolAuthMode: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentIdStr = readRouteParam(req.params.agentId);
     const toolIdStr = readRouteParam(req.params.toolId);
     if (!isUuidLike(agentIdStr)) {
@@ -104,7 +107,7 @@ export class AgentToolController extends BaseController {
    * @description PUT /api/agents/:agentId/tools/:toolId/config - Set runtime config for a specific tool
    * Body: { toolConfig: { auth, env, endpoint, metadata } }
    */
-  setToolConfig = this.asyncHandler(async (req: Request, res: Response) => {
+  setToolConfig: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentIdStr = readRouteParam(req.params.agentId);
     const toolIdStr = readRouteParam(req.params.toolId);
     if (!isUuidLike(agentIdStr)) {
@@ -131,7 +134,7 @@ export class AgentToolController extends BaseController {
    * @description PUT /api/agents/:agentId/tools/groups/:groupName - Set auth mode for all tools in a group
    * Body: { authMode: 'auto' | 'ask' | 'off' }
    */
-  setGroupAuthMode = this.asyncHandler(async (req: Request, res: Response) => {
+  setGroupAuthMode: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentIdStr = readRouteParam(req.params.agentId);
     const groupNameStr = readRouteParam(req.params.groupName);
     if (!isUuidLike(agentIdStr)) {
@@ -158,7 +161,7 @@ export class AgentToolController extends BaseController {
   /**
    * @description GET /api/agents/:agentId/selector - Get the composed selector for an agent
    */
-  getComposedSelector = this.asyncHandler(async (req: Request, res: Response) => {
+  getComposedSelector: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentIdStr = readRouteParam(req.params.agentId);
     if (!isUuidLike(agentIdStr)) {
       this.logger.warn({ agentId: agentIdStr }, 'Rejected malformed selector request');
@@ -176,7 +179,7 @@ export class AgentToolController extends BaseController {
   /**
    * @description POST /api/agents/:agentId/selector/recompose - Force recomposition of selector
    */
-  recomposeSelector = this.asyncHandler(async (req: Request, res: Response) => {
+  recomposeSelector: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const agentIdStr = readRouteParam(req.params.agentId);
     if (!isUuidLike(agentIdStr)) {
       this.logger.warn({ agentId: agentIdStr }, 'Rejected malformed selector recompose request');
@@ -196,7 +199,7 @@ export class AgentToolController extends BaseController {
    * @description POST /api/agents/selectors/recompose-all - Recompose selectors for all agents
    * (Admin operation)
    */
-  recomposeAllSelectors = this.asyncHandler(async (req: Request, res: Response) => {
+  recomposeAllSelectors: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const count = await this.selectorService.recomposeAllAgents();
     
     return this.success(res, {

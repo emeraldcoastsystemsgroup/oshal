@@ -32,6 +32,11 @@ scripts/
 !scripts/bot-node-batch.sh
 !scripts/finalize-incident.sh
 !scripts/record-cost.sh
+# Postflight verification trio (INSTALLER-GAPS G1) — extracted from the image by
+# oshal-install.sh registry mode; /api/readiness reads the critical-bots list.
+!scripts/oshal-verify.sh
+!scripts/swarm-routability-check.sh
+!scripts/routability-critical-bots.txt
 # All OSHAL connector/app CLIs are runtime-required — keep them ALL in the build
 # context so every app (walmart, uber, spotify, duffel, …) survives a container
 # recreate. New oshal-*.js CLIs are included automatically.

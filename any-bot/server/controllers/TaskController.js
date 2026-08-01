@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Persist task owner binding and reject task-id reuse across owned, ownerless, and anonymous identity boundaries.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Explicit agentic-mode marker (BACKLOG "BYO / free-tier connections bypass the agentic loop"): processMessage routing now honors options.toolLess (with env OSHAL_TOOL_LESS as the process-level default) via resolveToolLessMarker instead of silently inferring tool-less mode from BYO status alone; when the marker is absent the legacy derivation (BYO connection => tool-less) still applies, and direct-path responses now carry toolLess: true so callers can surface the degraded mode.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Change-log accuracy: entry 4 above claims createTask places NEW workspaces under <base>/users/<sub>/<taskId> via resolveUserTaskDir, but that layout was REVERTED (see the per-branch notes in createTask) — all three branches join the flat root, and the orphaned resolveUserTaskDir helper has been deleted. What options.userSub still does is STAMP the owner on the task record, which is what assertTaskOwnerBinding (and the bot-node handler's pre-createTask check) compare on reuse. Entry 4 stands as history; this entry is the correction. No behavior change.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G12: on the direct (non-agentic) path, an agentic-only node passed the old `activeLlm || agenticController` truthiness check and then threw "activeLlm.generateResponse is not a function" mid-request. processMessage now rejects direct:true + agenticMode:false up front with an actionable error ({ success:false, error:'direct_mode_unsupported' }, task status 'error') when no provider implements generateResponse; the legacy "LLM service not configured" stub path for nodes with NO engine at all is unchanged. Guard: tests/unit/task-controller-direct-mode.spec.ts.
  */
 
 /**
@@ -325,9 +326,28 @@ class TaskController {
       // AgenticController has dual providers (Bedrock + Cline CLI). A per-request
       // BYO provider (caller's own endpoint) takes precedence when present.
       const activeLlm = byoLlm || this.llm;
-      const hasLLM = activeLlm || this.agenticController;
+      // Direct (non-agentic) execution requires a provider that implements
+      // generateResponse. An agentic-only node used to pass the old
+      // `activeLlm || agenticController` truthiness check here and then die
+      // mid-request with "activeLlm.generateResponse is not a function"
+      // (INSTALLER-GAPS G12: direct:true + agenticMode:false). Reject the
+      // combination up front with an actionable error instead.
+      const directCapable = !!activeLlm && typeof activeLlm.generateResponse === 'function';
 
-      if (!hasLLM) {
+      if (!directCapable && this.agenticController) {
+        const response = {
+          type: 'say',
+          say: 'error',
+          text: 'This node has no direct-capable LLM provider, so agenticMode:false (direct) is not supported here. Retry with agenticMode:true (or omit it), or configure a provider that implements generateResponse.',
+          ts: Date.now(),
+        };
+        await this.messageStore.saveMessage(taskId, response);
+        task.messages.push(response);
+        await this.updateTask(taskId, { status: 'error' });
+        return { success: false, error: 'direct_mode_unsupported', message: response };
+      }
+
+      if (!directCapable) {
         const response = {
           type: 'say',
           say: 'say',

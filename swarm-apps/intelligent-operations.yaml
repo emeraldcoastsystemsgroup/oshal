@@ -19,8 +19,11 @@ description: >-
   incident, performs root-cause analysis, and writes remediation scripts for
   operator review — never auto-applied to production. Incident investigation
   is grounded in a curated, operator-seeded runbook corpus.
-version: 1.0.0
+version: 1.0.1
 status: active
+# operations.oshal.ai bundle front door (operator decision 2026-07-31) — one of the 11
+# distinct COCKPIT_THEMES, no repeats across the bundle set.
+theme: midnight
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BOTS — standard incident roster

@@ -138,6 +138,8 @@
  * 133 | maintainer@emeraldcoastsystemsgroup.com   | Update-check daemon wired: registerUpdateRoutes (public GET /api/version — the platform's first runtime self-identity — + auth-gated GET /api/updates) and startUpdateCheckCron (daily deployed-apps-vs-store + running-commit-vs-upstream check; detection only, UPDATE_CHECK_ENABLED=0 disables). Guard: tests/unit/update-check.spec.ts.
  * 134 | maintainer@emeraldcoastsystemsgroup.com   | Update-check completion: registerUpdateRoutes now receives swarmAppService.loadApp so the operator-gated POST /api/updates/apps/:name/apply can hot-reload a re-installed package (installer runs with repo/ref from the INSTALLED manifest, never the caller); new-update transitions notify the operator via the notification center.
  * 135 | maintainer@emeraldcoastsystemsgroup.com   | Registered app.get('/login', loginHandler) after the global authMiddleware: the stock express-openid-connect login route is disabled (routes.login=false in @/shared/middleware/oidc) because it hardcoded returnTo=baseURL — every login-restart path (callback retry, state-mismatch recovery, cockpit 401 guard) forgot the original URL, so /cockpit/?app=<name> deep links landed on the bare cockpit after recovery. Guards: tests/login-returnto.spec.ts + tests/unit/login-returnto.spec.ts.
+ * 136 | maintainer@emeraldcoastsystemsgroup.com   | Root landing resolves HOST_APP_MAP (new host-app-map.ts) before falling back to LANDING_PATH, so a themed app subdomain (dnd.oshal.ai, trading.oshal.ai, littlemonsters.oshal.ai, ...) lands straight on its app instead of the generic ribbon. Unset = unchanged prior behavior. Guard: tests/unit/host-app-map.spec.ts.
+ * 137 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G3 + G9: needsOnboarding now delegates to the pure onboardingRequired predicate (new onboarding-gate.ts) — DISABLE_ONBOARDING_GATE only suppresses the per-user wizard and can no longer waive the "a model must be connected" requirement; a deliberately model-less box declares OSHAL_NO_AI=true instead (a warn log names the exact fix when the gate fires despite the flag). Registered registerReadinessRoutes (new routes/readiness-routes.ts): GET /api/readiness reports per-capability ok|off|fail because /api/health is liveness-only and was being read as readiness. Guards: tests/unit/onboarding-gate.spec.ts + tests/unit/readiness-report.spec.ts.
  */
 
 require('dotenv').config();
@@ -153,6 +155,7 @@ import { createChildLogger } from '@/shared/logger';
 import { registerCodeServerBridgeRoutes, buildCodeServerRedirectUrl } from './routes/code-server-bridge-routes';
 import { registerDebugRoutes } from './routes/debug-routes';
 import { createAppContext } from './composition-root';
+import { resolveHostLandingPath } from './host-app-map';
 import { 
   createTaskRoutes, 
   createMessageRoutes, 
@@ -197,6 +200,8 @@ import { createVerificationRoutes } from './routes/verification-routes';
 // Manual auth routes removed — express-openid-connect handles /login, /callback, /logout
 import { createConfigRoutes } from './routes/config-routes';
 import { createProviderRoutes, listConfiguredProviders } from './routes/provider-routes';
+import { onboardingRequired } from './onboarding-gate';
+import { registerReadinessRoutes } from './routes/readiness-routes';
 import { createConnectorsRoutes, createFacebookDataDeletionRoute } from './routes/connectors-routes';
 import { createByoLlmRoutes } from './routes/byo-llm-routes';
 import { createFreeTierRoutes } from './routes/free-tier-routes';
@@ -415,23 +420,45 @@ function createApp(): express.Application {
   const scheduleController = createScheduleController(ctx);
 
   // Onboarding gate predicate, shared by the root redirect and the surface guards below.
-  // Returns true when the user should be sent to /welcome: either no LLM provider is active
-  // (mandatory — bots can't run) or this user hasn't completed onboarding yet (seen-once).
+  // Decision logic lives in the pure onboardingRequired (onboarding-gate.ts) — the
+  // INSTALLER-GAPS G3 rule: DISABLE_ONBOARDING_GATE suppresses only the per-user wizard;
+  // the "a model must be connected" requirement is waivable ONLY by OSHAL_NO_AI=true.
   // Fail-open on any error so the gate can never trap a user out of the app.
   const needsOnboarding = async (req: express.Request): Promise<boolean> => {
-    if (process.env.DISABLE_ONBOARDING_GATE === 'true') return false;
     try {
-      // Guests never onboard: onboarding exists to configure providers, which the guest
-      // capability tier can't write (PUT /api/user/onboarding is Tier-B blocked), and every
-      // guest sub is a fresh UUID — the gate would bounce every guest to /welcome forever.
-      if (isGuestRequest(req)) return false;
-      if (!listConfiguredProviders().activeProvider) return true;
+      const disableGateFlag = process.env.DISABLE_ONBOARDING_GATE === 'true';
+      const noAiDeclared = process.env.OSHAL_NO_AI === 'true';
+      const activeProvider = listConfiguredProviders().activeProvider;
+      const hasActiveProvider = !!activeProvider && activeProvider !== 'noop';
+      // Per-user seen-once state is only consulted when it can change the outcome
+      // (provider active, wizard not suppressed) — keeps the flag path db-free.
+      let onboardingCompleted: boolean | null = null;
       const userId = (req as any).oidc?.user?.sub;
-      if (userId && !(await isOnboardingCompleted(ctx.pool, userId))) return true;
+      if (userId && hasActiveProvider && !disableGateFlag && !noAiDeclared) {
+        onboardingCompleted = await isOnboardingCompleted(ctx.pool, userId);
+      }
+      const required = onboardingRequired({
+        disableGateFlag,
+        noAiDeclared,
+        // Guests never onboard: onboarding exists to configure providers, which the guest
+        // capability tier can't write (PUT /api/user/onboarding is Tier-B blocked), and every
+        // guest sub is a fresh UUID — the gate would bounce every guest to /welcome forever.
+        isGuest: isGuestRequest(req),
+        hasActiveProvider,
+        onboardingCompleted,
+      });
+      if (required && disableGateFlag) {
+        logger.warn(
+          { activeProvider: activeProvider ?? null },
+          'Onboarding gate fired DESPITE DISABLE_ONBOARDING_GATE: no LLM provider is active. ' +
+          'Connect a model, or set OSHAL_NO_AI=true if this deployment is deliberately model-less (INSTALLER-GAPS G3).',
+        );
+      }
+      return required;
     } catch (err) {
       logger.warn({ err }, 'Onboarding gate check failed — treating as not required');
+      return false;
     }
-    return false;
   };
 
   // Guards the main HTML app surfaces (cockpit, chat) so deep links / bookmarks can't skip
@@ -795,9 +822,15 @@ function createApp(): express.Application {
   // shaped by the user's authorizations. An explicit ?app=<name> in any URL is always
   // respected (RibbonNav reads it per page load) — only the no-app default changed. Set
   // LANDING_PATH to point a single-app deployment elsewhere, e.g.
-  // LANDING_PATH=/cockpit/?app=little-monsters.
+  // LANDING_PATH=/cockpit/?app=little-monsters. A themed subdomain (dnd.oshal.ai,
+  // trading.oshal.ai, ...) is resolved from HOST_APP_MAP first — see host-app-map.ts;
+  // LANDING_PATH stays the single-host fallback when no host entry matches.
   app.get('/', requiresAuth, async (req, res) => {
-    const landingPath = process.env.LANDING_PATH || '/cockpit/';
+    const landingPath = resolveHostLandingPath(
+      process.env.HOST_APP_MAP,
+      req.hostname,
+      process.env.LANDING_PATH || '/cockpit/',
+    );
     // First-run gate: every user sees onboarding once, and a working LLM is mandatory.
     if (await needsOnboarding(req)) {
       const qIdx = req.originalUrl.indexOf('?');
@@ -877,7 +910,9 @@ function createApp(): express.Application {
   app.use('/api/intake', expensiveOpLimiter);
   registerFastIntakeRoutes(app, requiresAuth, ctx.ticketService as any);
 
-  // Extended health endpoint with stats (public)
+  // Extended health endpoint with stats (public). NB: this is LIVENESS only — it says
+  // the process is up, not that the box can think/hear/speak. Capability status lives
+  // at /api/readiness below (INSTALLER-GAPS G9); runbooks should gate on that.
   app.get('/api/health', (_req, res) => {
     logger.info('GET /api/health');
     res.json({
@@ -887,6 +922,11 @@ function createApp(): express.Application {
       streaming: ctx.streamManager.getStats(),
     });
   });
+
+  // Per-capability readiness (llm / bots / credentials / voice / db) — public, coarse,
+  // 503 when any advertised capability has nothing behind it. Consumed by
+  // scripts/oshal-verify.sh and the customer runbooks.
+  registerReadinessRoutes(app, ctx);
 
   // API status endpoint (returns output dir, write mode, and encryption status)
   app.get('/api/status', requiresAuth, (_req, res) => {

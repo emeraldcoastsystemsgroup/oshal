@@ -44,6 +44,7 @@
  * 39 | maintainer@emeraldcoastsystemsgroup.com   | Repointed the header RAG icon (#ragBtn) to open Settings → Knowledge (openCockpitSettingsPage('knowledge')) instead of bouncing a workspace action into the tool-gated embedded-chat RAG button that silently no-op'd; openCockpitSettingsPage now accepts a target tab.
  * 40 | maintainer@emeraldcoastsystemsgroup.com   | Prevented immersive profiles from restoring disabled hidden chat sessions or creating background tasks.
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Zen (full-window focus) mode wiring: header arrows-out button + floating exit button toggle body.zen-mode (all cockpit chrome hidden, surface gets the whole window); Esc exits when no modal is open; state survives same-tab reloads via sessionStorage so the once-per-deploy service-worker reload doesn't kick the operator back to chrome.
+ * 42 | maintainer@emeraldcoastsystemsgroup.com   | Mobile drawer closes on ANY ribbon-item tap: tapping the already-active view hit setActive's no-op early return, so switchView (and its drawer close) never ran and the drawer stayed open. Delegated listener on #ribbonContainer so it survives ribbon re-renders.
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -434,6 +435,13 @@ class CockpitApp {
     // Mobile: hamburger opens the ribbon as a slide-in drawer; backdrop closes it.
     document.getElementById('mobileMenuBtn')?.addEventListener('click', () => this.toggleMobileMenu());
     document.getElementById('ribbonBackdrop')?.addEventListener('click', () => this.toggleMobileMenu(false));
+    // Any ribbon-item tap closes the drawer — including a tap on the ALREADY-ACTIVE
+    // view, which RibbonNav.setActive treats as a no-op (so switchView, which owns
+    // the usual drawer close, never runs). Delegated on the container so it keeps
+    // working across ribbon re-renders.
+    document.getElementById('ribbonContainer')?.addEventListener('click', (e) => {
+      if (e.target?.closest?.('.ribbon-btn')) this.toggleMobileMenu(false);
+    });
   }
 
   // ═══ ZEN (FULL-WINDOW FOCUS) MODE ═══

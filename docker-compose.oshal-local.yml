@@ -20,11 +20,16 @@
 name: oshal-local
 
 x-codex-auth-volume: &codex-auth-volume ${CODEX_CONFIG_HOST_PATH:-~/.codex}:/root/.codex:rw
-# Mount the host claude OAuth session into containers (claude login on host)
-x-claude-auth-volume: &claude-auth-volume ${CLAUDE_CONFIG_HOST_PATH:-~/.claude}:/root/.claude:ro
-x-claude-auth-json:   &claude-auth-json   ${CLAUDE_CONFIG_HOST_JSON:-~/.claude.json}:/root/.claude.json:ro
-# Mount the host gemini OAuth session into containers (gemini auth login on host)
-x-gemini-auth-volume: &gemini-auth-volume ${GEMINI_CONFIG_HOST_PATH:-~/.gemini}:/root/.gemini:ro
+# Mount the host claude OAuth session into containers (claude login on host).
+# Mode is env-driven (INSTALLER-GAPS G4): default ro suits a dev box with its own
+# host-side token refresh; servers set CLAUDE_AUTH_MOUNT_MODE=rw (oshal-install.sh
+# writes it) because a CLI that cannot write cannot refresh — `claude auth login`
+# reports success while saving nothing.
+x-claude-auth-volume: &claude-auth-volume ${CLAUDE_CONFIG_HOST_PATH:-~/.claude}:/root/.claude:${CLAUDE_AUTH_MOUNT_MODE:-ro}
+x-claude-auth-json:   &claude-auth-json   ${CLAUDE_CONFIG_HOST_JSON:-~/.claude.json}:/root/.claude.json:${CLAUDE_AUTH_MOUNT_MODE:-ro}
+# Mount the host gemini OAuth session into containers (gemini auth login on host).
+# Same env-driven mode rationale as the claude mount above.
+x-gemini-auth-volume: &gemini-auth-volume ${GEMINI_CONFIG_HOST_PATH:-~/.gemini}:/root/.gemini:${GEMINI_AUTH_MOUNT_MODE:-ro}
 # Mount the host Google Workspace OAuth profile (node scripts/google-workspace-cli.js auth login)
 # so Calendar sync + Cloud STT/TTS can reuse the google-bot token inside the container.
 x-google-workspace-volume: &google-workspace-volume ${GOOGLE_WORKSPACE_HOST_PATH:-~/.oshal-google-workspace}:/root/.oshal-google-workspace:ro
@@ -111,6 +116,7 @@ x-bot-env: &bot-env
   APP_URL: ${APP_URL:-http://localhost:35457}
   # Per-host OIDC login origins (fixes cross-host login loop). Unset = single-host.
   OIDC_BASE_URLS: ${OIDC_BASE_URLS:-}
+  HOST_APP_MAP: ${HOST_APP_MAP:-}
   # SESSION_SECRET (the master connector-token AES key) is deliberately NOT in the
   # shared bot anchor — token-broker security: bots get short-lived per-user tokens
   # from the controller, never the master key. It lives on oshal-api (the controller)
@@ -940,6 +946,11 @@ services:
       # Plane" wizard they can do nothing with. server.ts read DISABLE_ONBOARDING_GATE the
       # whole time; compose simply never passed it, so setting it in .env did nothing.
       DISABLE_ONBOARDING_GATE: ${DISABLE_ONBOARDING_GATE:-}
+      # The EXPLICIT model-less declaration (INSTALLER-GAPS G2/G3, written by
+      # oshal-install.sh --no-ai). With it set, the onboarding gate and /api/readiness
+      # treat "no model" as a declared posture instead of a broken engine. Without it,
+      # DISABLE_ONBOARDING_GATE alone no longer waives the model requirement.
+      OSHAL_NO_AI: ${OSHAL_NO_AI:-}
       # The name an authenticator app shows beside the account (RFC 6238 issuer). Same story:
       # read by the 2FA enrolment route, never forwarded, so it silently stayed 'oshal'.
       TOTP_ISSUER: ${TOTP_ISSUER:-}

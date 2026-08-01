@@ -366,6 +366,28 @@ URIs that are already registered under the business email.
 | Spotify (`spotify`) — Music | A | `/api/connect/spotify/callback` | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` (dev-mode: 5 Premium users, allowlist) |
 | TMDB (`tmdb`) — Movies & TV | B (token) | n/a (paste / env) | paste on `/utilities`, or `TMDB_API_KEY` / `THEMOVIEDB_*` env |
 
+### Google (`google`) in Testing mode — the refresh token EXPIRES on you (read before a customer box)
+
+The Google connector client is registered **External + Testing** with the operator as the sole
+test user — correct for a single-operator admin connector, and app verification is not worth it
+for one user. What the console does NOT tell you (INSTALLER-GAPS G14, learned live on the first
+customer box):
+
+- **Google applies a reauthentication policy to sensitive scopes on Testing-mode clients.**
+  `gmail.send` qualifies. The stored refresh token can be silently invalidated **hours** after
+  connecting — the next refresh gets HTTP 400 (`invalid_grant`) and every send on that grant
+  fails from then on.
+- **The failure lands on the FIRST thing a new admin does**: inviting their own employees. The
+  invite flow now reports it distinctly ("your Google connection needs to be reconnected", not a
+  generic no-transport message), but set the expectation up front: **reconnecting takes ~30
+  seconds on the Connections screen**, and on a Testing-mode client it recurs.
+- A `refresh 400 (google)` warning in the api container log is **never** "low priority, not in
+  use" once any connector-rail feature (invites, notify, digests) is live — it is the exact
+  signature of this failure.
+- If a customer box needs the grant to survive long-term, the options are: move the client to
+  **In production** (requires Google verification for sensitive scopes), or accept the periodic
+  30-second reconnect as an operating procedure and write it into the customer runbook.
+
 ---
 
 # DevOps / Operator CLI logins

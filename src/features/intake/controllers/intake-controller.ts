@@ -6,9 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added intake controller for provider listing and pull endpoints
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exposed subticket inclusion control on intake pull requests
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exposed crash-safe provider reconciliation that materializes tickets before checkpointing
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:07:00 | Added
+ *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
+ *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  */
 
-import { Request, Response } from 'express';
+import { Request, Response, type RequestHandler } from 'express';
 import { z } from 'zod';
 import { BaseController } from '@/app/base-controller';
 import { IntakeProviderSchema, IntakePullRequestSchema } from '@/shared/types';
@@ -36,7 +39,7 @@ export class IntakeController extends BaseController {
   /**
    * @description GET /api/intake/providers - list enabled intake providers.
    */
-  listProviders = this.asyncHandler(async (_req: Request, res: Response) => {
+  listProviders: RequestHandler = this.asyncHandler(async (_req: Request, res: Response) => {
     const providers = this.intakeService.listProviders();
     return this.success(res, {
       providers,
@@ -47,7 +50,7 @@ export class IntakeController extends BaseController {
   /**
    * @description POST /api/intake/providers/:provider/pull - preview normalized work without checkpointing.
    */
-  pullProvider = this.asyncHandler(async (req: Request, res: Response) => {
+  pullProvider: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     const { provider } = IntakeProviderParamSchema.parse(req.params);
     const body = IntakePullRequestSchema.parse(req.body || {});
 
@@ -70,7 +73,7 @@ export class IntakeController extends BaseController {
   /**
    * @description POST /api/intake/providers/:provider/reconcile - upsert pulled work before checkpointing.
    */
-  reconcileProvider = this.asyncHandler(async (req: Request, res: Response) => {
+  reconcileProvider: RequestHandler = this.asyncHandler(async (req: Request, res: Response) => {
     if (!this.materializeWorkItem) {
       throw new Error('Provider reconciliation is unavailable on this runtime role');
     }
