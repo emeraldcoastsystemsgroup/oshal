@@ -238,6 +238,30 @@
     <div id="llmProviders"><p class="sub">Loading providers…</p></div>
   </div>
 
+  <!-- Per-bot provider. The roster above is DEPLOYMENT-WIDE (one active provider); this is the
+       per-bot tier below it. The effective provider and which tier won are computed SERVER-side
+       (shared/llm-runtime/bot-provider-precedence.ts, surfaced on GET /api/agents) so this panel
+       reports the rule rather than reimplementing it - and so a bot whose registry harness
+       outranks the operator's pick says so instead of offering a control that does nothing. -->
+  <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">
+    Per-bot provider <span style="font-weight:400;font-size:12px;">— which model each bot actually runs on, and whether you can change it</span>
+  </h2>
+  <div class="card" style="flex-direction:column;align-items:stretch;gap:8px;">
+    <div class="meta" id="botLlmNote" style="margin-bottom:4px;">
+      A bot with a harness pinned in the registry resolves that harness <em>before</em> any
+      deployment or per-bot setting, so its provider is read-only here and the reason is shown on the
+      row. Its model is still yours to set. Saving pushes to the live bot and reports a refusal
+      instead of recording a change that did not happen.
+    </div>
+    <div class="tokrow" style="gap:6px;">
+      <input id="botFilter" class="tokin" placeholder="Filter bots by name, role or provider" oninput="renderBotProviders()" />
+      <label class="meta" style="align-self:center;white-space:nowrap;">
+        <input type="checkbox" id="botOnlyOverridable" onchange="renderBotProviders()" /> only bots I can change
+      </label>
+    </div>
+    <div id="botProviders"><p class="sub">Loading bots…</p></div>
+  </div>
+
   <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">Your accounts</h2>
   <!-- Connect personally or on behalf of a household everyone in it can share (ADR-042). -->
   <div id="tenantBar" class="tbar">
@@ -976,8 +1000,153 @@ async function saveLlm(id, activate) {
     })).json();
     if (!r || r.success === false) throw new Error((r && r.error) || 'save failed');
     if (msg) msg.textContent = 'Saved ✓';
-    loadLlmProviders();
+    loadLlmProviders().then(loadBotProviders, loadBotProviders);
   } catch (e) { if (msg) msg.textContent = 'Could not save: ' + e.message; }
+}
+
+// ── Per-bot provider (the tier BELOW the deployment-wide roster above) ──────────────────
+// GET /api/agents returns each bot's registry harnessType/apiType, its per-bot DB providerId/
+// modelId, AND the resolved effectiveProvider + providerSource + providerOverridable +
+// precedenceNote (computed by shared/llm-runtime/bot-provider-precedence.ts). This file renders
+// those fields; it does NOT decide precedence. The write goes to the authoritative push-down
+// endpoint PUT /api/agents/:id/runtime, which 502s when the live bot refuses so the record never
+// advances on a change that did not land.
+var BOT_STATE = [];
+
+// Human wording for each precedence tier. Presentation only - the TIER comes from the API.
+var PROVIDER_SOURCE_LABEL = {
+  'registry-harness': 'registry harness (wins)',
+  'agent-profile': 'this bot\'s own setting',
+  'registry-api-type': 'registry apiType',
+  'deployment-default': 'deployment default',
+};
+
+async function loadBotProviders() {
+  var host = document.getElementById('botProviders');
+  if (!host) return;
+  try {
+    var raw = await (await fetch('/api/agents', { credentials: 'include' })).json();
+    // BaseController wraps in { success, data }; tolerate a bare array/objects too.
+    var list = (raw && raw.data && raw.data.agents) || (raw && raw.agents) || (Array.isArray(raw) ? raw : []);
+    BOT_STATE = list.filter(function (a) { return a && (a.agentId || a.agent_id); });
+  } catch (e) {
+    host.innerHTML = '<p class="sub" style="margin:0;">Could not load bots: ' + esc(e.message) + '</p>';
+    return;
+  }
+  renderBotProviders();
+}
+
+function botProviderOptions(bot) {
+  var current = bot.providerId && String(bot.providerId).toLowerCase() !== 'auto' ? String(bot.providerId) : '';
+  var opts = ['<option value="">— follow the tier above —</option>'];
+  (LLM_STATE.providers || []).forEach(function (p) {
+    // An unconfigured provider is offered but labelled, never silently selectable-and-broken.
+    var label = esc(p.label) + (p.configured ? '' : ' (no key yet)');
+    opts.push('<option value="' + esc(p.id) + '"' + (p.id === current ? ' selected' : '') + '>' + label + '</option>');
+  });
+  return opts.join('');
+}
+
+function botRowHtml(bot) {
+  var id = esc(bot.agentId || bot.agent_id);
+  var pinned = bot.providerOverridable === false;
+  var effective = bot.effectiveProvider ? esc(bot.effectiveProvider) : 'deployment default';
+  var sourceLabel = PROVIDER_SOURCE_LABEL[bot.providerSource] || esc(bot.providerSource || 'unknown');
+  var pill = '<span class="statuspill' + (pinned ? ' warn' : ' ok') + '">' + esc(sourceLabel) + '</span>';
+  var head = '<div class="cardhead"><div class="info">' +
+    '<div class="name">' + esc(bot.name || id) + '</div>' +
+    '<div class="meta">' + esc(bot.status || '') + (bot.harnessType ? ' · harness ' + esc(bot.harnessType) : '') +
+    ' · runs on <b>' + effective + '</b>' + (bot.effectiveModel ? ' / ' + esc(bot.effectiveModel) : '') + '</div>' +
+    '</div>' + pill + '</div>';
+  // The reason a tier won is the API's sentence, rendered verbatim. Never paraphrased here.
+  var note = '<div class="meta">' + esc(bot.precedenceNote || '') + '</div>';
+  var controls = '<div class="tokrow">' +
+    '<select id="botprov-' + id + '" class="tsel"' + (pinned ? ' disabled title="Pinned by the registry harness"' : '') + '>' +
+    botProviderOptions(bot) + '</select>' +
+    '<input id="botmodel-' + id + '" class="tokin" placeholder="Model — blank to leave as is" value="' +
+    esc(bot.modelId || '') + '" />' +
+    '<button class="btn connect" onclick="saveBotProvider(\'' + id + '\')">Save</button>' +
+    '<span id="botmsg-' + id + '" class="meta" style="align-self:center;"></span></div>';
+  return '<div class="card col" id="botcard-' + id + '">' + head + note + controls + '</div>';
+}
+
+function renderBotProviders() {
+  var host = document.getElementById('botProviders');
+  if (!host) return;
+  var fEl = document.getElementById('botFilter');
+  var onlyEl = document.getElementById('botOnlyOverridable');
+  var q = ((fEl && fEl.value) || '').trim().toLowerCase();
+  var onlyOverridable = !!(onlyEl && onlyEl.checked);
+  var rows = BOT_STATE.filter(function (b) {
+    if (onlyOverridable && b.providerOverridable === false) return false;
+    if (!q) return true;
+    var hay = [b.name, b.role, b.harnessType, b.apiType, b.effectiveProvider, b.providerId]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.indexOf(q) >= 0;
+  });
+  // Registry-pinned bots sink to the bottom: the actionable rows come first.
+  rows.sort(function (a, b) {
+    var ap = a.providerOverridable === false ? 1 : 0;
+    var bp = b.providerOverridable === false ? 1 : 0;
+    if (ap !== bp) return ap - bp;
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+  var pinnedCount = BOT_STATE.filter(function (b) { return b.providerOverridable === false; }).length;
+  var summary = '<div class="meta" style="margin-bottom:6px;">' + rows.length + ' of ' + BOT_STATE.length +
+    ' bots shown · ' + pinnedCount + ' pinned by a registry harness (provider read-only)</div>';
+  // As shipped today EVERY registry bot declares a harness, so pinnedCount === BOT_STATE.length and
+  // the "only bots I can change" filter is legitimately empty. Say that plainly - an empty list with
+  // no explanation reads as a loading failure, and the operator would go looking for a bug.
+  if (BOT_STATE.length && pinnedCount === BOT_STATE.length) {
+    summary += '<div class="meta" style="margin-bottom:6px;">Every bot in this deployment declares a ' +
+      'harness in the bot registry, so none of their providers can be changed from here. Changing one ' +
+      'means editing its registry entry (it is source, not configuration). Their <b>models</b> are ' +
+      'settable below.</div>';
+  }
+  host.innerHTML = summary + (rows.length
+    ? rows.map(botRowHtml).join('')
+    : '<p class="sub">' + (onlyOverridable
+      ? 'No bot in this deployment has a changeable provider — every one is pinned by its registry entry.'
+      : 'No bots match.') + '</p>');
+}
+
+async function saveBotProvider(agentId) {
+  var msg = document.getElementById('botmsg-' + agentId);
+  var provEl = document.getElementById('botprov-' + agentId);
+  var modelEl = document.getElementById('botmodel-' + agentId);
+  var bot = BOT_STATE.filter(function (b) { return String(b.agentId || b.agent_id) === agentId; })[0] || {};
+  var body = {};
+  // A pinned bot's select is disabled, so no providerId travels for it - the model alone does,
+  // which is the only half that reaches a pinned harness (via the bot-node config bootstrap).
+  if (provEl && !provEl.disabled && provEl.value) body.providerId = provEl.value;
+  if (modelEl && modelEl.value.trim()) body.modelId = modelEl.value.trim();
+  if (!body.providerId && !body.modelId) {
+    if (msg) msg.textContent = 'Nothing to save — pick a provider or type a model.';
+    return;
+  }
+  // The route requires at least one of the two; when only a model changes on an unpinned bot,
+  // send the effective provider so the pushed record stays internally consistent.
+  if (!body.providerId && bot.providerOverridable !== false && bot.effectiveProvider) {
+    body.providerId = bot.effectiveProvider;
+  }
+  if (msg) msg.textContent = 'Pushing to the bot…';
+  try {
+    var res = await fetch('/api/agents/' + encodeURIComponent(agentId) + '/runtime', {
+      method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var r = await res.json().catch(function () { return null; });
+    if (res.status === 502) {
+      // The live bot refused or was unreachable: the record did NOT advance. Say exactly that.
+      if (msg) msg.textContent = 'Not applied — the bot did not accept it (' + esc((r && r.error) || 'unreachable') + '). Nothing was recorded.';
+      return;
+    }
+    if (!res.ok || !r || r.success === false) throw new Error((r && r.error) || ('HTTP ' + res.status));
+    if (msg) msg.textContent = 'Applied to the running bot ✓';
+    loadBotProviders();
+  } catch (e) {
+    if (msg) msg.textContent = 'Could not apply: ' + esc(e.message);
+  }
 }
 
 // ── Free model lanes (ADR-064) — catalog + connect + rotation state ──
@@ -1127,7 +1296,9 @@ loadClaude();
 loadCodex();
 loadGemini();
 loadFreeTier();
-loadLlmProviders();
+// The per-bot panel's provider <select> options come from LLM_STATE, so the roster loads
+// first; loadBotProviders runs either way so a roster failure does not hide the bot list.
+loadLlmProviders().then(loadBotProviders, loadBotProviders);
 </script>
 </body>
 </html>

@@ -16,6 +16,7 @@
  *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
  *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | K2/K3 identity canon (BACKLOG kernel audit): a0…0018 is 'system-architect' in every map (was 'architect-bot' here while dispatch resolved by the other name); the LEGACY unported a0…0034 row is relabeled 'legacy-system-architect' so exactly ONE identity carries the canonical name; self-healing-bot moves a0…030 → a0…056 (030 belongs to codex-packer — the three-way collision made 030's attribution ambiguous). Mirrors registries + compose + migration 100.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | enrichProfileWithHarness now also returns the EFFECTIVE provider + which tier won (effectiveProvider / effectiveModel / providerSource / providerOverridable / modelOverridable / precedenceNote) via the shared resolveEffectiveBotProvider. Reading /api/agents used to give harnessType and providerId side by side with no indication that the first silently outranks the second, so a cockpit panel could only guess - and a per-bot provider picker that guesses is a picker that lies. Computed server-side from ONE rule; a registry-read failure no longer drops the fields (it falls through and answers from the DB record, which is the honest answer in that case).
  */
 
 import { Request, Response, type RequestHandler } from 'express';
@@ -26,6 +27,7 @@ import {
 } from '@/entities/agent';
 import { AgentProfileService } from '../services';
 import { validateFile } from '@/shared/api/validation';
+import { resolveEffectiveBotProvider } from '@/shared/llm-runtime';
 
 /**
  * @description Controller for dedicated agent-profile persistence endpoints.
@@ -191,21 +193,46 @@ function buildDataUrl(file: Express.Multer.File): string {
  * If the agent is not in the registry, the profile is returned unchanged.
  */
 function enrichProfileWithHarness(agentId: string, profile: Record<string, unknown>): Record<string, unknown> {
+  let harnessType: string | null = null;
+  let apiType: string | null = null;
+  let inRegistry = false;
+  let registryReadable = false;
   try {
     const { getActiveRegistry } = require('@/app/extensions/swarm/swarm-bot-registry');
     const reg = getActiveRegistry() as Array<{ agentId?: string; harnessType?: string; apiType?: string }>;
     const entry = reg.find((b) => b.agentId === agentId);
     if (entry) {
-      return {
-        ...profile,
-        harnessType: entry.harnessType ?? null,
-        apiType: entry.apiType ?? null,
-      };
+      inRegistry = true;
+      harnessType = entry.harnessType ?? null;
+      apiType = entry.apiType ?? null;
     }
+    registryReadable = true;
   } catch {
-    // registry unavailable — return profile as-is
+    // Registry unavailable. registryReadable stays false and the resolver FAILS CLOSED: it reports
+    // providerSource 'registry-unreadable' with providerOverridable false, because the registry is
+    // the highest tier and a failed read is "unknown", not "nothing is pinned". Treating it as the
+    // latter would silently promote the DB record and make the cockpit offer a provider control
+    // that may be inert.
   }
-  return profile;
+  // The EFFECTIVE provider is computed server-side, from the one shared rule, so a surface renders
+  // an answer instead of reimplementing three files' worth of precedence in browser JavaScript.
+  const effective = resolveEffectiveBotProvider({
+    harnessType,
+    apiType,
+    dbProviderId: (profile.providerId as string | null | undefined) ?? null,
+    dbModelId: (profile.modelId as string | null | undefined) ?? null,
+    registryReadable,
+  });
+  return {
+    ...profile,
+    ...(inRegistry ? { harnessType, apiType } : {}),
+    effectiveProvider: effective.effectiveProvider,
+    effectiveModel: effective.effectiveModel,
+    providerSource: effective.providerSource,
+    providerOverridable: effective.providerOverridable,
+    modelOverridable: effective.modelOverridable,
+    precedenceNote: effective.precedenceNote,
+  };
 }
 
 /**

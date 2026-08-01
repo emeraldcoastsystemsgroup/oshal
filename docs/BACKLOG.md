@@ -3405,6 +3405,46 @@ than a real unmount — decide that first, or the "lazy" in the title will not s
 
 **Verified 2026-07-19:** PARTIAL — key paste/validate/store/propagate is done (byo-llm-routes.ts); the per-bot provider-selection UI remains open.
 
+**DONE 2026-08-01 (wave17-cockpit) — and the build found that the feature this entry asked for is
+INERT for every shipped bot.** A "per-bot provider selection UI" implies a per-bot provider you can
+select. Measured against the default registry: **all 60 entries declare a non-cline `harnessType`**
+(38 `claude-code`, 20 `codex-cli`, 1 `gemini-cli`), and `resolveHarnessForAgent`
+(provider-runtime.ts:841) returns that harness *before* `FORCE_LLM_PROVIDER`, global-config.json, or
+the per-agent DB record is consulted. So the two write rails that already existed
+(`PUT /api/agents/:id/profile` → `agents.api_provider_id`, `PUT /api/agents/:id/runtime` →
+`agent_config` + live push-down) cannot change which provider serves ANY bot in a default
+deployment. A picker built as this entry described would have been a control that does nothing.
+
+What shipped instead — the honest version of the same request:
+- **The rule, extracted once**: `src/shared/llm-runtime/bot-provider-precedence.ts`. It was
+  previously only knowable by reading three files (provider-runtime.ts:841,
+  claude-code-provider.ts:246 for the in-cline order, bot-node-config-bootstrap.ts:184 for the model
+  env mapping). Shared layer so the API and any surface get the same answer — a browser copy is how a
+  panel starts lying.
+- **`GET /api/agents` now carries the resolved answer**: `effectiveProvider`, `effectiveModel`,
+  `providerSource`, `providerOverridable`, `modelOverridable`, `precedenceNote`
+  (`enrichProfileWithHarness`). The read model used to hand back `harnessType` and `providerId` side
+  by side with no hint that the first outranks the second.
+- **FAIL-CLOSED on an unreadable registry**: the controller reaches the registry through an aliased
+  `require()`. If that read fails, precedence is *unknown*, not "nothing is pinned" — so the resolver
+  answers `providerSource: 'registry-unreadable'` with `providerOverridable: false` rather than
+  promoting the DB record and offering an inert control. Not hypothetical: the aliased require does
+  not resolve under vitest, which is how the branch was found and is what the guard exercises.
+- **The panel** (`src/api/utilities.html`, under the deployment-wide LLM-providers roster): per-bot
+  rows showing the effective provider + a tier badge, the API's own reason rendered verbatim, the
+  provider `<select>` **disabled** where the registry wins, the MODEL still settable (a DB `modelId`
+  does reach a pinned harness via `CODEX_MODEL`/`CLAUDE_CODE_MODEL`), writes through the
+  authoritative `PUT /api/agents/:id/runtime` with a 502 reported as *not applied, nothing recorded*,
+  and — because today that means every bot — an explicit empty state saying so instead of an
+  unexplained empty list.
+- **Residual (needs a decision, not code):** the only way to change a bot's provider today is editing
+  its registry entry, which is source. Either that is the intended contract (then say so in
+  docs/building-a-bot.md) or `harnessType` needs a per-bot override rail of its own — an ADR-level
+  call, deliberately not made here.
+- Guard: `tests/unit/bot-provider-precedence.spec.ts` — **provider-panel-shows-registry-precedence**,
+  12 tests, 15 targeted mutations each proven red (including both fail-open shapes and the
+  paraphrase-the-reason shape).
+
 ### Per-user token routing through bot execution ✅ DONE + VERIFIED (2026-06-15)
 - **Done:** The caller's OIDC `sub` is threaded into bot execution on BOTH transports —
   remote dispatch (`BotNodeRequest.userSub` → `/api/swarm-execute` → executionHandler →
