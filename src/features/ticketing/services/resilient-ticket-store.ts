@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added resilient ticket store wrapper that falls back to in-memory persistence during MOCK_OIDC localhost runs when Postgres is unavailable
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): delegated the new findLatestByMetadataKey through the standard primary/fallback executor
  */
 
 import type { Pool } from 'pg';
@@ -81,6 +82,21 @@ export class ResilientTicketStore implements ITicketStore {
       'findActiveByMetadataKey',
       (store) => store.findActiveByMetadataKey(key, value),
       () => this.fallback.findActiveByMetadataKey(key, value),
+    );
+  }
+
+  /**
+   * @description Finds the newest ticket (any status) for a metadata key/value — the
+   * alert-triage consolidation lookup (ADR-119 P1), delegated with the standard fallback.
+   * @param key - Metadata field name.
+   * @param value - Metadata value to match exactly.
+   * @returns Newest matching ticket or null.
+   */
+  async findLatestByMetadataKey(key: string, value: string): Promise<InternalTicket | null> {
+    return this.execute(
+      'findLatestByMetadataKey',
+      (store) => store.findLatestByMetadataKey(key, value),
+      () => this.fallback.findLatestByMetadataKey(key, value),
     );
   }
 

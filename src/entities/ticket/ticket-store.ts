@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial ITicketStore interface for ticket CRUD and linking operations
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Process tracker: added getStatusHistory to interface
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestByMetadataKey — the consolidation stage needs the NEWEST ticket for an incident key in ANY status (open ⇒ consolidate the refire onto it; terminal ⇒ open a recurrence-linked successor, FR-C5), which findActiveByMetadataKey (oldest-first, cancelled-only exclusion) cannot answer
  */
 
 import type { OshalTicketState } from './types';
@@ -54,6 +55,17 @@ export interface ITicketStore {
    * @returns Ticket record or null.
    */
   findActiveByMetadataKey(key: string, value: string): Promise<InternalTicket | null>;
+
+  /**
+   * @description Find the MOST RECENTLY CREATED ticket whose `metadata.<key>` equals the
+   * given value, in ANY status (terminal included). The alert-triage consolidation stage
+   * (ADR-119 P1) uses this to decide between updating the open incident ticket for an
+   * incident key and opening a recurrence-linked successor after the prior one went terminal.
+   * @param key - Metadata field name.
+   * @param value - Metadata value to match exactly.
+   * @returns Newest matching ticket record or null.
+   */
+  findLatestByMetadataKey(key: string, value: string): Promise<InternalTicket | null>;
 
   /**
    * @description Update a ticket's status and derived state group / execution phase.

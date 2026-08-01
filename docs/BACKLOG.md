@@ -3,7 +3,7 @@
 Tracking items deferred from the OSHAL build session. Each item has the
 deferral reason and the "done" condition so future work isn't ambiguous.
 
-## Alert triage & consolidation — intelligent-processing intake (spec ready, build pending)
+## Alert triage & consolidation — intelligent-processing intake (P1 built 2026-07-31; P2–P4 pending)
 
 **Specified 2026-07-28** (operator directive: non-noisy alerts flow to the queue, duplicates get
 bundled and consolidated — the analyst + self-healing portion). The functional specification is
@@ -20,6 +20,13 @@ change:
    first/last-seen; a refire updates the ticket instead of a silent log-line skip; an unclaimed
    alertname increments a queryable noise counter; a higher-severity refire raises ticket priority
    and never lowers it — all proven by guard specs that go red on regression.
+   **BUILT 2026-07-31**: `src/features/alert-triage/` (Stage A + Stage C + FR-A3 counters,
+   recurrence linking FR-C5, genesis write-once FR-C6) wired into
+   `src/app/routes/alertmanager-routes.ts` (+ `GET /api/alerts/intake-stats`, same fail-closed
+   bearer guard); named guards in `tests/unit/alert-triage-consolidation.spec.ts`
+   (identical-flood-one-ticket, refire-updates-not-duplicates, noise-counter-accuracy,
+   severity-never-lowers, incident-key-hygiene, genesis-write-once + recurrence,
+   consolidation-ttl-window, refire-never-redispatches, identity-gate).
 2. **P2 Bundling + root candidate.** **Done when:** the api-down drill (`SwarmApiUnreachable` +
    `SwarmContainerDown` on the api + one dependent-bot alert inside the correlation window) opens
    ONE ticket with members + attach reasons recorded at attach time and the api as

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added in-memory ticket store fallback so MOCK_OIDC localhost flows can create, link, and inspect internal tickets without Postgres
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ: deriveStateFields maps 'dead_letter' → state_group 'escalated' (parity with the Postgres store so MOCK_OIDC flows behave identically).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestByMetadataKey (newest match, any status; same-millisecond ties broken by insertion order) — parity with the Postgres consolidation lookup
  */
 
 import { randomUUID } from 'crypto';
@@ -109,6 +110,28 @@ export class InMemoryTicketStore implements ITicketStore {
       .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
     const match = candidates[0];
     logger.debug({ key, value, found: Boolean(match) }, 'Find ticket by metadata key in memory');
+    return match ? cloneTicket(match) : null;
+  }
+
+  /**
+   * @description Finds the newest ticket (any status) whose `metadata.<key>` equals the
+   * value — parity with the Postgres store's alert-triage consolidation lookup (ADR-119 P1).
+   * Same-millisecond creations tie-break by insertion order, newest first.
+   * @param key - Metadata field name.
+   * @param value - Metadata value to match exactly.
+   * @returns Newest matching ticket or null.
+   */
+  async findLatestByMetadataKey(key: string, value: string): Promise<InternalTicket | null> {
+    const ordered = Array.from(this.tickets.values());
+    const insertionIndex = new Map(ordered.map((t, i) => [t.ticketId, i]));
+    const candidates = ordered
+      .filter((t) => (t.metadata as Record<string, unknown> | undefined)?.[key] === value)
+      .sort((a, b) => (
+        String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+        || ((insertionIndex.get(b.ticketId) ?? 0) - (insertionIndex.get(a.ticketId) ?? 0))
+      ));
+    const match = candidates[0];
+    logger.debug({ key, value, found: Boolean(match) }, 'Find latest ticket by metadata key in memory');
     return match ? cloneTicket(match) : null;
   }
 
