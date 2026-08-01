@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — proves the personal-access-token tier (src/app/routes/cli-token-routes.ts): the Bearer middleware stamps req.oidc ONLY for a valid unrevoked oshal_pat_ token (unknown/revoked/foreign-Bearer/existing-session paths all pass through untouched), plaintext never lands at rest (sha256 only), and the full loop works over a real express app with a scripted pool — trusted-service mint → Bearer whoami resolves the owner → owner-scoped list/revoke → revoked token no longer authenticates.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards the bootstrap-mint escalation fix. The service secret is fleet-wide (every bot carries it), so the pre-fix route let any bot mint a permanent PAT for an arbitrary sub and then authenticate as that user everywhere. Added: a non-operator asserted sub is refused 403 with NO row written (the takeover guard — this is the case that used to succeed), and an operator bootstrap mint is time-boxed rather than permanent. The pre-existing happy-path cases now allowlist user-a as an operator, so they additionally prove the operator bootstrap still works — i.e. swarm-cli login is not collateral damage. fakePool now records expires_at so permanence is assertable.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
@@ -24,6 +25,7 @@ const SECRET = 'unit-service-secret';
 interface TokenRow {
   id: string; user_sub: string; email: string | null; label: string;
   token_hash: string; created_at: Date; last_used_at: Date | null; revoked_at: Date | null;
+  expires_at: Date | null;
 }
 
 /** Scripted in-memory stand-in for the pg Pool — routes on SQL substrings. */
@@ -36,6 +38,7 @@ function fakePool(): { pool: Pool; rows: TokenRow[] } {
           id: String(params[0]), user_sub: String(params[1]), email: (params[2] as string | null) ?? null,
           label: String(params[3]), token_hash: String(params[4]),
           created_at: new Date(), last_used_at: null, revoked_at: null,
+          expires_at: (params[5] as Date | null) ?? null,
         });
         return { rows: [], rowCount: 1 };
       }
@@ -133,6 +136,8 @@ describe('cli token routes — full loop over HTTP', () => {
 
   beforeEach(async () => {
     process.env.SWARM_SERVICE_SECRET = SECRET;
+    // user-a is the operator here, so the pre-existing cases exercise the ALLOWED bootstrap path.
+    process.env.OSHAL_OPERATOR_SUBS = 'user-a';
     const fake = fakePool();
     rows = fake.rows;
     const app = express();
@@ -151,6 +156,7 @@ describe('cli token routes — full loop over HTTP', () => {
     base = `http://127.0.0.1:${addr.port}/api/cli-tokens`;
   });
   afterEach(async () => {
+    delete process.env.OSHAL_OPERATOR_SUBS;
     await new Promise<void>((r) => { server.close(() => r()); });
   });
 
@@ -192,5 +198,37 @@ describe('cli token routes — full loop over HTTP', () => {
       headers: { ...serviceHeaders, 'x-oshal-user-sub': 'user-b' },
     });
     expect(((await foreign.json()) as { revoked: boolean }).revoked).toBe(false);
+  });
+
+  // THE takeover guard. Every bot container carries the fleet-wide SWARM_SERVICE_SECRET, so
+  // before the fix an injected bot could POST here asserting ANY sub and walk away with a
+  // permanent credential for that user. If this goes green with a 201, that hole is back.
+  it('refuses a bootstrap mint for a non-operator asserted sub, and writes nothing', async () => {
+    const res = await fetch(base, {
+      method: 'POST',
+      headers: { ...serviceHeaders, 'x-oshal-user-sub': 'victim-user' },
+      body: JSON.stringify({ label: 'stolen' }),
+    });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('operator_required');
+    expect(rows).toHaveLength(0);
+  });
+
+  // An empty allowlist must not mean "everyone" — isOperatorIdentity is fail-closed and the
+  // route must inherit that, otherwise an unconfigured box silently reopens the hole.
+  it('refuses every bootstrap mint when no operator allowlist is configured', async () => {
+    delete process.env.OSHAL_OPERATOR_SUBS;
+    const res = await fetch(base, { method: 'POST', headers: serviceHeaders, body: '{}' });
+    expect(res.status).toBe(403);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('time-boxes the operator bootstrap mint instead of minting a permanent credential', async () => {
+    const res = await fetch(base, { method: 'POST', headers: serviceHeaders, body: JSON.stringify({ label: 'cli' }) });
+    expect(res.status).toBe(201);
+    const minted = await res.json() as { expiresAt: string | null };
+    expect(minted.expiresAt).not.toBeNull();
+    expect(rows[0].expires_at).toBeInstanceOf(Date);
+    expect((rows[0].expires_at as Date).getTime()).toBeGreaterThan(Date.now());
   });
 });

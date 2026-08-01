@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — personal access tokens (PATs) for headless CLI auth, the industry-standard replacement for handing humans the machine-wide SWARM_SERVICE_SECRET. `oshal_pat_`-prefixed tokens (greppable by the tier-A secret scanners), sha256-hashed at rest in oshal_cli_tokens (owner RLS at the lazy-DDL chokepoint, mirroring tv-pairing-routes). createCliTokenAuthMiddleware stamps an authenticated req.oidc from `Authorization: Bearer oshal_pat_…` — the same MOCK_OIDC/tv-token session shape — so EVERY requiresAuth route accepts a PAT as its owner with zero per-route changes; an invalid token falls through to the normal 401, never a new rejection path. Routes: POST / mint (session or trusted-service bootstrap), GET / list, DELETE /:id revoke, GET /whoami. Consumed by scripts/swarm-cli.js `login`.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Optional token expiry (enables short-lived phone-pairing tokens for the Spaces mobile ingest, ADR-111). Added a nullable expires_at column (ALTER … ADD COLUMN IF NOT EXISTS — existing PATs stay non-expiring, expires_at IS NULL) and made the auth middleware reject an expired token: the lookup now requires `(expires_at IS NULL OR expires_at > NOW())`, so an elapsed pairing token authenticates on NO route. Extracted the mint path into an exported insertCliToken(pool, {sub,email,label,ttlMs}) helper — single source of the column set now that expiry exists — and pointed POST / at it. Consumed by the auth-gated POST /api/spaces/pair mint endpoint.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | guc-strict fix: the auth middleware's token lookup ran with NO request identity (it IS the identity-stamper — chicken-and-egg), so once OSHAL_DB_GUC_STRICT=deny went live the FORCE-RLS oshal_cli_tokens SELECT returned zero rows and EVERY PAT 401'd on every route. Lookup + the best-effort last_used_at update now run under runWithSystemIdentity — the sanctioned trusted-path sentinel the deny log itself prescribes; safe because the read is proof-of-possession (keyed on the 48-hex token hash) and returns only that row. Guard: tests/unit/token-middleware-rls.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Closed the bootstrap-mint escalation. POST / previously accepted the x-oshal-user-sub assertion for ANY sub and minted a NON-EXPIRING PAT, so any holder of the fleet-wide SWARM_SERVICE_SECRET (every bot container carries it) could mint a permanent credential for an arbitrary user and then authenticate as them on every requiresAuth route — including /api/content and /api/linkedin-assistant, which the service secret alone cannot reach. That turned a per-request impersonation into persistent account takeover, which matters because a prompt-injected bot is an untrusted principal holding that secret. Header-asserted (session-less) mints are now (a) operator-only via isOperatorIdentity — fail-closed on an empty allowlist — and (b) time-boxed by OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS (default 30) using the existing expires_at column, so even the operator bootstrap is no longer a permanent credential. Session-authenticated mints (the cockpit path) are unchanged and still non-expiring. swarm-cli's service-secret login keeps working for the operator. Guard: tests/unit/cli-token-auth.spec.ts.
  */
 import { Router, type RequestHandler, type Request, type Response } from 'express';
 import crypto from 'crypto';
@@ -13,9 +14,25 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
-import { getCaller, getTrustedServiceUserSub, isOperator } from '@/shared/middleware/authz';
+import { getCaller, getTrustedServiceUserSub, isOperator, isOperatorIdentity } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'cli-tokens' });
+
+/** Default lifetime for a session-less bootstrap mint. Long enough not to nag a CLI user, short
+ *  enough that a leaked bootstrap token is not a permanent credential. */
+const BOOTSTRAP_TTL_DAYS_DEFAULT = 30;
+
+/**
+ * @description Lifetime applied to a bootstrap (service-secret + asserted-sub) mint. Tunable via
+ * OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS; a non-numeric or non-positive value falls back to the default
+ * rather than minting a non-expiring token, so a typo cannot silently restore permanence.
+ * @returns lifetime in milliseconds, always > 0.
+ */
+function bootstrapTtlMs(): number {
+  const raw = Number(process.env.OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS ?? BOOTSTRAP_TTL_DAYS_DEFAULT);
+  const days = Number.isFinite(raw) && raw > 0 ? raw : BOOTSTRAP_TTL_DAYS_DEFAULT;
+  return days * 24 * 60 * 60 * 1000;
+}
 
 /** Token prefix — recognizable (like ghp_) so secret scanners and humans can spot a leak. */
 export const CLI_TOKEN_PREFIX = 'oshal_pat_';
@@ -198,8 +215,11 @@ export async function insertCliToken(pool: Pool, input: CliTokenMintInput): Prom
 /**
  * @description Builds the PAT management router (mount at /api/cli-tokens behind
  * serviceSecretOr(requiresAuth) — a browser session manages its own tokens; the
- * trusted-service secret may bootstrap-mint for an asserted sub, which is not an
- * escalation because the secret already implies full impersonation).
+ * trusted-service secret may bootstrap-mint, but only for an OPERATOR sub and only as a
+ * time-boxed token. The older rationale — "not an escalation, the secret already implies full
+ * impersonation" — assumed every secret-holder is trusted. Bots are secret-holders and are
+ * prompt-injectable, so an unbounded mint converted per-request impersonation into a permanent
+ * cross-user credential; see change-log entry 4.
  * @param pool - Postgres pool.
  * @returns Express router.
  */
@@ -216,15 +236,38 @@ export function createCliTokenRoutes(pool: Pool): Router {
     res.json({ sub, email: getCaller(req).email, operator: isOperator(req) });
   });
 
-  /** POST / — mint a (non-expiring) token for the caller. The plaintext is returned ONCE and never stored. */
+  /**
+   * POST / — mint a token for the caller. The plaintext is returned ONCE and never stored.
+   *
+   * Two paths with deliberately different power:
+   *  - SESSION mint (a signed-in cockpit user managing their own tokens) — non-expiring, unchanged.
+   *  - BOOTSTRAP mint (no session; identity asserted via x-oshal-user-sub behind the service
+   *    secret, i.e. `swarm-cli login --secret`) — operator-only and time-boxed. Every bot container
+   *    carries the fleet-wide SWARM_SERVICE_SECRET, so treating the assertion as sufficient let a
+   *    single injected bot mint a PERMANENT credential for any user and then act as them on every
+   *    requiresAuth route. Bounding it here is what keeps a compromised bot's reach per-request.
+   */
   router.post('/', async (req: Request, res: Response) => {
-    const sub = callerSub(req);
+    const sessionSub = getCaller(req).sub ?? null;
+    const assertedSub = sessionSub ? null : getTrustedServiceUserSub(req);
+    const sub = sessionSub ?? assertedSub;
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+    // The asserted value is a sub, but operators may be allowlisted by either sub or email; check
+    // it against both lists so an email-only allowlist doesn't silently break the bootstrap.
+    if (!sessionSub && !isOperatorIdentity(assertedSub, assertedSub)) {
+      logger.warn({ assertedSub }, 'refused bootstrap PAT mint — asserted sub is not an operator');
+      res.status(403).json({ error: 'operator_required' });
+      return;
+    }
     try {
       const minted = await insertCliToken(pool, {
         sub, email: getCaller(req).email, label: (req.body as { label?: string } | undefined)?.label,
+        ttlMs: sessionSub ? undefined : bootstrapTtlMs(),
       });
-      logger.info({ id: minted.id, sub, label: minted.label }, 'cli token minted');
+      logger.info(
+        { id: minted.id, sub, label: minted.label, bootstrap: !sessionSub, expiresAt: minted.expiresAt },
+        'cli token minted',
+      );
       res.status(201).json(minted);
     } catch (err) {
       logger.error({ err }, 'cli token mint failed');
