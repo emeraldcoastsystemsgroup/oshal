@@ -38,6 +38,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Outlook default scopes += Mail.Send (ADR-037 email-swarm parity with Gmail's send leg): scripts/oshal-outlook.js now sends via POST /me/sendMail, which needs the delegated Mail.Send permission. Existing Outlook connections must RECONNECT at /utilities to pick up the new scope; the Azure app registration needs Mail.Send added under API permissions (docs/partner-app-registration.md, Communications bundle).
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Plaid becomes a first-class hub connector (new auth:'link' mode) instead of the app-private oshal_finance_items store ADR-048 gave Finance. Adds the 'plaid' PROVIDERS entry (finance category, stub OAuth fields — its ceremony is the Link widget), the 'link' auth-model + 'plaid' flavor union members, the /list `configured` link-branch (isPlaidConfigured), and registers the Plaid Link routes (connector-plaid-link.ts) before the generic /:provider/* handlers. Tokens land in oshal_connections (per-user AES-GCM) and read back via getValidAccessToken's no-refresh_token branch, so an app REFERENCES Plaid via the broker rather than forking its own store. NB: file at the decomposition threshold — all substantive Plaid logic lives in connector-plaid-link.ts, this is a small wiring seam only.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the key derivation - SESSION_SECRET unset now throws at the call site instead of silently deriving a well-known AES key any reader of this public repo can compute. Guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account-per-provider closed out (ADR-113 section 4). (a) The CREATE TABLE no longer declares UNIQUE (user_sub, provider) — it was created and then dropped again by ensureTenancySchema on every fresh boot, and under OSHAL_SCHEMA_BOOTSTRAP=validate-only it survived, so a migration-driven deployment silently OVERWROTE the first account on the second connect. scripts/migrations/101-connections-multi-account.sql is the owner-role half; the per-account partial unique indexes are the only uniqueness now. (b) /start forces the provider's ACCOUNT CHOOSER once the caller already holds a connection for that provider (or asks with ?another=1) — Google's default prompt=consent silently re-authorises the SAME account, which made "two Gmails" unreachable from the UI no matter how the schema was shaped. (c) DELETE /:provider revoked ONE refresh token and then deleted EVERY row for the provider; it now revokes each account it removes and re-seeds the scope default. (d) /list publishes defaultConnectionId + multiAccount so a consumer can see which account a bare token request will resolve to. Guards: tests/unit/connector-multi-account.spec.ts.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto default-ON boot posture: after ensureDekSchema, log LOUD (error) when OSHAL_ENVELOPE_CRYPTO is on (now the default) but SESSION_SECRET is unset — connector token crypto will throw at the kek() boundary, so surface the misconfig at boot rather than on the first connect. Imported envelopeEnabled for the check.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G14: getValidAccessToken accepts opts.forceRefresh — when a refresh token exists, skip the still-valid-expiry shortcut and exercise a REAL provider refresh, so the connector-liveness probe learns whether the provider still honors the grant (revoked Testing-mode Google → `refresh 400`) instead of trusting the DB row. Default path (no flag) is byte-for-byte unchanged.
  * -----------------------------------------------------------------------------
@@ -53,7 +54,8 @@ import type { AppContext } from '@/app/composition/app-context';
 import { ensureDekSchema, encryptToken, decryptToken, envelopeEnabled } from './connector-token-crypto';
 import {
   ensureTenancySchema, accessibleConnections, resolveConnectionRow, upsertConnection,
-  isTenantMember, ownerSub, relabelConnection, type ConnectionRow, type ConnectionSelector,
+  isTenantMember, ownerSub, relabelConnection, disconnectConnections, pickConnection,
+  type ConnectionRow, type ConnectionSelector,
 } from './connector-tenancy';
 import { buildAnyLlmListEntry } from './byo-llm-routes';
 import { fetchAccount } from './connector-account-lookup';
@@ -634,6 +636,38 @@ const PLATFORM_DEFAULT_ENV: Record<string, string[]> = {
   duffel: ['DUFFEL_ACCESS_TOKEN'],
 };
 
+/**
+ * Extra authorize-URL params that force the provider's ACCOUNT CHOOSER, keyed by OAuth dialect.
+ * Needed to reach the second account of a provider: Google's default `prompt=consent` re-authorises
+ * whichever account the browser is already signed into, so a user with one Gmail connected could
+ * never add a second one from the UI regardless of what the schema allowed. Applied only when the
+ * caller ALREADY holds a connection for that provider (or asks explicitly with `?another=1`), so
+ * the first-time connect keeps its current one-tap behaviour. Dialects with no account-chooser
+ * parameter are simply absent — the flow is unchanged for them.
+ */
+const ACCOUNT_CHOOSER_PARAMS: Partial<Record<ProviderDef['flavor'], Record<string, string>>> = {
+  // 'select_account consent' = show the chooser AND always return a refresh token for the picked one.
+  google: { prompt: 'select_account consent' },
+  microsoft: { prompt: 'select_account' },
+};
+
+/**
+ * @description The authorize-URL params to ADD when the consent flow is about to connect an
+ * ADDITIONAL account of a provider the caller already uses. Pure + exported so the multi-account
+ * behaviour is testable without driving an OAuth redirect: without these, Google re-authorises the
+ * already-signed-in account and the second Gmail silently becomes an update of the first.
+ * @param flavor - the provider's OAuth dialect
+ * @param alreadyConnected - how many accounts of this provider the caller already holds
+ * @param wantsAnother - the caller asked explicitly (`?another=1`) even with none connected
+ * @returns params to merge into the authorize URL; empty when the flow should stay unchanged
+ */
+export function additionalAccountAuthParams(
+  flavor: ProviderDef['flavor'], alreadyConnected: number, wantsAnother = false,
+): Record<string, string> {
+  if (alreadyConnected <= 0 && !wantsAnother) return {};
+  return { ...(ACCOUNT_CHOOSER_PARAMS[flavor] ?? {}) };
+}
+
 /** OAuth client creds per provider. Google reuses the login client by default. */
 function providerCreds(provider: string): { clientId: string; clientSecret: string } {
   if (provider === 'google') {
@@ -857,8 +891,10 @@ export async function ensureConnectionsSchema(pool: AppContext['pool']): Promise
         expiry TIMESTAMPTZ,
         status VARCHAR(20) NOT NULL DEFAULT 'connected',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (user_sub, provider)
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        -- NO UNIQUE (user_sub, provider): a user may hold SEVERAL accounts of one provider
+        -- (two Gmails — ADR-113 section 4). Uniqueness is per ACCOUNT and lives in the partial
+        -- indexes ensureTenancySchema/migration 101 create (user_sub, provider, account_key).
       )`,
       'ALTER TABLE oshal_connections ADD COLUMN IF NOT EXISTS account_id TEXT',
     ],
@@ -898,6 +934,28 @@ export async function ensureConnectionsSchema(pool: AppContext['pool']): Promise
   // Tenancy (ADR-042): tenant tables + tenant_id/connected_by_sub on oshal_connections +
   // partial unique indexes. Backward-compatible (tenant_id defaults NULL = personal).
   await ensureTenancySchema(pool);
+}
+
+/**
+ * @description Best-effort revoke of ONE connection's refresh token at the provider. Extracted so
+ * both disconnect paths revoke every account they remove — the per-provider path used to revoke a
+ * single arbitrary row while deleting all of them, leaving live grants behind for the others.
+ * @param pool - db pool (needed to decrypt with the owner's DEK)
+ * @param ownerSubValue - the sub whose DEK encrypted the token
+ * @param def - the provider definition (its revokeUrl, when it has one)
+ * @param encRefresh - the encrypted refresh token, or null
+ * @returns nothing; failures are logged, never thrown (a disconnect must always complete locally)
+ */
+async function revokeRefreshToken(
+  pool: AppContext['pool'], ownerSubValue: string, def: ProviderDef | undefined, encRefresh: string | null,
+): Promise<void> {
+  if (!encRefresh || !def?.revokeUrl) return;
+  try {
+    const refresh = await decryptToken(pool, ownerSubValue, encRefresh);
+    await fetch(`${def.revokeUrl}?token=${encodeURIComponent(refresh)}`, { method: 'POST' });
+  } catch (err) {
+    logger.warn({ err, revokeUrl: def.revokeUrl }, 'Provider token revoke failed (local disconnect proceeds)');
+  }
 }
 
 /**
@@ -951,6 +1009,11 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
           connectionId: c.connection_id, label: c.label, account: c.account_email,
           tenantId: c.tenant_id || null, isDefault: c.is_default,
         })),
+        // The account a bare token request resolves to (pickConnection's answer), published so a
+        // consumer never has to re-implement the rule — and so a multi-account provider is visible
+        // as such to a surface that wants to make the user choose.
+        multiAccount: conns.length > 1,
+        defaultConnectionId: pickConnection(conns)?.connection_id ?? null,
         status: conns.length ? 'connected' : 'not_connected',
       };
     });
@@ -1001,6 +1064,15 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
       res.cookie(`oshalpkce_${provider}`, encrypt(verifier), { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 10 * 60 * 1000, path: '/' });
       params.set('code_challenge', challenge);
       params.set('code_challenge_method', 'S256');
+    }
+    // Adding ANOTHER account of a provider the caller is already connected to (ADR-113 section 4):
+    // force the provider's account chooser, otherwise the consent screen silently re-authorises the
+    // account the browser is signed into and the "second Gmail" becomes an update of the first.
+    const existing = (await accessibleConnections(ctx.pool, me.sub, provider)).length;
+    const chooser = additionalAccountAuthParams(def.flavor, existing, String(req.query.another || '').trim() === '1');
+    if (Object.keys(chooser).length) {
+      for (const [k, v] of Object.entries(chooser)) params.set(k, v);
+      logger.info({ provider, sub: me.sub, existing }, 'Connector consent: forcing the provider account chooser (additional account)');
     }
     params.set('state', signState({ provider, sub: me.sub, tenant: tenant && tenant !== 'personal' ? tenant : undefined, label: label || undefined }));
     // Facebook / Meta "Login for Business" apps define permissions in a Login Configuration
@@ -1138,15 +1210,16 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
     try {
       // Personal disconnect only (tenant_id IS NULL). Removing a shared/household hub is a
       // tenant-admin action (ADR-042 Phase 3), not a per-member disconnect.
-      const row = (await ctx.pool.query('SELECT refresh_token FROM oshal_connections WHERE user_sub = $1 AND provider = $2 AND tenant_id IS NULL', [me.sub, provider])).rows[0];
-      if (row?.refresh_token && def?.revokeUrl) {
-        try {
-          const refresh = await decryptToken(ctx.pool, me.sub, row.refresh_token);
-          await fetch(`${def.revokeUrl}?token=${encodeURIComponent(refresh)}`, { method: 'POST' });
-        } catch { /* best-effort */ }
-      }
-      await ctx.pool.query('DELETE FROM oshal_connections WHERE user_sub = $1 AND provider = $2 AND tenant_id IS NULL', [me.sub, provider]);
-      res.json({ success: true });
+      // Multi-account: this removes EVERY personal account of the provider, so every one of them
+      // gets its refresh token revoked. The pre-multi-account code read a single row and revoked
+      // that one while the DELETE removed them all — leaving live grants at the provider.
+      const rows = (await ctx.pool.query(
+        'SELECT connection_id, refresh_token FROM oshal_connections WHERE user_sub = $1 AND provider = $2 AND tenant_id IS NULL',
+        [me.sub, provider],
+      )).rows as Array<{ connection_id: string; refresh_token: string | null }>;
+      await Promise.all(rows.map(async (r) => revokeRefreshToken(ctx.pool, me.sub, def, r.refresh_token)));
+      const removed = await disconnectConnections(ctx.pool, me.sub, rows.map((r) => r.connection_id), provider);
+      res.json({ success: true, removed });
     } catch (err: any) {
       logger.error({ err, provider }, 'Disconnect failed');
       res.status(500).json({ error: err.message });
@@ -1181,14 +1254,11 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
         [String(req.params.id), me.sub],
       )).rows[0];
       if (!row) { res.status(404).json({ error: 'not found' }); return; }
-      const def = PROVIDERS[row.provider];
-      if (row.refresh_token && def?.revokeUrl) {
-        try {
-          const refresh = await decryptToken(ctx.pool, me.sub, row.refresh_token);
-          await fetch(`${def.revokeUrl}?token=${encodeURIComponent(refresh)}`, { method: 'POST' });
-        } catch { /* best-effort */ }
-      }
-      await ctx.pool.query('DELETE FROM oshal_connections WHERE connection_id = $1 AND user_sub = $2 AND tenant_id IS NULL', [String(req.params.id), me.sub]);
+      await revokeRefreshToken(ctx.pool, me.sub, PROVIDERS[row.provider], row.refresh_token);
+      // disconnectConnections re-seeds the provider's scope default, so removing the DEFAULT of two
+      // accounts promotes the remaining one instead of leaving the provider defaultless (which would
+      // drop resolution onto the stable-order fallback).
+      await disconnectConnections(ctx.pool, me.sub, [String(req.params.id)], String(row.provider));
       res.json({ success: true });
     } catch (err: any) {
       logger.error({ err }, 'connection delete failed');
