@@ -45,6 +45,7 @@
  * 40 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Idle-timeout directive (adversarial-review follow-up): DISPATCH_PIPELINE_TIMEOUT_MS + MAX_DISPATCH_DURATION_MS raised 30min→2h and made env-tunable — the 30-min queue watchdog was killing actively-working pipelines below the 60-min harness idle ceiling. The pair stays coupled (watchdog never fires before the pipeline times out); the real stuck-detector is the harness idle timeout underneath.
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | Docs-only: added the missing JSDoc block to dispatchTicket (the exported class's core swarm/build dispatch path) — every other method already carried one. Explains WHY it is the heavy path (owns child-ticket creation + parent-assembly + failure triage). No logic change (additive comment only).
+ * 43 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): setAutoApplyGate — the bounded auto-apply hook threaded into the incident-RCA dispatch deps, wired at the app layer exactly like setBudgetService (optional; unset = unchanged Mode-A human gate). The hook is only ever consulted by the incident pipeline's Mode-A finalizer, never by the build/manifest/graph paths.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -96,7 +97,7 @@ import { dispatchManifestWorkerTicket as dispatchManifestWorkerTicketImpl } from
 import { dispatchGraphTicket as dispatchGraphTicketImpl } from './dispatch-graph-worker';
 // Incident 2-bot RCA pipeline moved to ./dispatch-incident-worker.ts
 // (1000-line cap decomposition).
-import { dispatchIncidentTicket as dispatchIncidentTicketImpl } from './dispatch-incident-worker';
+import { dispatchIncidentTicket as dispatchIncidentTicketImpl, type IncidentAutoApplyHook } from './dispatch-incident-worker';
 
 // Module-level dispatch helpers (planning-role inference, capability routing maps,
 // dispatch entry-state resolution, failed-work-item summarization, child-ticket
@@ -309,6 +310,23 @@ export class QueueManagerService {
   setBudgetService(service: BudgetService): void {
     this.budgetService = service;
     logger.info('Cost-governance BudgetService wired into QueueManagerService');
+  }
+
+  /** @description ADR-119 P4 (A2): the bounded auto-apply gate for Mode-A incident verdicts; optional — absent means the unchanged human approve gate. */
+  private autoApplyGate?: IncidentAutoApplyHook;
+
+  /**
+   * @description Sets the ADR-119 A2 auto-apply gate the incident pipeline's Mode-A
+   * finalizer consults (same optional-hook wiring shape as setBudgetService). The gate
+   * itself owns every A2 bound — kill switch (default OFF), sanctioned classes, the
+   * absolute core-infra refusal, once-per-key-per-TTL, the hourly cap, and
+   * verification-before-complete. Unset = Mode A always parks at the human gate.
+   * @param hook - The auto-apply engine from the swarm extension composition.
+   * @returns void
+   */
+  setAutoApplyGate(hook: IncidentAutoApplyHook): void {
+    this.autoApplyGate = hook;
+    logger.info('ADR-119 auto-apply gate wired into QueueManagerService (kill switch governs activation)');
   }
 
   /**
@@ -749,6 +767,8 @@ export class QueueManagerService {
       // ADR-034 gap-b push-on-dispatch: same authoritative-config resolver the manifest
       // worker uses; gated by OSHAL_PUSH_ON_DISPATCH, fail-open, legacy when absent.
       runtimeParamsResolver: this.pipelineDeps?.runtimeParamsResolver,
+      // ADR-119 P4 (A2): the bounded auto-apply gate for Mode-A verdicts (optional).
+      autoApply: this.autoApplyGate,
       pipelineDeps: this.pipelineDeps,
     });
   }

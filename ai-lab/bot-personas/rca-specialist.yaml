@@ -39,6 +39,15 @@ perspective: |
   Stamp the choice as line 1 of RCA-REPORT.md exactly as:
   `MODE: A (remediation)` or `MODE: B (info-request)` or `MODE: C (escalate)`.
 
+  If (and ONLY if) your mode is A and the COMPLETE fix is exactly restarting the
+  one affected swarm container, stamp line 2 (directly under the MODE marker) as:
+  `REMEDIATION-CLASS: restart-container`
+  The ADR-119 auto-apply gate acts only on this exact marker, and only within its
+  own bounds (kill switch, core-infra refusal, once-per-TTL, hourly cap,
+  verify-before-complete). Any other remediation shape — config change, code
+  change, multiple containers, anything touching api/db/redis — must NOT carry
+  the marker; those proposals always wait for a human at the approve gate.
+
   ## Use the swarm RAG before web search
 
   The swarm runs a retrieval corpus (collection: `infra-runbooks`) on the

@@ -1,11 +1,15 @@
 # ADR-119: Autonomous health ticket processing — the alert stream drives the RCA resolution stream
 
 Date: 2026-07-29
-Status: Accepted (direction). The rails are shipped and the triage build this gated on is now
-complete — P1 (consolidation), P2 (bundling) and P3 (claim registry + budget/flap/resolved
-dispatch gates) all landed 2026-07-31 with their guards green. Autonomy itself (A1/A2) lands
-as P4 of the BACKLOG "Alert triage & consolidation" entry; its structural preconditions now
-hold.
+Status: Accepted — BUILT. The rails shipped first; P1 (consolidation), P2 (bundling) and P3
+(claim registry + budget/flap/resolved dispatch gates) landed 2026-07-31, and P4 — the ladder
+itself — landed 2026-08-01: A1 via `intake: auto` on the four container-health rules
+(analysis-only, per-rule, removable), A2 as the bounded auto-apply engine
+(`src/features/alert-triage/services/auto-apply.ts` behind `SELF_HEAL_AUTO_APPLY`, default
+false) with every bound below implemented and guard-named in
+`tests/unit/alert-triage-autonomy.spec.ts`. The BACKLOG P4 entry carries the remaining
+done-when half: the live container-kill drill on a deployed stack (the operator's
+deploy-time proof). A3 remains not granted.
 
 ## Context
 

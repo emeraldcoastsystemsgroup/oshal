@@ -1,6 +1,6 @@
 # Alert Triage & Consolidation — Functional Specification (intelligent-processing intake)
 
-**Status: P1+P2+P3 BUILT (2026-07-31).** Stage A (canonicalize + identity gate), Stage B (the
+**Status: P1+P2+P3 BUILT (2026-07-31); P4 code+guards BUILT (2026-08-01 — live drill = the operator's deploy-time proof, see BACKLOG).** Stage A (canonicalize + identity gate), Stage B (the
 claim registry — declarative `{match, incidentKey?, intake?, bundleHints?}` rules with
 load-time hygiene validation, `ALERT_APPROVED_NAMES` surviving as a pure-claim shorthand),
 Stage C (identity-based consolidation, recurrence linking, escalate-only severity), Stage D
@@ -18,7 +18,11 @@ rows accumulate a task's LIFETIME total and re-stamp `updated_at` on every event
 windowed read there attributes a long-lived task's whole history to "this hour" (the defect
 cost-governance already fixed once; chat_tasks remains the canonical per-call ledger). The
 build phases and their done-when criteria live in [BACKLOG.md](../BACKLOG.md)
-("Alert triage & consolidation"); only P4 (the ADR-119 autonomy ladder) remains.
+("Alert triage & consolidation"). P4 — the ADR-119 autonomy ladder — shipped its code and
+guards 2026-08-01: A1 per-rule `intake: auto` on the container-health rules, and the A2
+bounded auto-apply engine behind `SELF_HEAL_AUTO_APPLY` (default off) with guards in
+`tests/unit/alert-triage-autonomy.spec.ts`; the live container-kill drill remains the
+deploy-time proof.
 
 - **Operator directive (2026-07-28):** non-noisy alerts get put into the queue; duplicates get
   bundled and consolidated. This is the analyst + self-healing portion of the platform.

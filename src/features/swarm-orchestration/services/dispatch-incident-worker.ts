@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired legacy-platform pre-flight: dropped its context-fetch import + env gates, and collapsed the worker prompt to its unconditional "no pre-fetched alarm/topology context" tooling section (the dead OpenSearch/graph curl block is gone). There is no OpenSearch/Memgraph; the bot investigates from the ticket + workspace + persona-granted tools.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING (controller half): the RCA pipeline's dispatchToBot now stamps each BotNodeClient.execute with the target's authoritative provider/model/configVersion (pushOnDispatchFields, shared with dispatch-manifest-worker) when OSHAL_PUSH_ON_DISPATCH is on. Fail-open + default OFF → byte-identical legacy dispatch; the localhost /api/send-message fallback is untouched (it hits the inline api, not a bot node).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: entry 2 stripped the dead OpenSearch/graph curl BLOCK but left the STEPS still ordering the worker to "query the graph and OpenSearch … (use curl commands below)" against commands that no longer existed — a self-contradicting prompt. Steps 2/3 now reference the real optional tier conditionally, and the tooling section names the ONE surface that exists (caller-scoped /api/graph, AQL not Cypher, 503 = absent) while saying outright that no OpenSearch and no external graph service is reachable.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): finalizeIncidentByMode (now exported for its guards) consults the optional IncidentAutoApplyHook on a Mode-A verdict — the queue manager threads the alert-triage auto-apply engine in exactly like the cost-governance budget hook (structural interface here, implementation injected at the app layer; FSD same-layer rule). The hook decides apply/park/escalate under the ADR-119 bounds and the finalizer writes whatever status the hook resolved (complete ONLY on verified apply); absent hook, disabled kill switch, or a hook crash = the unchanged Mode-A customer_action disposition. Modes B/C and the no-marker fallback never consult the hook — analysis dispositions are never remediated. The worker prompt's Step 2 now documents the REMEDIATION-CLASS line-2 marker (rca-mode.ts readRcaRemediationClass) a restart-only Mode-A proposal may stamp.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -19,10 +20,32 @@ import { taskSubdirs } from '@/shared/workspace-task-dirs';
 import type { WorkflowDefinition } from './dispatch-routing';
 import type { TaskFolderService } from './task-folder-service';
 import { createTicketWorkspace, writeTaskBrief } from './queue-manager-workspace-helpers';
-import { INCIDENT_MODE_DISPOSITION, readRcaMode } from './rca-mode';
+import { INCIDENT_MODE_DISPOSITION, readRcaMode, readRcaRemediationClass } from './rca-mode';
 import { extractErrorMessage } from './queue-manager-dispatch-helpers';
 
 const logger = createChildLogger({ module: 'dispatch-incident-worker' });
+
+/**
+ * @description ADR-119 P4 (A2): the bounded auto-apply decision surface the Mode-A
+ * finalizer consults. Declared structurally HERE (FSD: no same-layer cross-import) and
+ * satisfied by alert-triage's SelfHealAutoApplyEngine, injected at the app layer via
+ * QueueManagerService.setAutoApplyGate — the same wiring shape as the cost-governance
+ * budget hook. The hook owns every A2 bound (kill switch, sanctioned class, core-infra
+ * refusal, once-per-key-per-TTL, hourly cap, verify-before-complete) and all ticket
+ * audit/flag writes; the finalizer only writes the resolved terminal status.
+ */
+export interface IncidentAutoApplyHook {
+  /**
+   * @description Resolves a Mode-A proposal to its terminal status under the A2 bounds.
+   * @param ticket - The incident ticket.
+   * @param remediationClass - The proposal's declared REMEDIATION-CLASS marker, or null.
+   * @returns Terminal status + disposition/reason for the status metadata.
+   */
+  resolveModeA(
+    ticket: InternalTicket,
+    remediationClass: string | null,
+  ): Promise<{ status: 'complete' | 'customer_action' | 'escalated'; disposition: string; reason: string; applied: boolean }>;
+}
 
 /**
  * @description Dependencies needed to dispatch an incident-RCA ticket.
@@ -41,6 +64,9 @@ export interface IncidentDispatchDeps {
    *  provider/model/configVersion so each bot-node dispatch carries it (gated by
    *  OSHAL_PUSH_ON_DISPATCH). Absent/off → no stamping; fail-open, never blocks. */
   runtimeParamsResolver?: RuntimeParamsResolver;
+  /** ADR-119 P4 (A2): the bounded auto-apply gate consulted on a Mode-A verdict.
+   *  Absent → the unchanged Mode-A disposition (customer_action, human gate). */
+  autoApply?: IncidentAutoApplyHook;
   /**
    * The queue manager's injected pipeline services, when present. Absence skips
    * workspace creation and falls back to hardcoded agent IDs — mirroring the
@@ -59,18 +85,47 @@ export interface IncidentDispatchDeps {
  * land in `customer_action` with a `disposition` tag (proposed_solution | human_action_needed) so the
  * operator acts on the proposed fix or gathers more data; Mode C escalates. When no MODE marker is
  * present (non-RCA worker, noop stub, older deliverables) it falls back to 'complete' — preserving
- * prior behavior. The queue surface already renders Customer Action / Escalated; this is what populates them.
- * @param ticketId - The ticket to finalize.
+ * prior behavior. ADR-119 P4: a Mode-A verdict first consults the optional auto-apply hook (A2) —
+ * the hook may resolve complete (applied AND verified), escalated (failed apply/verify, recurrence)
+ * or the plain customer_action park; Modes B/C never consult it (analysis lands on a human at every
+ * autonomy level), and a hook failure falls back to the unchanged human gate — an auto-apply crash
+ * must never lose the proposal. Exported for its named guards (alert-triage-autonomy.spec.ts).
+ * @param ticket - The incident ticket being finalized.
  * @param delivDir - The worker's deliverables directory (holds RCA-REPORT.md).
  * @param ticketService - Persistent terminal-status writer.
+ * @param autoApply - Optional ADR-119 A2 gate (see IncidentAutoApplyHook).
  * @returns Resolves once the terminal status is written.
  */
-async function finalizeIncidentByMode(ticketId: string, delivDir: string, ticketService: TicketService): Promise<void> {
+export async function finalizeIncidentByMode(
+  ticket: InternalTicket,
+  delivDir: string,
+  ticketService: TicketService,
+  autoApply?: IncidentAutoApplyHook,
+): Promise<void> {
+  const { ticketId } = ticket;
   const mode = readRcaMode(delivDir);
   if (!mode) {
     await ticketService.updateStatus(ticketId, 'complete');
     logger.info({ ticketId }, 'Incident finalized: complete (no MODE marker on RCA-REPORT.md)');
     return;
+  }
+  if (mode === 'A' && autoApply) {
+    try {
+      const resolution = await autoApply.resolveModeA(ticket, readRcaRemediationClass(delivDir));
+      await ticketService.updateStatus(ticketId, resolution.status, {
+        mode,
+        disposition: resolution.disposition,
+        source: 'incident-rca-pipeline',
+        autonomy: resolution.reason,
+      });
+      logger.info(
+        { ticketId, mode, status: resolution.status, disposition: resolution.disposition, reason: resolution.reason, applied: resolution.applied },
+        'Incident finalized by MODE via the ADR-119 auto-apply gate',
+      );
+      return;
+    } catch (error) {
+      logger.error({ err: error, ticketId }, 'Auto-apply hook failed — falling back to the human approve gate (Mode A disposition)');
+    }
   }
   const { status, disposition } = INCIDENT_MODE_DISPOSITION[mode];
   await ticketService.updateStatus(ticketId, status, { mode, disposition, source: 'incident-rca-pipeline' });
@@ -272,6 +327,12 @@ export async function dispatchIncidentTicket(
       '  - Alternative hypothesis',
       '  - What additional data would increase certainty',
       '',
+      'If (and ONLY if) your mode is A and the COMPLETE fix is exactly restarting the one',
+      'affected swarm container, add line 2 of RCA-REPORT.md (directly under the MODE marker):',
+      '`REMEDIATION-CLASS: restart-container`',
+      'The ADR-119 auto-apply gate acts only on this exact marker; any other remediation',
+      'shape (config change, code change, multi-container, core infra) must NOT carry it.',
+      '',
       '### Step 3: Impact Assessment',
       'Map blast radius from the ticket evidence, plus the graph neighborhood when the tier is up.',
       'Which systems are upstream/downstream? How many users/services affected?',
@@ -336,7 +397,7 @@ export async function dispatchIncidentTicket(
 
     if (!queueAgentId) {
       if (hasRequiredDeliverables()) {
-        await finalizeIncidentByMode(ticketId, delivDir, deps.ticketService);
+        await finalizeIncidentByMode(ticket, delivDir, deps.ticketService, deps.autoApply);
       } else {
         await deps.ticketService.updateStatus(ticketId, 'escalated', {
           reason: 'reviewer_unavailable_deliverables_missing',
@@ -421,7 +482,7 @@ export async function dispatchIncidentTicket(
 
     if (approved) {
       logger.info({ ticketId }, 'APPROVED by queue bot — finalizing incident by MODE');
-      await finalizeIncidentByMode(ticketId, delivDir, deps.ticketService);
+      await finalizeIncidentByMode(ticket, delivDir, deps.ticketService, deps.autoApply);
       return;
     }
 
@@ -429,7 +490,7 @@ export async function dispatchIncidentTicket(
       // Queue bot didn't write a review — treat as approved if deliverables exist
       if (hasRequiredDeliverables()) {
         logger.info({ ticketId }, 'Queue bot did not write review but deliverables present — finalizing by MODE');
-        await finalizeIncidentByMode(ticketId, delivDir, deps.ticketService);
+        await finalizeIncidentByMode(ticket, delivDir, deps.ticketService, deps.autoApply);
         return;
       }
     }
@@ -462,7 +523,7 @@ export async function dispatchIncidentTicket(
     // Complete regardless — worker has had its second pass
     if (workerResult2.success) {
       logger.info({ ticketId }, 'Revision cycle complete — finalizing incident by MODE');
-      await finalizeIncidentByMode(ticketId, delivDir, deps.ticketService);
+      await finalizeIncidentByMode(ticket, delivDir, deps.ticketService, deps.autoApply);
     } else {
       await deps.ticketService.updateStatus(ticketId, 'escalated', {
         reason: 'worker_bot_revision_failed',

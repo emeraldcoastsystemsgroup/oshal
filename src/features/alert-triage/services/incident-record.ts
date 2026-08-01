@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): the consolidated-incident record shape + tolerant reader, extracted verbatim from alert-consolidation.ts so the new bundling stage can read incident records off candidate tickets without an alert-consolidation <-> alert-bundling import cycle. P2 additions to the record itself: rootCandidate {target, reason} (FR-D4 — the ordered-policy winner and why it won) carried through the tolerant read
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (Stage B + E): members fill the spec §5 resolvedAt? slot (FR-E4 — a resolved event marks the member, a refire clears it); the record gains rootFilter (the claiming rule's ordered FR-D4 root filter, stamped at genesis so the incident's policy is stable) and flap (FR-E3 rolling refire observations + the parked provenance marker). markMemberResolved/allMembersResolved are the pure FR-E4 helpers — full resolution is UNPROVABLE while membersOverflow > 0, so auto-close conservatively refuses then
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P4 (ADR-119 A2): the record gains the autoApply audit slot — what was applied, when, and the verification result (ADR-119 A2 bound 4: full audit on the ticket). Written at most once per incident by the auto-apply engine; the recurrenceOf link makes it the durable once-per-key-per-TTL evidence a successor incident reads before it may apply. Tolerant read like every other field
  */
 
 import type { InternalTicket, TicketPriority } from '@/entities/ticket';
@@ -55,6 +56,37 @@ export interface RootCandidate {
 }
 
 /**
+ * @description The ADR-119 A2 audit record (bound 4: what was applied, when, verification
+ * result, and which autonomy level authorized it) riding `incident.autoApply`. Written by
+ * the auto-apply engine at most once per incident; a successor incident on the same key
+ * reads it through the recurrenceOf link as the durable once-per-key-per-TTL evidence.
+ */
+export interface IncidentAutoApplyAudit {
+  /** The autonomy level that authorized the action (always 'A2' today). */
+  level: string;
+  /** The sanctioned remediation class executed (e.g. restart-container). */
+  remediationClass: string;
+  /** The container acted on (resolved from the incident's own alert evidence). */
+  target: string;
+  /** When the engine committed to applying (ISO) — the once-per-TTL anchor. */
+  decidedAt: string;
+  /** When the apply command finished (ISO). */
+  appliedAt?: string;
+  /** Whether the apply command itself succeeded. */
+  applyOk?: boolean;
+  /** Executor detail for the apply step. */
+  applyDetail?: string;
+  /** Whether post-apply verification observed the target healthy in the window. */
+  verified?: boolean;
+  /** When verification concluded (ISO). */
+  verifiedAt?: string;
+  /** Executor detail for the verification step. */
+  verifyDetail?: string;
+  /** Terminal outcome of the attempt. */
+  outcome: 'applied-verified' | 'apply-failed' | 'verify-failed';
+}
+
+/**
  * @description The consolidated incident record riding `metadata.incident` (spec §5).
  * `firstSeen` is genesis and write-once (FR-C6); `updateCount` counts suppressed refires
  * (the source platform's `update_count`); `instanceSeq` numbers successive incidents on the
@@ -80,6 +112,8 @@ export interface IncidentRecord {
   rootFilter?: string[];
   /** FR-E3 flap-damping state (P3 Stage E). */
   flap?: IncidentFlapState;
+  /** ADR-119 A2 audit record — present only when an auto-apply was attempted (P4). */
+  autoApply?: IncidentAutoApplyAudit;
 }
 
 /**
@@ -111,6 +145,7 @@ export function incidentOf(ticket: InternalTicket): IncidentRecord | null {
     ...(typeof inc.recurrenceCount === 'number' ? { recurrenceCount: inc.recurrenceCount } : {}),
     ...(isStringArray(inc.rootFilter) ? { rootFilter: [...inc.rootFilter] } : {}),
     ...(isFlapState(inc.flap) ? { flap: { recent: [...inc.flap.recent], ...(inc.flap.parked === true ? { parked: true } : {}) } } : {}),
+    ...(isAutoApplyAudit(inc.autoApply) ? { autoApply: { ...inc.autoApply } } : {}),
   };
 }
 
@@ -164,6 +199,26 @@ function isStringArray(value: unknown): value is string[] {
  */
 function isFlapState(value: unknown): value is IncidentFlapState {
   return !!value && typeof value === 'object' && isStringArray((value as IncidentFlapState).recent);
+}
+
+/**
+ * @description Narrow-type check for a stored autoApply audit (ADR-119 A2, P4) — malformed
+ * values drop instead of propagating, like every other tolerant read here. Note the guard
+ * direction this feeds: a record that DROPS here reads as "no prior apply", so the engine's
+ * durable once-per-key check additionally fails safe on unreadable predecessors.
+ * @param value - Raw metadata value.
+ * @returns True for a well-formed IncidentAutoApplyAudit.
+ */
+function isAutoApplyAudit(value: unknown): value is IncidentAutoApplyAudit {
+  if (!value || typeof value !== 'object') return false;
+  const audit = value as IncidentAutoApplyAudit;
+  return (
+    typeof audit.level === 'string' &&
+    typeof audit.remediationClass === 'string' &&
+    typeof audit.target === 'string' &&
+    typeof audit.decidedAt === 'string' &&
+    typeof audit.outcome === 'string'
+  );
 }
 
 /**

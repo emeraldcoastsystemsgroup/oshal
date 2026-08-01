@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): services barrel for the alert-triage feature slice
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): bundling exports — AlertBundlingService, the DependencyResolver seam + StaticDependencyMap, the correlation knobs, and the incident record shape now sourced from incident-record.ts (unchanged public names)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage B + E): claim-registry exports (AlertClaimRegistry, rule validation, unclaimed policy), the RcaBudgetGate + RcaSpendReader seam, flap damping, the FR-E4 member-resolution helpers, and the new dispatch-gate knobs
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P4 (ADR-119 A2): auto-apply exports — SelfHealAutoApplyEngine + the RemediationExecutor/AutoApplyTicketGateway seams, the sanctioned-class set, the surfacing flag constants, isCoreInfraTarget (the absolute core-infra guard over the dependency map's own names), the autoApply audit slot, and the SELF_HEAL_* knob readers
  */
 
 export {
@@ -28,6 +29,11 @@ export {
   flapQuietSeconds,
   flapThreshold,
   flapWindowSeconds,
+  SELF_HEAL_APPLY_HOURLY_CAP_DEFAULT,
+  SELF_HEAL_VERIFY_TIMEOUT_DEFAULT_SECONDS,
+  autoApplyEnabled,
+  autoApplyHourlyCap,
+  autoApplyVerifyTimeoutSeconds,
   isWithinConsolidationTtl,
   isWithinCorrelationWindow,
   maxIncidentMembers,
@@ -55,12 +61,28 @@ export {
   allMembersResolved,
   incidentOf,
   markMemberResolved,
+  type IncidentAutoApplyAudit,
   type IncidentEscalation,
   type IncidentFlapState,
   type IncidentMember,
   type IncidentRecord,
   type RootCandidate,
 } from './incident-record';
+
+export {
+  AUTO_APPLIED_FLAG,
+  AUTO_APPLY_APPLY_FAILED_FLAG,
+  AUTO_APPLY_CAP_PARKED_FLAG,
+  AUTO_APPLY_CLASSES,
+  AUTO_APPLY_CORE_INFRA_FLAG,
+  AUTO_APPLY_RECURRENCE_FLAG,
+  AUTO_APPLY_VERIFY_FAILED_FLAG,
+  SelfHealAutoApplyEngine,
+  resolveApplyTarget,
+  type AutoApplyResolution,
+  type AutoApplyTicketGateway,
+  type RemediationExecutor,
+} from './auto-apply';
 
 export {
   AlertClaimRegistry,
@@ -92,6 +114,7 @@ export {
 
 export {
   StaticDependencyMap,
+  isCoreInfraTarget,
   normalizeTarget,
   type DependencyResolver,
 } from './dependency-map';
