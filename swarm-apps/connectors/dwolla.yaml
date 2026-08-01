@@ -32,6 +32,8 @@ resources:
     query:
       limit: '{limit}'
 metadata:
+  description: "Dwolla — reads customers, customer, funding sources, transfers via api.dwolla.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Payments"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/dwolla.com.ico

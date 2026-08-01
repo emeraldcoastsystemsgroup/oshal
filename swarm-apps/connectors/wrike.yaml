@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /contacts
 metadata:
+  description: "Wrike — reads tasks, folders, contacts via www.wrike.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Project management"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/wrike.com.ico

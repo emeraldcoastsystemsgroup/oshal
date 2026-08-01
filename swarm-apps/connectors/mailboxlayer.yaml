@@ -19,6 +19,8 @@ resources:
     query:
       email: '{email}'
 metadata:
+  description: "mailboxlayer — reads check via apilayer.net. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Email"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/apilayer.net.ico

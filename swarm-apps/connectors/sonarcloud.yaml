@@ -41,6 +41,8 @@ resources:
     method: GET
     path: /metrics/search
 metadata:
+  description: "SonarCloud — reads projects, issues, measures, quality gate status and 1 more via sonarcloud.io. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Developer tools"
   icon: sonarcloud
   iconTitle: SonarCloud
   iconSource: simple-icons

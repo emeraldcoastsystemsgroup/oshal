@@ -28,6 +28,8 @@ resources:
     query:
       quotes: '{quotes}'
 metadata:
+  description: "Coinpaprika — reads coins, tickers, ticker detail via api.coinpaprika.com. No credential needed — a public API."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/coinpaprika.com.ico

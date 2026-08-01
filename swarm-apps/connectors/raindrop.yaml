@@ -42,6 +42,8 @@ resources:
       perpage: '50'
     paginate: true
 metadata:
+  description: "Raindrop.io — reads me, collections, raindrops, search via api.raindrop.io. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Knowledge"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/raindrop.io.ico

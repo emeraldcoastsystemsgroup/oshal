@@ -20,6 +20,8 @@ resources:
     method: GET
     path: /docs/{docId}/tables
 metadata:
+  description: "Coda — reads docs, doc tables via coda.io. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Knowledge"
   icon: coda
   iconTitle: Coda
   iconSource: simple-icons

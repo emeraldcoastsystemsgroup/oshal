@@ -37,6 +37,8 @@ resources:
     query:
       query: '{query}'
 metadata:
+  description: "CoinGecko — reads coins markets, coin detail, simple price, search via api.coingecko.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/coingecko.com.ico

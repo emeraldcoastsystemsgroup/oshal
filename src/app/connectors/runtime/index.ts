@@ -15,6 +15,10 @@ export type { BuildSpecOptions, ConnectorSpec, SpecAuth, SpecClient, SpecPaginat
 export { specFromOpenApi } from './openapi-import';
 export type { ImportResult } from './openapi-import';
 export { specToMarkdown } from './spec-to-doc';
+export {
+  CANONICAL_CATEGORIES, connectorSetupLane, deriveConnectorCategory, deriveConnectorDescription,
+} from './curation';
+export type { ConnectorSetupLane } from './curation';
 export { auditSpec, auditConnectorCatalog, formatAudit } from './catalog-audit';
 export type { AuditIssue, ConnectorAudit } from './catalog-audit';
 export {

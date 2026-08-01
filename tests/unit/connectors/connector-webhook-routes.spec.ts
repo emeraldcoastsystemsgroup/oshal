@@ -10,14 +10,15 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Proved GitHub issue events take the specialized sync path without duplicate generic tickets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Proved exact-byte HMAC verification, GitHub delivery identifiers, and trusted system dispatch
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guarded production middleware order so global JSON parsing cannot consume signed webhook bytes
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEQ 4's guard read server.ts as TEXT and searched for an inline parser ternary. The web-hardening lane moved that logic into createGlobalJsonParser (features/security/hardening/body-limits.ts) and the guard went RED on main while the behaviour was completely intact — a substring guard rotting, not a regression. It now drives the REAL middleware the server mounts: a /api/hooks body must arrive unparsed (HMAC needs the original bytes) while an ordinary route is parsed, so the reservation is proven specific rather than a parser that does nothing.
  *
  * @module tests/unit/connectors/connector-webhook-routes
  */
 import crypto from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import { createGlobalJsonParser, RESERVED_BODY_PARSER_PREFIXES } from '@/features/security';
 import {
   createConnectorWebhookHandler,
   loadWebhookEvents,
@@ -113,17 +114,29 @@ describe('createConnectorWebhookHandler', () => {
 });
 
 describe('mountConnectorWebhookRoutes', () => {
-  it('reserves /api/hooks from the production global JSON parser', () => {
-    const source = readFileSync('src/app/server.ts', 'utf8');
-    const parserStart = source.indexOf("req.path.startsWith('/api/remote-clients')");
-    const parserEnd = source.indexOf('// CSP violation collector', parserStart);
-    const productionParser = source.slice(parserStart, parserEnd);
-
-    expect(parserStart).toBeGreaterThan(-1);
-    expect(parserEnd).toBeGreaterThan(parserStart);
-    expect(productionParser).toContain("req.path.startsWith('/api/hooks')");
-    expect(productionParser.indexOf("req.path.startsWith('/api/hooks')"))
-      .toBeLessThan(productionParser.indexOf('express.json()'));
+  it('reserves /api/hooks from the production global JSON parser', async () => {
+    // Was a source-substring assertion against server.ts and went RED the moment the web-hardening
+    // lane moved the inline parser into createGlobalJsonParser — the BEHAVIOUR was never broken, the
+    // guard was. Drive the real middleware instead: the exact parser the server mounts must leave a
+    // /api/hooks body untouched, because HMAC verification needs the original bytes.
+    const app = express();
+    app.use(createGlobalJsonParser());
+    // express 5 / path-to-regexp: a bare '*' is no longer a valid path — use middleware instead.
+    app.use((req, res) => { res.json({ parsed: req.body !== undefined }); });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const send = (pathname: string) => fetch(`http://127.0.0.1:${port}${pathname}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ a: 1 }),
+    }).then((r) => r.json() as Promise<{ parsed: boolean }>);
+    try {
+      expect(await send('/api/hooks/github/issues')).toEqual({ parsed: false });
+      // ...while an ordinary route IS parsed, so the reservation is specific, not a no-op parser.
+      expect(await send('/api/tickets')).toEqual({ parsed: true });
+      expect(RESERVED_BODY_PARSER_PREFIXES).toContain('/api/hooks');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+    }
   });
 
   it('verifies exact GitHub bytes and deduplicates by X-GitHub-Delivery', async () => {

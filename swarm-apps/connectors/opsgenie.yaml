@@ -46,6 +46,8 @@ resources:
     path: /v1/services
     paginate: true
 metadata:
+  description: "Opsgenie — reads alerts, alert, incidents, teams and 2 more via api.opsgenie.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   icon: opsgenie
   iconTitle: Opsgenie
   iconSource: simple-icons

@@ -43,7 +43,10 @@ describe('connector marketplace audit export', () => {
 
       const csv = connectorAuditExportCsv(exported);
       expect(csv).toContain('id,label,category,installState,enabled,riskLevel,authType');
-      expect(csv).toContain('demo,Demo Service,General,available,false,medium,oauth2');
+      // 'Uncategorized', not 'General': this fixture spec declares no category and carries no
+      // signal that identifies a provider, and the catalog no longer invents a plausible shelf
+      // label for that case — it says so, and logs it (src/app/connectors/runtime/curation.ts).
+      expect(csv).toContain('demo,Demo Service,Uncategorized,available,false,medium,oauth2');
       expect(csv).toContain('oauth-app,operator-assisted,per-user');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

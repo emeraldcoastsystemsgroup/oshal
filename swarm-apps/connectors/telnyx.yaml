@@ -30,6 +30,8 @@ resources:
       page[number]: '{page}'
       page[size]: '{size}'
 metadata:
+  description: "Telnyx — reads message, phone numbers, messaging profiles via api.telnyx.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Communications"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/telnyx.com.ico

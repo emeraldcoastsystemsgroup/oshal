@@ -27,6 +27,8 @@ resources:
     query:
       tag: '{tag}'
 metadata:
+  description: "Tumblr — reads blog info, blog posts, tagged via api.tumblr.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Social"
   icon: tumblr
   iconTitle: Tumblr
   iconSource: simple-icons

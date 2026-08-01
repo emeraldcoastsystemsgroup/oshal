@@ -30,6 +30,8 @@ resources:
       poll: '1'
       since: '{since}'
 metadata:
+  description: "ntfy — reads health, topic json, topic raw via ntfy.sh. No credential needed — a public API."
+  category: "Communications"
   icon: ntfy
   iconTitle: ntfy
   iconSource: simple-icons

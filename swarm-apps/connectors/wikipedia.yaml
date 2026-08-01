@@ -39,6 +39,8 @@ resources:
       search: '{q}'
       format: json
 metadata:
+  description: "Wikipedia — reads search, page extract, opensearch via en.wikipedia.org. No credential needed — a public API."
+  category: "Knowledge"
   icon: wikipedia
   iconTitle: Wikipedia
   iconSource: simple-icons

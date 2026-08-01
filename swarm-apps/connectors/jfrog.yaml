@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /build
 metadata:
+  description: "JFrog Artifactory — reads ping, version, repositories, repository and 2 more via yourcompany.jfrog.io. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Developer tools"
   icon: jfrog
   iconTitle: JFrog
   iconSource: simple-icons

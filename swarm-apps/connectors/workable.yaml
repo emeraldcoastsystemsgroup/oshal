@@ -29,6 +29,8 @@ resources:
     method: GET
     path: /members
 metadata:
+  description: "Workable — reads jobs, candidates, members via yourco.workable.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "HR & recruiting"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/workable.com.ico

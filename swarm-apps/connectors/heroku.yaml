@@ -42,6 +42,8 @@ resources:
     path: /apps/{appId}/releases
     paginate: true
 metadata:
+  description: "Heroku — reads account, apps, app, dynos and 2 more via api.heroku.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   icon: heroku
   iconTitle: Heroku
   iconSource: simple-icons

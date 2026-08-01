@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /products
 metadata:
+  description: "Printful — reads store products, orders, products via api.printful.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Commerce"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/printful.com.ico

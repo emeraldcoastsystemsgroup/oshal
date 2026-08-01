@@ -31,6 +31,8 @@ resources:
     query:
       editors_choice: 'true'
 metadata:
+  description: "Pixabay — reads image search, video search, editors choice via pixabay.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Media"
   icon: pixabay
   iconTitle: Pixabay
   iconSource: simple-icons

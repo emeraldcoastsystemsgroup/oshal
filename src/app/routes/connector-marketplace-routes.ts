@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the caller-scoped connector write-action audit READ (GET /api/connectors/actions/audit, see routes/connector-action-audit.ts). It lives HERE rather than with the write tier because the write tier is gated behind CONNECTOR_SPEC_ROUTES=on, and reading what already happened must not depend on whether writes are currently switched on. Path is /actions/* — every other route in this router is under /marketplace/*, so there is no overlap.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add per-user enablement routes (BACKLOG.md:2718) alongside the untouched deployment routes: POST /marketplace/:provider/enable-for-me, POST /marketplace/:provider/disable-for-me, and GET /marketplace/my-enablement — each scoped to callerFromRequest(req).sub (the whole router is already requiresAuth-gated in server.ts). NON-BREAKING override layer; deployment enable/disable/remove behavior is unchanged.
  *
  * @module connector-marketplace-routes
@@ -14,6 +15,7 @@ import { createChildLogger } from '@/shared/logger';
 import { emitAuditEvent, callerFromRequest } from '@/features/governance';
 import type { AppContext } from '../composition-root';
 import type { ConnectorMarketplaceEntry, ConnectorMarketplaceSummary } from '../connectors/runtime/marketplace';
+import { registerConnectorActionAuditRoute } from './connector-action-audit';
 
 const logger = createChildLogger({ module: 'connector-marketplace-routes' });
 
@@ -77,6 +79,10 @@ export interface ConnectorAuditExport {
  */
 export function createConnectorMarketplaceRoutes(ctx: AppContext): Router {
   const router = Router();
+
+  // Connector write-action trail (migration 083) for the CALLER only — the read half of the write
+  // tier, kept outside the CONNECTOR_SPEC_ROUTES gate on purpose.
+  registerConnectorActionAuditRoute(router, ctx);
 
   // ── Per-user enablement OVERRIDE layer (BACKLOG.md:2718) ─────────────────────
   // Registered BEFORE `/marketplace/:provider` so `/marketplace/my-enablement`

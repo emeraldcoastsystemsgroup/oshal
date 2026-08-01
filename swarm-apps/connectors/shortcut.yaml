@@ -29,6 +29,8 @@ resources:
     method: GET
     path: /workflows
 metadata:
+  description: "Shortcut — reads epics, members, projects, workflows via api.app.shortcut.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Project management"
   icon: shortcut
   iconTitle: Shortcut
   iconSource: simple-icons

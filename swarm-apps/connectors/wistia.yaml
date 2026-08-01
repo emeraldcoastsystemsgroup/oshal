@@ -31,6 +31,8 @@ resources:
     method: GET
     path: "/medias/{hashed_id}.json"
 metadata:
+  description: "Wistia — reads medias, projects, media via api.wistia.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Media"
   icon: wistia
   iconTitle: Wistia
   iconSource: simple-icons

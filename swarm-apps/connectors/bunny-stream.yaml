@@ -31,6 +31,8 @@ resources:
       page: '{page}'
       itemsPerPage: '{itemsPerPage}'
 metadata:
+  description: "Bunny Stream — reads videos, video, collections via video.bunnycdn.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Media"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/video.bunnycdn.com.ico

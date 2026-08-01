@@ -46,6 +46,8 @@ resources:
     method: GET
     path: /project
 metadata:
+  description: "Rollbar — reads items, item, item by counter, occurrences and 2 more via api.rollbar.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/rollbar.com.ico

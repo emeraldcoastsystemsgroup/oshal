@@ -33,6 +33,8 @@ resources:
     path: /isbn/{isbn}.json
     query: {}
 metadata:
+  description: "Open Library — reads search, work, author, isbn via openlibrary.org. No credential needed — a public API."
+  category: "Knowledge"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/openlibrary.org.ico

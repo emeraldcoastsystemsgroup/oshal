@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Category now comes from the SPEC and is never silently invented. The entry's category was CATEGORY_BY_PROVIDER[provider] ?? inferCategory(spec), whose final branch returned 'General' — so a shelf label existed for every connector whether or not anyone had ever categorised it, and the 51 specs that DID declare metadata.category were ignored (the marketplace only read metadata.description). Both hand-maintained tables are replaced by the shared derivation in curation.ts: declared metadata.category (canonicalised) -> ordered signal rules -> 'Uncategorized' with ONE aggregated ERROR log per catalog build naming the providers. Same source of truth as scripts/connectors/curate-catalog.ts, so a file on disk and its marketplace entry cannot disagree.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add a per-user enablement OVERRIDE layer on top of the deployment-global marketplace state (BACKLOG.md:2718): optional pool + enableProviderForUser / disableProviderForUser / isEnabledForUser / enabledProviderSetForUser / userEnablementRows, delegating to user-enablement-store. NON-BREAKING — a connector is usable for a user when deployment-enabled AND NOT explicitly user-disabled; absence of a per-user row = allowed, so existing credentialed connectors never regress. Deployment routes/state untouched.
  *
  * @module marketplace
@@ -11,7 +12,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
 import type { Pool } from 'pg';
+import { createChildLogger } from '@/shared/logger';
 import { actionProfilesForSpec, type ConnectorActionProfile } from './action-safety';
+import { deriveConnectorCategory, deriveConnectorDescription } from './curation';
 import { auditSpec, type ConnectorAudit } from './catalog-audit';
 import { loadConnectorSpec, type ConnectorSpec } from './spec';
 import {
@@ -19,6 +22,14 @@ import {
   readConnectorUserDisabledProviders,
   setConnectorUserEnablement,
 } from './user-enablement-store';
+
+const logger = createChildLogger({ module: 'connector-marketplace' });
+
+/**
+ * The honest label for a connector nothing could categorise. Deliberately NOT a plausible shelf name
+ * ('General', 'Other'): it has to look wrong on the shelf, because it is.
+ */
+const UNCATEGORIZED = 'Uncategorized';
 
 export type ConnectorInstallState = 'available' | 'enabled' | 'disabled' | 'removed' | 'blocked';
 export type ConnectorRiskLevel = 'low' | 'medium' | 'high';
@@ -37,6 +48,19 @@ interface ConnectorMarketplaceDiskCache {
   signature: string;
   generatedAt: string;
   entries: ConnectorMarketplaceEntry[];
+}
+
+/** One declared write action, flattened for a surface. */
+export interface ConnectorDeclaredAction {
+  name: string;
+  method: string;
+  urlTemplate: string;
+  riskLevel: ConnectorRiskLevel;
+  description: string;
+  /** True when the executor will answer 428 until the caller confirms. */
+  requiresConfirmation: boolean;
+  /** Top-level required param names from the action's paramsSchema. */
+  requiredParams: string[];
 }
 
 export interface ConnectorMarketplaceEntry {
@@ -74,6 +98,13 @@ export interface ConnectorMarketplaceEntry {
   writeCount: number;
   destructiveCount: number;
   actions: ConnectorActionProfile[];
+  /**
+   * The connector's DECLARED write actions (the `actions:` block), which the resource-derived
+   * `actions` above does not carry. A surface cannot offer the 428 confirm gate without the action
+   * name, its risk, and which params it requires — paramsSchema itself is intentionally not shipped
+   * (it can be large); the required-key list is what a form needs.
+   */
+  writeActions: ConnectorDeclaredAction[];
   audit: {
     pass: boolean;
     errors: number;
@@ -120,63 +151,6 @@ const DEFAULT_STATE_PATH = path.join(process.cwd(), 'output', 'connector-marketp
 const DEFAULT_CACHE_PATH = path.join(process.cwd(), 'output', 'connectors', 'marketplace-catalog-cache.json');
 const DEFAULT_CACHE_TTL_MS = 30_000;
 const MARKETPLACE_CACHE_VERSION = 2;
-
-const CATEGORY_BY_PROVIDER: Record<string, string> = {
-  airtable: 'Productivity',
-  asana: 'Project management',
-  bitbucket: 'Developer tools',
-  buttondown: 'Marketing',
-  calendly: 'Scheduling',
-  clickup: 'Project management',
-  coinbase: 'Finance',
-  datadog: 'Operations',
-  'defender-cloud': 'Security',
-  discord: 'Communications',
-  dropbox: 'Files',
-  dynatrace: 'Operations',
-  'elastic-security': 'Security',
-  figma: 'Design',
-  fitbit: 'Health',
-  github: 'Developer tools',
-  gitlab: 'Developer tools',
-  gmail: 'Email',
-  'google-calendar': 'Scheduling',
-  'google-drive': 'Files',
-  gumroad: 'Commerce',
-  hubspot: 'CRM',
-  intercom: 'Support',
-  jira: 'Project management',
-  monzo: 'Finance',
-  newrelic: 'Operations',
-  notion: 'Knowledge',
-  openai: 'AI',
-  oura: 'Health',
-  outlook: 'Email',
-  pagerduty: 'Operations',
-  pinterest: 'Social',
-  postmark: 'Email',
-  raindrop: 'Knowledge',
-  sentinel: 'Security',
-  servicenow: 'Operations',
-  sendgrid: 'Email',
-  sentry: 'Operations',
-  shippo: 'Commerce',
-  slack: 'Communications',
-  spotify: 'Media',
-  stripe: 'Payments',
-  strava: 'Health',
-  tenable: 'Security',
-  tmdb: 'Media',
-  todoist: 'Productivity',
-  twitter: 'Social',
-  unsplash: 'Media',
-  vercel: 'Developer tools',
-  virustotal: 'Security',
-  wakatime: 'Developer tools',
-  whoop: 'Health',
-  youtube: 'Media',
-  zoom: 'Communications',
-};
 
 const SIMPLE_ICON_BY_PROVIDER: Record<string, string> = {
   airtable: 'airtable',
@@ -471,9 +445,19 @@ export class ConnectorMarketplaceService {
     const disabled = new Set(state.disabledProviders);
     const removed = new Set(state.removedProviders);
     const byId = new Map<string, ConnectorMarketplaceEntry>();
+    const uncategorised: string[] = [];
     for (const file of files) {
-      const entry = this.entryFromFile(file, enabled, disabled, removed);
+      const entry = this.entryFromFile(file, enabled, disabled, removed, uncategorised);
       if (entry && !byId.has(entry.id)) byId.set(entry.id, entry);
+    }
+    // ONE aggregated line, at ERROR: an uncategorised connector is a curation defect with a named
+    // fix (an anchor in curation.ts / a metadata.category in the spec), not a per-entry warning to
+    // scroll past. Silence here is what let 'General' pass for a shelf label for months.
+    if (uncategorised.length) {
+      logger.error(
+        { count: uncategorised.length, providers: uncategorised.slice(0, 20) },
+        'connector catalog: connectors with NO derivable category — shelved as Uncategorized; add a CATEGORY_RULES anchor or a metadata.category to the spec',
+      );
     }
     return Array.from(byId.values()).sort((left, right) => left.label.localeCompare(right.label));
   }
@@ -535,6 +519,7 @@ export class ConnectorMarketplaceService {
     enabled: Set<string>,
     disabled: Set<string>,
     removed: Set<string>,
+    uncategorised?: string[],
   ): ConnectorMarketplaceEntry | null {
     const sourcePath = file;
     let spec: ConnectorSpec;
@@ -563,8 +548,8 @@ export class ConnectorMarketplaceService {
     return {
       id: spec.provider,
       label: spec.displayName || toTitle(spec.provider),
-      category: CATEGORY_BY_PROVIDER[spec.provider] ?? inferCategory(spec),
-      description: spec.metadata?.description,
+      category: categoryFor(spec, uncategorised),
+      description: deriveConnectorDescription(spec),
       tags: tagsFor(spec, actions),
       icon: spec.metadata?.icon || curatedIcon,
       iconTitle: spec.metadata?.iconTitle,
@@ -589,6 +574,7 @@ export class ConnectorMarketplaceService {
       writeCount,
       destructiveCount,
       actions,
+      writeActions: declaredActionsFor(spec),
       audit: {
         pass: audit.pass,
         errors: audit.issues.filter((issue) => issue.level === 'error').length,
@@ -694,13 +680,42 @@ function parsePathList(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function inferCategory(spec: ConnectorSpec): string {
-  const text = `${spec.provider} ${(spec.displayName ?? '')}`.toLowerCase();
-  if (/mail|email|postmark|sendgrid/.test(text)) return 'Email';
-  if (/pay|stripe|coin|bank|finance|monzo/.test(text)) return 'Finance';
-  if (/git|dev|sentry|pager|wakatime|vercel|netlify/.test(text)) return 'Developer tools';
-  if (/calendar|zoom|slack|discord|social|twitter/.test(text)) return 'Communications';
-  return 'General';
+/**
+ * @description The entry's shelf label. Falls through to the literal 'Uncategorized' — NOT a
+ * plausible-looking catch-all — so an uncurated connector is visibly uncurated on the shelf and in
+ * the log, instead of being labelled 'General' and looking done. Uncategorised providers are
+ * collected and logged ONCE per catalog build by {@link ConnectorMarketplaceService.loadEntries}.
+ * @param spec - the parsed connector spec
+ * @param uncategorised - collector the caller drains into a single aggregated ERROR log
+ * @returns the canonical category, or 'Uncategorized'
+ */
+function categoryFor(spec: ConnectorSpec, uncategorised?: string[]): string {
+  const derived = deriveConnectorCategory(spec);
+  if (derived) return derived;
+  uncategorised?.push(spec.provider);
+  return UNCATEGORIZED;
+}
+
+/**
+ * @description Flatten a spec's declared `actions:` block for a surface. medium/high risk (or an
+ * explicit approvalRequired) means the executor answers 428 until confirmed — the same rule
+ * connectorActionRequiresApproval applies, restated here so a surface never has to guess.
+ * @param spec - the parsed connector spec
+ * @returns the declared write actions, empty when the connector is read-only
+ */
+function declaredActionsFor(spec: ConnectorSpec): ConnectorDeclaredAction[] {
+  return (spec.actions ?? []).map((action) => {
+    const schema = (action.paramsSchema ?? {}) as { required?: unknown };
+    return {
+      name: action.name,
+      method: action.method,
+      urlTemplate: action.urlTemplate,
+      riskLevel: action.riskLevel as ConnectorRiskLevel,
+      description: action.description,
+      requiresConfirmation: action.riskLevel !== 'low' || action.approvalRequired === true,
+      requiredParams: Array.isArray(schema.required) ? schema.required.map(String) : [],
+    };
+  });
 }
 
 function riskLevel(spec: ConnectorSpec, writeCount: number): ConnectorRiskLevel {
@@ -765,7 +780,7 @@ function onboardingFor(spec: ConnectorSpec): ConnectorMarketplaceEntry['onboardi
 function tagsFor(spec: ConnectorSpec, actions: ConnectorActionProfile[]): string[] {
   return Array.from(new Set([
     spec.provider,
-    inferCategory(spec).toLowerCase(),
+    categoryFor(spec).toLowerCase(),
     spec.auth.type,
     `onboarding:${onboardingFor(spec).mode}`,
     `setup:${onboardingFor(spec).setupLevel}`,

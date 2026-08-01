@@ -29,6 +29,8 @@ resources:
     method: GET
     path: /sources
 metadata:
+  description: "NewsAPI — reads top headlines, everything, sources via newsapi.org. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "News"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/newsapi.org.ico

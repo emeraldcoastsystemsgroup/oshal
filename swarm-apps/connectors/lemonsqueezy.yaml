@@ -30,6 +30,8 @@ resources:
     method: GET
     path: /subscriptions
 metadata:
+  description: "Lemon Squeezy — reads stores, products, orders, subscriptions via api.lemonsqueezy.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Payments"
   icon: lemonsqueezy
   iconTitle: Lemon Squeezy
   iconSource: simple-icons

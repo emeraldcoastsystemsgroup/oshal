@@ -30,6 +30,8 @@ resources:
     query:
       cursor: '{cursor}'
 metadata:
+  description: "Courier — reads messages, lists, brands via api.courier.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Communications"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/courier.com.ico

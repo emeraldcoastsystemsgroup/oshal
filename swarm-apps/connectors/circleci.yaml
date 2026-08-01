@@ -46,6 +46,8 @@ resources:
     path: /workflow/{workflowId}/job
     paginate: true
 metadata:
+  description: "CircleCI — reads me, project, pipelines, pipeline and 2 more via circleci.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Developer tools"
   icon: circleci
   iconTitle: CircleCI
   iconSource: simple-icons

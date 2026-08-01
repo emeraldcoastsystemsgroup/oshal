@@ -3,10 +3,12 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Surface the 428 needs-confirmation gate: a connector that declares write actions gets a "Run write action" control that opens ConnectorActionRunner. The confirm rail existed since 2026-07-15 and no human could reach it — approval was a thing only a curl could give.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add the per-user enablement layer + connect-state to the Discover surface (BACKLOG.md:2718 + :2672): each card now shows a connect-state badge (Connected / Not connected, from /api/connect/list) and an "On/Off for me" toggle (POST /api/connectors/marketplace/:provider/{enable,disable}-for-me, state from GET /api/connectors/marketplace/my-enablement). The existing deployment Enable/Disable/Remove controls are unchanged; the per-user toggle is an additive override.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
+import { openConnectorActionRunner } from './ConnectorActionRunner.js';
 
 const logger = createUiLogger('cockpit-connector-discover-view');
 
@@ -309,6 +311,12 @@ export class ConnectorDiscoverView {
     body.querySelectorAll('[data-connector-focus]').forEach((button) => {
       button.addEventListener('click', () => this._focusConnector(button.dataset.connectorFocus));
     });
+    body.querySelectorAll('[data-connector-run]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const entry = (this.data.entries || []).find((item) => item.id === button.dataset.connectorRun);
+        if (entry) openConnectorActionRunner(entry);
+      });
+    });
     body.querySelectorAll('[data-connector-preset]').forEach((button) => {
       button.addEventListener('click', () => this._applyPreset(button.getAttribute('data-connector-preset')));
     });
@@ -460,6 +468,9 @@ export class ConnectorDiscoverView {
         <button class="connector-icon-action" type="button" ${canRemove ? '' : 'disabled'} title="Remove from deployment" data-provider="${this._escape(entry.id)}" data-connector-action="remove">
           <i class="ph ph-archive"></i>
         </button>
+        ${(entry.writeActions || []).length ? `<button class="connector-icon-action" type="button" title="Run a declared write action (confirmation-gated)" data-connector-run="${this._escape(entry.id)}">
+          <i class="ph ph-lightning"></i>
+        </button>` : ''}
       </div>
       ${showForMe ? `<div class="connector-user-actions">
         <button class="connector-user-toggle connector-user-toggle--${onForUser ? 'on' : 'off'}" type="button" title="${onForUser ? 'Turn this connector off for your account only' : 'Turn this connector back on for your account'}" data-provider="${this._escape(entry.id)}" data-connector-user-action="${forMeAction}">

@@ -44,6 +44,8 @@ resources:
     method: GET
     path: /api/endpoint/metadata
 metadata:
+  description: "Elastic Security — reads detection rules, detection rule, signals index, fleet agents and 1 more via your-deployment.kb.us-central1.gcp.cloud.es.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Security"
   icon: elastic
   iconTitle: Elastic
   iconSource: simple-icons

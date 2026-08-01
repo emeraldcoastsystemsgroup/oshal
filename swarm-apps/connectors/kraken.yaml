@@ -38,6 +38,8 @@ resources:
       pair: '{pair}'
       count: '{count}'
 metadata:
+  description: "Kraken — reads ticker, asset pairs, ohlc, depth via api.kraken.com. No credential needed — a public API."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/kraken.com.ico

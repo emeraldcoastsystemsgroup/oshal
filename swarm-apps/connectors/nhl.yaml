@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /player/{playerId}/landing
 metadata:
+  description: "NHL — reads standings now, club schedule season, player landing via api-web.nhle.com. No credential needed — a public API."
+  category: "Sports"
   icon: nhl
   iconTitle: NHL
   iconSource: simple-icons

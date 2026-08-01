@@ -30,6 +30,8 @@ resources:
       page: '{page}'
       page_size: '{pageSize}'
 metadata:
+  description: "Sinch — reads batches, batch, groups via us.sms.api.sinch.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Communications"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/us.sms.api.sinch.com.ico

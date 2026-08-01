@@ -22,6 +22,8 @@ resources:
     method: GET
     path: /item/{item_id}
 metadata:
+  description: "eBay — reads item summary search, item via api.ebay.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Commerce"
   icon: ebay
   iconTitle: eBay
   iconSource: simple-icons

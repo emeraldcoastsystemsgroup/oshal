@@ -23,6 +23,8 @@ resources:
     method: GET
     path: /account
 metadata:
+  description: "Emailable — reads verify, account via api.emailable.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Email"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/emailable.com.ico

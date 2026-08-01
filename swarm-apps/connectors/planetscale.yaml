@@ -28,6 +28,8 @@ resources:
     method: GET
     path: /organizations/{organization}/databases/{database}/branches
 metadata:
+  description: "PlanetScale — reads organizations, databases, database, branches via api.planetscale.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Data infrastructure"
   icon: planetscale
   iconTitle: PlanetScale
   iconSource: simple-icons

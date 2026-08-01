@@ -25,6 +25,8 @@ resources:
       to: '{to}'
       amount: '{amount}'
 metadata:
+  description: "exchangerate.host — reads live, convert via api.exchangerate.host. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/exchangerate.host.ico

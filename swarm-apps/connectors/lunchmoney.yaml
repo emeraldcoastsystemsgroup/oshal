@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /assets
 metadata:
+  description: "Lunch Money — reads categories, transactions, assets via dev.lunchmoney.app. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Finance"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/dev.lunchmoney.app.ico

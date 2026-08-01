@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /workspaces/{workspace_id}/dbs
 metadata:
+  description: "Xata — reads workspaces, workspace, databases via api.xata.io. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Data infrastructure"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/xata.io.ico

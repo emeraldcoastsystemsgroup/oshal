@@ -34,6 +34,8 @@ resources:
     method: GET
     path: /departments
 metadata:
+  description: "Ramp — reads transactions, cards, users, departments via api.ramp.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/ramp.com.ico

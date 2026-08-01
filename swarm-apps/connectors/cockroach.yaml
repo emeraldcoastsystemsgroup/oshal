@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /clusters/{cluster_id}/backups
 metadata:
+  description: "CockroachDB Cloud — reads clusters, cluster, backups via cockroachlabs.cloud. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Data infrastructure"
   icon: cockroachlabs
   iconTitle: Cockroach Labs
   iconSource: simple-icons

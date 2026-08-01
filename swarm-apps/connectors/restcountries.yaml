@@ -32,6 +32,8 @@ resources:
     path: /region/{region}
     query: {}
 metadata:
+  description: "REST Countries — reads all, by name, by code, by region via restcountries.com. No credential needed — a public API."
+  category: "Knowledge"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/restcountries.com.ico

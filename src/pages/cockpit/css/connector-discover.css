@@ -833,3 +833,38 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Write-action runner: the 428 needs-confirmation gate made reachable by a human ───────────── */
+.connector-runner-overlay {
+  position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center;
+  background: rgba(6, 10, 20, .62); padding: 18px;
+}
+.connector-runner {
+  width: min(620px, 100%); max-height: 88vh; overflow: auto; display: flex; flex-direction: column; gap: 12px;
+  background: var(--bg-card); color: var(--text); border: 1px solid var(--border);
+  border-radius: 14px; padding: 18px;
+}
+.connector-runner header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.connector-runner-close { background: none; border: 0; color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
+.connector-runner label { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.connector-runner select,
+.connector-runner textarea {
+  width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+}
+.connector-runner textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.connector-runner-desc { margin: 0; font-size: 12.5px; color: var(--muted); }
+.connector-runner-state { font-size: 13px; min-height: 20px; }
+/* The refusal has to LOOK like a stop, not a status line — it is the whole point of the gate. */
+.connector-runner-state.needs-confirm {
+  border-left: 3px solid var(--warn, #d98a00); padding: 8px 10px; border-radius: 6px;
+  background: color-mix(in srgb, var(--warn, #d98a00) 12%, transparent); font-weight: 600;
+}
+.connector-runner-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.connector-runner-buttons button {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; cursor: pointer;
+  background: var(--bg); color: var(--text); font-size: 13px;
+}
+.connector-runner-approve { border-color: var(--warn, #d98a00); font-weight: 700; }
+.connector-runner-trail { font-size: 12.5px; color: var(--muted); }
+.connector-runner-trail ul { margin: 6px 0 0; padding-left: 18px; }

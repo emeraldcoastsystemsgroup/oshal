@@ -26,6 +26,8 @@ resources:
     method: GET
     path: /user
 metadata:
+  description: "Clockify — reads workspaces, projects, user via api.clockify.me. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Productivity"
   icon: clockify
   iconTitle: Clockify
   iconSource: simple-icons

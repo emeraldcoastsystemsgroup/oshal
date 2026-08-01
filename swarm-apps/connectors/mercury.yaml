@@ -26,6 +26,8 @@ resources:
     query:
       limit: '{limit}'
 metadata:
+  description: "Mercury — reads accounts, account, transactions via api.mercury.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/mercury.com.ico

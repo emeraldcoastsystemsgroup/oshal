@@ -20,6 +20,8 @@ resources:
     method: GET
     path: /models/{model}
 metadata:
+  description: "Cohere — reads models, model via api.cohere.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "AI"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/cohere.com.ico

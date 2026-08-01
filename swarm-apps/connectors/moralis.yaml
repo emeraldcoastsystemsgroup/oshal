@@ -31,6 +31,8 @@ resources:
     query:
       chain: '{chain}'
 metadata:
+  description: "Moralis — reads native balance, wallet nfts, erc20 price via deep-index.moralis.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/deep-index.moralis.io.ico

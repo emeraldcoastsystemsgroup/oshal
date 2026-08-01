@@ -28,6 +28,8 @@ resources:
     method: GET
     path: /groups/{groupId}/clusters/{clusterName}
 metadata:
+  description: "MongoDB Atlas — reads groups, group, clusters, cluster via cloud.mongodb.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Data infrastructure"
   icon: mongodb
   iconTitle: MongoDB
   iconSource: simple-icons

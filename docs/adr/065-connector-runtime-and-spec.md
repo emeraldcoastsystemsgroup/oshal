@@ -108,9 +108,21 @@ mapping, not a fresh HTTP client.
 
 ### Phase 4+ (planned)
 
-- Port the remaining ~19 connectors onto the runtime/spec; mount the webhook router + wire `dbSeenStore`
-  and the delivery table migration in `server.ts`.
-- Per-connector conformance specs (recorded/mocked providers) extending the runtime suite.
+- Port the remaining ~19 connectors onto the runtime/spec.
+- ~~Mount the webhook router + wire `dbSeenStore` and the delivery table migration in `server.ts`.~~
+  **DONE — and it had been done for a while.** `server.ts` mounts `mountConnectorWebhookRoutes`
+  behind `CONNECTOR_WEBHOOKS`, with `dbSeenStore` wired and migration 056 in place; this line stayed
+  in the "planned" list because nothing guarded either side, so nobody noticed the doc had drifted.
+  The env comparison is now the exported `connectorWebhookIngressEnabled()` and the guard
+  (`tests/unit/connectors/connector-webhook-mount.spec.ts`) pins both halves: the gate, and that a
+  mounted ingress REFUSES an unsigned, wrongly-signed, or undeclared delivery — the signature is the
+  only reason a route outside the OIDC wall is safe.
+- Per-connector conformance specs (recorded/mocked providers) extending the runtime suite —
+  **still open.** The shared runtime behaviours (auth, refresh-on-401, retry/backoff/Retry-After,
+  rate limiting, error classification, pagination) are covered once in
+  `tests/unit/connectors/connector-runtime.spec.ts`; what is missing is a per-connector pass over the
+  catalog. Done when a table-driven suite drives every declared resource of every spec against a
+  stubbed transport and fails on the first connector whose declared shape does not round-trip.
 - ICP-first mass production (productivity/comms/storage/dev backbone) then community-contributed
   `connector.yaml` PRs, with governance + docs flowing through the broker (ADR-056).
 

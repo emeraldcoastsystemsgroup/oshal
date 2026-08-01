@@ -24,6 +24,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add 'twilio' → OSHAL_CRED_TWILIO: the user's pasted "SID:AuthToken" secret brokered to the communications-bot for its phone/text leg (scripts/oshal-twilio.js).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add 'outlook' → OSHAL_CRED_OUTLOOK: the caller's Microsoft Graph access token brokered to the communications-bot for its M365 mail leg (scripts/oshal-outlook.js) — ADR-037 provider parity with Gmail, so the bot reads/sends Outlook mail without SESSION_SECRET.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add 'plaid' → OSHAL_CRED_PLAID: the caller's Plaid Link access token (now a hub connector, not the app-private oshal_finance_items store) brokered to the finance bot's ADR-083 read-only fallback (scripts/oshal-plaid.js). The Finance controller decrypts server-side directly; this covers the bot-shell-out path.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account-per-provider (ADR-113 section 4): resolveBotCreds accepts an optional per-provider ConnectionSelector so a caller/app can broker a NAMED account ("work email") instead of always getting the resolved default, and logs at WARN when a provider has several accounts and no selector was given — the ambiguity is now visible in the log instead of being decided silently by resolution order. Default behaviour with no selectors is unchanged (the marked default).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Consult per-user connector enablement (BACKLOG.md:2718): before resolving each provider's token, skip any provider the caller has EXPLICITLY disabled for themselves (oshal_connector_user_enablement, enabled=false) so a user-disabled connector is never brokered even if a credential exists. Default-allow + FAIL-OPEN — absence of an override, or any read error, leaves every provider brokerable, so no existing flow regresses.
  *
  * @module connector-token-broker
@@ -33,6 +34,7 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { readConnectorUserDisabledProviders } from '@/app/connectors/runtime/user-enablement-store';
 import { getValidAccessToken } from './connectors-routes';
+import { connectionCount, type ConnectionSelector } from './connector-tenancy';
 
 const logger = createChildLogger({ module: 'connector-token-broker' });
 
@@ -105,12 +107,18 @@ const CRED_ENV_KEYS: Record<string, string> = {
  * @param pool - the Postgres pool (holds oshal_connections).
  * @param userSub - the authenticated caller's OIDC sub. No-op (returns {}) if absent.
  * @param providers - providers to resolve tokens for (default: google + twitter).
+ * @param selectors - optional per-provider account selector for the multi-account case (ADR-113
+ *   section 4). A user may hold two accounts of one provider; pass `{ google: { label: 'work' } }`
+ *   to broker a NAMED one. Omitted → the account the user marked default (deterministic). A
+ *   selector that matches nothing resolves to no token for that provider, so a bot fails visibly
+ *   rather than acting on the wrong mailbox.
  * @returns a map of env keys (OSHAL_CRED_GOOGLE/OSHAL_CRED_TWITTER) → raw access token. Empty if none resolvable.
  */
 export async function resolveBotCreds(
   pool: unknown,
   userSub: string | undefined,
   providers: string[] = ['google', 'twitter'],
+  selectors: Record<string, ConnectionSelector> = {},
 ): Promise<Record<string, string>> {
   if (!userSub) return {};
   // Per-user enablement OVERRIDE (BACKLOG.md:2718): a connector the caller has EXPLICITLY disabled
@@ -127,7 +135,17 @@ export async function resolveBotCreds(
         return;
       }
       try {
-        const token = await getValidAccessToken(pool, userSub, provider);
+        const selector = selectors[provider];
+        if (!selector) {
+          // Multi-account ambiguity must be VISIBLE. Resolution is deterministic (the marked
+          // default), but a bot brokered one of several accounts without being told which — that is
+          // worth a log line, not silence.
+          const accounts = await connectionCount(pool, userSub, provider).catch(() => 1);
+          if (accounts > 1) {
+            logger.warn({ provider, userSub, accounts }, 'token broker: several accounts for this provider and no selector — brokering the marked default');
+          }
+        }
+        const token = await getValidAccessToken(pool, userSub, provider, selector);
         if (token) creds[envKey] = token;
       } catch (err) {
         // Best-effort: a refresh/decrypt failure for one provider must not break dispatch.

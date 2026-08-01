@@ -28,6 +28,8 @@ resources:
     query:
       limit: '{limit}'
 metadata:
+  description: "Brex — reads card transactions, accounts, users via platform.brexapis.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Finance"
   icon: brex
   iconTitle: Brex
   iconSource: simple-icons

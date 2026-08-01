@@ -22,6 +22,8 @@ resources:
     method: GET
     path: /monitors/{key}
 metadata:
+  description: "Cronitor — reads monitors, monitor via cronitor.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/cronitor.io.ico

@@ -32,6 +32,8 @@ resources:
     query:
       limit: '100'
 metadata:
+  description: "SmartRecruiters — reads jobs, candidates, postings via api.smartrecruiters.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "HR & recruiting"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/smartrecruiters.com.ico

@@ -31,6 +31,8 @@ resources:
     query:
       steamid: '{q}'
 metadata:
+  description: "Steam — reads player summaries, owned games, friend list via api.steampowered.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Games"
   icon: steam
   iconTitle: Steam
   iconSource: simple-icons

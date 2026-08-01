@@ -29,6 +29,8 @@ resources:
     method: GET
     path: /users
 metadata:
+  description: "JazzHR — reads jobs, applicants, users via api.resumatorapi.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "HR & recruiting"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/resumatorapi.com.ico

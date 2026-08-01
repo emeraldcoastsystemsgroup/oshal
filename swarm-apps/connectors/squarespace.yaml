@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /commerce/products
 metadata:
+  description: "Squarespace — reads orders, inventory, products via api.squarespace.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Commerce"
   icon: squarespace
   iconTitle: Squarespace
   iconSource: simple-icons

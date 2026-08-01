@@ -29,6 +29,8 @@ resources:
       language: en
       format: json
 metadata:
+  description: "Wikidata — reads get entities, search entities via www.wikidata.org. No credential needed — a public API."
+  category: "Knowledge"
   icon: wikidata
   iconTitle: Wikidata
   iconSource: simple-icons

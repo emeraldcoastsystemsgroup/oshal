@@ -41,6 +41,8 @@ resources:
     path: /user/orgs/
     paginate: true
 metadata:
+  description: "Docker Hub — reads user, repositories, repository, tags and 1 more via hub.docker.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Developer tools"
   icon: docker
   iconTitle: Docker
   iconSource: simple-icons

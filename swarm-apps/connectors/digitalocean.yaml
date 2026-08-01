@@ -44,6 +44,8 @@ resources:
     method: GET
     path: /kubernetes/clusters
 metadata:
+  description: "DigitalOcean — reads account, droplets, droplet, apps and 2 more via api.digitalocean.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   icon: digitalocean
   iconTitle: DigitalOcean
   iconSource: simple-icons

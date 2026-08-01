@@ -27,6 +27,8 @@ resources:
     query:
       date: '{date}'
 metadata:
+  description: "CurrencyAPI — reads latest, currencies, historical via api.currencyapi.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/currencyapi.com.ico

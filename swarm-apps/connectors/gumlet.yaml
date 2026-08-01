@@ -23,6 +23,8 @@ resources:
     method: GET
     path: /source
 metadata:
+  description: "Gumlet — reads video assets, source via api.gumlet.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Media"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/gumlet.com.ico

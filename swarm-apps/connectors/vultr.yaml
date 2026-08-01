@@ -36,6 +36,8 @@ resources:
     method: GET
     path: /regions
 metadata:
+  description: "Vultr — reads account, instances, instance, block storage and 2 more via api.vultr.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   icon: vultr
   iconTitle: Vultr
   iconSource: simple-icons

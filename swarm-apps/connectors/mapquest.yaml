@@ -26,6 +26,8 @@ resources:
       from: '{from}'
       to: '{to}'
 metadata:
+  description: "MapQuest — reads geocode address, route via www.mapquestapi.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Location & maps"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/mapquestapi.com.ico

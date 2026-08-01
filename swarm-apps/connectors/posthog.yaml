@@ -46,6 +46,8 @@ resources:
     path: /projects/{projectId}/feature_flags/
     paginate: true
 metadata:
+  description: "PostHog — reads organizations, projects, insights, events and 2 more via app.posthog.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Analytics"
   icon: posthog
   iconTitle: PostHog
   iconSource: simple-icons

@@ -235,7 +235,7 @@ import { createJudgeRoutes } from './routes/judge-routes';
 import { createConnectorMarketplaceRoutes } from './routes/connector-marketplace-routes';
 import { mountConnectorSpecRoutes } from './routes/connector-spec-routes';
 import { mountConnectorActionRoutes } from './routes/connector-action-routes';
-import { mountConnectorWebhookRoutes } from './routes/connector-webhook-routes';
+import { connectorWebhookIngressEnabled, mountConnectorWebhookRoutes } from './routes/connector-webhook-routes';
 import { createGraphRoutes as createPersonalGraphRoutes } from './routes/personal-graph-routes';
 import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-routes';
 import { InMemoryGraphStore } from '@/features/personal-graph';
@@ -1311,7 +1311,7 @@ function createApp(): express.Application {
   }
   // ADR-065 connector webhook ingress: POST /api/hooks/:provider/:event (signature-verified, deduped,
   // -> swarm ticket). Machine-to-machine (no OIDC). OFF by default — set CONNECTOR_WEBHOOKS=on.
-  if (process.env.CONNECTOR_WEBHOOKS === 'on') {
+  if (connectorWebhookIngressEnabled()) {
     mountConnectorWebhookRoutes(app, ctx);
   }
   // ADR-066 personal knowledge graph (end-to-end): ingest a connector's data into a user-owned graph

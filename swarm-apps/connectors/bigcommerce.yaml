@@ -37,6 +37,8 @@ resources:
     method: GET
     path: /orders/{order_id}/transactions
 metadata:
+  description: "BigCommerce — reads customers, orders, order, products and 2 more via api.bigcommerce.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Commerce"
   icon: bigcommerce
   iconTitle: BigCommerce
   iconSource: simple-icons

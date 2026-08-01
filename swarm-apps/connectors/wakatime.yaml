@@ -31,6 +31,8 @@ resources:
     method: GET
     path: /users/current/projects
 metadata:
+  description: "WakaTime — reads me, summaries, stats, projects via api.wakatime.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Developer tools"
   icon: wakatime
   iconTitle: WakaTime
   iconSource: simple-icons

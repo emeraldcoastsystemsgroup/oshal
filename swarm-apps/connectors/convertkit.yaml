@@ -40,6 +40,8 @@ resources:
     query:
       page: null
 metadata:
+  description: "ConvertKit — reads subscribers, forms, sequences, tags and 1 more via api.convertkit.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Marketing"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/convertkit.com.ico

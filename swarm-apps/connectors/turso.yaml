@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /organizations/{organization}/groups
 metadata:
+  description: "Turso — reads databases, database, groups via api.turso.tech. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Data infrastructure"
   icon: turso
   iconTitle: Turso
   iconSource: simple-icons

@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /collections
 metadata:
+  description: "Replicate — reads models, predictions, collections via api.replicate.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "AI"
   icon: replicate
   iconTitle: Replicate
   iconSource: simple-icons

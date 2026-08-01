@@ -31,6 +31,8 @@ resources:
       limit: '{limit}'
       offset: '{offset}'
 metadata:
+  description: "MessageBird — reads messages, balance, contacts via rest.messagebird.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Communications"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/rest.messagebird.com.ico

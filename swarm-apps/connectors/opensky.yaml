@@ -23,6 +23,8 @@ resources:
       begin: '{begin}'
       end: '{end}'
 metadata:
+  description: "OpenSky Network — reads states all, flights all via opensky-network.org. No credential needed — a public API."
+  category: "Location & maps"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/opensky-network.org.ico

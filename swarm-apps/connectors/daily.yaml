@@ -30,6 +30,8 @@ resources:
       limit: '{limit}'
       starting_after: '{starting_after}'
 metadata:
+  description: "Daily — reads rooms, room, recordings via api.daily.co. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Communications"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/daily.co.ico

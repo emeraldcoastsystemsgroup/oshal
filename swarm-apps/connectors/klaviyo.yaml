@@ -52,6 +52,8 @@ resources:
     query:
       page[size]: null
 metadata:
+  description: "Klaviyo — reads profiles, lists, segments, campaigns and 2 more via a.klaviyo.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Marketing"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/a.klaviyo.com.ico

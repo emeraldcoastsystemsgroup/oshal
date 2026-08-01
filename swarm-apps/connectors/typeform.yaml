@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /responses
 metadata:
+  description: "Typeform — reads list forms, get form, list responses via api.typeform.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Forms"
   icon: typeform
   iconTitle: Typeform
   iconSource: simple-icons

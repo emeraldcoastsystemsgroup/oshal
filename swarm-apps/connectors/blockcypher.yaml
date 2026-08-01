@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /btc/main/txs/{hash}
 metadata:
+  description: "BlockCypher — reads chain info, address, tx via api.blockcypher.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Finance"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/blockcypher.com.ico

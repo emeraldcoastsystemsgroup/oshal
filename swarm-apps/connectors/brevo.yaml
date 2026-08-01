@@ -51,6 +51,8 @@ resources:
       startDate: null
       endDate: null
 metadata:
+  description: "Brevo — reads contacts, lists, email campaigns, senders and 2 more via api.brevo.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Marketing"
   icon: brevo
   iconTitle: Brevo
   iconSource: simple-icons

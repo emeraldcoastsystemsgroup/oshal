@@ -1,0 +1,69 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Declarative LinkedIn connector so member-share publishing runs through the connector write-action executor instead of a bespoke fetch(). The `create-post` action is the UGC Posts call linkedin-assistant-routes used to make directly: declared params, riskLevel high + requiresConfirmation, the caller's own brokered token, and a connector_action_audit row per attempt.
+
+provider: linkedin
+displayName: LinkedIn
+version: 1.0.0
+baseUrl: https://api.linkedin.com
+auth:
+  # The caller's own connection (oshal_connections, provider 'linkedin') resolved by the token
+  # broker at call time. The w_member_social scope is what authorises the share.
+  type: oauth2
+  scopes:
+    - openid
+    - profile
+    - email
+    - w_member_social
+headers:
+  # LinkedIn's Rest.li protocol version header is required on the UGC Posts endpoint.
+  X-Restli-Protocol-Version: '2.0.0'
+rateLimit:
+  burst: 5
+  perSecond: 2
+retry:
+  maxRetries: 2
+  honorRetryAfter: true
+resources:
+  - name: me
+    tool: linkedin-me
+    method: GET
+    path: /v2/userinfo
+actions:
+  - name: create-post
+    method: POST
+    urlTemplate: /v2/ugcPosts
+    riskLevel: high
+    description: >-
+      Publish a member share (text post) to the caller's own LinkedIn feed. High risk: it is public,
+      immediate, and cannot be undone from here — the confirm gate is not optional.
+    approvalRequired: true
+    paramsSchema:
+      type: object
+      required:
+        - author
+        - lifecycleState
+        - specificContent
+        - visibility
+      properties:
+        author:
+          type: string
+          # urn:li:person:<the account id stored on the caller's connection>
+          pattern: '^urn:li:person:[A-Za-z0-9_-]+$'
+        lifecycleState:
+          type: string
+          enum:
+            - PUBLISHED
+        specificContent:
+          type: object
+        visibility:
+          type: object
+metadata:
+  category: "Social"
+  description: "LinkedIn — reads the connected member's profile, and publishes a member share through the confirm-gated, audited write-action tier. OAuth: the operator registers the provider app once, then each user connects their own account."
+  icon: linkedin
+  iconTitle: LinkedIn
+  iconSource: simple-icons
+  iconVerified: true

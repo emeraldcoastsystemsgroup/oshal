@@ -30,6 +30,8 @@ resources:
       page: '{page}'
       limit: '{limit}'
 metadata:
+  description: "StatusCake — reads uptime, uptime test, pagespeed via api.statuscake.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Operations"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/statuscake.com.ico

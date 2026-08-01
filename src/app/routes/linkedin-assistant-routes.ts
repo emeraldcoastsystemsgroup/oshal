@@ -20,6 +20,7 @@
  * ---------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial LinkedIn AI Content Assistant surface: GET /panel, POST /drafts (draft→judge→refine→pending-approval on the accountable bots), GET /drafts (+?state), GET /drafts/:id, POST /drafts/:id/approve (→scheduled+slot), /reject, /publish (confirm-gated, real LinkedIn publish with clean no-connection skip). Wires the linkedin-assistant service to social-writer (draft), quality-judge (grade), and the LinkedIn connector (publish).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review gap-list round2: publisher now resolves the author-id urn from the SAME personal∪shared connection row (resolveConnectionRow) the broker token comes from, instead of a caller-only `WHERE user_sub` query — a user on a household-shared LinkedIn grant now gets a consistent token + author id rather than a misleading "missing author id" skip.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Publish now runs through the CONNECTOR WRITE-ACTION EXECUTOR (runConnectorAction against the create-post action on swarm-apps/connectors/linkedin.yaml) instead of a bespoke fetch() to /v2/ugcPosts. Same brokered caller token, same clean no-connection skip, but the params are validated against the declared schema before any HTTP, the risky-write confirm gate is the shared one, and every attempt writes a connector_action_audit row (migration 083) — a public post on someone's behalf now leaves a trail. The confirm signal is passed because approval already happened upstream: the surface only reaches publish from an APPROVED draft.
  * ---------------------------------------------------------------------------
  * @module linkedin-assistant-routes
  */
@@ -41,6 +42,10 @@ import {
   type GradeResult,
   type PublishOutcome,
 } from '@/features/linkedin-assistant';
+import {
+  loadConnectorSpec, resolveConnectorActionCreds, runConnectorAction,
+  type ConnectorActionAuditPool, type ConnectorSpec,
+} from '@/app/connectors/runtime';
 import { getValidAccessToken } from './connectors-routes';
 import { resolveConnectionRow } from './connector-tenancy';
 import { executeBotOrInline } from './inline-bot-execution';
@@ -153,41 +158,80 @@ function buildGrader(ctx: AppContext, sub: string): Grader {
   };
 }
 
+/** The declarative LinkedIn connector, loaded once. A missing/broken spec must not be silent. */
+let linkedinSpec: ConnectorSpec | null | undefined;
+function linkedinConnectorSpec(): ConnectorSpec | null {
+  if (linkedinSpec !== undefined) return linkedinSpec;
+  try {
+    linkedinSpec = loadConnectorSpec(path.join(process.cwd(), 'swarm-apps/connectors/linkedin.yaml'));
+  } catch (err) {
+    logger.error({ err, stack: err instanceof Error ? err.stack : undefined }, 'LinkedIn connector spec not loadable — publish cannot run through the write-action executor');
+    linkedinSpec = null;
+  }
+  return linkedinSpec;
+}
+
 /**
- * @description Build the LinkedIn publisher bound to a caller — sends the EXACT approved text to
- * the caller's LinkedIn via their broker token (UGC Posts / w_member_social), no LLM in the path.
- * A missing connection (or missing author id) returns a clean SKIP the surface shows as
- * "connect LinkedIn to publish" — never a faked success. Mirrors social-routes' publishToLinkedIn.
- * @param ctx - App context (pool for the connector token).
+ * @description Build the LinkedIn publisher bound to a caller — sends the EXACT approved text to the
+ * caller's own LinkedIn through the connector WRITE-ACTION EXECUTOR (the `create-post` action on
+ * swarm-apps/connectors/linkedin.yaml), not a bespoke fetch. The executor is the sanctioned home for
+ * a write: params are validated against the declared schema before any HTTP happens, credentials
+ * resolve lazily from the broker (the caller's own connection, never an operator key), and every
+ * attempt lands in `connector_action_audit` — so a public post made on someone's behalf is
+ * reviewable. No LLM in the path.
+ *
+ * `confirm: true` is passed deliberately: the human gate is UPSTREAM — publish is only reachable from
+ * a draft the person already approved, and the route itself is confirm-gated. Re-prompting here would
+ * ask the same human the same question twice.
+ *
+ * A missing connection (or missing author id) still returns a clean SKIP the surface shows as
+ * "connect LinkedIn to publish" — never a faked success.
+ * Exported for its guard (tests/unit/connectors/connector-write-actions.spec.ts): the fail-closed
+ * audit property can only be proven by driving the real publisher.
+ * @param ctx - App context (pool for the broker + the audit trail).
  * @returns A {@link DraftPublisher}.
  */
-function buildPublisher(ctx: AppContext): DraftPublisher {
+export function buildPublisher(ctx: AppContext): DraftPublisher {
   return async (sub, text): Promise<PublishOutcome> => {
+    const spec = linkedinConnectorSpec();
+    if (!spec) {
+      return { ok: false, code: 502, message: 'LinkedIn connector definition is unavailable — publish is disabled until it loads.' };
+    }
     // Resolve the caller's LinkedIn connection with the SAME personal∪shared (household) scoping the
-    // token uses, and take the author id (urn) from THAT row — not a caller-only `WHERE user_sub`
-    // query. Otherwise a user whose only LinkedIn grant is household-shared would get a token but no
-    // author id and hit a misleading "missing author id" skip.
+    // token uses, and take the author id (urn) from THAT row — otherwise a user whose only LinkedIn
+    // grant is household-shared gets a token but no author id and a misleading skip.
     const conn = await resolveConnectionRow(ctx.pool, sub, 'linkedin');
-    const token = conn ? await getValidAccessToken(ctx.pool, sub, 'linkedin') : null;
-    if (!token) {
+    if (!conn) {
       return { ok: false, skipped: true, code: 409, message: 'Connect LinkedIn at /utilities to publish. Your draft stays scheduled.' };
     }
-    const authorId = conn?.account_id;
-    if (!authorId) {
+    if (!conn.account_id) {
       return { ok: false, skipped: true, code: 409, message: 'Reconnect LinkedIn at /utilities (missing author id). Your draft stays scheduled.' };
     }
-    const body = {
-      author: `urn:li:person:${authorId}`, lifecycleState: 'PUBLISHED',
+    const params = {
+      author: `urn:li:person:${conn.account_id}`,
+      lifecycleState: 'PUBLISHED',
       specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text }, shareMediaCategory: 'NONE' } },
       visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
     };
-    const r = await fetch('https://api.linkedin.com/v2/ugcPosts', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
-      body: JSON.stringify(body),
+    const result = await runConnectorAction({
+      pool: ctx.pool as unknown as ConnectorActionAuditPool,
+      spec,
+      resolveCreds: () => resolveConnectorActionCreds(spec, ctx.pool, sub, getValidAccessToken),
+      userSub: sub,
+      actionName: 'create-post',
+      params,
+      requestBody: { confirm: true },
     });
-    if (r.status >= 200 && r.status < 300) return { ok: true, postId: r.headers.get('x-restli-id') };
-    return { ok: false, code: 502, message: `LinkedIn rejected the post (${r.status}): ${(await r.text()).slice(0, 200)}` };
+    const body = result.body as { ok?: boolean; code?: string; error?: string; data?: { id?: string } };
+    if (result.status === 200 && body.ok) {
+      return { ok: true, postId: body.data?.id ?? null };
+    }
+    // The executor's own not-connected outcome maps to the SAME clean skip, so the two paths that can
+    // discover a missing credential (row lookup above, broker resolution inside) behave identically.
+    if (body.code === 'not_connected') {
+      return { ok: false, skipped: true, code: 409, message: 'Connect LinkedIn at /utilities to publish. Your draft stays scheduled.' };
+    }
+    return { ok: false, code: result.status >= 400 ? result.status : 502, message: body.error || 'LinkedIn rejected the post.' };
   };
 }
 

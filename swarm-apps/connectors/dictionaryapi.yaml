@@ -17,6 +17,8 @@ resources:
     path: /entries/en/{word}
     query: {}
 metadata:
+  description: "Free Dictionary API — reads entry via api.dictionaryapi.dev. No credential needed — a public API."
+  category: "Knowledge"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/dictionaryapi.dev.ico

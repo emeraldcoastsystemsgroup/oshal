@@ -16,6 +16,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Routed verified GitHub issue events through the configured idempotent ticket synchronizer
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Made connector webhook catalog read and parse failures visible in structured logs
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exported connectorWebhookIngressEnabled() so the ON/OFF decision is a testable function instead of an inline env comparison in server.ts. ADR-065 Phase 4 listed "mount the webhook router" as outstanding while it was in fact mounted — nothing guarded that, so nothing noticed. The guard (tests/unit/connectors/connector-webhook-mount.spec.ts) now pins both halves: the gate, and that a mounted ingress REFUSES an unsigned or wrongly-signed delivery.
  *
  * @module routes/connector-webhook-routes
  */
@@ -37,6 +38,18 @@ import {
 } from './github-ticket-webhook-sync';
 
 const logger = createChildLogger({ module: 'connector-webhook-routes' });
+
+/**
+ * @description Whether this deployment serves the webhook ingress. The route is machine-to-machine
+ * and sits OUTSIDE the OIDC wall (it self-guards by HMAC signature), so whether it exists at all is a
+ * deployment decision — off unless CONNECTOR_WEBHOOKS is explicitly 'on'. Exported so the decision is
+ * testable rather than an inline comparison buried in server.ts.
+ * @param env - environment to read (defaults to process.env)
+ * @returns true when the ingress should be mounted
+ */
+export function connectorWebhookIngressEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.CONNECTOR_WEBHOOKS === 'on';
+}
 const SPEC_DIR = path.join(process.cwd(), 'swarm-apps/connectors');
 
 /** Read every connector.yaml and flatten its declared webhooks into verified event specs. */

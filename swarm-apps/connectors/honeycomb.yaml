@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /triggers/{dataset}
 metadata:
+  description: "Honeycomb — reads datasets, columns, triggers via api.honeycomb.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Operations"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/honeycomb.io.ico

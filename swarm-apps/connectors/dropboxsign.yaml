@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /account
 metadata:
+  description: "Dropbox Sign — reads list signature requests, list templates, account via api.hellosign.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "E-signature & documents"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/hellosign.com.ico

@@ -37,6 +37,8 @@ resources:
       end_date: '{end}'
     paginate: true
 metadata:
+  description: "Oura Ring — reads me, daily activity, sleep via api.ouraring.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Health"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/ouraring.com.ico

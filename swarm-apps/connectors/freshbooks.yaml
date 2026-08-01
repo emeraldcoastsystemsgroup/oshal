@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /accounting/account/{accountId}/users/clients/clients
 metadata:
+  description: "FreshBooks — reads me, invoices, clients via api.freshbooks.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Finance"
   iconSource: favicon-fallback
   iconVerified: false
   iconUrl: https://icons.duckduckgo.com/ip3/freshbooks.com.ico

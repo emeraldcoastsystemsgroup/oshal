@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /users
 metadata:
+  description: "Kustomer — reads customers, conversations, users via api.kustomerapp.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Support"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/kustomerapp.com.ico

@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /notes
 metadata:
+  description: "Productboard — reads features, products, notes via api.productboard.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "Project management"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/productboard.com.ico

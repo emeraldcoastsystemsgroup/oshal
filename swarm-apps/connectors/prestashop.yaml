@@ -30,6 +30,8 @@ resources:
     query:
       output_format: JSON
 metadata:
+  description: "PrestaShop — reads products, orders, customers via yourstore.example.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Commerce"
   icon: prestashop
   iconTitle: PrestaShop
   iconSource: simple-icons

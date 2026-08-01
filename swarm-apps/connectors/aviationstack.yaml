@@ -31,6 +31,8 @@ resources:
     query:
       search: '{q}'
 metadata:
+  description: "Aviationstack — reads flights, airports, airlines via api.aviationstack.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Location & maps"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/aviationstack.com.ico

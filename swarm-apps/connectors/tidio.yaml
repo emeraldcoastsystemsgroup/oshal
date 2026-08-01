@@ -23,6 +23,8 @@ resources:
     method: GET
     path: /conversations
 metadata:
+  description: "Tidio — reads contacts, conversations via api.tidio.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Support"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/tidio.com.ico

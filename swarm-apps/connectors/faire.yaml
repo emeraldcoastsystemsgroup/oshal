@@ -21,6 +21,8 @@ resources:
     method: GET
     path: /products
 metadata:
+  description: "Faire — reads orders, products via www.faire.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Commerce"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/faire.com.ico

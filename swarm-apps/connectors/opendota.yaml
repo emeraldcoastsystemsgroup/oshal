@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /heroes
 metadata:
+  description: "OpenDota — reads player, pro matches, heroes via api.opendota.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Games"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/opendota.com.ico

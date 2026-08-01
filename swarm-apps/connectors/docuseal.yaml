@@ -25,6 +25,8 @@ resources:
     method: GET
     path: /submitters
 metadata:
+  description: "DocuSeal — reads list templates, list submissions, list submitters via api.docuseal.co. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "E-signature & documents"
   iconVerified: false
   iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/docuseal.co.ico

@@ -24,6 +24,8 @@ resources:
     method: GET
     path: /companies/{companyId}/payrolls
 metadata:
+  description: "Gusto — reads me, employees, payrolls via api.gusto.com. OAuth: the operator registers the provider app once, then each user connects their own account."
+  category: "HR & recruiting"
   icon: gusto
   iconTitle: Gusto
   iconSource: simple-icons

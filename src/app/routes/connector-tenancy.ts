@@ -21,6 +21,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-042 Phase 1: oshal_tenants + oshal_tenant_memberships, tenant_id/connected_by_sub on oshal_connections, partial unique indexes (personal vs shared), personal∪shared resolution (household-first), tenant-aware upsert, and minimal household management helpers.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account-per-provider (ADR-113 section 4) made DETERMINISTIC. Resolution used to fall back to the first row of an updated_at DESC list, so with two accounts of one provider and no explicit default "the user's Gmail token" changed identity every time an access token was refreshed. Extracted the rule into the pure, exported pickConnection() — explicit selector, then the marked default, then the only candidate, then a STABLE tiebreak (shared-before-personal, then created_at, then connection_id) — and made upsertConnection seed exactly one is_default per (ownership scope, provider) so the marked-default branch is the normal path. Added created_at to the resolved row, the scope-default seed to the bootstrap (mirroring migration 101), and disconnectConnections() so removing an account re-seeds the scope default instead of leaving the scope defaultless.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -45,6 +46,9 @@ export interface ConnectionRow {
   access_token: string | null;
   refresh_token: string | null;
   expiry: Date | null;
+  /** Connection age — the STABLE tiebreak for deterministic resolution (updated_at is not: a
+   *  token refresh rewrites it, which would silently move which account a bot acts on). */
+  created_at: Date | string | null;
 }
 
 /** How a caller/bot picks among several connections for one provider. All optional;
@@ -65,13 +69,17 @@ export interface TenantSummary {
 }
 
 const CONN_COLS =
-  'connection_id, user_sub, connected_by_sub, tenant_id, provider, label, account_key, is_default, account_email, account_id, scopes, access_token, refresh_token, expiry';
+  'connection_id, user_sub, connected_by_sub, tenant_id, provider, label, account_key, is_default, account_email, account_id, scopes, access_token, refresh_token, expiry, created_at';
 
 /**
  * @description Create/upgrade the tenancy schema. Idempotent; safe to call on every
  * boot. Adds the tenant tables, the `tenant_id`/`connected_by_sub` columns, and swaps
- * the old `UNIQUE(user_sub, provider)` for two partial unique indexes (personal vs
- * shared) so a user can hold BOTH a personal and a shared connection for one provider.
+ * the old `UNIQUE(user_sub, provider)` for two partial unique indexes keyed on
+ * `account_key` (personal vs shared) so a user can hold BOTH a personal and a shared
+ * connection for one provider AND several accounts of the SAME provider (two Gmails).
+ * The owner-role half of the same change is scripts/migrations/101-connections-multi-account.sql
+ * — this bootstrap does nothing under OSHAL_SCHEMA_BOOTSTRAP=validate-only, so a
+ * migration-driven deployment needs 101 applied or it keeps the one-account constraint.
  * @param pool - pg pool
  */
 export async function ensureTenancySchema(pool: any): Promise<void> {
@@ -105,6 +113,18 @@ export async function ensureTenancySchema(pool: any): Promise<void> {
       'DROP INDEX IF EXISTS oshal_conn_shared_uq',
       'CREATE UNIQUE INDEX IF NOT EXISTS oshal_conn_personal_acct_uq ON oshal_connections (user_sub, provider, account_key) WHERE tenant_id IS NULL',
       'CREATE UNIQUE INDEX IF NOT EXISTS oshal_conn_shared_acct_uq ON oshal_connections (tenant_id, provider, account_key) WHERE tenant_id IS NOT NULL',
+      'CREATE INDEX IF NOT EXISTS idx_oshal_connections_user_provider ON oshal_connections (user_sub, provider) WHERE tenant_id IS NULL',
+      // Deterministic resolution needs an EXPLICIT default per (ownership scope, provider). Seed the
+      // oldest connection of any group that has none, so a pre-existing multi-account user is never
+      // resolved by refresh order. Mirrors scripts/migrations/101-connections-multi-account.sql.
+      `WITH ranked AS (
+         SELECT connection_id,
+                ROW_NUMBER() OVER (PARTITION BY COALESCE(tenant_id::text, 'personal:' || user_sub), provider
+                                   ORDER BY created_at, connection_id) AS rn,
+                BOOL_OR(is_default) OVER (PARTITION BY COALESCE(tenant_id::text, 'personal:' || user_sub), provider) AS scope_has_default
+           FROM oshal_connections)
+       UPDATE oshal_connections c SET is_default = TRUE FROM ranked r
+        WHERE c.connection_id = r.connection_id AND r.rn = 1 AND r.scope_has_default IS NOT TRUE`,
     ],
     requirements: [
       { table: 'oshal_tenants', columns: ['tenant_id', 'kind', 'name', 'created_by_sub', 'created_at'] },
@@ -137,35 +157,71 @@ export async function accessibleConnections(pool: any, userSub: string, provider
 }
 
 /**
- * @description Resolve the ONE connection to act on for (caller, provider). With a
- * `tenantId` opt, returns that tenant's connection (or null). Otherwise household-first:
- * a shared connection if any, else the personal one. Returns null if none accessible.
- * @param pool @param userSub @param provider @param opts - { tenantId?: 'personal' | <uuid> }
- * @returns the chosen row or null
+ * @description Stable ordering for candidate connections — the LAST resort of the resolution rule.
+ * Deliberately independent of `updated_at`: a token refresh rewrites updated_at, so ordering by it
+ * meant "the user's Gmail token" could silently switch accounts between two calls. Household
+ * (shared) rows sort before personal ones to preserve the pre-multi-account household-first
+ * behaviour; within a scope the FIRST-CONNECTED account wins, with connection_id as the final,
+ * always-total tiebreak.
+ * @param a - a candidate row
+ * @param b - the other candidate row
+ * @returns negative when `a` should be preferred
+ */
+function stableConnectionOrder(a: ConnectionRow, b: ConnectionRow): number {
+  const scope = (r: ConnectionRow) => (r.tenant_id ? 0 : 1);
+  if (scope(a) !== scope(b)) return scope(a) - scope(b);
+  const age = (r: ConnectionRow) => {
+    const t = r.created_at ? new Date(r.created_at as string).getTime() : NaN;
+    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY; // unknown age never beats a known one
+  };
+  if (age(a) !== age(b)) return age(a) - age(b);
+  return a.connection_id < b.connection_id ? -1 : a.connection_id > b.connection_id ? 1 : 0;
+}
+
+/**
+ * @description The multi-account resolution rule, pure and exported so it is testable without a
+ * database. Precedence, highest first:
+ *   1. ownership-scope narrowing (`tenantId: 'personal'` or a household id);
+ *   2. an EXPLICIT selector — connectionId, then label, then account email. A named selector that
+ *      matches nothing returns null so a bot asks instead of silently acting on the wrong account;
+ *   3. the connection the user MARKED default for that provider (is_default);
+ *   4. the only candidate;
+ *   5. {@link stableConnectionOrder} — never recency, so the answer does not move on a refresh.
+ * @param rows - every connection the caller may use for one provider
+ * @param opts - optional selector
+ * @returns the chosen row, or null when nothing matches
+ */
+export function pickConnection(rows: ConnectionRow[], opts?: ConnectionSelector): ConnectionRow | null {
+  let candidates = rows;
+  if (opts?.tenantId === 'personal') candidates = candidates.filter((r) => r.tenant_id == null);
+  else if (opts?.tenantId) candidates = candidates.filter((r) => String(r.tenant_id) === opts.tenantId);
+  if (!candidates.length) return null;
+  if (opts?.connectionId) return candidates.find((r) => r.connection_id === opts.connectionId) || null;
+  if (opts?.label) {
+    const l = opts.label.trim().toLowerCase();
+    return candidates.find((r) => (r.label || '').trim().toLowerCase() === l) || null;
+  }
+  if (opts?.email) {
+    const e = opts.email.trim().toLowerCase();
+    return candidates.find((r) => (r.account_email || '').trim().toLowerCase() === e) || null;
+  }
+  const sorted = [...candidates].sort(stableConnectionOrder);
+  return sorted.find((r) => r.is_default) || sorted[0] || null;
+}
+
+/**
+ * @description Resolve the ONE connection to act on for (caller, provider) — the DB-backed wrapper
+ * over {@link pickConnection}. With a `tenantId` opt, returns that household's connection (or null).
+ * @param pool - pg pool
+ * @param userSub - the caller's OIDC sub
+ * @param provider - provider slug
+ * @param opts - optional account selector
+ * @returns the chosen row or null when nothing is accessible/matching
  */
 export async function resolveConnectionRow(
   pool: any, userSub: string, provider: string, opts?: ConnectionSelector,
 ): Promise<ConnectionRow | null> {
-  let rows = await accessibleConnections(pool, userSub, provider);
-  if (!rows.length) return null;
-  // Narrow by ownership scope if asked ('personal' or a specific household).
-  if (opts?.tenantId === 'personal') rows = rows.filter((r) => r.tenant_id == null);
-  else if (opts?.tenantId) rows = rows.filter((r) => String(r.tenant_id) === opts.tenantId);
-  if (!rows.length) return null;
-  // Explicit selectors (the bot's "work email" / "lake house" → label or email). A named
-  // selector with no match returns null so the caller/bot can ask rather than guess.
-  if (opts?.connectionId) return rows.find((r) => r.connection_id === opts.connectionId) || null;
-  if (opts?.label) {
-    const l = opts.label.trim().toLowerCase();
-    return rows.find((r) => (r.label || '').trim().toLowerCase() === l) || null;
-  }
-  if (opts?.email) {
-    const e = opts.email.trim().toLowerCase();
-    return rows.find((r) => (r.account_email || '').trim().toLowerCase() === e) || null;
-  }
-  // Nothing specified: explicit default → single → household-first/newest (back-compat).
-  return rows.find((r) => r.is_default) || (rows.length === 1 ? rows[0]
-    : (rows.find((r) => r.tenant_id != null) || rows[0]));
+  return pickConnection(await accessibleConnections(pool, userSub, provider), opts);
 }
 
 /** @description Are there multiple accessible connections for this provider (so a bare
@@ -212,10 +268,68 @@ export async function upsertConnection(pool: any, c: {
     [c.userSub, c.userEmail, c.provider, c.accountEmail, c.accountId, c.scopes, c.encAccess,
      c.encRefresh, c.expiry, c.tenantId || null, c.connectedBySub, label, accountKey],
   );
+  // The FIRST account of a provider in this ownership scope becomes the explicit default, so
+  // resolution never has to guess between two accounts (pickConnection step 3 rather than the
+  // stable-order fallback). Conditional: a user who already chose a default keeps it when they
+  // connect a second account, and a silent re-auth of the same account changes nothing.
+  await seedScopeDefault(pool, c.provider, c.tenantId || null, c.userSub);
   // Connecting an account may activate per-user "polls" that loaded apps declared
   // (manifest schedules with scope:'per-user' + requiresConnection===provider).
   // Fire-and-forget — never blocks or fails the connection write.
   reconcilePerUserSchedules(c.userSub, c.provider);
+}
+
+/**
+ * @description Guarantee exactly one marked default per (ownership scope, provider) by promoting the
+ * oldest connection in the scope when none is marked. Idempotent and conditional — an existing
+ * default is never moved. Called after a connect and after a disconnect so the deterministic
+ * resolution rule always lands on step 3 (the marked default) rather than the stable-order fallback.
+ * @param pool - pg pool
+ * @param provider - provider slug
+ * @param tenantId - the household id, or null for the personal scope
+ * @param userSub - the owner sub (used only for the personal scope)
+ * @returns nothing
+ */
+export async function seedScopeDefault(
+  pool: any, provider: string, tenantId: string | null, userSub: string,
+): Promise<void> {
+  const scope = tenantId ? 'tenant_id = $3' : 'user_sub = $3 AND tenant_id IS NULL';
+  await pool.query(
+    `UPDATE oshal_connections SET is_default = TRUE
+       WHERE connection_id = (
+         SELECT connection_id FROM oshal_connections
+          WHERE provider = $1 AND ${scope} AND status <> 'removed'
+          ORDER BY created_at, connection_id LIMIT 1)
+         AND NOT EXISTS (
+           SELECT 1 FROM oshal_connections d
+            WHERE d.provider = $2 AND d.is_default
+              AND ${scope.replace(/tenant_id/g, 'd.tenant_id').replace(/user_sub/g, 'd.user_sub')})`,
+    [provider, provider, tenantId || userSub],
+  );
+}
+
+/**
+ * @description Delete specific PERSONAL connections the caller owns, then re-seed the scope default
+ * so removing the default account leaves the provider deterministically resolvable instead of
+ * defaultless. Shared/household hubs are removed by a tenant admin (ADR-042 Phase 3), so this only
+ * ever touches `tenant_id IS NULL` rows — a mismatched id simply deletes nothing.
+ * @param pool - pg pool
+ * @param userSub - the owner's OIDC sub (part of the delete predicate, never trusted from a caller)
+ * @param connectionIds - the connection ids to remove
+ * @param provider - the provider slug the ids belong to (for the default re-seed)
+ * @returns how many rows were deleted
+ */
+export async function disconnectConnections(
+  pool: any, userSub: string, connectionIds: string[], provider: string,
+): Promise<number> {
+  if (!connectionIds.length) return 0;
+  const result = await pool.query(
+    'DELETE FROM oshal_connections WHERE connection_id = ANY($1::uuid[]) AND user_sub = $2 AND tenant_id IS NULL',
+    [connectionIds, userSub],
+  );
+  await seedScopeDefault(pool, provider, null, userSub);
+  logger.info({ provider, userSub, removed: result.rowCount ?? 0 }, 'Connections disconnected');
+  return result.rowCount ?? 0;
 }
 
 /** @description Rename a connection's label and/or set it as the provider default for the

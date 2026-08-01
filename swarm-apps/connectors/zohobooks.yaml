@@ -32,6 +32,8 @@ resources:
     query:
       organization_id: '{orgId}'
 metadata:
+  description: "Zoho Books — reads invoices, contacts, items via www.zohoapis.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
+  category: "Finance"
   icon: zohobooks
   iconTitle: Zoho Books
   iconSource: simple-icons
