@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guest-mode session (Phase 1). A self-contained, HMAC-signed `oshal_guest` cookie carrying a per-browser `guest-<uuid>` sub so anonymous visitors get an isolated, capability-restricted identity on the public tenant WITHOUT a Google login. The injector mirrors createTvTokenAuthMiddleware: it only fills req.oidc when there is no real OIDC session, so a real login always wins. Gated by ENABLE_GUEST_MODE (default off).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | createGuestWelcomeMat: pages that opt in (the /applications app-store preview) send an ANONYMOUS visitor to the /guest landing (carrying the deep link via ?next=) instead of straight to Google OAuth, so a shared link lands on "Continue as guest / Sign in" rather than a login wall. Guest mode off, non-GET, or any existing session (guest or real) falls through to requiresAuth unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guest cookie writes now validate SESSION_COOKIE_DOMAIN before passing it to Express/cookie. A malformed deployment value no longer turns /api/guest/start into HTTP 500; guest mode logs the bad config and falls back to a host-only cookie.
  */
 
 import crypto from 'crypto';
@@ -16,6 +17,7 @@ const logger = createChildLogger({ module: 'guest-session' });
 
 export const GUEST_COOKIE = 'oshal_guest';
 export const GUEST_SUB_PREFIX = 'guest-';
+const COOKIE_DOMAIN_RE = /^([.]?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
 
 /** True when guest mode is enabled (master switch, default OFF). */
 export function isGuestModeEnabled(): boolean {
@@ -35,6 +37,16 @@ function ttlMs(): number {
  */
 function signingSecret(): string {
   return (process.env.SESSION_SECRET || process.env.AUTH_SESSION_SECRET || process.env.KEYCLOAK_CLIENT_SECRET || '').trim();
+}
+
+function sessionCookieDomain(): string | undefined {
+  const domain = (process.env.SESSION_COOKIE_DOMAIN || '').trim();
+  if (!domain) return undefined;
+  if (!COOKIE_DOMAIN_RE.test(domain)) {
+    logger.warn('Ignoring invalid SESSION_COOKIE_DOMAIN for guest cookie');
+    return undefined;
+  }
+  return domain;
 }
 
 function b64url(buf: Buffer): string {
@@ -101,22 +113,24 @@ export function verifyGuestCookie(value: string | undefined | null): GuestClaims
 export function setGuestCookie(req: Request, res: Response): string | null {
   const minted = mintGuestCookie();
   if (!minted) return null;
+  const domain = sessionCookieDomain();
   res.cookie(GUEST_COOKIE, minted.value, {
     httpOnly: true,
     sameSite: 'lax',
     secure: req.secure || process.env.NODE_ENV === 'production',
     path: '/',
     maxAge: minted.maxAgeMs,
-    ...(process.env.SESSION_COOKIE_DOMAIN ? { domain: process.env.SESSION_COOKIE_DOMAIN } : {}),
+    ...(domain ? { domain } : {}),
   });
   return minted.sub;
 }
 
 /** @description Clears the guest cookie. */
 export function clearGuestCookie(res: Response): void {
+  const domain = sessionCookieDomain();
   res.clearCookie(GUEST_COOKIE, {
     path: '/',
-    ...(process.env.SESSION_COOKIE_DOMAIN ? { domain: process.env.SESSION_COOKIE_DOMAIN } : {}),
+    ...(domain ? { domain } : {}),
   });
 }
 

@@ -8,7 +8,7 @@ Two distinct layers use it — don't conflate them:
 
 | Layer | Credential | Purpose |
 | --- | --- | --- |
-| Operator notification transports (`twilio-sms` / `twilio-voice` in [src/features/notifications/](../../src/features/notifications/)) | `TWILIO_*` env vars in `.env` | `notifyOperator()` alerts (watchdog, job failures) |
+| Operator notification transports (`twilio-sms` / `twilio-voice` / `twilio-whatsapp` in [src/features/notifications/](../../src/features/notifications/)) | `TWILIO_*` env vars in `.env` | `notifyOperator()` alerts (watchdog, job failures); WhatsApp uses the same Twilio Messages API with `whatsapp:` addresses |
 | Per-user connector (this doc) | Pasted per-user secret, encrypted in `oshal_connections` | The communications-bot acting **for a user** in chat/tickets |
 
 ## Connect (per user, ~2 minutes)
@@ -54,8 +54,10 @@ consumes the same broker secret as HTTP Basic for `/api/connectors/twilio` GET r
 - **Trial accounts** can only reach verified numbers (`OutgoingCallerIds`) and prepend a
   "sent from a Twilio trial account" notice to every message.
 
-## Not built yet
+## Still not built
 
-WhatsApp-via-Twilio (same adapter, different endpoint), inbound SMS → Jarvis (a true chat
-*channel* like Telegram — would need a Twilio webhook route), millionaire-alarm fan-out. See
+Outbound WhatsApp-via-Twilio is built as the `twilio-whatsapp` notification transport. Still open:
+inbound SMS → Jarvis (a true chat *channel* like Telegram — the signed Twilio webhook exists today
+but only dispatches to an injected/default sink), inbound WhatsApp chat routing, and the
+millionaire-alarm policy that chooses/fans out transports. See
 [BACKLOG.md → Twilio as a pluggable notification transport](../BACKLOG.md).

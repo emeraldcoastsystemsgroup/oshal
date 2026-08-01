@@ -1183,7 +1183,7 @@ exists but is not a wired inbound channel either.
   Telegram+Discord on the test account, and a `docs/connectors/*` page showing a real user how to
   register their own bot and paste the token. WhatsApp card is present but marked staged.
 
-### Twilio as a pluggable notification transport (SMS / voice / WhatsApp-via-Twilio) ⬜ NOT BUILT
+### Twilio as a pluggable notification transport (SMS / voice / WhatsApp-via-Twilio) 🟨 PARTIAL
 - **The distinction that placed this here:** Telegram/Discord adapters are *free, first-party,
   bidirectional* chat with your own bot. Twilio is a *paid pipe* — it delivers a message you already
   wrote through Twilio's cloud, per-message fee, no bot behind it. They are different slots, not
@@ -1270,7 +1270,7 @@ exists but is not a wired inbound channel either.
      well when NOT connected (bot says "connect at /utilities", doesn't hallucinate); auth token
      never appears in any log/response.
 - **Then (already-listed follow-ons, from the transport entry above):** inbound SMS → Jarvis webhook
-  channel; WhatsApp-via-Twilio; millionaire-alarm fan-out across transports.
+  channel; inbound WhatsApp chat channel; millionaire-alarm fan-out policy across transports.
 - **Done when:** all three smoke legs pass from a browser as a signed-in user against the live
   stack, and the result (with the Twilio message sid) is noted in this entry or COLLABORATE.md.
 

@@ -24,6 +24,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — proves Phase 3 of check-kernel-skills goes RED on an undeclared kernel import, stays GREEN on over-declaration and on type-only .ts references, and announces its skip when no store checkout is present.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | 2026-07-31 23:21:37 America/Chicago — Raises the subprocess-backed negative-case timeout because full-suite transform load can push the real gate past Vitest's 5s default before the assertion runs.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -119,7 +120,7 @@ describe('kernel-skills Phase 3 — a store package must declare the skills it i
     expect(res.out).toContain("store package 'undeclaring-app'");
     expect(res.out).toContain('graph');
     expect(res.out).toContain('thing-routes.js');
-  });
+  }, 30_000);
 
   it('PASSES when the declaration is a SUPERSET of the imports (over-declaring is legal)', () => {
     const store = newStore();

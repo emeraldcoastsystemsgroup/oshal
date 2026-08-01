@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard manifest-driven chat and global-assistant suppression across profile synthesis and browser script load order.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin disabled-chat boot behavior so immersive apps cannot create an invisible background task.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cache-version pin advanced v25 → v26 (service-worker bump for the index.html auth-lapse guard now carrying ?returnTo through relogin).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Cache-version pin advanced v26 → v27 to match the current cockpit service worker after the mobile drawer cache bump.
  */
 
 /**
@@ -142,6 +143,6 @@ describe('global assistant load-order contract', () => {
     const index = readFileSync(resolve('src/pages/cockpit/index.html'), 'utf8');
     const worker = readFileSync(resolve('src/pages/cockpit/service-worker.js'), 'utf8');
     expect(index).toContain('js/jarvis-orb.js?v=2');
-    expect(worker).toContain("const CACHE_VERSION = 'oshal-cockpit-v26'");
+    expect(worker).toContain("const CACHE_VERSION = 'oshal-cockpit-v27'");
   });
 });

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Two-user device-ownership proof for the repo-audit 2026-07-05 finding: a second non-operator user gets 403 enqueueing to / reading results from a device they don't own; owner + operator + machine (shared secret) callers keep working; session chat identity is pinned to the session sub; session re-registration cannot take over another user's device.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Control-plane URL fixtures follow PLAYWRIGHT_PORT via the shared apiOrigin() helper instead of hardcoded localhost:35457 literals (byte-identical under the default env)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | First test gets the sibling 15s budget: it pays the one-time router-graph import/transform, which exceeds the 5s default on a cold vite cache (fresh npm ci) — surfaced by the trunk cutover's fresh install
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | First test timeout raised 15s → 30s after the full unit suite showed the same import-heavy route graph can exceed 15s under parallel load while passing alone in ~9s.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -126,10 +127,10 @@ describe('remote-client device ownership binding', () => {
     // A single-device read by a non-owner 404s (not 403) so ids cannot be probed for existence.
     expect((await fetch(`${base}/device-1`, { headers: { 'x-test-sub': INTRUDER } })).status).toBe(404);
     expect((await fetch(`${base}/device-1`, { headers: { 'x-test-sub': OWNER } })).status).toBe(200);
-    // 15s, same as the completion-flow test below: the FIRST test in the file pays the one-time
+    // 30s: the FIRST test in the file pays the one-time
     // dynamic-import/transform of the real router graph, which blows the default 5s budget on a
-    // cold vite cache (fresh npm ci / fresh clone / CI) while the assertions themselves run in ms.
-  }, 15_000);
+    // cold vite cache and can exceed 15s under full-suite parallel load.
+  }, 30_000);
 
   it('refuses mesh task INJECTION from one user\'s device onto another user\'s device', async () => {
     // The mesh subscriber converts an inbound envelope into registry.enqueueTask, and toTaskEnvelope

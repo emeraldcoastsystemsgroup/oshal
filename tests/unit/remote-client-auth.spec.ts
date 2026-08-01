@@ -18,6 +18,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the remote-client auth hardening (timing-safe compare, per-caller rate limit, worker-plane-on-node-token proof)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | 2026-07-31 23:21:37 America/Chicago — Raises the first HTTP router boot timeout because full-suite dynamic import load can exceed 15s before the auth assertions execute.
  */
 
 import { readFileSync } from 'fs';
@@ -206,8 +207,8 @@ describe('remote-client auth over HTTP', () => {
     });
     expect(viaBearer.status).toBe(200);
     expect(viaBearer.headers.get('x-oshal-shared-secret-deprecated')).toBe('1');
-    // 15s: the first HTTP test pays the one-time dynamic import/transform of the router graph.
-  }, 15_000);
+    // 30s: the first HTTP test pays the one-time dynamic import/transform of the router graph under full-suite load.
+  }, 30_000);
 
   it('runs the ENTIRE worker plane on a node token with NO shared secret configured', async () => {
     // The BACKLOG-sanctioned replacement for the swarm-wide secret: a per-node

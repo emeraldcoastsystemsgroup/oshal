@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pins the public guest-demo entry rails: (1) /guest?next= deep links are same-origin only — the landing form carries a sanitized next, start redirects there, off-origin/protocol-relative/oversized values fall back to /cockpit/, and an already-authenticated visitor skips the landing; (2) the demo seed runs inside ONE transaction with a transaction-local oshal.current_sub GUC (FORCE-RLS rejected every guest's seed until 2026-07-18) and only ever plants queue-INERT ticket statuses (complete/backlog) so a seeded ticket can never be dispatched to a bot and spend LLM.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard guest start against malformed SESSION_COOKIE_DOMAIN values: the route still mints a host-only guest cookie and redirects instead of surfacing Express/cookie's invalid-domain TypeError as HTTP 500.
  */
 
 import express from 'express';
@@ -22,6 +23,7 @@ describe('guest ?next= deep links', () => {
   beforeEach(() => {
     savedEnv.ENABLE_GUEST_MODE = process.env.ENABLE_GUEST_MODE;
     savedEnv.SESSION_SECRET = process.env.SESSION_SECRET;
+    savedEnv.SESSION_COOKIE_DOMAIN = process.env.SESSION_COOKIE_DOMAIN;
     process.env.ENABLE_GUEST_MODE = 'true';
     process.env.SESSION_SECRET = 'unit-test-secret';
   });
@@ -29,6 +31,8 @@ describe('guest ?next= deep links', () => {
   afterEach(async () => {
     process.env.ENABLE_GUEST_MODE = savedEnv.ENABLE_GUEST_MODE;
     process.env.SESSION_SECRET = savedEnv.SESSION_SECRET;
+    if (savedEnv.SESSION_COOKIE_DOMAIN === undefined) delete process.env.SESSION_COOKIE_DOMAIN;
+    else process.env.SESSION_COOKIE_DOMAIN = savedEnv.SESSION_COOKIE_DOMAIN;
     await Promise.all(servers.map((s) => new Promise<void>((resolve) => s.close(resolve))));
     servers.length = 0;
   });
@@ -62,6 +66,16 @@ describe('guest ?next= deep links', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe(NEXT_DECODED);
     expect(res.headers.get('set-cookie')).toContain('oshal_guest=');
+  });
+
+  it('falls back to a host-only cookie when SESSION_COOKIE_DOMAIN is malformed', async () => {
+    process.env.SESSION_COOKIE_DOMAIN = 'http://127.0.0.1:35457';
+    const res = await fetch(`${boot()}/api/guest/start?next=${NEXT_ENCODED}`, { method: 'POST', redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe(NEXT_DECODED);
+    const cookie = res.headers.get('set-cookie') ?? '';
+    expect(cookie).toContain('oshal_guest=');
+    expect(cookie.toLowerCase()).not.toContain('domain=');
   });
 
   it.each([
