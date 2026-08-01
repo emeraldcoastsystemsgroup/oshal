@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Layer B: news fetcher — Bing RSS -> outlet -> sentiment -> world
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Multi-source feed registry + REAL sentiment via swarm Claude creds (CLI provider, batched)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Classify re-enable rails (the 2026-06-29 burn + the CPU-spiral note, both root-caused): (a) a GLOBAL classify budget — every LLM call takes a token from a shared hour/day bucket (per-subject ingest AND deep-dive), exhausted → lexicon for the rest of the window, so the 27-spawns/min catch-up storm is structurally impossible; (b) thinking OFF + minified JSON for the classify spawn — a measured 8-item haiku chunk went 39.3s/4,277 output tokens → 5.1s/414 (the answer was the last ~350 tokens; the rest was interleaved thinking a batch-JSON task doesn't need), which is what makes each budgeted call cheap enough to fit the 5-min pulse window. analyzeBatch is now exported with injectable seams so the guard spec counts real provider calls instead of grepping source. Prompt formatting changed → classifier version v3.
  */
 
 /**
@@ -30,17 +31,23 @@ import { itemHash, slugifyEntity, pubIso, lexicon } from './feed-util';
 import { isRealNewsHeadline } from '@/shared/utils/headline-noise';
 import type { WorldContribution } from './world-types';
 import type { WorldIntelligenceService } from './world-intelligence-service';
+import { createClassifyBudget, type ClassifyBudget, type ClassifyBudgetSnapshot } from './classify-budget';
 
 const logger = createChildLogger({ module: 'news-fetcher' });
 const CLASSIFIER_MODEL = process.env.WORLD_SENTIMENT_MODEL || 'claude-haiku-4-5-20251001';
 // Bump when the analyze prompt/schema changes — backtests compare against the version that produced the record.
-const CLASSIFIER_VERSION = 'world-analyze-v2';
+const CLASSIFIER_VERSION = 'world-analyze-v3';
 const parser = new XMLParser({ ignoreAttributes: true, removeNSPrefix: true });
 
-/** A classify backend — both the Claude CLI and the Codex CLI expose this same shape. */
-interface ClassifyProvider { name: string; complete(prompt: string, systemPrompt?: string): Promise<{ text: string }>; }
+/** A classify backend — both the Claude CLI and the Codex CLI expose this same shape. Exported as
+ *  the seam type the guard spec's counting fake implements. */
+export interface ClassifyProvider { name: string; complete(prompt: string, systemPrompt?: string): Promise<{ text: string }>; }
 
-const claudeProvider = new ClaudeCodeCliProvider({ model: CLASSIFIER_MODEL });
+// MAX_THINKING_TOKENS=0: batch-JSON classification needs no interleaved thinking — with it on,
+// a measured 8-item haiku chunk spent 39.3s emitting 4,277 output tokens of which the answer was
+// the final ~350; with it off the same chunk took 5.1s / 414 tokens. This is what makes each
+// budgeted call fit inside the pulse window instead of overrunning it.
+const claudeProvider = new ClaudeCodeCliProvider({ model: CLASSIFIER_MODEL, extraEnv: { MAX_THINKING_TOKENS: '0' } });
 const codexProvider = new CodexHarnessProvider({
   model: process.env.WORLD_CLASSIFY_CODEX_MODEL || undefined,
   timeoutMs: Math.max(30_000, Number(process.env.WORLD_CLASSIFY_CODEX_TIMEOUT_MS) || 120_000),
@@ -182,26 +189,73 @@ const CLASSIFY_CONCURRENCY = Math.max(1, Number(process.env.WORLD_CLASSIFY_CONCU
  *  insider, short, gov, calendar) keep working. The instant "stop the token burn" lever. */
 const CLASSIFY_DISABLED = ['1', 'true', 'on', 'yes'].includes((process.env.WORLD_CLASSIFY_DISABLED || '').trim().toLowerCase());
 
-/**
- * Classify items (sentiment + entities + catalyst) in CHUNKED, bounded-concurrency sub-batches. A failed
- * or timed-out chunk degrades only its own items (empty → lexicon fallback) — the rest still classify.
- */
+/** Cap from env where an EXPLICIT 0 must stay 0 (fail-closed) — `Number(x)||dflt` would resurrect it. */
+function envCap(name: string, dflt: number): number {
+  const raw = (process.env[name] || '').trim();
+  if (!raw) return dflt;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : dflt;
+}
+
+/** The GLOBAL classify budget — one bucket for every LLM classify call this process makes (per-subject
+ *  ingest, firehose deep-dive, backtest rescores). The 2026-06-29 burn guard: chunk sizing bounds a CALL,
+ *  circuit breakers bound a FEED, but nothing bounded the total — a catch-up storm where every item is
+ *  "fresh" spawned the CLI 27×/min for 9 hours. Exhausted → lexicon fallback until the window rolls. */
+const CLASSIFY_BUDGET = createClassifyBudget({
+  perHour: envCap('WORLD_CLASSIFY_BUDGET_PER_HOUR', 60),
+  perDay: envCap('WORLD_CLASSIFY_BUDGET_PER_DAY', 400),
+});
+
+/** @description Current classify-budget counters — the pulse completion log records this so LLM burn is
+ *  visible per cycle instead of discovered on the subscription page.
+ *  @returns Hour/day usage + caps + denials this hour. */
+export function classifyBudgetSnapshot(): ClassifyBudgetSnapshot {
+  return CLASSIFY_BUDGET.snapshot();
+}
+
 /** GLOBAL round-robin cursor — advances per chunk across ALL analyzeBatch calls (every feed, every pulse),
  *  so small single-chunk feeds still alternate Codex/Claude instead of all landing on provider[0]. */
 let providerCursor = 0;
 
-async function analyzeBatch(items: FeedItem[], subject: string): Promise<ItemAnalysis[]> {
-  const providers = CLASSIFY_PROVIDERS;
+/** Dependency seams for {@link analyzeBatch} — tests inject fakes here; runtime callers omit it. */
+export interface AnalyzeSeams { providers?: ClassifyProvider[]; budget?: ClassifyBudget }
+
+/**
+ * @description Classify items (sentiment + entities + catalyst) in CHUNKED, bounded-concurrency
+ * sub-batches. A failed or timed-out chunk degrades only its own items (empty → lexicon fallback) —
+ * the rest still classify. Every chunk's LLM call first takes a token from the GLOBAL classify
+ * budget; a denied chunk falls back to lexicon (items stay `used_llm=false`, so the metered
+ * deep-dive can still upgrade the hottest of them later). Exported for the guard spec, which
+ * injects a counting fake provider + a capped budget and asserts CALLS — not source substrings.
+ * @param items - Feed items to classify.
+ * @param subject - The subject sentiment is measured toward.
+ * @param seams - Test-only injection of providers/budget; runtime callers omit.
+ * @returns Per-item analysis, order-aligned with `items`.
+ */
+export async function analyzeBatch(items: FeedItem[], subject: string, seams: AnalyzeSeams = {}): Promise<ItemAnalysis[]> {
+  const providers = seams.providers ?? CLASSIFY_PROVIDERS;
+  const budget = seams.budget ?? CLASSIFY_BUDGET;
   if (!items.length) return [];
+  const lex = (c: FeedItem[]): ItemAnalysis[] => c.map(() => ({ s: null, entities: [], event: null }));
   // Cost kill-switch / no providers → lexicon-only (no LLM spend).
-  if (CLASSIFY_DISABLED || providers.length === 0) return items.map(() => ({ s: null, entities: [], event: null }));
-  if (items.length <= CLASSIFY_CHUNK && providers.length === 1) return analyzeChunk(items, subject, providers[0]);
+  if (CLASSIFY_DISABLED || providers.length === 0) return lex(items);
+  // One budget token per LLM call, fail-closed. Warn once per window, not per denied chunk —
+  // a catch-up storm denying hundreds of chunks must not become its own log storm.
+  const take = (): boolean => {
+    if (budget.tryTake()) return true;
+    const snap = budget.snapshot();
+    if (snap.denied === 1) logger.warn({ subject, ...snap }, 'world classify budget exhausted — further chunks fall back to lexicon until the window rolls');
+    return false;
+  };
+  if (items.length <= CLASSIFY_CHUNK && providers.length === 1) {
+    return take() ? analyzeChunk(items, subject, providers[0]) : lex(items);
+  }
   const chunks: FeedItem[][] = [];
   for (let i = 0; i < items.length; i += CLASSIFY_CHUNK) chunks.push(items.slice(i, i + CLASSIFY_CHUNK));
   // Round-robin chunks across providers (Codex + Claude) via the GLOBAL cursor; run enough in parallel to
   // keep both busy.
   const conc = Math.max(CLASSIFY_CONCURRENCY, providers.length);
-  const results = await mapPool(chunks, conc, (c) => analyzeChunk(c, subject, providers[(providerCursor++) % providers.length]));
+  const results = await mapPool(chunks, conc, (c) => (take() ? analyzeChunk(c, subject, providers[(providerCursor++) % providers.length]) : Promise.resolve(lex(c))));
   return results.flat();
 }
 
@@ -223,7 +277,7 @@ async function analyzeChunk(items: FeedItem[], subject: string, provider: Classi
     + 'rating (analyst upgrade/downgrade/price target), legal_reg (lawsuit/regulatory/investigation), product '
     + '(launch/recall/approval), exec (leadership change), macro (rates/inflation/jobs/Fed), supply (disaster/supply shock). '
     + 'Use null for "ev" when the item is not about a concrete catalyst. '
-    + 'Return ONLY a JSON array of {"i":<index>,"s":<number>,"e":[{"n":"<name>","t":"<type>"}],"ev":{"t":"<catalyst>","i":<0..1>}}, no prose.';
+    + 'Return ONLY a MINIFIED JSON array (no whitespace) of {"i":<index>,"s":<number>,"e":[{"n":"<name>","t":"<type>"}],"ev":{"t":"<catalyst>","i":<0..1>}}, no prose.';
   try {
     const r = await provider.complete(`Subject: ${subject}\nItems:\n${list}`, sys);
     const m = r.text.match(/\[[\s\S]*\]/);

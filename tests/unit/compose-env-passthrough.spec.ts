@@ -4,6 +4,7 @@
  * DATE/TIME           | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 2026-07-29 13:20:00 | roger.murphy@emeraldcoastsystemsgroup.com   | Guard for the silent-env-var class: compose forwards ONLY the variables it names, so an env var the code reads but the compose file never declares does NOTHING — and it fails as "not configured" rather than as an error. Found live on the first customer box: connectors-routes reads GOOGLE_CONNECT_CLIENT_ID first, compose only forwarded OIDC_CLIENT_ID, so every Google connector reported "needs setup" on a LOCAL_AUTH deployment no matter what was set; NOTIFY_EMAIL_SENDER_SUB had the same shape. This spec pins the credential/identity env vars the api actually reads to the compose api service that must forward them.
+ * 2026-08-01 00:00:00 | roger.murphy@emeraldcoastsystemsgroup.com   | Pin the world classify budget caps (WORLD_CLASSIFY_BUDGET_PER_HOUR/PER_DAY) — the burn-guard knobs an operator turns in .env; unforwarded they would be silently ignored in favor of the compiled defaults, which is how the burn class starts.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -38,6 +39,12 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'TWILIO_AUTH_TOKEN', readBy: 'notify-routes twilio transports' },
   { name: 'TELEGRAM_BOT_TOKEN', readBy: 'chat-channel-routes — the Telegram inbound channel' },
   { name: 'TOTP_ISSUER', readBy: 'local-auth-routes 2FA enrolment — the name an authenticator app displays' },
+  // World classify re-enable 2026-08-01: the budget caps are the 2026-06-29 burn guard. If they
+  // stop reaching the container the code still runs — on its compiled-in defaults — and an
+  // operator turning the knobs in .env is silently ignored, which is exactly how the burn class
+  // starts. (WORLD_CLASSIFY_DISABLED / _PROVIDERS were already forwarded; these are their new siblings.)
+  { name: 'WORLD_CLASSIFY_BUDGET_PER_HOUR', readBy: 'news-fetcher envCap — the global classify-call hourly ceiling' },
+  { name: 'WORLD_CLASSIFY_BUDGET_PER_DAY', readBy: 'news-fetcher envCap — the global classify-call daily ceiling' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:
