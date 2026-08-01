@@ -1087,8 +1087,10 @@ function createApp(): express.Application {
   // (e.g. oshal-developer's codebase index) — callerSub inside resolves the trusted sub first.
   app.use('/api/graph', serviceSecretOr(requiresAuth), createGraphRoutes());
   // PAT management (mint/list/revoke/whoami). serviceSecretOr: a browser session manages its
-  // own tokens; the trusted-service secret may bootstrap-mint for an asserted sub (not an
-  // escalation — the secret already implies full impersonation). swarm-cli login uses this.
+  // own tokens; the trusted-service secret may bootstrap-mint but ONLY for an operator sub and
+  // ONLY a time-boxed token (cli-token-routes.ts) — the old "not an escalation, the secret
+  // implies full impersonation" reasoning was retired because bots hold the secret and are
+  // injectable. swarm-cli login --secret uses this (operator only).
   app.use('/api/cli-tokens', serviceSecretOr(requiresAuth), createCliTokenRoutes(ctx.pool));
   // LOCAL_AUTH flows (ADR-117): /invite + /logout pages, login/accept/bootstrap, and the
   // operator-or-trusted-service user administration API. Mounted below the GUC stamp so
