@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119) Stage A: canonical alert shape, target-resolution ladder, identity gate (FR-A2), incident-key rendering with fingerprint fallback (FR-C1 key hygiene), and the severity→priority mapping shared with the intake route (moved here from alertmanager-routes so consolidation escalation (FR-C4) and ticket creation rank severities identically)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (FR-E4): canonical alerts now carry resolvedAt (Alertmanager's endsAt on a resolved event, null otherwise) so resolved-handling records the alert's OWN resolution time on the member instead of fabricating an arrival timestamp
  */
 
 import type { TicketPriority } from '@/entities/ticket';
@@ -36,6 +37,8 @@ export interface CanonicalAlert {
   severity: string;
   status: 'firing' | 'resolved';
   firedAt: string | null;
+  /** Alertmanager `endsAt` on a resolved event; null while firing (FR-E4). */
+  resolvedAt: string | null;
   fingerprint: string;
   incidentKey: string;
   usedFingerprintKeyFallback: boolean;
@@ -143,12 +146,14 @@ export function canonicalizeAlert(alert: RawAlertmanagerAlert): CanonicalAlert |
   }
   const fingerprint = (alert.fingerprint ?? '').trim() || `${alertname || 'UnnamedAlert'}:${target || 'unknown-target'}`;
   const { key, usedFingerprintFallback } = renderIncidentKey(alertname, target, fingerprint);
+  const status = alert.status === 'resolved' ? 'resolved' : 'firing';
   return {
     alertname,
     target,
     severity: (labels.severity ?? '').trim() || 'warning',
-    status: alert.status === 'resolved' ? 'resolved' : 'firing',
+    status,
     firedAt: alert.startsAt ?? null,
+    resolvedAt: status === 'resolved' ? alert.endsAt ?? null : null,
     fingerprint,
     incidentKey: key,
     usedFingerprintKeyFallback: usedFingerprintFallback,

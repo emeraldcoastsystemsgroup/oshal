@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119) Stage C: identity-based consolidation. Exactly one open ticket per incident key (FR-C2 — per-key serialization in-process + the tickets table's (external_provider, external_id) unique claim in the DB, release-on-failure by folding the loser into the winner); a refire is a visible consolidation update — updateCount/lastSeen/member counts — never a silent skip (FR-C3); severity only escalates priority, never lowers it (FR-C4); a refire after the prior incident went terminal within the TTL opens a NEW ticket linked recurrenceOf (FR-C5); genesis fields are write-once (FR-C6). Consolidation updates never touch ticket status, so RCA structurally runs once per incident (FR-E1)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): an arrival that did not consolidate now checks OPEN related incidents (AlertBundlingService — same-target FR-D2, dependency FR-D3) before creating, and ATTACHES instead: member recorded at attach time with its attachReason (FR-D5), rootCandidate recomputed by the ordered policy (FR-D4), severity escalation shared with the refire path (FR-C4 max-over-members). Attach NEVER touches ticket status — no promote, no re-dispatch (FR-D7); an auto-flow member attaching to a backlog bundle sets the needs-attention flag instead. The incident record types + incidentOf moved verbatim to incident-record.ts (import-cycle break); the intake serialization domain widened from per-key to the intake stage because Stage D correlates ACROSS keys — the DB's (external_provider, external_id) unique claim remains the durable restart-safe guarantee (spec §9.7). Member cap now reads the ALERT_MAX_MEMBERS knob (FR-D5)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage E): the dispatch gates. FR-E2 — an auto-flow CREATE consults the RcaBudgetGate first: over budget it parks the ticket in backlog carrying the visible analysis-skipped:budget flag+label (an operator promote overrides; backlog-parked tickets never spend); allowed dispatches reserve the p95 estimate before the create and release it on create failure or a lost creation race. FR-E3 — every refire feeds flap damping: crossing the threshold trips `flapping` and demotes a not-yet-dispatched approved ticket to backlog (in-flight tickets only get the flag — "if RCA has not yet run"); a refire after the quiet period ends the episode and restores ONLY a flap-parked ticket to approved (budget-gated again — restoring is a dispatch). FR-E4 — intakeResolved marks the member resolvedAt (a refire clears it via upsertMember), and ONLY with ALERT_AUTO_RESOLVE=true a fully-resolved still-backlog ticket completes as self-resolved; approved-or-beyond tickets never auto-close. Genesis stamps the claiming rule's rootFilter (Stage B) so FR-D4's step 1 has real per-rule declarations
  */
 
 import { randomUUID } from 'crypto';
@@ -20,15 +21,30 @@ import {
   ALERT_BUNDLE_CANDIDATE_LIMIT,
   ALERT_INCIDENT_KEY_FIELD,
   TERMINAL_TICKET_STATES,
+  autoResolveEnabled,
   consolidationTtlSeconds,
   isWithinConsolidationTtl,
   maxIncidentMembers,
 } from './alert-triage-constants';
 import { priorityRank, severityToPriority, type CanonicalAlert } from './canonical-alert';
 import { AlertBundlingService, type BundleTarget } from './alert-bundling';
-import { incidentOf, type IncidentMember, type IncidentRecord } from './incident-record';
+import { observeRefireForFlap, type FlapVerdict } from './flap-damping';
+import {
+  allMembersResolved,
+  incidentOf,
+  markMemberResolved,
+  type IncidentMember,
+  type IncidentRecord,
+} from './incident-record';
+import { BUDGET_PARK_FLAG, RcaBudgetGate, type RcaReservation } from './rca-budget-gate';
 
 const logger = createChildLogger({ module: 'alert-consolidation' });
+
+/** @description The `flags[]` / label value FR-E4 stamps on an auto-closed ticket (spec §5). */
+const SELF_RESOLVED_FLAG = 'self-resolved';
+
+/** @description Ticket-status side effect a refire's flap verdict may demand (FR-E3). */
+type FlapStatusAction = 'demote' | 'restore' | null;
 
 /**
  * @description The minimal ticket surface consolidation needs, expressed structurally so
@@ -38,6 +54,7 @@ const logger = createChildLogger({ module: 'alert-consolidation' });
 export interface TriageTicketGateway {
   createTicket(input: CreateInternalTicketInput): Promise<InternalTicket>;
   updateTicket(ticketId: string, updates: Partial<Omit<InternalTicket, 'ticketId' | 'createdAt' | 'status'>>): Promise<void>;
+  updateStatus(ticketId: string, status: InternalTicket['status'], metadata?: TicketStatusMetadata): Promise<void>;
   recordActivity(ticketId: string, metadata: TicketStatusMetadata): Promise<void>;
   findLatestTicketByMetadataKey(key: string, value: string): Promise<InternalTicket | null>;
   listTickets(options?: { ticketType?: TicketType; limit?: number }): Promise<InternalTicket[]>;
@@ -50,6 +67,8 @@ export interface AlertTicketShape {
   description: string;
   intakeStatus: 'approved' | 'backlog';
   externalUrl: string | null;
+  /** The claiming rule's ordered FR-D4 root filter (P3 Stage B), stamped at genesis. */
+  rootFilter?: readonly string[];
 }
 
 /** @description What consolidation did with one firing alert. */
@@ -57,6 +76,8 @@ export interface ConsolidationOutcome {
   decision: 'created' | 'consolidated' | 'bundled';
   ticketId: string;
   updateCount: number;
+  /** True when FR-E2 parked an intended auto-flow create in backlog (visible, promotable). */
+  budgetParked?: boolean;
 }
 
 /**
@@ -89,6 +110,9 @@ function upsertMember(incident: IncidentRecord, alert: CanonicalAlert, seenAt: s
   if (existing) {
     existing.count += 1;
     existing.lastSeen = laterIso(existing.lastSeen, seenAt);
+    // A firing member is not resolved anymore (FR-E4): a refire clears the resolution so a
+    // later full-resolution check never counts a re-burning member as resolved.
+    delete existing.resolvedAt;
     if (priorityRank(severityToPriority(alert.severity)) > priorityRank(severityToPriority(existing.severity))) {
       existing.severity = alert.severity;
     }
@@ -164,18 +188,23 @@ export class AlertConsolidationService {
    * @param tickets - Ticket operations (structurally satisfied by TicketService).
    * @param bundling - Stage D correlation logic (FR-D1/D2/D3/D4). Default wires the static
    *   compose-topology dependency map; an ADR-045 graph-backed resolver can be injected.
+   * @param budget - FR-E2 analyst cost guard. The default (no spend reader) is an explicit
+   *   pass-through; the app layer wires the cost-ledger reader.
    */
   constructor(
     private readonly tickets: TriageTicketGateway,
     private readonly bundling: AlertBundlingService = new AlertBundlingService(),
+    private readonly budget: RcaBudgetGate = new RcaBudgetGate(),
   ) {}
 
   /**
    * @description Intakes one canonical FIRING alert: updates the open incident ticket for
    * its key (Stage C), attaches to an open RELATED incident (Stage D), or creates a new
-   * ticket (recurrence-linked when the prior went terminal within the TTL). Never touches
-   * ticket status — neither a refire nor an attach can ever re-dispatch analysis
-   * (FR-E1/FR-D7).
+   * ticket (recurrence-linked when the prior went terminal within the TTL), gated by the
+   * Stage E dispatch gates (FR-E2 budget park, FR-E3 flap damping). A refire or attach can
+   * never RE-dispatch analysis (FR-E1/FR-D7): the only status writes this path ever makes
+   * are the FR-E3 demote/restore of a not-yet-dispatched ticket — deferring or un-deferring
+   * a dispatch that has not happened, never re-running one.
    * @param alert - Canonical firing alert.
    * @param shape - Ticket presentation fields from the route.
    * @returns What happened and to which ticket.
@@ -257,17 +286,22 @@ export class AlertConsolidationService {
     const seenAt = alert.firedAt ?? nowIso;
     const incident = incidentOf(ticket) ?? this.migratedIncident(ticket, alert);
     const isRefire = incident.members.some((m) => m.fingerprint === alert.fingerprint);
+    // FR-E3: only a REFIRE is flap evidence; a first-time attach is new information, not
+    // flapping. Observed before lastSeen advances (the quiet check needs the prior value).
+    const flap = isRefire ? observeRefireForFlap(incident, seenAt) : null;
     incident.lastSeen = laterIso(incident.lastSeen, seenAt);
     if (isRefire) incident.updateCount += 1;
     upsertMember(incident, alert, seenAt, attachReason);
     if (!isRefire) {
-      incident.rootCandidate = await this.bundling.chooseRootCandidate(incident.members);
+      incident.rootCandidate = await this.bundling.chooseRootCandidate(incident.members, incident.rootFilter ?? []);
       if (shape.intakeStatus === 'approved' && ticket.status === 'backlog' && !incident.flags.includes('needs-attention')) {
         incident.flags.push('needs-attention');
       }
     }
     const escalatedTo = escalateSeverity(incident, ticket, alert, nowIso);
+    const statusAction = flap ? await this.resolveFlapStatusAction(ticket, incident, flap) : null;
     await this.persistIncident(ticket, incident, alert, escalatedTo);
+    await this.applyFlapStatusAction(ticket, statusAction);
     const reason = isRefire
       ? `alert refire consolidated (×${incident.updateCount}${escalatedTo ? `, priority → ${escalatedTo}` : ''})`
       : `alert bundled onto related incident (${attachReason}; root candidate: ${incident.rootCandidate?.target ?? 'n/a'})`;
@@ -280,10 +314,15 @@ export class AlertConsolidationService {
   }
 
   /**
-   * @description Creates the incident ticket for a key with no open incident. The DB claim id
-   * is `<incidentKey>#<instanceSeq>` — if a concurrent creator won the unique-index race, the
-   * store returns the winner instead of a new row and this alert folds into it as a
-   * consolidation update (FR-C2 release-on-failure: no lost alert, no duplicate ticket).
+   * @description Creates the incident ticket for a key with no open incident, running the
+   * FR-E2 budget gate first when the intake policy wants auto-flow: over budget the ticket
+   * is created PARKED in backlog carrying the visible `analysis-skipped:budget` flag+label
+   * (an operator promote overrides — the gate never runs on promotes); within budget the
+   * p95 estimate is reserved BEFORE the create and released again on create failure or a
+   * lost creation race, so a retry can proceed and the winner's own reservation is the only
+   * one standing. The DB claim id is `<incidentKey>#<instanceSeq>` — if a concurrent
+   * creator won the unique-index race, the store returns the winner instead of a new row
+   * and this alert folds into it as a consolidation update (FR-C2 release-on-failure).
    * @param alert - Canonical firing alert.
    * @param shape - Ticket presentation fields.
    * @param priorTerminal - Newest terminal ticket on this key, if any (recurrence candidate).
@@ -296,42 +335,64 @@ export class AlertConsolidationService {
   ): Promise<ConsolidationOutcome> {
     const nowIso = new Date().toISOString();
     const claimNonce = randomUUID();
-    const incident = this.buildGenesisIncident(alert, nowIso, claimNonce, priorTerminal);
-    const created = await this.tickets.createTicket({
-      title: shape.title,
-      ticketType: shape.ticketType,
-      description: shape.description,
-      externalProvider: 'prometheus',
-      externalId: `${alert.incidentKey}#${incident.instanceSeq}`,
-      externalUrl: shape.externalUrl,
-      status: shape.intakeStatus,
-      workspaceId: null,
-      assignedAgentId: null,
-      parentTicketId: null,
-      priority: severityToPriority(alert.severity),
-      labels: [
-        'prometheus',
-        'incident',
-        'self-healing',
-        'rca-requested',
-        `severity:${alert.severity}`,
-        `target:${alert.target || 'unknown-target'}`,
-        `intake:${shape.intakeStatus}`,
-      ],
-      metadata: {
-        source: 'prometheus',
-        alertFingerprint: alert.fingerprint,
-        alertname: alert.alertname,
-        severity: alert.severity,
-        target: alert.target || 'unknown-target',
-        intake: shape.intakeStatus,
-        startsAt: alert.firedAt,
-        rawLabels: alert.labels,
-        [ALERT_INCIDENT_KEY_FIELD]: alert.incidentKey,
-        incident,
-      },
-    });
+    let intakeStatus = shape.intakeStatus;
+    let budgetParked = false;
+    let reservation: RcaReservation | null = null;
+    if (intakeStatus === 'approved') {
+      const verdict = await this.budget.evaluate(shape.ticketType);
+      if (verdict.park) {
+        intakeStatus = 'backlog';
+        budgetParked = true;
+      } else {
+        reservation = this.budget.reserve(verdict.estimateUsd);
+      }
+    }
+    const incident = this.buildGenesisIncident(alert, nowIso, claimNonce, priorTerminal, shape.rootFilter);
+    if (budgetParked) incident.flags.push(BUDGET_PARK_FLAG);
+    let created: InternalTicket;
+    try {
+      created = await this.tickets.createTicket({
+        title: shape.title,
+        ticketType: shape.ticketType,
+        description: shape.description,
+        externalProvider: 'prometheus',
+        externalId: `${alert.incidentKey}#${incident.instanceSeq}`,
+        externalUrl: shape.externalUrl,
+        status: intakeStatus,
+        workspaceId: null,
+        assignedAgentId: null,
+        parentTicketId: null,
+        priority: severityToPriority(alert.severity),
+        labels: [
+          'prometheus',
+          'incident',
+          'self-healing',
+          'rca-requested',
+          `severity:${alert.severity}`,
+          `target:${alert.target || 'unknown-target'}`,
+          `intake:${intakeStatus}`,
+          ...(budgetParked ? [BUDGET_PARK_FLAG] : []),
+        ],
+        metadata: {
+          source: 'prometheus',
+          alertFingerprint: alert.fingerprint,
+          alertname: alert.alertname,
+          severity: alert.severity,
+          target: alert.target || 'unknown-target',
+          intake: intakeStatus,
+          startsAt: alert.firedAt,
+          rawLabels: alert.labels,
+          [ALERT_INCIDENT_KEY_FIELD]: alert.incidentKey,
+          incident,
+        },
+      });
+    } catch (err) {
+      reservation?.release();
+      logger.error({ err, incidentKey: alert.incidentKey }, 'Incident ticket create failed — budget reservation released so a retry can proceed');
+      throw err;
+    }
     if (incidentOf(created)?.claimNonce !== claimNonce) {
+      reservation?.release();
       logger.info(
         { incidentKey: alert.incidentKey, winnerTicketId: created.ticketId },
         'Lost the incident-key creation race — folding alert into the winning ticket (FR-C2 release-on-failure)',
@@ -339,10 +400,12 @@ export class AlertConsolidationService {
       return this.consolidateInto(created, alert);
     }
     logger.info(
-      { ticketId: created.ticketId, incidentKey: alert.incidentKey, recurrenceOf: incident.recurrenceOf ?? null },
-      'Opened consolidated incident ticket',
+      { ticketId: created.ticketId, incidentKey: alert.incidentKey, recurrenceOf: incident.recurrenceOf ?? null, budgetParked },
+      budgetParked
+        ? 'Opened consolidated incident ticket PARKED by the RCA budget gate (FR-E2 — promote to dispatch)'
+        : 'Opened consolidated incident ticket',
     );
-    return { decision: 'created', ticketId: created.ticketId, updateCount: 0 };
+    return { decision: 'created', ticketId: created.ticketId, updateCount: 0, ...(budgetParked ? { budgetParked: true } : {}) };
   }
 
   /**
@@ -354,6 +417,8 @@ export class AlertConsolidationService {
    * @param nowIso - Creation timestamp.
    * @param claimNonce - Nonce proving this process authored the stored record.
    * @param priorTerminal - Newest terminal ticket on this key, if any.
+   * @param rootFilter - The claiming rule's ordered FR-D4 root filter (P3 Stage B) — stamped
+   *   at genesis so the incident's root-candidate policy is stable across attaches.
    * @returns The genesis incident record.
    */
   private buildGenesisIncident(
@@ -361,6 +426,7 @@ export class AlertConsolidationService {
     nowIso: string,
     claimNonce: string,
     priorTerminal: InternalTicket | null,
+    rootFilter?: readonly string[],
   ): IncidentRecord {
     const firstSeen = alert.firedAt ?? nowIso;
     const priorIncident = priorTerminal ? incidentOf(priorTerminal) : null;
@@ -376,6 +442,7 @@ export class AlertConsolidationService {
       escalations: [],
       flags: [],
       claimNonce,
+      ...(rootFilter && rootFilter.length > 0 ? { rootFilter: [...rootFilter] } : {}),
     };
     if (priorTerminal && isWithinConsolidationTtl(priorTerminal.updatedAt, Date.now(), consolidationTtlSeconds())) {
       incident.recurrenceOf = priorTerminal.ticketId;
@@ -397,12 +464,16 @@ export class AlertConsolidationService {
     const nowIso = new Date().toISOString();
     const seenAt = alert.firedAt ?? nowIso;
     const incident = incidentOf(ticket) ?? this.migratedIncident(ticket, alert);
+    // FR-E3: observe the refire BEFORE lastSeen advances (the quiet check needs the gap).
+    const flap = observeRefireForFlap(incident, seenAt);
     incident.updateCount += 1;
     incident.lastSeen = laterIso(incident.lastSeen, seenAt);
     upsertMember(incident, alert, seenAt);
 
     const escalatedTo = escalateSeverity(incident, ticket, alert, nowIso);
+    const statusAction = await this.resolveFlapStatusAction(ticket, incident, flap);
     await this.persistIncident(ticket, incident, alert, escalatedTo);
+    await this.applyFlapStatusAction(ticket, statusAction);
     await this.recordIncidentActivity(
       ticket.ticketId,
       alert,
@@ -414,6 +485,163 @@ export class AlertConsolidationService {
       'Alert refire consolidated onto the open incident ticket',
     );
     return { decision: 'consolidated', ticketId: ticket.ticketId, updateCount: incident.updateCount };
+  }
+
+  /**
+   * @description FR-E3 status policy for one refire's flap verdict. Demote ONLY on the
+   * trip transition of a still-`approved` (not-yet-dispatched) ticket — an in-flight
+   * ticket only carries the flag ("if RCA has not yet run"), and continued flapping never
+   * re-demotes, so an operator promote mid-episode sticks. Restore ONLY a ticket the flap
+   * gate itself parked (`flap.parked` provenance) that is still in backlog when the quiet
+   * period ends — and restoring is a dispatch, so the FR-E2 budget gate runs again: over
+   * budget the ticket stays parked, now carrying the visible budget flag instead.
+   * @param ticket - The incident ticket (pre-update snapshot).
+   * @param incident - The incident record (mutated: park provenance, budget flag).
+   * @param flap - The refire's flap verdict.
+   * @returns The status action to apply after the record persists.
+   */
+  private async resolveFlapStatusAction(
+    ticket: InternalTicket,
+    incident: IncidentRecord,
+    flap: FlapVerdict,
+  ): Promise<FlapStatusAction> {
+    if (flap.becameQuiet && incident.flap?.parked) {
+      incident.flap.parked = false;
+      if (ticket.status !== 'backlog') return null; // an operator already moved it — theirs to run
+      const verdict = await this.budget.evaluate(ticket.ticketType);
+      if (verdict.park) {
+        if (!incident.flags.includes(BUDGET_PARK_FLAG)) incident.flags.push(BUDGET_PARK_FLAG);
+        logger.warn(
+          { ticketId: ticket.ticketId, incidentKey: incident.key },
+          'Flap episode ended but the RCA budget is exhausted — ticket stays parked, now visibly budget-parked (FR-E3→FR-E2)',
+        );
+        return null;
+      }
+      this.budget.reserve(verdict.estimateUsd);
+      return 'restore';
+    }
+    if (flap.tripped && ticket.status === 'approved') {
+      incident.flap = { ...(incident.flap ?? { recent: [] }), parked: true };
+      return 'demote';
+    }
+    return null;
+  }
+
+  /**
+   * @description Applies a flap status action (FR-E3). Best-effort AFTER the incident
+   * record persisted: a dispatch race (the queue manager grabbing the ticket between our
+   * read and this write) makes the transition invalid — logged at ERROR, never fatal, and
+   * the flag on the record still tells the truth.
+   * @param ticket - The incident ticket.
+   * @param action - demote | restore | null.
+   */
+  private async applyFlapStatusAction(ticket: InternalTicket, action: FlapStatusAction): Promise<void> {
+    if (!action) return;
+    const [status, reason] =
+      action === 'demote'
+        ? (['backlog', 'flap damping — dispatch deferred until quiet or an operator promote (FR-E3)'] as const)
+        : (['approved', 'flap episode ended after the quiet period — auto-flow restored (FR-E3)'] as const);
+    try {
+      await this.tickets.updateStatus(ticket.ticketId, status, { source: 'prometheus', reason });
+      logger.info({ ticketId: ticket.ticketId, action, status }, 'Flap damping adjusted ticket status (FR-E3)');
+    } catch (err) {
+      logger.error({ err, ticketId: ticket.ticketId, action }, 'Flap damping status change failed (likely a dispatch race) — flag state stands, status untouched');
+    }
+  }
+
+  /**
+   * @description FR-E4 resolved handling: marks the matching member resolved on the open
+   * incident that holds it (found by incident key first, then by fingerprint across open
+   * bundles — a member may ride a related incident under another key). Auto-close happens
+   * ONLY when ALERT_AUTO_RESOLVE is enabled AND the ticket is still `backlog` AND every
+   * recorded member is resolved with none overflowed — the ticket completes carrying
+   * `self-resolved`. A ticket at `approved` or beyond never auto-closes: if the analyst is
+   * already engaged, a human decides. No open incident holding the member = a counted
+   * no-op (the route already recorded the FR-A3 `resolved` decision).
+   * @param alert - The canonical resolved alert.
+   * @param ticketType - The alert queue's ticket type (bounds the bundle scan).
+   */
+  async intakeResolved(alert: CanonicalAlert, ticketType: TicketType): Promise<void> {
+    return this.withKeyLock(AlertConsolidationService.INTAKE_LOCK_DOMAIN, () => this.intakeResolvedLocked(alert, ticketType));
+  }
+
+  /**
+   * @description The serialized FR-E4 path (see intakeResolved).
+   * @param alert - The canonical resolved alert.
+   * @param ticketType - The alert queue's ticket type.
+   */
+  private async intakeResolvedLocked(alert: CanonicalAlert, ticketType: TicketType): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const resolvedAt = alert.resolvedAt ?? nowIso;
+    const located = await this.findOpenIncidentHoldingMember(alert, ticketType);
+    if (!located) {
+      logger.info({ fingerprint: alert.fingerprint, incidentKey: alert.incidentKey }, 'Resolved alert matches no open incident member — nothing to mark (FR-E4)');
+      return;
+    }
+    const { ticket, incident } = located;
+    markMemberResolved(incident, alert.fingerprint, resolvedAt);
+    incident.lastSeen = laterIso(incident.lastSeen, resolvedAt);
+    const closing = autoResolveEnabled() && ticket.status === 'backlog' && allMembersResolved(incident);
+    if (closing && !incident.flags.includes(SELF_RESOLVED_FLAG)) incident.flags.push(SELF_RESOLVED_FLAG);
+    const metadata: Record<string, unknown> = {
+      ...((ticket.metadata as Record<string, unknown> | undefined) ?? {}),
+      [ALERT_INCIDENT_KEY_FIELD]: incident.key,
+      incident,
+    };
+    await this.tickets.updateTicket(
+      ticket.ticketId,
+      closing
+        ? { metadata, labels: [...new Set([...(ticket.labels ?? []), SELF_RESOLVED_FLAG])] }
+        : { metadata },
+    );
+    if (closing) {
+      await this.tickets.updateStatus(ticket.ticketId, 'complete', {
+        source: 'prometheus',
+        reason: 'every member resolved while still in backlog — self-resolved auto-close (FR-E4, ALERT_AUTO_RESOLVE)',
+      });
+    }
+    await this.recordIncidentActivity(
+      ticket.ticketId,
+      alert,
+      incident,
+      closing
+        ? 'alert resolved — every member resolved; backlog ticket self-resolved (FR-E4)'
+        : `alert resolved — member marked resolved (${alert.fingerprint})`,
+    );
+    logger.info(
+      { ticketId: ticket.ticketId, incidentKey: incident.key, fingerprint: alert.fingerprint, closed: closing },
+      closing ? 'Backlog incident self-resolved — all members resolved (FR-E4)' : 'Incident member marked resolved (FR-E4)',
+    );
+  }
+
+  /**
+   * @description Locates the open incident holding this alert as a member: the incident-key
+   * ticket first (the common case), then a bounded scan of open tickets for the fingerprint
+   * (a bundled member rides a ticket keyed by ANOTHER alert's incident key).
+   * @param alert - The canonical resolved alert.
+   * @param ticketType - The alert queue's ticket type.
+   * @returns The holding ticket + parsed incident, or null.
+   */
+  private async findOpenIncidentHoldingMember(
+    alert: CanonicalAlert,
+    ticketType: TicketType,
+  ): Promise<{ ticket: InternalTicket; incident: IncidentRecord } | null> {
+    const holds = (ticket: InternalTicket): { ticket: InternalTicket; incident: IncidentRecord } | null => {
+      if (TERMINAL_TICKET_STATES.has(ticket.status)) return null;
+      const incident = incidentOf(ticket);
+      return incident?.members.some((m) => m.fingerprint === alert.fingerprint) ? { ticket, incident } : null;
+    };
+    const latest = await this.tickets.findLatestTicketByMetadataKey(ALERT_INCIDENT_KEY_FIELD, alert.incidentKey);
+    if (latest) {
+      const hit = holds(latest);
+      if (hit) return hit;
+    }
+    const candidates = await this.tickets.listTickets({ ticketType, limit: ALERT_BUNDLE_CANDIDATE_LIMIT });
+    for (const candidate of candidates) {
+      const hit = holds(candidate);
+      if (hit) return hit;
+    }
+    return null;
   }
 
   /**

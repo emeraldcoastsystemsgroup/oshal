@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ (migration 081): 'dead_letter' reachable from approved / every dispatchable in_process_* phase / approval_required / escalated (the two quarantine triggers are a dispatch-failure mid-flight and the Nth escalation cycle), leaves only via operator requeue (approved) or backlog/cancelled. buildStatusTransitionMetadata backstops dead_letter transitions with reason/source/nextAction the same way it already backstops escalations, so a reason-less quarantine is structurally impossible.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 graph ingestion: createTicket and assignAgent now emit sanitized ticket-created / agent-assigned events onto the shared ticketEvents bus (ids/title/status only — never the description), giving the swarm operational graph an observable lifecycle seam without instrumenting call sites. Status transitions were already emitted by the stores.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestTicketByMetadataKey delegation — the consolidation stage's open-vs-recurrence decision (newest ticket per incident key, any status; FR-C5)
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E4): VALID_TRANSITIONS allows backlog → complete — the opt-in self-resolve close for a fully-resolved alert incident that never left backlog (previously an Invalid state transition, forcing a fake promote before closing)
  */
 
 import {
@@ -41,7 +42,11 @@ const TRUSTED_ALERT_PROVIDERS = new Set(['prometheus', 'alertmanager']);
  * @description Valid state transitions for the OshalTicketState lifecycle.
  */
 const VALID_TRANSITIONS: Record<OshalTicketState, Set<OshalTicketState>> = {
-  backlog: new Set(['approved', 'escalated', 'paused', 'cancelled']),
+  // backlog → complete is the ADR-119 FR-E4 self-resolve close: with ALERT_AUTO_RESOLVE
+  // enabled, a fully-resolved alert incident that never left backlog completes as
+  // 'self-resolved' instead of demanding a promote-then-close round trip. Guarded by
+  // tests/unit/alert-triage-dispatch.spec.ts (resolved-closes-only-backlog).
+  backlog: new Set(['approved', 'escalated', 'paused', 'cancelled', 'complete']),
   approved: new Set(['in_process_discovery', 'in_process_design', 'in_process_build', 'backlog', 'escalated', 'dead_letter', 'paused', 'cancelled', 'complete']),
   // Chat-ticket lifecycle: an open conversation that only ever closes (X → complete / cancelled),
   // pauses, or returns to backlog. It is never dispatched, so no in_process_* phase transitions.

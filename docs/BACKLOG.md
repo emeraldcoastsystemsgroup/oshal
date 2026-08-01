@@ -3,7 +3,7 @@
 Tracking items deferred from the OSHAL build session. Each item has the
 deferral reason and the "done" condition so future work isn't ambiguous.
 
-## Alert triage & consolidation — intelligent-processing intake (P1+P2 built 2026-07-31; P3–P4 pending)
+## Alert triage & consolidation — intelligent-processing intake (P1–P3 built 2026-07-31; P4 pending)
 
 **Specified 2026-07-28** (operator directive: non-noisy alerts flow to the queue, duplicates get
 bundled and consolidated — the analyst + self-healing portion). The functional specification is
@@ -50,6 +50,31 @@ change:
    promote overrides; 6 refires in 30m defers dispatch with a `flapping` flag; with
    `ALERT_AUTO_RESOLVE=true` a fully-resolved backlog ticket self-closes while an `approved`
    ticket never does; a claim rule containing a time predicate is rejected at load.
+   **BUILT 2026-07-31**: Stage B claim registry in `src/features/alert-triage/`
+   (`claim-registry.ts` — rules `{match, incidentKey?, intake?, bundleHints?}` from
+   `ALERT_CLAIMS_FILE` + `ALERT_APPROVED_NAMES` as a pure-claim shorthand, first match wins
+   FR-B4, no registry ⇒ accept-all dev default, `ALERT_UNCLAIMED_POLICY` drop|backlog FR-B2;
+   load-time validation rejects time-predicate matchers (FR-B3, guard 9), multi-alertname
+   rules without `{alertname}` in the key template, placeholder-less/free-text/timestamp
+   templates (FR-C1, guard 10's deferred half); per-rule key templates re-key Stage A and
+   per-rule `bundleHints.rootFilter` feeds FR-D4 step 1 via genesis-stamped
+   `incident.rootFilter`). Stage E gates: FR-E2 budget park (`rca-budget-gate.ts` over the
+   per-event cost-ledger reader `src/app/routes/alertmanager-rca-spend.ts` — NOT a
+   chat_tasks updated_at window, per the cost-governance seq-2 lesson; reserve-before-act
+   p95 reservations with TTL true-up + release-on-failure; fail-OPEN on unreadable spend),
+   FR-E3 flap damping (`flap-damping.ts` — threshold/window/quiet knobs, trips the
+   `flapping` flag on the P2 flags[] seam, demotes only a not-yet-dispatched approved
+   ticket, quiet-restores only what it parked, operator promote sticks), FR-E4 resolved
+   handling (member `resolvedAt` slot filled from Alertmanager `endsAt`, refire clears it;
+   backlog-only + opt-in + all-members-resolved + zero-overflow auto-close as
+   `self-resolved`; `backlog → complete` added to VALID_TRANSITIONS for exactly this path).
+   Named guards in `tests/unit/alert-triage-dispatch.spec.ts`
+   (budget-skip-visible-and-promotable, budget-reserve-before-act, budget-fail-open,
+   flap-defers-and-surfaces, flap-promote-sticks, flap-in-flight-flag-only,
+   resolved-closes-only-backlog, resolved-never-closes-engaged-or-default-off,
+   matcher-hygiene, key-hygiene-multi-alertname, claim-registry-routing,
+   claim-root-filter-feeds-fr-d4, unclaimed-policy); P1's 11 + P2's 8 guards green
+   untouched.
 4. **P4 Autonomy ladder ([ADR-119](adr/119-autonomous-health-ticket-processing.md))** — structurally
    blocked on P1+P3. **Done when:** with the container-health rules at A1, a live container-kill
    drill flows alert → consolidated ticket → RCA proposal waiting at the approve gate with zero

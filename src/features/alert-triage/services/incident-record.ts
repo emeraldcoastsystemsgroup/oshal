@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): the consolidated-incident record shape + tolerant reader, extracted verbatim from alert-consolidation.ts so the new bundling stage can read incident records off candidate tickets without an alert-consolidation <-> alert-bundling import cycle. P2 additions to the record itself: rootCandidate {target, reason} (FR-D4 — the ordered-policy winner and why it won) carried through the tolerant read
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (Stage B + E): members fill the spec §5 resolvedAt? slot (FR-E4 — a resolved event marks the member, a refire clears it); the record gains rootFilter (the claiming rule's ordered FR-D4 root filter, stamped at genesis so the incident's policy is stable) and flap (FR-E3 rolling refire observations + the parked provenance marker). markMemberResolved/allMembersResolved are the pure FR-E4 helpers — full resolution is UNPROVABLE while membersOverflow > 0, so auto-close conservatively refuses then
  */
 
 import type { InternalTicket, TicketPriority } from '@/entities/ticket';
@@ -18,6 +19,21 @@ export interface IncidentMember {
   lastSeen: string;
   count: number;
   attachReason: string;
+  /** Set by a resolved Alertmanager event (FR-E4); cleared again when the member refires. */
+  resolvedAt?: string;
+}
+
+/**
+ * @description FR-E3 flap-damping state riding the incident record: `recent` holds the
+ * newest refire observation timestamps (pruned to the flap window, capped at the flap
+ * threshold — enough to prove "≥ threshold inside the window" without unbounded metadata);
+ * `parked` marks that the flap gate itself demoted this ticket from `approved`, which is
+ * the ONLY provenance that permits the quiet-restore to promote it back — an operator- or
+ * policy-parked backlog ticket is never auto-promoted (automation stays opt-in).
+ */
+export interface IncidentFlapState {
+  recent: string[];
+  parked?: boolean;
 }
 
 /** @description A recorded priority escalation (FR-C4 — "records the escalation"). */
@@ -60,6 +76,10 @@ export interface IncidentRecord {
   rootCandidate?: RootCandidate;
   recurrenceOf?: string;
   recurrenceCount?: number;
+  /** The claiming rule's ordered FR-D4 root filter, stamped at genesis (P3 Stage B). */
+  rootFilter?: string[];
+  /** FR-E3 flap-damping state (P3 Stage E). */
+  flap?: IncidentFlapState;
 }
 
 /**
@@ -89,7 +109,61 @@ export function incidentOf(ticket: InternalTicket): IncidentRecord | null {
     ...(isRootCandidate(inc.rootCandidate) ? { rootCandidate: { target: inc.rootCandidate.target, reason: inc.rootCandidate.reason } } : {}),
     ...(typeof inc.recurrenceOf === 'string' ? { recurrenceOf: inc.recurrenceOf } : {}),
     ...(typeof inc.recurrenceCount === 'number' ? { recurrenceCount: inc.recurrenceCount } : {}),
+    ...(isStringArray(inc.rootFilter) ? { rootFilter: [...inc.rootFilter] } : {}),
+    ...(isFlapState(inc.flap) ? { flap: { recent: [...inc.flap.recent], ...(inc.flap.parked === true ? { parked: true } : {}) } } : {}),
   };
+}
+
+/**
+ * @description FR-E4: marks the member with this fingerprint resolved. A later timestamp
+ * never regresses an earlier one on repeat resolved deliveries.
+ * @param incident - The incident record (mutated).
+ * @param fingerprint - The resolving alert's fingerprint.
+ * @param resolvedAtIso - When the alert resolved (Alertmanager endsAt, or arrival time).
+ * @returns True when a member matched and was marked.
+ */
+export function markMemberResolved(incident: IncidentRecord, fingerprint: string, resolvedAtIso: string): boolean {
+  const member = incident.members.find((m) => m.fingerprint === fingerprint);
+  if (!member) return false;
+  if (!member.resolvedAt || Date.parse(resolvedAtIso) > Date.parse(member.resolvedAt)) {
+    member.resolvedAt = resolvedAtIso;
+  }
+  return true;
+}
+
+/**
+ * @description FR-E4 auto-close precondition: EVERY recorded member is resolved. While
+ * membersOverflow > 0 some members were counted but never recorded, so full resolution is
+ * unprovable — this returns false and auto-close conservatively refuses (a capped storm
+ * must never self-close on partial evidence).
+ * @param incident - The incident record.
+ * @returns True when every member is resolved and none overflowed.
+ */
+export function allMembersResolved(incident: IncidentRecord): boolean {
+  return (
+    incident.members.length > 0 &&
+    incident.membersOverflow === 0 &&
+    incident.members.every((m) => typeof m.resolvedAt === 'string' && m.resolvedAt.length > 0)
+  );
+}
+
+/**
+ * @description Narrow-type check for a stored string array (tolerant read helper).
+ * @param value - Raw metadata value.
+ * @returns True for an array of strings.
+ */
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+/**
+ * @description Narrow-type check for stored flap state (FR-E3) — malformed values drop
+ * instead of propagating, like every other tolerant read here.
+ * @param value - Raw metadata value.
+ * @returns True for a well-formed IncidentFlapState.
+ */
+function isFlapState(value: unknown): value is IncidentFlapState {
+  return !!value && typeof value === 'object' && isStringArray((value as IncidentFlapState).recent);
 }
 
 /**
