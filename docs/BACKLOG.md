@@ -5538,7 +5538,7 @@ packages declare **no bots**, so nothing would re-register them.
   fail-loud escalate; and a guard proves a kernel-mode boot dispatches no ticket to an unregistered
   agentId. Until then `UI_PROFILE=<app>` is the shipped mitigation (customer sees only their app).
 
-**K2 — `system-architect` / `architect-bot`: one UUID, three names.** ⬜
+**K2 — `system-architect` / `architect-bot`: one UUID, three names.** ✅ SHIPPED 2026-08-01
 `swarm-bot-registry-local.ts:772` says `system-architect`; `swarm-bot-registry.ts:782` and
 `swarm-apps/oshal-engineering.yaml:70` say `architect-bot`; `dispatch-routing.ts:96-99` resolves
 the built-in **build** workflow BY NAME on `system-architect`. The kernel manifest registers the
@@ -5546,8 +5546,19 @@ name the build workflow cannot resolve, and `agent-profile-controller.ts` assign
 `system-architect` to a *different* uuid.
 - **Done when:** one name across both registries and the manifest, name-vs-id resolution is
   consistent in dispatch-routing, and a guard fails on a registry/manifest name divergence.
+- **Shipped 2026-08-01:** `system-architect` is the one name — it is what dispatch-routing
+  resolves, what the persona (`system-architect.yaml`) declares, what the compose service is
+  called, and what the local (default) registry already used. Renamed in the full registry +
+  `oshal-engineering.yaml` (bot AND `workflow.workerBot`); `agent-profile-controller.ts` maps
+  a0…0018 to it everywhere and the LEGACY unported a0…0034 row is relabeled
+  `legacy-system-architect` so exactly one identity carries the canonical name; migration 100
+  renames any DB row. Guard: `tests/unit/registry-name-consistency.spec.ts` — shared-id name
+  parity across both registries, manifest-vs-registry name agreement, and every built-in
+  `WORKFLOW_PIPELINES` workerBot resolving BY NAME in BOTH lineups (red on any rename).
+  Residual (cosmetic, deliberately untouched): `intake-l1-processor-service.ts` artifact
+  `ownerRole` prose strings still mix the two spellings — display text, not dispatch.
 
-**K3 — `codex-packer` agentId is a three-way collision.** ⬜
+**K3 — `codex-packer` agentId is a three-way collision.** ✅ SHIPPED 2026-08-01
 `a0000000-0000-0000-0000-000000000030` is declared by `swarm-apps/codex-packer.yaml:36` AND
 `swarm-apps/intelligent-processing.yaml:54`, and `docker-compose.oshal-local.yml:1277` assigns it
 to the **self-healing-bot** service. `validate-swarm-wiring.ts` matches by agentId only, so the
@@ -5555,8 +5566,18 @@ boot audit reports OK. A UUID cannot be safely re-pointed once tickets, `chat_ta
 heartbeats reference it.
 - **Done when:** self-healing-bot has its own agentId, the wiring validator fails on a
   one-id-many-names/services collision, and a migration note covers existing rows.
+- **Shipped 2026-08-01:** self-healing-bot now owns `a0000000-0000-0000-0000-000000000056`
+  (compose `AGENT_ID`, persona `agent_id` — was a slug — and the agent-profile fallback maps);
+  a0…030 is codex-packer's alone. `validate-swarm-wiring.ts` grew `findAgentIdCollisions()` —
+  one agentId under two NAMES across active manifests logs ERROR at boot and throws under
+  `STRICT_SWARM_WIRING=true` (same-name re-declares stay legal). Migration 100 covers existing
+  rows and documents the ambiguity: pre-migration tickets/chat_tasks under a0…030 are a truthful
+  record of the collision era and are left untouched; post-migration attribution is unambiguous.
+  Redis heartbeats self-heal (90s TTL). Guard: `tests/unit/swarm-wiring-collision.spec.ts`
+  (pure detector red on the collision shape, STRICT throw through the real audit, shipped
+  manifests collision-free, compose/persona pinned to a0…056).
 
-**K4 — `self-healing-bot` is the sharpest object in the tree.** ⬜
+**K4 — `self-healing-bot` is the sharpest object in the tree.** ✅ STRICT FORM SHIPPED 2026-08-01
 Mounts `/var/run/docker.sock` (root-equivalent on the host), sets `TOOL_AUTH_DOCKER_SOCKET=auto`
 (the only service overriding the swarm-wide `off`), runs autonomously under
 `ENABLE_SELF_HEALING_SCHEDULER`, grants restart-container / git-pull / analyze-and-fix-code /
@@ -5574,8 +5595,17 @@ docker-build, declares **no accessRoles anywhere**, and reaches a box through
   Still open from the strict done-when: moving the bot out of the kernel-resident manifest set
   entirely (needs an app-store home for the remediation leg + the K3 agentId collision fixed
   first — re-pointing a…030 is its own migration).
+- **STRICT form shipped 2026-08-01 (unblocked by K3):** `intelligent-processing.yaml` declares
+  **no bots at all** — the docker-socket bot is out of the kernel-resident manifest set, so a
+  customer box loading the kernel manifests is never handed a root-equivalent identity. The
+  workflow (rca-specialist worker, queue-bot reviewer) is unchanged; the container remains
+  compose-side behind `profiles: incident, extras` under its own a0…056 identity for the
+  operator's opt-in remediation leg. `kernel-manifest-docker-bot-guard.spec.ts` now asserts the
+  ABSENCE (no kernel manifest declares any host-privileged bot; a0…056 not in the kernel id set)
+  with the seq-1 scoped-accessRoles walk kept as defense-in-depth. Remaining (unchanged intent):
+  an app-store package as the remediation leg's future home — packaging it is store-repo work.
 
-**K5 — worker bots inherit the SUPERUSER database URL; the api does not.** ⬜
+**K5 — worker bots inherit the SUPERUSER database URL; the api does not.** ✅ CODE SHIPPED 2026-08-01 (live soak = deploy-time)
 `docker-compose.oshal-local.yml:225` gives the shared bot env a DSN for the `oshal` role
 (superuser, `rolbypassrls=true`) while the api was moved to least-privilege `oshal_app` at :679.
 **Postgres superuser bypasses RLS** — the keystone of the multi-user isolation the platform is sold
@@ -5584,6 +5614,26 @@ on. VERIFIED NOT APPLICABLE to the first customer box (2026-07-29: api runs `osh
 bot nodes, including the dev box.
 - **Done when:** worker bots use `oshal_app` (or a per-bot least-privilege role), a guard asserts no
   compose service hands a bot a superuser DSN, and the RLS two-user live test is re-run with bots up.
+- **Shipped 2026-08-01 (code + guard):** new dedicated `oshal_bot` role — NOSUPERUSER,
+  NOBYPASSRLS, NOCREATEROLE, DML-only, owns NOTHING (weaker than `oshal_app`, which owns tables
+  for startup DDL: bots do no DDL, so plain RLS enforces everywhere a policy exists). Created
+  idempotently + privilege-tolerantly by migration 099 (runs as superuser in the flag-ON compose
+  bootstrap; degrades to NOTICE elsewhere), with default-privilege grants from BOTH creators
+  (`oshal` migrations + `oshal_app` runtime DDL). All 18 bot-side compose DSNs now read
+  `${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}` — deliberately
+  NOT `${DATABASE_URL}`, so bots can never again inherit whatever the operator's api DSN is
+  (custom-DB boxes set `BOT_DATABASE_URL` beside `DATABASE_URL`). Guard:
+  `tests/unit/bot-db-least-privilege.spec.ts` (no superuser DSN anywhere, exactly ONE
+  `${DATABASE_URL:-…}` left = the api's oshal_app line, role attributes + no-ownership pinned
+  in the migration). **Remaining leg (deploy-time, do at next `oshal-deploy.sh`):**
+  (1) confirm migration 099 applied and `SELECT rolname, rolsuper, rolbypassrls FROM pg_roles
+  WHERE rolname='oshal_bot'` shows f/f; (2) with bot containers up, confirm a bot connects as
+  `oshal_bot` (`SELECT current_user` via the bot's pool log or `docker exec`); (3) re-run the
+  RLS two-user live test with bots up; (4) rotate the dev password on any shared box
+  (`ALTER ROLE oshal_bot WITH PASSWORD …` + `BOT_DATABASE_URL` in `.env`). Residuals noted:
+  `docker-compose.incident-lab.yml` still hands its LAB bots the lab-DB superuser (isolated
+  throwaway DB, api shares the anchor — out of K5's multi-user-isolation scope); `TSDB_URL`
+  (market bars) is a separate single-purpose DB, untouched.
 
 **K6 — `OSHAL_EXECUTE_ENTITLEMENT` appears in no compose file** ⬜ so it defaults to `warn`:
 entitlement denials are logged and then **allowed**. Setting `enforce` (with `OSHAL_OPERATOR_SUBS`
@@ -5602,7 +5652,7 @@ deployment goes dark.
   a runbook line for customer boxes (set `OSHAL_OPERATOR_SUBS` before inviting users to scoped
   bots), and re-checking the denial log on the dev box after the next deploy.
 
-**K7 — internal machinery bots ship unscoped.** ⬜ `code-developer`, `code-reviewer`,
+**K7 — internal machinery bots ship unscoped.** ✅ SHIPPED 2026-08-01 — `code-developer`, `code-reviewer`,
 `test-engineer`, `tester-bot`, `devops-bot`, `research-bot`, `security-analyst`, `vault-bot` and
 `general-bot` declare no `accessRoles`, so ADR-087's "omitted = open to every caller" makes them
 live Jarvis / inbound-A2A call-out candidates with the shared workspace mounted read-write.
@@ -5612,8 +5662,21 @@ fallback, so scoping it must include the `jarvis` role or Jarvis routing breaks.
 - **Done when:** each gets an explicit accessRoles decision (both registries per
   docs/building-a-bot.md), and a guard asserts every bot the platform treats as internal machinery
   declares them.
+- **Shipped 2026-08-01:** all eight get `accessRoles: [operator, swarm]` in BOTH registries
+  where present (security-analyst/vault-bot are local-only by design), plus apply-operator and
+  linkedin-profile-operator on the same decision (desktop-driving rail). `general-bot` gets
+  `[operator, swarm, jarvis]` — the jarvis role is KEPT per the wave-2 constraint (task-lane
+  fallback; `routability-critical-bots.spec.ts` also enforces it). Direct-by-id dispatch
+  (security-routes → security-analyst, devops surface → vault-bot, build pipeline → workers)
+  is unaffected per ADR-087; what closes is discovery + the around-the-gate call-out + (under
+  the K6 enforce default) interactive non-operator execute. Guard:
+  `tests/unit/internal-machinery-scoping.spec.ts` — a NAMED machinery list, every definition in
+  both registries must declare valid roles that DENY 'jarvis' via the real roleCanAccess, the
+  security-analyst identity-vs-route case pinned via live isBotAccessibleTo, and the general-bot
+  constraint pinned as its own case. Behavior note for operators: chatting AS a non-operator
+  user directly with these bots now 403s under the enforce default — set `OSHAL_OPERATOR_SUBS`.
 
-**K8 — registry-membership hazards.** ⬜ `linkedin-profile-operator` is pinned by
+**K8 — registry-membership hazards.** ✅ SHIPPED 2026-08-01 — `linkedin-profile-operator` is pinned by
 `src/app/profile-studio-dispatch.ts:37` and mounted unconditionally, but exists ONLY in
 `swarm-bot-registry.ts` — a kernel filter written against the local registry alone silently misses
 it. `advisor-bot` looks like a **phantom**: no persona, no compose service, no references outside
@@ -5622,6 +5685,17 @@ default off — a prompt-to-external-vendor path with no approval gate, and a th
 customer's DPA inventory.
 - **Done when:** both registries agree on membership for every pinned bot, phantoms are deleted or
   justified, and tool-auth defaults are consistent with the swarm-wide `off` posture.
+- **Shipped 2026-08-01:** linkedin-profile-operator AND its rail sibling apply-operator (also
+  full-registry-only, pinned by browser-task-dispatch) added to the local registry — identical
+  defs, operator+swarm scoped; `internal-machinery-scoping.spec.ts` pins both core-pinned ids to
+  exist in BOTH registries under one name. The `advisor-bot` phantom was ALREADY deleted on main
+  (2026-07-29 ADR-045 closure, both registries — this item's description predates it; verified
+  zero references remain). Tool-auth: `TOOL_AUTH_GOOGLE_SEARCH` compose default flipped
+  auto→off (matches the code default in cliTools.js and the off posture of every other
+  externally-reaching lane; opt back in per-deployment via `.env`); plane/chroma stay auto as
+  pinned in-stack exceptions. Guard: `tests/unit/compose-tool-auth-defaults.spec.ts` (all
+  external lanes -off}, exactly two auto exceptions, and the ONLY hard per-service escalation is
+  self-healing-bot's docker-socket inside the profile-gated service).
 
 ## First-run provisioning wizard — store → apps → users → defaults (operator vision, 2026-07-28) ⬜
 

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Fail-loud swarm-wiring audit: a manifest bot with no endpoint-registry entry compiles green but throws at runtime (the build-your-own-swarm-app "compiles-but-fails" trap). Catch it at boot.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | K3 (BACKLOG kernel audit): the audit matched by agentId ONLY, so one id declared by TWO manifests under DIFFERENT names (codex-packer.yaml + intelligent-processing.yaml both claiming a0…030) reported OK while heartbeats, cost rows and dispatch attribution were ambiguous. findAgentIdCollisions now flags any agentId carrying more than one bot NAME across active manifests — logged as ERROR, thrown under STRICT_SWARM_WIRING=true. Guard: tests/unit/swarm-wiring-collision.spec.ts.
  */
 
 /**
@@ -21,6 +22,8 @@ const logger = createChildLogger({ module: 'validate-swarm-wiring' });
 
 export interface ManifestAppBots { appName: string; bots: Array<{ name: string; agentId: string }>; }
 export interface WiringIssue { appName: string; botName: string; agentId: string; reason: 'no-registry-entry'; }
+/** @description One agentId claimed under more than one bot NAME across active manifests (K3). */
+export interface AgentIdCollision { agentId: string; claims: Array<{ appName: string; botName: string }>; }
 
 /**
  * PURE: return one issue per active-manifest bot whose agentId is absent from the endpoint registry.
@@ -37,6 +40,34 @@ export function findUnregisteredBots(apps: ManifestAppBots[], registeredAgentIds
     }
   }
   return issues;
+}
+
+/**
+ * PURE: return one collision per agentId that active manifests claim under MORE THAN ONE bot name
+ * (K3 — the codex-packer/self-healing-bot shape: a UUID cannot be safely re-pointed once tickets,
+ * chat_tasks and Redis heartbeats reference it, so two names on one id is always a defect).
+ * Multiple manifests re-declaring the SAME name on one id stay legal (shared framework bots).
+ *
+ * @param apps - Active manifests' declared bots.
+ * @returns One entry per ambiguous agentId, with every claiming app+name.
+ */
+export function findAgentIdCollisions(apps: ManifestAppBots[]): AgentIdCollision[] {
+  const byId = new Map<string, Array<{ appName: string; botName: string }>>();
+  for (const app of apps) {
+    for (const bot of app.bots) {
+      if (!bot.agentId) continue;
+      const claims = byId.get(bot.agentId) ?? [];
+      claims.push({ appName: app.appName, botName: bot.name });
+      byId.set(bot.agentId, claims);
+    }
+  }
+  const collisions: AgentIdCollision[] = [];
+  for (const [agentId, claims] of byId.entries()) {
+    if (new Set(claims.map((c) => c.botName)).size > 1) {
+      collisions.push({ agentId, claims });
+    }
+  }
+  return collisions;
 }
 
 /**
@@ -66,8 +97,25 @@ export async function auditSwarmBotWiring(swarmAppService: SwarmAppService): Pro
   );
   const issues = findUnregisteredBots(apps, registered);
 
+  // K3: one agentId under two names is invisible to the id-only check above — it "resolves",
+  // to whichever definition wins, and every downstream attribution is ambiguous. Fail loud.
+  const collisions = findAgentIdCollisions(apps);
+  for (const c of collisions) {
+    logger.error(
+      { agentId: c.agentId, claims: c.claims },
+      `SWARM WIRING COLLISION: agentId ${c.agentId} is declared under ${new Set(c.claims.map((x) => x.botName)).size} different names `
+      + `(${c.claims.map((x) => `${x.appName}:${x.botName}`).join(', ')}). One UUID = one bot — give each bot its own agentId `
+      + `(a UUID cannot be safely re-pointed once tickets/chat_tasks/heartbeats reference it; see migration 100 for the K3 precedent).`,
+    );
+  }
+  if (collisions.length > 0 && process.env.STRICT_SWARM_WIRING === 'true') {
+    throw new Error(`Swarm-wiring audit failed: ${collisions.length} agentId collision(s) across active manifests`);
+  }
+
   if (issues.length === 0) {
-    logger.info({ apps: apps.length }, 'Swarm-wiring audit OK — every active manifest bot resolves in the endpoint registry');
+    if (collisions.length === 0) {
+      logger.info({ apps: apps.length }, 'Swarm-wiring audit OK — every active manifest bot resolves in the endpoint registry');
+    }
     return issues;
   }
 

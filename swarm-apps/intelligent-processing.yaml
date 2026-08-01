@@ -6,8 +6,9 @@
 # containers land here as `intelligent-processing` tickets (kept distinct from
 # generic `incident` so they filter cleanly in the cockpit), park in BACKLOG for
 # operator triage, and — once promoted to approved — flow through the framework's
-# incident-rca pipeline: RCA bots root-cause and PROPOSE a fix, then on the
-# approve-or-close gate the self-healing-bot applies the container action.
+# incident-rca pipeline: RCA bots root-cause and PROPOSE a fix. Executing a
+# container remediation is an operator act on the profile-gated self-healing
+# node (see the BOTS note below — K4 keeps that identity OUT of this manifest).
 #
 # Intake path: Prometheus → Alertmanager → POST /api/alerts/alertmanager
 #   (see src/app/routes/alertmanager-routes.ts, docs/runbooks/self-healing-monitoring.md)
@@ -19,8 +20,9 @@ displayName: Intelligent Processing
 description: >-
   Streamlined self-healing alert queue. Prometheus self-monitoring alerts open
   intelligent-processing tickets that park in backlog until an operator promotes
-  them, then run the incident-rca pipeline (RCA proposes, self-healing-bot
-  applies the container fix at the approve-or-close gate).
+  them, then run the incident-rca pipeline (RCA proposes a fix; executing a
+  container remediation is an operator act on the profile-gated self-healing
+  node, outside this manifest).
 version: 1.0.0
 status: active
 
@@ -44,33 +46,17 @@ workflow:
   maxRevisions: 2
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BOTS — only the bot unique to this app. self-healing-bot is the fix-APPLIER:
-# the one worker with the Docker socket + restart-container tool (its container
-# is in docker-compose.oshal-local.yml, profile: incident). Selected post-RCA on
-# approval to execute the remediation. Runs the protected autonomous-monitoring
-# hook (ENABLE_SELF_HEALING_SCHEDULER).
+# BOTS — NONE (K4 strict form, kernel audit 2026-07-29). self-healing-bot — the
+# docker-socket bot, root-equivalent on the host — is deliberately NOT declared
+# by any kernel-resident manifest anymore: a customer box loading the kernel
+# manifests must never be handed a host-privileged identity. Its container stays
+# in docker-compose.oshal-local.yml behind `profiles: incident, extras` (opt-in,
+# never in a default bring-up) under its OWN agentId a0000000-…-000000000056
+# (K3 — the old a0…030 was a three-way collision with codex-packer). The
+# remediation leg's future home is an app-store package (BACKLOG). Guarded by
+# tests/unit/kernel-manifest-docker-bot-guard.spec.ts, which fails if ANY
+# kernel manifest declares a docker-capable bot again.
 # ─────────────────────────────────────────────────────────────────────────────
-bots:
-  - agentId: a0000000-0000-0000-0000-000000000030
-    name: self-healing-bot
-    persona: ai-lab/bot-personas/self-healing-bot.yaml
-    role: incident/self-healing
-    # K4 (kernel audit 2026-07-29): this is the docker-socket bot — root-equivalent on the
-    # host. It exists for the operator-approved remediation leg of the incident-rca pipeline
-    # ONLY, so it is scoped to operator + swarm callers (ADR-087): Jarvis cannot discover it,
-    # user delegation cannot reach it, and the execute-time entitlement gate (enforce default)
-    # refuses an interactive identity caller. Guarded by
-    # tests/unit/kernel-manifest-docker-bot-guard.spec.ts — do not remove without moving the
-    # bot out of the kernel-resident manifest set entirely.
-    accessRoles:
-      - operator
-      - swarm
-    capabilities:
-      - self-healing
-      - container-restart
-      - infrastructure-remediation
-      - docker
-      - monitoring
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI — a dedicated ribbon screen for the queue. Served standalone at

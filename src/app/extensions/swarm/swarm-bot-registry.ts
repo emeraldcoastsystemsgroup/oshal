@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Fix ADR-085 carve id collision: drone-operator moved b0100000-…001 → b00f0000-…001. The portrait-studio store package had reused b0100000-…001, so the live DB had that id as portrait-artist (active) and drone-operator displaced to b00f0000-…001 (inactive). Operator-chosen resolution: portrait keeps b0100000, drone-operator reverts to its (already-in-DB) b00f0000 id. Surfaced by scripts/swarm-app-bot-integrity-check.sh.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Registry parity: codex-packer (the Bot Forge, a0…030) existed ONLY in the local registry, so SWARM_REGISTRY=full silently dropped the Forge bot while its app manifest, ribbon tab, and chat surface all stayed up. Added the same inline entry here (container oshal-api, claude-code, operator+swarm scoped per ADR-087); parity guarded by codex-packer-created-bot.spec.ts.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: removed the PHANTOM advisor-bot row (e0…200) — no persona YAML, no compose service, no manifest, no heartbeat, so it could never be personified or dispatched. Removed from BOTH registries in the same change so the two cannot drift (the mirrored-registry rule cuts both ways).
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | K2/K7 (BACKLOG kernel audit 2026-07-29): a0…0018 renamed architect-bot → system-architect — ONE name everywhere. The split was live breakage in full mode: dispatch-routing's built-in build workflow resolves BY NAME on 'system-architect', which this registry did not contain, and the oshal-engineering manifest registered the third variant. Now both registries, the manifest, the persona (system-architect.yaml), and the compose service all agree; migration 100 renames the DB row; guarded by registry-name-consistency.spec.ts. K7: scoped code-developer, code-reviewer, devops-bot, research-bot, test-engineer, tester-bot, apply-operator to operator+swarm (internal machinery, ADR-087) and general-bot to operator+swarm+jarvis (task-lane fallback KEEPS jarvis — wave-2 constraint). Kernel-set comment for a0…030 corrected to codex-packer (self-healing-bot moved to a0…056 + out of the kernel manifests — K3/K4).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -165,8 +166,10 @@ function dynamicAppBots(): SwarmBotDefinition[] {
  * `tests/unit/kernel-registry-scope.spec.ts` recomputes exactly that and fails if the two drift —
  * add a kernel manifest and the test tells you to update this list.
  *
- * Keyed by agentId, NOT name: a manifest's bot name and its registry name legitimately differ
- * (`architect-bot` vs `system-architect`), and the id is the contract both sides must share.
+ * Keyed by agentId, NOT name: the id is the contract both sides must share, and a name is a
+ * label that has already drifted once (the architect-bot/system-architect split, K2 — one name
+ * everywhere now, and registry-name-consistency.spec.ts fails on any new manifest/registry
+ * name divergence).
  */
 const KERNEL_BOT_AGENT_IDS: ReadonlySet<string> = new Set([
   'a0000000-0000-0000-0000-000000000099', // general-bot — ADR-083 low-confidence routing fallback
@@ -178,11 +181,11 @@ const KERNEL_BOT_AGENT_IDS: ReadonlySet<string> = new Set([
   'a0000000-0000-0000-0000-000000000003', // code-reviewer          │ oshal-engineering
   'a0000000-0000-0000-0000-000000000004', // documentation-writer   │ (build pipeline)
   'a0000000-0000-0000-0000-000000000005', // test-engineer          │
-  'a0000000-0000-0000-0000-000000000018', // architect-bot          ┘
+  'a0000000-0000-0000-0000-000000000018', // system-architect       ┘
   'a0000000-0000-0000-0000-000000000016', // rca-specialist            ┐ intelligent-operations
   'a0000000-0000-0000-0000-00000000000b', // incident-response-bot     │ (incident/RCA pipeline)
   'e0000000-0000-0000-0000-000000000100', // incident-remediation-bot  ┘
-  'a0000000-0000-0000-0000-000000000030', // self-healing-bot (intelligent-processing)
+  'a0000000-0000-0000-0000-000000000030', // codex-packer (the Bot Forge, codex-packer.yaml) — K3: self-healing-bot moved OFF this id (→ a0…056) and out of the kernel manifests (K4)
   'a0000000-0000-0000-0000-000000000047', // security-analyst (security)
   'a0000000-0000-0000-0000-0000000000d0', // vault-bot (devops)
   'a0000000-0000-0000-0000-000000000051', // workflow-assistant (workflow-studio)
@@ -297,6 +300,7 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['ats-form-fill', 'browser-screen-control', 'application-submission', 'email-code-retrieval', 'application-recording'],
     harnessType: 'codex-cli',
     apiType: 'openai-codex',
+    accessRoles: ['operator', 'swarm'],  // K7/K8: desktop-driving machinery dispatched by the apply rail, not Jarvis-discoverable (ADR-087)
   },
   {
     // LinkedIn-profile-operator — apply-operator's sibling on the SAME remote-worker rail (LinkedIn
@@ -514,6 +518,9 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['general-assistance', 'cross-domain-synthesis', 'web-research', 'overflow-fallback'],
     harnessType: 'codex-cli',
     apiType: 'openai-codex',
+    // K7 with the wave-2 CONSTRAINT: general-bot is the Jarvis 'task' lane fallback, so its
+    // scoping MUST include 'jarvis' or every Jarvis-sourced task ticket strands with no owner.
+    accessRoles: ['operator', 'swarm', 'jarvis'],
   },
   {
     // Workflow Studio (ADR-039) — inline concierge run via the orchestrator; the BRAIN turns a
@@ -617,6 +624,7 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['coding', 'implementation', 'debugging'],
     harnessType: 'codex-cli',
     apiType: 'openai-codex',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery with the shared workspace rw — not a Jarvis call-out target (ADR-087)
   },
   // video-director — the Video Studio app (swarm-apps/video.yaml, ?app=video).
   // REASON-ONLY: drafts a scene-by-scene storyboard JSON; the api renders the real .mp4
@@ -738,6 +746,7 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     role: 'localhost/worker',
     capabilities: ['code-review', 'security', 'quality'],
     harnessType: 'claude-code',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery — not a Jarvis call-out target (ADR-087)
   },
   {
     agentId: 'a0000000-0000-0000-0000-000000000016',
@@ -783,6 +792,7 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     container: 'devops-bot',
     role: 'localhost/worker',
     capabilities: ['infrastructure', 'cicd', 'kubernetes', 'docker', 'monitoring'],
+    accessRoles: ['operator', 'swarm'],   // K7: infra machinery — not a Jarvis call-out target (ADR-087)
   },
   {
     agentId: 'a0000000-0000-0000-0000-00000000000b',
@@ -806,6 +816,7 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['research', 'analysis', 'documentation', 'investigation'],
     harnessType: 'claude-code',
     apiType: 'claude-code',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline research machinery — not a Jarvis call-out target (ADR-087)
   },
   {
     agentId: 'a0000000-0000-0000-0000-00000000000a',
@@ -824,10 +835,15 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['testing', 'validation', 'verification', 'test-automation', 'qa'],
     harnessType: 'cline',
     apiType: 'openai-codex',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery — not a Jarvis call-out target (ADR-087)
   },
   {
+    // K2: renamed architect-bot → system-architect (one UUID had three names). This is the name
+    // dispatch-routing's built-in build workflow resolves BY NAME, the name the local registry and
+    // the compose service already used, and the name the persona file (system-architect.yaml)
+    // declares. Guarded by registry-name-consistency.spec.ts; DB row renamed by migration 100.
     agentId: 'a0000000-0000-0000-0000-000000000018',
-    name: 'architect-bot',
+    name: 'system-architect',
     port: 3023,
     container: 'system-architect',
     role: 'localhost/worker',
@@ -850,6 +866,7 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     container: 'tester-bot',
     role: 'localhost/worker',
     capabilities: ['testing', 'qa', 'test-standards', 'acceptance-criteria', 'test-automation'],
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery — not a Jarvis call-out target (ADR-087)
   },
   {
     agentId: 'a0000000-0000-0000-0000-000000000023',

@@ -9,6 +9,8 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Forward the operator-notification env (NOTIFY_TRANSPORT, TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID, TWILIO_* SMS/voice) into the api service — the pluggable notify harness and oshal-send-alert.js run there, and without the passthrough the host .env credentials never reached the process, so every transport silently no-opped in-container.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | World classify re-enable rails: forward WORLD_CLASSIFY_BUDGET_PER_HOUR/PER_DAY (the global LLM-call ceiling the 2026-06-29 burn proved missing), and default WORLD_CLASSIFY_PROVIDERS to claude alone — the codex default routed every other chunk to a CLI documented broken in this container (read-only-fs app-server), which silently lexicon-degraded half the classify work.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | K5 (BACKLOG kernel audit): every bot-side DATABASE_URL now defaults to the least-privilege oshal_bot role (migration 099) and reads its OWN interpolation var BOT_DATABASE_URL — bots no longer inherit the operator's DATABASE_URL, which on legacy .envs was the RLS-bypassing superuser. The api keeps oshal_app (runtime) + the superuser BOOTSTRAP_DATABASE_URL (migrations/provisioning) unchanged. Custom-DB deployments must now set BOT_DATABASE_URL beside DATABASE_URL. Guard: tests/unit/bot-db-least-privilege.spec.ts.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | K8: TOOL_AUTH_GOOGLE_SEARCH default auto→off — the one prompt-to-external-vendor tool lane that defaulted open while aws/kubectl/gcloud/docker were off; opt back in per-deployment via .env. K3: the self-healing-bot service gets its OWN AGENT_ID a0…056 — a0…030 was a three-way collision with codex-packer (two manifests + this service), so heartbeats/chat_tasks/tickets under 030 were ambiguous between the Bot Forge and the docker-socket bot. Migration 100 covers existing rows. Guards: compose-tool-auth-defaults.spec.ts + swarm-wiring-collision.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -243,7 +245,12 @@ x-bot-env: &bot-env
   TOOL_AUTH_KUBECTL: ${TOOL_AUTH_KUBECTL:-off}
   TOOL_AUTH_GCLOUD: ${TOOL_AUTH_GCLOUD:-off}
   TOOL_AUTH_DOCKER_SOCKET: ${TOOL_AUTH_DOCKER_SOCKET:-off}
-  TOOL_AUTH_GOOGLE_SEARCH: ${TOOL_AUTH_GOOGLE_SEARCH:-auto}
+  # K8: off like the other externally-reaching tool lanes (it was the ONE auto default —
+  # a prompt-to-external-vendor path with no approval gate and a third LLM vendor in a
+  # customer's DPA inventory). Opt in per-deployment: TOOL_AUTH_GOOGLE_SEARCH=auto in .env.
+  TOOL_AUTH_GOOGLE_SEARCH: ${TOOL_AUTH_GOOGLE_SEARCH:-off}
+  # plane/chroma stay auto: both resolve to in-stack services (no external vendor). Pinned
+  # by compose-tool-auth-defaults.spec.ts so changing this posture is a deliberate act.
   TOOL_AUTH_PLANE_MCP: ${TOOL_AUTH_PLANE_MCP:-auto}
   TOOL_AUTH_CHROMA_MCP: ${TOOL_AUTH_CHROMA_MCP:-auto}
   # Default cockpit profile: the clean first-run "starter" cockpit — Jarvis up
@@ -260,7 +267,14 @@ x-bot-env: &bot-env
   # if a bot tried to shell out to `aws`, the call would be blocked.
   # ── Infrastructure ──
   REDIS_URL: redis://oshal-redis:6379
-  DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+  # SECURITY (K5): bots connect as the least-privilege oshal_bot role — NOSUPERUSER,
+  # NOBYPASSRLS, DML-only, provisioned idempotently by migration 099. Postgres exempts
+  # superusers from RLS, so the old `oshal` default made every bot node an RLS bypass —
+  # the keystone of per-user isolation. Deliberately reads BOT_DATABASE_URL, NOT
+  # DATABASE_URL: bots must never inherit the operator's api DSN (a legacy .env pointing
+  # DATABASE_URL at the superuser would silently re-open the bypass). Custom-DB
+  # deployments set BOT_DATABASE_URL beside DATABASE_URL.
+  DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
   CHROMADB_URL: http://oshal-chromadb:8000
   # Graph engine (ADR-045) — per-person + per-tenant graphs as isolated ArangoDB databases.
   ARANGO_URL: http://oshal-arangodb:8529
@@ -1379,7 +1393,10 @@ services:
     environment:
       <<: *bot-env
       BOT_NAME: self-healing-bot
-      AGENT_ID: a0000000-0000-0000-0000-000000000030
+      # K3: its OWN id — a0…030 belongs to codex-packer (the Bot Forge). The old three-way
+      # collision (two manifests + this service on one id) made heartbeats, chat_tasks cost
+      # and ticket attribution ambiguous; migration 100 covers existing DB rows.
+      AGENT_ID: a0000000-0000-0000-0000-000000000056
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/self-healing-bot.yaml
       AGENT_CAPABILITIES: "self-healing,docker,container-restart,remediation,infrastructure,monitoring"
       ENABLE_SELF_HEALING_SCHEDULER: "true"
@@ -1707,7 +1724,7 @@ services:
       # Owns email: reads the per-user connector token (DATABASE_URL), decrypts
       # it (SESSION_SECRET, from *bot-env), and calls Gmail/Calendar. The OIDC
       # client creds power the Google refresh flow used by scripts/oshal-gmail.js.
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       GOOGLE_CONNECT_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       GOOGLE_CONNECT_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
       # Default mailbox so oshal-gmail.js resolves when >1 Google account is connected
@@ -1806,7 +1823,7 @@ services:
       # the same proven pattern as email-bot/home-bot/cloud-ops-bot. Overrides the *bot-env default.
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       # career_database tool (node scripts/oshal-jobhunter.js query) reads the user's jobs DB here.
       JOBHUNTER_STORE_ROOT: /app/output/career-hunter-data
       BOT_UI_LABEL: Assistant
@@ -1854,7 +1871,7 @@ services:
       AGENT_CAPABILITIES: "restaurant-search,menu-browse,food-order-building,uber-eats-checkout-handoff,dietary-filtering,cuisine-preferences"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       BOT_UI_LABEL: Order Food
       BOT_UI_URL: /cockpit/?app=eats
       BOT_UI_ICON: "codicon codicon-flame"
@@ -1896,7 +1913,7 @@ services:
       AGENT_CAPABILITIES: "ride-fare-estimate,ride-options-comparison,rideshare-trip-planning,uber-ride-handoff,ride-preference-learning"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       BOT_UI_LABEL: Rides
       BOT_UI_URL: /cockpit/?app=rides
       BOT_UI_ICON: "codicon codicon-rocket"
@@ -1942,7 +1959,7 @@ services:
       AGENT_CAPABILITIES: "product-search,retail-price-comparison,shopping-list-management,cross-retailer-cart-building,rollback-deal-tracking,retail-checkout-handoff,purchase-preference-memory"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -1974,7 +1991,7 @@ services:
       AGENT_CAPABILITIES: "spotify-music-search,spotify-playlist-building,music-recommendation,music-taste-learning,now-playing-awareness"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2006,7 +2023,7 @@ services:
       AGENT_CAPABILITIES: "flight-search,hotel-search,car-search,fare-price-intelligence,fare-watch,trip-itinerary-planning,traveller-preference-learning,booking-handoff"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2038,7 +2055,7 @@ services:
       AGENT_CAPABILITIES: "movie-tv-discovery,title-search,where-to-watch-streaming,watchlist-curation,movie-taste-learning,showtimes-handoff"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2072,7 +2089,7 @@ services:
       AGENT_CAPABILITIES: "post-drafting,voice-matching,content-refinement,personal-branding,linkedin-post-drafting,x-post-drafting,facebook-page-post-drafting,caption-writing,hook-and-cta-crafting"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2104,7 +2121,7 @@ services:
       AGENT_CAPABILITIES: "storage-target-config,github-repo-create,file-store-listing,storage-backend-routing,storage-management"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2136,7 +2153,7 @@ services:
       AGENT_CAPABILITIES: "presentation-outline,slide-structure,deck-template-recommendation,pitch-deck-drafting,deck-guidance"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2168,7 +2185,7 @@ services:
       AGENT_CAPABILITIES: "personal-finance-brief,net-worth-analysis,account-balance-aggregation,portfolio-holdings-review,spending-and-cashflow-analysis,budget-tracking"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2200,7 +2217,7 @@ services:
       AGENT_CAPABILITIES: "market-signal-analysis,trade-decision,decision-tree-justification,portfolio-audit,autopilot-pnl,order-forensics,risk-gate-forensics"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2232,7 +2249,7 @@ services:
       AGENT_CAPABILITIES: "connection-inventory-review,access-health-review,expired-login-detection,duplicate-account-detection,stale-connection-detection,missing-connector-suggestion,default-account-check"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2267,7 +2284,7 @@ services:
       AGENT_CAPABILITIES: "general-assistance,cross-domain-synthesis,web-research,overflow-fallback"
       FORCE_LLM_PROVIDER: openai-codex
       FORCE_LLM_MODEL: gpt-5.5
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2312,7 +2329,7 @@ services:
       FORCE_LLM_MODEL: gpt-5.5
       # Reads the per-user SmartThings token: decrypts oshal_connections (DATABASE_URL +
       # SESSION_SECRET from *bot-env). Per-user scoping via OSHAL_USER_SUB at dispatch.
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       BOT_UI_LABEL: Smart Home
       BOT_UI_URL: /cockpit/?app=home
       BOT_UI_ICON: "codicon codicon-home"
@@ -2358,7 +2375,7 @@ services:
       FORCE_LLM_MODEL: gpt-5.5
       # Reads the per-user GCP token (DATABASE_URL + SESSION_SECRET) and refreshes it
       # via the GCP OAuth client creds when expired (oshal-gcp.js).
-      DATABASE_URL: ${DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       GCP_CLIENT_ID: ${GCP_CLIENT_ID:-}
       GCP_CLIENT_SECRET: ${GCP_CLIENT_SECRET:-}
       BOT_UI_LABEL: Cloud
