@@ -1,7 +1,7 @@
 # ADR-027: Swarm Cost Rollup — Per-Bot Task Linking and Cost Aggregation
 
 ## Status
-Accepted (Partially Implemented — Session 18)
+Accepted — implemented (reconciled 2026-07-31: per-bot task linking + cost aggregation are live platform rails — `src/app/record-cost.ts` → `chat_tasks` + `ticket_task_links`, and the ADR-107 run-trace read model assembles from exactly these rows)
 
 ## Date
 2026-03-29 (proposed) / 2026-03-30 (implemented)

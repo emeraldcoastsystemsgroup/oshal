@@ -1,5 +1,7 @@
 # ADR-090 — Skills as first-class packages: origin, and the four "who may X" axes (depend / call / set / trust)
 
+> **Numbering note:** ADR number 090 is shared by two files — this one (“ADR-090-skills”) and [090-github-actions-to-local-ci.md](090-github-actions-to-local-ci.md) (local CI; cited elsewhere as **ADR-090-CI**). Neither is renumbered, so existing links stay valid.
+
 - **Status:** **Accepted — all open questions O1–O8 decided by the operator 2026-07-13**
   (via the cost/benefit decision slate; every recommendation taken as proposed — see the
   resolutions inline in "Open questions" below). Written 2026-07-11 from the operator's raise while

@@ -10,10 +10,11 @@
   dependency-aware uninstall (impact/409/orphans-never-cascade); the generic per-user
   dynamic-tool visibility hook; package-bundled cockpit skins. Flags
   `APP_PACKAGE_DYNAMIC_ROUTES` / `APP_PACKAGE_MIGRATIONS` default OFF (local api opts in).
-  **Follow-on work:** converting the remaining ~39 baked-in apps is planned (not executed) in
-  [docs/apps/swarm-store-migration-plan.md](../apps/swarm-store-migration-plan.md) — incl. the
-  Wave-0 bot-container-model decision (D1, needs its own ADR) and six proposed kernel-resident
-  apps awaiting operator sign-off.
+  **Follow-on work — COMPLETE 2026-07-19:** the remaining-apps migration under
+  [docs/apps/swarm-store-migration-plan.md](../apps/swarm-store-migration-plan.md) executed —
+  all carve-eligible app surfaces carved to the store, kernel down to 10 core-platform manifests
+  (see the completion stamp in docs/BACKLOG.md §“App store (ADR-085)”); the Wave-0
+  bot-container-model decision (D1) landed as ADR-093.
 - **Date:** 2026-07-09 (accepted 2026-07-10)
 - **Author:** maintainer@emeraldcoastsystemsgroup.com
 - **Related:**

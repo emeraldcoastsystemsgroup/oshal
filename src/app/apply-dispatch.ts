@@ -1,7 +1,9 @@
 /**
  * Job-Apply — ticket-gated desktop dispatch. The browser submission runs on the operator's desktop
  * worker node via `codex.exec` + the node's local browser controls, reached ONLY through the
- * queue/worker path — like lora-train-dispatch (ADR-070 privilege rule), never a direct endpoint
+ * queue/worker path — like lora-train-dispatch (the ticket-gated queue/worker dispatch privilege
+ * rule, grounded in ADR-085's queue/worker rail; the old "ADR-070" label here was a mislabel —
+ * ADR-070 is multi-provider video generation — see ADR-101's numbering note), never a direct endpoint
  * call. This module resolves the desktop worker, STAGES the packet (resume + cover + profile) into
  * the task's shared workspace folder so a NON-co-located remote box can pull it into codex's working
  * directory (the workspace-sync rail — a truly-remote node has no `oshal-local-api` container to
@@ -43,6 +45,10 @@
  *   each milestone, so the cockpit apply queue can show a run as it happens. The worker was already
  *   screenshot-driven; the frames just died on its own disk with a path echoed into the final note.
  *   Explicitly marked telemetry — a failed beat must never abort a real application.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: corrected the
+ *   "ADR-070 privilege rule" mislabel in the header (ADR-070 is multi-provider video generation;
+ *   the queue/worker privilege rule is grounded in ADR-085 — flagged by ADR-101's numbering note).
+ *   No code change.
  *
  * @module app/apply-dispatch
  */

@@ -1,6 +1,6 @@
 # ADR-013: Headscale Self-Hosted Overlay Network for External Agent Nodes
 
-**Status:** Proposed  
+**Status:** Accepted — implemented (reconciled 2026-07-31; the 2026-03-10 status had gone stale): `infra/headscale/` ships the compose + config + hardened ACL policy (+ k8s resources), with `scripts/headscale-setup.sh` + `scripts/headscale-enroll-worker.sh`, runbooks (`docs/runbooks/headscale-acl-hardening.md`, `docs/runbooks/remote-swarm-node-enrollment.md`), the ACL guard `tests/unit/headscale-policy.spec.ts`, and the A2A `headscale-http` transport (`src/shared/types/a2a.ts`)  
 **Date:** 2026-03-10  
 **Deciders:** OSHAL project team  
 **Technical Story:** Phase 11 Session 22 — Headscale Architecture Workspace

@@ -1,6 +1,6 @@
 # ADR-052 — Stock-trading swarm: signal-justified execution with dual ledgers (Alpaca)
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented and extended far past this ADR (reconciled 2026-07-31): the trading stack is a live feature slice (`src/features/trading/` + the `scripts/oshal-*` trading CLI suite, incl. the shared ensemble engine `scripts/oshal-algos.js`); see ADR-053 (“built out well past this ADR”), ADR-092 (strategy lab), ADR-095 (strategy library), ADR-096 (shadow indicators)
 - **Date:** 2026-06-18
 - **Related:** [ADR-036 (bot-owned application architecture)](036-bot-owned-application-architecture.md),
   [ADR-037 (communications swarm — the social/news sensing service)](037-communications-swarm.md),

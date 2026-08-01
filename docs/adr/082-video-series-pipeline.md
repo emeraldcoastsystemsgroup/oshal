@@ -1,6 +1,6 @@
 # ADR-082 — Video Series Pipeline
 
-**Status:** Accepted (partially built — see Consequences)
+**Status:** Accepted — built and proven end to end; since 2026-07-30 it is driven nightly by the ADR-120 joke-shorts pump (first episode produced with no human in the loop). Graph orchestration, the codex-default key and ComfyUI wiring remain open — see Consequences. (Reconciled 2026-07-31.)
 **Date:** 2026-07-08
 **Supersedes/extends:** ADR-080 (Creative Studio), ADR-036 (bot-owned domain)
 

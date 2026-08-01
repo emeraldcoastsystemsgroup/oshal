@@ -1,6 +1,6 @@
 # ADR-043 — Presentation Studio: bot-scoped store, visible save target, real preview, guided flow
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented (reconciled 2026-07-31): the presentations bundle shipped (`src/features/presentation-generation/`), then was extended by ADR-103 (AI Office — one themed engine across pptx/docx/xlsx) and ADR-108 (delivery adapters)
 - **Date:** 2026-06-17
 - **Related:** [ADR-036 (bot-owned application architecture)](036-bot-owned-application-architecture.md),
   [ADR-037 (communications swarm — reference app)](037-communications-swarm.md),

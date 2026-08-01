@@ -1,6 +1,6 @@
 # ADR 038 — Swarms bundled by type (the swarm catalog)
 
-Status: **Proposed** (2026-06-15)
+Status: **Accepted — implemented** (2026-06-15; reconciled 2026-07-31). The bundled-by-type model is the shipped app shape: comms (ADR-037) is the reference implementation and the social / storage / presentations / operations bundles are built; packaging moved to the ADR-085 store, with ADR-097 suites as shelf metadata.
 Builds on: [ADR 036 bot-owned apps](036-bot-owned-application-architecture.md), [ADR 037 comms swarm](037-communications-swarm.md) (the **reference implementation**), [connectors-tenant-isolation](../architecture/connectors-tenant-isolation.md), [ADR 035 multi-tenant](035-multi-tenant-saas-foundation.md)
 
 ## Context

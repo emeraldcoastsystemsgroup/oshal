@@ -60,14 +60,14 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | [creative-studio/](./creative-studio/README.md) | Google Vids remote-node pipeline notes for episode writing, rendering, validation, and delivery. |
 | [delivery/](./delivery/README.md) | How a client engagement is run — the seven-step method, its artifact set, and the four `delivery-*` bots that replicate it. |
 | [enterprise/](./enterprise/README.md) | Permission-aware RAG, procurement security packet, SCIM bridge. |
-| evidence/ | Generated competitive-scoreboard evidence (nightly refresh — don't hand-edit generated reports). |
+| evidence/ | *Not in this repo* — the generated competitive-scoreboard evidence tree is internal-only and lives in the private archive (see CLAUDE.md Rule 0b). |
 | [governance/](./governance/README.md) | RLS/RBAC policies, provisioning SQL, RLS runbook. |
-| intelligent-career-automation/ | Apply-agent specs and application-form playbook. |
+| intelligent-career-automation/ | *Not in this repo* — the apply-agent specs and application-form playbook stayed in the private archive. |
 | [k8/](./k8/README.md) | Kubernetes setup docs and handover (the manifests themselves live in `ops/any-bot-k8s/`). |
 | [legal/](./legal/README.md) | Licensing, attribution, trademark, and inbound contribution terms — what AGPL-3.0 actually grants and requires, and the commercial exception. |
 | [little-monsters](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/little-monsters) | Little Monsters K-12 study app — carved out to the oshal-applications store (ADR-085): install, user guide, runbook, support, school deployment live in the package. |
 | [operations/](./operations/README.md) | Support / SLA / incident posture. |
-| release/ | Go-public: publish SOP, credential rotation, history scrub, prune list. |
+| release/ | *Not in this repo* — the go-public SOP (publish, rotation, scrub, prune list) is internal-only and lives in the private archive. |
 | [research/](./research/README.md) | Research notes (A2A vs mesh, node pools, product architecture). |
 | [runbooks/](./runbooks/README.md) | Operator runbooks — recovery procedures and feature bring-up. |
 | [saas/](./saas/README.md) | Public self-serve foundation. |
@@ -76,7 +76,7 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | [test-lab-reports/](./test-lab-reports/README.md) | Canonical Test Lab outputs (`latest.md` + `baseline.json`). |
 | [tv-surfaces/](./tv-surfaces/README.md) | Roku / Samsung TV app registration. |
 | [workflows/](./workflows/README.md) | Tool approval / management / verification workflows. |
-| archive/ | The graveyard: superseded handovers, closed-phase plans, historical snapshots. Kept on purpose; dropped from the public snapshot. |
+| archive/ | *Not in this repo* — the graveyard (superseded handovers, closed-phase plans, historical snapshots) lives in the private archive; dropped from the public snapshot by design. |
 
 **Outside `docs/` but documented on its own:** [`native/`](../native/README.md) — the compiled-kernel
 track (Rust → WASM port of the ADR-116 indicator layer), with its own README / ARCHITECTURE /
@@ -102,5 +102,5 @@ unrelated to native compiled code.
 - New documents go **into a topic folder**, not the docs/ top level. Add them to that folder's
   `README.md`. The top level is reserved for the canonical guides above.
 - Point-in-time snapshots (dated scorecards, closed-phase plans, superseded handovers) move to
-  archive/ — see the
-  prune list for the review process.
+  the private archive's `archive/` tree (not in this repo) — see the prune list there for the
+  review process.

@@ -1,6 +1,6 @@
 # ADR-115 — The clean repo is the trunk: branch strategy, and application code never mixes with swarm code
 
-- Status: Accepted — cutover PENDING a quiet swarm (guard + tooling SHIPPED)
+- Status: Accepted — CORE CUTOVER EXECUTED 2026-07-23/24: this repo (`emeraldcoastsystemsgroup/oshal`) is the development trunk and the private full-history repo is a reference archive (CLAUDE.md Rule 0b). The store cutover (`oshal-applications` → `oshal-apps`) is still pending a quiet swarm. (Reconciled 2026-07-31.)
 - Date: 2026-07-23
 - Related: [ADR-085](085-remote-app-packages-and-registries.md) (apps carve out of the kernel), [ADR-093](093-packaged-app-runtime-placement.md) (bot placement — the D1 interim this depends on), [ADR-090](090-skills-as-first-class-packages.md) (kernel skills = the package-facing API), [ADR-090-CI](090-github-actions-to-local-ci.md) (why CI is local), docs/release/PUBLIC-RELEASE-SOP.md
 

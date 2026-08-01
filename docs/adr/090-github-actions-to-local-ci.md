@@ -1,5 +1,7 @@
 # ADR-090: GitHub Actions → local CI (the $0 gate) + gha-local (run any workflow locally)
 
+> **Numbering note:** ADR number 090 is shared by two files — this one (local CI; cited elsewhere as **ADR-090-CI**) and [090-skills-as-first-class-packages.md](090-skills-as-first-class-packages.md) (“ADR-090-skills”). Neither is renumbered, so existing links stay valid.
+
 **Status:** Accepted — as-built (documents 2026-07-09 decisions; gha-local BUILT 2026-07-12)
 **Relates to:** [docs/runbooks/local-ci.md](../runbooks/local-ci.md) (the daily gate), [docs/runbooks/ci-cd.md](../runbooks/ci-cd.md) (the retired cloud pipeline), ADR-089 (same absorb-don't-fight thesis)
 
