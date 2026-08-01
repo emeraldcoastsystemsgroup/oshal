@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): the ONE constants module for triage defaults (spec §9.8 — the source platform shipped a knob whose documented default and read-site default disagreed; every triage stage reads its defaults from here)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): the bundling knobs — ALERT_CORRELATION_WINDOW (FR-D1, default 15m), ALERT_CORRELATION_DEPTH (FR-D3, default 3 — the depth the source platform actually deployed), ALERT_MAX_MEMBERS (FR-D5 — the P1 member cap becomes the spec's configurable knob), the correlation-window predicate, and the bundle-candidate listing bound. All read at intake time with fail-safe fallbacks via one shared parser
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage B + E): the dispatch-gate knobs — ALERT_RCA_HOURLY_BUDGET_USD (FR-E2, default $10/h — the source platform's shipped default), the flap-damping trio ALERT_FLAP_THRESHOLD/_WINDOW/_QUIET (FR-E3, defaults 5/30m/10m), ALERT_AUTO_RESOLVE (FR-E4, default OFF — a knob that ships only with its guard, spec §9.9), plus the budget gate's non-env constants (reservation TTL, p95 sample bound, first-run reserve fallback). Same fail-safe read-at-intake-time posture as P1/P2
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -165,4 +166,100 @@ export function isWithinCorrelationWindow(lastActivityIso: string, nowMs: number
   const activityMs = Date.parse(lastActivityIso);
   if (!Number.isFinite(activityMs)) return false;
   return (nowMs - activityMs) / 1000 <= windowSeconds;
+}
+
+/**
+ * @description Default sliding-hour analyst budget in USD (FR-E2) — $10/h, the source
+ * platform's shipped default for its enricher cost guard (spec §6). The gate compares
+ * chat_tasks-derived actuals + live reservations against this cap before an auto-flow
+ * dispatch; over budget parks the ticket visibly, never silently.
+ */
+export const ALERT_RCA_HOURLY_BUDGET_DEFAULT_USD = 10;
+
+/**
+ * @description Default flap threshold (FR-E3): this many refires inside the flap window
+ * marks the incident `flapping` (spec §6).
+ */
+export const ALERT_FLAP_THRESHOLD_DEFAULT = 5;
+
+/** @description Default flap observation window in seconds (FR-E3) — 30 minutes. */
+export const ALERT_FLAP_WINDOW_DEFAULT_SECONDS = 1800;
+
+/**
+ * @description Default quiet period in seconds (FR-E3) — 10 minutes without refires ends a
+ * flap episode; a flap-parked incident may then return to its auto-flow status.
+ */
+export const ALERT_FLAP_QUIET_DEFAULT_SECONDS = 600;
+
+/**
+ * @description How long (seconds) a budget reservation counts against the sliding-hour
+ * spend before it is presumed realized (FR-E2 true-up). recordCost lands an RCA run's
+ * actuals in the cost ledger as the run executes; once a reservation is this old, the
+ * actuals read already reflects the run it reserved for, so keeping the reservation alive
+ * would double-count. A NON-env constant on purpose: a knob nobody's guard exercises is
+ * the §9.9 trap.
+ */
+export const ALERT_RCA_RESERVATION_TTL_SECONDS = 900;
+
+/**
+ * @description Reservation estimate used when the cost ledger has no per-RCA history yet
+ * (first dispatches on a fresh deployment). Deliberately modest: the guard direction on an
+ * empty ledger is "let analysis run and learn real costs", not "park on a guess".
+ */
+export const ALERT_RCA_RESERVE_FALLBACK_USD = 0.5;
+
+/**
+ * @description How many recent per-RCA ticket costs feed the p95 reservation estimate
+ * (FR-E2 "reserve the recent p95 per-RCA cost").
+ */
+export const ALERT_RCA_COST_SAMPLE_LIMIT = 20;
+
+/**
+ * @description Resolves the sliding-hour analyst budget in USD from
+ * `ALERT_RCA_HOURLY_BUDGET_USD` (FR-E2). `0` is a real value — zero budget parks every
+ * auto-flow dispatch (visibly); unset/invalid values fall back to $10.
+ * @returns Budget in USD.
+ */
+export function rcaHourlyBudgetUsd(): number {
+  return envKnobNumber('ALERT_RCA_HOURLY_BUDGET_USD', ALERT_RCA_HOURLY_BUDGET_DEFAULT_USD);
+}
+
+/**
+ * @description Resolves the flap threshold from `ALERT_FLAP_THRESHOLD` (FR-E3).
+ * Minimum 1; unset/invalid → 5.
+ * @returns Refire count that marks an incident flapping.
+ */
+export function flapThreshold(): number {
+  return envKnobNumber('ALERT_FLAP_THRESHOLD', ALERT_FLAP_THRESHOLD_DEFAULT, { integer: true, min: 1 });
+}
+
+/**
+ * @description Resolves the flap observation window in seconds from `ALERT_FLAP_WINDOW`
+ * (FR-E3). `0` deliberately disables flap damping; unset/invalid → 30m.
+ * @returns Window in seconds.
+ */
+export function flapWindowSeconds(): number {
+  return envKnobNumber('ALERT_FLAP_WINDOW', ALERT_FLAP_WINDOW_DEFAULT_SECONDS);
+}
+
+/**
+ * @description Resolves the flap quiet period in seconds from `ALERT_FLAP_QUIET` (FR-E3).
+ * Unset/invalid → 10m. `0` means any gap ends the episode (effectively: the next refire
+ * after a flap always restores) — permitted, but the default is the deliberate value.
+ * @returns Quiet period in seconds.
+ */
+export function flapQuietSeconds(): number {
+  return envKnobNumber('ALERT_FLAP_QUIET', ALERT_FLAP_QUIET_DEFAULT_SECONDS);
+}
+
+/**
+ * @description Resolves the FR-E4 auto-resolve opt-in from `ALERT_AUTO_RESOLVE`.
+ * Default **false** (spec §6): auto-closing work — even fully-self-resolved backlog work —
+ * is outward-acting automation and stays opt-in per the standing directive. Only the
+ * explicit affirmatives enable it; anything else is off.
+ * @returns True when backlog auto-close on full member resolution is enabled.
+ */
+export function autoResolveEnabled(): boolean {
+  const raw = (process.env.ALERT_AUTO_RESOLVE ?? '').trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'yes';
 }

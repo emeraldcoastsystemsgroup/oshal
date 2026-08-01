@@ -1,8 +1,11 @@
 # ADR-119: Autonomous health ticket processing — the alert stream drives the RCA resolution stream
 
 Date: 2026-07-29
-Status: Accepted (direction). The rails are shipped; autonomy is gated on the triage build
-(BACKLOG "Alert triage & consolidation" P1–P3) and lands as P4 of that entry.
+Status: Accepted (direction). The rails are shipped and the triage build this gated on is now
+complete — P1 (consolidation), P2 (bundling) and P3 (claim registry + budget/flap/resolved
+dispatch gates) all landed 2026-07-31 with their guards green. Autonomy itself (A1/A2) lands
+as P4 of the BACKLOG "Alert triage & consolidation" entry; its structural preconditions now
+hold.
 
 ## Context
 

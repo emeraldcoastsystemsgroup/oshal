@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): services barrel for the alert-triage feature slice
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): bundling exports — AlertBundlingService, the DependencyResolver seam + StaticDependencyMap, the correlation knobs, and the incident record shape now sourced from incident-record.ts (unchanged public names)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage B + E): claim-registry exports (AlertClaimRegistry, rule validation, unclaimed policy), the RcaBudgetGate + RcaSpendReader seam, flap damping, the FR-E4 member-resolution helpers, and the new dispatch-gate knobs
  */
 
 export {
@@ -12,15 +13,25 @@ export {
   ALERT_CONSOLIDATION_TTL_DEFAULT_SECONDS,
   ALERT_CORRELATION_DEPTH_DEFAULT,
   ALERT_CORRELATION_WINDOW_DEFAULT_SECONDS,
+  ALERT_FLAP_QUIET_DEFAULT_SECONDS,
+  ALERT_FLAP_THRESHOLD_DEFAULT,
+  ALERT_FLAP_WINDOW_DEFAULT_SECONDS,
   ALERT_INCIDENT_KEY_FIELD,
   ALERT_MAX_INCIDENT_MEMBERS,
+  ALERT_RCA_HOURLY_BUDGET_DEFAULT_USD,
+  ALERT_RCA_RESERVATION_TTL_SECONDS,
   TERMINAL_TICKET_STATES,
+  autoResolveEnabled,
   consolidationTtlSeconds,
   correlationDepth,
   correlationWindowSeconds,
+  flapQuietSeconds,
+  flapThreshold,
+  flapWindowSeconds,
   isWithinConsolidationTtl,
   isWithinCorrelationWindow,
   maxIncidentMembers,
+  rcaHourlyBudgetUsd,
 } from './alert-triage-constants';
 
 export {
@@ -41,12 +52,43 @@ export {
 } from './intake-stats';
 
 export {
+  allMembersResolved,
   incidentOf,
+  markMemberResolved,
   type IncidentEscalation,
+  type IncidentFlapState,
   type IncidentMember,
   type IncidentRecord,
   type RootCandidate,
 } from './incident-record';
+
+export {
+  AlertClaimRegistry,
+  DEFAULT_INCIDENT_KEY_TEMPLATE,
+  renderClaimIncidentKey,
+  unclaimedPolicy,
+  validateClaimRule,
+  type ClaimBundleHints,
+  type ClaimMatch,
+  type ClaimResolution,
+  type ClaimRule,
+  type ClaimRuleValidation,
+  type UnclaimedPolicy,
+} from './claim-registry';
+
+export {
+  BUDGET_PARK_FLAG,
+  RcaBudgetGate,
+  type RcaBudgetVerdict,
+  type RcaReservation,
+  type RcaSpendReader,
+} from './rca-budget-gate';
+
+export {
+  FLAPPING_FLAG,
+  observeRefireForFlap,
+  type FlapVerdict,
+} from './flap-damping';
 
 export {
   StaticDependencyMap,

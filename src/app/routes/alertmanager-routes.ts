@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prometheus Alertmanager webhook -> incident ticket intake for swarm self-healing
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): intake now runs Stage A canonicalization + Stage C consolidation (@/features/alert-triage) — a refire on an open incident UPDATES that ticket (updateCount/lastSeen/priority-escalation) instead of the old silent skipped++; unapproved alertnames are counted as noise per-alertname instead of vanishing; identity-less alerts drop counted; and GET /intake-stats (same fail-closed bearer guard) serves the FR-A3 decision counters. severityToPriority/targetOf moved into the feature so create + escalate rank severities identically
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): a firing alert that did not consolidate now BUNDLES onto an open related incident (same target, or dependency-connected within ALERT_CORRELATION_DEPTH, inside ALERT_CORRELATION_WINDOW) instead of opening a sibling ticket — the api-down drill is ONE ticket with members + rootCandidate, not three tickets and three RCA bills. `bundled` joins the response counts and the FR-A3 stats; outcome tallying extracted so the handler stays within the function cap
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage B + E): the claim REGISTRY replaces the inline ALERT_APPROVED_NAMES set as the noise gate — rules {match, incidentKey?, intake?, bundleHints?} from ALERT_CLAIMS_FILE, with ALERT_APPROVED_NAMES surviving as a pure-claim shorthand (identical behavior) and no registry at all keeping the accept-all dev default. A claim's key template re-keys the canonical alert (Stage A hand-off), its intake slots between the per-alert label (SRE wins) and the env defaults, and its rootFilter rides to genesis. ALERT_UNCLAIMED_POLICY=backlog parks unclaimed alerts instead of dropping them. Resolved events now DO something (FR-E4): consolidation.intakeResolved marks members / opt-in self-closes. The route accepts an optional RcaSpendReader so the app layer can wire the FR-E2 budget gate's cost-ledger actuals
  */
 
 /**
@@ -24,10 +25,13 @@
  *           -> incident-rca pipeline investigates + proposes a fix
  *             -> ticket lands at the approve-or-close gate (human-in-the-loop)
  *
- * "Approved alert" gate: only firing alerts whose alertname is in
- * ALERT_APPROVED_NAMES (comma-separated) become tickets. If that env var is
- * unset, every firing alert is accepted (dev default) and logged. Unapproved
- * alerts are COUNTED as noise per alertname (FR-A3) — never an uncounted vanish.
+ * Claim gate (ADR-119 Stage B): a firing alert becomes a ticket only when a rule
+ * in the claim registry claims it — rules load from ALERT_CLAIMS_FILE, and every
+ * ALERT_APPROVED_NAMES entry remains valid as a pure-claim shorthand. With NO
+ * registry configured at all, every firing alert is accepted (dev default).
+ * Unclaimed alerts are COUNTED as noise per alertname (FR-A3) — never an
+ * uncounted vanish — or parked as backlog tickets when
+ * ALERT_UNCLAIMED_POLICY=backlog (the cautious migration setting).
  *
  * Auth: machine-to-machine, so this router is mounted WITHOUT the OIDC
  * requiresAuth guard. It self-guards with a shared bearer token when
@@ -42,16 +46,31 @@ import { createChildLogger } from '@/shared/logger';
 import { hmacWebhookGuard } from '@/features/security';
 import type { TicketService } from '@/features/ticketing';
 import {
+  AlertBundlingService,
+  AlertClaimRegistry,
   AlertConsolidationService,
   AlertIntakeStats,
+  RcaBudgetGate,
   canonicalizeAlert,
+  unclaimedPolicy,
   type CanonicalAlert,
+  type ClaimResolution,
   type ConsolidationOutcome,
   type RawAlertmanagerAlert,
+  type RcaSpendReader,
 } from '@/features/alert-triage';
 import { TicketTypeSchema } from '@/entities/ticket';
 
 const logger = createChildLogger({ module: 'alertmanager-routes' });
+
+/**
+ * @description Optional app-layer wiring for the alert intake (all seams default off/null
+ * so the P1/P2 call shape keeps working unchanged).
+ */
+export interface AlertmanagerRouteOptions {
+  /** FR-E2 actuals source (the per-event cost ledger); null/absent = budget gate passes through. */
+  rcaSpend?: RcaSpendReader | null;
+}
 
 /** Per-request intake tally backing the webhook response counts. */
 interface IntakeTally {
@@ -84,9 +103,10 @@ function tallyOutcome(
   if (outcome.decision === 'created') {
     stats.record('created');
     tally.created.push(outcome.ticketId);
-    if (intakeStatus === 'backlog') tally.backlogged += 1;
+    // FR-E2: a budget-parked create landed in backlog no matter what intake asked for.
+    if (intakeStatus === 'backlog' || outcome.budgetParked === true) tally.backlogged += 1;
     logger.info(
-      { ticketId: outcome.ticketId, alertname: canonical.alertname, target: canonical.target, intake: intakeStatus },
+      { ticketId: outcome.ticketId, alertname: canonical.alertname, target: canonical.target, intake: intakeStatus, budgetParked: outcome.budgetParked ?? false },
       'Opened incident ticket from Prometheus alert',
     );
   } else if (outcome.decision === 'bundled') {
@@ -152,25 +172,27 @@ function buildDescription(
 /**
  * @description Mounts the Alertmanager webhook intake route.
  * @param ticketService - The DB-backed ticket service (multi-tenant, persistent).
+ * @param options - Optional app-layer seams (FR-E2 cost-ledger reader).
  * @returns Express router exposing POST /alertmanager + GET /intake-stats
  *   (mount at /api/alerts).
  */
-export function createAlertmanagerRoutes(ticketService: TicketService): Router {
+export function createAlertmanagerRoutes(ticketService: TicketService, options: AlertmanagerRouteOptions = {}): Router {
   const router = Router();
 
-  // Approved-alert allowlist. Unset => accept all firing alerts (dev default).
-  const approvedRaw = (process.env.ALERT_APPROVED_NAMES || '').trim();
-  const approvedNames = approvedRaw
-    ? new Set(approvedRaw.split(',').map((s) => s.trim()).filter(Boolean))
-    : null;
+  // Stage B claim registry (FR-B1..B4): ALERT_CLAIMS_FILE rules + the
+  // ALERT_APPROVED_NAMES shorthand. Unconfigured => accept all firing alerts
+  // (dev default, unchanged from P1).
+  const registry = AlertClaimRegistry.fromEnvironment();
 
   // Backlog-intake policy. Some alerts should NOT auto-flow into the incident-rca
   // pipeline — they land as `backlog` so an operator triages them from the cockpit
   // ticket surface (Status=Backlog, Type=Incident) and pulls them in manually.
   // Resolution order, first match wins:
   //   1. per-alert label `intake` ("backlog"/"manual"/"queue" vs "auto"/"approved")
-  //   2. alertname in ALERT_BACKLOG_NAMES -> backlog
-  //   3. ALERT_DEFAULT_INTAKE (default "approved" = auto-flow, as before)
+  //      — the SRE who writes the alert rule owns its routing (FR-B1 precedence)
+  //   2. the claiming rule's own `intake` declaration (P3 Stage B)
+  //   3. alertname in ALERT_BACKLOG_NAMES -> backlog
+  //   4. ALERT_DEFAULT_INTAKE (default "approved" = auto-flow, as before)
   const backlogRaw = (process.env.ALERT_BACKLOG_NAMES || '').trim();
   const backlogNames = backlogRaw
     ? new Set(backlogRaw.split(',').map((s) => s.trim()).filter(Boolean))
@@ -180,10 +202,15 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
       ? 'backlog'
       : 'approved';
 
-  const resolveIntakeStatus = (alertname: string, labels: Record<string, string>): 'approved' | 'backlog' => {
+  const resolveIntakeStatus = (
+    alertname: string,
+    labels: Record<string, string>,
+    ruleIntake?: 'approved' | 'backlog',
+  ): 'approved' | 'backlog' => {
     const hint = (labels.intake || labels.ticket_status || '').toLowerCase();
     if (hint === 'backlog' || hint === 'manual' || hint === 'queue') return 'backlog';
     if (hint === 'auto' || hint === 'approved' || hint === 'flow') return 'approved';
+    if (ruleIntake) return ruleIntake;
     if (backlogNames.has(alertname)) return 'backlog';
     return defaultIntake;
   };
@@ -200,9 +227,15 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
 
   // ADR-119 P1: intake decision counters (FR-A3) + the Stage C consolidator.
   // TicketService structurally satisfies TriageTicketGateway — the feature slice
-  // stays decoupled from the ticketing slice (FSD same-layer rule).
+  // stays decoupled from the ticketing slice (FSD same-layer rule). P3 wires the
+  // FR-E2 budget gate over the app-supplied cost-ledger reader (absent = explicit
+  // pass-through, never a silent park).
   const stats = new AlertIntakeStats();
-  const consolidation = new AlertConsolidationService(ticketService);
+  const consolidation = new AlertConsolidationService(
+    ticketService,
+    new AlertBundlingService(),
+    new RcaBudgetGate(options.rcaSpend ?? null),
+  );
 
   // Shared-secret guard for machine-to-machine posting (Alertmanager bearer token).
   // FAIL-CLOSED: with no ALERT_WEBHOOK_TOKEN configured the receiver rejects everything.
@@ -259,39 +292,60 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
     for (const alert of alerts) {
       // Stage A: canonicalize + identity gate (FR-A1/A2). Identity-less alerts are
       // unactionable — dropped AND counted (reason=no_identity), never invisible.
-      const canonical = canonicalizeAlert(alert);
-      if (!canonical) {
+      const canonicalized = canonicalizeAlert(alert);
+      if (!canonicalized) {
         stats.record('dropped');
         tally.dropped += 1;
         continue;
       }
 
-      // Resolved alerts: don't open work; count the decision for the trace (FR-A3).
-      // Resolved-handling (member resolution, ALERT_AUTO_RESOLVE) is P3 (FR-E4).
+      // Stage B: claim gate (FR-B1..B4). A claim re-keys the alert with its rule's
+      // incident-key template; unclaimed alerts are NOISE (counted per alertname,
+      // queryable via GET /intake-stats — tunable from evidence) or, under
+      // ALERT_UNCLAIMED_POLICY=backlog, park as backlog tickets. No registry at all
+      // keeps the accept-all dev default.
+      let canonical = canonicalized;
+      let claim: ClaimResolution | null = null;
+      let unclaimedBacklog = false;
+      if (registry.configured) {
+        claim = registry.claim(canonicalized);
+        if (claim) {
+          canonical = { ...canonicalized, incidentKey: claim.incidentKey, usedFingerprintKeyFallback: claim.usedFingerprintFallback };
+        } else if (canonicalized.status !== 'resolved') {
+          if (unclaimedPolicy() === 'drop') {
+            stats.record('noise', canonical.alertname);
+            tally.noise += 1;
+            logger.info({ alertname: canonical.alertname }, 'No claim rule claims this alert — counted as noise, no ticket (FR-B2)');
+            continue;
+          }
+          unclaimedBacklog = true;
+        }
+      }
+
+      // Resolved alerts never open work; the FR-A3 decision is counted and FR-E4
+      // marks the matching member (opt-in self-close for fully-resolved backlog).
       if (canonical.status === 'resolved') {
         stats.record('resolved');
         tally.resolved += 1;
-        logger.info({ alertname: canonical.alertname, fingerprint: canonical.fingerprint }, 'Alert resolved (no ticket action)');
-        continue;
-      }
-
-      // "Approved alert" gate — unclaimed alerts are NOISE: counted per alertname
-      // (queryable via GET /intake-stats) so the allowlist can be tuned from
-      // evidence. This replaces the pre-P1 uncounted vanish (FR-B2-lite/FR-A3).
-      if (approvedNames && !approvedNames.has(canonical.alertname)) {
-        stats.record('noise', canonical.alertname);
-        tally.noise += 1;
-        logger.info({ alertname: canonical.alertname }, 'Alert not in ALERT_APPROVED_NAMES — counted as noise, no ticket');
+        try {
+          await consolidation.intakeResolved(canonical, ticketType);
+        } catch (err) {
+          logger.error({ err, alertname: canonical.alertname }, 'Failed to apply resolved event to the incident (FR-E4)');
+        }
         continue;
       }
 
       // approved => auto-flows into incident-rca; backlog => waits for operator triage.
-      const intakeStatus = resolveIntakeStatus(canonical.alertname, canonical.labels);
+      // An unclaimed alert under the backlog policy always parks (FR-B2).
+      const intakeStatus = unclaimedBacklog
+        ? 'backlog'
+        : resolveIntakeStatus(canonical.alertname, canonical.labels, claim?.intake);
 
-      // Stage C + D: consolidate or bundle (FR-C2..C6, FR-D1..D7). Refire of an open
-      // incident updates that ticket; a RELATED alert attaches to the open incident
-      // inside the correlation window; otherwise a new ticket opens (recurrence-linked
-      // within the TTL).
+      // Stage C + D + E: consolidate or bundle (FR-C2..C6, FR-D1..D7), dispatch-gated
+      // (FR-E2 budget park, FR-E3 flap damping). Refire of an open incident updates
+      // that ticket; a RELATED alert attaches to the open incident inside the
+      // correlation window; otherwise a new ticket opens (recurrence-linked within
+      // the TTL).
       try {
         const outcome = await consolidation.intake(canonical, {
           title: `[${canonical.severity}] ${canonical.alertname || 'UnnamedAlert'} on ${canonical.target || 'unknown-target'}`,
@@ -299,6 +353,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService): Router {
           description: buildDescription(alert, canonical, intakeStatus),
           intakeStatus,
           externalUrl: alert.generatorURL ?? null,
+          rootFilter: claim?.rootFilter ?? [],
         });
         tallyOutcome(tally, stats, outcome, intakeStatus, canonical);
       } catch (err) {

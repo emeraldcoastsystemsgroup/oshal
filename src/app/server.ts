@@ -141,6 +141,7 @@
  * 136 | maintainer@emeraldcoastsystemsgroup.com   | Root landing resolves HOST_APP_MAP (new host-app-map.ts) before falling back to LANDING_PATH, so a themed app subdomain (dnd.oshal.ai, trading.oshal.ai, littlemonsters.oshal.ai, ...) lands straight on its app instead of the generic ribbon. Unset = unchanged prior behavior. Guard: tests/unit/host-app-map.spec.ts.
  * 138 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: retired the stale '/api/remote-clients hardening TODO = per-caller rate limiting' note - the limiter SHIPPED router-local in remote-client-routes.ts (seq 11: flag-gated OSHAL_RATE_LIMIT_REMOTE_CLIENTS, keyed per /:clientId, guard tests/unit/remote-client-auth.spec.ts), so the TODO was sending the next security wave to re-do finished work. No logic change.
  * 137 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G3 + G9: needsOnboarding now delegates to the pure onboardingRequired predicate (new onboarding-gate.ts) — DISABLE_ONBOARDING_GATE only suppresses the per-user wizard and can no longer waive the "a model must be connected" requirement; a deliberately model-less box declares OSHAL_NO_AI=true instead (a warn log names the exact fix when the gate fires despite the flag). Registered registerReadinessRoutes (new routes/readiness-routes.ts): GET /api/readiness reports per-capability ok|off|fail because /api/health is liveness-only and was being read as readiness. Guards: tests/unit/onboarding-gate.spec.ts + tests/unit/readiness-report.spec.ts.
+ * 139 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E2): the /api/alerts mount now wires the pool-backed RcaSpendReader (routes/alertmanager-rca-spend.ts) into the intake's analyst budget gate — cost-ledger actuals meter auto-flow RCA dispatch; a pool-less run passes null and the gate is an explicit pass-through.
  */
 
 require('dotenv').config();
@@ -1522,9 +1523,14 @@ function createApp(): express.Application {
 
   // Prometheus Alertmanager webhook -> incident ticket intake (swarm self-healing).
   // Machine-to-machine: mounted WITHOUT requiresAuth; self-guards via ALERT_WEBHOOK_TOKEN.
+  // ADR-119 P3: the FR-E2 analyst budget gate reads its actuals from the cost ledger via
+  // the pool-backed reader; a pool-less run wires null and the gate passes through.
   if (ctx.ticketService) {
     const { createAlertmanagerRoutes } = require('./routes/alertmanager-routes');
-    app.use('/api/alerts', createAlertmanagerRoutes(ctx.ticketService));
+    const { createPoolRcaSpendReader } = require('./routes/alertmanager-rca-spend');
+    app.use('/api/alerts', createAlertmanagerRoutes(ctx.ticketService, {
+      rcaSpend: ctx.pool ? createPoolRcaSpendReader(ctx.pool) : null,
+    }));
   }
 
   // Inbound SMS webhook (Twilio replies) -> POST /api/sms/inbound. Machine-to-machine: mounted
