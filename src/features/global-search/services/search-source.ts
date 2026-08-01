@@ -4,7 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Global search (new slice): the pluggable SearchSource adapter contract + the normalized SearchHit shape every adapter emits. Caller scoping is IN the contract (userSub is the first search argument) so an adapter that ignores it is visibly wrong at review time — the isolation model, not a convention.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SearchHit gains a required `kind` (ticket/chat/app/connector/bot/doc/entity). `source` names the ADAPTER and is free to grow; `kind` names WHAT the row is and is what a renderer switches on and what picks the deep-link builder. Making it required is deliberate: a new adapter cannot ship an untyped, unlinkable row by omission.
  */
+
+import type { SearchHitKind } from './deep-link';
 
 /**
  * @description One normalized result row from any search source. Every adapter maps its native
@@ -17,7 +20,16 @@ export interface SearchHit {
   title: string;
   /** Short excerpt around the match — already trimmed by the adapter. */
   snippet: string;
-  /** Cockpit surface link the hit opens into, or null when no surface exists for the record. */
+  /**
+   * What this row IS, independent of which adapter produced it. Drives the typed row renderer
+   * and selects the deep-link builder. See {@link SearchHitKind}.
+   */
+  kind: SearchHitKind;
+  /**
+   * Canonical cockpit deep link for the record, minted by `deepLinkFor(kind, id)` — NEVER a
+   * hand-formatted path. `null` ONLY for a kind registered in `NO_SURFACE_REASON` with its reason;
+   * an unexplained null is a bug the deep-link guard fails on.
+   */
   url: string | null;
   /** Source-native relevance score. NOT comparable across sources until normalized by the merge. */
   score: number;

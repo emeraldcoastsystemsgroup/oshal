@@ -1720,7 +1720,7 @@ verified working. Sources today: **openrouter** (PKCE OAuth), **gemini** (AI Stu
    Postgres-connected rows via `freeTierToHarnessConfig()`, so it runs on a bare checkout.
 2. ✅ largely done via the 07-10/11 hardening (`d4f27a38`, runtime `:free` discovery, probe caches,
    walled→null, operator exemption, hard `:free`-only guard on the platform key).
-3. ⬜ **Make rotation observable** — surface `markUsed` / `reportRateLimit` / `reportSuccess` state in the
+3. ✅ **Make rotation observable** — surface `markUsed` / `reportRateLimit` / `reportSuccess` state in the
    cockpit so a dead lane is visible instead of silently skipped. (The platform rotation lane's
    in-memory verdict is still surfaced nowhere — that half stays open.) **De-orphaned 2026-07-12:**
    `/free-models` is now linked from the welcome wizard's model step ("connect your own free AI
@@ -1748,6 +1748,35 @@ verified working. Sources today: **openrouter** (PKCE OAuth), **gemini** (AI Stu
   entry + a live-probe check.
 
 **Verified 2026-07-19:** PARTIAL — `/free-models` is linked, but per-lane rotation health is still surfaced nowhere (step 3 stays open); the cerebras COMPAT follow-up is DONE (optimizer-providers.ts:47).
+
+**DONE 2026-08-01 (wave17-cockpit) — step 3 closed; this entry's LAST open clause.**
+`GET /api/connect/free-tier/rotation` (auth-gated, caller-scoped through
+`listFreeTierConnections`) plus the per-lane detail in the Utilities free-lanes card.
+
+- **Per-lane, a dead lane is now visible instead of silently skipped**: `cooldownRemainingMs`
+  (when it comes back), `lastStatus` (why it left), and the new `lastUsedAt` → `stale` /
+  `neverUsed`. That last one is the signal the entry was really asking for: a lane the rotation has
+  quietly stopped picking has no cooldown and no error, so under the old binary
+  connected/cooling-down pill it looked **identical to a healthy one**.
+- **The shared platform lane is readable at last.** `platformVerdict` / `freeCatalog` /
+  `lastLivePlatformModel` were module-level with no accessor, so "the shared lane is walled until
+  14:05" was a fact only the logs knew. New `freeTierRuntimeSnapshot()` reads them **without
+  probing** — and non-probing is the whole design constraint, because calling
+  `platformFreeConnection()` from a polled surface spends up to `MAX_PLATFORM_PROBES` real
+  completions of the shared key's daily free-request quota. The surface would have burned the
+  resource it reports on. `/resolve` is unusable here for the mirror-image reason: it `markUsed()`s,
+  so polling it would make the reading change the reading.
+- **Three honest platform states, no guessing**: `live` / `walled` / `unknown`. `unknown` means this
+  api process holds no cached verdict; it is rendered as unknown rather than assumed healthy, and
+  the row says the verdict is per-process (one in-memory cache per replica).
+- No key crosses the boundary — the snapshot returns the model id and the verdict, never the key.
+- Guard: `tests/unit/free-lane-rotation-observability.spec.ts` —
+  **free-lane-rotation-is-observable-and-read-only**, 9 tests, 10 targeted mutations each proven
+  red (including the two that matter most: the read issuing `markUsed`, and the read probing the
+  platform lane).
+
+Still open on this entry: step 4 (wiring Token Chase's variant lanes to the live-verified free
+providers first-class). Untouched here.
 
 ### Plan C — multi-tenancy as infra, with two isolation tiers ⬜
 The operator's model is right and already half-expressed in ADR-078. Make the tier explicit.
@@ -3405,6 +3434,46 @@ than a real unmount — decide that first, or the "lazy" in the title will not s
 
 **Verified 2026-07-19:** PARTIAL — key paste/validate/store/propagate is done (byo-llm-routes.ts); the per-bot provider-selection UI remains open.
 
+**DONE 2026-08-01 (wave17-cockpit) — and the build found that the feature this entry asked for is
+INERT for every shipped bot.** A "per-bot provider selection UI" implies a per-bot provider you can
+select. Measured against the default registry: **all 60 entries declare a non-cline `harnessType`**
+(38 `claude-code`, 20 `codex-cli`, 1 `gemini-cli`), and `resolveHarnessForAgent`
+(provider-runtime.ts:841) returns that harness *before* `FORCE_LLM_PROVIDER`, global-config.json, or
+the per-agent DB record is consulted. So the two write rails that already existed
+(`PUT /api/agents/:id/profile` → `agents.api_provider_id`, `PUT /api/agents/:id/runtime` →
+`agent_config` + live push-down) cannot change which provider serves ANY bot in a default
+deployment. A picker built as this entry described would have been a control that does nothing.
+
+What shipped instead — the honest version of the same request:
+- **The rule, extracted once**: `src/shared/llm-runtime/bot-provider-precedence.ts`. It was
+  previously only knowable by reading three files (provider-runtime.ts:841,
+  claude-code-provider.ts:246 for the in-cline order, bot-node-config-bootstrap.ts:184 for the model
+  env mapping). Shared layer so the API and any surface get the same answer — a browser copy is how a
+  panel starts lying.
+- **`GET /api/agents` now carries the resolved answer**: `effectiveProvider`, `effectiveModel`,
+  `providerSource`, `providerOverridable`, `modelOverridable`, `precedenceNote`
+  (`enrichProfileWithHarness`). The read model used to hand back `harnessType` and `providerId` side
+  by side with no hint that the first outranks the second.
+- **FAIL-CLOSED on an unreadable registry**: the controller reaches the registry through an aliased
+  `require()`. If that read fails, precedence is *unknown*, not "nothing is pinned" — so the resolver
+  answers `providerSource: 'registry-unreadable'` with `providerOverridable: false` rather than
+  promoting the DB record and offering an inert control. Not hypothetical: the aliased require does
+  not resolve under vitest, which is how the branch was found and is what the guard exercises.
+- **The panel** (`src/api/utilities.html`, under the deployment-wide LLM-providers roster): per-bot
+  rows showing the effective provider + a tier badge, the API's own reason rendered verbatim, the
+  provider `<select>` **disabled** where the registry wins, the MODEL still settable (a DB `modelId`
+  does reach a pinned harness via `CODEX_MODEL`/`CLAUDE_CODE_MODEL`), writes through the
+  authoritative `PUT /api/agents/:id/runtime` with a 502 reported as *not applied, nothing recorded*,
+  and — because today that means every bot — an explicit empty state saying so instead of an
+  unexplained empty list.
+- **Residual (needs a decision, not code):** the only way to change a bot's provider today is editing
+  its registry entry, which is source. Either that is the intended contract (then say so in
+  docs/building-a-bot.md) or `harnessType` needs a per-bot override rail of its own — an ADR-level
+  call, deliberately not made here.
+- Guard: `tests/unit/bot-provider-precedence.spec.ts` — **provider-panel-shows-registry-precedence**,
+  12 tests, 15 targeted mutations each proven red (including both fail-open shapes and the
+  paraphrase-the-reason shape).
+
 ### Per-user token routing through bot execution ✅ DONE + VERIFIED (2026-06-15)
 - **Done:** The caller's OIDC `sub` is threaded into bot execution on BOTH transports —
   remote dispatch (`BotNodeRequest.userSub` → `/api/swarm-execute` → executionHandler →
@@ -4876,6 +4945,21 @@ mobile-ux fix. Context: `docs/evidence/gap-list-build-2026-07-15.md` and the `@g
 
 **Verified 2026-07-19:** OPEN — no tool-budgets/notify/dlq/export surfaces (DLQ has an operator surface, so partial there).
 
+**DONE — corrected 2026-08-01 (wave17-cockpit):** the done-when was already MET and this entry was
+stale. `5d5db19` (PR #24) shipped all four bind-mounted tool surfaces —
+`src/pages/cockpit/tools/{budgets,notify,dlq,my-data}.html` — registered in
+`src/pages/cockpit/js/components/RibbonNav.js` (Budgets / Notifications / Dead Letters / My Data)
+and served by the cockpit's own `requiresAuth` `express.static` mount, so they need no Express route
+and no image rebuild. Dead Letters is operator-only in the rail AND server-side. Budgets is
+read-only over `/api/budgets` + `/api/budgets/spend` with an operator-wide `/api/budgets/state`
+view; notify does per-topic channel prefs + a test send; DLQ does list + requeue + JSON export;
+my-data does export + the two-step delete. What was genuinely missing was a GUARD for the DLQ
+surface specifically — added now as `tests/unit/dlq-surface.spec.ts`
+(**dlq-surface-shows-real-entries**): drives the real router over a stubbed `oshal_queue_dlq`,
+asserts what/why/when/how-many reach the payload, that a non-operator is refused BEFORE the store is
+read, that a malformed id never reaches SQL, and — the anti-drift half — that `dlq.html` renders
+every field the route's own response carries and offers NO action the router does not expose.
+
 **Verified 2026-07-19 (completion-day):** PARTIAL — the operator DATA rails now exist (routes, not cockpit surfaces): `GET /api/budgets/state` (`3173f104`, requiresOperator — every cap + trailing-window spend + recent `oshal_budget_events`), `POST /api/notify/operator` (`07a9aef0`, requiresOperator + `confirm:true`→428, fails LOUD 502 when the transport skips so a monitoring operator is never fooled by a silent no-op), and `GET /api/queue/dlq/export` (`bf738100`, requiresOperator — downloadable JSON over the SAME `DeadLetterService.listEntries`, not a second surface). Each is operator-gated inside an already-`requiresAuth` mount (route-auth inventory unchanged, 5/5 green) and ships its guard spec. The entry's done-when — bind-mounted **cockpit tool surfaces** (like `tool-global-search`/`tool-run-trace`) — stays OPEN; these routes are the accountable data layer such a surface would consume. DLQ now has list + requeue + export.
 
 ### Connector write-actions: marketplace surfacing + audit read endpoint + interactive-approval UX
@@ -4914,6 +4998,45 @@ Guards: `tests/unit/connectors/connector-write-actions.spec.ts`,
   pg_trgm indexes on the searched text columns, with a measured before/after latency recorded.
 
 **Verified 2026-07-19:** OPEN — no pg_trgm migration, no canonical deep-link contract.
+
+**DONE 2026-08-01 (wave17-cockpit):** both clauses shipped.
+1. **Deep-link contract** — `src/features/global-search/services/deep-link.ts` is now the ONLY
+   place a hit's URL is minted. `SearchHit` gained a required `kind`
+   (ticket/chat/app/connector/bot/doc/entity); `deepLinkFor(kind, id)` is exhaustive over the union
+   via a `never` check, so a new kind without a builder is a COMPILE error rather than an unlinked
+   row found in production. Two adapters used to return a bare surface path (`'/cockpit/'`,
+   `'/chat'`) — the right screen, the wrong row — and two returned an unexplained `null`; both
+   are gone. Unlinked kinds are now declared in `NO_SURFACE_REASON` **with the reason**, which
+   `GET /api/search/sources` publishes as `{name, kind, deepLink, noSurfaceReason}` so the surface
+   explains an unlinked hit from the API instead of from its own copy of the rules. The cockpit end
+   of the contract shipped too: `?ticket=` in `src/pages/cockpit/js/app.js` (seeds
+   `pendingTicketSelection` → `TicketView.focusTicket`) and `?connector=` in
+   `src/api/utilities.html` (scrolls + outlines the matching card).
+2. **Three new typed adapters** — `apps`, `bots`, `connectors`, each owning its own visibility
+   rule IN the adapter (apps mirror `isVisibleToCaller`; bots apply ADR-087 `accessRoles` through
+   the shared `roleCanAccess` at the caller's effective role; connectors pin `user_sub = $1` and
+   never name a token column). The app/bot listers are injected UNFILTERED from the route on
+   purpose — pre-narrowing in `SwarmAppService` would make two filters where only one is auditable.
+3. **`scripts/migrations/103-global-search-trgm.sql`** — `pg_trgm` GIN indexes on the columns the
+   adapters actually ILIKE, plus `(owner_sub, updated_at DESC)` composites. Idempotent,
+   `to_regclass`-guarded, no `CONCURRENTLY` (the runner wraps each migration in one transaction).
+4. **Measured, and the measurement changed the story.**
+   `scripts/measure-global-search-latency.js` benchmarks in a throwaway database it creates and
+   drops — it never touches a production index. Medians:
+   chat **215.32 → 5.41 ms (39.8×)** at 100k rows/50 owners; tickets **154.45 → 1.39 ms
+   (111.5×)** at 100k rows/single owner; connectors 7.70 → 2.30 ms (3.3×) single-owner.
+   Honest reading, recorded in the doc: the **trigram** index is decisive only on `chat_messages`
+   (no owner column → whole-table text scan); the tickets win is the **composite btree**, not the
+   trigram (`EXPLAIN` shows no trigram in the tickets plan in any scenario); and two cells are
+   mildly NEGATIVE (−3 ms on sub-8 ms operations) where the planner picks the index on a small
+   table — kept because the shape that regresses is the shape that was already fast.
+   Full table + reproduce commands: [global-search-deep-link-contract.md](architecture/global-search-deep-link-contract.md).
+   Guards: `tests/unit/global-search-deep-links.spec.ts` —
+   **search-results-carry-resolvable-deeplinks** (each link's parameter asserted against the REAL
+   surface source that reads it, so deleting a handler goes red) and **search-is-caller-scoped**
+   (a second user's person-scoped app, an operator-only bot, and another sub's connections all
+   proven absent; the SQL adapters assert the bound parameter AND the owner predicate, not a
+   substring).
 
 ### Token Chase: auto keep-winner then re-baseline loop + per-run judge budget cap
 - **Reason:** step 4 (LLM-judge assessor) + 4b (judged savings report) shipped, but a winning variant is not

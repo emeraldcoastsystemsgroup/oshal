@@ -103,9 +103,9 @@
     <div class="tblwrap"><table>
       <thead><tr>
         <th>Title</th><th>Ticket type</th><th>Ticket status</th><th>Attempts</th><th>State</th>
-        <th>Reason</th><th>Last error</th><th>Quarantined</th><th>Requeued</th><th></th>
+        <th>Reason</th><th>Last error</th><th>Last failure</th><th>Quarantined</th><th>Requeued</th><th></th>
       </tr></thead>
-      <tbody id="rows"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="11" class="empty">Loading…</td></tr></tbody>
     </table></div>
   </div>
 
@@ -124,7 +124,7 @@
   const $rows = document.getElementById('rows');
   const $all = document.getElementById('all');
   const $exportLink = document.getElementById('exportLink');
-  const COLS = 10;
+  const COLS = 11;
 
   function say(text, bad) {
     $status.textContent = text;
@@ -261,6 +261,11 @@
       tr.appendChild(pill(e));
       tr.appendChild(cell(e.reason ? String(e.reason) : '—', 'title'));
       tr.appendChild(cell(e.lastError ? String(e.lastError) : '—', 'err'));
+      // lastFailureAt is NOT the same instant as quarantinedAt: a ticket fails repeatedly and is
+      // quarantined only once the retry budget runs out, so "when did it last actually break" and
+      // "when did the queue give up" are different operator questions. The route has always
+      // emitted both; only quarantinedAt was ever shown.
+      tr.appendChild(cell(when(e.lastFailureAt), 'nowrap'));
       tr.appendChild(cell(when(e.quarantinedAt), 'nowrap'));
       tr.appendChild(cell(e.requeuedAt ? when(e.requeuedAt) + (e.requeuedBy ? ' by ' + e.requeuedBy : '') : '—', 'nowrap'));
       tr.appendChild(requeueCell(e));

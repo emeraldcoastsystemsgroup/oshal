@@ -29,6 +29,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the resolution source long enough to cool a free-tier connection or invalidate the cached platform verdict after a real 429, allowing one immediate configured-provider retry instead of trusting a stale probe.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | platformFreeConnection: hard free-only guard — drop any non-:free candidate (incl. a misconfigured OPENROUTER_FREE_MODEL override). The shared account now carries the one-time $10 (1,000 :free req/day unlocked), so a paid model id would actually spend; operator directive: the platform key only ever runs :free models.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Runtime free-model discovery (BACKLOG "Free-tier model rot"): the platform candidate list now comes from OpenRouter GET /models (filter :free + zero pricing, family/context ranking, 30-min cache) instead of the hardcoded PLATFORM_FREE_MODELS array that kept 404ing as the catalog churned. Platform probes now also reject 200-but-empty completions (reasoning models eat a tiny-max_tokens probe) so the pick demonstrably answers; last-live model is tried first to cut probe burn. User-connection probe semantics unchanged.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Made rotation OBSERVABLE (ADR-064 Plan-B step 3, the last open clause). FreeTierStatus gains lastUsedAt - without the LRU position a lane the rotation has silently stopped picking is indistinguishable from a healthy idle one. New freeTierRuntimeSnapshot(): a NON-PROBING read of the module-level platform-lane state (platformVerdict / freeCatalog / lastLivePlatformModel), which was readable from nowhere. Non-probing is the whole point - calling platformFreeConnection() from a cockpit poll spends up to MAX_PLATFORM_PROBES real completions of the shared key's daily quota, so the surface would burn the resource it reports on. The key never leaves this module, and the snapshot labels itself per-process (one verdict cache per replica).
  *
  * @module free-tier-rotation
  */
@@ -77,6 +78,13 @@ export interface FreeTierStatus {
   cooldownUntil: number;    // epoch ms; 0 = none
   cooledDown: boolean;      // cooldownUntil > now
   lastStatus: string | null;
+  /**
+   * Epoch ms of the last time rotation PICKED this lane (markUsed); 0 = never used. This is the
+   * signal that distinguishes a healthy idle lane from one the rotation has silently stopped
+   * choosing — the LRU order is invisible without it, and a lane that is never picked looks
+   * identical to a lane that works.
+   */
+  lastUsedAt: number;
 }
 
 /** Per-connection rotation telemetry. */
@@ -156,6 +164,7 @@ export async function listFreeTierConnections(pool: any, userSub: string): Promi
       cooldownUntil,
       cooledDown: cooldownUntil > now,
       lastStatus: st?.last_status || null,
+      lastUsedAt: num(st?.last_used_at),
     };
   });
 }
@@ -489,6 +498,51 @@ export async function platformFreeConnection(): Promise<ByoLlmConnection | null>
   logger.warn('free-tier: every platform free model is walled/erroring — falling back to the bot\'s configured provider');
   platformVerdict = { conn: null, until: Date.now() + PLATFORM_WALLED_TTL_MS };
   return null;
+}
+
+/**
+ * @description A READ-ONLY, NON-PROBING view of this process's in-memory platform-lane state.
+ *
+ * Why it has to exist: `platformVerdict`, `freeCatalog` and `lastLivePlatformModel` are
+ * module-level and were readable from nowhere, so "the shared lane is walled until 14:05" was a
+ * fact only the logs knew. The obvious alternative — calling `platformFreeConnection()` from a
+ * cockpit poll — is a trap: on a cold cache it spends up to MAX_PLATFORM_PROBES REAL completions
+ * against the shared key's daily free-request quota, so an observability surface would burn the
+ * very resource it reports on. This reads what is already in memory and probes nothing.
+ *
+ * Two honesty constraints are baked in: the API KEY never leaves this module (only the model id
+ * and the verdict do), and everything here is PER-PROCESS. A multi-replica deployment has one
+ * verdict cache per replica, so the answer is "what this api process believes", which is exactly
+ * how `verdictScope` labels it.
+ * @returns The platform lane's cached verdict, catalog size and last-live model.
+ */
+export function freeTierRuntimeSnapshot(): {
+  configured: boolean;
+  verdict: 'live' | 'walled' | 'unknown';
+  verdictExpiresAt: number | null;
+  model: string | null;
+  lastLiveModel: string | null;
+  catalogSize: number | null;
+  catalogExpiresAt: number | null;
+  maxProbesPerResolution: number;
+  verdictScope: 'this-api-process';
+} {
+  const configured = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
+  const now = Date.now();
+  const fresh = platformVerdict && now < platformVerdict.until ? platformVerdict : null;
+  return {
+    configured,
+    // 'unknown' is a real answer, not a placeholder: with no cached verdict this process has not
+    // resolved the lane recently, and claiming 'live' or 'walled' would be inventing one.
+    verdict: fresh ? (fresh.conn ? 'live' : 'walled') : 'unknown',
+    verdictExpiresAt: fresh ? fresh.until : null,
+    model: fresh?.conn?.model ?? null,
+    lastLiveModel: lastLivePlatformModel,
+    catalogSize: freeCatalog && now < freeCatalog.until ? freeCatalog.models.length : null,
+    catalogExpiresAt: freeCatalog && now < freeCatalog.until ? freeCatalog.until : null,
+    maxProbesPerResolution: MAX_PLATFORM_PROBES,
+    verdictScope: 'this-api-process',
+  };
 }
 
 const RETRYABLE_PROVIDER_FAILURE = /(?:\b(?:402|403|429)\b|too many requests|rate[-\s]?limit|quota|throttl\w*|resourceexhausted|empty_final_answer|returned no final answer)/i;

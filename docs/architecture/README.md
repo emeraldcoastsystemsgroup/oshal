@@ -13,6 +13,10 @@ The guiding model is:
 ## Current Documents
 
 ### Core Runtime
+- [global-search-deep-link-contract.md](./global-search-deep-link-contract.md)
+  - the per-source deep-link contract for `/api/search` (which URL each result kind opens, which kinds
+    declare no surface and why), the adapter-owned isolation rules, and the measured before/after
+    pg_trgm latency numbers with an honest reading of which index carried which win
 - [platform-shared-services.md](./platform-shared-services.md)
   - as-built reference for the cross-cutting services every app rides on (budgets, connector write-actions, global search, LLM-judge, persona-evals, notifications, data export/delete, queue DLQ, bot-node auth, run tracing) from the 2026-07 gap-list build
 - [core-runtime-overview.md](./core-runtime-overview.md)

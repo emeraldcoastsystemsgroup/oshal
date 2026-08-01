@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit tests for global search's pure ranking (escapeIlike / buildSnippet / ilikeRecencyScore / normalizeScores / mergeRankedHits) and the orchestrator's ISOLATION contract with mock adapters: every adapter gets the caller's sub verbatim, sources= filtering, a throwing adapter degrades to empty instead of sinking the search, and the global cap holds.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SearchHit gained a required `kind`; the fixture builder now stamps one. Kept as 'doc' for every fixture on purpose - these tests are about ranking and fault isolation, and giving each fake source a different kind would imply the merge cares about kind, which it deliberately does not.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -20,7 +21,7 @@ import {
 
 /** Shorthand hit builder. */
 function hit(source: string, id: string, score: number, ts: string | null = null): SearchHit {
-  return { id, title: `${source}-${id}`, snippet: '', url: null, score, source, ts };
+  return { id, title: `${source}-${id}`, snippet: '', kind: 'doc', url: null, score, source, ts };
 }
 
 describe('escapeIlike — user text never becomes a wildcard', () => {

@@ -144,6 +144,7 @@
  * 137 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G3 + G9: needsOnboarding now delegates to the pure onboardingRequired predicate (new onboarding-gate.ts) — DISABLE_ONBOARDING_GATE only suppresses the per-user wizard and can no longer waive the "a model must be connected" requirement; a deliberately model-less box declares OSHAL_NO_AI=true instead (a warn log names the exact fix when the gate fires despite the flag). Registered registerReadinessRoutes (new routes/readiness-routes.ts): GET /api/readiness reports per-capability ok|off|fail because /api/health is liveness-only and was being read as readiness. Guards: tests/unit/onboarding-gate.spec.ts + tests/unit/readiness-report.spec.ts.
  * 139 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E2): the /api/alerts mount now wires the pool-backed RcaSpendReader (routes/alertmanager-rca-spend.ts) into the intake's analyst budget gate — cost-ledger actuals meter auto-flow RCA dispatch; a pool-less run passes null and the gate is an explicit pass-through.
  * 140 | maintainer@emeraldcoastsystemsgroup.com   | Jarvis UX trio wiring: /api/voice now receives ctx (JVV-012 per-user TTS prefs endpoints + prefs-honoring synthesize), and /api/connect gains the liveness router (INSTALLER-GAPS G14 — the Connections badge live token check) on the same auth-gated mount.
+ * 141 | maintainer@emeraldcoastsystemsgroup.com   | Global search grew the app/bot/connector result kinds: createGlobalSearchRoutes now receives swarmAppService.listApps as an injected, deliberately UNFILTERED lister (the features slice cannot reach the service, and AppsSearchSource owns the tested caller-visibility rule - pre-filtering here would make two filters where only one can be audited).
  */
 
 require('dotenv').config();
@@ -1472,7 +1473,12 @@ function createApp(): express.Application {
   // Global search — one caller-scoped box over the caller's OWN swarm data
   // (tickets / chat history / personal vault / permission-aware RAG). Shares the
   // /api/rag RagService instance so both surfaces rank identically.
-  app.use('/api/search', requiresAuth, createGlobalSearchRoutes(ctx, ragService, apiDir));
+  // listApps is injected (not imported inside the route) because a features slice may not reach
+  // SwarmAppService; it is passed UNFILTERED on purpose - AppsSearchSource owns the tested
+  // caller-visibility rule, and pre-filtering here would make two filters where one is auditable.
+  app.use('/api/search', requiresAuth, createGlobalSearchRoutes(ctx, ragService, apiDir, {
+    listApps: () => swarmAppService.listApps(),
+  }));
   // (/api/presentations is no longer mounted: the legacy Presentron HTTP sidecar proxy was
   //  retired — its presentron:8080 backend is gone and the render path moved to the in-repo
   //  deck engine. The packaged AI Office surface owns /api/presentations/sections.)

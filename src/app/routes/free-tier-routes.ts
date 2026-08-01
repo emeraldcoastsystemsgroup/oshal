@@ -26,6 +26,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — catalog/list/connect/test/resolve/delete + OpenRouter PKCE OAuth for ADR-064.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | OAuth callback lands back on /free-models (?connected= success banner / ?connect_error= readable failure banner) instead of dumping to /cockpit/ or a bare-text 400 — the free-credits click-through returns the user to the page they started from.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | OAuth start accepts ?return= and the callback honours it, so the free lanes can be connected from EITHER surface (they are now first-class cards on /utilities next to Claude/Codex, not only the standalone /free-models page). The return path rides a cookie beside the PKCE verifier (OpenRouter's callback_url cannot carry extra params) and is ALLOWLISTED, not sanitized — it feeds res.redirect, so a permissive check would be an open redirect.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | GET /rotation - the read-only per-lane rotation health view (ADR-064 Plan-B step 3, the last open clause of that entry). Non-mutating and non-probing BY DESIGN, unlike the two endpoints a surface might otherwise reach for: /resolve markUsed()s and so perturbs the LRU order a health poll is trying to report, and platformFreeConnection() spends real completions from the shared key's daily quota. Reports cooldownRemainingMs (when a lane returns), lastStatus (why it left), lastUsedAt/stale (whether rotation still picks it), plus the in-memory platform-lane verdict. Caller-scoped through listFreeTierConnections; no key ever crosses the boundary.
  *
  * @module free-tier-routes
  */
@@ -45,6 +46,7 @@ import {
 } from './free-tier-providers';
 import {
   ensureFreeTierSchema, listFreeTierConnections, getFreeTierConnection, deleteState,
+  freeTierRuntimeSnapshot,
 } from './free-tier-rotation';
 
 const logger = createChildLogger({ module: 'free-tier-routes' });
@@ -200,6 +202,62 @@ export function createFreeTierRoutes(ctx: AppContext): Router {
       connections,
       summary: { connected: connections.length, active, cooledDown: connections.length - active },
     });
+  });
+
+  /**
+   * GET /rotation — the read-only rotation health view (ADR-064 Plan-B step 3).
+   *
+   * Deliberately NON-MUTATING and non-probing, which /resolve is not: /resolve calls
+   * getFreeTierConnection, which markUsed()s and therefore perturbs the very LRU order a health
+   * surface is trying to report — polling it would make the reading change the reading. The
+   * platform half comes from freeTierRuntimeSnapshot(), an in-memory read; calling
+   * platformFreeConnection() here would spend real completions from the shared key's daily quota
+   * on every poll.
+   *
+   * Per-lane fields let a DEAD lane be seen rather than silently skipped: cooldownUntil (when it
+   * comes back), lastStatus (why it went away), and lastUsedAt (whether rotation is still picking
+   * it at all — the signal that separates a healthy idle lane from an abandoned one).
+   */
+  router.get('/rotation', async (req: Request, res: Response) => {
+    const me = caller(req);
+    if (!me) { res.status(401).json({ error: 'not authenticated' }); return; }
+    const started = Date.now();
+    try {
+      const connections = await listFreeTierConnections(ctx.pool, me.sub);
+      const now = Date.now();
+      const active = connections.filter((c) => !c.cooledDown).length;
+      // "Stale" is a REPORTED observation, never an action: a lane that has not been picked in a
+      // day while others have is the shape of a lane rotation has quietly stopped choosing.
+      const STALE_MS = 24 * 60 * 60_000;
+      const lanes = connections.map((c) => ({
+        ...c,
+        cooldownRemainingMs: c.cooledDown ? Math.max(0, c.cooldownUntil - now) : 0,
+        neverUsed: c.lastUsedAt === 0,
+        staleMs: c.lastUsedAt ? Math.max(0, now - c.lastUsedAt) : null,
+        stale: c.lastUsedAt > 0 && now - c.lastUsedAt > STALE_MS,
+      }));
+      const platform = freeTierRuntimeSnapshot();
+      logger.info(
+        { sub: me.sub, lanes: lanes.length, active, platformVerdict: platform.verdict, durationMs: Date.now() - started },
+        'GET /api/connect/free-tier/rotation',
+      );
+      res.json({
+        lanes,
+        summary: {
+          connected: lanes.length,
+          active,
+          cooledDown: lanes.length - active,
+          neverUsed: lanes.filter((l) => l.neverUsed).length,
+          stale: lanes.filter((l) => l.stale).length,
+        },
+        platform,
+        observedAt: new Date(now).toISOString(),
+        staleAfterMs: STALE_MS,
+      });
+    } catch (err) {
+      logger.error({ err, stack: (err as Error).stack, sub: me.sub }, 'rotation read failed');
+      res.status(500).json({ error: 'rotation read failed' });
+    }
   });
 
   /** POST /connect — validate against the live provider, then store (encrypted, per-user). */

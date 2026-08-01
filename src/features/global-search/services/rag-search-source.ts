@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Global search: RAG adapter — searchAllCollections through RagService's OWN hybrid ranking, ALWAYS under a caller RagPermissionContext (owner_sub/allowed_users/allowed_groups/tenant filtering happens inside the permission filter; shared corpus stays readable via allowPublic). The context is built by the route from the session — this adapter refuses to run without one.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Emit kind:'doc'. The url stays null, but now BY DECLARATION: deepLinkFor('doc') resolves against NO_SURFACE_REASON, which states why (no addressable per-document cockpit surface) — so the null is a documented decision the guard checks, not an unexplained gap.
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type { RagService, RagSearchResult, RagPermissionContext } from '@/features/rag';
 import type { SearchCallerExtras, SearchHit, SearchSource } from './search-source';
 import { buildSnippet } from './search-ranking';
+import { deepLinkFor } from './deep-link';
 
 const logger = createChildLogger({ module: 'global-search-rag' });
 
@@ -53,7 +55,8 @@ export class RagSearchSource implements SearchSource {
         id: r.id,
         title: r.metadata?.title || r.metadata?.doc_id || `${r.collection} document`,
         snippet: buildSnippet(r.text, query),
-        url: null,
+        kind: 'doc',
+        url: deepLinkFor('doc', r.id),
         score: r.score,
         source: this.name,
         ts: r.metadata?.ingested_at || null,
