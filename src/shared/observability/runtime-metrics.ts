@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prometheus exposition for the swarm's own runtimes. The live container-kill drill (2026-08-01) proved cAdvisor emits ZERO series for any docker container on Docker Desktop 29's containerd/`overlayfs` image store — its docker factory dies in getRwLayerID because /var/lib/docker/image/overlayfs/layerdb does not exist in that layout — so every `container_last_seen{name=~"oshal-local-.+"}` rule matched nothing and SwarmContainerDown was a standing, target-less false alarm. The swarm now reports its OWN liveness/restart/memory/CPU in the Prometheus text format, so the self-healing rules key on series the platform itself guarantees instead of on a host-level collector that may not see it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | LIVE DRILL FIX: the start-time gauge was recomputed per scrape from Date.now() - process.uptime(), which jitters 1-3 ms every scrape because the two clocks are read microseconds apart. changes()[10m] therefore counted every scrape as a restart — 11 distinct values in 3 minutes on a stable container, putting all 34 bots into a pending SwarmContainerRestartLoop within two minutes of the rules going live. It is now computed ONCE at module load, which is what a process start time semantically is. The guard's old tolerance (within 1 second) was too loose to see millisecond jitter; it now demands an exactly identical value across renders AND across an hour-long injected clock jump.
  */
 
 /**
@@ -51,6 +52,23 @@ const CGROUP_V1_MEMORY_MAX = '/sys/fs/cgroup/memory/memory.limit_in_bytes';
  * would make the HighMemory rule's ratio permanently ~0 and the alert permanently silent.
  */
 const V1_UNLIMITED_FLOOR = 2 ** 53;
+
+/**
+ * When this process started, in Unix epoch seconds — computed ONCE, on purpose.
+ *
+ * `SwarmContainerRestartLoop` is `changes(oshal_process_start_time_seconds[10m]) > 2`, so this
+ * value must be EXACTLY constant while the process lives. Deriving it per scrape from
+ * `Date.now() - process.uptime()` looks equivalent and is not: the two clocks are read a few
+ * microseconds apart and round differently, so the answer jitters by 1-3 ms every scrape and
+ * `changes()` counts every scrape as a restart. Observed live on 2026-08-01: 11 distinct values
+ * in 3 minutes on a container that had not restarted, putting all 34 bots into a pending
+ * restart-loop alert. A per-scrape recomputation is the bug; the constant is the fix.
+ *
+ * A wall-clock step would make this value slightly wrong (by the size of the step) but still
+ * CONSTANT, which is what the rule needs. Wrongness of a few seconds in a timestamp nobody reads
+ * absolutely is strictly better than a metric that manufactures restarts.
+ */
+const PROCESS_START_TIME_SECONDS = (Date.now() - Math.round(process.uptime() * 1000)) / 1000;
 
 /** Memoized cgroup limit: a container's memory ceiling does not change while it runs. */
 let memoryLimitCache: number | null = null;
@@ -126,7 +144,9 @@ interface Series {
  * happens to hold the port) answered it.
  *
  * @param identity - Runtime kind + instance name for the shared label set.
- * @param nowMs - Current epoch milliseconds (injected for deterministic guards).
+ * @param nowMs - Current epoch milliseconds. Accepted so a guard can prove the exposition does
+ *   NOT track the wall clock: the start-time gauge is a per-process constant and must be
+ *   identical no matter what clock the caller passes.
  * @param read - cgroup reader (injected for deterministic guards).
  * @returns The exposition body, `text/plain; version=0.0.4` with a trailing newline.
  */
@@ -135,6 +155,7 @@ export function renderRuntimeMetrics(
   nowMs: number = Date.now(),
   read: FileReader = defaultReader,
 ): string {
+  void nowMs; // see the @param note: deliberately unused, and the guard proves it stays unused.
   const cpu = process.cpuUsage();
   const memory = process.memoryUsage();
   const series: Series[] = [
@@ -148,10 +169,7 @@ export function renderRuntimeMetrics(
       name: 'oshal_process_start_time_seconds',
       help: 'Unix epoch seconds at which this process started. A change is a restart.',
       type: 'gauge',
-      // uptime() is monotonic within the process, so start time stays stable across scrapes
-      // (Date.now() - uptime is not perturbed by wall-clock adjustments the way a cached
-      // timestamp would be by a clock step). changes()[10m] over this IS the restart count.
-      value: (nowMs - Math.round(process.uptime() * 1000)) / 1000,
+      value: PROCESS_START_TIME_SECONDS,
     },
     {
       name: 'oshal_process_cpu_seconds_total',
