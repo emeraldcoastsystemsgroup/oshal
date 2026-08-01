@@ -3,6 +3,7 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | PRIVATE GCP cost + health diagnostics CLI for cloud-ops-bot. 20 read-only check verbs over the Cloud REST APIs (no gcloud), authed by the per-user GCP connector token (brokered .oshal-cred-gcp / OSHAL_CRED_GCP, DB-decrypt fallback) — identical token plumbing to scripts/oshal-gcp.js. This is a PRIVATE tool (bot-internal, invoked via bash, NOT registered in gcpToolKit.js / cloud.yaml — by design). Each check returns structured JSON {check, findings[], ...}; `summary` aggregates a curated set into health (0-100) + monthly $ savings scores. Every API call is defensive (apiSafe) so a disabled API / missing permission on one check degrades to a finding instead of crashing the diagnostic.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  *   node scripts/oshal-gcp-diag.js summary [projectId]      # health score + cost savings rollup
  *   node scripts/oshal-gcp-diag.js list                     # all 20 checks
@@ -40,7 +41,7 @@ function resolveProvidedToken() {
   try { const t = fs.readFileSync(path.join(process.cwd(), '.oshal-cred-gcp'), 'utf8').trim(); if (t) return t; } catch { /* env next */ }
   return process.env.OSHAL_CRED_GCP || undefined;
 }
-function hkey() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function hkey() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', hkey(), Buffer.from(iv, 'base64'));

@@ -10,9 +10,11 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exported subtask lifecycle schema bootstrap helper for durable subtask tracking
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Exported ticket and workspace schema bootstrap helpers for internal ticketing system
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Exported buildOwnerRlsPolicyStatements so lazy app-store DDL sites outside this directory (finance/payments/youtube/trading/tv-pairing) can apply tier-1 RLS at their chokepoints (A1.2 follow-up)
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported gucEnabled + wrapPoolWithGuc through the barrel so feature slices that mint their OWN pg Pool (pgvector-rag-engine) can identity-stamp it without a deep import - an unwrapped private pool is exactly how rag_chunks rows were written owner-less (RLS inert).
  */
 
 export { createOptionalPostgresPool, hasPostgresConfiguration } from './optional-postgres-pool';
+export { gucEnabled, wrapPoolWithGuc } from './guc-pool';
 export {
   assertSchemaReady,
   isRuntimeDdlStatement,

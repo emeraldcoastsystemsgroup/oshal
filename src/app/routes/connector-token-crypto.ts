@@ -31,6 +31,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-user DEK envelope encryption for connector tokens, gated by OSHAL_ENVELOPE_CRYPTO (default off, backward-compatible with legacy single-key blobs).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: kek() now fails loud on a missing SESSION_SECRET in EVERY mode - the crypto-OFF break-glass branch still derived the key from the hardcoded dev constant, i.e. rolling back envelope crypto silently downgraded every user's at-rest tokens to a key any reader of this public repo can compute. There is no legitimate deployment shape where a well-known key beats an explicit failure. Guard: tests/unit/no-dev-secret-fallback.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Flipped OSHAL_ENVELOPE_CRYPTO default OFF->ON (explicit 'false'/'0'/'no'/'off' = rollback). decryptToken already reads legacy single-key blobs (format-aware) so no already-connected user's tokens are stranded. Made key absence FAIL-LOUD: kek() now throws when SESSION_SECRET is unset AND crypto is ON, instead of silently deriving a weak KEK from the hardcoded dev constant. Dev fallback retained only when crypto is OFF.
  *
  * @module connector-token-crypto
@@ -57,20 +58,19 @@ export function envelopeEnabled(): boolean {
 
 /**
  * Master key-encryption-key — SHA256(SESSION_SECRET). Wraps DEKs (and decrypts legacy tokens).
- * FAIL-LOUD on key absence: when crypto is ON and SESSION_SECRET is unset, throw rather than
- * derive the KEK from a hardcoded dev constant — that would wrap every user's DEK (and every
- * legacy token) under a known key, i.e. no real at-rest protection. Never downgrades to plaintext.
- * The historical dev fallback survives ONLY when crypto is explicitly OFF (legacy/dev break-glass).
+ * FAIL-LOUD on key absence in EVERY mode: SESSION_SECRET unset throws rather than deriving the
+ * KEK from a hardcoded dev constant — that would wrap every user's DEK (and every legacy token)
+ * under a key any reader of this public repo can compute, i.e. no real at-rest protection. The
+ * historical crypto-OFF break-glass fallback was removed 2026-07-31 (SECURITY-HARDENING 3.1/9):
+ * a box without the secret cannot decrypt real data anyway, so the only thing the fallback ever
+ * enabled was silently WRITING new secrets under a public key. Never downgrades to plaintext.
  */
 function kek(): Buffer {
   const secret = process.env.SESSION_SECRET;
   if (!secret) {
-    if (envelopeEnabled()) {
-      throw new Error(
-        'connector-token-crypto: SESSION_SECRET is unset but OSHAL_ENVELOPE_CRYPTO is on — refusing to derive an at-rest key from a hardcoded dev constant. Set SESSION_SECRET (production), or set OSHAL_ENVELOPE_CRYPTO=false for legacy/dev.',
-      );
-    }
-    return crypto.createHash('sha256').update('oshal-dev-secret').digest();
+    throw new Error(
+      'connector-token-crypto: SESSION_SECRET is unset — refusing to derive an at-rest key from a hardcoded dev constant (the dev fallback was removed; docs/security/SECURITY-HARDENING.md 3.1/9). Set SESSION_SECRET.',
+    );
   }
   return crypto.createHash('sha256').update(secret).digest();
 }

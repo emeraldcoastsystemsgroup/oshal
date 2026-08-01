@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Phone + text CLI for the communications-bot (Intelligent Communication swarm, ADR-037 pattern: connector + oshal-<provider>.js, never a new app). Reads the per-user Twilio credential ("AccountSid:AuthToken" combined secret, provider='twilio') from the OSHAL connector store — connected at /utilities. Mirrors scripts/oshal-smartthings.js resolution: prefer the controller-brokered secret (.oshal-cred-twilio / OSHAL_CRED_TWILIO), else decrypt the per-user secret from the DB, else the operator env pair (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN). Read verbs: digest (default), account, numbers, messages, calls, accounts. Send verbs (sms, call) are OUTWARD-FACING and confirm-gated: OSHAL_MESSAGE_SEND_CONFIRM=true or --confirm, else exit with no send. The auth token is never printed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  *   node scripts/oshal-twilio.js                       # JSON digest (account, numbers, recent messages + calls)
  *   node scripts/oshal-twilio.js account               # account info (friendly name, status, type)
@@ -76,7 +77,7 @@ function secretFromEnvPair() {
   return sid && tok ? `${sid}:${tok}` : undefined;
 }
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));

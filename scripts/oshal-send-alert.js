@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fix silent alert black-hole: all 5 callers (trading/stack watchdog, lab-report, ci-local, earnings-gate) invoke this via `docker exec` without OSHAL_USER_SUB, so it defaulted to the 'example-user-sub' placeholder and returned "SEND_FAIL no Google connection" on EVERY alert — that is why the 3-day wrangler deploy pile-up (which OOM-crashed the swarm) never notified anyone. Now sub falls back to the first OSHAL_OPERATOR_SUBS entry (set in the container) and the recipient falls back to the connected account's own inbox instead of the 'owner@example.com' placeholder.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto v2 compat (same drift fixed in oshal-gmail.js 07-21 and oshal-recap-email.js 07-24/PR#28): connector tokens re-encrypt to `v2:` per-user-DEK blobs since OSHAL_ENVELOPE_CRYPTO defaulted ON (07-20), but this sibling's decrypt only knew the legacy single-KEK format, so even after the sub fix it died with "Unsupported state or unable to authenticate data". Ported the format-aware userDek/decryptToken helpers; an access-token decrypt failure now falls through to a refresh instead of aborting.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Telegram leg for every watchdog-family caller (BACKLOG "Telegram notification bot" go-live): runAlert() now sends the alert to the operator's Telegram chat FIRST (sendTelegramAlert — no-op without TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID, fixed-string errors so the token can never leak through an exception), then runs the unchanged Gmail leg. The trading/stack watchdogs, lab-report, ci-local, and earnings-gate all inherit the phone-push with zero caller changes; email exit codes are preserved.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  */
 /*
  * Usage (in the api container): node oshal-send-alert.js "<subject>" "<body>"
@@ -17,7 +18,7 @@
 const crypto = require('crypto');
 const { Pool } = require('pg');
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function gcmDecryptRaw(k, blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', k, Buffer.from(iv, 'base64'));

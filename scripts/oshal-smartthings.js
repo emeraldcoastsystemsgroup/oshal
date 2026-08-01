@@ -6,6 +6,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account selection (ADR-042): a user/household can have several SmartThings connections; pick one with OSHAL_CONNECTION_LABEL / OSHAL_CONNECTION_EMAIL / OSHAL_CONNECTION_ID (the home-bot tools pass the label the user named, e.g. "lake house"). New `accounts` verb lists the caller's labeled connections (the catalog the bot selects from). Resolution is personal ∪ shared (household). With a selector, resolve from the DB by it (ignoring the single brokered default); a bare request with multiple connections exits 2 listing the labels so the bot asks which.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bot-owned store (ADR-036): new `index` verb builds the unified, DEDUPED device index (canonical-name join across hubs, prior user renames preserved) and persists it to the per-user store at $OSHAL_HOME_DATA_DIR/<sub>/devices.json (shared `home-data` volume, home-bot :rw / api :ro). The cheap read-model the Smart Home surface renders without an LLM call (GET /api/home/devices). Store helpers (readStore/writeStore/slug) added; foundation for bot-owned scenes/prefs/history next.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bot-owned SCENES: scene-save/scene-run/scene-del/myscenes verbs over scenes.json. SmartThings can't create vendor scenes via API, so the bot owns its own — a named step list ([{device:<canonical key>,cmd:on|off|set,...}]) replayed through the control commands; steps reference devices by index key (hub-agnostic, survives id churn). Surfaced cheaply at GET /api/home/scenes.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  *   node scripts/oshal-smartthings.js                      # JSON digest (devices+state, scenes)
  *   node scripts/oshal-smartthings.js index                # build+persist the deduped device index (store)
@@ -92,7 +93,7 @@ function resolveProvidedToken() {
   return process.env.OSHAL_CRED_SMARTTHINGS || undefined;
 }
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));

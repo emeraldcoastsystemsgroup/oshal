@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — execute-time per-caller entitlement gate for the bot-node's POST /api/swarm-execute (BACKLOG "Bot-endpoint privilege model"). Reuses the EXISTING models, invents no store: ADR-087 accessRoles (isBotAccessibleTo, most-restrictive-wins) + the operator allowlist (isOperatorIdentity, OSHAL_OPERATOR_SUBS/EMAILS). Caller classes: no userSub → internal dispatch (trusted, unchanged); userSub without direct → queue/swarm dispatch threading the ticket owner's sub for credential brokering (trusted — queue-manager dispatch must not break); userSub + direct:true → interactive per-user delegation, entitlement-checked. Front-door exemption: a bot whose registry role is assistant/* is the user's own entry point — its operator+swarm scoping is discovery-hiding only (registry comment on oshal-assistant), so identity callers stay entitled to it. Mode env OSHAL_EXECUTE_ENTITLEMENT: off (default — enforcement requires OSHAL_OPERATOR_SUBS on bot containers) | warn (log would-be denials) | enforce (403 + denial log).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | K6 close-out (BACKLOG kernel audit): default mode flipped 'warn' -> ENFORCE — the gate is now fail-closed by default. The warn soak ran box-wide since the seq-2 flip and logged ZERO would-be denials (api + bot containers, 7-day grep 2026-07-31), so enforcement is behavior-safe here; a deployment that needs the soak back sets OSHAL_EXECUTE_ENTITLEMENT=warn EXPLICITLY, and 'off' stays the explicit kill switch. Unknown values now fall back to ENFORCE (fail closed — a typo must not relax enforcement; seq 2 had typos fall to warn for auditing, which a fail-closed default supersedes). Posture logs updated to match. Guard: tests/unit/bot-node-execute-entitlement.spec.ts default-mode case now proves a denial actually DENIES (403) with the operator path still green.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Privilege-model rollout (BACKLOG item, diagnosis bot-endpoint-priv): (1) default mode flipped 'off' → 'warn' — the gate was built but OSHAL_EXECUTE_ENTITLEMENT was wired NOWHERE (no compose/.env entry), so every deployment silently ran no check at all; warn is behavior-safe (log-only) and starts the denial soak everywhere without an env change. Unknown values now also fall back to 'warn' (a typo must not silently disable auditing); 'off' remains an explicit opt-out. The warn→enforce flip stays an explicit operator env act. (2) New exports for the CONTROLLER chokepoint (executeBotOrInline — inline bots resolve to a null endpoint and never reach this HTTP gate): assertExecuteEntitlement (mode-aware helper that reuses the SAME pure decision + denial-log shape, throws in enforce) and CallerNotEntitledError (statusCode 403). Denial logging refactored to a transport-neutral field logger so bot-node HTTP + controller denials grep as one line shape.
  */
 
@@ -69,19 +70,21 @@ export type ExecuteEntitlementDecision =
 
 /**
  * @description Parses OSHAL_EXECUTE_ENTITLEMENT into an enforcement mode. Default (and any
- * unknown value) is 'warn': would-be denials are logged, nothing is blocked — behavior-safe
- * on every deployment, and it runs the denial soak an enforce flip needs. 'off' is an
- * EXPLICIT opt-out only. Turning 'enforce' on requires the operator allowlist env on bot
- * containers and a review of the warn-soak denial logs first — so the fail-closed flip is
- * an explicit operator env act, exactly like SWARM_SERVICE_SECRET.
+ * unknown value) is 'enforce': an interactive identity caller who is not entitled to the
+ * target bot is REFUSED (403) — fail closed, like the rest of the auth surface (K6, kernel
+ * audit 2026-07-29). Relaxing is an EXPLICIT env act: 'warn' logs would-be denials and
+ * allows (the rollout soak mode), 'off' disables the check entirely. Unknown values fall
+ * back to 'enforce' — a typo must never silently relax enforcement. Note enforce needs
+ * OSHAL_OPERATOR_SUBS/EMAILS populated for operators to reach operator+swarm-scoped bots
+ * interactively (the installer writes it; open bots and assistant front doors need nothing).
  * @param env - Environment map (process.env by default; injectable for tests).
  * @returns The active enforcement mode.
  */
 export function resolveExecuteEntitlementMode(env: NodeJS.ProcessEnv = process.env): ExecuteEntitlementMode {
   const raw = String(env.OSHAL_EXECUTE_ENTITLEMENT ?? '').trim().toLowerCase();
-  if (raw === 'enforce' || raw === 'on' || raw === 'true') return 'enforce';
+  if (raw === 'warn') return 'warn';
   if (raw === 'off' || raw === 'false' || raw === 'disabled') return 'off';
-  return 'warn';
+  return 'enforce';
 }
 
 /**
@@ -270,11 +273,14 @@ function logDenialFields(fields: {
 export function logExecuteEntitlementPosture(): void {
   const mode = resolveExecuteEntitlementMode();
   if (mode === 'enforce') {
-    logger.info('Execute-time entitlement is ENFORCED (OSHAL_EXECUTE_ENTITLEMENT=enforce) — interactive identity callers must be entitled to the target agent (ADR-087 accessRoles + operator allowlist)');
+    logger.info('Execute-time entitlement is ENFORCED (the default) — interactive identity callers must be entitled to the target agent (ADR-087 accessRoles + operator allowlist). Ensure OSHAL_OPERATOR_SUBS/EMAILS is set so operators keep interactive reach to scoped bots.');
     return;
   }
   if (mode === 'warn') {
-    logger.info('Execute-time entitlement is in WARN mode (the default) — would-be denials are logged, nothing is blocked. Review the denial soak, then set OSHAL_EXECUTE_ENTITLEMENT=enforce (with OSHAL_OPERATOR_SUBS on bot containers) to fail closed.');
+    logger.warn(
+      { backlogItem: BACKLOG_ITEM },
+      'Execute-time entitlement is in WARN mode (explicit opt-out via OSHAL_EXECUTE_ENTITLEMENT=warn) — would-be denials are logged, nothing is blocked. Unset the var to restore the fail-closed enforce default.',
+    );
     return;
   }
   logger.warn(

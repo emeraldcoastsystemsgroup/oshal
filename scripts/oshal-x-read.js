@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | X/Twitter reader for the social swarm: reads the connected account's OWN home timeline (reverse_chronological = tweets from accounts you follow) and the list of accounts you follow, via the per-user connector token (oshal_connections). This is the keyless path — follow accounts (e.g. @realDonaldTrump) from your logged-in X account and they stream into your home timeline; no paid search tier needed. Refreshes the OAuth2 token (confidential client, HTTP Basic) when expired. The social bot uses this to sense signals for other swarm bots (e.g. notify the trading bot on a market-moving tweet).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: PREFER a controller-provided access token (.oshal-cred-twitter in cwd, or OSHAL_CRED_TWITTER env) — use it directly and skip ALL DB/SESSION_SECRET decryption. Falls back to the existing per-user DB-decrypt+refresh path when no cred is provided.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  *   OSHAL_USER_SUB=... node scripts/oshal-x-read.js              # home timeline (default)
  *   X_MODE=following OSHAL_USER_SUB=... node scripts/oshal-x-read.js   # who I follow
@@ -35,7 +36,7 @@ function resolveProvidedToken() {
   return process.env.OSHAL_CRED_TWITTER || undefined;
 }
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));

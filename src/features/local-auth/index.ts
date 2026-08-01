@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Barrel for the local-auth feature (ADR-117): the invited-user store behind LOCAL_AUTH mode.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export createPasswordReset (self-service reset, ADR-117 deferred item).
  */
 
 export {
@@ -43,6 +44,7 @@ export {
   hashInviteToken,
   ensureLocalUserSchema,
   upsertInvite,
+  createPasswordReset,
   findByInviteToken,
   acceptInvite,
   verifyLogin,

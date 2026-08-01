@@ -8,6 +8,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve Gmail message IDs, provider receive time, and UNREAD/IMPORTANT/STARRED flags in the structured digest.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add the `verify` verb for ATS sign-up/2FA: the digest reads format=metadata (headers + the ~100-char snippet) ONLY, so a verification LINK in the message BODY was invisible — which is exactly what Workday/account-activation mail sends, blocking those ATS families. `verify` fetches format=full, walks the MIME parts, and extracts a code AND/OR an activation link, with a BOUNDED POLL (the apply flow's one-shot lookup missed codes that had not landed yet) and a client-side recency filter so a stale code from earlier is never returned. Emits ONLY the extracted token — never the body — so the digest's privacy posture holds.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto compat: OSHAL_ENVELOPE_CRYPTO flipped ON by default 2026-07-20, so connector tokens now re-encrypt to a `v2:` per-user-DEK blob on refresh — but this CLI's decrypt only knew the legacy single-KEK format, so it broke reading the access_token the moment it refreshed to v2 ("Unsupported state or unable to authenticate data"), silently killing the apply flow's Gmail verification-code retrieval. Made decrypt format-aware (new decryptToken + userDek: v2 -> unwrap the per-user DEK from oshal_user_deks under the KEK, then DEK-decrypt; legacy -> KEK) to mirror connector-token-crypto.ts, and made an access_token decrypt failure fall through to a refresh_token refresh instead of aborting.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  * Prints a JSON digest of today's unread-ish mail + calendar for a connected
  * Google account. The account is connected by a user at /utilities (no CLI auth).
@@ -45,7 +46,7 @@ function resolveProvidedToken() {
   return process.env.OSHAL_CRED_GOOGLE || undefined;
 }
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function gcmDecryptRaw(k, blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', k, Buffer.from(iv, 'base64'));

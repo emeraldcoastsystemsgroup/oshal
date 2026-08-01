@@ -5,6 +5,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Outlook/Microsoft 365 reader (email swarm). Reads recent mail + today's calendar via Microsoft Graph using the OSHAL connector token (oshal_connections, provider=outlook). Mirrors oshal-gmail.js: AES-256-GCM decrypt + refresh (Azure AD). Prints the same digest JSON shape so the email bot can reason over Gmail OR Outlook identically.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-037 provider parity with oshal-gmail.js: (1) token broker — prefer the controller-provided short-lived token (.oshal-cred-outlook in cwd, or OSHAL_CRED_OUTLOOK env) so the bot never needs SESSION_SECRET/DB; (2) per-user scoping — OSHAL_USER_SUB (env or .oshal-user-sub file) scopes the DB fallback to the caller's own connection and FAILS CLOSED (exit 2) when >1 connection exists unscoped; (3) new verbs list/read/send over real Graph v1.0 endpoints (GET /me/messages with $top/$filter, GET /me/messages/{id}, POST /me/sendMail — send is --confirm-gated); (4) digest rows now carry id/receivedAt/providerFlags like the Gmail digest; (5) machine-readable JSON errors on every failure path + --help that needs no credentials. Refresh scope now includes Mail.Send.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review findings (gap-list build 2026-07-15): (1) --body-file now fails closed (exit 1, machine-readable JSON) when the named file is missing instead of silently sending the literal path string as the email body — the positional bodyFileOrText keeps its file-or-literal duality for oshal-gmail-send.js parity; (2) body-file reads route through readBodyFile so EISDIR/EACCES print the {error, message} JSON contract instead of crashing main() with a raw stack outside the try/catch; (3) the token-persist UPDATE no longer swallows its rejection (.catch removed) — it propagates to main()'s handler like oshal-gmail.js, so a dropped rotated refresh token is diagnosable (no-swallowed-catches compliance).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  * Prints JSON for a connected Microsoft 365 (Outlook) account. The account is
  * connected by a user at /utilities (provider id: outlook). Same output contract
@@ -61,7 +62,7 @@ function resolveProvidedToken() {
   return process.env.OSHAL_CRED_OUTLOOK || undefined;
 }
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));

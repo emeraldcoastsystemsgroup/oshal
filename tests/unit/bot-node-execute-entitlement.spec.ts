@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the execute-time entitlement gate on the bot-node's POST /api/swarm-execute (BACKLOG "Bot-endpoint privilege model"). Drives the REAL middleware chain the server mounts (authorizeBotNodeExecutionCall → createExecuteEntitlementGate) against the REAL local registry: (1) service-secret internal + queue dispatch passes; (2) entitled identity passes (unscoped target / operator sub on a scoped target / the assistant front door); (3) an unentitled identity caller 403s in enforce mode with the denial logged; plus warn-mode allows-and-logs, off-mode (default) no-ops, the pure decision matrix with injected deps, and mode parsing.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | K6 close-out: default mode flipped warn -> ENFORCE. The default-mode e2e case now proves a denial actually DENIES — env unset, unentitled identity caller gets 403 through the REAL middleware chain while the operator path and queue dispatch stay green — and mode parsing pins {} / unknown values -> 'enforce' (fail closed; a typo must not relax enforcement) with 'warn' as the EXPLICIT soak opt-out. Goes red if the default ever silently regresses to allow.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Default mode flipped off → WARN (rollout fix — OSHAL_EXECUTE_ENTITLEMENT was wired nowhere, so 'off default' disabled the gate on every deployment): the default-mode e2e case now asserts allow-and-log (warn soak), 'off' is asserted as an EXPLICIT opt-out only, and mode parsing pins {} / unknown values → 'warn' and off/false/disabled → 'off'. Goes red if the default ever silently regresses to no-check.
  */
 
@@ -133,12 +134,18 @@ describe('bot-node /api/swarm-execute execute-time entitlement gate', () => {
     expect(String(meta.outcome)).toContain('warn-only');
   });
 
-  it('the DEFAULT (env unset) is warn mode: an unentitled call is allowed but the denial soak logs it', async () => {
-    const url = await boot(); // OSHAL_EXECUTE_ENTITLEMENT unset → warn default
-    expect((await post(url, { agentId: SCOPED_AGENT_ID, userSub: USER_SUB, direct: true })).status).toBe(200);
+  it('the DEFAULT (env unset) is ENFORCE: an unentitled call is REFUSED, and the operator/queue paths still work', async () => {
+    const url = await boot(); // OSHAL_EXECUTE_ENTITLEMENT unset → enforce default (fail closed)
+    const denied = await post(url, { agentId: SCOPED_AGENT_ID, userSub: USER_SUB, direct: true });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({ success: false, error: 'caller_not_entitled_to_agent' });
     expect(logSpies.warn).toHaveBeenCalledTimes(1);
     const [meta] = logSpies.warn.mock.calls[0] as [Record<string, unknown>];
-    expect(String(meta.outcome)).toContain('warn-only');
+    expect(String(meta.outcome)).toBe('DENIED');
+    // The flip must not strand legitimate callers: the operator's interactive path and the
+    // queue-manager's owner-sub dispatch both stay green under the same default.
+    expect((await post(url, { agentId: SCOPED_AGENT_ID, userSub: OPERATOR_SUB, direct: true })).status).toBe(200);
+    expect((await post(url, { agentId: SCOPED_AGENT_ID, userSub: USER_SUB })).status).toBe(200);
   });
 
   it('off mode is an EXPLICIT opt-out: no check, no log', async () => {
@@ -184,8 +191,8 @@ describe('bot-node /api/swarm-execute execute-time entitlement gate', () => {
   });
 
   describe('resolveExecuteEntitlementMode', () => {
-    it('defaults to WARN; off is explicit; parses enforce; unknown values fall back to warn (a typo must not disable auditing)', () => {
-      expect(resolveExecuteEntitlementMode({})).toBe('warn');
+    it('defaults to ENFORCE; warn/off are explicit opt-outs; unknown values fall back to enforce (a typo must not relax enforcement)', () => {
+      expect(resolveExecuteEntitlementMode({})).toBe('enforce');
       expect(resolveExecuteEntitlementMode({ OSHAL_EXECUTE_ENTITLEMENT: 'warn' })).toBe('warn');
       expect(resolveExecuteEntitlementMode({ OSHAL_EXECUTE_ENTITLEMENT: 'off' })).toBe('off');
       expect(resolveExecuteEntitlementMode({ OSHAL_EXECUTE_ENTITLEMENT: 'false' })).toBe('off');
@@ -193,7 +200,7 @@ describe('bot-node /api/swarm-execute execute-time entitlement gate', () => {
       expect(resolveExecuteEntitlementMode({ OSHAL_EXECUTE_ENTITLEMENT: 'enforce' })).toBe('enforce');
       expect(resolveExecuteEntitlementMode({ OSHAL_EXECUTE_ENTITLEMENT: 'ENFORCE' })).toBe('enforce');
       expect(resolveExecuteEntitlementMode({ OSHAL_EXECUTE_ENTITLEMENT: 'on' })).toBe('enforce');
-      expect(resolveExecuteEntitlementMode({ OSHAL_EXECUTE_ENTITLEMENT: 'banana' })).toBe('warn');
+      expect(resolveExecuteEntitlementMode({ OSHAL_EXECUTE_ENTITLEMENT: 'banana' })).toBe('enforce');
     });
   });
 });

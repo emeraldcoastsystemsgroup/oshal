@@ -12,6 +12,7 @@
  *   geocodes via OpenStreetMap Nominatim (no API key) with a fallback ladder (full → drop a leading
  *   business-name segment → drop the house number); an unresolvable address falls back to its label.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Uber Rides (transportation) CLI.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *   Reads the operator's OPTIONAL Uber Rides config from the OSHAL connector store
  *   (oshal_connections, provider='uber-rides') — connected once at /utilities, NO keys in
  *   env/compose. Mirrors scripts/oshal-uber.js credential resolution: prefer a brokered
@@ -51,7 +52,7 @@ function resolveBrokeredCred() {
   return process.env.OSHAL_CRED_UBER_RIDES || undefined;
 }
 function secretKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest();
+  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
 }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');

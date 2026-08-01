@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Self-service password reset (ADR-117 deferred item): createPasswordReset mints a reset token for an ACTIVE account by email, riding the SAME invite-token machinery (invite_token_hash / findByInviteToken / acceptInvite), never creating an account and never touching invited/disabled rows - so an unauthenticated /forgot request cannot mint accounts, resurrect a disabled login, or stomp a pending admin invitation... and the single-UPDATE shape answers known and unknown emails in one indistinguishable round trip (enumeration safety). Reset links live 60 minutes (RESET_TTL_MS) vs the invite's 7 days: the requester is at their keyboard. acceptInvite deliberately does NOT touch the TOTP columns, so a reset can never strip a second factor.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local invited-user store (ADR-117). Standalone deployments (a client box with no IdP) need a controlled login: an admin invites a user by email, the invitee follows a one-time link to set a password, and only invited people can sign in. This module owns the oshal_local_users table, scrypt password hashing (Node built-in — no new crypto dependency), the deterministic `local-<sha256(email)[0..16]>` sub (the SAME formula the installer's LocalSub writes into MOCK_OIDC_SUB, so sub-keyed data survives the switch from open mock mode to gated login), and the one-time invite tokens (oshal_inv_ prefixed, sha256 at rest, single-use, 7-day expiry — the PAT trade). Passwords hash into Postgres, NOT the Vault surface: hashes are one-way material that belongs in the identity DB (how Keycloak/AD do it), and the login path must not depend on the Vault facade whose runtime is not built (ADR-040).
  */
 
@@ -20,6 +21,8 @@ export const INVITE_TOKEN_PREFIX = 'oshal_inv_';
 const TOKEN_BYTES = 24;
 /** Invite links stop working after this long; the admin re-invites to mint a fresh one. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Self-service RESET links are short-lived — the requester is at their keyboard. */
+const RESET_TTL_MS = 60 * 60 * 1000;
 /** NIST-style policy: a real minimum length, no composition theater. */
 export const PASSWORD_MIN_LENGTH = 10;
 const PASSWORD_MAX_LENGTH = 200;
@@ -241,6 +244,34 @@ export async function upsertInvite(
   ));
   if (!rows[0]) throw httpError(409, 'that account is disabled — re-enable it before re-inviting');
   return { user: toLocalUser(rows[0]), token, expiresAt: expiresAt.toISOString() };
+}
+
+/**
+ * @description Mints a self-service password-reset token for an ACTIVE account, riding the
+ * same one-time invite-token machinery (the link lands on /invite; acceptInvite redeems it).
+ * Deliberately narrower than upsertInvite: it NEVER creates an account (an unauthenticated
+ * caller must not be able to mint one), and it skips 'invited' (their admin invite link stays
+ * valid) and 'disabled' (a reset must not resurrect a disabled login) rows. One UPDATE answers
+ * known and unknown emails alike — a single indistinguishable round trip, so the /forgot route
+ * can stay enumeration-safe. The redeem path bumps token_version (old sessions die) and never
+ * touches the TOTP columns (a reset cannot strip a second factor).
+ *
+ * @param pool - Postgres pool.
+ * @param email - The address the reset was requested for (normalized here).
+ * @returns The user + one-time plaintext token, or null when no active account matches
+ *   (the caller MUST NOT let the two outcomes produce different responses).
+ */
+export async function createPasswordReset(pool: Pool, email: string): Promise<InviteResult | null> {
+  const normalized = normalizeEmail(email);
+  const token = generateInviteToken();
+  const expiresAt = new Date(Date.now() + RESET_TTL_MS);
+  const { rows } = await runWithSystemIdentity(() => pool.query(
+    `UPDATE oshal_local_users SET invite_token_hash = $2, invite_expires_at = $3
+      WHERE email = $1 AND status = 'active'
+      RETURNING *`,
+    [normalized, hashInviteToken(token), expiresAt],
+  ));
+  return rows[0] ? { user: toLocalUser(rows[0]), token, expiresAt: expiresAt.toISOString() } : null;
 }
 
 /**

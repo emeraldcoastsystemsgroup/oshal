@@ -18,6 +18,7 @@
  *   durable enqueuer can mint ONE job-apply ticket per posting (queue works them one-at-a-time). Does
  *   NOT claim (dispatch claims each at apply time).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | queue requeue <postingId> — undo a
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *   claim (apply_active=1) + a 'deferred' status for a dispatch that never reached the desktop. Without
  *   it a durable job-apply ticket poisoned its OWN posting: gatherAndDispatch claims before dispatching,
  *   so a transient node-offline left the posting unfindable and the retry escalated "no submittable job
@@ -74,7 +75,7 @@ const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
 
 // ── Token broker (Google), copied from oshal-jobhunter.js / oshal-gmail.js ─────────────────
 function sessionKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest();
+  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
 }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');

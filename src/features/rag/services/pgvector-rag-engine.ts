@@ -4,10 +4,12 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-091 pgvector engine: RAG chunks in the existing Postgres (rag_chunks — vector(384) HNSW + generated tsvector GIN, RLS'd like the rest of the platform). Vector KNN and websearch FTS run as two indexed queries fused by the shared RRF helper — replaces Chroma's full-collection BM25 fetch. Selected via RAG_ENGINE=pgvector; availability is health-checked (table+extension) with sticky fallback to the chroma path, so a stock-postgres deployment keeps working untouched.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG security burn-down: rag_chunks RLS was INERT for engine-written rows - addChunks never populated the owner_sub COLUMN (the ACL rode only in metadata JSONB, which policies cannot see), so every chunk landed unowned = public-read, and the engine's private raw Pool carried no identity GUCs anyway. Now (a) addChunks lifts owner_sub out of each chunk's metadata into the column, making migration 070's policies bite at the database layer exactly where the app-side permission filter already draws the line, and (b) the engine pool is wrapped with wrapPoolWithGuc (via the shared barrel) so the caller's request identity (or the SYSTEM sentinel for background sweeps) rides every query - without which the FORCE-RLS WITH CHECK would refuse the very owned writes (a) introduces. Pre-existing rows keep owner_sub NULL until re-ingest (shared-corpus semantics unchanged). Test seam _setRagPoolForTests. Guard: tests/unit/rag-pgvector-owner-sub.spec.ts.
  */
 
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database';
 import { reciprocalRankFusion } from './hybrid-fusion';
 import type { RagSearchResult } from './rag-service';
 
@@ -20,9 +22,24 @@ const INSERT_BATCH = 200;
 let sharedPool: Pool | null = null;
 function getPool(): Pool {
   if (!sharedPool) {
-    sharedPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 4 });
+    const raw = new Pool({ connectionString: process.env.DATABASE_URL, max: 4 });
+    // Identity-stamped like every other pool: rag_chunks is FORCE-RLS (migration 070), so
+    // owned reads/writes need oshal.current_sub riding the connection. An unwrapped private
+    // pool here is exactly how owner-stamped rows would be unwritable (WITH CHECK) and
+    // owned rows invisible to their own users.
+    sharedPool = gucEnabled() ? wrapPoolWithGuc(raw) : raw;
   }
   return sharedPool;
+}
+
+/**
+ * @description Test seam: inject a fake pool (pre-wrap — it is GUC-wrapped exactly like the
+ * real one) or null to reset to lazy construction. Mirrors the seam pattern of guc-pool's
+ * _resetFailOpenAudit; never called by production code.
+ * @param pool - Replacement pool, or null to restore the default lazy pool.
+ */
+export function _setRagPoolForTests(pool: Pool | null): void {
+  sharedPool = pool ? (gucEnabled() ? wrapPoolWithGuc(pool) : pool) : null;
 }
 
 /**
@@ -67,7 +84,11 @@ export class PgvectorRagEngine {
    * @param collection - Logical collection name.
    * @param ids - Chunk ids (aligned with documents/metadatas).
    * @param documents - Chunk texts.
-   * @param metadatas - Per-chunk metadata objects.
+   * @param metadatas - Per-chunk metadata objects. An `owner_sub` key (the ACL the writers
+   *   stamp — rag-routes private ingest/upload, the source-acl mapper) is ALSO lifted into
+   *   the rag_chunks owner_sub COLUMN so migration 070's RLS policies actually apply to
+   *   engine-written rows; without the column every row lands unowned = public-read and the
+   *   database-layer backstop is inert. Chunks without the key stay NULL (shared corpus).
    * @param embeddings - One vector per chunk, or null when the embedder was unavailable.
    */
   async addChunks(
@@ -84,15 +105,20 @@ export class PgvectorRagEngine {
       const params: unknown[] = [];
       for (let i = start; i < end; i++) {
         const base = params.length;
+        const meta = metadatas[i] ?? {};
+        const ownerSub = typeof meta.owner_sub === 'string' && meta.owner_sub.trim().length > 0
+          ? meta.owner_sub.trim()
+          : null;
         // Postgres TEXT/JSONB reject NUL bytes — pdf-parse output regularly contains
         // them, and one poisoned chunk must not fail a whole ingest batch.
         params.push(ids[i], collection, documents[i].replace(/\u0000/g, ''),
-          JSON.stringify(metadatas[i] ?? {}).replace(/\\u0000/g, ''),
-          embeddings ? `[${embeddings[i].join(',')}]` : null);
-        values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}::jsonb, $${base + 5}::vector)`);
+          JSON.stringify(meta).replace(/\\u0000/g, ''),
+          embeddings ? `[${embeddings[i].join(',')}]` : null,
+          ownerSub);
+        values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}::jsonb, $${base + 5}::vector, $${base + 6})`);
       }
       await pool.query(
-        `INSERT INTO rag_chunks (chunk_id, collection, document, metadata, embedding)
+        `INSERT INTO rag_chunks (chunk_id, collection, document, metadata, embedding, owner_sub)
          VALUES ${values.join(', ')}
          ON CONFLICT (chunk_id) DO NOTHING`,
         params,
