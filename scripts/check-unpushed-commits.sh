@@ -6,6 +6,8 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Unpushed-commit guard: the third leg of the backlog "Seven agent-worktree branches" done-when, and the half check-worktree-strays.sh deliberately leaves open. That script skips the PRIMARY checkout ("other rules govern it") and only inspects worktrees with a branch checked out — so the shapes that actually strand work here go undetected: a commit on the primary checkout's branch that was never pushed, a local branch ref left ahead of origin, and a detached HEAD carrying a commit (the private-index/push-by-SHA recipe's failure mode, where a stale branch pointer pushes "successfully" while the real commit stays local). This script judges EVERY local ref against every origin remote-tracking ref and separates work that exists nowhere but this disk (fails) from refs whose content already landed as a squash merge and from dead pre-scrub history (both informational), so the red state stays actionable instead of 36 lines nobody reads.
 #
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Third landed-proof (subject trace), found the same night by deleting the 59 landed remote branches: the two structural proofs are not DURABLE. A branch that merged origin/main into itself before being squash-merged has no patch-id match (the squash's diff is the whole branch, not any one commit) and stops producing a no-op merge the moment main edits a file it touched — so three long-merged branches (PRs #24/#26/#29) flipped to STRANDED as soon as their remote counterparts were pruned. Because GitHub's squash body lists each original commit subject, requiring EVERY non-merge subject to appear in origin/main's log is the proof that survives main moving. It is last in precedence and needs subjects of real length, so it can only clear a branch whose every commit is already named in the trunk's history.
+#
 # WHY A CONTENT CHECK AND NOT JUST `rev-list --count`: this repo squash-merges every PR, so a
 # landed branch's original commit object is never an ancestor of origin/main. A naive
 # ahead-of-origin count reports dozens of already-shipped branch refs as unpushed — a red gate
@@ -13,6 +15,15 @@
 # tests answer the real question "is this content in the trunk?": a no-op merge into origin/main
 # (result tree byte-identical to origin/main's), or `git cherry` finding every commit's patch-id
 # already upstream. Either is proof; neither can be satisfied by a genuinely new commit.
+#
+# THE THIRD PROOF, AND WHY IT IS NEEDED: both structural tests DECAY. A branch that merged
+# origin/main into itself before landing has no per-commit patch-id match (the squash's diff is the
+# whole branch), and its no-op merge stops holding the first time main edits a file it touched. So a
+# branch merged weeks ago silently becomes "STRANDED" as the trunk advances. GitHub's squash body
+# lists each original commit subject, so requiring EVERY non-merge commit's subject to appear
+# somewhere in origin/main's log is the proof that does not decay. It is deliberately LAST: a subject
+# is text, not content, so it can be fooled by a genuinely new commit that reuses an old subject
+# verbatim. Short subjects are refused for that reason, and the two structural proofs get first say.
 #
 # WHY TWO NON-FAILING CLASSES EXIST, AND WHY THEY ARE NOT LOOPHOLES:
 #   * `archive/*` — deliberate local-only history snapshots. `archive/pre-scrub-main` holds the
@@ -81,7 +92,33 @@ content_landed() {
   # Squash merges break ancestry but keep patch-ids: `git cherry` marks an upstream-equivalent
   # commit with '-' and an unlanded one with '+'. Zero '+' lines means everything landed.
   [ "$(git cherry origin/main "$rev" 2>/dev/null | grep -c '^+')" -eq 0 ] && return 0
+  subjects_landed "$rev" && return 0
   return 1
+}
+
+# --- last-resort proof: is every commit on this ref NAMED in the trunk's history? --------------
+# The squash body lists the branch's original subjects, so this survives main advancing past the
+# point where the structural proofs decay. Merge commits are skipped: a merge carries no original
+# work and never gets a subject of its own in the squash body. A subject shorter than
+# MIN_SUBJECT_CHARS is refused as evidence — "wip" matching something is not proof of anything.
+MIN_SUBJECT_CHARS=16
+main_log_cache=""
+subjects_landed() {
+  local rev="$1" mb subject found=0
+  mb=$(git merge-base "$rev" origin/main 2>/dev/null) || return 1
+  if [ -z "$main_log_cache" ]; then
+    main_log_cache=$(mktemp) || return 1
+    git log --format='%s%n%b' origin/main > "$main_log_cache" 2>/dev/null || return 1
+  fi
+  while IFS= read -r subject; do
+    [ -z "$subject" ] && continue
+    [ "${#subject}" -lt "$MIN_SUBJECT_CHARS" ] && return 1
+    grep -qF -- "$subject" "$main_log_cache" || return 1
+    found=$((found + 1))
+  done <<EOF_SUBJ
+$(git log --no-merges --format='%s' "$mb..$rev" 2>/dev/null)
+EOF_SUBJ
+  [ "$found" -gt 0 ]
 }
 
 # --- classify one ref -------------------------------------------------------------------------
@@ -146,6 +183,8 @@ EOF_WT
   echo "pre-scrub orphans ($orphan_n) — no common ancestor with origin/main (the trunk history restarts 2026-07-29); unpushable by construction:$orphan_names"
 [ "$exempt_n" -gt 0 ] && \
   echo "archive refs ($exempt_n) — deliberate local-only history, must NOT be pushed:$exempt_names"
+
+[ -n "$main_log_cache" ] && rm -f "$main_log_cache"
 
 if [ "$fail" -eq 0 ]; then
   echo "unpushed-commits: clean (nothing stranded; $checked ref(s) ahead of origin, all accounted for)"

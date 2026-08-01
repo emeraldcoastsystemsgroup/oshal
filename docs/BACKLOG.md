@@ -235,16 +235,28 @@ agent-worktree commit loud rather than silent — a `git worktree list` + ahead-
   `git cherry`), pre-scrub orphan (no merge base; the trunk history restarts 2026-07-29), and
   `archive/*` (deliberate local-only history that must never be pushed). No origin refs, or no
   `origin/main`, exits 2 UNAVAILABLE rather than 0. Guard:
-  `tests/unit/unpushed-commit-guard.spec.ts` — 12 cases on throwaway bare-origin + clone fixtures
-  (the real repo's ref state is never read), 9 mutations proven red.
+  `tests/unit/unpushed-commit-guard.spec.ts` — 14 cases on throwaway bare-origin + clone fixtures
+  (the real repo's ref state is never read), 11 mutations proven red.
+  **Third landed-proof added the same night, and the reason matters.** Pruning the landed remote
+  branches removed the `origin/<branch>` refs that had been making three long-merged local branches
+  (PRs #24/#26/#29) look reachable — and the gate went red on them, because BOTH structural proofs
+  decay: a branch that merged `origin/main` into itself before its squash has no per-commit patch-id
+  match, and its no-op merge stops holding the moment main edits a file it touched. So a branch
+  merged weeks ago silently becomes "stranded" as the trunk advances. The durable proof is that
+  GitHub's squash body names each original commit subject: every non-merge subject present in
+  `origin/main`'s log clears the ref. It runs LAST (a subject is text, not content) and refuses
+  subjects under 16 characters, both pinned by their own cases + mutations.
 
 **Full remote-branch sweep, 2026-08-01 — nothing else is stranded.** Every `origin/*` branch
 (60, excluding `main` and the read-only `pull/*` refs) was checked two ways: does merging it into
 `origin/main` produce `origin/main`'s exact tree, and does `git cherry` find each of its commits'
 patch-ids already upstream. **All 60 are content-landed**, and every one traces to a merged PR by
 commit subject — including `fix/pump-tuning-from-first-run`, whose subject was reworded on the way
-in (PR #53) and which therefore looked absent under a naive subject search. All 60 remote branches
-were deleted; nothing unmerged was touched. Local refs ahead of origin: 35 pre-scrub orphans, 1
+in (PR #53) and which therefore looked absent under a naive subject search. The five whose structural
+proofs had already decayed were confirmed against the PR API (all `merged`) before deletion. 59
+remote refs were deleted — the landed set plus this work's own branch after it merged. `origin` now
+carries `main` and nothing else except branches pushed by lanes still in flight; nothing unmerged was
+touched, and there were zero open PRs at deletion time. Local refs ahead of origin: 35 pre-scrub orphans, 1
 `archive/*`, and 1 stale ref (`chore/extract-coder-bot`, landed via PR #19 and then deliberately
 removed by PR #31 when coder-bot was extracted to its own repo — merging it back would re-add the
 carved-out directory, so it is a delete, not a land).

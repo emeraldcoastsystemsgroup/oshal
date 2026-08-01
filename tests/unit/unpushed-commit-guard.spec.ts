@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for scripts/check-unpushed-commits.sh — the third leg of the backlog "Seven agent-worktree branches" done-when. check-worktree-strays.sh covers linked worktrees only and skips the primary checkout by design, so the shapes that actually strand work here (a commit on the primary checkout's branch, a local branch ref left ahead of origin, a detached HEAD carrying a commit) were undetected. Every case runs against a throwaway bare-origin + clone pair in the OS temp dir — this repo's own branch state is never read, so the spec's verdict cannot drift with whatever refs the shared checkout happens to carry. Proves the check fires on ahead-of-origin work, stays green on a synced repo, does not cry wolf on squash-landed / patch-id-landed / unrelated-history / archive refs, and refuses to report clean when there is nothing on origin to compare against.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Case for the third landed-proof (subject trace). Found by pruning the 59 landed remote branches: the two structural proofs DECAY. A branch that merged origin/main into itself before its squash has no patch-id match, and its no-op merge stops holding the moment main edits a file it touched, so three branches merged weeks ago (PRs #24/#26/#29) flipped to STRANDED the instant their remote counterparts were gone. This case reproduces that exact shape end-to-end — landed under a different squash message AND main moved on top — so a future simplification that drops the subject trace goes red instead of re-arming a gate that reds on already-shipped work.
  */
 
 import { describe, expect, it, afterAll } from 'vitest';
@@ -50,6 +51,9 @@ const BASH = resolveBash();
  * and a timeout is a false red with no defect behind it.
  */
 const CASE_TIMEOUT = 60_000;
+
+/** Line feed. Fixture file bodies are built by joining on this so no source line carries a raw \n escape. */
+const NL = String.fromCharCode(10);
 const FIXTURE_ROOTS: string[] = [];
 
 interface GuardResult {
@@ -239,6 +243,52 @@ describe('unpushed-commit guard — stays green when nothing is actually lost', 
     expect(result.output).toContain('stale refs');
     expect(result.output).toContain('feat/landed-then-edited');
     expect(result.output).not.toContain('STRANDED');
+  }, CASE_TIMEOUT);
+
+  it('a branch that landed under a different squash message, with main moved on top, is stale (the subject trace)', () => {
+    // The shape that broke the first version of this guard. Both structural proofs decay here: the
+    // squash's diff is not any single commit's, so no patch-id matches; and main has since edited
+    // the same region, so merging the ref back conflicts. What survives is that GitHub's squash body
+    // names the original commit subject — which is exactly how three branches merged weeks earlier
+    // (PRs #24/#26/#29) were proven landed after their remote refs were pruned.
+    const { origin, clone } = makeOriginAndClone();
+    git(clone, 'switch', '-qc', 'feat/landed-under-a-squash');
+    commitFile(clone, 'f.txt', ['A', 'B', ''].join(NL), 'feat: the distinctive branch change');
+
+    git(clone, 'switch', '-q', 'main');
+    // The squash: different content (so the patch-id differs) under a body that names the subject.
+    writeFileSync(join(clone, 'f.txt'), ['A', 'B', 'squash-extra', ''].join(NL), 'utf8');
+    git(clone, 'add', 'f.txt');
+    git(clone, 'commit', '-m',
+      ['feat: the distinctive branch change (#9)', '', '* feat: the distinctive branch change'].join(NL),
+      '--', 'f.txt');
+    // …and main moves on over the same region, so the no-op-merge proof cannot hold either.
+    commitFile(clone, 'f.txt', ['A', 'B-rewritten', 'squash-extra', ''].join(NL), 'trunk moves on');
+    git(clone, 'push', '-q', origin, 'main:main');
+    git(clone, 'fetch', '-q', 'origin');
+
+    const result = runGuard(clone);
+    expect(result.code).toBe(0);
+    expect(result.output).toContain('stale refs');
+    expect(result.output).toContain('feat/landed-under-a-squash');
+    expect(result.output).not.toContain('STRANDED');
+  }, CASE_TIMEOUT);
+
+  it('a short commit subject is NOT accepted as evidence, even if it appears in the trunk log', () => {
+    // A subject is text, not content. "wip" matching something in main's log proves nothing, so the
+    // trace refuses subjects below the minimum length and the ref stays STRANDED.
+    const { origin, clone } = makeOriginAndClone();
+    git(clone, 'switch', '-q', 'main');
+    commitFile(clone, 'note.txt', `trunk${NL}`, 'wip');
+    git(clone, 'push', '-q', origin, 'main:main');
+    git(clone, 'fetch', '-q', 'origin');
+    git(clone, 'switch', '-qc', 'feat/short-subject');
+    commitFile(clone, 'real-work.txt', `genuinely new${NL}`, 'wip');
+
+    const result = runGuard(clone);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('STRANDED');
+    expect(result.output).toContain('feat/short-subject');
   }, CASE_TIMEOUT);
 
   it('a ref with NO common ancestor is reported as pre-scrub orphan history, not stranded', () => {
