@@ -27,6 +27,10 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // .env did nothing and every invited user on a single-app box was bounced out of their app
   // into the platform provider wizard. TOTP_ISSUER had the same shape (silently stayed 'oshal').
   { name: 'DISABLE_ONBOARDING_GATE', readBy: 'server.ts needsOnboarding — single-app boxes must skip the provider wizard' },
+  // The explicit model-less declaration (INSTALLER-GAPS G2/G3). If this stops reaching the
+  // container, every deliberately no-AI box starts bouncing its users to /welcome again and
+  // /api/readiness reports the engine as broken instead of declared-off.
+  { name: 'OSHAL_NO_AI', readBy: 'server.ts needsOnboarding + routes/readiness-routes.ts — the declared no-AI posture' },
   { name: 'TOTP_ISSUER', readBy: 'local-auth-routes 2FA enrolment — the name an authenticator app displays' },
 ];
 

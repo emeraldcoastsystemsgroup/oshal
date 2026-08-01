@@ -7,6 +7,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the codebase-free installer: Docker + registry reachability are the ONLY prerequisites. Pulls the OSHAL image, extracts the baked compose.dist.yml + non-secret config seeds, generates operator-local .env secrets, then brings the swarm up ORDERED AND BATCHED (infra healthy -> api fully up -> bots 5-at-a-time). The batching is load-bearing: a mass cold-start of every bot OOM-crashes small Docker engines (~6 GB, proven twice 2026-07-23); this script embeds the bring-up rather than assuming any repo script exists on the host.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | v2 — the ONE-CLICK installer. Four modes: (1) swarm from registry, no source; (2) swarm from source (clone + build); (3) leaf-node bot joining an existing swarm; (4) k8s pointer (deploy/terraform). Bundles install the KERNEL plus curated app sets with dependencies BOUND (little-monsters pulls the office tools + deck-builder bot; gaming = dnd + game-show; jobs = career-hunter + job-apply), --apps adds individual store packages, and the resolved set is DEDUPED — a package stages once and a bot/surface registers once no matter how many bundles/flags name it (idempotent re-runs skip already-staged packages). Ends with the cockpit opening, superadmin instructions, and the operator email wired into .env when provided.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | First-run fix (lockstep with oshal-install.ps1) — the closing instructions were false and the identity was never the user's. MOCK_OIDC has NO sign-in page; it fabricates alex@demo.local / mock-user-001 and treats every request as authenticated, so "sign in at the cockpit with your email" could never happen: the user was silently someone else, not the superadmin, with every connector token binding to the shared demo sub. The email prompt now writes MOCK_OIDC_EMAIL/NAME/SUB alongside OSHAL_OPERATOR_EMAILS, the sub being a stable sha256-of-lowercased-email (local_sub(), byte-identical to the ps1's LocalSub) so a reinstall against the same workspace volume keeps its sub-keyed data. Also opens /welcome instead of /cockpit/ — linking an AI model is mandatory and browser-only, and /cockpit just 302s to the wizard anyway — and says plainly what the wizard will ask for.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G1/G2/G4 (the G-Squared incident): (G1) install now ENDS with scripts/oshal-verify.sh in --pre-onboarding posture — counting containers is no longer success; a broken leg (kernel service, heartbeat, db, contradictory no-AI posture) fails the install loudly by name. The verify trio (oshal-verify.sh, swarm-routability-check.sh, routability-critical-bots.txt) is extracted from the image in registry mode, with a raw.githubusercontent fallback for images predating it. (G2) new --no-ai flag: running without a connected model is now an EXPLICIT choice recorded in .env (OSHAL_NO_AI=true + FORCE_LLM_PROVIDER=noop + a comment saying what will not work) — never a silent default; with it, the installer opens the cockpit instead of a wizard that could never complete. (G4) preflight now owns the credential paths BEFORE first `up` (~/.claude, ~/.codex, ~/.gemini as directories; ~/.claude.json as a FILE, so Docker cannot auto-create a root-owned directory where a file belongs) and writes CLAUDE_AUTH_MOUNT_MODE=rw / GEMINI_AUTH_MOUNT_MODE=rw for server installs — a CLI that cannot write cannot refresh its token, and `claude auth login` reports success while saving nothing.
 # =============================================================================
 #
 # One-click:
@@ -22,6 +23,8 @@
 #   --tag TAG           image tag (default latest)      --registry REG   (default ghcr.io/emeraldcoastsystemsgroup)
 #   --admin-email E     wire E as the swarm operator/superadmin in .env
 #   --control-plane URL --join-code CODE [--enrollment-token T]   (mode 3)
+#   --no-ai             EXPLICITLY install without a connected model (recorded in .env;
+#                       AI features stay disabled until a model is connected)
 #   --dry-run           print the plan, touch nothing
 #
 # Hosting environments: DOCKER (modes 1-2, automated here) and KUBERNETES
@@ -30,7 +33,7 @@
 
 set -euo pipefail
 
-MODE=""; BUNDLE="full"; APPS=""; DIR="./oshal"; TAG="latest"
+MODE=""; BUNDLE="full"; APPS=""; DIR="./oshal"; TAG="latest"; NO_AI=0
 REGISTRY="ghcr.io/emeraldcoastsystemsgroup"; ADMIN_EMAIL=""; DRY=0; FROM_ARCHIVE=""
 CONTROL_PLANE=""; JOIN_CODE=""; ENROLL_TOKEN=""
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
@@ -48,6 +51,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --join-code) JOIN_CODE="$2"; shift 2 ;;
   --enrollment-token) ENROLL_TOKEN="$2"; shift 2 ;;
   --from-archive) FROM_ARCHIVE="$2"; shift 2 ;;
+  --no-ai) NO_AI=1; shift ;;
   --dry-run) DRY=1; shift ;;
   *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac; done
@@ -162,6 +166,19 @@ command -v docker >/dev/null 2>&1 || { echo "docker is required (Docker Desktop 
 docker compose version >/dev/null 2>&1 || { echo "docker compose v2 is required"; exit 1; }
 docker info >/dev/null 2>&1 || { echo "docker daemon not running"; exit 1; }
 
+# ── Preflight: own the credential paths BEFORE docker can (INSTALLER-GAPS G4) ─
+# Compose bind-mounts these vendor-CLI homes into every bot. If a path is absent at
+# first `up`, Docker auto-creates it as a ROOT-OWNED DIRECTORY — including
+# ~/.claude.json, which must be a FILE (a directory there breaks the Claude CLI on
+# every later login on this host). Create them as the invoking user, correct shapes.
+CLAUDE_DIR="${CLAUDE_CONFIG_HOST_PATH:-$HOME/.claude}"
+CODEX_DIR="${CODEX_CONFIG_HOST_PATH:-$HOME/.codex}"
+GEMINI_DIR="${GEMINI_CONFIG_HOST_PATH:-$HOME/.gemini}"
+CLAUDE_JSON="${CLAUDE_CONFIG_HOST_JSON:-$HOME/.claude.json}"
+mkdir -p "$CLAUDE_DIR" "$CODEX_DIR" "$GEMINI_DIR"
+[ -e "$CLAUDE_JSON" ] || printf '{}\n' > "$CLAUDE_JSON"
+[ -f "$CLAUDE_JSON" ] || { echo "$CLAUDE_JSON exists but is NOT a file (a previous docker up auto-created a directory there) — remove it and re-run"; exit 1; }
+
 IMAGE="$REGISTRY/oshal-bot:$TAG"
 mkdir -p "$DIR"
 
@@ -193,6 +210,10 @@ if [ "$MODE" = "1" ]; then
   trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
   docker cp "$CID:/app/compose.dist.yml" "$COMPOSE_FILE"
   [ -d "$DIR/config-seed" ] || docker cp "$CID:/app/config-seed.dist" "$DIR/config-seed"
+  # Postflight verify trio (G1). Older images predate these — tolerated here, fetched later.
+  for f in oshal-verify.sh swarm-routability-check.sh routability-critical-bots.txt; do
+    docker cp "$CID:/app/scripts/$f" "$DIR/$f" >/dev/null 2>&1 || true
+  done
   docker rm -f "$CID" >/dev/null 2>&1; trap - EXIT
 else
   COMPOSE_FILE="$COMPOSE_SRC"
@@ -226,6 +247,23 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "MOCK_OIDC=true"
     echo "REJECT_LOOP_TICKETS=true"
     [ -n "${BUNDLE_PROFILES[$BUNDLE]}" ] && echo "COMPOSE_PROFILES=${BUNDLE_PROFILES[$BUNDLE]}"
+    echo "#"
+    echo "# ── AI ENGINE ──"
+    if [ "$NO_AI" -eq 1 ]; then
+      echo "# --no-ai was passed: this box DELIBERATELY runs without a connected model."
+      echo "# Chat, Jarvis and every AI feature stay disabled until you remove these two lines"
+      echo "# and connect a model (cockpit -> /welcome). The onboarding gate and"
+      echo "# scripts/oshal-verify.sh honor this declaration instead of failing the box (G2/G3)."
+      echo "OSHAL_NO_AI=true"
+      echo "FORCE_LLM_PROVIDER=noop"
+    else
+      echo "# Vendor-CLI logins (~/.claude, ~/.gemini) mount READ-WRITE so the in-container CLI"
+      echo "# can refresh its own OAuth token. On a server there is no host-side refresh, and a"
+      echo "# CLI that cannot write reports a successful login while saving nothing (G4). On a"
+      echo "# dev box with its own host-side refresh you may set these to ro."
+      echo "CLAUDE_AUTH_MOUNT_MODE=rw"
+      echo "GEMINI_AUTH_MOUNT_MODE=rw"
+    fi
     echo "#"
     echo "# ── WHO YOU ARE ──"
     echo "# MOCK_OIDC=true has NO sign-in page: it treats every request as already logged in as"
@@ -321,12 +359,42 @@ for svc in $remaining; do
 done
 [ "${#batch[@]}" -gt 0 ] && { "${DC[@]}" up -d --no-deps "${batch[@]}" >/dev/null; started=$((started + ${#batch[@]})); note "started ${started}/${total}"; }
 
+# ── Postflight: verify the box can do what it advertises (INSTALLER-GAPS G1) ─
+# Counting containers is not success — the G-Squared box passed every count while
+# the engine, voice and a routing-critical bot were dead. A failed leg FAILS the
+# install, by name. --pre-onboarding: legs the browser wizard is about to satisfy
+# (model, credentials, voice) report PENDING instead of failing a fresh box.
+say "postflight verification"
+VERIFY=""
+if [ "$MODE" = "2" ] && [ -f "$DIR/src/scripts/oshal-verify.sh" ]; then VERIFY="$DIR/src/scripts/oshal-verify.sh"
+elif [ -f "$DIR/oshal-verify.sh" ]; then VERIFY="$DIR/oshal-verify.sh"; fi
+if [ -z "$VERIFY" ]; then
+  note "verify script not in this image — fetching from the repo"
+  for f in oshal-verify.sh swarm-routability-check.sh routability-critical-bots.txt; do
+    curl -fsSL "https://raw.githubusercontent.com/emeraldcoastsystemsgroup/oshal/main/scripts/$f" -o "$DIR/$f" 2>/dev/null || true
+  done
+  [ -f "$DIR/oshal-verify.sh" ] && VERIFY="$DIR/oshal-verify.sh"
+fi
+if [ -n "$VERIFY" ]; then
+  NOAI_FLAG=""; [ "$NO_AI" -eq 1 ] && NOAI_FLAG="--no-ai"
+  if ! bash "$VERIFY" --pre-onboarding $NOAI_FLAG --env-file "$ENV_FILE"; then
+    say "INSTALL FAILED postflight verification — the leg(s) named above are broken."
+    note "Nothing hides behind a green container count. Fix the named leg, then re-check:"
+    note "  bash $VERIFY --env-file $ENV_FILE"
+    exit 1
+  fi
+else
+  note "WARNING: could not obtain oshal-verify.sh (offline?) — this install is NOT verified."
+fi
+
 # ── Show the swarm ───────────────────────────────────────────────────────────
 # Open the WIZARD, not the cockpit. Connecting an AI model is mandatory and is a browser OAuth /
 # paste-a-key flow, so it cannot happen out here in the shell — the wizard is where linking
 # actually lives. (/cockpit would 302 here anyway while onboarding is incomplete; landing on the
-# wizard directly is the honest version of the same redirect.)
+# wizard directly is the honest version of the same redirect.) EXCEPT --no-ai: the wizard exists
+# to connect a model, which that posture explicitly declines — open the cockpit directly.
 WELCOME="http://localhost:35457/welcome"
+[ "$NO_AI" -eq 1 ] && WELCOME="http://localhost:35457/cockpit/"
 say "installed — opening your swarm"
 docker ps --format '{{.Names}}' | grep -c oshal | xargs -I{} echo "   containers up: {}"
 note "setup:   $WELCOME"
@@ -347,9 +415,18 @@ else
   note "MOCK_OIDC_SUB / OSHAL_OPERATOR_EMAILS in $ENV_FILE, then:"
   note "  docker compose -f $COMPOSE_FILE restart oshal-api"
 fi
-note "1. Connect an AI model — REQUIRED, and the wizard will not let you past it. Free shared"
-note "   model is one click; an API key or a Claude/Codex login also work."
-note "2. Connect your accounts (optional) — Gmail, social, storage. Each one is its own consent."
-note "Already logged into a vendor CLI on this machine? ~/.claude, ~/.codex and ~/.gemini mount"
-note "read-only into the bots, so that login is reused as-is (BYOK). See INSTALL.md."
+if [ "$NO_AI" -eq 1 ]; then
+  note "This box was installed --no-ai: AI features stay disabled until a model is connected."
+  note "To enable later: remove OSHAL_NO_AI + FORCE_LLM_PROVIDER=noop from $ENV_FILE, restart"
+  note "the api, then finish /welcome."
+else
+  note "1. Connect an AI model — REQUIRED, and the wizard will not let you past it. Free shared"
+  note "   model is one click; an API key or a Claude/Codex login also work."
+  note "2. Connect your accounts (optional) — Gmail, social, storage. Each one is its own consent."
+  note "Already logged into a vendor CLI on this machine? ~/.claude, ~/.codex and ~/.gemini mount"
+  note "into the bots read-write (so the in-container CLI can refresh its token — see .env to"
+  note "change), and that login is reused as-is (BYOK). NEVER copy a credential file between"
+  note "machines — one OAuth grant serves one machine; log in on this box instead (INSTALL.md)."
+fi
+note "Re-check the box any time: bash $DIR/oshal-verify.sh   (or GET /api/readiness)"
 note "Add more apps any time: cockpit -> Explore Apps, or re-run with --apps name1,name2"
