@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119) Stage C: identity-based consolidation. Exactly one open ticket per incident key (FR-C2 — per-key serialization in-process + the tickets table's (external_provider, external_id) unique claim in the DB, release-on-failure by folding the loser into the winner); a refire is a visible consolidation update — updateCount/lastSeen/member counts — never a silent skip (FR-C3); severity only escalates priority, never lowers it (FR-C4); a refire after the prior incident went terminal within the TTL opens a NEW ticket linked recurrenceOf (FR-C5); genesis fields are write-once (FR-C6). Consolidation updates never touch ticket status, so RCA structurally runs once per incident (FR-E1)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): an arrival that did not consolidate now checks OPEN related incidents (AlertBundlingService — same-target FR-D2, dependency FR-D3) before creating, and ATTACHES instead: member recorded at attach time with its attachReason (FR-D5), rootCandidate recomputed by the ordered policy (FR-D4), severity escalation shared with the refire path (FR-C4 max-over-members). Attach NEVER touches ticket status — no promote, no re-dispatch (FR-D7); an auto-flow member attaching to a backlog bundle sets the needs-attention flag instead. The incident record types + incidentOf moved verbatim to incident-record.ts (import-cycle break); the intake serialization domain widened from per-key to the intake stage because Stage D correlates ACROSS keys — the DB's (external_provider, external_id) unique claim remains the durable restart-safe guarantee (spec §9.7). Member cap now reads the ALERT_MAX_MEMBERS knob (FR-D5)
  */
 
 import { randomUUID } from 'crypto';
@@ -16,13 +17,16 @@ import type {
 } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
 import {
+  ALERT_BUNDLE_CANDIDATE_LIMIT,
   ALERT_INCIDENT_KEY_FIELD,
-  ALERT_MAX_INCIDENT_MEMBERS,
   TERMINAL_TICKET_STATES,
   consolidationTtlSeconds,
   isWithinConsolidationTtl,
+  maxIncidentMembers,
 } from './alert-triage-constants';
 import { priorityRank, severityToPriority, type CanonicalAlert } from './canonical-alert';
+import { AlertBundlingService, type BundleTarget } from './alert-bundling';
+import { incidentOf, type IncidentMember, type IncidentRecord } from './incident-record';
 
 const logger = createChildLogger({ module: 'alert-consolidation' });
 
@@ -36,48 +40,7 @@ export interface TriageTicketGateway {
   updateTicket(ticketId: string, updates: Partial<Omit<InternalTicket, 'ticketId' | 'createdAt' | 'status'>>): Promise<void>;
   recordActivity(ticketId: string, metadata: TicketStatusMetadata): Promise<void>;
   findLatestTicketByMetadataKey(key: string, value: string): Promise<InternalTicket | null>;
-}
-
-/** @description One member of a consolidated incident (spec §5), recorded at attach time. */
-export interface IncidentMember {
-  fingerprint: string;
-  alertname: string;
-  target: string;
-  severity: string;
-  firstSeen: string;
-  lastSeen: string;
-  count: number;
-  attachReason: string;
-}
-
-/** @description A recorded priority escalation (FR-C4 — "records the escalation"). */
-export interface IncidentEscalation {
-  at: string;
-  fromPriority: TicketPriority;
-  toPriority: TicketPriority;
-  severity: string;
-}
-
-/**
- * @description The consolidated incident record riding `metadata.incident` (spec §5).
- * `firstSeen` is genesis and write-once (FR-C6); `updateCount` counts suppressed refires
- * (the source platform's `update_count`); `instanceSeq` numbers successive incidents on the
- * same key so each gets a distinct DB claim id; `claimNonce` proves creation-race outcomes.
- */
-export interface IncidentRecord {
-  key: string;
-  firstSeen: string;
-  lastSeen: string;
-  updateCount: number;
-  instanceSeq: number;
-  severity: string;
-  members: IncidentMember[];
-  membersOverflow: number;
-  escalations: IncidentEscalation[];
-  flags: string[];
-  claimNonce: string;
-  recurrenceOf?: string;
-  recurrenceCount?: number;
+  listTickets(options?: { ticketType?: TicketType; limit?: number }): Promise<InternalTicket[]>;
 }
 
 /** @description Ticket presentation fields the route resolves (title/body/intake policy). */
@@ -91,38 +54,9 @@ export interface AlertTicketShape {
 
 /** @description What consolidation did with one firing alert. */
 export interface ConsolidationOutcome {
-  decision: 'created' | 'consolidated';
+  decision: 'created' | 'consolidated' | 'bundled';
   ticketId: string;
   updateCount: number;
-}
-
-/**
- * @description Reads the incident record off a ticket's metadata, tolerating partial/older
- * shapes (missing fields default rather than throw — a malformed record must not wedge the
- * intake). Returns null when no incident record exists at all.
- * @param ticket - The ticket to read.
- * @returns The incident record or null.
- */
-export function incidentOf(ticket: InternalTicket): IncidentRecord | null {
-  const raw = (ticket.metadata as Record<string, unknown> | undefined)?.incident;
-  if (!raw || typeof raw !== 'object') return null;
-  const inc = raw as Partial<IncidentRecord>;
-  if (typeof inc.key !== 'string' || !inc.key) return null;
-  return {
-    key: inc.key,
-    firstSeen: typeof inc.firstSeen === 'string' ? inc.firstSeen : ticket.createdAt,
-    lastSeen: typeof inc.lastSeen === 'string' ? inc.lastSeen : ticket.createdAt,
-    updateCount: typeof inc.updateCount === 'number' ? inc.updateCount : 0,
-    instanceSeq: typeof inc.instanceSeq === 'number' ? inc.instanceSeq : 0,
-    severity: typeof inc.severity === 'string' ? inc.severity : 'warning',
-    members: Array.isArray(inc.members) ? (inc.members as IncidentMember[]) : [],
-    membersOverflow: typeof inc.membersOverflow === 'number' ? inc.membersOverflow : 0,
-    escalations: Array.isArray(inc.escalations) ? (inc.escalations as IncidentEscalation[]) : [],
-    flags: Array.isArray(inc.flags) ? (inc.flags as string[]) : [],
-    claimNonce: typeof inc.claimNonce === 'string' ? inc.claimNonce : '',
-    ...(typeof inc.recurrenceOf === 'string' ? { recurrenceOf: inc.recurrenceOf } : {}),
-    ...(typeof inc.recurrenceCount === 'number' ? { recurrenceCount: inc.recurrenceCount } : {}),
-  };
 }
 
 /**
@@ -141,13 +75,16 @@ function laterIso(current: string, candidate: string): string {
 }
 
 /**
- * @description Upserts the member entry for a refire's fingerprint (FR-C3: the member entry
- * records its own count) under the member cap (overflow counted, never silent — spec §9.5).
+ * @description Upserts the member entry for an alert's fingerprint (FR-C3/FR-D5: the member
+ * entry records its own count; membership is recorded at attach time) under the member cap
+ * (overflow counted, never silent — spec §9.5).
  * @param incident - The incident record (mutated).
- * @param alert - The canonical refire.
- * @param seenAt - When this refire fired.
+ * @param alert - The canonical alert.
+ * @param seenAt - When this alert fired.
+ * @param attachReason - Reason recorded on a NEWLY attached member (FR-D5). Existing
+ *   members keep their original reason.
  */
-function upsertMember(incident: IncidentRecord, alert: CanonicalAlert, seenAt: string): void {
+function upsertMember(incident: IncidentRecord, alert: CanonicalAlert, seenAt: string, attachReason = 'same-incident-key'): void {
   const existing = incident.members.find((m) => m.fingerprint === alert.fingerprint);
   if (existing) {
     existing.count += 1;
@@ -157,7 +94,7 @@ function upsertMember(incident: IncidentRecord, alert: CanonicalAlert, seenAt: s
     }
     return;
   }
-  if (incident.members.length >= ALERT_MAX_INCIDENT_MEMBERS) {
+  if (incident.members.length >= maxIncidentMembers()) {
     incident.membersOverflow += 1;
     return;
   }
@@ -169,7 +106,7 @@ function upsertMember(incident: IncidentRecord, alert: CanonicalAlert, seenAt: s
     firstSeen: seenAt,
     lastSeen: seenAt,
     count: 1,
-    attachReason: 'same-incident-key',
+    attachReason,
   });
 }
 
@@ -193,36 +130,64 @@ function genesisMember(alert: CanonicalAlert, firstSeen: string): IncidentMember
 }
 
 /**
- * @description Stage C consolidator. One instance per intake route; all mutation of a given
- * incident key is serialized through `withKeyLock`, and the durable one-open-ticket-per-key
- * claim is the DB's (external_provider, external_id) unique index — the in-memory lock is
- * optimization, the DB is the restart-safe state (spec §9.7).
+ * @description Applies the severity-only-escalates rule (FR-C4) to an incident: when the
+ * arriving alert outranks the ticket's priority, the incident's severity advances and the
+ * escalation is recorded. Shared by the refire and attach paths so both rank identically.
+ * @param incident - The incident record (mutated on escalation).
+ * @param ticket - The ticket carrying the current priority.
+ * @param alert - The arriving canonical alert.
+ * @param nowIso - Timestamp for the escalation entry.
+ * @returns The new (higher) priority when escalating, else null.
+ */
+function escalateSeverity(incident: IncidentRecord, ticket: InternalTicket, alert: CanonicalAlert, nowIso: string): TicketPriority | null {
+  const alertPriority = severityToPriority(alert.severity);
+  if (priorityRank(alertPriority) <= priorityRank(ticket.priority)) return null;
+  incident.severity = alert.severity;
+  incident.escalations.push({ at: nowIso, fromPriority: ticket.priority, toPriority: alertPriority, severity: alert.severity });
+  return alertPriority;
+}
+
+/**
+ * @description Stage C consolidator + Stage D bundler. One instance per intake route; all
+ * intake mutation is serialized through one in-process lock domain (Stage D correlates
+ * across incident keys, so per-key serialization is not enough), and the durable
+ * one-open-ticket-per-key claim is the DB's (external_provider, external_id) unique index —
+ * the in-memory lock is optimization, the DB is the restart-safe state (spec §9.7).
  */
 export class AlertConsolidationService {
   private readonly locks = new Map<string, Promise<unknown>>();
 
-  /**
-   * @param tickets - Ticket operations (structurally satisfied by TicketService).
-   */
-  constructor(private readonly tickets: TriageTicketGateway) {}
+  /** @description The single serialization domain for intake work (see class doc). */
+  private static readonly INTAKE_LOCK_DOMAIN = 'alert-intake';
 
   /**
-   * @description Consolidates one canonical FIRING alert: updates the open incident ticket
-   * for its key, or creates a new one (recurrence-linked when the prior went terminal within
-   * the TTL). Never touches ticket status — a refire on a dispatched ticket can never
-   * re-dispatch analysis (FR-E1).
+   * @param tickets - Ticket operations (structurally satisfied by TicketService).
+   * @param bundling - Stage D correlation logic (FR-D1/D2/D3/D4). Default wires the static
+   *   compose-topology dependency map; an ADR-045 graph-backed resolver can be injected.
+   */
+  constructor(
+    private readonly tickets: TriageTicketGateway,
+    private readonly bundling: AlertBundlingService = new AlertBundlingService(),
+  ) {}
+
+  /**
+   * @description Intakes one canonical FIRING alert: updates the open incident ticket for
+   * its key (Stage C), attaches to an open RELATED incident (Stage D), or creates a new
+   * ticket (recurrence-linked when the prior went terminal within the TTL). Never touches
+   * ticket status — neither a refire nor an attach can ever re-dispatch analysis
+   * (FR-E1/FR-D7).
    * @param alert - Canonical firing alert.
    * @param shape - Ticket presentation fields from the route.
    * @returns What happened and to which ticket.
    */
   async intake(alert: CanonicalAlert, shape: AlertTicketShape): Promise<ConsolidationOutcome> {
-    return this.withKeyLock(alert.incidentKey, () => this.intakeLocked(alert, shape));
+    return this.withKeyLock(AlertConsolidationService.INTAKE_LOCK_DOMAIN, () => this.intakeLocked(alert, shape));
   }
 
   /**
-   * @description Serializes work per incident key with a promise chain so a concurrent burst
-   * on one key becomes one create + N-1 updates (FR-C2) and counter increments never race.
-   * @param key - Incident key.
+   * @description Serializes work per lock key with a promise chain so a concurrent burst
+   * becomes one create + N-1 updates (FR-C2) and counter increments never race.
+   * @param key - Lock key (the intake domain).
    * @param fn - The work to run under the lock.
    * @returns The work's result.
    */
@@ -241,8 +206,9 @@ export class AlertConsolidationService {
   }
 
   /**
-   * @description The serialized intake decision: open ticket → consolidate; otherwise create
-   * (recurrence-aware).
+   * @description The serialized intake decision ladder: open same-key ticket → consolidate
+   * (Stage C); open related incident inside the correlation window → attach (Stage D);
+   * otherwise create (recurrence-aware).
    * @param alert - Canonical firing alert.
    * @param shape - Ticket presentation fields.
    * @returns Consolidation outcome.
@@ -252,7 +218,65 @@ export class AlertConsolidationService {
     if (latest && !TERMINAL_TICKET_STATES.has(latest.status)) {
       return this.consolidateInto(latest, alert);
     }
+    const bundle = await this.findBundleTarget(alert, shape);
+    if (bundle) {
+      return this.attachToBundle(bundle, alert, shape);
+    }
     return this.createIncidentTicket(alert, shape, latest);
+  }
+
+  /**
+   * @description Stage D candidate lookup (FR-D1): lists recent tickets of the alert
+   * queue's type (newest-first, bounded) and asks the bundling service whether any OPEN
+   * incident with activity inside the correlation window correlates with this alert.
+   * @param alert - Canonical firing alert.
+   * @param shape - Ticket presentation fields (carries the queue's ticketType).
+   * @returns The bundle target, or null when nothing correlates.
+   */
+  private async findBundleTarget(alert: CanonicalAlert, shape: AlertTicketShape): Promise<BundleTarget | null> {
+    const candidates = await this.tickets.listTickets({ ticketType: shape.ticketType, limit: ALERT_BUNDLE_CANDIDATE_LIMIT });
+    return this.bundling.findBundleTarget(candidates, alert, Date.now());
+  }
+
+  /**
+   * @description Stage D attach (FR-D5/FR-D7): records the arriving alert as a member of
+   * the open related incident at attach time — never reconstructed later — with its
+   * attachReason, recomputes the root candidate (FR-D4), and applies escalate-only severity
+   * (FR-C4). NEVER touches ticket status: attach to backlog stays backlog, attach to an
+   * in-flight ticket never re-dispatches RCA; an auto-flow member arriving on a backlog
+   * bundle sets the needs-attention flag for the operator instead (FR-D7).
+   * @param bundle - The open incident to attach to, with the attach reason.
+   * @param alert - The canonical arriving alert.
+   * @param shape - Ticket presentation fields (carries the member's own intake policy).
+   * @returns Consolidation outcome ('bundled' for a new member, 'consolidated' for a
+   *   refire of an already-bundled member).
+   */
+  private async attachToBundle(bundle: BundleTarget, alert: CanonicalAlert, shape: AlertTicketShape): Promise<ConsolidationOutcome> {
+    const { ticket, attachReason } = bundle;
+    const nowIso = new Date().toISOString();
+    const seenAt = alert.firedAt ?? nowIso;
+    const incident = incidentOf(ticket) ?? this.migratedIncident(ticket, alert);
+    const isRefire = incident.members.some((m) => m.fingerprint === alert.fingerprint);
+    incident.lastSeen = laterIso(incident.lastSeen, seenAt);
+    if (isRefire) incident.updateCount += 1;
+    upsertMember(incident, alert, seenAt, attachReason);
+    if (!isRefire) {
+      incident.rootCandidate = await this.bundling.chooseRootCandidate(incident.members);
+      if (shape.intakeStatus === 'approved' && ticket.status === 'backlog' && !incident.flags.includes('needs-attention')) {
+        incident.flags.push('needs-attention');
+      }
+    }
+    const escalatedTo = escalateSeverity(incident, ticket, alert, nowIso);
+    await this.persistIncident(ticket, incident, alert, escalatedTo);
+    const reason = isRefire
+      ? `alert refire consolidated (×${incident.updateCount}${escalatedTo ? `, priority → ${escalatedTo}` : ''})`
+      : `alert bundled onto related incident (${attachReason}; root candidate: ${incident.rootCandidate?.target ?? 'n/a'})`;
+    await this.recordIncidentActivity(ticket.ticketId, alert, incident, reason);
+    logger.info(
+      { ticketId: ticket.ticketId, incidentKey: incident.key, attachReason, isRefire, rootCandidate: incident.rootCandidate ?? null },
+      isRefire ? 'Bundled member refire consolidated onto the incident ticket' : 'Alert bundled onto open related incident (Stage D)',
+    );
+    return { decision: isRefire ? 'consolidated' : 'bundled', ticketId: ticket.ticketId, updateCount: incident.updateCount };
   }
 
   /**
@@ -377,29 +401,45 @@ export class AlertConsolidationService {
     incident.lastSeen = laterIso(incident.lastSeen, seenAt);
     upsertMember(incident, alert, seenAt);
 
-    const refirePriority = severityToPriority(alert.severity);
-    const escalate = priorityRank(refirePriority) > priorityRank(ticket.priority);
-    if (escalate) {
-      incident.severity = alert.severity;
-      incident.escalations.push({ at: nowIso, fromPriority: ticket.priority, toPriority: refirePriority, severity: alert.severity });
-    }
+    const escalatedTo = escalateSeverity(incident, ticket, alert, nowIso);
+    await this.persistIncident(ticket, incident, alert, escalatedTo);
+    await this.recordIncidentActivity(
+      ticket.ticketId,
+      alert,
+      incident,
+      `alert refire consolidated (×${incident.updateCount}${escalatedTo ? `, priority → ${escalatedTo}` : ''})`,
+    );
+    logger.info(
+      { ticketId: ticket.ticketId, incidentKey: incident.key, updateCount: incident.updateCount, escalatedTo },
+      'Alert refire consolidated onto the open incident ticket',
+    );
+    return { decision: 'consolidated', ticketId: ticket.ticketId, updateCount: incident.updateCount };
+  }
 
+  /**
+   * @description Persists an updated incident record onto its ticket's metadata (and the
+   * escalated priority when FR-C4 fired). Never touches ticket status (FR-E1/FR-D7).
+   * @param ticket - The incident ticket.
+   * @param incident - The updated incident record.
+   * @param alert - The arriving alert (its severity is surfaced on escalation).
+   * @param escalatedTo - New priority when escalating, else null.
+   */
+  private async persistIncident(
+    ticket: InternalTicket,
+    incident: IncidentRecord,
+    alert: CanonicalAlert,
+    escalatedTo: TicketPriority | null,
+  ): Promise<void> {
     const metadata: Record<string, unknown> = {
       ...((ticket.metadata as Record<string, unknown> | undefined) ?? {}),
       [ALERT_INCIDENT_KEY_FIELD]: incident.key,
       incident,
-      ...(escalate ? { severity: alert.severity } : {}),
+      ...(escalatedTo ? { severity: alert.severity } : {}),
     };
     await this.tickets.updateTicket(
       ticket.ticketId,
-      escalate ? { metadata, priority: refirePriority } : { metadata },
+      escalatedTo ? { metadata, priority: escalatedTo } : { metadata },
     );
-    await this.recordRefireActivity(ticket.ticketId, alert, incident, escalate ? refirePriority : null);
-    logger.info(
-      { ticketId: ticket.ticketId, incidentKey: incident.key, updateCount: incident.updateCount, escalatedTo: escalate ? refirePriority : null },
-      'Alert refire consolidated onto the open incident ticket',
-    );
-    return { decision: 'consolidated', ticketId: ticket.ticketId, updateCount: incident.updateCount };
   }
 
   /**
@@ -433,31 +473,31 @@ export class AlertConsolidationService {
   }
 
   /**
-   * @description Leaves the operator-visible refire trail on the ticket's activity history.
-   * Best-effort: the consolidation update already persisted, so a history failure logs at
+   * @description Leaves the operator-visible activity trail on the ticket's history.
+   * Best-effort: the incident update already persisted, so a history failure logs at
    * ERROR and does not fail the intake.
    * @param ticketId - Ticket identifier.
-   * @param alert - The canonical refire.
+   * @param alert - The canonical alert.
    * @param incident - The updated incident record.
-   * @param escalatedTo - New priority when this refire escalated, else null.
+   * @param reason - Human-readable activity line (refire vs attach).
    */
-  private async recordRefireActivity(
+  private async recordIncidentActivity(
     ticketId: string,
     alert: CanonicalAlert,
     incident: IncidentRecord,
-    escalatedTo: TicketPriority | null,
+    reason: string,
   ): Promise<void> {
     try {
       await this.tickets.recordActivity(ticketId, {
         source: 'prometheus',
-        reason: `alert refire consolidated (×${incident.updateCount}${escalatedTo ? `, priority → ${escalatedTo}` : ''})`,
+        reason,
         severity: alert.severity,
         alertname: alert.alertname,
         fingerprint: alert.fingerprint,
         incidentKey: incident.key,
       });
     } catch (err) {
-      logger.error({ err, ticketId, incidentKey: incident.key }, 'Failed to record refire activity on the incident ticket');
+      logger.error({ err, ticketId, incidentKey: incident.key }, 'Failed to record incident activity on the ticket');
     }
   }
 }

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): the ONE constants module for triage defaults (spec §9.8 — the source platform shipped a knob whose documented default and read-site default disagreed; every triage stage reads its defaults from here)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): the bundling knobs — ALERT_CORRELATION_WINDOW (FR-D1, default 15m), ALERT_CORRELATION_DEPTH (FR-D3, default 3 — the depth the source platform actually deployed), ALERT_MAX_MEMBERS (FR-D5 — the P1 member cap becomes the spec's configurable knob), the correlation-window predicate, and the bundle-candidate listing bound. All read at intake time with fail-safe fallbacks via one shared parser
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -76,4 +77,92 @@ export function isWithinConsolidationTtl(terminalAtIso: string, nowMs: number, t
   const terminalMs = Date.parse(terminalAtIso);
   if (!Number.isFinite(terminalMs)) return false;
   return (nowMs - terminalMs) / 1000 <= ttlSeconds;
+}
+
+/**
+ * @description Default Stage D correlation window in seconds (FR-D1): an arriving alert
+ * that did not consolidate is checked against OPEN incidents with activity inside this
+ * window. 15 minutes per the spec's §6 knob table.
+ */
+export const ALERT_CORRELATION_WINDOW_DEFAULT_SECONDS = 900;
+
+/**
+ * @description Default dependency-bundling depth in hops (FR-D3) — 3, the depth the source
+ * platform actually deployed (not its default 5; spec §6).
+ */
+export const ALERT_CORRELATION_DEPTH_DEFAULT = 3;
+
+/**
+ * @description Upper bound on how many recent tickets of the alert queue's type Stage D
+ * scans for open-incident correlation (FR-D1). Stores list newest-first, so the window's
+ * live incidents are always inside this bound at swarm scale; it exists only so a huge
+ * historical queue can never turn one webhook POST into an unbounded table scan.
+ */
+export const ALERT_BUNDLE_CANDIDATE_LIMIT = 200;
+
+/**
+ * @description Shared fail-safe reader for numeric triage knobs (spec §9.8 — one source of
+ * truth for defaults, and a bad value must never take down the intake). Read at intake
+ * time, not module load, so a deployment can retune without a rebuild.
+ * @param name - Environment variable name.
+ * @param fallback - Default when unset or invalid.
+ * @param opts - Validation options: `integer` requires a whole number; `min` is the lowest
+ *   accepted value (default 0).
+ * @returns The parsed knob value or the fallback.
+ */
+function envKnobNumber(name: string, fallback: number, opts: { integer?: boolean; min?: number } = {}): number {
+  const raw = (process.env[name] ?? '').trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  const min = opts.min ?? 0;
+  if (!Number.isFinite(parsed) || parsed < min || (opts.integer === true && !Number.isInteger(parsed))) {
+    logger.warn({ knob: name, raw }, 'Alert triage knob is not a valid number — using the default');
+    return fallback;
+  }
+  return parsed;
+}
+
+/**
+ * @description Resolves the Stage D correlation window in seconds from
+ * `ALERT_CORRELATION_WINDOW` (FR-D1). `0` deliberately disables bundling; unset/invalid
+ * values fall back to the 15m default.
+ * @returns Window in seconds.
+ */
+export function correlationWindowSeconds(): number {
+  return envKnobNumber('ALERT_CORRELATION_WINDOW', ALERT_CORRELATION_WINDOW_DEFAULT_SECONDS);
+}
+
+/**
+ * @description Resolves the dependency-bundling depth in hops from
+ * `ALERT_CORRELATION_DEPTH` (FR-D3). `0` disables dependency bundling (same-target
+ * bundling is unaffected); unset/invalid values fall back to 3.
+ * @returns Depth in hops.
+ */
+export function correlationDepth(): number {
+  return envKnobNumber('ALERT_CORRELATION_DEPTH', ALERT_CORRELATION_DEPTH_DEFAULT, { integer: true });
+}
+
+/**
+ * @description Resolves the recorded-member cap from `ALERT_MAX_MEMBERS` (FR-D5). Beyond
+ * the cap, membership is counted in `membersOverflow` instead of recorded — never silent.
+ * Minimum 1 (an incident always records its genesis member); unset/invalid → 50.
+ * @returns Member cap.
+ */
+export function maxIncidentMembers(): number {
+  return envKnobNumber('ALERT_MAX_MEMBERS', ALERT_MAX_INCIDENT_MEMBERS, { integer: true, min: 1 });
+}
+
+/**
+ * @description Answers whether an incident's last activity is inside the correlation
+ * window (FR-D1): `now - lastActivity <= window`. Unparseable timestamps return false —
+ * an undatable incident never attracts a bundle.
+ * @param lastActivityIso - ISO timestamp of the incident's last activity.
+ * @param nowMs - Arrival epoch milliseconds (injected for deterministic guards).
+ * @param windowSeconds - Window size in seconds.
+ * @returns True when the incident is inside the window.
+ */
+export function isWithinCorrelationWindow(lastActivityIso: string, nowMs: number, windowSeconds: number): boolean {
+  const activityMs = Date.parse(lastActivityIso);
+  if (!Number.isFinite(activityMs)) return false;
+  return (nowMs - activityMs) / 1000 <= windowSeconds;
 }
