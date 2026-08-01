@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | De-brand final pass: renamed this file (from its legacy-branded name to …-local.ts) and its export (to LOCAL_BOT_REGISTRY). This lean lineup is the DEFAULT active registry — getActiveRegistry() resolves here unless SWARM_REGISTRY=full opts into the fuller SWARM_BOT_REGISTRY. Same bots, same order; no behavior change. A stale legacy SWARM_REGISTRY value now falls through to this default (hot-swap-safe).
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Fix ADR-085 carve id collision: drone-operator moved b0100000-…001 → b00f0000-…001 (mirrors the canonical registry). portrait-studio's store package had taken b0100000-…001; operator-chosen resolution keeps portrait there and reverts drone-operator to its already-in-DB b00f0000 id. See scripts/swarm-app-bot-integrity-check.sh.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: removed the two PHANTOM platform-advisory rows, graph-analyst (e0…001) and advisor-bot (e0…200). Neither had a persona YAML in ai-lab/bot-personas/ nor a compose service, so neither could ever be personified or dispatched — yet this is the DEFAULT active registry and they held the only 'graph-query'/'opensearch-query' capabilities the queue manager's title-keyword hint asks for, so a graph/correlation ticket could bid to a bot with no home. Graph/topology reasoning moved to real personas (rca-specialist for incident topology, capture-coordinator for teaming), both now carrying the concrete /api/graph recipe.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | K7/K8 (BACKLOG kernel audit 2026-07-29): scoped the remaining internal-machinery bots (code-developer, devops-bot, code-reviewer, research-bot, test-engineer, tester-bot, security-analyst, vault-bot) to accessRoles operator+swarm — they carried the shared workspace read-write with NO declaration, so ADR-087's omitted=open made them live Jarvis/inbound-A2A call-out candidates (security-analyst was the sharpest: its ROUTE is requiresOperator-gated but its identity was not, so a call-out reached it around the gate). general-bot is scoped but KEEPS 'jarvis' — it is the ADR-083 task-lane fallback and removing jarvis strands every Jarvis task ticket (wave-2 constraint; guarded by internal-machinery-scoping.spec.ts + routability-critical-bots.spec.ts). K8 membership: added apply-operator (cb…0003) and linkedin-profile-operator (cb…0004) — both are pinned by core dispatch (browser-task-dispatch / profile-studio-dispatch) but existed ONLY in the full registry, so the DEFAULT lineup served their identities as unknown (= open, undiscoverable, unattributable). Guard: tests/unit/internal-machinery-scoping.spec.ts.
  */
 
 import type { SwarmBotDefinition } from './swarm-bot-registry';
@@ -137,6 +138,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['coding', 'implementation', 'debugging', 'refactoring', 'feature-development', 'bug-fixing', 'api-design'],
     harnessType: 'claude-code',
     apiType: 'claude-code',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery with the shared workspace rw — not a Jarvis call-out target (ADR-087)
   },
   {
     agentId: 'a0000000-0000-0000-0000-000000000008',
@@ -147,6 +149,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['infrastructure', 'cicd', 'kubernetes', 'docker', 'monitoring', 'scripting', 'bash', 'deployment'],
     harnessType: 'claude-code',
     apiType: 'claude-code',
+    accessRoles: ['operator', 'swarm'],   // K7: infra machinery — not a Jarvis call-out target (ADR-087)
   },
   // ── Quality ───────────────────────────────────────────────────────────────
   {
@@ -158,6 +161,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['code-review', 'security', 'quality', 'best-practices', 'architecture-review'],
     harnessType: 'claude-code',
     apiType: 'claude-code',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery — not a Jarvis call-out target (ADR-087)
   },
   {
     agentId: 'a0000000-0000-0000-0000-000000000004',
@@ -511,6 +515,10 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['finding-triage', 'threat-assessment', 'attack-scenario-analysis', 'remediation-recommendation'],
     harnessType: 'claude-code',
     apiType: 'claude-code',
+    // K7: the sharpest of the unscoped set — its ROUTE (security-routes) is requiresOperator-gated
+    // but the identity was not, so a call-out reached it AROUND the gate. Direct-by-id dispatch
+    // from the operator-gated route is not discovery and is unaffected (ADR-087).
+    accessRoles: ['operator', 'swarm'],
   },
   // trading-research-analyst — finds + classifies gravity masses from news/research for Intelligent
   // Trades (ADR-054). REASON-ONLY inline on the api like trading-analyst. id 049 (047=security, 048 taken).
@@ -730,6 +738,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['research', 'analysis', 'documentation', 'investigation', 'web-search', 'competitive-analysis'],
     harnessType: 'gemini-cli',
     apiType: 'google-gemini',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline research machinery — a prompt-to-external-vendor path stays off Jarvis's menu (ADR-087)
   },
   // ── Testing ────────────────────────────────────────────────────────────────
   {
@@ -741,6 +750,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['testing', 'validation', 'verification', 'test-automation', 'qa', 'acceptance-criteria'],
     harnessType: 'claude-code',
     apiType: 'claude-code',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery — not a Jarvis call-out target (ADR-087)
   },
   // ── QA (mandatory swarm participant) ───────────────────────────────────────
   {
@@ -752,6 +762,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['testing', 'qa', 'test-standards', 'acceptance-criteria', 'test-automation'],
     harnessType: 'claude-code',
     apiType: 'claude-code',
+    accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery — not a Jarvis call-out target (ADR-087)
   },
   // ── Architecture & Design ─────────────────────────────────────────────────
   {
@@ -834,6 +845,10 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['general-assistance', 'cross-domain-synthesis', 'web-research', 'overflow-fallback'],
     harnessType: 'codex-cli',
     apiType: 'openai-codex',
+    // K7 with the wave-2 CONSTRAINT: general-bot is the Jarvis 'task' lane fallback, so its
+    // scoping MUST include 'jarvis' or every Jarvis-sourced task ticket strands with no owner
+    // (routability-critical-bots.txt flags it jarvisReachable=yes and the spec enforces it).
+    accessRoles: ['operator', 'swarm', 'jarvis'],
   },
   // ── Video (inline on the api; drives the vids-operator worker) ──────────────
   // brand-graphics (b00f…0001) was carved to the store 2026-07-17 (ADR-085 Wave 1);
@@ -879,6 +894,41 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     capabilities: ['credential-brokering', 'short-lived-creds', 'privileged-runtime'],
     harnessType: 'claude-code',
     apiType: 'claude-code',
+    accessRoles: ['operator', 'swarm'],   // K7: credential-brokering machinery behind the superadmin-gated devops surface — never a Jarvis target (ADR-087)
+  },
+  // ── Remote-worker rail identities (career family — K8 membership parity) ────
+  // Both are pinned by core dispatch (browser-task-dispatch / profile-studio-dispatch) and were
+  // registered ONLY in the full registry, so the DEFAULT lineup served them as unknown ids —
+  // open (ADR-087 unknown=open), undiscoverable, and unattributable. Keep IDENTICAL to
+  // swarm-bot-registry.ts (docs/building-a-bot.md: register in BOTH).
+  {
+    // Apply-operator — a REMOTE WORKER bot in the career-hunter family. It does NOT run in a swarm
+    // container; it runs on the operator's desktop (oshal-chat/remote-client) and drives the real
+    // logged-in Chrome via its browser_control MCP to submit an approved, packet-ready application.
+    agentId: 'cb000000-0000-0000-0000-000000000003',
+    name: 'apply-operator',
+    port: 5000,            // bots listen on 5000 internally; unused for this remote-worker identity
+    container: 'apply-operator',
+    role: 'career/application-submitter',
+    capabilities: ['ats-form-fill', 'browser-screen-control', 'application-submission', 'email-code-retrieval', 'application-recording'],
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
+    accessRoles: ['operator', 'swarm'],  // K7/K8: desktop-driving machinery dispatched by the apply rail, not Jarvis-discoverable (ADR-087)
+  },
+  {
+    // LinkedIn-profile-operator — apply-operator's sibling on the SAME remote-worker rail (LinkedIn
+    // has NO profile-edit API). Applies an APPROVED Profile Studio plan by driving the operator's
+    // real logged-in Chrome via browser_control on the desktop. Registry identity only, no compose
+    // service; dispatched by profile-studio-dispatch, resolves via /api/profile-studio/ingest.
+    agentId: 'cb000000-0000-0000-0000-000000000004',
+    name: 'linkedin-profile-operator',
+    port: 5000,            // unused for this remote-worker identity
+    container: 'linkedin-profile-operator',
+    role: 'career/profile-customizer',
+    capabilities: ['linkedin-profile-editing', 'browser-screen-control', 'profile-media-upload'],
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
+    accessRoles: ['operator', 'swarm'],  // ADR-087: internal machinery — dispatched by Profile Studio, not Jarvis-discoverable
   },
   // ── External A2A (outbound gateway, BACKLOG Plan F item 3) ──────────────────
   // a2a-sample-agent — the EXAMPLE outbound A2A dispatch target. An EXTERNAL agent:

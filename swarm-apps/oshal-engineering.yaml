@@ -66,8 +66,11 @@ bots:
       - acceptance-validation
       - regression-detection
 
+  # K2: 'system-architect' is the ONE name for a0…0018 — the built-in build workflow
+  # (dispatch-routing.ts) resolves its worker BY NAME on it, both registries now carry it,
+  # and the persona below declares it. Guarded by registry-name-consistency.spec.ts.
   - agentId: a0000000-0000-0000-0000-000000000018
-    name: architect-bot
+    name: system-architect
     persona: ai-lab/bot-personas/system-architect.yaml
     role: engineering/architecture
     capabilities:
@@ -169,7 +172,7 @@ ticketType: build
 workflow:
   name: Software Build Swarm
   pipeline: swarm
-  workerBot: architect-bot
+  workerBot: system-architect
   phases:
     - intake
     - planning

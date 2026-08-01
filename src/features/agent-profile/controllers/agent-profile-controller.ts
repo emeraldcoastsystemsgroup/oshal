@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:07:00 | Added
  *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
  *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | K2/K3 identity canon (BACKLOG kernel audit): a0…0018 is 'system-architect' in every map (was 'architect-bot' here while dispatch resolved by the other name); the LEGACY unported a0…0034 row is relabeled 'legacy-system-architect' so exactly ONE identity carries the canonical name; self-healing-bot moves a0…030 → a0…056 (030 belongs to codex-packer — the three-way collision made 030's attribution ambiguous). Mirrors registries + compose + migration 100.
  */
 
 import { Request, Response, type RequestHandler } from 'express';
@@ -238,7 +239,7 @@ function getSeedAgentProfileFallback(agentId: string): Record<string, unknown> |
     'a0000000-0000-0000-0000-00000000000e': { name: 'tester-bot', role: 'tester' },
     'a0000000-0000-0000-0000-000000000016': { name: 'rca-specialist', role: 'root-cause-analyst' },
     'a0000000-0000-0000-0000-000000000017': { name: 'presentation-bot', role: 'presenter' },
-    'a0000000-0000-0000-0000-000000000018': { name: 'architect-bot', role: 'architect' },
+    'a0000000-0000-0000-0000-000000000018': { name: 'system-architect', role: 'architect' },
     /* ── 31 unported legacy domain bots (available for dynamic activation) ── */
     'a0000000-0000-0000-0000-000000000019': { name: '3d-printing-bot', role: 'manufacturing' },
     'a0000000-0000-0000-0000-00000000001a': { name: 'animatronics-bot', role: 'animatronics' },
@@ -263,10 +264,10 @@ function getSeedAgentProfileFallback(agentId: string): Record<string, unknown> |
     'a0000000-0000-0000-0000-00000000002d': { name: 'pr-communications-bot', role: 'public-relations' },
     'a0000000-0000-0000-0000-00000000002e': { name: 'robotics-bot', role: 'robotics-engineer' },
     'a0000000-0000-0000-0000-00000000002f': { name: 'scheduler-bot', role: 'scheduler' },
-    'a0000000-0000-0000-0000-000000000030': { name: 'self-healing-bot', role: 'self-healing' },
+    'a0000000-0000-0000-0000-000000000056': { name: 'self-healing-bot', role: 'self-healing' },
     'a0000000-0000-0000-0000-000000000031': { name: 'slack-bot', role: 'messaging' },
     'a0000000-0000-0000-0000-000000000033': { name: 'small-motors-bot', role: 'motors-specialist' },
-    'a0000000-0000-0000-0000-000000000034': { name: 'system-architect', role: 'system-architect' },
+    'a0000000-0000-0000-0000-000000000034': { name: 'legacy-system-architect', role: 'system-architect' },
     'a0000000-0000-0000-0000-000000000035': { name: 'video-bot', role: 'video-production' },
     'a0000000-0000-0000-0000-000000000036': { name: 'weather-bot', role: 'weather-analyst' },
     'a0000000-0000-0000-0000-000000000037': { name: 'website-design-bot', role: 'web-designer' },
@@ -352,7 +353,7 @@ const BOT_CATALOGS: Record<string, Array<{ id: string; name: string; role: strin
     { id: 'a0000000-0000-0000-0000-000000000005', name: 'test-engineer',        role: 'tester' },
     { id: 'a0000000-0000-0000-0000-000000000006', name: 'task-manager',         role: 'qa-gatekeeper' },
     { id: 'a0000000-0000-0000-0000-000000000008', name: 'devops-bot',           role: 'devops-engineer' },
-    { id: 'a0000000-0000-0000-0000-000000000018', name: 'architect-bot',        role: 'architect' },
+    { id: 'a0000000-0000-0000-0000-000000000018', name: 'system-architect',     role: 'architect' },
     { id: 'a0000000-0000-0000-0000-00000000000a', name: 'security-auditor-bot', role: 'security-auditor' },
     { id: 'a0000000-0000-0000-0000-00000000000c', name: 'research-bot',         role: 'research-analyst' },
     { id: 'a0000000-0000-0000-0000-00000000000e', name: 'tester-bot',           role: 'tester' },
@@ -367,7 +368,7 @@ const BOT_CATALOGS: Record<string, Array<{ id: string; name: string; role: strin
     { id: 'a0000000-0000-0000-0000-000000000006', name: 'task-manager',            role: 'qa-gatekeeper' },
     { id: 'a0000000-0000-0000-0000-000000000007', name: 'agent-factory',           role: 'factory' },
     { id: 'a0000000-0000-0000-0000-000000000008', name: 'devops-bot',              role: 'devops-engineer' },
-    { id: 'a0000000-0000-0000-0000-000000000018', name: 'architect-bot',           role: 'architect' },
+    { id: 'a0000000-0000-0000-0000-000000000018', name: 'system-architect',        role: 'architect' },
     { id: 'a0000000-0000-0000-0000-00000000000a', name: 'security-auditor-bot',    role: 'security-auditor' },
     { id: 'a0000000-0000-0000-0000-00000000000b', name: 'incident-response-bot',   role: 'incident-responder' },
     { id: 'a0000000-0000-0000-0000-00000000000c', name: 'research-bot',            role: 'research-analyst' },
@@ -397,10 +398,10 @@ const BOT_CATALOGS: Record<string, Array<{ id: string; name: string; role: strin
     { id: 'a0000000-0000-0000-0000-00000000002d', name: 'pr-communications-bot',   role: 'public-relations' },
     { id: 'a0000000-0000-0000-0000-00000000002e', name: 'robotics-bot',            role: 'robotics-engineer' },
     { id: 'a0000000-0000-0000-0000-00000000002f', name: 'scheduler-bot',           role: 'scheduler' },
-    { id: 'a0000000-0000-0000-0000-000000000030', name: 'self-healing-bot',        role: 'self-healing' },
+    { id: 'a0000000-0000-0000-0000-000000000056', name: 'self-healing-bot',        role: 'self-healing' },
     { id: 'a0000000-0000-0000-0000-000000000031', name: 'slack-bot',               role: 'messaging' },
     { id: 'a0000000-0000-0000-0000-000000000033', name: 'small-motors-bot',        role: 'motors-specialist' },
-    { id: 'a0000000-0000-0000-0000-000000000034', name: 'system-architect',        role: 'system-architect' },
+    { id: 'a0000000-0000-0000-0000-000000000034', name: 'legacy-system-architect', role: 'system-architect' },
     { id: 'a0000000-0000-0000-0000-000000000035', name: 'video-bot',               role: 'video-production' },
     { id: 'a0000000-0000-0000-0000-000000000036', name: 'weather-bot',             role: 'weather-analyst' },
     { id: 'a0000000-0000-0000-0000-000000000037', name: 'website-design-bot',      role: 'web-designer' },

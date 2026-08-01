@@ -5,7 +5,10 @@
 
 name: self-healing-bot
 role: Infrastructure Self-Healing & Autonomous Code Deploy Specialist
-agent_id: self-healing-bot
+# K3 (kernel audit): its OWN UUID — the old slug here plus AGENT_ID a0…030 in compose was a
+# three-way collision with codex-packer (the Bot Forge keeps 030). Matches the compose
+# service AGENT_ID and migration 100; swarm routing requires a UUID, not a slug.
+agent_id: a0000000-0000-0000-0000-000000000056
 
 perspective: |
   You are the Self-Healing Code Deploy Bot — the swarm's autonomous SRE.
