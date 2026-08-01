@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted UNGUARDED_ALLOWLIST out of tests/unit/server-route-auth-inventory.spec.ts so a SECOND spec can import it. The backlog's done-when for the route-audit allowlist gap asks for a programmatic cross-check between this reviewed list and src/features/security/route-audit.ts's PUBLIC_BY_DESIGN; until now the two referenced each other only in prose comments and could diverge silently forever (they had — '/api/security/csp-report' and '/api/branding' lived here and nowhere in PUBLIC_BY_DESIGN). Importing a spec file from another spec would re-register its suites, so the shared data moves to this plain module instead. Content is unchanged from the spec's version; the reviewed reasons ARE the artifact.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the '/api/jarvis' limiter-only entry (+ LIMITER_ONLY_PATHS). The web-hardening close-out mounted expensiveOpLimiter on /api/jarvis, which registers no handlers, but the CI-side inventory classifies limiter-only mounts by ALLOWLIST while the runtime scanner skips them BY RULE - so the gate went red on main the moment that mount landed, on a path whose every real router is guarded (serviceSecretOr(requiresAuth) + two requiresAuth mounts). Mirrors the /api/intake entry exactly. The asymmetry itself is the real defect and is named in the entry's reason: the parser should learn the scanner's Limiter rule so the next such mount does not repeat this.
  */
 
 /**
@@ -67,6 +68,18 @@ export const UNGUARDED_ALLOWLIST: readonly UnguardedRouteEntry[] = [
       '(src/app/routes/fast-intake-routes.ts L36).',
   },
   {
+    path: '/api/jarvis',
+    reason:
+      'Limiter-only mount — app.use(\'/api/jarvis\', expensiveOpLimiter) (src/app/server.ts, web-hardening '
+      + 'close-out) registers a rate limiter and NO handlers. Every real /api/jarvis router mounts '
+      + 'separately and guarded: serviceSecretOr(requiresAuth) + createJarvisRoutes, requiresAuth + '
+      + 'createJarvisBriefRoutes, and the three requiresAuth /api/jarvis/ambient* mounts. Same shape and '
+      + 'same justification as the /api/intake entry above. NB the runtime scanner '
+      + '(src/features/security/route-audit.ts) skips this shape BY RULE (its Limiter-name test), so '
+      + 'this CI-side spec is the only place it needs declaring — an asymmetry worth closing by teaching '
+      + 'this parser the same rule, so the next limiter mount does not turn the gate red on arrival.',
+  },
+  {
     path: '/api/apply',
     reason:
       'Desktop-worker box callback — every route 401s without the service secret: serviceSecretOk() at ' +
@@ -123,4 +136,4 @@ export const UNGUARDED_ALLOWLIST: readonly UnguardedRouteEntry[] = [
  * allow-listing them, so such a path legitimately appears here and NOT in `PUBLIC_BY_DESIGN`.
  * The sync check needs to know that, or it would demand a scanner entry that must not exist.
  */
-export const LIMITER_ONLY_PATHS: readonly string[] = ['/api/intake'];
+export const LIMITER_ONLY_PATHS: readonly string[] = ['/api/intake', '/api/jarvis'];
