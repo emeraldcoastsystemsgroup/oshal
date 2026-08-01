@@ -97,3 +97,4 @@ tests/voice-integration.spec.ts
 tests/workflow-runtime-boundary.spec.ts
 tests/workspace-bootstrap.spec.ts
 tests/swarm-apps-framework.spec.ts
+tests/alert-intake-rls-live.spec.ts

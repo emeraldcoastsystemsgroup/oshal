@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119) Stage C: identity-based consolidation. Exactly one open ticket per incident key (FR-C2 — per-key serialization in-process + the tickets table's (external_provider, external_id) unique claim in the DB, release-on-failure by folding the loser into the winner); a refire is a visible consolidation update — updateCount/lastSeen/member counts — never a silent skip (FR-C3); severity only escalates priority, never lowers it (FR-C4); a refire after the prior incident went terminal within the TTL opens a NEW ticket linked recurrenceOf (FR-C5); genesis fields are write-once (FR-C6). Consolidation updates never touch ticket status, so RCA structurally runs once per incident (FR-E1)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P2 (ADR-119 Stage D): an arrival that did not consolidate now checks OPEN related incidents (AlertBundlingService — same-target FR-D2, dependency FR-D3) before creating, and ATTACHES instead: member recorded at attach time with its attachReason (FR-D5), rootCandidate recomputed by the ordered policy (FR-D4), severity escalation shared with the refire path (FR-C4 max-over-members). Attach NEVER touches ticket status — no promote, no re-dispatch (FR-D7); an auto-flow member attaching to a backlog bundle sets the needs-attention flag instead. The incident record types + incidentOf moved verbatim to incident-record.ts (import-cycle break); the intake serialization domain widened from per-key to the intake stage because Stage D correlates ACROSS keys — the DB's (external_provider, external_id) unique claim remains the durable restart-safe guarantee (spec §9.7). Member cap now reads the ALERT_MAX_MEMBERS knob (FR-D5)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage E): the dispatch gates. FR-E2 — an auto-flow CREATE consults the RcaBudgetGate first: over budget it parks the ticket in backlog carrying the visible analysis-skipped:budget flag+label (an operator promote overrides; backlog-parked tickets never spend); allowed dispatches reserve the p95 estimate before the create and release it on create failure or a lost creation race. FR-E3 — every refire feeds flap damping: crossing the threshold trips `flapping` and demotes a not-yet-dispatched approved ticket to backlog (in-flight tickets only get the flag — "if RCA has not yet run"); a refire after the quiet period ends the episode and restores ONLY a flap-parked ticket to approved (budget-gated again — restoring is a dispatch). FR-E4 — intakeResolved marks the member resolvedAt (a refire clears it via upsertMember), and ONLY with ALERT_AUTO_RESOLVE=true a fully-resolved still-backlog ticket completes as self-resolved; approved-or-beyond tickets never auto-close. Genesis stamps the claiming rule's rootFilter (Stage B) so FR-D4's step 1 has real per-rule declarations
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | createIncidentTicket now stamps ownerSub: ALERT_INTAKE_OWNER_SUB. The alert path is a machine caller with no user identity, so the owner-RLS WITH CHECK refused every INSERT and the ladder could not open a single ticket on a live box; a NULL owner_sub fails the predicate even once the connection is identity-stamped, so both halves ship together (the route stamps the same constant on the connection).
  */
 
 import { randomUUID } from 'crypto';
@@ -20,6 +21,7 @@ import { createChildLogger } from '@/shared/logger';
 import {
   ALERT_BUNDLE_CANDIDATE_LIMIT,
   ALERT_INCIDENT_KEY_FIELD,
+  ALERT_INTAKE_OWNER_SUB,
   TERMINAL_TICKET_STATES,
   autoResolveEnabled,
   consolidationTtlSeconds,
@@ -359,6 +361,12 @@ export class AlertConsolidationService {
         externalId: `${alert.incidentKey}#${incident.instanceSeq}`,
         externalUrl: shape.externalUrl,
         status: intakeStatus,
+        // The machine owner (see ALERT_INTAKE_OWNER_SUB). Without it the owner-RLS WITH
+        // CHECK refuses the row even when the connection is correctly identity-stamped:
+        // the predicate is `owner_sub = current_setting('oshal.current_sub')`, and a NULL
+        // owner_sub never equals the stamped sub. The route stamps the SAME constant on the
+        // connection, so the two halves are one source of truth.
+        ownerSub: ALERT_INTAKE_OWNER_SUB,
         workspaceId: null,
         assignedAgentId: null,
         parentTicketId: null,

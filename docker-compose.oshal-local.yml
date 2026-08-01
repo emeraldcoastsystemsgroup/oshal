@@ -988,6 +988,13 @@ services:
       TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
       TWILIO_TO_NUMBER: ${TWILIO_TO_NUMBER:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # ADR-119 alert triage: the receiver is FAIL-CLOSED, so an unforwarded token means
+      # Alertmanager can never reach it — the whole ladder is unreachable and looks 'quiet'.
+      ALERT_WEBHOOK_TOKEN: ${ALERT_WEBHOOK_TOKEN:-}
+      ALERT_TICKET_TYPE: ${ALERT_TICKET_TYPE:-}
+      SELF_HEAL_AUTO_APPLY: ${SELF_HEAL_AUTO_APPLY:-false}
+      SELF_HEAL_APPLY_HOURLY_CAP: ${SELF_HEAL_APPLY_HOURLY_CAP:-}
+      ALERT_RCA_HOURLY_BUDGET_USD: ${ALERT_RCA_HOURLY_BUDGET_USD:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       # Facebook connector (Utilities hub). The connector is "not configured" until
       # FACEBOOK_APP_ID/SECRET are set. FACEBOOK_REDIRECT_URI must match the URI

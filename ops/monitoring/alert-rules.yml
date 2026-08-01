@@ -5,107 +5,135 @@
 # incident ticket (via Alertmanager -> /api/alerts/alertmanager) that the
 # incident-rca pipeline investigates; the fix is gated at approve-or-close.
 #
-# Start: container-health signals (up/down, restart loops, resource pressure).
-# Later: error-rate signals once the bots expose a /metrics endpoint — add a
-# group here keyed on those series and nothing downstream changes.
-#
 # The `severity` label maps to ticket priority; `container` maps to the heal
-# target. `alertname` is what the ALERT_APPROVED_NAMES allowlist matches on.
+# target. `alertname` is what the claim registry (ADR-119 Stage B) matches on.
 #
-# AUTONOMY (ADR-119 P4, 2026-08-01): the four container-health rules carry
-# `intake: auto` — level A1 of the autonomy ladder. Their consolidated incidents
-# auto-flow into incident-rca ANALYSIS (metered by the P3 budget/flap gates);
-# the proposed fix still stops at the approve-or-close gate unless the
-# deployment also opts into A2 (SELF_HEAL_AUTO_APPLY=true, bounded, worker
-# containers only). Remove the label on any rule to walk it back to A0
-# (observe: park in backlog for hand-promotion). SwarmApiUnreachable stays A0
-# by design — core-plane recovery is watchdog territory, never this loop's.
+# SIGNAL SOURCE (rewritten 2026-08-01 after the live container-kill drill)
+# -----------------------------------------------------------------------
+# These rules previously keyed on `container_last_seen{name=~"oshal-local-.+"}`.
+# cAdvisor emits ZERO such series on this deployment — Docker Desktop's containerd
+# image store breaks its docker factory outright, so no oshal container is ever
+# reported and there is no label to match on. Consequence observed live: the
+# `absent(...)` branch fired permanently, SwarmContainerDown was a standing false
+# alarm carrying NO target (so ADR-119 P1's identity gate dropped it), and a
+# genuinely stopped container was never identified. Full evidence in the header of
+# ops/monitoring/prometheus.yml.
+#
+# Every rule now keys on series the swarm itself guarantees:
+#   up                                    Prometheus's own scrape result per target
+#   oshal_process_start_time_seconds      restart detection
+#   oshal_process_resident_memory_bytes   /  oshal_process_memory_limit_bytes
+#   oshal_process_cpu_seconds_total       CPU saturation
+# served by src/shared/observability/runtime-metrics.ts on GET /metrics. The
+# `container` and `tier` labels come from the scrape target (prometheus.yml), so
+# EVERY alert below carries a usable heal target by construction.
+#
+# AUTONOMY (ADR-119 P4): the four worker-fleet rules carry `intake: auto` —
+# level A1 of the autonomy ladder. Their consolidated incidents auto-flow into
+# incident-rca ANALYSIS (metered by the P3 budget/flap gates); the proposed fix
+# still stops at the approve-or-close gate unless the deployment also opts into
+# A2 (SELF_HEAL_AUTO_APPLY=true, bounded, worker containers only). Remove the
+# label on any rule to walk it back to A0 (observe: park in backlog for
+# hand-promotion). SwarmApiUnreachable stays A0 by design — core-plane recovery
+# is watchdog territory, never this loop's, which is also why the worker rules
+# scope to job="oshal-swarm-bots" (tier=worker) and never to the core job.
 # =============================================================================
 
 groups:
   - name: swarm-container-health
     rules:
-      # A swarm container's cAdvisor series disappeared = container gone/down.
+      # A worker container is not answering its scrape = container gone/down/wedged.
+      #
+      # The `max_over_time(...) > 0` conjunct is load-bearing, not decoration: a target
+      # that has NEVER been up (a compose `profiles:` bot this deployment does not run)
+      # would otherwise be a permanent false alarm — the exact failure mode this rewrite
+      # exists to remove. "Was healthy within the last hour and is not now" is the
+      # actionable event; "was never started" is a deployment choice, not an incident.
       - alert: SwarmContainerDown
         expr: |
-          absent(container_last_seen{name=~"oshal-local-.+"})
-          or (time() - max by (name) (container_last_seen{name=~"oshal-local-.+"}) > 60)
+          up{job="oshal-swarm-bots"} == 0
+          and on (container) max_over_time(up{job="oshal-swarm-bots"}[1h]) > 0
         for: 1m
         labels:
           severity: critical
           team: swarm-ops
           intake: auto  # A1 (ADR-119): unattended analysis; action stays gated
         annotations:
-          summary: "Swarm container {{ $labels.name }} is down or unreported"
+          summary: "Swarm container {{ $labels.container }} is down"
           description: >-
-            cAdvisor has not seen container {{ $labels.name }} for over 60s.
-            It has likely crashed or been killed. Investigate and restart.
+            {{ $labels.container }} stopped answering its /metrics scrape for over a
+            minute after having been healthy. It has likely crashed or been killed.
+            Investigate and restart.
 
-      # Container restart loop (memory of restarts climbing fast).
+      # Container restart loop — the process start time keeps moving.
       - alert: SwarmContainerRestartLoop
         expr: |
-          increase(container_start_time_seconds{name=~"oshal-local-.+"}[10m]) > 2
+          changes(oshal_process_start_time_seconds{job="oshal-swarm-bots"}[10m]) > 2
         for: 2m
         labels:
           severity: warning
           team: swarm-ops
           intake: auto  # A1 (ADR-119): unattended analysis; action stays gated
         annotations:
-          summary: "Swarm container {{ $labels.name }} is restart-looping"
+          summary: "Swarm container {{ $labels.container }} is restart-looping"
           description: >-
-            {{ $labels.name }} restarted more than twice in 10 minutes —
+            {{ $labels.container }} restarted more than twice in 10 minutes —
             crash loop. Root-cause the startup failure before it flaps further.
 
-      # Sustained high memory (OOM risk) on a swarm container.
+      # Sustained high memory (OOM risk) against the container's own cgroup ceiling.
+      # The `> 0` conjunct excludes processes with no enforceable limit — the exporter
+      # reports 0 for those, and a ratio against 0 is not a signal.
       - alert: SwarmContainerHighMemory
         expr: |
-          (container_memory_usage_bytes{name=~"oshal-local-.+"}
-            / container_spec_memory_limit_bytes{name=~"oshal-local-.+"} > 0.92)
-          and (container_spec_memory_limit_bytes{name=~"oshal-local-.+"} > 0)
+          (oshal_process_resident_memory_bytes{job="oshal-swarm-bots"}
+            / oshal_process_memory_limit_bytes{job="oshal-swarm-bots"} > 0.92)
+          and (oshal_process_memory_limit_bytes{job="oshal-swarm-bots"} > 0)
         for: 5m
         labels:
           severity: warning
           team: swarm-ops
           intake: auto  # A1 (ADR-119): unattended analysis; action stays gated
         annotations:
-          summary: "Swarm container {{ $labels.name }} memory > 92%"
+          summary: "Swarm container {{ $labels.container }} memory > 92%"
           description: >-
-            {{ $labels.name }} has been above 92% of its memory limit for 5m —
+            {{ $labels.container }} has been above 92% of its memory limit for 5m —
             OOM-kill risk. Check for a leak or raise the limit.
 
-      # Sustained high CPU on a swarm container.
-      # NOTE: without a per-rule label, intake follows ALERT_DEFAULT_INTAKE (the
-      # cautious deployment sets `backlog`: tickets park and the operator
-      # promotes by hand). The per-rule `intake: auto` label below is the A1
-      # opt-in — delete it to walk this rule back to A0.
+      # Sustained high CPU on a worker container (one full core of process CPU time).
       - alert: SwarmContainerHighCPU
         expr: |
-          sum by (name) (rate(container_cpu_usage_seconds_total{name=~"oshal-local-.+"}[5m])) > 0.95
+          rate(oshal_process_cpu_seconds_total{job="oshal-swarm-bots"}[5m]) > 0.95
         for: 10m
         labels:
           severity: warning
           team: swarm-ops
           intake: auto  # A1 (ADR-119): unattended analysis; action stays gated
         annotations:
-          summary: "Swarm container {{ $labels.name }} CPU pinned > 95%"
+          summary: "Swarm container {{ $labels.container }} CPU pinned > 95%"
           description: >-
-            {{ $labels.name }} has sustained >95% of a CPU core for 10m.
+            {{ $labels.container }} has sustained >95% of a CPU core for 10m.
             Likely a runaway loop or unexpected load.
 
   - name: swarm-api-health
     rules:
-      # The control-plane API liveness probe failed.
+      # The control-plane API is not answering its scrape.
+      #
+      # NOTE the target change (2026-08-01): this used to scrape /api/health, which
+      # returns JSON. Prometheus cannot parse JSON as the exposition format, so the
+      # scrape FAILED on every cycle and `up` was pinned to 0 on a perfectly healthy
+      # box — a permanent false alarm indistinguishable from a real outage. The target
+      # is now /metrics (a real Prometheus exposition), so `up` means what this rule
+      # claims it means.
       - alert: SwarmApiUnreachable
-        expr: up{job="oshal-api-health"} == 0
+        expr: up{job="oshal-core"} == 0
         for: 2m
         labels:
           severity: critical
           team: swarm-ops
-          container: oshal-local-api
         annotations:
-          summary: "oshal-api liveness probe failing"
+          summary: "oshal-api ({{ $labels.container }}) is unreachable"
           description: >-
-            Prometheus cannot reach oshal-api /api/health for 2m. The queue
+            Prometheus cannot scrape {{ $labels.container }} for 2m. The queue
             manager / ticket API may be down. NOTE: if THIS is what is down, the
             ticket-based heal path cannot self-open — this alert is the signal to
             let the external watchdog restart oshal-local-api directly.

@@ -4304,6 +4304,42 @@ nothing has run on the GPU box yet. Design + decisions in [ADR-071](adr/071-char
 - **Break-glass:** `OSHAL_DB_GUC_STRICT=off` restores the pre-flip fail-open-to-operator behavior on any
   starvation incident.
 
+### Machine-write identity: audit every un-migrated identity-less WRITE, not just reads ⬜ (found by the 2026-08-01 container-kill drill)
+- **Reason:** the guc-strict entry above frames the risk as *starvation on reads*. The alert intake showed
+  the sharper failure: an authenticated MACHINE route (Alertmanager webhook, bearer-token auth, no human
+  behind it) inherited the global anonymous request identity, and the owner-RLS `WITH CHECK` on `tickets`
+  refused every INSERT — `new row violates row-level security policy for table "tickets"`. Not zero rows:
+  a hard write failure, caught and logged by the route, so the whole ADR-119 ladder looked *quiet* rather
+  than broken. Fixed for this route (PR: `runWithRequestIdentity` with the synthetic `alert:prometheus`
+  sub + a matching `owner_sub`, the A2A gateway's `ownerSubForA2aAgent` rail). **The class is not closed:**
+  a2a-routes hit it in July, the alert intake in August — both machine callers that authenticate with a
+  shared secret and then write an owner-scoped table. Any other such route has the same defect today.
+- **Done when:** every route mounted OUTSIDE the OIDC wall that WRITES an owner-RLS table is enumerated
+  (start from `tests/helpers/unguarded-route-allowlist.ts` + `PUBLIC_BY_DESIGN`), each is classified
+  machine-owned (synthetic namespaced sub, `isOperator: false`) or genuinely user-scoped, and a guard —
+  extending the route-auth inventory — fails when a self-guarded machine route writes an owner-RLS table
+  without establishing a machine identity. Prefer the synthetic sub over `runWithSystemIdentity`: the
+  system sentinel is `isOperator: true`, which hands a secret-holder cross-tenant READ for any scan the
+  route performs (Stage D's bundle scan was the concrete case).
+- **Guard that exists today:** `tests/alert-intake-rls-live.spec.ts` — a REAL insert as the K5
+  least-privilege `oshal_bot` role against a REAL RLS-enforcing `tickets`, with both halves of the fix
+  mutation-proven. Every stubbed-gateway spec stayed green through this defect; copy the live shape, not
+  the stub shape, for the rest of the class.
+
+### Container-health signal on non-cAdvisor hosts — decide the supported collector story ⬜ (found by the 2026-08-01 container-kill drill)
+- **Reason:** the ADR-119 rules shipped keyed on `container_last_seen{name=~"oshal-local-.+"}`. On the
+  reference dev box cAdvisor emits **58** `container_last_seen` series and **zero** for any oshal
+  container: Docker Desktop 29.x uses the containerd image store (driver `overlayfs`), so cAdvisor's
+  docker factory fails in `getRwLayerID` for every container and no handler is ever constructed
+  (reproduced on v0.49.1 and v0.52.1; `--docker_only`, `--store_container_labels`,
+  `--containerd-namespace=moby` and disabling disk metrics all make no difference). The rules were
+  rewritten onto the swarm's own `/metrics` exposition, which is portable and carries an exact
+  `container` identity — but cAdvisor is still in the compose and still contributes nothing here.
+- **Done when:** either cAdvisor is confirmed working on the supported deployment targets (a Linux host
+  and the k8s profile) and documented as optional-detail-only, or it is dropped from the monitoring
+  overlay entirely; and the runbook states plainly which container metrics exist on which host, so
+  nobody writes another rule against a series their deployment does not produce.
+
 ### Deploy: bot-recreate thundering-herd on `/api/config/runtime` — stagger or size the pool ⬜ (completion-day follow-up 2026-07-19)
 - **Reason:** every deploy recreates all ~35 bot containers, and they simultaneously pull
   `/api/config/runtime` on boot, bursting DB connection checkouts against the api's pg pool. The new
