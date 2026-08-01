@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One-share LIVE smoke test of the Schwab write path (operator-requested): quote -> market BUY <qty> <symbol> -> poll to fill -> position readback -> record decision+order in the ledger. Deliberately direct-to-venue (bypasses TRADING_HALT/engine) so the API rail can be proven while the engine stays halted. Refuses to run without SMOKE_CONFIRM=yes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto v2 fix (the oshal-recap-email.js drift's unaudited sibling, found live 2026-07-26): token decrypt is now format-aware — a `v2:`-prefixed blob unwraps the per-user DEK from oshal_user_deks first; legacy unprefixed blobs keep the single-KEK path. Without this the script dies "Unsupported state or unable to authenticate data" on any token refreshed since envelope crypto went on (2026-07-20).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  */
 /*
  * Usage (in the api container):  SMOKE_CONFIRM=yes node schwab-live-smoke.js [SYMBOL] [QTY]
@@ -22,7 +23,7 @@ const TRADER = (process.env.SCHWAB_TRADER_BASE_URL || 'https://api.schwabapi.com
 const MKT = (process.env.SCHWAB_MARKETDATA_BASE_URL || 'https://api.schwabapi.com/marketdata/v1').replace(/\/+$/, '');
 const step = (m) => console.log('[smoke] ' + m);
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function gcmDecryptRaw(k, blob) { const [iv, tag, enc] = String(blob).split(':'); const d = crypto.createDecipheriv('aes-256-gcm', k, Buffer.from(iv, 'base64')); d.setAuthTag(Buffer.from(tag, 'base64')); return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]); }
 /** Version tag on per-user-DEK envelope blobs (mirrors src/app/routes/connector-token-crypto.ts). */
 const ENVELOPE_V2 = 'v2:';

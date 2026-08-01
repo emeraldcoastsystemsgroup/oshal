@@ -6,6 +6,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Invitations send with NO mail password. The first hosted customer box had no SMTP, so an invited user simply never got an email and the admin had to notice the copy-link banner - the operator did not, and the invitee waited. Invite delivery now tries two rails in order: SMTP when a deployment configures its own server (explicit beats inherited), else the platform's EXISTING Gmail connector - the same OAuth grant every other outbound message in the swarm already uses, resolved through the same NOTIFY_EMAIL_SENDER_SUB / OSHAL_OPERATOR_SUBS identity notify-routes uses. sendGmail is reused, not re-implemented, so the header-injection fence still applies. The public-URL check moved FIRST because an emailed invite needs an absolute link (the copyable path still works without one - the browser knows its origin), and both rails failing is not an error: the admin screen always shows the link. Guard: local-auth-routes.spec rail-order case, mutation-proven.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | LOCAL_AUTH mode (ADR-117): a controlled invited-user login for deployments with no external IdP. createLocalAuthMiddlewareSet is the third sibling of the OIDC/mock middleware sets (server.ts picks it when LOCAL_AUTH=true): a session-cookie injector that fabricates the SAME req.oidc shape as the PAT/TV/guest injectors, a requiresAuth that answers API requests 401-JSON and browser documents with a /login redirect (reusing shouldReturnUnauthorizedResponse — one discrimination rule), and a loginHandler that serves the first-party credential page. createLocalAuthRoutes carries the flows: bootstrap-first-admin (the installer is the first login), email invitations with a copyable-link fallback when SMTP is absent, one-time accept (set password), login with per-ip+email rate limiting and account-enumeration-proof errors, logout, and the operator/trusted-service user administration API the CRM admin screen proxies to. Fail-closed at boot: LOCAL_AUTH+MOCK_OIDC together, or a missing SESSION_SECRET, throw instead of silently degrading to open auth.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | servePage passes dotfiles:'allow' to res.sendFile. Express defaults to 'ignore', which 404s when ANY segment of the resolved path starts with a dot — so /login, /invite and /2fa returned 404 for any checkout under `.claude/worktrees/<name>`, which is exactly how every agent worktree is laid out. Two page-serving specs went red for anyone running the suite from a worktree (and a future agent would misattribute them to their own change), and a real deployment under a dot-segment path would serve no login page at all. Safe: `file` is one of three hardcoded literals and `resolved` comes from resolveLoginPage's fixed candidate list, so no caller-supplied path reaches sendFile.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-117 deferred item: unauthenticated self-service password reset. POST /api/local-auth/forgot (public front door, like /login) asks the store for a reset token (createPasswordReset - active accounts only, never creates/resurrects/stomps) and emails the /invite link over the SAME two rails as invitations. Enumeration-safe by construction: ONE response body/status for known, unknown, invited and disabled addresses; one identical store round trip either way; delivery is fire-and-forget so response timing cannot become the oracle; and delivery outcomes are logged, never returned. Per-IP fixed-window limit answers 429; the per-EMAIL cap is enforced SILENTLY (same 200) because a distinct answer would itself leak, and it caps mailbombing a victim address. A reset never clears TOTP (acceptInvite leaves the factor columns alone - guarded). Guard: tests/unit/local-auth-forgot-password.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G14: a broken Google grant (token refresh rejected — getValidAccessToken throws `refresh 400`) now produces a DISTINCT emailDetail telling the admin to reconnect on the Connections screen, instead of the generic transport failure. On the G-Squared box the first two real invitations silently returned emailSent:false because a Testing-mode Google client had invalidated the refresh token for gmail.send hours after connecting, and the only signal was a container-log warning a prior triage had dismissed. The admin-facing message now names the fix (~30s reconnect) so no log dive is needed.
  */
 
@@ -42,6 +43,9 @@ import {
   setTotpRequired,
   verifySecondFactor,
   findByInviteToken,
+  createPasswordReset,
+  looksLikeEmail,
+  normalizeEmail,
   getSessionSnapshot,
   getUserById,
   isStoreEmpty,
@@ -108,6 +112,31 @@ function recordLoginFailure(key: string): void {
   const bucket = loginFailures.get(key);
   if (!bucket || bucket.resetAt < Date.now()) {
     loginFailures.set(key, { count: 1, resetAt: Date.now() + LOGIN_WINDOW_MS });
+    return;
+  }
+  bucket.count += 1;
+}
+
+// ── Forgot-password rate limiting (fixed window, in-memory) ──────────────────────
+// Counts REQUESTS, not failures: the endpoint is unauthenticated and every ask spends
+// real resources (a token write + an outbound mail), so the budget is per ask.
+const FORGOT_WINDOW_MS = 15 * 60 * 1000;
+const FORGOT_MAX_PER_IP = 5;
+const FORGOT_MAX_PER_EMAIL = 3;
+const forgotRequests = new Map<string, { count: number; resetAt: number }>();
+
+function forgotOverLimit(key: string, max: number): boolean {
+  const bucket = forgotRequests.get(key);
+  return !!bucket && bucket.resetAt >= Date.now() && bucket.count >= max;
+}
+
+function recordForgotRequest(key: string): void {
+  if (forgotRequests.size > 5000) {
+    for (const [k, v] of forgotRequests) if (v.resetAt < Date.now()) forgotRequests.delete(k);
+  }
+  const bucket = forgotRequests.get(key);
+  if (!bucket || bucket.resetAt < Date.now()) {
+    forgotRequests.set(key, { count: 1, resetAt: Date.now() + FORGOT_WINDOW_MS });
     return;
   }
   bucket.count += 1;
@@ -357,6 +386,54 @@ async function deliverInvite(
     : { emailSent: false, emailDetail: `${viaConnector.detail} — copy the invite link to the user yourself` };
 }
 
+/**
+ * @description Emails a self-service password-reset link over the SAME two rails as
+ * invitations (deployment SMTP first, else the operator's connected Gmail). Called
+ * fire-and-forget from the /forgot route: outcomes are logged, never returned — an
+ * unauthenticated caller must see neither the link nor whether mail went out (either
+ * difference is an account-probing oracle). A box with no working rail degrades to the
+ * admin-driven Re-invite path, which this flow deliberately does not replace.
+ *
+ * @param pool - Postgres pool holding the connector tokens.
+ * @param user - The account the reset was minted for.
+ * @param token - One-time plaintext reset token (rides the /invite redeem page).
+ * @param expiresAt - ISO expiry of the link.
+ * @returns Resolves when delivery has been attempted on every rail.
+ */
+async function deliverPasswordReset(pool: Pool, user: LocalUser, token: string, expiresAt: string): Promise<void> {
+  const base = publicBaseUrl();
+  if (!base) {
+    logger.warn('password reset requested but no public URL is configured (set LOCAL_AUTH_PUBLIC_URL or APP_URL) — no link can be emailed; the admin Re-invite path remains');
+    return;
+  }
+  const product = process.env.SERVICE_DISPLAY_NAME || process.env.SERVICE_NAME || 'oshal';
+  const link = `${base}${invitePath(token)}`;
+  const expires = new Date(expiresAt).toUTCString();
+  const mail = {
+    to: user.email,
+    subject: `Reset your ${product} password`,
+    text: [
+      `Someone asked to reset the ${product} password for this address.`,
+      '',
+      'Open this link to choose a new password:',
+      link,
+      '',
+      `The link works once and expires ${expires}. If your account uses two-step sign-in,`,
+      'the reset does not remove it — signing in still asks for your code.',
+      "If you didn't ask for this, ignore this email; your password is unchanged.",
+    ].join('\n'),
+  };
+  if (smtpConfigured()) {
+    const result = await sendTransactionalMail(mail);
+    if (result.ok) return;
+    logger.warn({ detail: result.detail }, 'SMTP reset send failed — falling back to the connector rail');
+  }
+  const viaConnector = await sendViaConnectedGmail(pool, mail);
+  if (!viaConnector.ok) {
+    logger.warn({ detail: viaConnector.detail }, 'password-reset email could not be sent on any rail — the admin Re-invite path remains');
+  }
+}
+
 // ── Admin gate ───────────────────────────────────────────────────────────────
 // User administration is an operator session OR a trusted internal service call (an
 // app's own admin surface gates on ITS capability model, then proxies here with the
@@ -382,7 +459,7 @@ function errStatus(err: unknown): number {
 /**
  * @description Builds the LOCAL_AUTH router: the invite/accept/login/logout flows plus
  * the user-administration API. Mount at the app root ONLY when LOCAL_AUTH is enabled —
- * public legs (login, state, invite-info, accept, bootstrap) are public by design
+ * public legs (login, state, invite-info, accept, bootstrap, forgot) are public by design
  * (they are the front door); admin legs gate per-request via requireUserAdmin.
  *
  * @param pool - Postgres pool backing the local-user store.
@@ -492,6 +569,41 @@ export function createLocalAuthRoutes(pool: Pool): Router {
       logger.error({ err }, 'local-auth login failed');
       res.status(500).json({ error: 'login unavailable' });
     }
+  });
+
+  /**
+   * POST /api/local-auth/forgot — unauthenticated self-service password reset (the /login
+   * page's "Email me a reset link"). ENUMERATION-SAFE: one response body and status for
+   * known, unknown, invited and disabled addresses; the store answers all of them with one
+   * identical UPDATE round trip; and delivery runs fire-and-forget AFTER the response is
+   * decided, so neither content nor timing says whether an account exists. Per-IP requests
+   * answer 429 over the window cap; the per-EMAIL cap is enforced silently (same 200) —
+   * a distinct answer would leak, and it stops mailbombing one victim address.
+   */
+  router.post('/api/local-auth/forgot', async (req, res) => {
+    const email = normalizeEmail(String(((req.body ?? {}) as { email?: string }).email ?? ''));
+    const ipKey = `ip|${req.ip}`;
+    if (forgotOverLimit(ipKey, FORGOT_MAX_PER_IP)) {
+      res.status(429).json({ error: 'too many reset requests — wait a few minutes and try again' });
+      return;
+    }
+    recordForgotRequest(ipKey);
+    try {
+      const emailKey = `email|${email}`;
+      if (looksLikeEmail(email) && !forgotOverLimit(emailKey, FORGOT_MAX_PER_EMAIL)) {
+        recordForgotRequest(emailKey);
+        const reset = await createPasswordReset(pool, email);
+        if (reset) {
+          // Fire-and-forget: the response must not wait on (or vary with) mail delivery.
+          void deliverPasswordReset(pool, reset.user, reset.token, reset.expiresAt)
+            .catch((err) => logger.error({ err }, 'password-reset delivery failed'));
+          logger.info({ sub: reset.user.userSub }, 'password-reset link minted');
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'forgot-password processing failed'); // the response stays identical
+    }
+    res.json({ ok: true, message: 'If that address has an account, a reset link is on its way.' });
   });
 
   /** GET /api/local-auth/invite-info — whose invitation a token is (proof-of-possession read). */

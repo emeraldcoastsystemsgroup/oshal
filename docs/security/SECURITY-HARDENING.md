@@ -142,9 +142,13 @@ enforcement a documented deployment step.
   to production).
 - **Gap to fix (tracked, §4):** the at-rest key is derived as `SHA256(SESSION_SECRET)`. A raw
   hash is not an approved key-derivation function. Move to **HKDF-SHA256** (approved) or
-  **PBKDF2-HMAC-SHA256** when the connector-token crypto is revised, and remove the
-  `'oshal-dev-secret'` fallback. The per-user envelope encryption (`OSHAL_ENVELOPE_CRYPTO`)
-  already uses per-user DEKs wrapped by a KEK — turn it on and source the KEK from a KMS.
+  **PBKDF2-HMAC-SHA256** when the connector-token crypto is revised. ~~and remove the
+  dev-secret fallback~~ **Done 2026-07-31:** the hardcoded dev-key fallback is removed
+  everywhere (src + every `scripts/oshal-*.js` CLI) — a missing `SESSION_SECRET` now fails
+  loud in every mode, including the envelope-crypto-OFF break-glass. Guard:
+  `tests/unit/no-dev-secret-fallback.spec.ts` (behavioral + tree scan). The per-user envelope
+  encryption (`OSHAL_ENVELOPE_CRYPTO`) already uses per-user DEKs wrapped by a KEK — it is on
+  by default; source the KEK from a KMS.
 - **Forbidden:** do not use MD5, SHA-1, RC4, DES/3DES, or non-approved curves for any security
   purpose. Audit with a grep before each release.
 
@@ -220,5 +224,10 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
 8. **Bot safety** — flip tool approval to fail-closed for unregistered tools, remove the
    blanket `use_mcp_tool` auto-approve on swarm dispatch, and fence external/tool-result content
    as untrusted to blunt prompt injection.
-9. **Latent** — default `MOCK_OIDC=false` in code and remove the `'oshal-dev-secret'` fallback
-   (both currently overridden by `.env`, harmless here, a footgun on a fresh deploy).
+9. ~~**Latent** — default `MOCK_OIDC=false` in code and remove the dev-secret fallback
+   (both currently overridden by `.env`, harmless here, a footgun on a fresh deploy).~~
+   **Done 2026-07-31:** the compose interpolation default is now `MOCK_OIDC:-false` (the
+   installer writes `MOCK_OIDC=true` explicitly for dev boxes, so the sanctioned path is
+   unchanged; a fresh `compose up` with no `.env` fails loud at boot instead of silently
+   mocking auth), and the hardcoded dev-key fallback is removed tree-wide (see §3.1). Guards:
+   `tests/unit/mock-oidc-failclosed.spec.ts` + `tests/unit/no-dev-secret-fallback.spec.ts`.

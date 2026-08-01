@@ -65,8 +65,16 @@ production, but passwords travel in the login POST — TLS is not optional for a
   once and expire after 7 days.
 - **Accepting** — the invitee opens `/invite?token=…`, sets a password (10+ characters), and
   is signed in. The token is spent on use.
-- **Forgot password / reset** — `POST /api/local-auth/users/:id/reinvite` mints a fresh
-  one-time link; accepting it sets the new password and ends every older session.
+- **Forgot password / reset** — two paths, same one-time-link machinery:
+  - *Self-service* (2026-07-31): the `/login` page's "Email me a reset link" posts
+    `POST /api/local-auth/forgot {email}`. Active accounts get a 60-minute one-time link on
+    the same rails as invitations (SMTP, else the operator's Gmail connector). The answer is
+    identical whether or not the address exists (no enumeration), delivery never blocks the
+    response (no timing oracle), requests are rate-limited per IP (429) and capped per email
+    (silently), and a reset **never clears a two-step factor**. A box with no mail rail simply
+    sends nothing — the admin path below still works.
+  - *Admin-driven* — `POST /api/local-auth/users/:id/reinvite` mints a fresh
+    one-time link; accepting it sets the new password and ends every older session.
 - **Disable** — `POST /api/local-auth/users/:id/disable` locks the account and kills live
   sessions within ~30 seconds. `/enable` restores it (the old password still stands unless
   you also reinvite).
@@ -108,8 +116,6 @@ Three deliberate behaviours worth knowing before you operate this:
 
 ## What this mode does NOT do (yet)
 
-- **Self-service password reset** — resets are admin-driven by design for now; there is no
-  unauthenticated "forgot password" email flow to enumerate or abuse.
 - **SSO** — when the client gets an IdP, switch to the OIDC mode; identities keyed by email
   will NOT carry over automatically (subs differ) — plan a mapping if that day comes.
 
@@ -127,4 +133,7 @@ with a role) at invite time — the binding is live the moment the invitee first
 `local-auth-session.spec.ts` (cookie signing, expiry, revocation, absolute cap),
 `local-auth-routes.spec.ts` (the login wall: bootstrap-once, generic errors, rate limiting,
 single-use invites, disable-kills-login, admin-gate matrix),
-`local-auth-middleware.spec.ts` (fail-closed construction, injector, 401/redirect split).
+`local-auth-middleware.spec.ts` (fail-closed construction, injector, 401/redirect split),
+`local-auth-forgot-password.spec.ts` (self-service reset: enumeration-identical answers,
+fire-and-forget delivery, per-IP 429 + silent per-email cap, reset survives TOTP, invite
+not stomped).

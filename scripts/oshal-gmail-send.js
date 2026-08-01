@@ -1,4 +1,12 @@
 #!/usr/bin/env node
+/*
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation (header added retroactively - file predates change-log enforcement)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ */
 /* Send an email (optionally with one attachment) via the OSHAL Google connection token.
  * Reuses the oshal-gmail.js auth (controller-provided token, else DB refresh-token decrypt).
  * Usage: node oshal-gmail-send.js <to> <subject> <bodyFile> [attachmentPath]
@@ -13,7 +21,7 @@ function resolveProvidedToken() {
   try { const t = fs.readFileSync(path.join(process.cwd(), '.oshal-cred-google'), 'utf8').trim(); if (t) return t; } catch {}
   return process.env.OSHAL_CRED_GOOGLE || undefined;
 }
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));

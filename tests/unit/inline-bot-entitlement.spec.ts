@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the CONTROLLER execute-time entitlement chokepoint (BACKLOG "Bot-endpoint privilege model", diagnosis bot-endpoint-priv): controller-inline bots resolve to a null endpoint (CONTROLLER_INLINE_CONTAINERS) and never reach the bot-node HTTP gate, so executeBotOrInline must run assertExecuteEntitlement itself. Drives the REAL executeBotOrInline + REAL entitlement module against the REAL local registry (project-manager a0000000-...-0001 is ADR-087 operator+swarm-scoped): enforce mode throws CallerNotEntitledError (statusCode 403) BEFORE the orchestrator/bot-node is invoked on BOTH branches; warn (the default) allows-and-logs with surface 'executeBotOrInline'; internal, swarm-dispatch, and operator callers stay trusted. Goes red if the chokepoint check is ever removed or the inline branch stops being covered.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | K6 close-out: the default flipped warn -> ENFORCE in bot-node-execute-entitlement.ts, so the default-mode case here now proves the CONTROLLER chokepoint DENIES with the env unset (CallerNotEntitledError before the orchestrator fires), and the allow-and-log soak behavior is asserted under an EXPLICIT OSHAL_EXECUTE_ENTITLEMENT=warn. Goes red if the chokepoint's default ever regresses to allow.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -119,7 +120,20 @@ describe('executeBotOrInline execute-time entitlement chokepoint', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('WARN (the default, env unset): the same unentitled call executes but the would-be denial is logged', async () => {
+  it('the DEFAULT (env unset) is ENFORCE: the unentitled inline call is DENIED before the orchestrator fires', async () => {
+    const { ctx, processMessage } = makeCtx();
+    const { client } = makeBotClient(false);
+
+    const attempt = executeBotOrInline(ctx, client, SCOPED_AGENT_ID, makeRequest({ userSub: USER_SUB, direct: true }));
+    await expect(attempt).rejects.toBeInstanceOf(CallerNotEntitledError);
+    expect(processMessage).not.toHaveBeenCalled();
+    const denials = logSpies.warn.mock.calls.filter(([meta]) => (meta as Record<string, unknown>)?.surface === 'executeBotOrInline');
+    expect(denials).toHaveLength(1);
+    expect(String((denials[0][0] as Record<string, unknown>).outcome)).toBe('DENIED');
+  });
+
+  it('WARN is an EXPLICIT soak opt-out: the same unentitled call executes but the would-be denial is logged', async () => {
+    process.env.OSHAL_EXECUTE_ENTITLEMENT = 'warn';
     const { ctx, processMessage } = makeCtx();
     const { client } = makeBotClient(false);
 

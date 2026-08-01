@@ -3,6 +3,7 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — canonical Plaid data-access CLI + localhost test harness for the finance app. Reads/writes the finance-owned oshal_finance_items store (AES-256-GCM, same scheme as the connector tokens). Commands: link-sandbox (seed a Sandbox item with NO Link widget / real bank creds), items, accounts, holdings, transactions, aggregate. Read-only against real money; sandbox-only for the seed command.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  * Read-only Plaid aggregation for a connected OSHAL user. Accounts are linked by the
  * user in the Finance app (Plaid Link) or seeded here for Sandbox testing.
@@ -25,7 +26,7 @@ const PLAID_BASE = `https://${PLAID_ENV}.plaid.com`;
 const SANDBOX_INSTITUTION = process.env.PLAID_SANDBOX_INSTITUTION || 'ins_109508';
 
 function creds() { return { client_id: process.env.PLAID_CLIENT_ID || '', secret: process.env.PLAID_SECRET || '' }; }
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function encrypt(plain) {
   const iv = crypto.randomBytes(12);
   const c = crypto.createCipheriv('aes-256-gcm', key(), iv);

@@ -3,6 +3,7 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Spotify (music bundle) CLI.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *   The bot-facing tool runtime for the spotify-concierge. Mirrors scripts/oshal-uber.js
  *   credential resolution: prefer a controller-brokered access token
  *   (.oshal-cred-spotify / OSHAL_CRED_SPOTIFY — a FRESH token the controller already
@@ -44,7 +45,7 @@ function resolveBrokeredCred() {
   return process.env.OSHAL_CRED_SPOTIFY || undefined;
 }
 function secretKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest();
+  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
 }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');

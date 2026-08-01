@@ -24,6 +24,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Distinguish demo fallback caused by no credential from a signed
  *   provider failure, while returning only bounded credential-safe diagnostics.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export a request-scoped, credential-argument live-search helper for
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *   deterministic provider intents; importing this module no longer runs the CLI.
  */
 'use strict';
@@ -60,7 +61,7 @@ function resolveBrokeredCred() {
 }
 
 function secretKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest();
+  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
 }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');

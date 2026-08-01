@@ -107,10 +107,14 @@ x-bot-env: &bot-env
   # TOKEN_CHASE_CAPTURE=false in .env to kill it. Owner-scoped reads via the api (/api/token-chase).
   TOKEN_CHASE_CAPTURE: ${TOKEN_CHASE_CAPTURE:-true}
   # ── Auth / OIDC ──
-  # Defaults to mock for zero-config local dev. To use a real IdP (Google, LinkedIn,
-  # Microsoft Entra), set these in .env: MOCK_OIDC=false + OIDC_ISSUER_URL +
-  # OIDC_CLIENT_ID + OIDC_CLIENT_SECRET + APP_URL + SESSION_SECRET.
-  MOCK_OIDC: ${MOCK_OIDC:-true}
+  # FAIL-CLOSED default (SECURITY-HARDENING 9, 2026-07-31): auth is never mocked unless
+  # .env says so. The installer writes MOCK_OIDC=true for a local dev box, so the
+  # sanctioned install path is unchanged; a bare `compose up` with no .env now fails
+  # loud at boot (missing OIDC session secret) instead of silently treating every
+  # visitor as an authenticated demo user. Real IdP (Google, LinkedIn, Microsoft
+  # Entra): MOCK_OIDC=false + OIDC_ISSUER_URL + OIDC_CLIENT_ID + OIDC_CLIENT_SECRET +
+  # APP_URL + SESSION_SECRET in .env. Guard: tests/unit/mock-oidc-failclosed.spec.ts.
+  MOCK_OIDC: ${MOCK_OIDC:-false}
   OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
   OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}

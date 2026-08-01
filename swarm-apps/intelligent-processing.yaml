@@ -55,6 +55,16 @@ bots:
     name: self-healing-bot
     persona: ai-lab/bot-personas/self-healing-bot.yaml
     role: incident/self-healing
+    # K4 (kernel audit 2026-07-29): this is the docker-socket bot — root-equivalent on the
+    # host. It exists for the operator-approved remediation leg of the incident-rca pipeline
+    # ONLY, so it is scoped to operator + swarm callers (ADR-087): Jarvis cannot discover it,
+    # user delegation cannot reach it, and the execute-time entitlement gate (enforce default)
+    # refuses an interactive identity caller. Guarded by
+    # tests/unit/kernel-manifest-docker-bot-guard.spec.ts — do not remove without moving the
+    # bot out of the kernel-resident manifest set entirely.
+    accessRoles:
+      - operator
+      - swarm
     capabilities:
       - self-healing
       - container-restart

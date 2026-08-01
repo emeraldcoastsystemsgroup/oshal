@@ -139,6 +139,7 @@
  * 134 | maintainer@emeraldcoastsystemsgroup.com   | Update-check completion: registerUpdateRoutes now receives swarmAppService.loadApp so the operator-gated POST /api/updates/apps/:name/apply can hot-reload a re-installed package (installer runs with repo/ref from the INSTALLED manifest, never the caller); new-update transitions notify the operator via the notification center.
  * 135 | maintainer@emeraldcoastsystemsgroup.com   | Registered app.get('/login', loginHandler) after the global authMiddleware: the stock express-openid-connect login route is disabled (routes.login=false in @/shared/middleware/oidc) because it hardcoded returnTo=baseURL — every login-restart path (callback retry, state-mismatch recovery, cockpit 401 guard) forgot the original URL, so /cockpit/?app=<name> deep links landed on the bare cockpit after recovery. Guards: tests/login-returnto.spec.ts + tests/unit/login-returnto.spec.ts.
  * 136 | maintainer@emeraldcoastsystemsgroup.com   | Root landing resolves HOST_APP_MAP (new host-app-map.ts) before falling back to LANDING_PATH, so a themed app subdomain (dnd.oshal.ai, trading.oshal.ai, littlemonsters.oshal.ai, ...) lands straight on its app instead of the generic ribbon. Unset = unchanged prior behavior. Guard: tests/unit/host-app-map.spec.ts.
+ * 138 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: retired the stale '/api/remote-clients hardening TODO = per-caller rate limiting' note - the limiter SHIPPED router-local in remote-client-routes.ts (seq 11: flag-gated OSHAL_RATE_LIMIT_REMOTE_CLIENTS, keyed per /:clientId, guard tests/unit/remote-client-auth.spec.ts), so the TODO was sending the next security wave to re-do finished work. No logic change.
  * 137 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G3 + G9: needsOnboarding now delegates to the pure onboardingRequired predicate (new onboarding-gate.ts) — DISABLE_ONBOARDING_GATE only suppresses the per-user wizard and can no longer waive the "a model must be connected" requirement; a deliberately model-less box declares OSHAL_NO_AI=true instead (a warn log names the exact fix when the gate fires despite the flag). Registered registerReadinessRoutes (new routes/readiness-routes.ts): GET /api/readiness reports per-capability ok|off|fail because /api/health is liveness-only and was being read as readiness. Guards: tests/unit/onboarding-gate.spec.ts + tests/unit/readiness-report.spec.ts.
  */
 
@@ -1428,7 +1429,10 @@ function createApp(): express.Application {
   // NOT wrapped in requiresAuth on purpose: this route has its own fail-closed
   // authorizeRemoteClient gate (valid OIDC session OR REMOTE_CLIENT_SHARED_SECRET
   // bearer). Wrapping it in requiresAuth would reject the bearer path that remote
-  // bot-nodes use. Hardening TODO = per-caller rate limiting, not a gate change.
+  // bot-nodes use. Per-caller rate limiting is SHIPPED router-local (remote-client-routes.ts
+  // seq 11): flag-gated OSHAL_RATE_LIMIT_REMOTE_CLIENTS (default off — flip deliberately,
+  // a legit fleet's heartbeats share this path), keyed on the /:clientId segment, never the
+  // NATed IP. Guard: tests/unit/remote-client-auth.spec.ts.
   // Higher json limit here so node task-complete bodies with screenshots (screen.capture) aren't
   // rejected with 413. Scoped to this router only (the global parser above skips these paths).
   app.use('/api/remote-clients', express.json({ limit: '25mb' }), createRemoteClientRoutes({

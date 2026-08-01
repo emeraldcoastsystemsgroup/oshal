@@ -43,6 +43,7 @@
   .error { color: var(--bad); font-size: 13px; margin: 12px 0 0; min-height: 1.4em; }
   .hidden { display: none; }
   .foot { color: var(--dim); font-size: 11.5px; margin-top: 18px; }
+  .foot a { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -59,8 +60,10 @@
     <label for="email">Email</label>
     <input id="email" name="email" type="email" required autocomplete="username" autofocus>
 
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" required autocomplete="current-password" minlength="10">
+    <div id="passwordRow">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required autocomplete="current-password" minlength="10">
+    </div>
 
     <div id="confirmRow" class="hidden">
       <label for="confirm">Confirm password</label>
@@ -78,7 +81,7 @@
 
     <button id="submit" type="submit">Sign in</button>
     <p class="error" id="error"></p>
-    <p class="foot" id="foot">Forgot your password? Ask your administrator to send a new invitation link.</p>
+    <p class="foot" id="foot">Forgot your password? <a href="#" id="forgot">Email me a reset link</a>.</p>
   </form>
 
 <script>
@@ -86,6 +89,7 @@
   'use strict';
   var bootstrapMode = false;
   var secondFactorNeeded = false;
+  var forgotMode = false;
   var $ = function (id) { return document.getElementById(id); };
 
   function returnTo() {
@@ -97,6 +101,22 @@
   fetch('/api/branding').then(function (r) { return r.json(); }).then(function (b) {
     if (b && b.displayName) { $('brand').textContent = b.displayName; document.title = 'Sign in - ' + b.displayName; }
   }).catch(function () {});
+
+  function enterForgotMode(ev) {
+    if (ev) ev.preventDefault();
+    forgotMode = true;
+    $('title').textContent = 'Reset your password';
+    $('subtitle').textContent = "Enter your email and we'll send a one-time reset link.";
+    $('passwordRow').classList.add('hidden');
+    $('password').removeAttribute('required');
+    $('codeRow').classList.add('hidden');
+    $('submit').textContent = 'Email me a reset link';
+    $('submit').disabled = false;
+    $('error').textContent = '';
+    $('foot').innerHTML = '<a href="/login">Back to sign in</a>. No email set up on this box? Ask your administrator for a new invitation link.';
+    $('email').focus();
+  }
+  $('forgot').addEventListener('click', enterForgotMode);
 
   fetch('/api/local-auth/state').then(function (r) { return r.json(); }).then(function (s) {
     if (s && s.bootstrapRequired) {
@@ -114,6 +134,29 @@
   $('form').addEventListener('submit', function (ev) {
     ev.preventDefault();
     $('error').textContent = '';
+    if (forgotMode) {
+      $('submit').disabled = true;
+      fetch('/api/local-auth/forgot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: $('email').value }),
+      }).then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
+        .then(function (res) {
+          if (res.status === 429) {
+            $('submit').disabled = false;
+            $('error').textContent = (res.data && res.data.error) || 'Too many requests. Wait a few minutes.';
+            return;
+          }
+          // Deliberately the SAME message whatever the address was — no account probing here.
+          $('subtitle').textContent = (res.data && res.data.message) || 'If that address has an account, a reset link is on its way.';
+          $('submit').textContent = 'Link sent';
+        })
+        .catch(function () {
+          $('submit').disabled = false;
+          $('error').textContent = 'The server did not answer. Try again.';
+        });
+      return;
+    }
     var password = $('password').value;
     if (password.length < 10) { $('error').textContent = 'Passwords need at least 10 characters.'; return; }
     if (bootstrapMode && password !== $('confirm').value) {

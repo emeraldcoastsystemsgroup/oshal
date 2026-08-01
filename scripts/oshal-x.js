@@ -3,6 +3,7 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Social swarm (ADR-038): publish a user-approved X/Twitter post (POST /2/tweets) or read the profile, using the OSHAL connector token (oshal_connections, provider=twitter). Mirrors oshal-linkedin.js. X OAuth 2.0 access tokens are short-lived (~2h), so unlike LinkedIn this CLI refreshes them itself — HTTP Basic (client_id:client_secret) + rotating refresh token, the same dialect the connector uses. Never auto-posts: the surface only calls `post` after explicit user approval.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  *   node scripts/oshal-x.js profile               # the connected X profile (@handle, metrics)
  *   node scripts/oshal-x.js post "Hello world"    # publish a tweet (<=280 chars)
@@ -18,7 +19,7 @@ const { Pool } = require('pg');
 const CLIENT_ID = process.env.TWITTER_CLIENT_ID || process.env.X_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.TWITTER_CLIENT_SECRET || process.env.X_CLIENT_SECRET || process.env.X_CLIENT_SECRECT || '';
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));

@@ -37,6 +37,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Twilio connector (Intelligent Communication swarm — phone + text): per-user pasted Account SID + Auth Token in the Jira two-value shape ("SID:AuthToken" combined secret), validated against the Twilio Accounts API before persisting. BYO account only; gives the communications-bot its SMS/voice leg via the token broker + scripts/oshal-twilio.js.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Outlook default scopes += Mail.Send (ADR-037 email-swarm parity with Gmail's send leg): scripts/oshal-outlook.js now sends via POST /me/sendMail, which needs the delegated Mail.Send permission. Existing Outlook connections must RECONNECT at /utilities to pick up the new scope; the Azure app registration needs Mail.Send added under API permissions (docs/partner-app-registration.md, Communications bundle).
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Plaid becomes a first-class hub connector (new auth:'link' mode) instead of the app-private oshal_finance_items store ADR-048 gave Finance. Adds the 'plaid' PROVIDERS entry (finance category, stub OAuth fields — its ceremony is the Link widget), the 'link' auth-model + 'plaid' flavor union members, the /list `configured` link-branch (isPlaidConfigured), and registers the Plaid Link routes (connector-plaid-link.ts) before the generic /:provider/* handlers. Tokens land in oshal_connections (per-user AES-GCM) and read back via getValidAccessToken's no-refresh_token branch, so an app REFERENCES Plaid via the broker rather than forking its own store. NB: file at the decomposition threshold — all substantive Plaid logic lives in connector-plaid-link.ts, this is a small wiring seam only.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the key derivation - SESSION_SECRET unset now throws at the call site instead of silently deriving a well-known AES key any reader of this public repo can compute. Guard: tests/unit/no-dev-secret-fallback.spec.ts.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto default-ON boot posture: after ensureDekSchema, log LOUD (error) when OSHAL_ENVELOPE_CRYPTO is on (now the default) but SESSION_SECRET is unset — connector token crypto will throw at the kek() boundary, so surface the misconfig at boot rather than on the first connect. Imported envelopeEnabled for the check.
  * -----------------------------------------------------------------------------
  *
@@ -765,7 +766,14 @@ function redirectUri(provider: string): string {
   return `${appUrl()}${def ? def.redirectPath : `/api/connect/${provider}/callback`}`;
 }
 function secretKey(): Buffer {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest();
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    // No dev-key fallback: a hardcoded constant in a public repo is a key everyone holds,
+    // which silently voids the PKCE/state crypto AND every legacy token blob written under it
+    // (docs/security/SECURITY-HARDENING.md 3.1/9). Fail loud at the call site instead.
+    throw new Error('SESSION_SECRET is required for connector state/token crypto — the hardcoded dev-key fallback was removed');
+  }
+  return crypto.createHash('sha256').update(secret).digest();
 }
 
 /** Encrypt a token for at-rest storage (AES-256-GCM → iv:tag:cipher, base64). */

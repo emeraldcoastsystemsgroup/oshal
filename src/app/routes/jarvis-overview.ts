@@ -12,6 +12,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: buildBots / buildComms / buildActivity / buildCalendar overview panels + the email-digest envelope decrypt helper (route decomposition, no behaviour change).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the key derivation - SESSION_SECRET unset now throws at the call site instead of silently deriving a well-known AES key any reader of this public repo can compute. Guard: tests/unit/no-dev-secret-fallback.spec.ts. Callers already try/catch decryptEnvelope, so an unset secret degrades to digest:null - never a 500.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | buildBots online now uses resolveDisplayOnline(heartbeat, container): inline/api-hosted bots (dnd/spaces/security-analyst/…) never heartbeat, so the Command Center swarm map painted them permanently offline even while they ran real work (dnd active-but-offline was the tell). Roster is getActiveRegistry() (dynamic-inclusive) so each bot's container is available for the inline check.
  *
  * @module jarvis-overview
@@ -27,7 +28,14 @@ const logger = createChildLogger({ module: 'jarvis-overview' });
 
 /** AES-256-GCM key = SHA256(SESSION_SECRET) — the project-wide envelope scheme. */
 function aesKey(): Buffer {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest();
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    // No dev-key fallback (docs/security/SECURITY-HARDENING.md 3.1/9): without the real
+    // secret the digest cannot decrypt anyway, so throw — the caller's try/catch degrades
+    // to digest:null rather than pretending a well-known key is protection.
+    throw new Error('SESSION_SECRET is required to decrypt the email digest — the hardcoded dev-key fallback was removed');
+  }
+  return crypto.createHash('sha256').update(secret).digest();
 }
 /** Decrypt an `iv:tag:enc` base64 envelope (e.g. the email digest) back to UTF-8. */
 function decryptEnvelope(blob: string): string {

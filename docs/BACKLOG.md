@@ -3,7 +3,7 @@
 Tracking items deferred from the OSHAL build session. Each item has the
 deferral reason and the "done" condition so future work isn't ambiguous.
 
-## Alert triage & consolidation — intelligent-processing intake (P1 built 2026-07-31; P2–P4 pending)
+## Alert triage & consolidation — intelligent-processing intake (spec ready, build pending)
 
 **Specified 2026-07-28** (operator directive: non-noisy alerts flow to the queue, duplicates get
 bundled and consolidated — the analyst + self-healing portion). The functional specification is
@@ -20,13 +20,6 @@ change:
    first/last-seen; a refire updates the ticket instead of a silent log-line skip; an unclaimed
    alertname increments a queryable noise counter; a higher-severity refire raises ticket priority
    and never lowers it — all proven by guard specs that go red on regression.
-   **BUILT 2026-07-31**: `src/features/alert-triage/` (Stage A + Stage C + FR-A3 counters,
-   recurrence linking FR-C5, genesis write-once FR-C6) wired into
-   `src/app/routes/alertmanager-routes.ts` (+ `GET /api/alerts/intake-stats`, same fail-closed
-   bearer guard); named guards in `tests/unit/alert-triage-consolidation.spec.ts`
-   (identical-flood-one-ticket, refire-updates-not-duplicates, noise-counter-accuracy,
-   severity-never-lowers, incident-key-hygiene, genesis-write-once + recurrence,
-   consolidation-ttl-window, refire-never-redispatches, identity-gate).
 2. **P2 Bundling + root candidate.** **Done when:** the api-down drill (`SwarmApiUnreachable` +
    `SwarmContainerDown` on the api + one dependent-bot alert inside the correlation window) opens
    ONE ticket with members + attach reasons recorded at attach time and the api as
@@ -4974,12 +4967,18 @@ fully and **text-based** documents. These extend it:
 - **Done when:** harness exports are moved off the barrel (deep module or a separate entry point), and
   the boundary spec's allowlist shrinks to the sanctioned edge only.
 
-## Security Center route-audit PUBLIC_BY_DESIGN list stale ⬜ (2026-07-19)
+## ~~Security Center route-audit PUBLIC_BY_DESIGN list stale~~ ✅ DONE (verified 2026-07-31; shipped 07-24/07-29)
 
 - **Context:** `src/features/security/route-audit.ts` doesn't know `/api/profile-studio` (added
   07-17, serviceSecretOk-gated) — likely a standing false positive in the Security Center.
 - **Done when:** the list is updated + a sync check exists against
   `tests/unit/server-route-auth-inventory.spec.ts`'s allowlist.
+- **Verified 2026-07-31: BOTH halves already shipped** — this entry had gone stale in the other
+  direction. `/api/profile-studio` (+ the five reviewed package mounts and the two inline-handler
+  mounts) landed in PUBLIC_BY_DESIGN via route-audit.ts seq 5–7, and route-audit.spec.ts seq 2
+  carries the PROGRAMMATIC two-list sync check (imports both lists, asserts containment in both
+  directions, plus the method-coverage guard that closed the app.get/app.post blind spot). Nothing
+  left to build.
 
 ## Spaces / spatial mapping (ADR-111) — deferred phases + box-side pipeline ⬜ (2026-07-20)
 
@@ -5354,8 +5353,17 @@ are what prove real authenticator apps will accept these codes; six mutations ve
 See [ADR-117](adr/117-local-auth-invited-users.md) and
 [docs/security/local-auth.md](security/local-auth.md#two-step-sign-in-totp).
 
-Still open: an unauthenticated "forgot password" flow. Resets are admin-driven (Re-invite),
-which is safe but needs an administrator awake. It rides the same invite-token machinery.
+~~Still open: an unauthenticated "forgot password" flow.~~ **✅ SHIPPED 2026-07-31.**
+`POST /api/local-auth/forgot` (from the /login page's "Email me a reset link") rides the same
+invite-token machinery: `createPasswordReset` mints a 60-minute one-time link for ACTIVE
+accounts only (never creates/resurrects an account, never stomps a pending admin invite), and
+delivery reuses the invitation rails (SMTP, else the operator's Gmail connector). Every
+done-when clause is guarded in `tests/unit/local-auth-forgot-password.spec.ts`: byte-identical
+responses for known/unknown/disabled addresses, fire-and-forget delivery (a hung transport
+cannot become a timing oracle), per-IP 429 + a SILENT per-email cap (an overt one would leak),
+and — because `acceptInvite` never touches the TOTP columns — a reset provably does NOT clear
+the second factor (the spec logs in post-reset and still gets `secondFactor: 'required'`).
+Original done-when kept below for the record:
 
 - **Done when:** a user can request a reset from `/login`, receives a one-time link, and sets a
   new password — with an **enumeration-safe response shape** (identical answer whether or not
@@ -5500,6 +5508,15 @@ docker-build, declares **no accessRoles anywhere**, and reaches a box through
 - **Done when:** it is removed from that manifest's `bots:` (or the manifest is not kernel-resident),
   its compose service is profile-gated away from any customer bring-up, and a guard asserts no
   kernel-resident manifest declares a docker-socket bot.
+- **Partial 2026-07-31:** the reachability half is closed the accessRoles way — the manifest
+  declaration now carries `accessRoles: [operator, swarm]` (ADR-087), so Jarvis discovery,
+  user delegation, and the (now default-enforce) execute-time entitlement gate all refuse it;
+  `tests/unit/kernel-manifest-docker-bot-guard.spec.ts` asserts EVERY host-privileged bot in
+  EVERY kernel manifest is so scoped (via the real roleCanAccess/manifestBotDefinition, red on
+  widen-or-drop). The compose service was already profile-gated (`profiles: incident, extras`).
+  Still open from the strict done-when: moving the bot out of the kernel-resident manifest set
+  entirely (needs an app-store home for the remediation leg + the K3 agentId collision fixed
+  first — re-pointing a…030 is its own migration).
 
 **K5 — worker bots inherit the SUPERUSER database URL; the api does not.** ⬜
 `docker-compose.oshal-local.yml:225` gives the shared bot env a DSN for the `oshal` role
@@ -5518,6 +5535,15 @@ flipping an enforcement default on a live customer box without an exercised path
 deployment goes dark.
 - **Done when:** `enforce` is the compose default, an e2e proves an unentitled execute is refused
   AND an operator path still works, and the customer runbook lists it.
+- **Shipped 2026-07-31:** the CODE default is now `enforce` (stronger than a compose default —
+  it covers every deployment that sets nothing, including k8s), with `warn`/`off` as explicit
+  opt-outs and unknown values falling back to enforce (a typo must not relax it). Flip decision
+  was soak-based: the seq-2 warn default had been logging would-be denials box-wide and a 7-day
+  grep across api + bot containers found ZERO, so nothing legitimate is behind the wall.
+  `tests/unit/bot-node-execute-entitlement.spec.ts` now proves the default DENIES (403 through
+  the real middleware chain) while the operator + queue-dispatch paths stay green. Still open:
+  a runbook line for customer boxes (set `OSHAL_OPERATOR_SUBS` before inviting users to scoped
+  bots), and re-checking the denial log on the dev box after the next deploy.
 
 **K7 — internal machinery bots ship unscoped.** ⬜ `code-developer`, `code-reviewer`,
 `test-engineer`, `tester-bot`, `devops-bot`, `research-bot`, `security-analyst`, `vault-bot` and

@@ -3,6 +3,7 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Social swarm (ADR-038): publish a LinkedIn post (Share on LinkedIn / w_member_social) or read the profile, using the OSHAL connector token (oshal_connections) — no separate login. Mirrors oshal-gmail.js (AES-256-GCM decrypt). The author URN uses the OIDC `sub` (stored as account_id).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *
  *   node scripts/oshal-linkedin.js profile               # the connected LinkedIn profile
  *   node scripts/oshal-linkedin.js post "Hello world"    # publish a public post
@@ -14,7 +15,7 @@
 const crypto = require('crypto');
 const { Pool } = require('pg');
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'oshal-dev-secret').digest(); }
+function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
 function decrypt(blob) {
   const [iv, tag, enc] = String(blob).split(':');
   const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));
