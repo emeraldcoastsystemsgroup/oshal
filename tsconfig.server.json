@@ -27,6 +27,7 @@
     "types": ["node"]
   },
   "include": [
+    "src/types/**/*.d.ts",
     "src/app/**/*.ts",
     "src/shared/**/*.ts",
     "src/entities/**/*.ts"
