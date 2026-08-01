@@ -24,9 +24,9 @@ class ScenesRunner {
     this.paused = false;
   }
 
-  pause() { this.paused = true; }
-  resume() { this.paused = false; }
-  abort() { this.aborted = true; }
+  pause() { this.paused = true; Desktop.pauseTyping(); }
+  resume() { this.paused = false; Desktop.resumeTyping(); }
+  abort() { this.aborted = true; Desktop.cancelTyping('agent_aborted'); }
   async waitWhilePaused() {
     while (this.paused && !this.aborted) await Desktop.wait(250);
     if (this.aborted) throw new Error('aborted');

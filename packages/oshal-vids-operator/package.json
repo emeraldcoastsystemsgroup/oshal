@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "start": "node bin/oshal-vids.js",
+    "test": "node --test test/*.test.js",
     "chrome": "node scripts/launch-chrome.js",
     "setup": "node scripts/setup.js",
     "postinstall": "node scripts/setup.js"

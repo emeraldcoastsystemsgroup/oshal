@@ -11,6 +11,7 @@ const api = (p, body) =>
 export function useBackend() {
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
+  const [pairedTyping, setPairedTypingState] = useState({ enabled: false, status: 'off', completed: 0, total: 0 });
   const [chat, setChat] = useState([
     { role: 'bot', text: "I'm a bot that runs on this computer. Tell me what you want — I'll move the mouse and click to make it happen. Try: \"make an 8-second clip explaining photosynthesis.\"" },
   ]);
@@ -24,6 +25,7 @@ export function useBackend() {
     if (!s) return;
     setConnected(s.connected);
     setRunning(Boolean(s.current));
+    if (s.pairedTyping) setPairedTypingState(s.pairedTyping);
   }, []);
 
   useEffect(() => {
@@ -33,7 +35,12 @@ export function useBackend() {
       wsRef.current = ws;
       ws.onmessage = (ev) => {
         const m = JSON.parse(ev.data);
-        if (m.type === 'state') { setConnected(m.state.connected); setRunning(Boolean(m.state.current)); }
+        if (m.type === 'state') {
+          setConnected(m.state.connected);
+          setRunning(Boolean(m.state.current));
+          if (m.state.pairedTyping) setPairedTypingState(m.state.pairedTyping);
+        }
+        else if (m.type === 'paired-typing') setPairedTypingState(m.state);
         else if (m.type === 'frame') { /* no mirror — you can see your own screen */ }
         else if (m.type === 'goal-start') { setRunning(true); sys(`▶ ${m.goal}`); }
         else if (m.type === 'goal-end') { setRunning(false); sys(m.ok ? `done — ${m.reason || ''}` : `stopped — ${m.reason || ''}`); }
@@ -65,6 +72,11 @@ export function useBackend() {
   }, [push, refresh]);
 
   const control = useCallback((action) => api('/api/control', { action }), []);
-
-  return { connected, running, chat, enableControl, send, control };
+  const setPairedTyping = useCallback(async (enabled) => {
+    const r = await api('/api/paired-typing', { enabled });
+    if (r.error) sys(`couldn't change paired typing — ${r.error}`);
+    else setPairedTypingState(r);
+    return r;
+  }, [sys]);
+  return { connected, running, pairedTyping, chat, enableControl, send, control, setPairedTyping };
 }

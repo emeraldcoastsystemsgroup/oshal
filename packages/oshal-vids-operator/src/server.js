@@ -184,6 +184,9 @@ class Operator {
     this.addDirs = fs.existsSync(KNOWLEDGE_DIR) ? [KNOWLEDGE_DIR] : [];
     this.bot = null; // Veo prompt-craft advisor (optional)
     this.stories = getStoryStore();
+    this.removePairedTypingListener = Desktop.onPairedTyping((state) => {
+      this.broadcast({ type: 'paired-typing', state });
+    });
   }
 
   /**
@@ -439,6 +442,18 @@ class Operator {
     return { ok: true };
   }
 
+  async setPairedTyping(enabled) {
+    if (this.current) throw new Error('Change paired typing only while the operator is idle.');
+    const state = await Desktop.setPairedTyping(Boolean(enabled));
+    this.log(
+      'info',
+      state.enabled
+        ? 'Paired typing enabled. Each ordinary key advances one prepared character; F8 pauses/resumes and F9 cancels.'
+        : 'Paired typing disabled.',
+    );
+    return state;
+  }
+
   state() {
     return {
       connected: this.ready,
@@ -446,6 +461,7 @@ class Operator {
       queue: this.queue,
       history: this.history,
       botReady: Boolean(this.bot),
+      pairedTyping: Desktop.pairedTypingState(),
     };
   }
 
@@ -564,6 +580,11 @@ function start() {
         const body = await readBody(req);
         return sendJson(res, 200, op.control(body.action));
       }
+      if (req.method === 'POST' && pathname === '/api/paired-typing') {
+        const body = await readBody(req);
+        const state = await op.setPairedTyping(body.enabled);
+        return sendJson(res, 200, state);
+      }
       if (req.method === 'POST' && pathname === '/api/chat') {
         const body = await readBody(req);
         const r = await op.chat(body.message, body.history || []).catch((e) => ({ reply: `Error: ${e.message || e}` }));
@@ -598,6 +619,9 @@ function start() {
     op.clients.add(ws);
     ws.send(JSON.stringify({ type: 'state', state: op.state() }));
     ws.on('close', () => op.clients.delete(ws));
+  });
+  server.on('close', () => {
+    Desktop.setPairedTyping(false);
   });
 
   server.listen(PORT, () => {

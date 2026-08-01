@@ -46,6 +46,7 @@
   }
   button:hover { border-color: var(--emerald-dim); }
   button.primary { background: var(--emerald-dim); border-color: var(--emerald); color: #04130c; font-weight: 600; }
+  button.paired-on { background: rgba(46,204,143,.16); border-color: var(--emerald); color: var(--emerald); }
   button:disabled { opacity: .5; cursor: default; }
   .steps { height: 160px; overflow: auto; padding: 8px 12px; background: var(--navy); border-top: 1px solid var(--line); font: 12px/1.5 ui-monospace, Menlo, monospace; }
   .steps .row { display: flex; gap: 8px; padding: 2px 0; }
@@ -83,6 +84,7 @@
     <div class="stage" id="stage"><div class="empty" id="stageEmpty">Click <b>Enable screen control</b>.<br>This mirrors your REAL screen — the agent moves your real cursor and clicks for you.</div></div>
     <div class="controls">
       <button id="connectBtn" class="primary">Enable screen control</button>
+      <button id="pairedBtn" disabled>Pair typing</button>
       <div class="spacer"></div>
       <button id="pauseBtn" disabled>Pause</button>
       <button id="resumeBtn" disabled>Resume</button>
@@ -151,6 +153,18 @@ function renderQueue(state) {
   $('queue').innerHTML = items.map((t) => `<div class="q">${escapeHtml(t)}</div>`).join('') || '<div class="q">no jobs yet</div>';
   const running = Boolean(state.current);
   $('pauseBtn').disabled = !running; $('resumeBtn').disabled = !running; $('abortBtn').disabled = !running;
+  renderPairedTyping(state.pairedTyping, running);
+}
+function renderPairedTyping(state = {}, running = false) {
+  const enabled = Boolean(state.enabled);
+  $('pairedBtn').classList.toggle('paired-on', enabled);
+  $('pairedBtn').textContent = enabled ? 'Paired typing on' : 'Pair typing';
+  $('pairedBtn').disabled = !connected || running;
+  if (state.status === 'typing') {
+    $('statusText').textContent = `paired typing ${state.completed || 0}/${state.total || 0}`;
+  } else if (state.status === 'paused') {
+    $('statusText').textContent = `paired typing paused (${state.reason || 'operator'})`;
+  }
 }
 const trim = (s) => (s || '').length > 60 ? s.slice(0, 57) + '…' : (s || '');
 const escapeHtml = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -160,6 +174,7 @@ function connectWS() {
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === 'state') { setStatus(m.state.connected, m.state.connected ? 'screen control on' : 'off'); renderQueue(m.state); }
+    else if (m.type === 'paired-typing') renderPairedTyping(m.state, !$('abortBtn').disabled);
     else if (m.type === 'frame') setFrame(m.image);
     else if (m.type === 'step' || m.type === 'log') addStep(m);
     else if (m.type === 'goal-start') addStep({ status: 'goal', message: 'goal: ' + trim(m.goal) });
@@ -178,6 +193,16 @@ $('connectBtn').onclick = async () => {
   if (r.error) { addStep({ status: 'fail', message: r.error }); $('connectBtn').textContent = 'Retry'; }
   else { addStep({ status: 'ok', message: 'screen control enabled' }); $('connectBtn').textContent = 'Screen control on'; }
   $('connectBtn').disabled = false; refresh();
+};
+$('pairedBtn').onclick = async () => {
+  const enabled = !$('pairedBtn').classList.contains('paired-on');
+  const r = await (await fetch('/api/paired-typing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })).json();
+  if (r.error) addStep({ status: 'fail', message: r.error });
+  else renderPairedTyping(r, false);
 };
 $('queueBtn').onclick = async () => {
   const body = { prompt: $('prompt').value, orientation: $('orientation').value, insertMode: $('insertMode').value, ingredientPath: $('ingredient').value.trim() || undefined };
