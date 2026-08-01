@@ -6056,6 +6056,73 @@ These are the deliberately-deferred remainders:
   *Done when:* `oshal-verify.sh --live` (PAT via env) sends one real chat message, asserts a
   non-stub answer, and strict mode documents when to use it (customer handover, post-deploy).
 
+
+## Payroll app (ADR-123) — deliberately deferred, with the reason ⬜ (2026-08-01)
+
+Payroll v1.1 shipped as a store package. Everything below was *chosen* not to build, not missed —
+each entry says why, so it is not silently re-litigated. Nothing here is required for the shipped
+scope to be correct; each is a coverage or product gap.
+
+1. **State withholding beyond the shipped set.** Four states ship verified tables (PA, IL, KY flat;
+   MO progressive) plus the nine no-wage-income-tax states; every other state falls back to an
+   operator-entered rate WITH a warning. **Deferred because** a wrong table is worse than an absent
+   one — the operator cannot tell it is wrong. **Done when:** the state's rule is in `STATE_RULES`
+   with a retrieved primary-source citation, a known-value test derived from that state's own worked
+   example (the Missouri pattern), and its removal from `KNOWN_UNSUPPORTED` if listed. Indiana needs
+   the mandatory county-tax table first; North Carolina needs its withholding rate (deliberately
+   higher than its tax rate) confirmed from NC-30.
+
+2. **Local/city taxes and state disability / paid-leave contributions.** Indiana counties, Ohio
+   municipalities, PA Act 32 EIT/LST, NYC and Yonkers, Maryland county piggyback, Michigan cities;
+   CA SDI, NY DBL/PFL, NJ TDI/FLI, WA PFML and Cares, MA/CT/OR/CO PFML. **Deferred because** these
+   are a second withholding dimension, not a rate tweak — for IN and MD the local piece is part of
+   the answer, which is why those states cannot ship at all. **Done when:** the engine carries a
+   jurisdiction list per employee and each shipped jurisdiction has a cited table plus a test.
+
+3. **Per-workweek hours.** FLSA overtime is computed per workweek and may never be averaged across
+   weeks, but a run line holds ONE hours figure for the whole period. Today the engine warns when a
+   multi-week period records more than 40 hours/week with no overtime. **Deferred because** the real
+   fix is a per-workweek (better: per-workday) child table, which is the same restructuring that
+   multiple pay rates and PTO need. **Done when:** hours are rows of (earnings code, rate, hours,
+   workweek), overtime is computed per workweek from them, and 29 CFR 516.2 daily/weekly records
+   exist for the retention period.
+
+4. **SSN, addresses and the employer EIN.** The W-2 output is a *preview* precisely because these
+   are absent. **Deferred because** SSN is the most sensitive field the platform would hold and
+   deserves encryption at rest, masked display, and audited reads — a security design, not a column.
+   **Done when:** those fields exist with that handling and the W-2 can be issued.
+
+5. **Employee self-service.** One login is the whole company; an employee cannot fetch their own
+   stub. **Deferred because** it needs a second identity class scoped to one `employee_id`, a
+   platform decision. **Done when:** an invited employee reads ONLY their own stubs and W-2 preview,
+   proven by an isolation spec that fails if they reach another employee's row.
+
+6. **Overpayment repayment across tax years.** **Deferred because** it is genuinely different from a
+   void: the employee had constructive receipt, so box 1 is NOT adjusted for a prior year — only
+   boxes 3–6 move, via W-2c, with a claim-of-right deduction. Getting it backwards is an IRS
+   violation, so approximating is worse than refusing. **Done when:** same-year and prior-year
+   repayment are separate transactions with a test asserting the prior-year case leaves box 1 alone.
+
+7. **Multiple garnishment orders with priority.** One CCPA-capped garnishment field exists; a second
+   order, priority ordering (support, then levy, then creditor), arrears multipliers and per-order
+   remittance do not. **Done when:** deductions are rows with type/priority/caps and each prints as
+   its own stub line.
+
+8. **Deposit schedule and due dates.** Reports are quarterly; federal deposits are monthly or
+   semiweekly by the lookback test, with a $100,000 next-day rule. **Done when:** a depositor status
+   setting drives a per-payday deposit amount and due date.
+
+9. **PTO/leave accrual, multiple pay rates, employer 401(k) match, workers' compensation, employer
+   benefit share, payment records (check number / ACH trace), bank-holiday pay-date shifting, and
+   1099 contractors.** **Deferred because** none changes a tax computation — they are additional
+   record types. **Done when:** each is a first-class type with its own stub or report presentation.
+
+10. **Money movement and filings.** No ACH/direct deposit, no tax deposits, no 941/940/W-2 filing.
+    **Deferred because** these are regulated activities better reached through a provider connector
+    (a Gusto connector already exists in the catalog) than reimplemented. **Done when:** a connector
+    performs the deposit/filing and the app records the confirmation — never when this app files.
+
+
 ## HUMAN: migrate platform SaaS accounts to real ECSG accounts (operator-led; record it) ⬜ PAUSED BY DESIGN
 
 - **Context (operator, 2026-08-01):** the platform's SaaS accounts were opened personally while
