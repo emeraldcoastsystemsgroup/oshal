@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The joke-shorts pump: the driver the video-series conductor never had. Rotates enrolled shows, refuses to touch a busy render node, opens a real ticket per episode, and honours the approval gate through per-show standing authorization with a daily cap instead of deleting it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Story-delivery notification hook (BACKLOG "Telegram notification bot" done-when): a run reaching `delivered` in syncPumpRuns now notifies the operator over the pluggable notify harness (notifyOperator — a no-op until a transport is configured), video-as-link when Drive returned one, honest node-only text when it did not. Injectable via opts.notify for the guard spec; best-effort so a notify failure never blocks the ledger sync.
  */
 /**
  * @description The joke-shorts pump — what keeps the engine producing.
@@ -47,6 +48,7 @@ import {
   checkVidsNodeAvailability, acquireVidsNodeLease, releaseVidsNodeLease, findRenderNode,
   type NodeAvailability,
 } from '@/app/vids-node-availability';
+import { notifyOperator, type NotificationMessage, type NotificationResult } from '@/features/notifications';
 
 const logger = createChildLogger({ module: 'series-pump' });
 
@@ -525,17 +527,37 @@ async function episodeTitle(pool: Pool, seriesId: string): Promise<string> {
 }
 
 /**
+ * @description The operator-facing delivery notice for one finished episode — exported so the guard
+ * spec can pin its shape. With a Drive link the video rides as media (the transport inlines it or
+ * falls back to text+link on its own); without one the text says plainly that the copy is on the
+ * node only — a notification must never imply a link that does not exist (the 2026-07-30 lesson).
+ * @param {{ showSlug: string; title: string; link: string | null }} run the delivered run
+ * @returns {NotificationMessage} the message for notifyOperator
+ */
+export function deliveredNotification(run: { showSlug: string; title: string; link: string | null }): NotificationMessage {
+  const text = `creative studio delivered: "${run.title}" (${run.showSlug})`;
+  if (!run.link) return { text: `${text} — rendered to the node content folder; no Drive link yet` };
+  return { text, media: { kind: 'video', url: run.link, caption: run.title } };
+}
+
+/**
  * @description Bring the ledger and the tuning counters up to date with what the conductor did:
  * a run whose episode reached `rendered`/`assembled` becomes `delivered` (with the link the node
- * actually returned), a `failed` episode becomes a failure against its show, and the node lease is
- * released once nothing is rendering.
+ * actually returned) and the operator is notified over the pluggable notify harness, a `failed`
+ * episode becomes a failure against its show, and the node lease is released once nothing is
+ * rendering.
  * @param {AppContext} ctx app context
+ * @param {{ notify?: (message: NotificationMessage) => Promise<NotificationResult> }} [opts] test seam — the guard spec injects a stub; production uses notifyOperator
  * @returns {Promise<number>} how many run rows changed
  */
-export async function syncPumpRuns(ctx: AppContext): Promise<number> {
+export async function syncPumpRuns(
+  ctx: AppContext,
+  opts: { notify?: (message: NotificationMessage) => Promise<NotificationResult> } = {},
+): Promise<number> {
   const pool = ctx.pool;
+  const notify = opts.notify ?? notifyOperator;
   const { rows } = await pool.query(
-    `SELECT r.run_id, r.show_id, r.show_slug, r.created_at, e.status AS ep_status, e.drive_url, e.error
+    `SELECT r.run_id, r.show_id, r.show_slug, r.episode_title, r.created_at, e.status AS ep_status, e.drive_url, e.error
        FROM video_pump_runs r
        JOIN video_episodes e ON e.series_id = r.series_id
       WHERE r.outcome IN ('started','rendering') AND r.series_id IS NOT NULL`,
@@ -566,6 +588,16 @@ export async function syncPumpRuns(ctx: AppContext): Promise<number> {
                   last_success_at = now(), updated_at = now() WHERE show_id = $1`, [raw.show_id],
         );
       }
+      // The story-delivery hook (BACKLOG "Telegram notification bot"): the finished episode goes to
+      // the operator's chat the moment the ledger learns of it. Best-effort — a notify failure never
+      // blocks the sync — and a no-op until a transport (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID or a
+      // NOTIFY_TRANSPORT sibling) is configured, which is what keeps the hook opt-in.
+      // eslint-disable-next-line no-await-in-loop
+      await notify(deliveredNotification({
+        showSlug: String(raw.show_slug ?? 'unknown'),
+        title: String(raw.episode_title ?? 'untitled'),
+        link,
+      })).catch((err: unknown) => logger.warn({ err: (err as Error).message }, 'delivery notification failed'));
       changed += 1;
     } else if (status === 'failed') {
       const why = String((raw.error as string | null) ?? 'the episode failed on the node');

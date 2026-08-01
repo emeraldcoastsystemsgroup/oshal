@@ -7,6 +7,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Enabled fail-closed native GitHub issue webhook intake on the API service
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Forward the operator-notification env (NOTIFY_TRANSPORT, TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID, TWILIO_* SMS/voice) into the api service — the pluggable notify harness and oshal-send-alert.js run there, and without the passthrough the host .env credentials never reached the process, so every transport silently no-opped in-container.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1116,6 +1117,18 @@ services:
       # code reads did nothing and only an operator-subs box could send.
       NOTIFY_EMAIL_SENDER_SUB: ${NOTIFY_EMAIL_SENDER_SUB:-}
       NOTIFY_EMAIL_TO: ${NOTIFY_EMAIL_TO:-}
+      # Operator notifications (BACKLOG "Telegram notification bot" + Twilio transport go-live):
+      # the pluggable notify harness (notifyOperator) and scripts/oshal-send-alert.js both run in
+      # THIS container, so the deployment-level channel credentials must be forwarded here. All
+      # default empty — an unconfigured transport is a documented no-op, never an error. BYO by the
+      # operator's own hand in the host .env (never through a chat transcript / never committed).
+      NOTIFY_TRANSPORT: ${NOTIFY_TRANSPORT:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      TWILIO_TO_NUMBER: ${TWILIO_TO_NUMBER:-}
       # Connector OAuth client. connectors-routes' providerCreds reads GOOGLE_CONNECT_* FIRST
       # and falls back to OIDC_CLIENT_*; only the fallback was ever forwarded, so on a box
       # with no OIDC (a LOCAL_AUTH customer deployment) every Google connector reported

@@ -1255,6 +1255,20 @@ exists but is not a wired inbound channel either.
 
 **Verified 2026-07-19:** OPEN — transports coded; no live credentialed smoke evidence.
 
+**Update 2026-07-31 (host-side credential proof):** `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`
+landed in the operator's `.env` and were validated LIVE from the host — Accounts GET returned
+HTTP 200, `status: active` (Trial). **The SMS live-proof is blocked exactly where step 1 warned:**
+the account owns ZERO phone numbers (IncomingPhoneNumbers is empty — the free trial number was
+never claimed), and `TWILIO_FROM_NUMBER`/`TWILIO_TO_NUMBER` are empty keys in `.env`. One verified
+outgoing caller ID exists (the operator's cell), which is the only destination a Trial account can
+text. Exactly one send was attempted and it 400'd BEFORE creating a message (no sid, no charge; not
+retried). Also shipped this pass: compose now forwards `TWILIO_*` into the api service (previously
+never forwarded, so the in-container transports/CLI could not see the host env at all). Next, in
+order: operator claims the trial number in the Twilio console → fills `TWILIO_FROM_NUMBER` (the
+claimed number) + `TWILIO_TO_NUMBER` (the verified cell) → one live SMS proof host-side → paste
+SID+token into the `/utilities` Twilio card for the BYO bot path → deploy → the three-leg cockpit
+smoke above.
+
 ### ~~Absorb, don't fight — import OpenClaw / markdown skills~~ ✅ BUILT 2026-07-11 (high-leverage, on-thesis)
 - The operator's instinct: "take md files into our bots and absorb the thing through integration." Correct and
   cheap. OSHAL already ingests markdown into RAG (ChromaDB corpus); an OpenClaw **skill** is markdown +
@@ -3890,7 +3904,7 @@ nothing has run on the GPU box yet. Design + decisions in [ADR-071](adr/071-char
   connection timeouts in the boot logs. (Note: ~13 additional boot error-lines seen at the same deploy
   are a SEPARATE pre-existing item — orphaned `oshal-chat` remote-client heartbeats — not this herd.)
 
-### OSHAL Telegram notification bot (platform-wide mouthpiece) 🟨 CORE BUILT 2026-07-10 — live proof + wiring remain
+### OSHAL Telegram notification bot (platform-wide mouthpiece) 🟨 HOOKS WIRED + TOKEN PROVEN 2026-07-31 — chat id + live send remain
 - **Core BUILT 2026-07-10:** the `TelegramNotifier` behind the pluggable-notifier shape this item
   specifies is done — [src/features/notifications/](../src/features/notifications/): `TelegramTransport`
   (`sendMessage`/`sendVideo`, ≤50MB → text+link fallback, no-op when the two env vars are absent, token
@@ -3919,6 +3933,22 @@ nothing has run on the GPU box yet. Design + decisions in [ADR-071](adr/071-char
   can send through the same service.
 
 **Verified 2026-07-19:** OPEN — transport + `notifyOperator` built (budget-service wired); the BotFather token, a live-send proof, and the creative-studio + watchdog hooks remain pending.
+
+**Update 2026-07-31 (host-side go-live pass):** the @BotFather token IS in the operator's `.env` and
+was proven live from the host: `getMe` → ok (bot `@The_oshal_bot`). `getUpdates` is EMPTY and no
+webhook is set — **nobody has messaged the bot yet, so there is no chat id and the one authorized
+test send was correctly skipped** (delivery target = the chat that messages the bot first).
+The remaining wiring from the done-when SHIPPED in the same pass: the creative-studio
+story-delivery hook (`syncPumpRuns` → `notifyOperator`, video-as-link when Drive returned one,
+honest node-only text when it did not — guard `tests/unit/video-pump-delivery-notify.spec.ts`),
+the watchdog-family hook (`scripts/oshal-send-alert.js` now runs a Telegram leg before its Gmail
+leg, so the trading/stack watchdogs + lab-report + ci-local + earnings-gate all push to the phone
+with zero caller changes — guard `tests/unit/send-alert-telegram.spec.ts`), and the compose
+passthrough of `NOTIFY_TRANSPORT`/`TELEGRAM_*`/`TWILIO_*` into the api service (they were never
+forwarded, so in-container transports silently no-opped regardless of the host `.env`). Remaining
+for done: (1) operator messages `@The_oshal_bot` once → `getUpdates` → set `TELEGRAM_CHAT_ID`;
+(2) a deploy/recreate so the containers receive the env; (3) the live send-proof (an episode or a
+watchdog alert arriving in the chat).
 
 ### Remote-node click-coordinate scaling bug ⬜
 - **Context:** discovered 2026-07-10 while driving Gabe's PC (render-node-1) remotely.

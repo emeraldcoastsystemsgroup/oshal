@@ -7,10 +7,11 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Generic alert email sender for the trading watchdog (subject + body args, Gmail via the operator's Google connection token, same RLS-aware token flow as oshal-recap-email.js, no attachment).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fix silent alert black-hole: all 5 callers (trading/stack watchdog, lab-report, ci-local, earnings-gate) invoke this via `docker exec` without OSHAL_USER_SUB, so it defaulted to the 'example-user-sub' placeholder and returned "SEND_FAIL no Google connection" on EVERY alert — that is why the 3-day wrangler deploy pile-up (which OOM-crashed the swarm) never notified anyone. Now sub falls back to the first OSHAL_OPERATOR_SUBS entry (set in the container) and the recipient falls back to the connected account's own inbox instead of the 'owner@example.com' placeholder.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto v2 compat (same drift fixed in oshal-gmail.js 07-21 and oshal-recap-email.js 07-24/PR#28): connector tokens re-encrypt to `v2:` per-user-DEK blobs since OSHAL_ENVELOPE_CRYPTO defaulted ON (07-20), but this sibling's decrypt only knew the legacy single-KEK format, so even after the sub fix it died with "Unsupported state or unable to authenticate data". Ported the format-aware userDek/decryptToken helpers; an access-token decrypt failure now falls through to a refresh instead of aborting.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Telegram leg for every watchdog-family caller (BACKLOG "Telegram notification bot" go-live): runAlert() now sends the alert to the operator's Telegram chat FIRST (sendTelegramAlert — no-op without TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID, fixed-string errors so the token can never leak through an exception), then runs the unchanged Gmail leg. The trading/stack watchdogs, lab-report, ci-local, and earnings-gate all inherit the phone-push with zero caller changes; email exit codes are preserved.
  */
 /*
  * Usage (in the api container): node oshal-send-alert.js "<subject>" "<body>"
- * Prints SEND_OK / SEND_FAIL.
+ * Prints TG_OK/TG_SKIP/TG_FAIL for the Telegram leg, then SEND_OK / SEND_FAIL for email.
  */
 'use strict';
 const crypto = require('crypto');
@@ -47,9 +48,52 @@ async function decryptToken(pool, userSub, blob) {
 }
 function b64url(buf) { return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 
-async function main() {
-  const subject = process.argv[2] || 'OSHAL alert';
-  const body = process.argv[3] || '(no body)';
+/**
+ * Best-effort Telegram push of the alert — the free first-party channel of the pluggable notify
+ * harness, duplicated here in the script's own self-contained style (it already hand-rolls Gmail).
+ * No-op ({skipped:true}) unless BOTH TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set. Errors are
+ * FIXED strings or Telegram's own description — never a thrown message, which could carry the
+ * request URL and with it the token.
+ */
+async function sendTelegramAlert(subject, body, deps = {}) {
+  const env = deps.env || process.env;
+  const fetchImpl = deps.fetch || fetch;
+  const token = String(env.TELEGRAM_BOT_TOKEN || '').trim();
+  const chatId = String(env.TELEGRAM_CHAT_ID || '').trim();
+  if (!token || !chatId) return { skipped: true };
+  const text = (subject + '\n\n' + body).slice(0, 3900); // Bot API caps message text at 4096
+  try {
+    const resp = await fetchImpl('https://api.telegram.org/bot' + token + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok || !j.ok) {
+      return { skipped: false, ok: false, error: 'telegram_http_' + resp.status + (j.description ? ':' + j.description : '') };
+    }
+    return { skipped: false, ok: true, id: String((j.result && j.result.message_id) || '') };
+  } catch {
+    return { skipped: false, ok: false, error: 'telegram_send_failed' };
+  }
+}
+
+/**
+ * The alert legs, in order: Telegram first (so a broken email path still reaches the phone), then
+ * the Gmail leg with its original exit-code contract. deps ({env,fetch,sendEmail}) is the test
+ * seam — the guard spec proves BOTH legs are called without touching the network or a DB.
+ */
+async function runAlert(subject, body, deps = {}) {
+  const tg = await sendTelegramAlert(subject, body, deps);
+  if (tg.skipped) console.log('TG_SKIP not-configured');
+  else if (tg.ok) console.log('TG_OK id=' + tg.id);
+  else console.error('TG_FAIL ' + tg.error);
+  const sendEmail = deps.sendEmail || sendEmailAlert;
+  await sendEmail(subject, body);
+  return tg;
+}
+
+async function sendEmailAlert(subject, body) {
   // Recipient: an explicit ALERT_EMAIL_TO override, else fall back to the connected account's own
   // inbox (resolved after the row fetch below) — never the 'owner@example.com' placeholder, which
   // silently black-holed every alert.
@@ -99,8 +143,14 @@ async function main() {
   } finally { client.release(); await pool.end(); }
 }
 
+async function main() {
+  const subject = process.argv[2] || 'OSHAL alert';
+  const body = process.argv[3] || '(no body)';
+  await runAlert(subject, body);
+}
+
 if (require.main === module) {
   main().catch((e) => { console.error('SEND_FAIL ' + ((e && e.message) || e)); process.exit(1); });
 }
 
-module.exports = { key, gcmDecryptRaw, decrypt, userDek, decryptToken };
+module.exports = { key, gcmDecryptRaw, decrypt, userDek, decryptToken, sendTelegramAlert, runAlert };
