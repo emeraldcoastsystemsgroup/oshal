@@ -4,10 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Notification preference center: proves pref resolution (saved row wins; no row = injected default of email-if-Gmail-else-none), America/Chicago quiet-hours math incl. wrap-midnight, and every transport skip path (disabled, channel none, unavailable channel, unregistered sender, sender failure, sender throw, broken prefs table) resolves to a logged outcome — notify() never throws into a producer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | DEFAULT_TOPIC fallback + voice channel: a saved 'default' row governs topics with no row of their own (incl. its quiet hours), a topic-specific row still wins, topic==='default' never double-reads, and NOTIFY_CHANNELS carries 'voice' (migration 099) so a stored voice row routes instead of degrading to none.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_TOPIC,
+  NOTIFY_CHANNELS,
   NotificationRouter,
   hourInTimeZone,
   isQuietHours,
@@ -170,6 +173,70 @@ describe('NotificationRouter pref resolution', () => {
     const { pool } = fakePool([prefRow({ channel: 'none' })]);
     const r = await router(pool, { email: fakeSender('email').sender }).notify('user-1', 'career-digest', MSG);
     expect(r).toMatchObject({ delivered: false, skipped: true, reason: 'channel-none' });
+  });
+});
+
+describe('NotificationRouter DEFAULT_TOPIC fallback (the wizard one-answer opt-in)', () => {
+  /** A pool that answers per-topic: params[1] picks which row (if any) comes back. */
+  function topicPool(rowsByTopic: Record<string, Record<string, unknown>>) {
+    const calls: Array<{ text: string; params?: unknown[] }> = [];
+    const pool: PgLike = {
+      async query(text: string, params?: unknown[]) {
+        calls.push({ text, params });
+        const row = rowsByTopic[String(params?.[1])];
+        return { rows: row ? [row] : [] };
+      },
+    };
+    return { pool, calls };
+  }
+
+  it('NOTIFY_CHANNELS carries voice (migration 099) — a stored voice row routes, never degrades to none', async () => {
+    expect(NOTIFY_CHANNELS).toContain('voice');
+    const { pool } = topicPool({ 'career-digest': prefRow({ channel: 'voice', phone: '+15551234567' }) });
+    const voice = fakeSender('voice');
+    const r = await router(pool, { voice: voice.sender }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: true, channel: 'voice' });
+  });
+
+  it("a saved 'default' row governs a topic with no row of its own", async () => {
+    const { pool, calls } = topicPool({ [DEFAULT_TOPIC]: prefRow({ topic: DEFAULT_TOPIC, channel: 'sms', phone: '+15551234567' }) });
+    const sms = fakeSender('sms');
+    const r = await router(pool, { sms: sms.sender }, { defaultChannel: 'none' }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: true, channel: 'sms' });
+    expect(calls.map((c) => c.params?.[1])).toEqual(['career-digest', DEFAULT_TOPIC]);
+  });
+
+  it('a topic-specific row still wins over the default row', async () => {
+    const { pool } = topicPool({
+      'career-digest': prefRow({ channel: 'email' }),
+      [DEFAULT_TOPIC]: prefRow({ topic: DEFAULT_TOPIC, channel: 'sms', phone: '+15551234567' }),
+    });
+    const email = fakeSender('email');
+    const sms = fakeSender('sms');
+    const r = await router(pool, { email: email.sender, sms: sms.sender }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: true, channel: 'email' });
+    expect(sms.sent).toHaveLength(0);
+  });
+
+  it("the default row's quiet hours apply when it is the row that resolved", async () => {
+    const { pool } = topicPool({ [DEFAULT_TOPIC]: prefRow({ topic: DEFAULT_TOPIC, channel: 'sms', phone: '+15551234567', quiet_hours_start: 22, quiet_hours_end: 6 }) });
+    const sms = fakeSender('sms');
+    // 23:00 Chicago = 04:00 UTC — inside the window.
+    const r = await router(pool, { sms: sms.sender }, { now: () => new Date(Date.UTC(2026, 6, 15, 4, 0)) }).notify('user-1', 'alerts', MSG);
+    expect(r).toMatchObject({ delivered: false, skipped: true, reason: 'quiet-hours' });
+  });
+
+  it("notifying topic 'default' itself reads once — no double-read", async () => {
+    const { pool, calls } = topicPool({});
+    await router(pool, { email: fakeSender('email').sender }, { defaultChannel: 'none' }).notify('user-1', DEFAULT_TOPIC, MSG);
+    expect(calls.map((c) => c.params?.[1])).toEqual([DEFAULT_TOPIC]);
+  });
+
+  it('no topic row and no default row falls through to the injected default', async () => {
+    const { pool } = topicPool({});
+    const email = fakeSender('email');
+    const r = await router(pool, { email: email.sender }, { defaultChannel: 'email' }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: true, channel: 'email' });
   });
 });
 
