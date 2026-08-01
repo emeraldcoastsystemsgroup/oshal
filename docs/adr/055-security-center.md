@@ -1,6 +1,6 @@
 # ADR-055 — Security Center: the swarm's self-security app
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented (reconciled 2026-07-31) as the `security` kernel app: `swarm-apps/security.yaml` (Security Center — deterministic scanners on the controller, reasoning on the inline security-analyst bot) + `src/features/security/`; scope as decided — observe + triage + escalate-to-ticket, no auto-remediation
 - **Date:** 2026-06-19
 - **Related:** [ADR-036 (bot-owned application architecture / cost split)](036-bot-owned-application-architecture.md),
   [ADR-052 (stock-trading swarm)](052-stock-trading-swarm.md),

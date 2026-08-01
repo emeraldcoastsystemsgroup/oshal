@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-20  
 **Author:** maintainer@emeraldcoastsystemsgroup.com  
-**Status:** Proposed  
+**Status:** Accepted — implemented (reconciled 2026-07-31): `swarm-apps/*.yaml` manifests + the loader/registry in `src/features/swarm-apps/` (runtime load/unload/toggle via `POST /api/swarm/apps/load`) ship exactly this decision; evolved by ADR-085 into installable store packages, with the kernel-resident manifests remaining here  
 **Implementation Target:** Weekend of 2026-04-25/26  
 
 ---

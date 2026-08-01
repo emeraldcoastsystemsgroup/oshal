@@ -1,6 +1,6 @@
 # ADR-014: any-bot Kubernetes Deployment with Headscale-Compatible Secure Gateway
 
-**Status:** Proposed  
+**Status:** Accepted — implemented (reconciled 2026-07-31): the workspace ships as `ops/any-bot-k8s/` (stack + kustomization + secrets/env examples) with `scripts/setup-any-bot-k8s.sh` and `docs/k8/any-bot-kubernetes-setup.md`; the platform-wide k8s/Argo/Terraform layer came later under ADR-078 (`ops/deployment/`, `deploy/terraform/`)  
 **Date:** 2026-03-10  
 **Deciders:** OSHAL project team  
 **Technical Story:** Phase 11 Session 23 — any-bot Kubernetes + Secure Gateway Workspace

@@ -1,6 +1,6 @@
 # ADR-012: OS Control MCP Adoption Strategy
 
-**Status:** Proposed  
+**Status:** Parked (reconciled 2026-07-31) — the vendored third-party OS-MCP adoption proposed here was never executed in this repo; OS/desktop control shipped by other routes: ADR-029 (Windows Desktop Automation MCP) and the operator-desktop remote-client rail (`packages/apply-operator-mcp` `browser_control` + `codex.exec` on `@oshal/chat` nodes — see ADR-101's context)  
 **Date:** 2026-03-10  
 **Deciders:** OSHAL project team  
 **Technical Story:** Phase 11 Session 19 — OS MCP Research and Planning

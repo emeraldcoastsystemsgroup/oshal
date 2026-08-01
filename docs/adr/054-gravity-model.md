@@ -1,6 +1,6 @@
 # ADR-054 — The Gravity Model: event-driven, time-decayed speculative displacement
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented (reconciled 2026-07-31): `gravity` is a live member of the confidence-weighted ensemble in `scripts/oshal-algos.js` (importing the engine `scripts/oshal-gravity.js`), with the gravity2 head-to-head backtest (`scripts/oshal-gravity2-backtest.ts`) and its prediction-ledger pattern generalized by ADR-096
 - **Date:** 2026-06-18
 - **Related:** [ADR-052 (stock-trading swarm)](052-stock-trading-swarm.md),
   [ADR-053 (trading-decision workflow)](053-trading-decision-workflow.md),

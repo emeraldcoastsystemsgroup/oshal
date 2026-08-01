@@ -1,6 +1,6 @@
 # ADR 039 — Bot-driven workflow authoring: the Studio is a view of a builder-bot conversation; Packer is the one-shot option
 
-Status: **Proposed** (2026-06-15). Design pass for BACKLOG "Workflow Studio — bot-driven"
+Status: **Accepted — largely implemented** (reconciled 2026-07-31): talk-to-build + Publish-to-runtime shipped 2026-07-05 (`workflow-publish-compiler.ts` compiles the canvas into a live caller-scoped queue) and `codex-packer` registers packed bots live via `POST /api/swarm/apps/load`; agentic authoring that composes brand-new agents/goals from a prompt remains roadmap. Originally a 2026-06-15 design pass for BACKLOG "Workflow Studio — bot-driven"
 and "Codex Packer ↔ Workflow Studio are ONE flow". Builds on:
 [ADR 038 swarms bundled by type](038-swarms-bundled-by-type.md),
 [ADR 036 bot-owned application architecture](036-bot-owned-application-architecture.md).

@@ -1,6 +1,6 @@
 # ADR-069 — Operations & SecOps connectors: normalize the ITSM/observability integrations onto the connector runtime and rebuild operations as a bundled swarm
 
-- **Status:** Proposed — 2026-06-22. Direction agreed after an audit of the operations/observability
+- **Status:** Accepted — substantially implemented (reconciled 2026-07-31): the ITSM/observability integrations are declarative connectors on the ADR-065 runtime (`swarm-apps/connectors/` — servicenow, datadog, dynatrace, pagerduty, snyk, grafana, jira, …), the operations bundle ships as `swarm-apps/intelligent-operations.yaml`, and the §2b dispositions are live rails per ADR-119. Originally Proposed 2026-06-22; direction agreed after an audit of the operations/observability
   tooling: the framework has a rich operator CLI toolchain and 46 declarative connectors, but its
   ITSM/observability integrations (ServiceNow, Splunk) are ad-hoc per-bot MCP servers, there is **no**
   observability connector (Dynatrace/Datadog), and the operations

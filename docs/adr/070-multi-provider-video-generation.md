@@ -1,8 +1,14 @@
 # ADR-070 — Multi-provider video generation: free-first, cost-gated escalation (Token Chase for media)
 
-- **Status:** Proposed — 2026-06-22. Still Proposed as of 2026-07-19 — the pluggable provider
-  layer decided here has not been built (no generation provider exists beyond the Phase-1 Veo
-  slice described below). The Video Studio (`?app=video`) shipped a Phase-1 thin slice
+- **Status:** Accepted — the pluggable provider layer decided here IS BUILT (reconciled
+  2026-07-31; the 2026-07-19 “not built” note was wrong in the under-claiming direction).
+  As-built in `src/features/video-generation/`: the `VideoGenProvider` registry
+  (`provider-registry.ts`), free-first default registration (`register-providers.ts` —
+  deck-to-video + ComfyUI free, Veo as the paid escalation), and the free-first → judge →
+  needs-approval loop (`generation-loop.ts` — paid providers are only ever proposed, never
+  auto-run). Still open: the ComfyUI provider needs the operator's exported workflow JSON +
+  endpoint configured on a live box, and the series pipeline's codex-default key + ComfyUI
+  wiring per ADR-082. The Video Studio (`?app=video`) shipped a Phase-1 thin slice
   (storyboard bot → deterministic render: Veo clips + ffmpeg stitch + TTS + captions → store →
   preview/download). Live testing surfaced the real product: video creation is **not one generator** —
   it is many tools matched to the *input type*, most of them free, with a paid generator (Veo) as the
