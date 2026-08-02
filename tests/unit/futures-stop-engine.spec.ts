@@ -4,10 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guards for the ADR-116 stop engine: initial-stop resolver (widest-candidate combine, low/close fallback anchors, min-risk floor, max-risk ceiling), stop validator clamps, breakeven-gated chandelier trail (tighten-only, risk-goal arming), Strangle lifecycle (latch-independent level tracking, inclusive N+1 span, gate modes incl. the dictated Laguerre-RSI variant, per-trade latch, underwater stand-down, close-breach market exit vs resting-stop mode, tighten-only rename). Ports ATCEntryCountDynStops.cs semantics.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the dictated %ATR buffer variant (BACKLOG stop-stack remainder): resolveStopBuffer scales linearly with ATR in atr-percent mode, ignores ATR in ticks mode, and floors at one tick; the initial stop and the Strangle level both move under the variant; the Strangle buffer is re-measured from the PER-BAR ATR and falls back to the entry ATR (never silently to ticks) when a caller supplies none; and an unconfigured engine is identical to the shipped tick-buffer code.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The source trader's confirmed defaults (2026-07-28): gate defaults to 'adx-laguerre' (a bar satisfying only the shipped clause must NOT arm), the new 'adx-all' both-clauses mode, NaN-RSI safety, ATR multiple 3 + wave source 'macd', and the min-risk floor proven to be a MINIMUM DISTANCE. The six lifecycle tests that relied on the old default now name the shipped gate explicitly.
  */
 import { describe, it, expect } from 'vitest';
-import { createFuturesStopEngine, resolveInitialStop, validateStopPrice, STOP_ENGINE_DEFAULTS } from '../../src/features/trading';
+import { createFuturesStopEngine, resolveInitialStop, validateStopPrice, resolveStopBuffer, STOP_ENGINE_DEFAULTS } from '../../src/features/trading';
 import type { StopEngineConfig, StopEngineBarInput } from '../../src/features/trading';
 import type { OhlcvBar } from '../../src/features/trading/services/market-data';
 
@@ -358,5 +359,93 @@ describe('explicit-undefined config values (reviewer-caught clobber)', () => {
     // Shipped clause satisfied, RSI cold: adx-any would latch; the adx-laguerre default must not.
     const d = e.onBar(input(bar(104.5, 103.8, 104), { adx: 35, adxPrev: 34, plusDi: 20, laguerreRsi: 50 }));
     expect(d.strangleLatched).toBe(false);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────────────────────────
+ * The %ATR buffer variant (BACKLOG "stop-stack remainder"). The dictation asked for a
+ * percent-of-ATR buffer where the shipped C# uses fixed tick counts. These guards pin that the
+ * variant is a REAL alternative measurement — it moves stops, it scales with ATR, it applies to
+ * both the initial stop and the Strangle level, and it can never collapse to a zero buffer.
+ * ──────────────────────────────────────────────────────────────────────────────────────────────*/
+
+describe('resolveStopBuffer — the dictated %ATR variant', () => {
+  it("'ticks' mode is the shipped measurement and ignores ATR entirely", () => {
+    expect(resolveStopBuffer('ticks', TICK, 3, 4, 10)).toBeCloseTo(0.75, 10);
+    // Changing ATR must not move a tick buffer by so much as an ulp.
+    expect(resolveStopBuffer('ticks', TICK, 3, 400, 10)).toBeCloseTo(0.75, 10);
+  });
+
+  it("'atr-percent' scales LINEARLY with ATR — the property the whole variant exists for", () => {
+    expect(resolveStopBuffer('atr-percent', TICK, 3, 10, 20)).toBeCloseTo(2, 10);
+    expect(resolveStopBuffer('atr-percent', TICK, 3, 20, 20)).toBeCloseTo(4, 10);
+    expect(resolveStopBuffer('atr-percent', TICK, 3, 40, 20)).toBeCloseTo(8, 10);
+  });
+
+  it('floors at ONE TICK, so a quiet tape can never produce a zero-distance buffer', () => {
+    // 1% of an ATR of 0.5 is 0.005 — well under a tick. A zero buffer puts the stop exactly ON the
+    // swing extreme, where the bar that made it takes it out.
+    expect(resolveStopBuffer('atr-percent', TICK, 3, 0.5, 1)).toBe(TICK);
+    expect(resolveStopBuffer('atr-percent', TICK, 3, 0, 20)).toBeCloseTo(0.75, 10); // ATR 0 → tick fallback
+    expect(resolveStopBuffer('atr-percent', TICK, 3, NaN, 20)).toBeCloseTo(0.75, 10); // NaN → tick fallback
+  });
+});
+
+describe('%ATR buffer mode — end to end through the engine', () => {
+  const entryBar = bar(101, 99, 100.5);
+
+  it('the INITIAL stop moves when the buffer mode changes, and widens with ATR', () => {
+    const at = (mode: 'ticks' | 'atr-percent', atr: number): number => createFuturesStopEngine(cfg({
+      stopBufferMode: mode, initialStopBufferAtrPercent: 25, initialStopAtrMultiple: 1.5,
+    })).onEntry(100.5, entryBar, atr).restingStop as number;
+    const ticks = at('ticks', 2);
+    const pct = at('atr-percent', 2);
+    // 25% of ATR 2 = 0.5 vs a 3-tick 0.75 buffer → the %ATR stop is HIGHER (tighter) here.
+    expect(pct).not.toBeCloseTo(ticks, 6);
+    expect(pct).toBeCloseTo(ticks + 0.25, 8);
+    // Doubling ATR must push the %ATR buffer out; it also moves the ATR-multiple fallback, so the
+    // assertion is on the BUFFER's contribution, isolated by differencing against ticks mode.
+    const bufferAt = (atr: number): number => at('ticks', atr) - at('atr-percent', atr);
+    expect(bufferAt(4)).toBeGreaterThan(bufferAt(2));
+  });
+
+  it('the STRANGLE level uses the same buffer mode, re-measured from the PER-BAR ATR', () => {
+    const run = (mode: 'ticks' | 'atr-percent', barAtr: number): number => {
+      const e = createFuturesStopEngine(cfg({
+        stopBufferMode: mode, strangleBufferAtrPercent: 30, strangleBufferTicks: 2,
+        strangleGateMode: 'adx-laguerre', strangleAdxThreshold: 1, trailMode: 'none',
+      }));
+      e.onEntry(100, bar(100.5, 99.5, 100), 2);
+      // One beyond-entry close seeds the level; the swing low of the seed span sets it.
+      return e.onBar(input(bar(103, 101, 102.5), { atr: barAtr })).strangleLevel;
+    };
+    const ticks = run('ticks', 2);
+    const pct = run('atr-percent', 2);
+    expect(pct).toBeLessThan(ticks); // 30% of ATR 2 = 0.6 > a 2-tick 0.5 buffer → level sits lower
+    // And a HIGHER per-bar ATR pushes the level further below the swing low.
+    expect(run('atr-percent', 6)).toBeLessThan(pct);
+  });
+
+  it('an atr-percent run with NO per-bar ATR falls back to the ENTRY ATR, never silently to ticks', () => {
+    const seed = (barAtr?: number): number => {
+      const e = createFuturesStopEngine(cfg({
+        stopBufferMode: 'atr-percent', strangleBufferAtrPercent: 30, strangleBufferTicks: 2,
+        strangleGateMode: 'adx-laguerre', strangleAdxThreshold: 1, trailMode: 'none',
+      }));
+      e.onEntry(100, bar(100.5, 99.5, 100), 5); // entry ATR = 5 → buffer 1.5
+      return e.onBar(input(bar(103, 101, 102.5), barAtr == null ? {} : { atr: barAtr })).strangleLevel;
+    };
+    const withEntryAtr = seed();          // uses entry ATR 5 → buffer 1.5
+    const withBarAtr = seed(5);           // same number, supplied explicitly
+    expect(withEntryAtr).toBeCloseTo(withBarAtr, 10);
+    // A ticks-mode run of the same tape would use 0.5; the fallback must NOT land there.
+    expect(withEntryAtr).toBeLessThan(99.5 - 0.5);
+  });
+
+  it("defaults to 'ticks' — an unconfigured engine is byte-identical to the shipped code", () => {
+    const shipped = createFuturesStopEngine(cfg()).onEntry(100.5, entryBar, 2).restingStop;
+    const explicit = createFuturesStopEngine(cfg({ stopBufferMode: 'ticks' })).onEntry(100.5, entryBar, 2).restingStop;
+    expect(shipped).toBe(explicit);
+    expect(STOP_ENGINE_DEFAULTS.stopBufferMode).toBe('ticks');
   });
 });
