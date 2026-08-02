@@ -13,6 +13,20 @@
  *   business-name segment → drop the house number); an unresolvable address falls back to its label.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Uber Rides (transportation) CLI.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | REAL distance, and the coordinates the map needs.
+ *   The estimate was a fake: pseudoKm() SHA-256-hashed the pickup+dropoff STRINGS into a 2-19.9 km
+ *   pseudo-distance and every fare/ETA derived from it — so "1 Main St" and "1 Main Street" quoted
+ *   different trips, and neither number meant anything. Meanwhile buildRideLinks() already geocoded
+ *   BOTH endpoints (Uber sets its pins from lat/lon), so real coordinates existed and were discarded.
+ *   Now: estimate geocodes both ends, measures haversine great-circle distance, and applies
+ *   ROAD_FACTOR for street routing. When an address does NOT resolve the fares come back NULL with
+ *   basis:'unresolved' — an honest "I can't price this" beats a confident hash. estimate/ride now
+ *   share a per-process geocode cache so a rider who estimates and then books geocodes once, and
+ *   Nominatim's ~1 req/s ask is honoured by a serialized queue rather than a sleep between retries.
+ *   Adds `geocode` + `reverse` subcommands: the rides surface's map drops and drags pins, and it
+ *   must resolve them through the SAME Nominatim contract (User-Agent, fallback ladder, rate limit)
+ *   instead of hitting the public endpoint from every rider's browser. Guard:
+ *   tests/unit/uber-rides-estimate.spec.ts.
  *   Reads the operator's OPTIONAL Uber Rides config from the OSHAL connector store
  *   (oshal_connections, provider='uber-rides') — connected once at /utilities, NO keys in
  *   env/compose. Mirrors scripts/oshal-uber.js credential resolution: prefer a brokered
@@ -28,6 +42,8 @@
  *   node scripts/oshal-uber-rides.js                                  # status digest
  *   node scripts/oshal-uber-rides.js estimate "<pickup>" "<dropoff>"  # ride options (estimate)
  *   node scripts/oshal-uber-rides.js ride "<pickup>" "<dropoff>" [rideType]  # the request deep link
+ *   node scripts/oshal-uber-rides.js geocode "<address>"              # address  -> {lat,lon,label}
+ *   node scripts/oshal-uber-rides.js reverse <lat> <lon>              # a dropped pin -> an address
  *   node scripts/oshal-uber-rides.js accounts                         # is a Rides config connected?
  */
 'use strict';
@@ -93,32 +109,95 @@ async function loadCred() {
 }
 function baseUrlOf(cred) { return (cred && cred.baseUrl) || 'https://m.uber.com'; }
 
-// ── Ride types + deterministic estimate ──────────────────────────────────────
-// No live pricing API on the deep-link path, so estimates are deterministic from the
-// pickup+dropoff text (stable, clearly labelled). The REAL fare shows in the rider's
-// Uber app at confirm time.
+// ── Ride types + distance-based estimate ─────────────────────────────────────
+// No live pricing API on the deep-link path, so the fare is MODELLED — but it is modelled on the
+// real distance between the two geocoded pins, not on the address text. The REAL fare shows in the
+// rider's Uber app at confirm time; everything here stays labelled `estimate: true`.
 const RIDE_TYPES = [
   { key: 'uberx',   label: 'UberX',   emoji: '🚗', seats: 4, base: 9,  perKm: 1.1 },
   { key: 'comfort', label: 'Comfort', emoji: '🚙', seats: 4, base: 12, perKm: 1.4 },
   { key: 'xl',      label: 'UberXL',  emoji: '🚐', seats: 6, base: 15, perKm: 1.8 },
   { key: 'black',   label: 'Uber Black', emoji: '🚘', seats: 4, base: 22, perKm: 2.6 },
 ];
-function pseudoKm(pickup, dropoff) {
-  const h = crypto.createHash('sha256').update(`${pickup}=>${dropoff}`).digest();
-  return 2 + (h[0] % 18) + (h[1] % 10) / 10; // 2.0 – 19.9 km, stable per route
+// Streets are not great circles. 1.3 is the widely-used detour ratio for urban road networks —
+// it is a stated modelling assumption, not a measured route, which is why `basis` says so.
+const ROAD_FACTOR = 1.3;
+const AVG_SPEED_KMH = 32; // door-to-door city average incl. lights/turns
+
+/**
+ * Great-circle distance between two {lat,lon} points, in kilometres.
+ *
+ * @description The honest half of the estimate: this is a real measurement over real coordinates.
+ *   The modelling (road factor, fare curve) sits on top of it and is labelled as modelling.
+ * @param {{lat:number,lon:number}} a - first point
+ * @param {{lat:number,lon:number}} b - second point
+ * @returns {number} distance in km
+ */
+function haversineKm(a, b) {
+  const R = 6371; // mean earth radius, km
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const s = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
-function estimateRides(pickup, dropoff) {
-  const km = pseudoKm(pickup, dropoff);
-  const etaPickup = 2 + (crypto.createHash('sha256').update(pickup).digest()[0] % 8); // min to pickup
+
+/**
+ * Build the ride options for a trip of a known road distance.
+ *
+ * @description `distanceKm` null means we could not place one of the pins. In that case every fare
+ *   comes back NULL rather than a plausible-looking number — a rider who is shown "$14-18" for a
+ *   trip we could not locate has been lied to, and the old hash did exactly that. The option rows
+ *   still render (seats, ride type) so the surface can offer the handoff; only the money is absent.
+ * @param {number|null} distanceKm - road-adjusted distance, or null when unresolved
+ * @param {number|null} pickupEtaMin - minutes to pickup, or null when unknown
+ * @returns {Array<object>} one row per ride type
+ */
+function buildRideOptions(distanceKm, pickupEtaMin) {
+  const known = typeof distanceKm === 'number' && Number.isFinite(distanceKm);
   return RIDE_TYPES.map((t) => {
-    const fare = t.base + t.perKm * km;
+    const fare = known ? t.base + t.perKm * distanceKm : null;
     return {
       type: t.key, label: t.label, emoji: t.emoji, seats: t.seats,
-      fareLow: Math.round(fare * 0.9), fareHigh: Math.round(fare * 1.15),
-      etaPickupMin: etaPickup, tripMin: Math.round(km * 2.2 + 4),
+      fareLow: known ? Math.round(fare * 0.9) : null,
+      fareHigh: known ? Math.round(fare * 1.15) : null,
+      etaPickupMin: pickupEtaMin,
+      tripMin: known ? Math.max(4, Math.round((distanceKm / AVG_SPEED_KMH) * 60 + 3)) : null,
       estimate: true,
     };
   });
+}
+
+/**
+ * Price a trip from its two endpoints.
+ *
+ * @description Geocodes both ends (through the shared cache), measures, and prices. `basis` tells
+ *   the caller exactly how much to trust the number: 'geocoded' = measured between two resolved
+ *   pins; 'unresolved' = at least one address did not geocode, so fares are null.
+ * @param {string} pickup - pickup address, or "my location"
+ * @param {string} dropoff - destination address
+ * @returns {Promise<{options:Array<object>,distanceKm:number|null,basis:string,coords:object}>}
+ */
+async function estimateRides(pickup, dropoff) {
+  const isMyLocation = !pickup || /my location|current/i.test(pickup);
+  const [pg, dg] = await Promise.all([
+    isMyLocation ? Promise.resolve(null) : geocode(pickup),
+    dropoff ? geocode(dropoff) : Promise.resolve(null),
+  ]);
+  const straightKm = pg && dg ? haversineKm(pg, dg) : null;
+  const distanceKm = straightKm === null ? null : Math.round(straightKm * ROAD_FACTOR * 10) / 10;
+  // Minutes to pickup is genuinely unknowable without Uber's driver supply — it is not modelled
+  // from the address any more. The surface shows Uber's own ETA once the rider opens the handoff.
+  const options = buildRideOptions(distanceKm, null);
+  return {
+    options,
+    distanceKm,
+    straightLineKm: straightKm === null ? null : Math.round(straightKm * 10) / 10,
+    basis: distanceKm === null ? 'unresolved' : 'geocoded',
+    roadFactor: ROAD_FACTOR,
+    coords: { pickup: pg, dropoff: dg },
+  };
 }
 
 /**
@@ -140,24 +219,83 @@ function geoCandidates(address) {
   if (base.length) { const noNum = base[0].replace(/^\d+\s+/, ''); if (noNum !== base[0]) out.push([noNum, ...base.slice(1)].join(', ')); }
   return [...new Set(out)];
 }
+// Nominatim's usage policy asks for at most ~1 request/second from an application, with a real
+// User-Agent. A sleep between RETRIES was not enough once estimate and ride both geocode and the
+// surface geocodes on every pin drag: serialize every call through one promise chain so concurrent
+// callers queue instead of bursting, and cache per process so the same address is asked once.
+const NOMINATIM_UA = 'oshal-uber-rides/1.1 (+https://github.com/emeraldcoastsystemsgroup/oshal)';
+const NOMINATIM_MIN_INTERVAL_MS = 1100;
+const geoCache = new Map();
+let nominatimChain = Promise.resolve();
+let lastNominatimAt = 0;
+
+/**
+ * Run a Nominatim request behind the shared rate limiter.
+ *
+ * @description Every outbound call to the public endpoint goes through here — one at a time, never
+ *   closer together than NOMINATIM_MIN_INTERVAL_MS. Callers just await; the queueing is invisible.
+ * @param {URL} url - the fully-built Nominatim URL
+ * @returns {Promise<any|null>} parsed JSON, or null on any failure
+ */
+function nominatim(url) {
+  const run = nominatimChain.then(async () => {
+    const wait = NOMINATIM_MIN_INTERVAL_MS - (Date.now() - lastNominatimAt);
+    if (wait > 0) await new Promise((s) => setTimeout(s, wait));
+    lastNominatimAt = Date.now();
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': NOMINATIM_UA } });
+      return r.ok ? await r.json() : null;
+    } catch { return null; }
+  });
+  // Keep the chain alive even when one call rejects, or every later lookup inherits the rejection.
+  nominatimChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 async function geocode(address) {
   if (!address) return null;
-  const cands = geoCandidates(address);
-  for (let i = 0; i < cands.length; i++) {
-    try {
-      const u = new URL('https://nominatim.openstreetmap.org/search');
-      u.searchParams.set('format', 'json');
-      u.searchParams.set('q', cands[i]);
-      u.searchParams.set('limit', '1');
-      const r = await fetch(u, { headers: { 'User-Agent': 'oshal-uber-rides/1.0' } });
-      if (r.ok) {
-        const j = await r.json();
-        if (Array.isArray(j) && j[0] && j[0].lat && j[0].lon) return { lat: Number(j[0].lat), lon: Number(j[0].lon) };
-      }
-    } catch { /* try the next, broader candidate */ }
-    if (i < cands.length - 1) await new Promise((s) => setTimeout(s, 1100)); // Nominatim asks for ~1 req/s
+  const key = `f:${address.trim().toLowerCase()}`;
+  if (geoCache.has(key)) return geoCache.get(key);
+  let hit = null;
+  for (const cand of geoCandidates(address)) {
+    const u = new URL('https://nominatim.openstreetmap.org/search');
+    u.searchParams.set('format', 'json');
+    u.searchParams.set('q', cand);
+    u.searchParams.set('limit', '1');
+    const j = await nominatim(u);
+    if (Array.isArray(j) && j[0] && j[0].lat && j[0].lon) {
+      hit = { lat: Number(j[0].lat), lon: Number(j[0].lon), label: String(j[0].display_name || cand) };
+      break;
+    }
   }
-  return null;
+  geoCache.set(key, hit);
+  return hit;
+}
+
+/**
+ * Turn a dropped/dragged map pin back into an address.
+ *
+ * @description The map surface lets a rider place a pin instead of typing. Uber still wants a
+ *   display address on the deep link, and the rider wants to read back where they just pointed, so
+ *   the pin round-trips through Nominatim's reverse endpoint on the SAME rate-limited queue.
+ * @param {number} lat - latitude
+ * @param {number} lon - longitude
+ * @returns {Promise<{lat:number,lon:number,label:string}|null>} the resolved place, or null
+ */
+async function reverseGeocode(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  const key = `r:${lat.toFixed(5)},${lon.toFixed(5)}`;
+  if (geoCache.has(key)) return geoCache.get(key);
+  const u = new URL('https://nominatim.openstreetmap.org/reverse');
+  u.searchParams.set('format', 'json');
+  u.searchParams.set('lat', String(lat));
+  u.searchParams.set('lon', String(lon));
+  u.searchParams.set('zoom', '18');
+  const j = await nominatim(u);
+  const hit = j && j.display_name ? { lat, lon, label: String(j.display_name) } : null;
+  geoCache.set(key, hit);
+  return hit;
 }
 
 /**
@@ -237,7 +375,31 @@ async function main() {
     case 'estimate': {
       const [pickup, dropoff] = args;
       if (!dropoff) return die('usage: estimate "<pickup>" "<dropoff>"');
-      out({ source: 'estimate', pickup: pickup || 'my location', dropoff, options: estimateRides(pickup || 'my location', dropoff) });
+      const e = await estimateRides(pickup || 'my location', dropoff);
+      out({
+        source: 'estimate', pickup: pickup || 'my location', dropoff,
+        options: e.options,
+        // The map surface draws its pins from these — no second geocode round-trip from the browser.
+        coords: e.coords, distanceKm: e.distanceKm, straightLineKm: e.straightLineKm,
+        basis: e.basis, roadFactor: e.roadFactor,
+        note: e.basis === 'geocoded'
+          ? `Fares are modelled from a measured ${e.straightLineKm} km straight line × ${e.roadFactor} road factor. Uber quotes the real price at confirm time.`
+          : 'One of these addresses did not resolve to a location, so no fare is shown. Add a city or a street number and try again.',
+      });
+      return;
+    }
+    case 'geocode': {
+      const [address] = args;
+      if (!address) return die('usage: geocode "<address>"');
+      const hit = await geocode(address);
+      out(hit ? { source: 'nominatim', ...hit } : { source: 'nominatim', error: 'address did not resolve' });
+      return;
+    }
+    case 'reverse': {
+      const [lat, lon] = args;
+      if (lat === undefined || lon === undefined) return die('usage: reverse <lat> <lon>');
+      const hit = await reverseGeocode(Number(lat), Number(lon));
+      out(hit ? { source: 'nominatim', ...hit } : { source: 'nominatim', error: 'no address at that point' });
       return;
     }
     case 'ride':
@@ -263,4 +425,10 @@ async function main() {
   }
 }
 
-main().catch((e) => { out({ source: 'estimate', options: [], error: e && e.message ? e.message : 'uber-rides CLI error' }); });
+// Exported for the guard (tests/unit/uber-rides-estimate.spec.ts). The pure pieces — distance,
+// the fare curve, the address ladder — are testable without touching Nominatim or the DB.
+module.exports = { haversineKm, buildRideOptions, geoCandidates, ROAD_FACTOR, AVG_SPEED_KMH, RIDE_TYPES };
+
+if (require.main === module) {
+  main().catch((e) => { out({ source: 'estimate', options: [], error: e && e.message ? e.message : 'uber-rides CLI error' }); });
+}
