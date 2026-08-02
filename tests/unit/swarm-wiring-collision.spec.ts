@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | K3 guard (BACKLOG kernel audit 2026-07-29): a0…030 was a THREE-WAY collision — codex-packer.yaml and intelligent-processing.yaml both declared it (different bots!) and the compose self-healing-bot service heartbeated as it — while validate-swarm-wiring matched by agentId only and reported OK. This spec proves the new findAgentIdCollisions detector red on the collision shape (pure + through the real audit under STRICT_SWARM_WIRING), asserts the shipped manifests are collision-free, and pins the healed identities: the compose self-healing service and its persona both carry a0…056, and NO compose AGENT_ID uses codex-packer's a0…030 again. A UUID cannot be safely re-pointed once tickets/chat_tasks/heartbeats reference it — migration 100 documents the existing-row story.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Second collision, same shape, found by the detector this file guards: a0…049 was declared by BOTH `intelligent-trades:trading-research-analyst` and `lora:lora-director` — an ERROR on EVERY api boot since the ADR-085 carve, because the LoRA Studio package kept the id the kernel registry already owned. The kernel keeps 049 (registered to trading-research-analyst since ADR-054, and swarm-bot-registry.ts removed lora-director BY NAME with a comment saying exactly that); the STORE package moves to a0…065. These guards pin the core half — one name on 049 across both registries and the persona, migration 111 restoring a mis-named row to trading's name and never to lora's, and 065 unclaimed in core so the store's new id cannot collide back.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -83,5 +84,79 @@ describe('K3: one agentId under two names is detected, and the shipped identitie
     expect(compose).not.toMatch(new RegExp(`AGENT_ID: ${CODEX_PACKER_ID}`));
     const persona = fs.readFileSync(path.resolve(process.cwd(), 'ai-lab/bot-personas/self-healing-bot.yaml'), 'utf8');
     expect(persona).toMatch(new RegExp(`^agent_id: ${SELF_HEALING_ID}$`, 'm'));
+  });
+});
+
+const TRADING_RESEARCH_ID = 'a0000000-0000-0000-0000-000000000049';
+const LORA_DIRECTOR_ID = 'a0000000-0000-0000-0000-000000000065';
+
+describe('a0…049: the kernel keeps it for trading-research-analyst; lora-director moved to a0…065', () => {
+  it('detects the EXACT pair the live boot log reported (intelligent-trades vs lora)', () => {
+    const apps: ManifestAppBots[] = [
+      { appName: 'intelligent-trades', bots: [{ name: 'trading-research-analyst', agentId: TRADING_RESEARCH_ID }] },
+      { appName: 'lora', bots: [{ name: 'lora-director', agentId: TRADING_RESEARCH_ID }] },
+    ];
+    const collisions = findAgentIdCollisions(apps);
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]!.claims.map((c) => c.botName).sort()).toEqual(['lora-director', 'trading-research-analyst']);
+  });
+
+  it('is resolved once the store package moves: the same two bots on DIFFERENT ids are clean', () => {
+    const apps: ManifestAppBots[] = [
+      { appName: 'intelligent-trades', bots: [{ name: 'trading-research-analyst', agentId: TRADING_RESEARCH_ID }] },
+      { appName: 'lora', bots: [{ name: 'lora-director', agentId: LORA_DIRECTOR_ID }] },
+    ];
+    expect(findAgentIdCollisions(apps)).toEqual([]);
+  });
+
+  it('the core tree claims a0…049 under exactly ONE name, and never lora-director', () => {
+    const files = [
+      'src/app/extensions/swarm/swarm-bot-registry-local.ts',
+      'src/app/extensions/swarm/swarm-bot-registry.ts',
+      'ai-lab/bot-personas/trading-research-analyst.yaml',
+    ];
+    const names = new Set<string>();
+    for (const rel of files) {
+      const text = fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8');
+      // Registry entries put `name:` on the line after `agentId:`; personas put agent_id
+      // under `name:`. Both shapes are covered by scanning a small window either side.
+      const lines = text.split(/\r?\n/);
+      lines.forEach((line, i) => {
+        if (!line.includes(TRADING_RESEARCH_ID)) return;
+        for (const near of lines.slice(Math.max(0, i - 4), i + 5)) {
+          const match = near.match(/^\s*name:\s*'?"?([a-z0-9-]+)'?"?\s*,?\s*$/i);
+          if (match) names.add(match[1]);
+        }
+      });
+    }
+    expect(names.has('lora-director')).toBe(false);
+    expect(Array.from(names)).toEqual(['trading-research-analyst']);
+  });
+
+  it('a0…065 is unclaimed in the core tree, so the store package cannot collide back onto the kernel', () => {
+    const roots = ['src', 'ai-lab/bot-personas', 'swarm-apps', 'docker-compose.oshal-local.yml'];
+    const hits: string[] = [];
+    const scan = (target: string): void => {
+      const abs = path.resolve(process.cwd(), target);
+      if (!fs.existsSync(abs)) return;
+      if (fs.statSync(abs).isDirectory()) {
+        for (const child of fs.readdirSync(abs)) scan(path.join(target, child));
+        return;
+      }
+      if (!/\.(ts|js|ya?ml|yml|sql)$/i.test(abs)) return;
+      if (fs.readFileSync(abs, 'utf8').includes(LORA_DIRECTOR_ID)) hits.push(target);
+    };
+    for (const root of roots) scan(root);
+    expect(hits).toEqual([]);
+  });
+
+  it('migration 111 restores a mis-named a0…049 row to trading-research-analyst, never to lora-director', () => {
+    const sql = fs.readFileSync(path.resolve(process.cwd(), 'scripts/migrations/111-lora-director-agent-id.sql'), 'utf8');
+    // The UPDATE must set trading's name where the row currently reads lora-director —
+    // the reverse direction would hand the kernel's id to the app that just gave it up.
+    expect(sql).toMatch(/SET name = 'trading-research-analyst'[\s\S]{0,200}WHERE agent_id = 'a0000000-0000-0000-0000-000000000049'[\s\S]{0,120}AND name = 'lora-director'/);
+    expect(sql).not.toMatch(/SET name = 'lora-director'/);
+    // No INSERT: lora is a STORE package (ADR-085) and the kernel never seeds an app's bot.
+    expect(sql).not.toMatch(/INSERT\s+INTO\s+agents/i);
   });
 });

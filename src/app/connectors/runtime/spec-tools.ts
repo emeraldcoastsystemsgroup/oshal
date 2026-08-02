@@ -1,9 +1,10 @@
-import { existsSync, readdirSync } from 'fs';
+import { existsSync } from 'fs';
 import path from 'path';
 import type { Pool } from 'pg';
 import { AuthMode, InstallMethod, ToolType } from '@/shared/types/tool';
 import type { CreateToolInput } from '@/entities/tool';
 import { createChildLogger } from '@/shared/logger';
+import { readCatalogDir, recordCatalogLoad } from '@/shared/observability';
 import { hasExplicitWriteConfirmation, confirmationRequiredPayload } from '@/shared/security/explicit-write-confirmation';
 import type { DynamicToolExecutorRegistry, ToolExecutorDescriptor, ToolRegistryService } from '@/features/tool-registry';
 import { getValidAccessToken } from '@/app/routes/connectors-routes';
@@ -19,6 +20,9 @@ import {
 
 const logger = createChildLogger({ module: 'connector-spec-tools' });
 const DEFAULT_SPEC_DIR = path.join(process.cwd(), 'swarm-apps/connectors');
+
+/** @description Catalog identity for the connector-spec load record (readiness reads it). */
+export const CONNECTOR_SPEC_CATALOG = 'connector-specs';
 const DEFAULT_IMPORTED_SPEC_DIR = path.join(process.cwd(), 'output/connectors/imported-openapi');
 
 type AccessTokenResolver = (pool: unknown, userSub: string, provider: string) => Promise<string | null>;
@@ -262,27 +266,54 @@ export async function resolveConnectorSpecCreds(
   }
 }
 
+/**
+ * @description Loads every connector spec from the configured directories.
+ *
+ * The directory read goes through {@link readCatalogDir}: bounded retry on transient
+ * POSIX errors and a recorded outcome. That is not tidying — on 2026-08-01 a single
+ * `ENOMEM: scandir '/app/swarm-apps/connectors'` during a bot-recreate storm cost the api
+ * its ENTIRE connector catalog for the life of the process, while `/api/health` and
+ * `/api/readiness` both reported fine. The per-directory load count is recorded back into
+ * the catalog registry so the readiness `catalogs` leg fails a box that offered specs and
+ * parsed none of them.
+ *
+ * @param specDir - One directory or a list of them.
+ * @param providerFilter - When present, only these provider names are read.
+ * @returns The parsed specs (empty when nothing is readable — the registry carries why).
+ */
 export function loadConnectorSpecs(specDir: string | string[] = DEFAULT_SPEC_DIR, providerFilter?: Set<string>): ConnectorSpec[] {
   const specDirs = Array.isArray(specDir) ? specDir : [specDir];
-  const files: string[] = [];
-  for (const dir of specDirs) {
-    try {
-      for (const file of readdirSync(dir).filter((item) => item.endsWith('.yaml') || item.endsWith('.yml'))) {
-        const provider = path.basename(file, path.extname(file));
-        if (providerFilter && !providerFilter.has(provider)) continue;
-        files.push(path.join(dir, file));
-      }
-    } catch (error) {
-      logger.warn({ err: error, specDir: dir }, 'Connector spec dir not readable; no connector tools registered from this dir');
-    }
-  }
-
   const specs: ConnectorSpec[] = [];
-  for (const file of files) {
-    try {
-      specs.push(loadConnectorSpec(file));
-    } catch (error) {
-      logger.warn({ err: error, file }, 'Connector spec not loadable; skipping tool registration');
+  for (const dir of specDirs) {
+    const read = readCatalogDir(dir, {
+      catalog: CONNECTOR_SPEC_CATALOG,
+      filter: (item) => item.endsWith('.yaml') || item.endsWith('.yml'),
+    });
+    let loaded = 0;
+    for (const file of read.entries) {
+      const provider = path.basename(file, path.extname(file));
+      if (providerFilter && !providerFilter.has(provider)) continue;
+      try {
+        specs.push(loadConnectorSpec(path.join(dir, file)));
+        loaded += 1;
+      } catch (error) {
+        logger.warn({ err: error, file }, 'Connector spec not loadable; skipping tool registration');
+      }
+    }
+    if (read.state === 'ok') {
+      // A provider filter legitimately loads a subset (or none) of what the dir offered,
+      // so a FILTERED read can never be reported as an empty catalog — only an unfiltered
+      // read that offered specs and parsed none is the "advertised and dead" shape.
+      const filtered = Boolean(providerFilter);
+      recordCatalogLoad({
+        catalog: CONNECTOR_SPEC_CATALOG,
+        source: dir,
+        state: (!filtered && read.entries.length > 0 && loaded === 0) ? 'empty' : 'ok',
+        discovered: read.entries.length,
+        loaded,
+        attempts: read.attempts,
+        detail: filtered ? `provider-filtered read (${loaded}/${read.entries.length})` : undefined,
+      });
     }
   }
   return specs;

@@ -17,14 +17,15 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Routed verified GitHub issue events through the configured idempotent ticket synchronizer
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Made connector webhook catalog read and parse failures visible in structured logs
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exported connectorWebhookIngressEnabled() so the ON/OFF decision is a testable function instead of an inline env comparison in server.ts. ADR-065 Phase 4 listed "mount the webhook router" as outstanding while it was in fact mounted — nothing guarded that, so nothing noticed. The guard (tests/unit/connectors/connector-webhook-mount.spec.ts) now pins both halves: the gate, and that a mounted ingress REFUSES an unsigned or wrongly-signed delivery.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "ENOMEM / healthy-but-degraded": the catalog read is no longer a one-shot readdirSync in a catch. The 2026-08-01 boot hit `ENOMEM: scandir '/app/swarm-apps/connectors'` in BOTH loadConnectorSpecs and loadWebhookEvents, and each logged once and served on with nothing loaded. It now goes through readCatalogDir (bounded retry on transient POSIX codes) and records the outcome so the /api/readiness `catalogs` leg fails a box whose webhook catalog is unreadable or parsed to nothing.
  *
  * @module routes/connector-webhook-routes
  */
 
-import { readdirSync } from 'fs';
 import path from 'path';
 import express, { type Express } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { readCatalogDir, recordCatalogLoad } from '@/shared/observability';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { loadConnectorSpec } from '../connectors/runtime';
 import {
@@ -52,20 +53,34 @@ export function connectorWebhookIngressEnabled(env: NodeJS.ProcessEnv = process.
 }
 const SPEC_DIR = path.join(process.cwd(), 'swarm-apps/connectors');
 
-/** Read every connector.yaml and flatten its declared webhooks into verified event specs. */
+/** @description Catalog identity for the webhook-event load record (readiness reads it). */
+export const WEBHOOK_EVENT_CATALOG = 'connector-webhook-events';
+
+/**
+ * @description Read every connector.yaml and flatten its declared webhooks into verified
+ * event specs. The directory read retries transient POSIX errors and records its outcome
+ * in the catalog registry — the same `ENOMEM: scandir '/app/swarm-apps/connectors'` that
+ * emptied the connector catalog on 2026-08-01 hit this loader too, and a one-shot
+ * `readdirSync` in a catch meant the box served a webhook ingress with zero verified
+ * events while reporting ready.
+ * @param specDir - Connector spec directory (defaults to `swarm-apps/connectors`).
+ * @returns Every declared, verifiable webhook event spec.
+ */
 export function loadWebhookEvents(specDir = SPEC_DIR): WebhookEventSpec[] {
-  let files: string[] = [];
-  try {
-    files = readdirSync(specDir).filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'));
-  } catch (error) {
-    logger.error({ err: error, specDir }, 'Unable to read connector webhook catalog');
-    return [];
-  }
+  const read = readCatalogDir(specDir, {
+    catalog: WEBHOOK_EVENT_CATALOG,
+    filter: (f) => f.endsWith('.yaml') || f.endsWith('.yml'),
+  });
+  const files = read.entries;
   const events: WebhookEventSpec[] = [];
+  // Count PARSED SPECS, not events: most connectors declare no webhooks at all, so zero
+  // events is normal — zero parsed specs from a directory full of them is the defect.
+  let parsedSpecs = 0;
   for (const file of files) {
     let spec;
     try {
       spec = loadConnectorSpec(path.join(specDir, file));
+      parsedSpecs += 1;
     } catch (error) {
       logger.warn({ err: error, file }, 'Skipping invalid connector webhook specification');
       continue;
@@ -79,6 +94,17 @@ export function loadWebhookEvents(specDir = SPEC_DIR): WebhookEventSpec[] {
         verify: { type: v.type, header: v.header, secret: resolveSecret(v.secret) } as WebhookVerify,
       });
     }
+  }
+  if (read.state === 'ok') {
+    recordCatalogLoad({
+      catalog: WEBHOOK_EVENT_CATALOG,
+      source: specDir,
+      state: files.length > 0 && parsedSpecs === 0 ? 'empty' : 'ok',
+      discovered: files.length,
+      loaded: parsedSpecs,
+      attempts: read.attempts,
+      detail: `${events.length} verifiable webhook event(s) across ${parsedSpecs} spec(s)`,
+    });
   }
   return events;
 }
