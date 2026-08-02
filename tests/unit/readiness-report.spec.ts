@@ -4,17 +4,45 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for INSTALLER-GAPS G9 + G7 + G2 (readiness legs): a silent FORCE_LLM_PROVIDER=noop must FAIL the llm leg unless OSHAL_NO_AI is declared; a routing-critical bot whose harness has no credential must FAIL the credentials leg BY NAME (the "starts, heartbeats, fails on first use" trap); a missing heartbeat fails the bots leg; voice fails only when declared-but-unconfigured; and the summary line stays in the exact `leg=state` token format scripts/oshal-verify.sh greps — that summary IS the shell contract, so this spec pins it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Moved with the `catalogs` leg instead of being left behind by it. The leg shipped and this spec did not: ReadinessDeps grew catalogLoads/degradedCatalogLoads, the fixture did not, and all 11 cases died on `deps.catalogLoads is not a function` — the feature landing without its guard, which is the thing guard-per-fix exists to stop. The fixture now wires the REAL @/shared/observability registry (reset per test, seeded through the real recordCatalogLoad) rather than stubbing the leg away, so these cases exercise the same code path production does; the shell-contract summary assertion carries the new token; and a catalog-less boot is asserted RED here too, not only in catalog-load-readiness.spec.ts.
  */
 
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 
 import {
   buildReadinessReport,
   type ReadinessDeps,
   type VoiceSideStatus,
 } from '@/app/routes/readiness-routes';
+import {
+  degradedCatalogs,
+  listCatalogLoads,
+  recordCatalogLoad,
+  resetCatalogLoads,
+} from '@/shared/observability';
 
 const VOICE_OFF: VoiceSideStatus = { providerId: 'gemini-tts', configured: false, declared: false, browser: false };
+
+/**
+ * A healthy connector catalog, recorded through the REAL registry the loader writes to —
+ * the leg is exercised, not stubbed out. Every test starts from an empty registry so
+ * "nothing loaded yet" and "loaded fine" are both reachable states.
+ */
+function seedHealthyCatalog(): void {
+  recordCatalogLoad({
+    catalog: 'connector-specs',
+    source: '/app/swarm-apps/connectors',
+    state: 'ok',
+    discovered: 306,
+    loaded: 306,
+    attempts: 1,
+  });
+}
+
+beforeEach(() => {
+  resetCatalogLoads();
+  seedHealthyCatalog();
+});
 
 function deps(overrides: Partial<ReadinessDeps> = {}): ReadinessDeps {
   return {
@@ -30,6 +58,8 @@ function deps(overrides: Partial<ReadinessDeps> = {}): ReadinessDeps {
     defaultHarness: () => 'codex-cli',
     voiceStatus: async () => VOICE_OFF,
     dbOk: async () => true,
+    catalogLoads: listCatalogLoads,
+    degradedCatalogLoads: degradedCatalogs,
     ...overrides,
   };
 }
@@ -39,7 +69,7 @@ describe('buildReadinessReport (INSTALLER-GAPS G9/G7/G2)', () => {
     const r = await buildReadinessReport(deps());
     expect(r.ready).toBe(true);
     expect(r.problems).toEqual([]);
-    expect(r.summary).toBe('llm=ok bots=ok credentials=ok voice.tts=off voice.stt=off db=ok');
+    expect(r.summary).toBe('llm=ok bots=ok credentials=ok catalogs=ok voice.tts=off voice.stt=off db=ok');
   });
 
   it('G2: FORCE_LLM_PROVIDER=noop without the OSHAL_NO_AI declaration FAILS the llm leg', async () => {
@@ -120,5 +150,33 @@ describe('buildReadinessReport (INSTALLER-GAPS G9/G7/G2)', () => {
     const r = await buildReadinessReport(deps({ dbOk: async () => false }));
     expect(r.ready).toBe(false);
     expect(r.legs.db.state).toBe('fail');
+  });
+
+  it('catalogs: an ENOMEM-emptied connector catalog reds the report on an otherwise perfect box', async () => {
+    // Everything else in this fixture is green. This is the 2026-08-01 boot: the api came
+    // up with `ENOMEM: scandir '/app/swarm-apps/connectors'`, registered zero connector
+    // tools, and reported ready:true. It must not any more.
+    resetCatalogLoads();
+    recordCatalogLoad({
+      catalog: 'connector-specs',
+      source: '/app/swarm-apps/connectors',
+      state: 'unreadable',
+      discovered: 0,
+      loaded: 0,
+      attempts: 3,
+      detail: "ENOMEM: not enough memory, scandir '/app/swarm-apps/connectors'",
+    });
+    const r = await buildReadinessReport(deps());
+    expect(r.ready).toBe(false);
+    expect(r.legs.catalogs.state).toBe('fail');
+    expect(r.summary).toContain('catalogs=fail');
+    expect(r.problems.join(' ')).toContain('ENOMEM');
+  });
+
+  it('catalogs: nothing recorded is off (a build with no catalog-backed subsystem stays ready)', async () => {
+    resetCatalogLoads();
+    const r = await buildReadinessReport(deps());
+    expect(r.legs.catalogs.state).toBe('off');
+    expect(r.ready).toBe(true);
   });
 });

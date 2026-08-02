@@ -4,6 +4,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G1 — the postflight capability verifier. Governing rule: a deployment must not report success while a capability it advertises has no credential behind it. The G-Squared box passed every check it had (container counts, /api/health) while the engine, STT, TTS and a routing-critical bot were all dead. This script fails LOUDLY, naming the broken leg: kernel containers healthy -> GET /api/readiness (server-side, ACTIVE-registry-scoped legs: llm / bots / credentials / voice / db) -> when the bots leg fails and the repo's swarm-routability-check.sh is present, runs it as the host-side drill-down (that script stays THE heartbeat prober — this one consumes the same signal server-side via /api/readiness rather than duplicating it). Two postures: strict (default — any fail leg fails the run) and --pre-onboarding (install-time: llm/credentials/voice legs the browser wizard is about to satisfy report PENDING instead of failing). --no-ai (or OSHAL_NO_AI=true in --env-file) asserts the DECLARED model-less posture: llm must be 'off', and 'fail' means the declaration did not reach the container.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the `catalogs` leg check. This script's governing rule is "a deployment must not report success while a capability it advertises has no credential behind it" — and on 2026-08-01 it passed a box that had registered ZERO connector tools after an ENOMEM scandir, because no leg could see a catalog that loaded nothing. Never PENDING even in --pre-onboarding: an empty catalog is not something the browser wizard goes on to satisfy. An empty leg value is reported as off, so this script stays usable against an api image that predates the leg.
 #
 # Usage:
 #   bash scripts/oshal-verify.sh                          # strict operational check
@@ -93,6 +94,18 @@ else
     ok)  ok "credentials: every routing-critical harness has a credential" ;;
     off) off "credentials: $(printf '%s' "$BODY" | sed -n 's/.*"credentials":{"state":"off","detail":"\([^"]*\)".*/\1/p')" ;;
     *)   if [ "$PRE" -eq 1 ]; then pend "credentials: $(problem_for credentials) — sign in via the wizard/host CLI"; else bad "credentials: $(problem_for credentials)"; fi ;;
+  esac
+
+  # catalogs — a subsystem that reads a catalog at boot and loaded NONE of it. Never
+  # waivable and never PENDING: the 2026-08-01 deploy booted with
+  # `ENOMEM: scandir '/app/swarm-apps/connectors'`, registered zero connector tools, and
+  # this very script passed because there was no leg that could see it.
+  CATALOGS="$(leg catalogs)"
+  case "$CATALOGS" in
+    ok)  ok "catalogs: $(printf '%s' "$BODY" | sed -n 's/.*"catalogs":{"state":"ok","detail":"\([^"]*\)".*/\1/p')" ;;
+    off) off "catalogs: $(printf '%s' "$BODY" | sed -n 's/.*"catalogs":{"state":"off","detail":"\([^"]*\)".*/\1/p')" ;;
+    "")  off "catalogs: leg absent — this api image predates the catalog-load registry" ;;
+    *)   bad "catalogs: $(problem_for catalogs)" ;;
   esac
 
   # voice — configured:true, or explicitly not declared.
