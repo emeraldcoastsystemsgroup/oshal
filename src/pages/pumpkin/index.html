@@ -26,10 +26,30 @@
       <button id="btnTalk" class="pill talk" title="Hold to talk (or hold SPACE)">🎤 Hold to talk</button>
       <button id="btnFull" class="pill" title="Fullscreen (F)">⛶</button>
       <span class="grow"></span>
+      <span id="link" class="link offline" title="Room link health"><i class="dot"></i><b id="linkText">connecting…</b></span>
       <span class="room">room: <b id="roomName">—</b></span>
       <span id="status" class="status">…</span>
     </div>
     <div class="hint">SPACE = talk · M = mode · L = listen mode · F = fullscreen · H = hide this bar</div>
+  </div>
+
+  <!-- Autoplay policy blocks the AudioContext until a real gesture. Without this the pumpkin looks
+       alive and is silent, and (because a suspended context never ends an utterance) also deaf. -->
+  <div id="audiogate" hidden>
+    <div class="gate-card">
+      <div class="gate-emoji">🎃</div>
+      <div class="gate-title">Tap to wake the pumpkin</div>
+      <div class="gate-sub">The browser needs one touch before it will let the prop speak.</div>
+    </div>
+  </div>
+
+  <!-- The session has a hard ceiling. When it is reached the prop must SAY so from across the yard
+       rather than sitting there looking happy while every call 401s. -->
+  <div id="reauth" class="reauth" hidden>
+    <h1>Signed out</h1>
+    <p>The pumpkin lost its session. On this device, open:</p>
+    <code id="reauthUrl"></code>
+    <p>and sign in again.</p>
   </div>
 
   <script src="/pumpkin/pumpkin-face.js"></script>
