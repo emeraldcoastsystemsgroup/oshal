@@ -707,6 +707,16 @@ services:
       # local controller opts in so store installs work end-to-end.
       APP_PACKAGE_DYNAMIC_ROUTES: "1"
       APP_PACKAGE_MIGRATIONS: "1"
+      # Maps for the `rides` store package. All three are OPTIONAL and empty by default:
+      # the surface's real map is keyless OpenStreetMap over vendored Leaflet, so it works
+      # on a fresh clone with no account anywhere. GOOGLE_MAPS_BROWSER_KEY upgrades that
+      # surface to Google Maps (road-routed polyline + Places autocomplete) — the route
+      # reads it at /api/rides/config, so it has to be passed in HERE or the key in .env is
+      # invisible to the container. OSHAL_MAP_TILE_URL points the OSM path at your own tile
+      # server (an {s}/{z}/{x}/{y} template) instead of the public one.
+      GOOGLE_MAPS_BROWSER_KEY: ${GOOGLE_MAPS_BROWSER_KEY:-}
+      GOOGLE_MAPS_MAP_ID: ${GOOGLE_MAPS_MAP_ID:-}
+      OSHAL_MAP_TILE_URL: ${OSHAL_MAP_TILE_URL:-}
       # ADR-091: RAG storage/retrieval in Postgres (rag_chunks — pgvector HNSW +
       # tsvector GIN). Default in code is 'chroma'; the local stack opts in. The
       # engine feature-detects (extension + table) and falls back to chroma when
