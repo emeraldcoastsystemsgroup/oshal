@@ -7,6 +7,10 @@ Shipped: the pure engine `src-routes/payroll-engine.ts` over versioned constants
 `src-routes/payroll-tax-tables.ts` and `src-routes/payroll-state-tax.ts`, persistence in
 `src-routes/payroll-store.ts`, `/api/payroll` routes with confirm-gated approve and void actions,
 the `?app=payroll` surface, and dependency-free `node --test` guards run as the `payroll` store-ci job.
+**Amended 2026-08-01** — a functional + technical spec review scored v1.1 at 25–30% of a commercial
+payroll system; v2 replaced the scalar-column check model with earnings/deduction ROWS, added
+per-workweek FLSA overtime, encrypted identity, and gross-up. One Consequence below is superseded.
+See [Update 2026-08-01](#update-2026-08-01--what-a-spec-review-found-and-what-v2-cost-the-design).
 **Package:** `payroll/` in the oshal-applications store repo ([ADR-085](085-remote-app-packages-and-registries.md)).
 **Related:** [ADR-036](036-bot-owned-application-architecture.md) (why a deterministic app has no bot),
 [ADR-097](097-app-suites-primary-categorization.md) (`suite: ai-finance`),
@@ -108,3 +112,67 @@ is a plausible number, not a verified one, and it will look exactly as confident
   the prior provider issues its own W-2, and adding the figures would double-count.
 - Because the whole surface is one company per login, there is no employee self-service: an employee
   cannot log in to fetch their own stub. That is a real product gap, not an oversight.
+
+## Update 2026-08-01 — what a spec review found, and what v2 cost the design
+
+The operator asked whether this was "a fully baked payroll system." It was not,
+and the honest way to answer was to write the specification and score against it
+rather than argue. Two independent reviews — one functional, one technical — put
+v1.1 at **25–30% of a commercial small-business payroll system**, with the tax
+engine at ~85% and almost everything around it thin. The number was not the
+useful part; the shape of the miss was.
+
+**The finding that mattered: the scalar-column model was not a missing feature,
+it was a structural decision every other module inherited.** A check stored as
+`hours / otHours / bonus / tips / reimbursement` cannot express PTO drawing a
+balance, a second job at a second rate, two garnishments with different statutory
+priorities, or an imputed group-term-life amount that is taxed but never paid.
+Several modules scored "partial" only because the engine was compensating for a
+model that could not represent the case.
+
+So v2 changed the model, and three consequences follow that Decision #1 above did
+not anticipate:
+
+1. **Overtime could not be correct under the old shape, at all.** FLSA overtime
+   is a per-WORKWEEK computation that may never be averaged across weeks
+   (29 CFR 778.104), and one hours figure per pay period cannot represent two
+   weeks. v1.1 could only *warn*. Earnings rows carry a workweek index, so the
+   30/50 split now owes its ten hours of premium. The derived row is
+   **premium-only**: a first draft emitted a full time-and-a-half row on top of
+   hours already paid straight, and paid the base hours twice — caught by its own
+   test, which is the argument for writing the test as a worked dollar figure.
+
+2. **Taxability is four axes, not one flag.** Section 125 reduces FIT, FICA, FUTA
+   and state; a 401(k) elective deferral reduces income tax only; Roth reduces
+   nothing yet still consumes the shared 402(g) ceiling. Codes carry all four
+   independently. Any model with a single `pretax` boolean gets at least one of
+   those wrong, silently.
+
+3. **The "preview" label on the W-2 became a computed state.** Holding no SSN and
+   no EIN was a defensible v1 choice, but it made the preview permanent. v2 stores
+   both encrypted through the framework's vault crypto (kernel skill `memory`),
+   and `GET /reports/w2-readiness/:id` now *derives* whether a real W-2 can be
+   issued and names what is missing. Consequence: this package is now a holder of
+   the most sensitive identifier a person has, so exactly one route returns a full
+   SSN, it is confirm-gated, and it writes its audit row before the value leaves.
+   Encrypted columns are scrubbed at the same chokepoint as date normalization —
+   a guard caught `GET /employees` returning the ciphertext envelope, which is
+   still the value, wrapped.
+
+**One consequence above is now superseded.** The original Consequences said the
+W-2 output "is explicitly a *preview*" as a permanent property. It is now
+conditional on identity being on file.
+
+**What did NOT change, deliberately:** no money movement and no filings. Those
+remain regulated activities better reached through a provider integration than
+reimplemented, and the app still records payroll rather than performing it.
+State coverage is still four verified tables plus the nine no-wage-income-tax
+states; an unverified state still falls back to an operator rate *with a warning*.
+Local taxes, state disability and paid-leave contributions, employee self-service,
+1099 contractors, PTO accrual, and segregation of duties remain absent with
+done-when criteria in the backlog.
+
+**Method note worth keeping:** `computePaycheck` now delegates to the same
+`computeTaxes` the row model uses. Two tax implementations in one payroll system
+is precisely the thing that drifts, and the refactor was proven behaviour-
+preserving by the 62 pre-existing guards passing unchanged.
