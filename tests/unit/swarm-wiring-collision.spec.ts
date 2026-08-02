@@ -14,6 +14,7 @@ import yaml from 'js-yaml';
 import {
   auditSwarmBotWiring,
   findAgentIdCollisions,
+  findUnregisteredBots,
   type ManifestAppBots,
 } from '../../src/app/extensions/swarm/validate-swarm-wiring';
 
@@ -158,5 +159,68 @@ describe('a0…049: the kernel keeps it for trading-research-analyst; lora-direc
     expect(sql).not.toMatch(/SET name = 'lora-director'/);
     // No INSERT: lora is a STORE package (ADR-085) and the kernel never seeds an app's bot.
     expect(sql).not.toMatch(/INSERT\s+INTO\s+agents/i);
+  });
+});
+
+const CODEX_PACKER_CANONICAL = 'a0000000-0000-0000-0000-000000000030';
+
+describe('the MIRROR defect: a manifest declaring an agentId nothing registers', () => {
+  /** Every bot every shipped kernel manifest declares, in the audit's own input shape. */
+  function shippedManifestBots(): ManifestAppBots[] {
+    const dir = path.resolve(process.cwd(), 'swarm-apps');
+    return fs.readdirSync(dir).filter((f) => f.endsWith('.yaml')).map((f) => {
+      const doc = yaml.load(fs.readFileSync(path.join(dir, f), 'utf8')) as
+        { name?: string; bots?: Array<{ agentId?: string; name?: string }> } | null;
+      return {
+        appName: doc?.name ?? f,
+        bots: (doc?.bots ?? [])
+          .filter((b): b is { agentId: string; name: string } => Boolean(b.agentId && b.name))
+          .map((b) => ({ agentId: b.agentId, name: b.name })),
+      };
+    });
+  }
+
+  it('detects declared-but-unregistered — the shape that made oshal-up.sh fail on codex-packer', () => {
+    const issues = findUnregisteredBots(
+      [{ appName: 'codex-packer', bots: [{ name: 'codex-packer', agentId: CODEX_PACKER_CANONICAL }] }],
+      new Set(['a0000000-0000-0000-0000-000000000056']),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ appName: 'codex-packer', agentId: CODEX_PACKER_CANONICAL, reason: 'no-registry-entry' });
+  });
+
+  it('every bot the shipped kernel manifests declare resolves in an endpoint registry', () => {
+    // Both variants: a deployment runs one or the other (SWARM_REGISTRY=full|local), and a bot
+    // present in only one is still resolvable on the box that runs it. An id in NEITHER is the
+    // compiles-but-fails trap. Read as data so this needs no live stack.
+    const registrySources = ['swarm-bot-registry.ts', 'swarm-bot-registry-local.ts']
+      .map((f) => fs.readFileSync(path.resolve(process.cwd(), 'src/app/extensions/swarm', f), 'utf8'))
+      .join('\n');
+    const registered = new Set(registrySources.match(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi) ?? []);
+    const issues = findUnregisteredBots(shippedManifestBots(), registered);
+    expect(issues.map((i) => `${i.appName}:${i.botName} (${i.agentId})`)).toEqual([]);
+  });
+
+  it('codex-packer declares the canonical id in the manifest AND both registries', () => {
+    const manifest = fs.readFileSync(path.resolve(process.cwd(), 'swarm-apps/codex-packer.yaml'), 'utf8');
+    expect(manifest).toContain(CODEX_PACKER_CANONICAL);
+    for (const f of ['swarm-bot-registry.ts', 'swarm-bot-registry-local.ts']) {
+      const src = fs.readFileSync(path.resolve(process.cwd(), 'src/app/extensions/swarm', f), 'utf8');
+      expect(src.includes(CODEX_PACKER_CANONICAL)).toBe(true);
+    }
+  });
+
+  it('migration 112 moves the DRIFTED row onto the canonical id and never the reverse', () => {
+    const sql = fs.readFileSync(path.resolve(process.cwd(), 'scripts/migrations/112-codex-packer-agent-id-canon.sql'), 'utf8');
+    // The code's id wins. Selecting the drifted row BY NAME (not by a hardcoded UUID) is what
+    // makes this work on a box whose generated uuid differs from the reference box's.
+    expect(sql).toContain(`canonical CONSTANT uuid := '${CODEX_PACKER_CANONICAL}'`);
+    expect(sql).toMatch(/WHERE name = 'codex-packer' AND agent_id <> canonical/);
+    expect(sql).toMatch(/UPDATE agents SET agent_id = canonical/);
+    // Idempotent: a box already carrying the canonical row must be left alone.
+    expect(sql).toMatch(/IF EXISTS \(SELECT 1 FROM agents WHERE agent_id = canonical\)[\s\S]{0,200}RETURN;/);
+    // The FK fallback must still END with a usable canonical row, not a swallowed error.
+    expect(sql).toMatch(/EXCEPTION WHEN foreign_key_violation THEN[\s\S]{0,900}INSERT INTO agents/);
+    expect(sql).not.toMatch(/DELETE\s+FROM\s+agents/i);
   });
 });
