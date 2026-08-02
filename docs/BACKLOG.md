@@ -6397,11 +6397,51 @@ scope to be correct; each is a coverage or product gap.
    1099 contractors.** **Deferred because** none changes a tax computation — they are additional
    record types. **Done when:** each is a first-class type with its own stub or report presentation.
 
-10. **Money movement and filings.** No ACH/direct deposit, no tax deposits, no 941/940/W-2 filing.
-    **Deferred because** these are regulated activities better reached through a provider connector
-    (a Gusto connector already exists in the catalog) than reimplemented. **Done when:** a connector
-    performs the deposit/filing and the app records the confirmation — never when this app files.
+10. **Money movement and filings** — ✅ PARTLY SHIPPED in v2.1 (2026-08-01), remainder below.
+    **Shipped:** the NACHA PPD ACH file the employer uploads to their OWN bank (with prenote mode),
+    Form 941 and Form 940 worksheets carrying real line numbers and a reconciliation against the tax
+    actually withheld, and issuable W-2s once identity is on file. oshal produces; the employer's bank
+    and EFTPS execute. ⚠ **Correction to this entry's original premise:** the Gusto connector is
+    READ-ONLY (`GET /me`, `/employees`, `/payrolls`) and was never a filing path. More importantly an
+    embedded provider computes its OWN withholding, so delegating would make the verified engine
+    decorative — which is why the self-contained direction was chosen instead.
+    **Still open, each with its own done-when:** items 11–16 below.
 
+
+11. **Electronic W-2 filing (SSA EFW2).** The W-2 is issuable as a document but there is no
+    machine-readable submission. **Deferred because** EFW2 is a second rigid fixed-width spec
+    (RA/RE/RW/RS/RT/RF records) and the paper/PDF path already unblocks a small employer.
+    **Done when:** an EFW2 file validates against AccuWage, its RT totals reconcile to the sum of the
+    RW records, and a guard asserts that reconciliation the way the NACHA guards read control totals
+    back out of the file rather than trusting the builder.
+
+12. **EFTPS deposit initiation and 941 e-file.** The deposit SCHEDULE and the 941 worksheet exist;
+    nothing transmits. **Deferred because** both need enrolment and credentials, and the worksheet
+    already tells an employer exactly what to pay and by when. **Done when:** a deposit is initiated
+    through an enrolled channel and the confirmation number is recorded against the obligation, so
+    the deposit report shows paid-vs-owed rather than owed-only.
+
+13. **ACH returns and notifications of change.** A generated file can come back rejected (R01
+    insufficient funds, R03 no account, R02 account closed) or corrected (NOC/COR with new routing or
+    account details). Today a payment row is written `pending` and nothing ever moves it.
+    **Done when:** a return/NOC file can be imported, the matching payment row moves to
+    returned/corrected, the employee’s bank account is flagged (or auto-updated from a NOC), and the
+    run surfaces which people were NOT actually paid. Without this, a failed deposit is invisible.
+
+14. **Bank-holiday calendar.** Pay dates shift off weekends but not off Federal Reserve holidays, and
+    deposit due dates have the same gap. A Friday pay date on Christmas Day does not fund.
+    **Done when:** an effective-dated holiday table drives both the pay-date shift and the deposit due
+    date, chaining through consecutive closures, with the shifted date and its reason shown at run
+    creation.
+
+15. **Check printing with MICR.** Employees not on direct deposit get a payment row but no document.
+    **Done when:** a check PDF prints with a valid MICR line, the check number is allocated from a
+    sequence, and the existing check-number uniqueness index prevents reuse.
+
+16. **State quarterly returns (FL RT-6 first).** Federal is covered; state unemployment returns are
+    not. **Done when:** RT-6 produces its line values from the same ledger with a reconciliation
+    against SUTA accrued, following the 941 pattern — and only for states whose withholding table is
+    already verified, so coverage never outruns correctness.
 
 ## HUMAN: migrate platform SaaS accounts to real ECSG accounts (operator-led; record it) ⬜ PAUSED BY DESIGN
 

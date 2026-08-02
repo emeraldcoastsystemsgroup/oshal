@@ -7,9 +7,12 @@ tax math, printable stubs, and quarterly-liability plus W-2-preview reports.
 store repo ([ADR-085](../adr/085-remote-app-packages-and-registries.md)). **Design:** [ADR-123](../adr/123-payroll-app.md).
 **Suite:** `ai-finance`. **Access:** `guestTier: blocked` — payroll data is employee PII.
 
-> **oshal records payroll. It does not move money and it does not file anything.** No direct deposit,
-> no tax deposits, no 941/940 submission. The W-2 output is explicitly a preview. Treat this as the
-> calculation and record-keeping half of payroll, with the money movement handled elsewhere.
+> **oshal computes payroll and produces the artifacts; your bank and EFTPS execute them.** It
+> generates the NACHA ACH file your own bank uploads, Form 941/940 worksheets with real line values,
+> and issuable W-2s — but it **transmits nothing**. No e-filing to the IRS or SSA, no EFTPS deposit
+> initiation, no check printing. No money moves through oshal and no third-party payroll provider is
+> involved, which is deliberate: an embedded provider would compute its own withholding and this
+> engine would become decorative.
 
 ## The daily loop
 
@@ -28,6 +31,29 @@ store repo ([ADR-085](../adr/085-remote-app-packages-and-registries.md)). **Desi
 5. **Approve & record.** This is the money action: it requires an explicit confirmation, stamps who
    approved it and when, and makes the run immutable.
 6. **Pay stubs** — printable per employee per run, showing the period components and year-to-date.
+
+## Paying people and filing
+
+**Pay & file** is where a computed run becomes money and paperwork.
+
+- **Direct deposit.** Pick a paid run and download the `.ach` file, then upload it to your bank's ACH
+  portal. Set your bank's routing number, your bank's name and your ACH company identifier (usually
+  `1` + your EIN) in Settings first — your bank assigns that identifier and it must match what they
+  have on file. Send a **prenote** first if they want accounts validated: it is the same file with
+  zero-dollar entries. Employees paid by check need no file.
+- **Form 941** (quarterly) and **Form 940** (annual FUTA) produce the numbered lines you transcribe
+  onto the return. Both carry a reconciliation: if the form's own arithmetic disagrees with the tax
+  actually withheld, it says so and by how much, because that gap means a wage base or threshold was
+  applied inconsistently somewhere.
+- **W-2.** Once the SSN, EIN and both addresses are on file, the W-2 is a real document rather than a
+  preview. Producing one is confirm-gated and recorded on the audit trail, because it decrypts the
+  SSN and the EIN. If identity is incomplete you get `issuable: false` and the exact list of what is
+  missing.
+
+The generated ACH file is deliberately strict — 94-character records, blocked to a multiple of ten,
+with an entry hash and control totals that must reconcile. Banks reject the whole file on any one of
+those, so it is checked before you ever see it; if something is wrong you get the specific problems
+rather than a file that fails at the bank.
 
 ## Correcting a mistake
 
@@ -98,11 +124,18 @@ payroll is *reporting*, and 2026 is the first mandatory year:
 
 ## Other known gaps
 
-No employee self-service (one login is the whole company), no 1099 contractors, no PTO or leave
-accrual, no garnishment limits under the CCPA disposable-earnings caps, no workers' compensation or
-employer benefit contributions, and no support for the pre-2020 Form W-4 allowances path.
+**Nothing transmits.** No e-filing to the IRS or SSA (the SSA's EFW2 electronic W-2 format is not
+generated), no EFTPS deposit initiation, no check printing, and no handling of ACH returns or
+notifications of change when your bank bounces an entry back.
+
+Also absent: employee self-service (one login is still the whole company), 1099 contractors, PTO and
+leave accrual, workers' compensation and employer benefit contributions, the pre-2020 Form W-4
+allowances path, and segregation of duties between whoever prepares a run and whoever approves it.
 Overpayment repayment spanning tax years is deliberately out of scope because it carries genuinely
-different tax treatment. These are tracked in [BACKLOG.md](../BACKLOG.md) with done-when criteria.
+different tax treatment — approximating it would be worse than refusing. Pay dates shift off
+weekends but not off bank holidays.
+
+All of these are tracked in [BACKLOG.md](../BACKLOG.md) with done-when criteria.
 
 ## Tests
 

@@ -11,6 +11,10 @@ the `?app=payroll` surface, and dependency-free `node --test` guards run as the 
 payroll system; v2 replaced the scalar-column check model with earnings/deduction ROWS, added
 per-workweek FLSA overtime, encrypted identity, and gross-up. One Consequence below is superseded.
 See [Update 2026-08-01](#update-2026-08-01--what-a-spec-review-found-and-what-v2-cost-the-design).
+**Amended 2026-08-01 (second)** — v2.1 added disbursement and filing ARTIFACTS (NACHA ACH file,
+Form 941/940 worksheets, issuable W-2) by producing rather than performing; the "does not move money
+or file anything / W-2 is a preview" Consequence is superseded.
+See [Update 2026-08-01 (second)](#update-2026-08-01-second--pay-and-file-without-becoming-a-money-transmitter).
 **Package:** `payroll/` in the oshal-applications store repo ([ADR-085](085-remote-app-packages-and-registries.md)).
 **Related:** [ADR-036](036-bot-owned-application-architecture.md) (why a deterministic app has no bot),
 [ADR-097](097-app-suites-primary-categorization.md) (`suite: ai-finance`),
@@ -176,3 +180,48 @@ done-when criteria in the backlog.
 `computeTaxes` the row model uses. Two tax implementations in one payroll system
 is precisely the thing that drifts, and the refactor was proven behaviour-
 preserving by the 62 pre-existing guards passing unchanged.
+
+## Update 2026-08-01 (second) — pay and file, without becoming a money transmitter
+
+v2.1 closes the two modules the spec review scored at ~0%: payments and filings. It does so by
+**producing artifacts rather than performing actions** — which is what let it happen at all.
+
+**The decision that shaped it.** The obvious path was to integrate an embedded payroll provider
+(Gusto Embedded, Check) so they move money and file returns. Investigating it produced two facts
+worth recording:
+
+- The **existing Gusto connector is read-only** — `GET /me`, `/companies/{id}/employees`,
+  `/companies/{id}/payrolls`, catalogued under "HR & recruiting." It reads Gusto's data and was never
+  a filing path. Any statement that "the Gusto connector already exists" as an argument for filings
+  is wrong.
+- More decisively: **an embedded provider computes its own withholding.** Delegating would make the
+  engine this ADR exists to justify decorative — we would become a UI over someone else's payroll.
+
+So the model is: oshal computes and produces; **the employer's own bank and EFTPS execute**. No money
+moves through oshal, no partner agreement is required, and the employer keeps the banking
+relationship they already have.
+
+7. **Disbursement is a generated NACHA file, not an API call.** `payroll-nacha.ts` emits the
+   fixed-width PPD credit file the employer uploads to their own bank. The format's rigidity is the
+   feature: 94-character records, blocking to a multiple of 10 with 9-fill, an entry hash that is the
+   *rightmost 10 digits* of the sum of receiving-DFI identifiers, and batch/file control totals that
+   must reconcile — a bank rejects the whole file on any one of them. The guards assert those
+   invariants and read the totals back **out of the control records**, so the test does not merely
+   agree with the builder's own arithmetic. Generating a file is confirm-gated and audited, because it
+   is the artifact that moves money even though we do not send it. A prenote mode emits zero-dollar
+   entries for account validation.
+
+8. **Filings are worksheets carrying real line numbers, and they reconcile.** `payroll-forms.ts`
+   produces Form 941 (5a = Social Security *wages* × the combined 12.4%, 5c Medicare × 2.9%, 5d the
+   additional 0.9% with no employer share) and Form 940 with the $7,000 FUTA base applied **per
+   employee**. Computing 5a from the tax withheld instead of from wages would hide an under-withholding
+   error; the worksheet therefore reconciles line 5e against the FICA actually withheld and reports
+   the drift rather than presenting a confident total.
+
+**This supersedes the Consequence** that read "The app records payroll; it does not move money or
+file anything… The W-2 output is explicitly a *preview*." The accurate statement is now: **oshal
+produces the ACH file, the 941/940 worksheets and issuable W-2s; it transmits nothing.** The W-2 is a
+document whose `issuable` state is computed from identity, not a permanent label. Nothing e-files to
+the IRS or SSA, there is no EFTPS deposit initiation, and there is no check printing — those remain
+out because they are the parts that would require either regulated status or a partner, and neither
+is needed for the employer to actually get paid and filed.
