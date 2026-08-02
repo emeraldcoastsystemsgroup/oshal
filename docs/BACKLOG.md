@@ -6427,3 +6427,66 @@ scope to be correct; each is a coverage or product gap.
   account; the old personal accounts are drained and closed or explicitly designated demo-only;
   the re-linking session is recorded and published; and Twilio A2P registration is completed on
   the ECSG account (which unblocks the SMS leg above).
+
+---
+
+## Found while deploying and drilling main — 2026-08-01
+
+These came out of an actual deploy + the ADR-119 container-kill drill, not a review. Each is
+recorded here rather than in a session thread because each will otherwise be re-discovered.
+
+### Swarm-wiring agentId collision: a0000000-...-049 claimed by two apps 🟥
+
+`validate-swarm-wiring` logs an ERROR on **every api boot**: agentId
+`a0000000-0000-0000-0000-000000000049` is declared under two different names —
+`intelligent-trades:trading-research-analyst` and `lora:lora-director`. This is the same shape
+K3 fixed for codex-packer (`...-030`), and it is the detector added by PR #85 doing its job on a
+collision nobody had noticed. Cost of leaving it: the two bots share an identity, so heartbeats,
+cost attribution (`chat_tasks`) and any per-agent authorization collapse into one row, and the
+recurring boot ERROR trains everyone to ignore boot errors.
+
+**Done when:** one of the two owns `...-049` and the other has its own id; a migration renames the
+existing DB rows (mirroring `100-agent-identity-canon.sql`); compose `AGENT_ID`, the persona YAML
+and both registry variants agree; the boot ERROR is gone; and
+`tests/unit/swarm-wiring-collision.spec.ts` covers this pair so it cannot regress.
+
+### The api can boot "healthy" with ZERO connector tools (ENOMEM) 🟥
+
+Observed live during the 2026-08-01 deploy: while the bot-recreate storm had memory tight, the api
+booted with `ENOMEM: not enough memory, scandir '/app/swarm-apps/connectors'` from BOTH
+`loadConnectorSpecs` and `loadWebhookEvents`. It then served traffic reporting **healthy** — and
+`/api/readiness` reported `ready:true` — with **no connector tools registered at all**. An api
+bounce fixed it once memory settled. A readiness probe that cannot see this is exactly the
+"liveness read as readiness" failure G9 was written to end.
+
+**Done when:** the connector-spec load failure is a first-class readiness leg (a box that
+registered zero connector specs is NOT ready, or is loudly degraded with the reason), the scandir
+is resilient to transient ENOMEM (retry/backoff rather than a one-shot readdirSync at boot), and a
+guard proves the readiness leg goes red when the load throws.
+
+### Dev-box disk reclamation (76 GB recoverable) 🟨 operator
+
+Measured 2026-08-01: **43 GB** reclaimable images (60% of 71.6 GB), **23 GB** reclaimable volumes,
+and a **10 GB** orphan database `oshal_restore_smoke_1784984720806` (created 2026-07-25T13:05Z,
+zero connections, not produced by any current script — the intelligent-sales restore test uses
+`oshal_restore_test` and self-drops). The swarm shares one VM disk with the build, and a full disk
+is how a build turns into a mid-flight failure.
+
+**Done when:** the orphan DB is dropped after a glance at what it holds, a scoped prune reclaims
+the dangling images/volumes (the existing ci-local prune is scoped — extend it rather than running
+a bare `docker system prune`), and the recovered figure is recorded so the next check has a
+baseline.
+
+### Doctrine: a guard that stubs the thing that breaks is not a guard 🟨
+
+The ADR-119 ladder shipped with 32 named, mutation-proven guards across four phases and still could
+not create a single ticket on a real box, because every one of them stubbed the ticket gateway. The
+same day, `resolveHarnessForAgent` was found to have returned `null` in EVERY spec (its aliased
+`require('@/...')` does not resolve under vitest) — silently untestable while looking covered. Both
+are the same failure: the seam under test was replaced by the thing that could not fail.
+
+**Done when:** the guard-per-fix rule in CLAUDE.md carries this corollary explicitly — for any fix
+whose failure mode is at an integration boundary (a DB write under RLS, a module resolution, a
+config the image reads), at least one guard must exercise the REAL boundary — and a sweep names the
+specs that currently stub their own subject (start with anything stubbing a ticket/store gateway or
+an aliased `require`).

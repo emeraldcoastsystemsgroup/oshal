@@ -111,9 +111,39 @@ These are already merged and take effect the moment the new image runs. They are
 
 ---
 
-## Cycle log — 2026-08-01
+## Cycle log — 2026-08-01 — EXECUTED
 
-The deploy-time proofs `main` is currently waiting on. Each links to the authoritative done-when text
+**This cycle ran.** `main` deployed (772740e, then a8ea1ef), 34/34 healthy, parity clean.
+Proven, not assumed: migrations 099x2/100/101/102/103 applied; `oshal_bot` verified
+NOSUPERUSER/NOBYPASSRLS; `oshal-verify.sh` PASS on every leg; `/api/readiness` ready:true;
+five store packages re-staged from the store's **origin/main** and reloaded (career-hunter
+1.6.0, dnd 0.19.0, game-show 0.10.0, hello-oshal 1.1.0, switchboard 0.3.0) with
+`app-store-drift-check.sh` clean afterwards; and the ADR-119 P4 container-kill drill PASSED
+(see ADR-119 "What the drill found" — it exposed three breaks that had shipped green).
+
+Four things this cycle taught, which apply to every future one:
+
+- **The first attempt failed the BUILD, and the stack was untouched — as designed.** The image
+  typechecks `tsconfig.server.json`; every gate ran `tsconfig.json`. `npm run typecheck` now
+  runs BOTH (PR #98), so this cannot recur silently. A lane reporting "typecheck clean" from an
+  older checkout is telling you only half the truth.
+- **A private-index commit never writes to disk.** After a run of agent lanes the working tree
+  can be many commits behind what is merged - and the bind-mounted surfaces (`src/api`,
+  `src/pages`, personas, `ops/monitoring`, `swarm-apps`) are served FROM THE TREE, so a
+  freshly deployed box can still serve stale UI. Re-sync the tree, not just the branch.
+- **Env in `.env` that compose does not forward is silently absent in-container.** Third
+  occurrence (TELEGRAM_*/TWILIO_*, then `ALERT_WEBHOOK_TOKEN`). Verify inside the container
+  (`docker exec ... 'echo ${#VAR}'`), never in `.env` alone.
+- **A "healthy" api can be a degraded api.** When memory is tight during the bot-recreate
+  storm the api boots with `ENOMEM: scandir '/app/swarm-apps/connectors'` and serves with ZERO
+  connector tools registered. Health and readiness both say ok. A bounce fixes it - check the
+  boot log for ENOMEM after any deploy.
+
+Monitoring specifics for this box: Prometheus's default 9090 is held by `oshal-headscale`, so
+the overlay needs `PROMETHEUS_PORT=9091`; and `docker compose up -d` does **not** reload a
+bind-mounted config - use `scripts/monitoring-up.sh`, which SIGHUPs prometheus + alertmanager.
+
+The original deploy-time proofs this cycle was waiting on. Each links to the authoritative done-when text
 in [../BACKLOG.md](../BACKLOG.md) — read it there rather than trusting this summary, and stamp it
 there when the proof is done.
 

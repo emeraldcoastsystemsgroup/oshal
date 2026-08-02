@@ -7,9 +7,13 @@ itself — landed 2026-08-01: A1 via `intake: auto` on the four container-health
 (analysis-only, per-rule, removable), A2 as the bounded auto-apply engine
 (`src/features/alert-triage/services/auto-apply.ts` behind `SELF_HEAL_AUTO_APPLY`, default
 false) with every bound below implemented and guard-named in
-`tests/unit/alert-triage-autonomy.spec.ts`. The BACKLOG P4 entry carries the remaining
-done-when half: the live container-kill drill on a deployed stack (the operator's
-deploy-time proof). A3 remains not granted.
+`tests/unit/alert-triage-autonomy.spec.ts`. The live container-kill drill — P4's remaining
+done-when half — RAN on the deployed stack 2026-08-01 and PASSED: stopping
+`oshal-local-research-bot` produced one ticket (`34e1a1c8-b31b-469c-910c-53112a6f7f99`,
+`owner_sub=alert:prometheus`, urgent) that reached `customer_action` with the action gated,
+and FR-E4 marked its members resolved when the container returned. Getting there needed two
+fixes the unit guards could not have caught, both live-found and shipped as PRs #99/#100 —
+see "What the drill found" below. A3 remains not granted.
 
 ## Context
 
@@ -106,3 +110,29 @@ Every level change is configuration, observable on the ticket surface, and ships
   default-off kill switch are part of the decision, not tuning left for later.
 - Deliberate friction remains: fresh deployments observe (A0) until the operator opts rules in.
   That is the automation directive applied, and it is not to be optimized away.
+
+## What the drill found (2026-08-01)
+
+Every P1-P4 guard was green and the ladder still could not work on a real box. Three
+independent breaks, none of which a stubbed test can see:
+
+1. **The intake could not write a ticket.** A real, authenticated Alertmanager POST
+   consolidated and then died on `new row violates row-level security policy for table
+   "tickets"` — the machine-write identity class. The specs all stub the ticket gateway,
+   which is precisely why it shipped. Fixed by stamping a machine identity
+   (`ALERT_INTAKE_OWNER_SUB = 'alert:prometheus'`, `isOperator:false`) on both the connection
+   and the row, following the `a2a:<agentId>` precedent — which hit the identical defect in
+   July. Guarded by a REAL insert against a REAL RLS-enforcing table
+   (`tests/alert-intake-rls-live.spec.ts`), not a stub.
+2. **The rules watched nothing.** cAdvisor emits zero series for any oshal container on
+   Docker Desktop 29's containerd image store, so `name=~"oshal-local-.+"` never matched:
+   `absent()` fired permanently, making `SwarmContainerDown` a standing false alarm with no
+   target. Both runtimes now expose `/metrics` and each container is its own scrape target.
+3. **`ALERT_WEBHOOK_TOKEN` was never forwarded into the api by compose.** The receiver is
+   fail-closed, so the entire ladder was unreachable while merely looking quiet.
+
+A fourth was caught by re-running the drill against the fix itself: a jittery start-time gauge
+made the restart-loop rule count scrapes, pushing all 34 bots into a pending restart-loop.
+**P3's budget gate contained it** — all 32 false tickets parked in backlog at zero analyst
+spend, which is the ladder's cost bound doing exactly its job.
+
