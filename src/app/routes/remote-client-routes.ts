@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Worker-plane auth hardening (docs/backlog/hardening.md #7, backward compatible — enrolled shared-secret nodes keep working): (1) the swarm-wide shared-secret compare is now constant-time via timingSafeSecretEquals (sha256-digest both sides + crypto.timingSafeEqual) — `===` was a timing oracle on a public origin; (2) a router-LOCAL, flag-gated (OSHAL_RATE_LIMIT_REMOTE_CLIENTS, default OFF = no-op) rate limiter mounts ahead of auth, keyed PER CALLER on the /:clientId path segment (never per shared IP — behind cloudflared/NAT an IP key pools the fleet into one bucket) — closes the operator-action-queue rate-limit item without touching over-cap server.ts; (3) the shared-secret branch is formally DEPRECATED in favour of per-node tokens (`Bearer oshal_pat_…` → the upstream cli-token middleware authenticates the node's OWNER; the session branch + requireDeviceAccess then bind it to its own devices — issue = POST /api/join/enroll or POST /api/cli-tokens, verify = createCliTokenAuthMiddleware): the branch now warns once per boot and stamps x-oshal-shared-secret-deprecated on its responses so re-enrollment progress is observable. Guard: tests/unit/remote-client-auth.spec.ts (worker plane proven on a node token with NO shared secret configured).
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | SHARED SECRET RETIREMENT (docs/backlog/hardening.md #7). Three legs. (a) FAIL-CLOSED SWITCH: REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true refuses the swarm-wide-secret branch outright (401 code shared_secret_retired) so a deployment can prove no node still depends on it; default false keeps field nodes working, and the branch stays loudly deprecated either way. (b) PER-NODE BINDING ENFORCEMENT: a node-bound token (cli-token-routes node_client_id) is already confined to its own /:clientId plane by the auth middleware, but POST /register carries the device identity in the BODY - handleRegisterClient now refuses a body clientId that is not the presented token's, so a device credential cannot enrol, and take delivery of work for, a sibling machine. (c) ROTATION SURFACE: POST /:clientId/token/rotate mints the successor credential and revokes every prior generation in one call (owner-or-operator session, or the node presenting its own current token). Guard: tests/unit/remote-client-node-token.spec.ts.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Rate-limiter keying fix (adversarial review): the per-clientId limiter mounted BEFORE auth let an unauthenticated flood mint a fresh bucket per fabricated clientId (bypass) and let a known clientId be 429-starved by anonymous traffic. Moved it AFTER authorizeRemoteClient — the clientId is now proven and unauthenticated floods are rejected before touching a legit node's bucket (the global 1000/min/IP limiter bounds those).
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | The per-caller limiter was BUILT but INERT: makeLimiter('remote_clients', …) returns a pass-through unless OSHAL_RATE_LIMIT_REMOTE_CLIENTS is explicitly on, and that flag is set in no compose file, no .env.example and no running container — the live api's boot log carried exactly one 'rate-limit preset enabled' line (limiter=internal). Swapped to createRemoteClientRateLimiter(), which keeps the same key/window/cap and the same env var but defaults ON, so this deliberately-outside-requiresAuth worker plane is bounded per caller on every deployment instead of only where an operator remembered a flag. Guard: tests/unit/remote-client-rate-limit.spec.ts.
  */
 
 import { randomUUID } from 'crypto';
@@ -44,9 +45,8 @@ import {
   type MeshEnvelope,
   type MeshSubscription,
 } from '@/features/agent-management';
-// Deep import mirrors the sanctioned server.ts precedent for the hardening presets module.
-import { makeLimiter } from '@/features/security';
 import {
+  createRemoteClientRateLimiter,
   sharedSecretRetired,
   nodeTokenBindingMatches,
   RemoteClientClaimResponseSchema,
@@ -60,7 +60,6 @@ import {
   RemoteClientChatAcceptResponseSchema,
   RemoteClientNotFoundError,
   canUseDevice,
-  remoteClientRateLimitKey,
   runRemoteChatTurn,
   timingSafeSecretEquals,
   type RemoteChatOrchestrator,
@@ -168,9 +167,11 @@ export function createRemoteClientRoutes(options: RemoteClientRouteOptions = {})
   }
 
   router.use(authorizeRemoteClient);
-  // Router-local per-caller rate limit (operator-action-queue 2026-07-18). Flag-gated
-  // (OSHAL_RATE_LIMIT_REMOTE_CLIENTS, default OFF = pass-through no-op) per the hardening
-  // preset pattern; tune via OSHAL_RATE_LIMIT_REMOTE_CLIENTS_MAX / _WINDOW_MS. Keyed on the
+  // Router-local per-caller rate limit (operator-action-queue 2026-07-18). ON by default —
+  // it used to ride the flag-gated hardening preset, which defaults OFF and whose flag no
+  // deployment ever set, so the control shipped inert; see remote-client-rate-limit.ts for
+  // why this router's limit is required rather than opt-in. Disable with
+  // OSHAL_RATE_LIMIT_REMOTE_CLIENTS=off; tune via ..._MAX / ..._WINDOW_MS. Keyed on the
   // /:clientId path segment — a node polls ~35 req/min (2.5s task poll + 10s heartbeat), so
   // the 300/min default leaves ~8x headroom while still bounding a runaway or abusive caller.
   // Mounted AFTER authorizeRemoteClient (2026-07-24 adversarial review): keying on the
@@ -178,14 +179,7 @@ export function createRemoteClientRoutes(options: RemoteClientRouteOptions = {})
   // bucket per fabricated id (bypass) and let a known clientId be 429-starved by anonymous
   // traffic. Post-auth the clientId is proven and unauthenticated floods are rejected before
   // they can touch a legit node's bucket; the global server limiter (1000/min/IP) bounds those.
-  router.use(
-    makeLimiter('remote_clients', {
-      windowMs: 60_000,
-      max: 300,
-      keyGenerator: remoteClientRateLimitKey,
-      message: { error: 'remote-client rate limit exceeded; slow down' },
-    }),
-  );
+  router.use(createRemoteClientRateLimiter());
   router.post('/register', (req, res) => void handleRegisterClient(req, res, context));
   router.get('/', handleListClients);
   router.get('/:clientId', handleGetClient);
