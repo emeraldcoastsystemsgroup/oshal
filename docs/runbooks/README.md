@@ -15,6 +15,10 @@ OSHAL pipelines and surfaces. One file per procedure.
   public-hostname entries).
 - [self-healing-monitoring.md](./self-healing-monitoring.md) — Prometheus → Alertmanager → RCA
   self-healing pipeline: intake route, approval gate, and container actions.
+- [operations-stream.md](./operations-stream.md) — the event-to-action pipeline: where an alert
+  stopped (every stage writes a row, so it is a query not a log trawl), the symptom→cause table,
+  topology hub collapse and the `traverse_via` vs `transit_allowed` distinction, claim-rule save
+  validation, and replay.
 - [market-remediation.md](./market-remediation.md) — market remediation runbook (competitive
   scoreboard gap closure).
 - [security-incident-bot-injection.md](./security-incident-bot-injection.md) — detection →
