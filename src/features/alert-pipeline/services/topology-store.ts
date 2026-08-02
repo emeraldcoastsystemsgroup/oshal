@@ -42,7 +42,17 @@ export const TOPOLOGY_TRAVERSAL_VERSION = 'postgres-cte/1';
 const MAX_BIND_PARAMS = 60000;
 
 /** Column order and per-column casts for a node tuple; the cast makes the parameter type explicit. */
-const NODE_CASTS = ['text', 'text', 'text[]', 'text[]', 'text', 'jsonb', 'text', 'text'] as const;
+const NODE_CASTS = [
+  'text',
+  'text',
+  'text[]',
+  'text[]',
+  'boolean',
+  'text',
+  'jsonb',
+  'text',
+  'text',
+] as const;
 
 /** Column order and per-column casts for an edge tuple. */
 const EDGE_CASTS = ['text', 'text', 'text', 'boolean', 'jsonb', 'text', 'text'] as const;
@@ -109,6 +119,13 @@ export interface StaticTopologyEntry {
   kinds?: string[];
   /** Hub gate for this node; omit or pass null to leave the node freely traversable. */
   traverseVia?: string[] | null;
+  /**
+   * Pass false to mark this node a hub: still reachable and still reported at its true hop
+   * count, but the walk stops there. Set it on a shared dependency — a control plane, a message
+   * bus, a shared datastore — that would otherwise bridge every peer depending on it into one
+   * component. Defaults to true.
+   */
+  transitAllowed?: boolean;
   props?: Record<string, unknown>;
   /** Keys this node depends on. Referenced keys are materialized as nodes if not declared. */
   dependsOn?: string[];
@@ -124,6 +141,7 @@ interface TopologyNodeDbRow {
   display_name: string | null;
   kinds: string[] | null;
   traverse_via: string[] | null;
+  transit_allowed: boolean;
   status: string;
   props: Record<string, unknown> | null;
   loader_tag: string;
@@ -142,7 +160,7 @@ interface TopologyEdgeDbRow {
 }
 
 const NODE_SELECT =
-  'node_key, display_name, kinds, traverse_via, status, props, loader_tag, loader_scope';
+  'node_key, display_name, kinds, traverse_via, transit_allowed, status, props, loader_tag, loader_scope';
 const EDGE_SELECT =
   'src_key, dst_key, edge_type, direction_certified, attrs, loader_tag, loader_scope';
 
@@ -171,6 +189,14 @@ const TRAVERSAL_SQL = `
     UNION ALL
     SELECT nx.node_key, w.hops + 1, w.path || nx.node_key
       FROM walk w
+      -- The node we are expanding FROM must permit transit. A hub marked
+      -- transit_allowed = false still appears in the result at its true hop count
+      -- (it was reached on the previous iteration) but the walk stops there, so a
+      -- shared dependency does not bridge every peer that depends on it into one
+      -- component. The seed row is exempt: a traversal must always leave its seed.
+      JOIN oshal_topology_node cur
+        ON cur.node_key = w.node_key
+       AND (w.hops = 0 OR cur.transit_allowed)
       JOIN oshal_topology_edge e
         ON e.src_key = w.node_key OR e.dst_key = w.node_key
       JOIN oshal_topology_node nx
@@ -252,6 +278,7 @@ function mapNodeRow(row: TopologyNodeDbRow): TopologyNodeRow {
     displayName: row.display_name,
     kinds: row.kinds ?? [],
     traverseVia: row.traverse_via,
+    transitAllowed: row.transit_allowed,
     status: row.status === 'decommissioned' ? 'decommissioned' : 'active',
     props: row.props ?? {},
     loaderTag: row.loader_tag as TopologyLoader,
@@ -277,28 +304,38 @@ function mapEdgeRow(row: TopologyEdgeDbRow): TopologyEdgeRow {
 }
 
 /**
- * @description True when the two reachable sets share at least one node. Iterates the smaller set,
- * so a hub-heavy seed does not make the pairwise pass quadratic in the larger set's size.
+ * @description True when the two reachable sets share at least one node that is permitted to
+ * bridge them. Iterates the smaller set, so a hub-heavy seed does not make the pairwise pass
+ * quadratic in the larger set's size.
  * @param a First reachable set.
  * @param b Second reachable set.
- * @returns Whether the sets intersect.
+ * @param bridgeable Nodes allowed to act as a bridge; a shared node outside this set is ignored.
+ * @returns Whether the sets intersect at a bridging node.
  */
-function intersects(a: Set<string>, b: Set<string>): boolean {
+function intersectsWithin(a: Set<string>, b: Set<string>, bridgeable: Set<string>): boolean {
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
-  for (const key of small) if (large.has(key)) return true;
+  for (const key of small) if (large.has(key) && bridgeable.has(key)) return true;
   return false;
 }
 
 /**
  * @description Partitions seeds into connected components by union-find over their reachable sets.
- * Two seeds join when their reachable sets intersect OR one seed reaches the other directly — the
- * second clause matters because a seed absent from the mirror has only itself in its set and would
- * otherwise never merge with a live neighbour that names it.
+ * Two seeds join when one seed reaches the other directly, or when their reachable sets intersect
+ * at a node that PERMITS TRANSIT. The direct-reach clause matters because a seed absent from the
+ * mirror has only itself in its set and would otherwise never merge with a live neighbour that
+ * names it. The transit restriction on the intersection clause matters because a shared hub is
+ * reachable from every peer that depends on it, and counting that as a bridge would rebuild the
+ * whole-estate component the traversal's own gating just prevented.
  * @param seeds Distinct seed keys, in caller order.
  * @param reach Reachable node set per seed.
+ * @param bridgeable Traversed nodes that permit transit; only these can join two seeds.
  * @returns Components, each sorted, ordered by their first member so output is deterministic.
  */
-function partitionSeeds(seeds: string[], reach: Map<string, Set<string>>): string[][] {
+function partitionSeeds(
+  seeds: string[],
+  reach: Map<string, Set<string>>,
+  bridgeable: Set<string>,
+): string[][] {
   const parent = new Map<string, string>(seeds.map((seed) => [seed, seed]));
   const find = (key: string): string => {
     let root = key;
@@ -316,7 +353,7 @@ function partitionSeeds(seeds: string[], reach: Map<string, Set<string>>): strin
       const b = seeds[j];
       const setA = reach.get(a) ?? new Set<string>();
       const setB = reach.get(b) ?? new Set<string>();
-      if (!setA.has(b) && !setB.has(a) && !intersects(setA, setB)) continue;
+      if (!setA.has(b) && !setB.has(a) && !intersectsWithin(setA, setB, bridgeable)) continue;
       const rootA = find(a);
       const rootB = find(b);
       if (rootA !== rootB) parent.set(rootA, rootB);
@@ -371,6 +408,7 @@ export class TopologyStore {
             node.displayName ?? null,
             node.kinds ?? [],
             node.traverseVia ?? null,
+            node.transitAllowed ?? true,
             node.status ?? 'active',
             JSON.stringify(node.props ?? {}),
             node.loaderTag,
@@ -379,13 +417,14 @@ export class TopologyStore {
         }
         const result = await this.pool.query(
           `INSERT INTO oshal_topology_node
-             (node_key, display_name, kinds, traverse_via, status, props,
+             (node_key, display_name, kinds, traverse_via, transit_allowed, status, props,
               loader_tag, loader_scope, refreshed_at, last_seen_at)
            SELECT v.*, now(), now() FROM (VALUES ${renderTuples(batch.length, NODE_CASTS)}) AS v
            ON CONFLICT (node_key) DO UPDATE SET
-             display_name = EXCLUDED.display_name,
-             kinds        = EXCLUDED.kinds,
-             traverse_via = EXCLUDED.traverse_via,
+             display_name    = EXCLUDED.display_name,
+             kinds           = EXCLUDED.kinds,
+             traverse_via    = EXCLUDED.traverse_via,
+             transit_allowed = EXCLUDED.transit_allowed,
              status       = EXCLUDED.status,
              props        = EXCLUDED.props,
              loader_tag   = EXCLUDED.loader_tag,
@@ -685,8 +724,15 @@ export class TopologyStore {
       reach.set(seed, reachable);
       for (const key of reachable) traversed.add(key);
     }
-    const components = partitionSeeds(unique, reach);
     const subgraph = await this.loadSubgraph(Array.from(traversed), unique, depth);
+    // Only a node the walk may CONTINUE through counts as evidence that two seeds share an
+    // incident. Two peers that both depend on a marked hub each reach it, but neither reaches
+    // the other — treating that shared hub as a bridge is exactly the collapse transit gating
+    // exists to prevent, and it would reappear here even though the traversal itself stopped.
+    const bridgeable = new Set(
+      subgraph.nodes.filter((node) => node.transitAllowed).map((node) => node.nodeKey),
+    );
+    const components = partitionSeeds(unique, reach, bridgeable);
     logger.info(
       { seeds: unique.length, depth, components: components.length, nodes: subgraph.nodes.length },
       'topology correlation complete',
@@ -748,6 +794,7 @@ export class TopologyStore {
         displayName: entry.displayName ?? null,
         kinds: entry.kinds ?? [],
         traverseVia: entry.traverseVia ?? null,
+        transitAllowed: entry.transitAllowed ?? true,
         status: 'active',
         props: entry.props ?? {},
         loaderTag: 'compose',
@@ -760,6 +807,7 @@ export class TopologyStore {
             displayName: null,
             kinds: [],
             traverseVia: null,
+            transitAllowed: true,
             status: 'active',
             props: {},
             loaderTag: 'compose',

@@ -1,0 +1,1496 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pipeline Admin — Operations Stream</title>
+<!-- Framework theme tokens + the bootstrap that follows the operator's theme live. Theme files
+     scope to [data-theme="…"] with no bare :root fallback, so the default on <html> above is what
+     gives this surface any colour at all. Host tokens are read-only here; every rule below either
+     consumes one or defines a surface-local token in :root. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);            /* translucent by design — never used as an opaque cover */
+    --solid: var(--bg-secondary);       /* opaque: sticky headers and the tab bar sit on this */
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --dim: var(--text-secondary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5e8fff);
+    --ok: var(--status-success, #34c759);
+    --warn: var(--status-warning, #ff9f0a);
+    --danger: var(--status-error, #ff453a);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden;
+    font: 14.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .page { max-width: 1240px; margin: 0 auto; padding: 24px 20px 90px; }
+
+  /* ── Header ─────────────────────────────────────────────────────────────── */
+  .hero { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hero h1 { font-size: 24px; margin: 0; }
+  .sub { color: var(--dim); font-size: 13.5px; margin: 8px 0 18px; max-width: 820px; line-height: 1.6; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; padding: 4px 9px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--muted); }
+  .badge.ok { color: var(--ok); border-color: rgba(52,199,89,.45); background: rgba(52,199,89,.12); }
+  .badge.warn { color: var(--warn); border-color: rgba(255,159,10,.45); background: rgba(255,159,10,.12); }
+  .badge.bad { color: var(--danger); border-color: rgba(255,69,58,.45); background: rgba(255,69,58,.12); }
+  .badge.acc { color: var(--accent); border-color: rgba(94,143,255,.45); background: rgba(94,143,255,.12); }
+
+  /* ── Tabs ───────────────────────────────────────────────────────────────── */
+  .tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; flex-wrap: wrap;
+    background: var(--bg); padding: 8px 0 10px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+  .tabs button { border: 1px solid var(--line); background: var(--panel2); color: var(--dim);
+    border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer; }
+  .tabs button:hover { border-color: var(--accent); color: var(--text); }
+  .tabs button[aria-selected="true"] { background: var(--accent); border-color: transparent; color: #04122e; font-weight: 600; }
+
+  /* ── Cards ──────────────────────────────────────────────────────────────── */
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px 18px; margin-bottom: 16px; }
+  .card > h2 { font-size: 14.5px; margin: 0 0 4px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .card > h2 .spacer { margin-left: auto; }
+  .note { color: var(--muted); font-size: 12.5px; line-height: 1.6; margin: 6px 0 12px; }
+  .note b, .note strong { color: var(--dim); }
+  .callout { border: 1px solid rgba(255,159,10,.4); background: rgba(255,159,10,.08);
+    color: var(--dim); border-radius: 10px; padding: 10px 12px; font-size: 12.8px; line-height: 1.6; margin: 10px 0; }
+  .callout.bad { border-color: rgba(255,69,58,.45); background: rgba(255,69,58,.08); }
+  .callout.ok { border-color: rgba(52,199,89,.4); background: rgba(52,199,89,.08); }
+  .hidden { display: none !important; }
+
+  /* ── Controls ───────────────────────────────────────────────────────────── */
+  label.fld { display: block; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin: 10px 0 4px; }
+  input, select, textarea { width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  textarea { font-family: ui-monospace, Consolas, monospace; font-size: 12px; resize: vertical; min-height: 74px; }
+  input[type=checkbox] { width: auto; }
+  .btn { border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+    border-radius: 9px; padding: 8px 15px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #04122e; }
+  .btn.warn { background: rgba(255,69,58,.14); border-color: rgba(255,69,58,.45); color: var(--danger); }
+  .btn.sm { padding: 5px 10px; font-size: 12px; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btns { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .inline > div { flex: 1 1 190px; min-width: 0; }
+  .inline > div.narrow { flex: 0 1 140px; }
+
+  /* ── Tables ─────────────────────────────────────────────────────────────── */
+  .scroller { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { position: sticky; top: 0; background: var(--solid); color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .05em; font-weight: 700; white-space: nowrap; z-index: 1; }
+  thead th.sortable { cursor: pointer; user-select: none; }
+  thead th.sortable:hover { color: var(--text); }
+  tbody tr:hover { background: rgba(127,127,127,.06); }
+  td.mono, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); font-size: 13px; padding: 18px 4px; }
+
+  /* ── Rule editor ────────────────────────────────────────────────────────── */
+  .rules th, .rules td { vertical-align: top; }
+  .rules td { min-width: 96px; }
+  .rules td.wide { min-width: 240px; }
+  .rules input, .rules select, .rules textarea { font-size: 12.5px; padding: 6px 8px; }
+  .rules textarea { min-height: 66px; }
+  .seg { display: flex; gap: 4px; }
+  .seg label { flex: 1; text-align: center; border: 1px solid var(--line); background: var(--panel2);
+    border-radius: 7px; padding: 5px 4px; font-size: 11px; cursor: pointer; color: var(--muted); white-space: nowrap; }
+  .seg label.on { border-color: var(--accent); color: var(--text); background: rgba(94,143,255,.16); font-weight: 700; }
+  .seg label.on[data-lvl="A2"] { border-color: rgba(255,159,10,.6); background: rgba(255,159,10,.15); color: var(--warn); }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .ferr { color: var(--danger); font-size: 11.5px; margin-top: 4px; line-height: 1.45; }
+  .rowerr { color: var(--danger); font-size: 12px; }
+  tr.hasError td { background: rgba(255,69,58,.06); }
+
+  /* ── Bars / meters ──────────────────────────────────────────────────────── */
+  .bar { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; min-width: 60px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  .bar.hot > i { background: var(--danger); }
+  .bar.mid > i { background: var(--warn); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 9px; margin-top: 10px; }
+  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; background: var(--panel2); }
+  .tile .v { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 2px; }
+  .tile.zero .v { color: var(--muted); }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+
+  /* ── Key preview readout ────────────────────────────────────────────────── */
+  .keyout { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .keyout .box { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; background: var(--panel2); }
+  .keyout .box .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .keyout .box .val { font-family: ui-monospace, Consolas, monospace; font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; }
+
+  pre.raw { margin: 10px 0 0; background: var(--panel2); border: 1px solid var(--line); border-radius: 9px;
+    padding: 10px 12px; font-size: 11.5px; font-family: ui-monospace, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; color: var(--dim); }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+  .gate { text-align: center; padding: 42px 22px; }
+  .gate .lock { font-size: 34px; }
+  .gate h2 { justify-content: center; font-size: 17px; margin-top: 10px; }
+  .gate .note { max-width: 620px; margin: 10px auto 0; }
+
+  /* ── Responsive ─────────────────────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .page { padding: 16px 13px 70px; }
+    .keyout { grid-template-columns: 1fr; }
+    .stack thead { display: none; }
+    .stack, .stack tbody, .stack tr, .stack td { display: block; width: 100%; }
+    .stack tr { border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px; margin-bottom: 12px; }
+    .stack td { display: grid; grid-template-columns: 118px 1fr; gap: 10px; align-items: start;
+      border-bottom: 1px solid var(--line); padding: 7px 2px; }
+    .stack tr td:last-child { border-bottom: none; }
+    .stack td::before { content: attr(data-label); color: var(--muted); font-size: 10.5px;
+      text-transform: uppercase; letter-spacing: .05em; padding-top: 7px; }
+    input, select, textarea { font-size: 16px; }  /* no iOS zoom-on-focus */
+  }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="page">
+
+  <div class="hero">
+    <h1>Pipeline Admin</h1>
+    <span class="badge acc" id="accessBadge">checking access</span>
+  </div>
+  <p class="sub">
+    The control surface for the Operations Stream: which alerts this pipeline claims, what identity
+    it gives them, what the estate topology says depends on what, what nothing wanted, and what each
+    knob is actually set to. Every route behind this screen is operator-gated on the server.
+  </p>
+
+  <!-- Access gate: rendered instead of the console when the server answers 403 (or the session is gone). -->
+  <section id="gate" class="card gate hidden">
+    <div class="lock">🔒</div>
+    <h2 id="gateTitle">Operator access required</h2>
+    <div class="note" id="gateBody"></div>
+    <div class="btns" style="justify-content:center;">
+      <a class="btn" id="gateAction" href="/login">Sign in</a>
+    </div>
+  </section>
+
+  <div id="console" class="hidden">
+    <nav class="tabs" role="tablist" id="tabs">
+      <button role="tab" data-panel="rules" aria-selected="true">Claim rules</button>
+      <button role="tab" data-panel="test" aria-selected="false">Rule test</button>
+      <button role="tab" data-panel="key" aria-selected="false">Dedup key preview</button>
+      <button role="tab" data-panel="topology" aria-selected="false">Topology</button>
+      <button role="tab" data-panel="drops" aria-selected="false">Drop counters</button>
+      <button role="tab" data-panel="replay" aria-selected="false">Replay</button>
+      <button role="tab" data-panel="config" aria-selected="false">Config</button>
+    </nav>
+
+    <!-- ══ 1. CLAIM RULES ══════════════════════════════════════════════════ -->
+    <section class="panel" id="panel-rules">
+      <div class="card">
+        <h2>Claim rules <span class="badge" id="rulesCount">—</span>
+          <span class="spacer"></span>
+          <button class="btn sm" id="rulesReload" type="button">Reload</button>
+        </h2>
+        <div class="note">
+          The set is saved whole. Saving upserts every rule below and deletes every rule the server
+          holds that is not in it, in one transaction — so removing a row here removes the rule.
+          <b>Autonomy is the switch:</b> <b>A0</b> parks the incident for a human, <b>A1</b> writes the
+          root cause and the remediation plan and stops, <b>A2</b> applies that plan.
+        </div>
+        <div class="callout" id="emptyRulesNote" hidden>
+          <b>The rule set is empty, which means unconfigured — not closed.</b> With no rules registered
+          the pipeline has nothing to filter on and accepts everything that arrives. Add at least one
+          rule to make claiming a decision rather than a default.
+        </div>
+        <div id="rulesSaveResult"></div>
+        <div class="scroller">
+          <table class="rules stack" id="rulesTable">
+            <thead><tr>
+              <th>On</th><th>Rule id</th><th>Priority</th><th>Match predicate</th>
+              <th>Identity fields</th><th>Intake</th><th>Autonomy</th>
+              <th>Dedup TTL s</th><th>Reopen s</th><th>Corr. depth</th><th>Root filter</th>
+              <th>Notes</th><th></th>
+            </tr></thead>
+            <tbody id="rulesBody"></tbody>
+          </table>
+        </div>
+        <div id="rulesEmpty" class="empty hidden">No claim rules are registered.</div>
+        <div class="btns">
+          <button class="btn" id="ruleAdd" type="button">Add rule</button>
+          <button class="btn primary" id="rulesSave" type="button">Save rule set</button>
+          <span class="note" style="margin:0;" id="rulesDirty"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 2. RULE TEST ════════════════════════════════════════════════════ -->
+    <section class="panel hidden" id="panel-test">
+      <div class="card">
+        <h2>Rule test</h2>
+        <div class="note">
+          Run a real event, or a label set you type, through the registered rules. Exactly one rule
+          must claim it: none means the event falls through as unclaimed, more than one means the
+          claim depends on priority ordering rather than on intent.
+        </div>
+        <div class="inline">
+          <div>
+            <label class="fld" for="testIncident">Incident (source of recent events)</label>
+            <select id="testIncident"><option value="">Load incidents…</option></select>
+          </div>
+          <div>
+            <label class="fld" for="testEvent">Event</label>
+            <select id="testEvent"><option value="">Pick an incident first</option></select>
+          </div>
+          <div class="narrow">
+            <button class="btn" id="testLoadIncidents" type="button">Load incidents</button>
+          </div>
+        </div>
+        <label class="fld" for="testLabels">Or a label set (JSON) — used when no event is selected</label>
+        <textarea id="testLabels" spellcheck="false" placeholder='{"alertname":"TargetDown","instance":"oshal-local-db:5432","severity":"critical"}'></textarea>
+        <div class="btns">
+          <button class="btn primary" id="testRun" type="button">Run test</button>
+          <button class="btn" id="testToKey" type="button">Send these labels to key preview</button>
+        </div>
+        <div id="testResult"></div>
+      </div>
+    </section>
+
+    <!-- ══ 3. DEDUP KEY PREVIEW ════════════════════════════════════════════ -->
+    <section class="panel hidden" id="panel-key">
+      <div class="card">
+        <h2>Dedup key preview <span class="badge" id="keyState">idle</span></h2>
+        <div class="note">
+          The identity decides what counts as the same problem. Edit the labels or the identity
+          fields and the key re-renders against the server as you type, alongside how that identity
+          has actually behaved in the dispatch log. <b>A high suppression ratio means the identity is
+          too coarse</b> — distinct problems are collapsing onto one key and the surplus is being
+          swallowed as duplicates.
+        </div>
+        <div class="inline">
+          <div>
+            <label class="fld" for="keyFields">Identity fields (comma separated — blank uses the pipeline default)</label>
+            <input id="keyFields" spellcheck="false" placeholder="target, alertname" />
+          </div>
+        </div>
+        <label class="fld" for="keyLabels">Labels (JSON)</label>
+        <textarea id="keyLabels" spellcheck="false" placeholder='{"alertname":"TargetDown","instance":"oshal-local-db:5432","severity":"critical"}'></textarea>
+        <div id="keyError"></div>
+        <div class="keyout hidden" id="keyOut">
+          <div class="box"><div class="lbl">Identity source</div><div class="val" id="keySource">—</div></div>
+          <div class="box"><div class="lbl">Dedup key</div><div class="val" id="keyKey">—</div></div>
+        </div>
+        <div id="keySuppression"></div>
+      </div>
+      <div class="card">
+        <h2>Identities previewed this session <span class="badge" id="keyListCount">0</span></h2>
+        <div class="note">Every key you have previewed, with its measured suppression. Sort on the ratio to bring the coarsest identities to the top.</div>
+        <div class="scroller">
+          <table id="keyListTable">
+            <thead><tr>
+              <th class="sortable" data-sort="dedupKey">Dedup key</th>
+              <th class="sortable" data-sort="identitySource">Identity source</th>
+              <th class="sortable num" data-sort="attempts">Attempts</th>
+              <th class="sortable num" data-sort="suppressed">Suppressed</th>
+              <th class="sortable num" data-sort="delivered">Delivered</th>
+              <th class="sortable num" data-sort="failed">Failed</th>
+              <th class="sortable" data-sort="ratio">Suppression ratio</th>
+            </tr></thead>
+            <tbody id="keyListBody"></tbody>
+          </table>
+        </div>
+        <div id="keyListEmpty" class="empty">Nothing previewed yet.</div>
+      </div>
+    </section>
+
+    <!-- ══ 4. TOPOLOGY ═════════════════════════════════════════════════════ -->
+    <section class="panel hidden" id="panel-topology">
+      <div class="card">
+        <h2>Topology <span class="badge" id="topoCount">—</span>
+          <span class="spacer"></span>
+          <button class="btn sm" id="topoReload" type="button">Reload</button>
+        </h2>
+        <div class="note">
+          What depends on what, as correlation traverses it. <b>Traverse via</b> is the hub gate: when
+          it is set, a traversal may enter that node only over one of the listed edge types — without
+          it a shared hub collapses the whole estate into one component and correlation looks
+          suspiciously good. <b>Direction certified</b> marks an edge whose direction root-cause
+          ranking is allowed to trust. Saving writes under the <b>operator</b> loader; rows owned by
+          another loader are shown read-only because that loader owns and re-sweeps them.
+          Node props and edge attributes are preserved exactly as loaded.
+        </div>
+        <div id="topoSaveResult"></div>
+        <h3 style="font-size:13px;margin:16px 0 6px;">Nodes</h3>
+        <div class="scroller">
+          <table class="stack" id="topoNodesTable">
+            <thead><tr>
+              <th>Node key</th><th>Display name</th><th>Kinds</th><th>Traverse via (hub gate)</th>
+              <th>Status</th><th>Loader</th><th>Scope</th><th></th>
+            </tr></thead>
+            <tbody id="topoNodesBody"></tbody>
+          </table>
+        </div>
+        <div id="topoNodesEmpty" class="empty hidden">No topology nodes are loaded.</div>
+        <h3 style="font-size:13px;margin:18px 0 6px;">Edges <span class="note" style="margin:0;">(source depends on destination)</span></h3>
+        <div class="scroller">
+          <table class="stack" id="topoEdgesTable">
+            <thead><tr>
+              <th>Source</th><th>Destination</th><th>Edge type</th><th>Direction certified</th>
+              <th>Loader</th><th>Scope</th><th></th>
+            </tr></thead>
+            <tbody id="topoEdgesBody"></tbody>
+          </table>
+        </div>
+        <div id="topoEdgesEmpty" class="empty hidden">No topology edges are loaded.</div>
+        <div class="btns">
+          <button class="btn" id="topoAddNode" type="button">Add node</button>
+          <button class="btn" id="topoAddEdge" type="button">Add edge</button>
+          <button class="btn primary" id="topoSave" type="button">Save operator rows</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Loader freshness</h2>
+        <div class="note">A loader that has stopped refreshing keeps serving its last answer. The newest refresh in each slice is what says whether it is still running.</div>
+        <div class="scroller">
+          <table><thead><tr>
+            <th>Loader</th><th>Scope</th><th class="num">Nodes</th><th>Newest refresh</th><th>Age</th>
+          </tr></thead><tbody id="topoFreshBody"></tbody></table>
+        </div>
+        <div id="topoFreshEmpty" class="empty hidden">No loader has recorded a slice.</div>
+      </div>
+      <div class="card">
+        <h2>Recent loader runs</h2>
+        <div class="note">A refused sweep means the proportional brake fired: the keep-set was small enough to look like a truncated feed, so nothing was deleted. That is the loader protecting the topology, and it is worth reading every time.</div>
+        <div class="scroller">
+          <table><thead><tr>
+            <th>When</th><th>Loader</th><th>Scope</th><th>Result</th><th class="num">Nodes ↑</th>
+            <th class="num">Edges ↑</th><th class="num">Nodes swept</th><th class="num">Edges swept</th><th>Duration</th><th>Error</th>
+          </tr></thead><tbody id="topoRunsBody"></tbody></table>
+        </div>
+        <div id="topoRunsEmpty" class="empty hidden">No loader run has been recorded.</div>
+      </div>
+    </section>
+
+    <!-- ══ 5. DROP COUNTERS ════════════════════════════════════════════════ -->
+    <section class="panel hidden" id="panel-drops">
+      <div class="card">
+        <h2>Drop counters
+          <span class="spacer"></span>
+          <select id="dropWindow" style="width:auto;">
+            <option value="15">last 15 min</option>
+            <option value="60" selected>last 60 min</option>
+            <option value="360">last 6 h</option>
+            <option value="1440">last 24 h</option>
+          </select>
+          <button class="btn sm" id="dropReload" type="button">Reload</button>
+        </h2>
+        <div class="note">Every claim decision in the window. A decision reading zero is a real zero — the whole vocabulary is seeded, so an absent outcome cannot hide as a missing row.</div>
+        <div id="dropError"></div>
+        <div class="tiles" id="dropDecisions"></div>
+      </div>
+      <div class="card">
+        <h2>Noise by alert name</h2>
+        <div class="note">The loudest names in the window, ranked by volume.</div>
+        <div class="scroller">
+          <table><thead><tr><th>Alert name</th><th style="width:45%">Share</th><th class="num">Count</th></tr></thead>
+          <tbody id="dropNoiseBody"></tbody></table>
+        </div>
+        <div id="dropNoiseEmpty" class="empty hidden">No events arrived in this window.</div>
+      </div>
+      <div class="card">
+        <h2>Unclaimed queue</h2>
+        <div class="note">What fired that no rule wanted, split by why. A coverage gap and a routing bug look nothing alike here: <b>no rule match</b> means nothing was written for it, <b>rule disabled</b> means something was and is switched off, and <b>no identity</b> means the event carried nothing to be identified by.</div>
+        <div class="scroller">
+          <table><thead><tr><th>Alert name</th><th>Reason</th><th>What it means</th><th class="num">Count</th></tr></thead>
+          <tbody id="dropUnclaimedBody"></tbody></table>
+        </div>
+        <div id="dropUnclaimedEmpty" class="empty hidden">Every event in this window was claimed.</div>
+      </div>
+    </section>
+
+    <!-- ══ 6. REPLAY ═══════════════════════════════════════════════════════ -->
+    <section class="panel hidden" id="panel-replay">
+      <div class="card">
+        <h2>Replay</h2>
+        <div class="note">
+          Re-runs landing, normalize and claim. Replay is idempotent by construction: the same
+          identity lands on the same incident and bubbles it rather than creating a second one, so
+          replaying twice is not a way to double-count anything.
+        </div>
+        <div class="inline">
+          <div class="narrow">
+            <label class="fld" for="replayMode">Replay</label>
+            <select id="replayMode">
+              <option value="envelope">an envelope</option>
+              <option value="deadletter">a dead-letter row</option>
+              <option value="range">a time range</option>
+            </select>
+          </div>
+          <div id="replayEnvelopeWrap">
+            <label class="fld" for="replayEnvelope">Envelope id</label>
+            <input id="replayEnvelope" spellcheck="false" placeholder="uuid" />
+          </div>
+          <div id="replayDeadletterWrap" class="hidden">
+            <label class="fld" for="replayDeadletter">Dead-letter id</label>
+            <input id="replayDeadletter" spellcheck="false" placeholder="numeric id" />
+          </div>
+          <div id="replayFromWrap" class="hidden">
+            <label class="fld" for="replayFrom">From</label>
+            <input id="replayFrom" type="datetime-local" />
+          </div>
+          <div id="replayToWrap" class="hidden">
+            <label class="fld" for="replayTo">To</label>
+            <input id="replayTo" type="datetime-local" />
+          </div>
+        </div>
+        <div class="btns"><button class="btn primary" id="replayRun" type="button">Replay</button></div>
+        <div id="replayResult"></div>
+      </div>
+      <div class="card">
+        <h2>Dead letters <span class="badge" id="dlCount">—</span>
+          <span class="spacer"></span>
+          <select id="dlLimit" style="width:auto;">
+            <option value="25">25 rows</option><option value="50" selected>50 rows</option><option value="200">200 rows</option>
+          </select>
+          <button class="btn sm" id="dlReload" type="button">Reload</button>
+        </h2>
+        <div class="note">Intake that could not be understood, kept verbatim. Malformed input is the only signal that an upstream contract changed.</div>
+        <div class="scroller">
+          <table><thead><tr>
+            <th>When</th><th>Stage</th><th>Reason</th><th>Error</th><th class="num">Attempts</th><th>Replayed</th><th></th>
+          </tr></thead><tbody id="dlBody"></tbody></table>
+        </div>
+        <div id="dlEmpty" class="empty hidden">Nothing has been dead-lettered.</div>
+      </div>
+    </section>
+
+    <!-- ══ 7. CONFIG ═══════════════════════════════════════════════════════ -->
+    <section class="panel hidden" id="panel-config">
+      <div class="card">
+        <h2>Config <span class="badge" id="cfgCount">—</span>
+          <span class="spacer"></span>
+          <button class="btn sm" id="cfgReload" type="button">Reload</button>
+        </h2>
+        <div class="note">
+          Every knob with the value in force and where that value came from. Read the source column
+          against your intent: a knob you set in the environment that still reports
+          <b>default</b> is not being read, and a knob reporting <b>rule</b> is being overridden per
+          claim rule regardless of what the environment says.
+        </div>
+        <div class="inline">
+          <div><label class="fld" for="cfgFilter">Filter</label><input id="cfgFilter" placeholder="key or value" spellcheck="false" /></div>
+        </div>
+        <div class="scroller">
+          <table><thead><tr><th>Key</th><th>Effective value</th><th>Source</th></tr></thead>
+          <tbody id="cfgBody"></tbody></table>
+        </div>
+        <div id="cfgEmpty" class="empty hidden">No configuration knobs were reported.</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var BASE = '/api/ops/alert-pipeline';
+  var $ = function (id) { return document.getElementById(id); };
+
+  var state = {
+    rules: [], ruleSeq: 0, serverRuleIds: [],
+    events: [], keyList: [], keySort: { col: 'ratio', dir: -1 },
+    topoNodes: [], topoEdges: [], topoSeq: 0,
+    config: []
+  };
+
+  /* ── Rendering helpers ─────────────────────────────────────────────────── */
+
+  function esc(v) {
+    return String(v === null || v === undefined ? '' : v)
+      .replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+  }
+  /** First present field across candidate names, so a row reads under either casing. */
+  function f(row, names, fallback) {
+    for (var i = 0; i < names.length; i++) {
+      if (row && row[names[i]] !== undefined && row[names[i]] !== null) return row[names[i]];
+    }
+    return fallback === undefined ? null : fallback;
+  }
+  function when(v) {
+    if (!v) return '—';
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+  }
+  function age(v) {
+    if (!v) return '—';
+    var ms = Date.now() - new Date(v).getTime();
+    if (!isFinite(ms)) return '—';
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 90) return s + 's ago';
+    if (s < 5400) return Math.round(s / 60) + 'm ago';
+    if (s < 172800) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  }
+  function num(v) { return typeof v === 'number' && isFinite(v) ? v : 0; }
+  function csv(list) { return Array.isArray(list) ? list.join(', ') : ''; }
+  function parseCsv(text) {
+    return String(text || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+  function intOrNull(text) {
+    var t = String(text === null || text === undefined ? '' : text).trim();
+    if (!t) return null;
+    var n = Number(t);
+    return isFinite(n) ? Math.trunc(n) : null;
+  }
+  function jsonText(value) { try { return JSON.stringify(value, null, 2); } catch (e) { return '{}'; } }
+  function pct(n, d) { return d > 0 ? Math.round((n / d) * 100) : 0; }
+  function banner(host, kind, html) {
+    host.innerHTML = '<div class="callout ' + kind + '">' + html + '</div>';
+  }
+  function rawBlock(payload) {
+    return '<details><summary>Server response</summary><pre class="raw">' + esc(jsonText(payload)) + '</pre></details>';
+  }
+
+  /* ── Transport ─────────────────────────────────────────────────────────── */
+
+  /**
+   * One fetch idiom for the whole surface. Returns { ok, status, body }. A non-JSON answer means
+   * the session was bounced to the identity provider rather than the API answering, and a 403 means
+   * the caller is authenticated but not an operator — both flip the page to the honest gate instead
+   * of leaving an empty screen behind.
+   */
+  function api(path, method, body) {
+    var opts = { method: method || 'GET', headers: { Accept: 'application/json' }, credentials: 'same-origin' };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(BASE + path, opts).then(function (res) {
+      var type = res.headers.get('content-type') || '';
+      if (type.indexOf('application/json') === -1) {
+        showGate('signin', res.status);
+        return { ok: false, status: res.status, body: { error: 'Signed out' }, gated: true };
+      }
+      return res.json().catch(function () { return {}; }).then(function (json) {
+        if (res.status === 403) { showGate('operator', 403, json && json.error); return { ok: false, status: 403, body: json, gated: true }; }
+        if (res.status === 401) { showGate('signin', 401); return { ok: false, status: 401, body: json, gated: true }; }
+        return { ok: res.ok, status: res.status, body: json };
+      });
+    }).catch(function (err) {
+      return { ok: false, status: 0, body: { error: err && err.message ? err.message : 'Network error' } };
+    });
+  }
+  function errText(r) {
+    var b = r && r.body;
+    var msg = b && (b.error || b.message);
+    return msg || ('HTTP ' + (r ? r.status : '?'));
+  }
+
+  /* ── Access gate ───────────────────────────────────────────────────────── */
+
+  function showGate(kind, status, serverMessage) {
+    $('console').classList.add('hidden');
+    $('gate').classList.remove('hidden');
+    var badge = $('accessBadge');
+    if (kind === 'signin') {
+      $('gateTitle').textContent = 'Sign in required';
+      $('gateBody').innerHTML = 'This screen reads and changes live pipeline configuration, so it is '
+        + 'behind the platform login. Your session is not authenticated'
+        + (status ? ' (HTTP ' + esc(status) + ')' : '') + '.';
+      $('gateAction').textContent = 'Sign in';
+      $('gateAction').href = '/login';
+      badge.className = 'badge warn';
+      badge.textContent = 'signed out';
+    } else {
+      $('gateTitle').textContent = 'Operator access required';
+      $('gateBody').innerHTML = 'You are signed in, but this account is not on the operator allowlist. '
+        + 'Every route behind this screen is operator-gated on the server, so nothing here can be read '
+        + 'or changed from this session — the panels are hidden because they would be empty, not because '
+        + 'the pipeline is idle.'
+        + (serverMessage ? '<br><br><span class="mono">' + esc(serverMessage) + '</span>' : '');
+      $('gateAction').textContent = 'Back to the cockpit';
+      $('gateAction').href = '/cockpit/';
+      badge.className = 'badge bad';
+      badge.textContent = 'not an operator';
+    }
+  }
+
+  /* ── Tabs ──────────────────────────────────────────────────────────────── */
+
+  var loaded = {};
+  var loaders = {
+    rules: loadRules, test: loadIncidents, key: function () {}, topology: loadTopology,
+    drops: loadDrops, replay: loadDeadletters, config: loadConfig
+  };
+  $('tabs').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('button[data-panel]');
+    if (!btn) return;
+    selectTab(btn.getAttribute('data-panel'));
+  });
+  function selectTab(name) {
+    var buttons = $('tabs').querySelectorAll('button[data-panel]');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].setAttribute('aria-selected', buttons[i].getAttribute('data-panel') === name ? 'true' : 'false');
+    }
+    var panels = document.querySelectorAll('.panel');
+    for (var j = 0; j < panels.length; j++) panels[j].classList.toggle('hidden', panels[j].id !== 'panel-' + name);
+    if (!loaded[name]) { loaded[name] = true; loaders[name](); }
+  }
+
+  /* ══ 1. CLAIM RULES ═════════════════════════════════════════════════════ */
+
+  var AUTONOMY = [
+    { level: 'A0', label: 'A0 park', title: 'A0 — parks the incident for a human.' },
+    { level: 'A1', label: 'A1 plan', title: 'A1 — writes the root cause and the remediation plan, then stops.' },
+    { level: 'A2', label: 'A2 apply', title: 'A2 — applies the remediation plan.' }
+  ];
+  var INTAKE = ['auto', 'backlog', 'inherit'];
+
+  function blankRule() {
+    return {
+      key: 'r' + (++state.ruleSeq), ruleId: '', enabled: true, priority: 100,
+      predicateText: '{\n  "alertname": []\n}', identityFieldsText: '', intake: 'auto',
+      autonomyLevel: 'A0', dedupTtlSeconds: '', reopenWindowSeconds: '', correlationDepth: '',
+      rootFilterText: '', notes: '', errors: []
+    };
+  }
+  function toEditable(row) {
+    return {
+      key: 'r' + (++state.ruleSeq),
+      ruleId: f(row, ['ruleId', 'rule_id'], ''),
+      enabled: f(row, ['enabled'], true) !== false,
+      priority: num(f(row, ['priority'], 100)),
+      predicateText: jsonText(f(row, ['matchPredicate', 'match_predicate'], {})),
+      identityFieldsText: csv(f(row, ['identityFields', 'identity_fields'], [])),
+      intake: f(row, ['intake'], 'auto'),
+      autonomyLevel: f(row, ['autonomyLevel', 'autonomy_level'], 'A0'),
+      dedupTtlSeconds: f(row, ['dedupTtlSeconds', 'dedup_ttl_seconds'], ''),
+      reopenWindowSeconds: f(row, ['reopenWindowSeconds', 'reopen_window_seconds'], ''),
+      correlationDepth: f(row, ['correlationDepth', 'correlation_depth'], ''),
+      rootFilterText: csv(f(row, ['rootFilter', 'root_filter'], [])),
+      notes: f(row, ['notes'], ''),
+      errors: []
+    };
+  }
+  function toWire(rule) {
+    var rootFilter = parseCsv(rule.rootFilterText);
+    return {
+      ruleId: String(rule.ruleId || '').trim(),
+      enabled: !!rule.enabled,
+      priority: num(Number(rule.priority)),
+      matchPredicate: JSON.parse(rule.predicateText || '{}'),
+      identityFields: parseCsv(rule.identityFieldsText),
+      intake: rule.intake,
+      autonomyLevel: rule.autonomyLevel,
+      dedupTtlSeconds: intOrNull(rule.dedupTtlSeconds),
+      reopenWindowSeconds: intOrNull(rule.reopenWindowSeconds),
+      correlationDepth: intOrNull(rule.correlationDepth),
+      rootFilter: rootFilter.length ? rootFilter : null,
+      notes: String(rule.notes || '').trim() || null
+    };
+  }
+
+  function loadRules() {
+    return api('/rules').then(function (r) {
+      if (!r.ok) { if (!r.gated) banner($('rulesSaveResult'), 'bad', 'Could not load the rule set: ' + esc(errText(r))); return; }
+      var rows = (r.body && r.body.rules) || [];
+      state.serverRuleIds = rows.map(function (row) { return f(row, ['ruleId', 'rule_id'], ''); });
+      state.rules = rows.map(toEditable);
+      $('rulesSaveResult').innerHTML = '';
+      renderRules();
+    });
+  }
+
+  function ruleErrFor(rule, field) {
+    var hits = rule.errors.filter(function (e) { return e.field === field; });
+    if (!hits.length) return '';
+    return '<div class="ferr">' + hits.map(function (e) { return esc(e.message); }).join('<br>') + '</div>';
+  }
+  function autonomyCell(rule, i) {
+    return '<div class="seg" role="radiogroup" aria-label="Autonomy level">' + AUTONOMY.map(function (a) {
+      var on = rule.autonomyLevel === a.level;
+      return '<label class="' + (on ? 'on' : '') + '" data-lvl="' + a.level + '" title="' + esc(a.title) + '">'
+        + '<input type="radio" name="aut-' + esc(rule.key) + '" value="' + a.level + '" data-idx="' + i + '" '
+        + 'data-field="autonomyLevel"' + (on ? ' checked' : '') + '> ' + esc(a.label) + '</label>';
+    }).join('') + '</div>' + ruleErrFor(rule, 'autonomyLevel');
+  }
+  function textCell(rule, i, field, label, opts) {
+    var o = opts || {};
+    return '<td data-label="' + esc(label) + '"' + (o.wide ? ' class="wide"' : '') + '><input data-idx="' + i
+      + '" data-field="' + field + '" value="' + esc(rule[field]) + '" spellcheck="false"'
+      + (o.placeholder ? ' placeholder="' + esc(o.placeholder) + '"' : '') + ' />'
+      + ruleErrFor(rule, o.errField || field) + '</td>';
+  }
+  function numCell(rule, i, field, label) {
+    return '<td data-label="' + esc(label) + '" class="num"><input type="number" data-idx="' + i + '" data-field="'
+      + field + '" value="' + esc(rule[field]) + '" />' + ruleErrFor(rule, field) + '</td>';
+  }
+
+  function ruleRow(rule, i) {
+    var cells = [];
+    cells.push('<td data-label="On"><input type="checkbox" data-idx="' + i + '" data-field="enabled"'
+      + (rule.enabled ? ' checked' : '') + ' aria-label="Rule enabled" />' + ruleErrFor(rule, 'enabled') + '</td>');
+    cells.push(textCell(rule, i, 'ruleId', 'Rule id', { wide: true, placeholder: 'target-down' }));
+    cells.push(numCell(rule, i, 'priority', 'Priority'));
+    cells.push('<td data-label="Match predicate" class="wide"><textarea data-idx="' + i + '" data-field="predicateText" '
+      + 'spellcheck="false">' + esc(rule.predicateText) + '</textarea>' + ruleErrFor(rule, 'predicate') + '</td>');
+    cells.push(textCell(rule, i, 'identityFieldsText', 'Identity fields',
+      { wide: true, placeholder: 'target, alertname', errField: 'identityFieldsText' }));
+    cells.push('<td data-label="Intake"><select data-idx="' + i + '" data-field="intake">' + INTAKE.map(function (v) {
+      return '<option value="' + v + '"' + (rule.intake === v ? ' selected' : '') + '>' + v + '</option>';
+    }).join('') + '</select>' + ruleErrFor(rule, 'intake') + '</td>');
+    cells.push('<td data-label="Autonomy" class="wide">' + autonomyCell(rule, i) + '</td>');
+    cells.push(numCell(rule, i, 'dedupTtlSeconds', 'Dedup TTL s'));
+    cells.push(numCell(rule, i, 'reopenWindowSeconds', 'Reopen s'));
+    cells.push(numCell(rule, i, 'correlationDepth', 'Corr. depth'));
+    cells.push(textCell(rule, i, 'rootFilterText', 'Root filter', { errField: 'rootFilterText' }));
+    cells.push(textCell(rule, i, 'notes', 'Notes', { wide: true }));
+    cells.push('<td data-label=""><button class="btn sm warn" data-remove="' + i + '" type="button">Remove</button></td>');
+    var generic = rule.errors.filter(function (e) { return !e.field; });
+    var errRow = generic.length
+      ? '<tr class="hasError"><td colspan="13" class="rowerr">' + generic.map(function (e) { return esc(e.message); }).join(' · ') + '</td></tr>'
+      : '';
+    return '<tr' + (rule.errors.length ? ' class="hasError"' : '') + '>' + cells.join('') + '</tr>' + errRow;
+  }
+
+  function renderRules() {
+    $('rulesBody').innerHTML = state.rules.map(ruleRow).join('');
+    $('rulesCount').textContent = state.rules.length + (state.rules.length === 1 ? ' rule' : ' rules');
+    $('rulesEmpty').classList.toggle('hidden', state.rules.length > 0);
+    $('emptyRulesNote').hidden = state.rules.length > 0;
+    $('rulesTable').classList.toggle('hidden', state.rules.length === 0);
+  }
+
+  $('rulesBody').addEventListener('input', onRuleEdit);
+  $('rulesBody').addEventListener('change', onRuleEdit);
+  function onRuleEdit(ev) {
+    var el = ev.target;
+    var idx = el.getAttribute && el.getAttribute('data-idx');
+    if (idx === null || idx === undefined) return;
+    var rule = state.rules[Number(idx)];
+    if (!rule) return;
+    var field = el.getAttribute('data-field');
+    if (field === 'enabled') rule.enabled = el.checked;
+    else if (field === 'autonomyLevel') {
+      rule.autonomyLevel = el.value;
+      var seg = el.closest('.seg');
+      var labels = seg.querySelectorAll('label');
+      for (var i = 0; i < labels.length; i++) labels[i].classList.toggle('on', labels[i].getAttribute('data-lvl') === el.value);
+    } else rule[field] = el.value;
+    markDirty();
+  }
+  $('rulesBody').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('button[data-remove]');
+    if (!btn) return;
+    var rule = state.rules[Number(btn.getAttribute('data-remove'))];
+    if (!rule) return;
+    var name = rule.ruleId || 'this unnamed rule';
+    if (!confirm('Remove "' + name + '" from the set? It is deleted from the server when you save.')) return;
+    state.rules.splice(state.rules.indexOf(rule), 1);
+    renderRules();
+    markDirty();
+  });
+  function markDirty() { $('rulesDirty').textContent = 'Unsaved edits — nothing changes on the server until you save.'; }
+
+  $('ruleAdd').addEventListener('click', function () { state.rules.push(blankRule()); renderRules(); markDirty(); });
+  $('rulesReload').addEventListener('click', function () {
+    if ($('rulesDirty').textContent && !confirm('Reload from the server and discard your unsaved edits?')) return;
+    $('rulesDirty').textContent = '';
+    loadRules();
+  });
+
+  /** Normalize the server's per-rule rejection into { ruleId, field, message } regardless of shape. */
+  function normalizeRuleErrors(body) {
+    var out = [];
+    var list = (body && (body.errors || body.ruleErrors || body.details)) || null;
+    var FIELD = {
+      match_predicate: 'predicate', matchPredicate: 'predicate', predicate: 'predicate',
+      identity_fields: 'identityFieldsText', identityFields: 'identityFieldsText',
+      autonomy_level: 'autonomyLevel', autonomyLevel: 'autonomyLevel', autonomy: 'autonomyLevel',
+      intake: 'intake', priority: 'priority', enabled: 'enabled',
+      rule_id: 'ruleId', ruleId: 'ruleId', notes: 'notes'
+    };
+    function push(ruleId, field, message) {
+      out.push({ ruleId: String(ruleId || ''), field: FIELD[field] || null, message: String(message || 'Rejected') });
+    }
+    if (Array.isArray(list)) {
+      list.forEach(function (e) {
+        if (typeof e === 'string') push('', null, e);
+        else push(f(e, ['ruleId', 'rule_id'], ''), f(e, ['field', 'path'], null), f(e, ['reason', 'message', 'error'], ''));
+      });
+    } else if (list && typeof list === 'object') {
+      Object.keys(list).forEach(function (id) {
+        var v = list[id];
+        if (Array.isArray(v)) v.forEach(function (m) {
+          if (typeof m === 'string') push(id, null, m); else push(id, f(m, ['field'], null), f(m, ['reason', 'message'], ''));
+        });
+        else if (v && typeof v === 'object') push(id, f(v, ['field'], null), f(v, ['reason', 'message'], ''));
+        else push(id, null, v);
+      });
+    }
+    return out;
+  }
+
+  $('rulesSave').addEventListener('click', function () {
+    state.rules.forEach(function (r) { r.errors = []; });
+    var wire = [];
+    var localFailure = false;
+    state.rules.forEach(function (rule) {
+      try { wire.push(toWire(rule)); }
+      catch (e) { rule.errors.push({ field: 'predicate', message: 'Match predicate is not valid JSON: ' + e.message }); localFailure = true; }
+    });
+    if (localFailure) {
+      renderRules();
+      banner($('rulesSaveResult'), 'bad', 'Nothing was sent. Fix the predicate marked below first.');
+      return;
+    }
+    var submittedIds = wire.map(function (w) { return w.ruleId; });
+    var willDelete = state.serverRuleIds.filter(function (id) { return submittedIds.indexOf(id) === -1; });
+    var confirmMsg = 'Save this rule set?\n\n'
+      + wire.length + ' rule(s) will be written.\n'
+      + willDelete.length + ' rule(s) currently on the server will be deleted: '
+      + (willDelete.length ? willDelete.join(', ') : 'none') + '\n\n'
+      + 'The whole set is reconciled in one transaction.';
+    if (!confirm(confirmMsg)) return;
+
+    var btn = $('rulesSave');
+    btn.disabled = true;
+    api('/rules', 'PUT', { rules: wire }).then(function (r) {
+      btn.disabled = false;
+      if (!r.ok) {
+        var perRule = normalizeRuleErrors(r.body);
+        perRule.forEach(function (e) {
+          var target = state.rules.filter(function (rule) { return String(rule.ruleId).trim() === e.ruleId; })[0];
+          if (target) target.errors.push({ field: e.field, message: e.message });
+        });
+        var unattached = perRule.filter(function (e) {
+          return !state.rules.some(function (rule) { return String(rule.ruleId).trim() === e.ruleId; });
+        });
+        renderRules();
+        banner($('rulesSaveResult'), 'bad',
+          '<b>Nothing was saved — the server rejected the set.</b> ' + esc(errText(r))
+          + (perRule.length ? '<br>' + perRule.length + ' rule(s) were rejected; the reasons are marked against the fields below.' : '')
+          + (unattached.length ? '<br>' + unattached.map(function (e) { return esc((e.ruleId || 'set') + ': ' + e.message); }).join('<br>') : ''));
+        return;
+      }
+      var saved = f(r.body, ['saved', 'upserted', 'written'], wire.length);
+      var deleted = f(r.body, ['deleted', 'removed'], willDelete.length);
+      $('rulesDirty').textContent = '';
+      banner($('rulesSaveResult'), 'ok', '<b>Saved ' + esc(saved) + ' rule' + (Number(saved) === 1 ? '' : 's')
+        + ', deleted ' + esc(deleted) + '.</b> The set on the server now matches this table exactly.'
+        + rawBlock(r.body));
+      var host = $('rulesSaveResult').innerHTML;
+      loadRules().then(function () { $('rulesSaveResult').innerHTML = host; });
+    });
+  });
+
+  /* ══ 2. RULE TEST ═══════════════════════════════════════════════════════ */
+
+  function loadIncidents() {
+    var sel = $('testIncident');
+    sel.innerHTML = '<option value="">Loading…</option>';
+    return api('/incidents?state=open&limit=50').then(function (r) {
+      if (!r.ok) {
+        sel.innerHTML = '<option value="">Could not load incidents</option>';
+        if (!r.gated) banner($('testResult'), 'bad', 'Could not load incidents: ' + esc(errText(r)));
+        return;
+      }
+      var rows = (r.body && r.body.incidents) || [];
+      if (!rows.length) { sel.innerHTML = '<option value="">No open incidents to draw events from</option>'; return; }
+      sel.innerHTML = '<option value="">Select an incident…</option>' + rows.map(function (inc) {
+        var id = f(inc, ['incidentId', 'incident_id'], '');
+        var label = f(inc, ['incidentLabel', 'incident_label'], '') || f(inc, ['primaryAlertname', 'primary_alertname'], '(unnamed)');
+        var target = f(inc, ['primaryTarget', 'primary_target'], '');
+        return '<option value="' + esc(id) + '">' + esc(label) + (target ? ' — ' + esc(target) : '') + '</option>';
+      }).join('');
+    });
+  }
+  $('testLoadIncidents').addEventListener('click', loadIncidents);
+  $('testIncident').addEventListener('change', function () {
+    var id = $('testIncident').value;
+    var sel = $('testEvent');
+    state.events = [];
+    if (!id) { sel.innerHTML = '<option value="">Pick an incident first</option>'; return; }
+    sel.innerHTML = '<option value="">Loading events…</option>';
+    api('/incidents/' + encodeURIComponent(id)).then(function (r) {
+      if (!r.ok) { sel.innerHTML = '<option value="">Could not load events</option>'; return; }
+      state.events = (r.body && r.body.events) || [];
+      if (!state.events.length) { sel.innerHTML = '<option value="">This incident has no stored events</option>'; return; }
+      sel.innerHTML = '<option value="">Select an event…</option>' + state.events.map(function (ev, i) {
+        var name = f(ev, ['alertname'], '(unnamed)');
+        var target = f(ev, ['target'], '');
+        var at = f(ev, ['receivedAt', 'received_at'], null);
+        return '<option value="' + i + '">' + esc(name) + ' · ' + esc(target) + ' · ' + esc(when(at)) + '</option>';
+      }).join('');
+    });
+  });
+  function selectedEvent() {
+    var idx = $('testEvent').value;
+    return idx === '' ? null : state.events[Number(idx)] || null;
+  }
+  function labelsFromForm(textareaId) {
+    var text = String($(textareaId).value || '').trim();
+    if (!text) return null;
+    return JSON.parse(text);
+  }
+
+  $('testRun').addEventListener('click', function () {
+    var ev = selectedEvent();
+    var payload;
+    if (ev) payload = { eventId: f(ev, ['eventId', 'event_id'], '') };
+    else {
+      try {
+        var labels = labelsFromForm('testLabels');
+        if (!labels) { banner($('testResult'), 'bad', 'Select an event or paste a label set first.'); return; }
+        payload = { labels: labels };
+      } catch (e) { banner($('testResult'), 'bad', 'The label set is not valid JSON: ' + esc(e.message)); return; }
+    }
+    $('testResult').innerHTML = '<div class="note">Running…</div>';
+    api('/rules/test', 'POST', payload).then(function (r) {
+      if (!r.ok) { if (!r.gated) banner($('testResult'), 'bad', 'The test could not run: ' + esc(errText(r))); return; }
+      renderTestResult(r.body);
+    });
+  });
+
+  function renderTestResult(body) {
+    var matched = (body && body.matched) || [];
+    var ok = !!(body && body.ok);
+    var verdict = ok
+      ? '<b>Exactly one rule claimed it.</b> This event routes deterministically.'
+      : (matched.length === 0
+        ? '<b>No rule claimed it.</b> This event falls through as unclaimed and reaches no incident.'
+        : '<b>' + matched.length + ' rules claimed it.</b> Which one wins depends on priority ordering rather than on intent — narrow the predicates until one matches.');
+    var rows = matched.map(function (id) {
+      var rule = state.rules.filter(function (x) { return String(x.ruleId).trim() === String(id); })[0];
+      return '<tr><td class="mono">' + esc(id) + '</td>'
+        + '<td>' + (rule ? esc(rule.priority) : '—') + '</td>'
+        + '<td>' + (rule ? esc(rule.autonomyLevel) : '—') + '</td>'
+        + '<td>' + (rule ? esc(rule.intake) : '—') + '</td>'
+        + '<td>' + (rule ? (rule.enabled ? 'enabled' : 'disabled') : '—') + '</td></tr>';
+    }).join('');
+    $('testResult').innerHTML = '<div class="callout ' + (ok ? 'ok' : 'bad') + '">' + verdict + '</div>'
+      + (matched.length
+        ? '<div class="scroller"><table><thead><tr><th>Rule id</th><th>Priority</th><th>Autonomy</th><th>Intake</th><th>State</th></tr></thead><tbody>'
+          + rows + '</tbody></table></div>'
+          + '<div class="note">Priority, autonomy and intake are read from the rule set loaded in the Claim rules tab; a dash means that rule is not in the table you are looking at.</div>'
+        : '')
+      + rawBlock(body);
+  }
+
+  $('testToKey').addEventListener('click', function () {
+    var ev = selectedEvent();
+    var labels = null;
+    if (ev) labels = f(ev, ['labels'], null);
+    if (!labels) {
+      try { labels = labelsFromForm('testLabels'); }
+      catch (e) { banner($('testResult'), 'bad', 'The label set is not valid JSON: ' + esc(e.message)); return; }
+    }
+    if (!labels) { banner($('testResult'), 'bad', 'Select an event or paste a label set first.'); return; }
+    $('keyLabels').value = jsonText(labels);
+    selectTab('key');
+    runKeyPreview();
+  });
+
+  /* ══ 3. DEDUP KEY PREVIEW ═══════════════════════════════════════════════ */
+
+  var keyTimer = null;
+  function scheduleKeyPreview() {
+    if (keyTimer) clearTimeout(keyTimer);
+    $('keyState').textContent = 'typing';
+    $('keyState').className = 'badge';
+    keyTimer = setTimeout(runKeyPreview, 400);
+  }
+  $('keyLabels').addEventListener('input', scheduleKeyPreview);
+  $('keyFields').addEventListener('input', scheduleKeyPreview);
+
+  function runKeyPreview() {
+    var labels;
+    try { labels = labelsFromForm('keyLabels'); }
+    catch (e) {
+      $('keyError').innerHTML = '<div class="callout bad">The labels are not valid JSON: ' + esc(e.message) + '</div>';
+      $('keyState').textContent = 'invalid'; $('keyState').className = 'badge bad';
+      return;
+    }
+    if (!labels) { $('keyError').innerHTML = ''; $('keyOut').classList.add('hidden'); $('keySuppression').innerHTML = ''; $('keyState').textContent = 'idle'; $('keyState').className = 'badge'; return; }
+    $('keyError').innerHTML = '';
+    var fields = parseCsv($('keyFields').value);
+    var payload = { labels: labels };
+    if (fields.length) payload.identityFields = fields;
+    $('keyState').textContent = 'previewing'; $('keyState').className = 'badge acc';
+    api('/key-preview', 'POST', payload).then(function (r) {
+      if (!r.ok) {
+        $('keyState').textContent = 'failed'; $('keyState').className = 'badge bad';
+        if (!r.gated) $('keyError').innerHTML = '<div class="callout bad">' + esc(errText(r)) + '</div>';
+        return;
+      }
+      $('keyState').textContent = 'live'; $('keyState').className = 'badge ok';
+      renderKeyPreview(r.body);
+    });
+  }
+
+  function suppressionOf(body) {
+    var s = (body && body.suppression) || {};
+    var attempts = num(f(s, ['attempts'], 0));
+    var suppressed = num(f(s, ['suppressed'], 0));
+    return {
+      attempts: attempts, suppressed: suppressed,
+      delivered: num(f(s, ['delivered'], 0)), failed: num(f(s, ['failed'], 0)),
+      ratio: attempts > 0 ? suppressed / attempts : null
+    };
+  }
+  function ratioClass(ratio) { return ratio === null ? '' : (ratio >= 0.8 ? 'hot' : (ratio >= 0.5 ? 'mid' : '')); }
+  function ratioWords(ratio, attempts) {
+    if (ratio === null) return 'This identity has no dispatch history yet, so nothing can be said about how coarse it is.';
+    if (ratio >= 0.8) return '<b>Too coarse.</b> ' + Math.round(ratio * 100) + '% of the ' + attempts
+      + ' dispatch decisions on this identity were suppressed as duplicates — distinct problems are collapsing onto one key. Add a field that tells them apart.';
+    if (ratio >= 0.5) return '<b>Coarse.</b> ' + Math.round(ratio * 100) + '% of ' + attempts
+      + ' decisions were suppressed. Worth checking whether the surplus is genuine repetition or two different problems sharing a key.';
+    return Math.round(ratio * 100) + '% of ' + attempts + ' decisions were suppressed. This identity is separating problems.';
+  }
+
+  function renderKeyPreview(body) {
+    var source = f(body, ['identitySource', 'identity_source'], '');
+    var key = f(body, ['dedupKey', 'dedup_key'], '');
+    $('keySource').textContent = source || '—';
+    $('keyKey').textContent = key || '—';
+    $('keyOut').classList.remove('hidden');
+    var s = suppressionOf(body);
+    $('keySuppression').innerHTML = '<div class="tiles">'
+      + tile(s.attempts, 'attempts') + tile(s.suppressed, 'suppressed')
+      + tile(s.delivered, 'delivered') + tile(s.failed, 'failed')
+      + '<div class="tile"><div class="v">' + (s.ratio === null ? '—' : Math.round(s.ratio * 100) + '%') + '</div>'
+      + '<div class="k">suppression</div></div></div>'
+      + (s.ratio === null
+        ? '<div class="note">' + ratioWords(null, 0) + '</div>'
+        : '<div class="callout ' + (s.ratio >= 0.8 ? 'bad' : (s.ratio < 0.5 ? 'ok' : '')) + '">'
+          + ratioWords(s.ratio, s.attempts) + '</div>');
+    upsertKeyRow({ dedupKey: key, identitySource: source, attempts: s.attempts, suppressed: s.suppressed,
+      delivered: s.delivered, failed: s.failed, ratio: s.ratio });
+  }
+  function tile(value, label) {
+    return '<div class="tile' + (num(value) === 0 ? ' zero' : '') + '"><div class="v">' + esc(value) + '</div><div class="k">' + esc(label) + '</div></div>';
+  }
+
+  function upsertKeyRow(row) {
+    if (!row.dedupKey) return;
+    var existing = state.keyList.filter(function (x) { return x.dedupKey === row.dedupKey; })[0];
+    if (existing) Object.keys(row).forEach(function (k) { existing[k] = row[k]; });
+    else state.keyList.push(row);
+    renderKeyList();
+  }
+  $('keyListTable').querySelector('thead').addEventListener('click', function (ev) {
+    var th = ev.target.closest('th[data-sort]');
+    if (!th) return;
+    var col = th.getAttribute('data-sort');
+    if (state.keySort.col === col) state.keySort.dir = -state.keySort.dir;
+    else state.keySort = { col: col, dir: -1 };
+    renderKeyList();
+  });
+  function renderKeyList() {
+    var rows = state.keyList.slice().sort(function (a, b) {
+      var x = a[state.keySort.col], y = b[state.keySort.col];
+      if (x === null || x === undefined) x = -1;
+      if (y === null || y === undefined) y = -1;
+      if (typeof x === 'string' || typeof y === 'string') return String(x).localeCompare(String(y)) * state.keySort.dir;
+      return (x - y) * state.keySort.dir;
+    });
+    $('keyListCount').textContent = String(rows.length);
+    $('keyListEmpty').classList.toggle('hidden', rows.length > 0);
+    $('keyListTable').classList.toggle('hidden', rows.length === 0);
+    $('keyListBody').innerHTML = rows.map(function (r) {
+      var p = r.ratio === null ? 0 : Math.round(r.ratio * 100);
+      return '<tr><td class="mono">' + esc(r.dedupKey) + '</td><td class="mono">' + esc(r.identitySource) + '</td>'
+        + '<td class="num">' + esc(r.attempts) + '</td><td class="num">' + esc(r.suppressed) + '</td>'
+        + '<td class="num">' + esc(r.delivered) + '</td><td class="num">' + esc(r.failed) + '</td>'
+        + '<td><div style="display:flex;align-items:center;gap:8px;"><div class="bar ' + ratioClass(r.ratio)
+        + '" style="flex:1"><i style="width:' + p + '%"></i></div><span class="num" style="min-width:44px">'
+        + (r.ratio === null ? 'n/a' : p + '%') + '</span></div></td></tr>';
+    }).join('');
+  }
+
+  /* ══ 4. TOPOLOGY ════════════════════════════════════════════════════════ */
+
+  function loadTopology() {
+    return api('/topology').then(function (r) {
+      if (!r.ok) { if (!r.gated) banner($('topoSaveResult'), 'bad', 'Could not load the topology: ' + esc(errText(r))); return; }
+      var b = r.body || {};
+      state.topoNodes = (b.nodes || []).map(function (n) {
+        return {
+          key: 't' + (++state.topoSeq),
+          nodeKey: f(n, ['nodeKey', 'node_key'], ''),
+          displayName: f(n, ['displayName', 'display_name'], '') || '',
+          kindsText: csv(f(n, ['kinds'], [])),
+          traverseViaText: csv(f(n, ['traverseVia', 'traverse_via'], [])),
+          status: f(n, ['status'], 'active'),
+          loaderTag: f(n, ['loaderTag', 'loader_tag'], 'operator'),
+          loaderScope: f(n, ['loaderScope', 'loader_scope'], 'operator'),
+          props: f(n, ['props'], {}) || {}
+        };
+      });
+      state.topoEdges = (b.edges || []).map(function (e) {
+        return {
+          key: 't' + (++state.topoSeq),
+          srcKey: f(e, ['srcKey', 'src_key'], ''),
+          dstKey: f(e, ['dstKey', 'dst_key'], ''),
+          edgeType: f(e, ['edgeType', 'edge_type'], 'depends_on'),
+          directionCertified: f(e, ['directionCertified', 'direction_certified'], false) === true,
+          loaderTag: f(e, ['loaderTag', 'loader_tag'], 'operator'),
+          loaderScope: f(e, ['loaderScope', 'loader_scope'], 'operator'),
+          attrs: f(e, ['attrs'], {}) || {}
+        };
+      });
+      renderTopology();
+      renderFreshness(b.freshness || []);
+      renderLoaderRuns(b.lastRuns || b.last_runs || []);
+    });
+  }
+
+  function editable(row) { return row.loaderTag === 'operator'; }
+  function nodeRow(n, i) {
+    var ed = editable(n);
+    function cell(field, label, placeholder) {
+      return '<td data-label="' + esc(label) + '">' + (ed
+        ? '<input data-tidx="' + i + '" data-tfield="' + field + '" value="' + esc(n[field]) + '" spellcheck="false" placeholder="' + esc(placeholder || '') + '" />'
+        : '<span class="mono">' + (esc(n[field]) || '—') + '</span>') + '</td>';
+    }
+    return '<tr>'
+      + cell('nodeKey', 'Node key', 'oshal-local-db')
+      + cell('displayName', 'Display name', '')
+      + cell('kindsText', 'Kinds', 'container, service')
+      + cell('traverseViaText', 'Traverse via', 'depends_on')
+      + '<td data-label="Status">' + (ed
+        ? '<select data-tidx="' + i + '" data-tfield="status"><option value="active"' + (n.status === 'active' ? ' selected' : '') + '>active</option>'
+          + '<option value="decommissioned"' + (n.status === 'decommissioned' ? ' selected' : '') + '>decommissioned</option></select>'
+        : esc(n.status)) + '</td>'
+      + '<td data-label="Loader"><span class="badge' + (ed ? ' acc' : '') + '">' + esc(n.loaderTag) + '</span></td>'
+      + cell('loaderScope', 'Scope', 'operator')
+      + '<td data-label="">' + (ed ? '<button class="btn sm warn" data-tremove="node:' + i + '" type="button">Remove</button>' : '<span class="note" style="margin:0">owned by ' + esc(n.loaderTag) + '</span>') + '</td>'
+      + '</tr>';
+  }
+  function edgeRow(e, i) {
+    var ed = editable(e);
+    function cell(field, label, placeholder) {
+      return '<td data-label="' + esc(label) + '">' + (ed
+        ? '<input data-eidx="' + i + '" data-efield="' + field + '" value="' + esc(e[field]) + '" spellcheck="false" placeholder="' + esc(placeholder || '') + '" />'
+        : '<span class="mono">' + (esc(e[field]) || '—') + '</span>') + '</td>';
+    }
+    return '<tr>'
+      + cell('srcKey', 'Source', 'oshal-local-api')
+      + cell('dstKey', 'Destination', 'oshal-local-db')
+      + cell('edgeType', 'Edge type', 'depends_on')
+      + '<td data-label="Direction certified">' + (ed
+        ? '<input type="checkbox" data-eidx="' + i + '" data-efield="directionCertified"' + (e.directionCertified ? ' checked' : '') + ' aria-label="Direction certified" />'
+        : (e.directionCertified ? 'yes' : 'no')) + '</td>'
+      + '<td data-label="Loader"><span class="badge' + (ed ? ' acc' : '') + '">' + esc(e.loaderTag) + '</span></td>'
+      + cell('loaderScope', 'Scope', 'operator')
+      + '<td data-label="">' + (ed ? '<button class="btn sm warn" data-tremove="edge:' + i + '" type="button">Remove</button>' : '<span class="note" style="margin:0">owned by ' + esc(e.loaderTag) + '</span>') + '</td>'
+      + '</tr>';
+  }
+  function renderTopology() {
+    $('topoNodesBody').innerHTML = state.topoNodes.map(nodeRow).join('');
+    $('topoEdgesBody').innerHTML = state.topoEdges.map(edgeRow).join('');
+    $('topoNodesEmpty').classList.toggle('hidden', state.topoNodes.length > 0);
+    $('topoEdgesEmpty').classList.toggle('hidden', state.topoEdges.length > 0);
+    $('topoNodesTable').classList.toggle('hidden', state.topoNodes.length === 0);
+    $('topoEdgesTable').classList.toggle('hidden', state.topoEdges.length === 0);
+    var ops = state.topoNodes.filter(editable).length;
+    var ope = state.topoEdges.filter(editable).length;
+    $('topoCount').textContent = state.topoNodes.length + ' nodes · ' + state.topoEdges.length + ' edges · '
+      + (ops + ope) + ' operator-owned';
+  }
+  function onTopoEdit(ev) {
+    var el = ev.target;
+    if (!el.getAttribute) return;
+    var ni = el.getAttribute('data-tidx');
+    if (ni !== null) { state.topoNodes[Number(ni)][el.getAttribute('data-tfield')] = el.value; return; }
+    var ei = el.getAttribute('data-eidx');
+    if (ei === null) return;
+    var edge = state.topoEdges[Number(ei)];
+    var field = el.getAttribute('data-efield');
+    edge[field] = field === 'directionCertified' ? el.checked : el.value;
+  }
+  $('topoNodesBody').addEventListener('input', onTopoEdit);
+  $('topoNodesBody').addEventListener('change', onTopoEdit);
+  $('topoEdgesBody').addEventListener('input', onTopoEdit);
+  $('topoEdgesBody').addEventListener('change', onTopoEdit);
+  function onTopoRemove(ev) {
+    var btn = ev.target.closest('button[data-tremove]');
+    if (!btn) return;
+    var parts = btn.getAttribute('data-tremove').split(':');
+    var list = parts[0] === 'node' ? state.topoNodes : state.topoEdges;
+    var row = list[Number(parts[1])];
+    if (!row) return;
+    var name = parts[0] === 'node' ? row.nodeKey : (row.srcKey + ' → ' + row.dstKey);
+    if (!confirm('Remove "' + name + '" from the operator slice? It is dropped when you save.')) return;
+    list.splice(list.indexOf(row), 1);
+    renderTopology();
+  }
+  $('topoNodesBody').addEventListener('click', onTopoRemove);
+  $('topoEdgesBody').addEventListener('click', onTopoRemove);
+  $('topoAddNode').addEventListener('click', function () {
+    state.topoNodes.push({ key: 't' + (++state.topoSeq), nodeKey: '', displayName: '', kindsText: '',
+      traverseViaText: '', status: 'active', loaderTag: 'operator', loaderScope: 'operator', props: {} });
+    renderTopology();
+  });
+  $('topoAddEdge').addEventListener('click', function () {
+    state.topoEdges.push({ key: 't' + (++state.topoSeq), srcKey: '', dstKey: '', edgeType: 'depends_on',
+      directionCertified: false, loaderTag: 'operator', loaderScope: 'operator', attrs: {} });
+    renderTopology();
+  });
+  $('topoReload').addEventListener('click', loadTopology);
+
+  $('topoSave').addEventListener('click', function () {
+    var nodes = state.topoNodes.filter(editable).map(function (n) {
+      var via = parseCsv(n.traverseViaText);
+      return { nodeKey: String(n.nodeKey || '').trim(), displayName: String(n.displayName || '').trim() || null,
+        kinds: parseCsv(n.kindsText), traverseVia: via.length ? via : null, status: n.status,
+        props: n.props, loaderTag: 'operator', loaderScope: String(n.loaderScope || 'operator').trim() || 'operator' };
+    });
+    var edges = state.topoEdges.filter(editable).map(function (e) {
+      return { srcKey: String(e.srcKey || '').trim(), dstKey: String(e.dstKey || '').trim(),
+        edgeType: String(e.edgeType || '').trim(), directionCertified: !!e.directionCertified, attrs: e.attrs,
+        loaderTag: 'operator', loaderScope: String(e.loaderScope || 'operator').trim() || 'operator' };
+    });
+    if (!confirm('Upsert ' + nodes.length + ' node(s) and ' + edges.length + ' edge(s) under the operator loader?\n\n'
+      + 'Rows owned by another loader are untouched.')) return;
+    var btn = $('topoSave');
+    btn.disabled = true;
+    api('/topology', 'PUT', { nodes: nodes, edges: edges }).then(function (r) {
+      btn.disabled = false;
+      if (!r.ok) { if (!r.gated) banner($('topoSaveResult'), 'bad', 'Nothing was written: ' + esc(errText(r))); return; }
+      var un = f(r.body, ['nodesUpserted', 'nodes_upserted', 'nodes'], nodes.length);
+      var ue = f(r.body, ['edgesUpserted', 'edges_upserted', 'edges'], edges.length);
+      banner($('topoSaveResult'), 'ok', '<b>Upserted ' + esc(un) + ' node(s) and ' + esc(ue)
+        + ' edge(s) under the operator loader.</b>' + rawBlock(r.body));
+      var keep = $('topoSaveResult').innerHTML;
+      loadTopology().then(function () { $('topoSaveResult').innerHTML = keep; });
+    });
+  });
+
+  function renderFreshness(rows) {
+    $('topoFreshEmpty').classList.toggle('hidden', rows.length > 0);
+    $('topoFreshBody').innerHTML = rows.map(function (row) {
+      var at = f(row, ['maxRefreshedAt', 'max_refreshed_at'], null);
+      return '<tr><td><span class="badge">' + esc(f(row, ['loaderTag', 'loader_tag'], '')) + '</span></td>'
+        + '<td class="mono">' + esc(f(row, ['loaderScope', 'loader_scope'], '')) + '</td>'
+        + '<td class="num">' + esc(num(f(row, ['count'], 0))) + '</td>'
+        + '<td>' + esc(when(at)) + '</td><td>' + esc(age(at)) + '</td></tr>';
+    }).join('');
+  }
+  function renderLoaderRuns(rows) {
+    $('topoRunsEmpty').classList.toggle('hidden', rows.length > 0);
+    $('topoRunsBody').innerHTML = rows.map(function (row) {
+      var refused = f(row, ['sweepRefused', 'sweep_refused'], false) === true;
+      var okRun = f(row, ['success'], false) === true;
+      var result = refused
+        ? '<span class="badge warn">sweep refused</span>'
+        : (okRun ? '<span class="badge ok">ok</span>' : '<span class="badge bad">failed</span>');
+      var ms = num(f(row, ['durationMs', 'duration_ms'], 0));
+      return '<tr><td>' + esc(when(f(row, ['at', 'ranAt', 'ran_at', 'startedAt', 'started_at'], null))) + '</td>'
+        + '<td><span class="badge">' + esc(f(row, ['loaderTag', 'loader_tag'], '')) + '</span></td>'
+        + '<td class="mono">' + esc(f(row, ['loaderScope', 'loader_scope'], '')) + '</td>'
+        + '<td>' + result + '</td>'
+        + '<td class="num">' + esc(num(f(row, ['nodesUpserted', 'nodes_upserted'], 0))) + '</td>'
+        + '<td class="num">' + esc(num(f(row, ['edgesUpserted', 'edges_upserted'], 0))) + '</td>'
+        + '<td class="num">' + esc(num(f(row, ['nodesSwept', 'nodes_swept'], 0))) + '</td>'
+        + '<td class="num">' + esc(num(f(row, ['edgesSwept', 'edges_swept'], 0))) + '</td>'
+        + '<td class="num">' + esc(ms) + ' ms</td>'
+        + '<td class="mono">' + esc(f(row, ['error'], '') || '') + '</td></tr>';
+    }).join('');
+  }
+
+  /* ══ 5. DROP COUNTERS ═══════════════════════════════════════════════════ */
+
+  var UNCLAIMED_MEANING = {
+    no_rule_match: 'No registered rule wanted it — a coverage gap.',
+    rule_disabled: 'A rule matches it but is switched off.',
+    no_identity: 'It carried nothing the identity fields could be built from.',
+    identity_empty: 'The identity fields resolved to an empty value.',
+    unknown_source: 'It arrived on a lane the registry does not know.'
+  };
+
+  function loadDrops() {
+    var w = $('dropWindow').value;
+    $('dropError').innerHTML = '';
+    $('dropDecisions').innerHTML = '<div class="note">Loading…</div>';
+    return api('/unclaimed?windowMinutes=' + encodeURIComponent(w)).then(function (r) {
+      if (!r.ok) {
+        $('dropDecisions').innerHTML = '';
+        if (!r.gated) banner($('dropError'), 'bad', 'Could not load the breakdown: ' + esc(errText(r)));
+        return;
+      }
+      renderDrops(r.body || {});
+    });
+  }
+  $('dropReload').addEventListener('click', loadDrops);
+  $('dropWindow').addEventListener('change', loadDrops);
+
+  function renderDrops(b) {
+    var byDecision = f(b, ['byDecision', 'by_decision'], {}) || {};
+    var keys = Object.keys(byDecision);
+    $('dropDecisions').innerHTML = keys.length
+      ? keys.map(function (k) { return tile(num(byDecision[k]), k.replace(/_/g, ' ')); }).join('')
+      : '<div class="empty">No claim decisions were recorded in this window.</div>';
+
+    var noise = f(b, ['byAlertname', 'by_alertname'], []) || [];
+    var max = noise.reduce(function (m, row) { return Math.max(m, num(f(row, ['count'], 0))); }, 0);
+    $('dropNoiseEmpty').classList.toggle('hidden', noise.length > 0);
+    $('dropNoiseBody').innerHTML = noise.map(function (row) {
+      var c = num(f(row, ['count'], 0));
+      return '<tr><td class="mono">' + esc(f(row, ['alertname'], '')) + '</td>'
+        + '<td><div class="bar"><i style="width:' + (max ? Math.max(2, pct(c, max)) : 0) + '%"></i></div></td>'
+        + '<td class="num">' + esc(c) + '</td></tr>';
+    }).join('');
+
+    var unclaimed = f(b, ['unclaimed'], []) || [];
+    $('dropUnclaimedEmpty').classList.toggle('hidden', unclaimed.length > 0);
+    $('dropUnclaimedBody').innerHTML = unclaimed.map(function (row) {
+      var reason = f(row, ['reason'], '');
+      return '<tr><td class="mono">' + esc(f(row, ['alertname'], '')) + '</td>'
+        + '<td><span class="badge warn">' + esc(String(reason).replace(/_/g, ' ')) + '</span></td>'
+        + '<td>' + esc(UNCLAIMED_MEANING[reason] || '') + '</td>'
+        + '<td class="num">' + esc(num(f(row, ['count'], 0))) + '</td></tr>';
+    }).join('');
+  }
+
+  /* ══ 6. REPLAY ══════════════════════════════════════════════════════════ */
+
+  $('replayMode').addEventListener('change', function () {
+    var mode = $('replayMode').value;
+    $('replayEnvelopeWrap').classList.toggle('hidden', mode !== 'envelope');
+    $('replayDeadletterWrap').classList.toggle('hidden', mode !== 'deadletter');
+    $('replayFromWrap').classList.toggle('hidden', mode !== 'range');
+    $('replayToWrap').classList.toggle('hidden', mode !== 'range');
+  });
+
+  function replayPayload() {
+    var mode = $('replayMode').value;
+    if (mode === 'envelope') {
+      var id = $('replayEnvelope').value.trim();
+      return id ? { body: { envelopeId: id }, what: 'envelope ' + id } : null;
+    }
+    if (mode === 'deadletter') {
+      var dl = $('replayDeadletter').value.trim();
+      return dl ? { body: { deadletterId: dl }, what: 'dead-letter row ' + dl } : null;
+    }
+    var from = $('replayFrom').value, to = $('replayTo').value;
+    if (!from || !to) return null;
+    var fromIso = new Date(from).toISOString(), toIso = new Date(to).toISOString();
+    return { body: { fromIso: fromIso, toIso: toIso }, what: 'everything between ' + new Date(fromIso).toLocaleString() + ' and ' + new Date(toIso).toLocaleString() };
+  }
+
+  function runReplay(payload) {
+    if (!payload) { banner($('replayResult'), 'bad', 'Fill in the field for the replay you picked.'); return; }
+    if (!confirm('Replay ' + payload.what + '?\n\nLanding, normalize and claim re-run. The same identity lands on the same incident, so this bubbles the existing incident rather than creating a second one.')) return;
+    $('replayResult').innerHTML = '<div class="note">Replaying…</div>';
+    api('/replay', 'POST', payload.body).then(function (r) {
+      if (!r.ok) { if (!r.gated) banner($('replayResult'), 'bad', 'The replay did not run: ' + esc(errText(r))); return; }
+      var replayed = f(r.body, ['replayed', 'count', 'processed'], 0);
+      var skipped = f(r.body, ['skipped'], 0);
+      banner($('replayResult'), 'ok', '<b>Replayed ' + esc(replayed) + ', skipped ' + esc(skipped) + '.</b> '
+        + 'Re-ran ' + esc(payload.what) + '.' + rawBlock(r.body));
+      loadDeadletters();
+    });
+  }
+  $('replayRun').addEventListener('click', function () { runReplay(replayPayload()); });
+
+  function loadDeadletters() {
+    var limit = $('dlLimit').value;
+    return api('/deadletter?limit=' + encodeURIComponent(limit)).then(function (r) {
+      if (!r.ok) { if (!r.gated) banner($('replayResult'), 'bad', 'Could not load dead letters: ' + esc(errText(r))); return; }
+      var rows = (r.body && r.body.rows) || [];
+      $('dlCount').textContent = rows.length + (rows.length === 1 ? ' row' : ' rows');
+      $('dlEmpty').classList.toggle('hidden', rows.length > 0);
+      $('dlBody').innerHTML = rows.map(function (row) {
+        var id = f(row, ['deadletterId', 'deadletter_id'], '');
+        var replayedAt = f(row, ['replayedAt', 'replayed_at'], null);
+        return '<tr><td>' + esc(when(f(row, ['at'], null))) + '</td>'
+          + '<td><span class="badge">' + esc(f(row, ['stage'], '')) + '</span></td>'
+          + '<td>' + esc(f(row, ['failureReason', 'failure_reason'], '')) + '</td>'
+          + '<td class="mono">' + esc(f(row, ['error'], '') || '') + '</td>'
+          + '<td class="num">' + esc(num(f(row, ['attempts'], 0))) + '</td>'
+          + '<td>' + (replayedAt ? esc(when(replayedAt)) : '—') + '</td>'
+          + '<td><button class="btn sm" data-dl="' + esc(id) + '" type="button">Replay</button></td></tr>';
+      }).join('');
+    });
+  }
+  $('dlReload').addEventListener('click', loadDeadletters);
+  $('dlLimit').addEventListener('change', loadDeadletters);
+  $('dlBody').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('button[data-dl]');
+    if (!btn) return;
+    var id = btn.getAttribute('data-dl');
+    $('replayMode').value = 'deadletter';
+    $('replayMode').dispatchEvent(new Event('change'));
+    $('replayDeadletter').value = id;
+    runReplay({ body: { deadletterId: id }, what: 'dead-letter row ' + id });
+  });
+
+  /* ══ 7. CONFIG ══════════════════════════════════════════════════════════ */
+
+  var SOURCE_BADGE = { env: 'acc', rule: 'warn', default: '' };
+  function loadConfig() {
+    return api('/config').then(function (r) {
+      if (!r.ok) { if (!r.gated) $('cfgBody').innerHTML = '<tr><td colspan="3" class="rowerr">' + esc(errText(r)) + '</td></tr>'; return; }
+      var b = r.body || {};
+      state.config = Array.isArray(b) ? b : (b.config || b.knobs || b.settings || []);
+      renderConfig();
+    });
+  }
+  $('cfgReload').addEventListener('click', loadConfig);
+  $('cfgFilter').addEventListener('input', renderConfig);
+  function renderConfig() {
+    var q = String($('cfgFilter').value || '').trim().toLowerCase();
+    var rows = state.config.filter(function (row) {
+      if (!q) return true;
+      return (String(f(row, ['key'], '')) + ' ' + jsonText(f(row, ['effective'], ''))).toLowerCase().indexOf(q) !== -1;
+    });
+    $('cfgCount').textContent = state.config.length + ' knobs';
+    $('cfgEmpty').classList.toggle('hidden', rows.length > 0);
+    $('cfgBody').innerHTML = rows.map(function (row) {
+      var src = String(f(row, ['source'], 'default'));
+      var value = f(row, ['effective'], null);
+      var text = (value !== null && typeof value === 'object') ? jsonText(value) : String(value);
+      return '<tr><td class="mono">' + esc(f(row, ['key'], '')) + '</td>'
+        + '<td class="mono">' + esc(text) + '</td>'
+        + '<td><span class="badge ' + (SOURCE_BADGE[src] || '') + '">' + esc(src) + '</span></td></tr>';
+    }).join('');
+  }
+
+  /* ── Boot ──────────────────────────────────────────────────────────────── */
+
+  api('/rules').then(function (r) {
+    if (r.gated) return;
+    if (!r.ok) {
+      $('console').classList.remove('hidden');
+      $('accessBadge').className = 'badge bad';
+      $('accessBadge').textContent = 'server error';
+      banner($('rulesSaveResult'), 'bad', 'The rule set could not be read: ' + esc(errText(r)));
+      loaded.rules = true;
+      return;
+    }
+    $('console').classList.remove('hidden');
+    $('accessBadge').className = 'badge ok';
+    $('accessBadge').textContent = 'operator';
+    var rows = (r.body && r.body.rules) || [];
+    state.serverRuleIds = rows.map(function (row) { return f(row, ['ruleId', 'rule_id'], ''); });
+    state.rules = rows.map(toEditable);
+    loaded.rules = true;
+    renderRules();
+  });
+}());
+</script>
+</body>
+</html>

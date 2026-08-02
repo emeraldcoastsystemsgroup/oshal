@@ -237,6 +237,14 @@ export interface TopologyNodeRow {
    * presents as correlation working unusually well.
    */
   traverseVia: string[] | null;
+  /**
+   * False marks a hub. The node stays reachable and is still reported at its true hop count,
+   * but the walk does not expand through it. `traverseVia` answers "may this node be REACHED
+   * over that edge type"; this answers "may the walk CONTINUE through it" — different questions,
+   * and a shared dependency needs the second one. Without it, a star topology bridges every peer
+   * that depends on the hub into a single component two hops wide.
+   */
+  transitAllowed: boolean;
   status: 'active' | 'decommissioned';
   props: Record<string, unknown>;
   loaderTag: TopologyLoader;

@@ -361,3 +361,68 @@ describe('TopologyStore loader provenance', () => {
     ]);
   });
 });
+
+describe('TopologyStore transit gating', () => {
+  // A star: two peers that depend on one shared hub, exactly the shape a control plane or a
+  // message bus produces. Two hops through the hub connects every peer to every other peer, so
+  // without a transit gate one failure correlates an entire estate into a single component.
+  const HUB = k('tr-hub');
+  const PEERS = [k('tr-peer-1'), k('tr-peer-2'), k('tr-peer-3')];
+
+  beforeAll(async () => {
+    await store.upsertNodes([node(HUB), ...PEERS.map((key) => node(key))]);
+    await store.upsertEdges(PEERS.map((peer) => edge(peer, HUB)));
+  });
+
+  it('bridges every peer through the hub while transit is allowed', async () => {
+    const reached = (await store.neighbors(PEERS[0], 2)).map((hop) => hop.nodeKey);
+    expect(reached).toContain(HUB);
+    // The collapse this gate exists to prevent.
+    expect(reached).toContain(PEERS[1]);
+    expect(reached).toContain(PEERS[2]);
+  });
+
+  it('stops the walk at a non-transit hub while keeping it reachable at its true hop count', async () => {
+    await pool.query('UPDATE oshal_topology_node SET transit_allowed = false WHERE node_key = $1', [HUB]);
+    try {
+      const hops = await store.neighbors(PEERS[0], MAX_TRAVERSAL_DEPTH);
+      const reached = hops.map((hop) => hop.nodeKey);
+
+      // Reachability survives: the hub is still reported, and at hop 1 — that dependency is
+      // precisely what explains the incident, so gating must not discard it.
+      expect(reached).toContain(HUB);
+      expect(hops.find((hop) => hop.nodeKey === HUB)?.hops).toBe(1);
+
+      // Transit does not: the peers behind it are gone even at the maximum depth.
+      expect(reached).not.toContain(PEERS[1]);
+      expect(reached).not.toContain(PEERS[2]);
+      expect(new Set(reached)).toEqual(new Set([PEERS[0], HUB]));
+    } finally {
+      await pool.query('UPDATE oshal_topology_node SET transit_allowed = true WHERE node_key = $1', [HUB]);
+    }
+  });
+
+  it('separates peers into their own components once the hub stops transiting', async () => {
+    const joined = await store.correlate([PEERS[0], PEERS[1]], 2);
+    expect(joined.components).toHaveLength(1);
+
+    await pool.query('UPDATE oshal_topology_node SET transit_allowed = false WHERE node_key = $1', [HUB]);
+    try {
+      const split = await store.correlate([PEERS[0], PEERS[1]], 2);
+      expect(split.components).toHaveLength(2);
+    } finally {
+      await pool.query('UPDATE oshal_topology_node SET transit_allowed = true WHERE node_key = $1', [HUB]);
+    }
+  });
+
+  it('always expands out of the seed, even when the seed itself is a non-transit hub', async () => {
+    // Otherwise marking a hub would make it a dead end when IT is the thing alerting.
+    await pool.query('UPDATE oshal_topology_node SET transit_allowed = false WHERE node_key = $1', [HUB]);
+    try {
+      const reached = (await store.neighbors(HUB, 1)).map((hop) => hop.nodeKey);
+      expect(new Set(reached)).toEqual(new Set([HUB, ...PEERS]));
+    } finally {
+      await pool.query('UPDATE oshal_topology_node SET transit_allowed = true WHERE node_key = $1', [HUB]);
+    }
+  });
+});

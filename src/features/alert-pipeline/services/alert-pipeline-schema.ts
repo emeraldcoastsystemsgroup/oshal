@@ -491,6 +491,11 @@ CREATE TABLE IF NOT EXISTS oshal_topology_node (
   kinds         TEXT[] NOT NULL DEFAULT '{}',
 
   traverse_via  TEXT[],
+  -- Reachability and transit are different questions. traverse_via gates which
+  -- edge types may ENTER a node; this gates whether the walk may CONTINUE out of
+  -- it. A shared dependency stays visible at its true hop count while no longer
+  -- bridging every peer that depends on it into one component.
+  transit_allowed BOOLEAN NOT NULL DEFAULT true,
 
   status        TEXT NOT NULL DEFAULT 'active'
                   CHECK (status IN ('active', 'decommissioned')),
@@ -505,6 +510,15 @@ CREATE TABLE IF NOT EXISTS oshal_topology_node (
 
 CREATE INDEX IF NOT EXISTS idx_topology_node_loader
   ON oshal_topology_node (loader_tag, loader_scope);
+-- CREATE TABLE IF NOT EXISTS is a no-op on a database that already has the
+-- table, so a column added after first creation needs its own idempotent ALTER
+-- for an existing deployment to self-heal to the current shape.
+ALTER TABLE oshal_topology_node
+  ADD COLUMN IF NOT EXISTS transit_allowed BOOLEAN NOT NULL DEFAULT true;
+
+CREATE INDEX IF NOT EXISTS idx_topology_node_no_transit
+  ON oshal_topology_node (node_key)
+  WHERE NOT transit_allowed;
 CREATE INDEX IF NOT EXISTS idx_topology_node_kinds
   ON oshal_topology_node USING GIN (kinds);
 
