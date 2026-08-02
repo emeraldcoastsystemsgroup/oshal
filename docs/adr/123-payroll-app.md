@@ -225,3 +225,92 @@ document whose `issuable` state is computed from identity, not a permanent label
 the IRS or SSA, there is no EFTPS deposit initiation, and there is no check printing — those remain
 out because they are the parts that would require either regulated status or a partner, and neither
 is needed for the employer to actually get paid and filed.
+
+---
+
+## Amendment — 2026-08-02: settlement (v2.2.0)
+
+The v2.1 amendment above ends by naming what stayed out. Three of those items are now in, one is
+partly in, and one is deliberately still out — and the reasoning for each is the point of this
+amendment, because two of them are *refusals*.
+
+### The defect this closes
+
+Approving a run said who *should* be paid. Nothing ever said who **was**. A payment row was written
+`pending` and no code path ever moved it, so a returned deposit — R02 account closed, R03 no
+account — was byte-for-byte indistinguishable from a successful one. An employee simply did not get
+paid, and the system reported success.
+
+It could not have been fixed by reading the return file alone. `buildAchFile` assigned every entry a
+trace number and discarded it, and a return identifies the entry it concerns **only** by that
+original trace. There was nothing to match against. The builder now returns the traces and the ACH
+route persists them, which is what makes the rest possible.
+
+9. **Returns and notifications of change are PARSED, never originated.** `payroll-ach-returns.ts`
+   reads the file the bank hands back and moves each payment: a return marks the person unpaid with
+   the statutory consequence attached (R01 is the documented exception that may be reinitiated; the
+   rest of the two-banking-day family and all of the sixty-calendar-day family require that entries
+   to that account STOP), while a notification of change means the opposite — the money arrived, and
+   the bank is correcting the details for next time. Treating an NOC as a failure is a common and
+   expensive mistake, so it is asserted in both directions. Applying a correction to an employee's
+   account is confirm-gated and re-validates the ABA check digit.
+
+   **Provenance is stated in the module rather than implied away.** The Nacha Operating Rules are
+   paywalled and were not read; the addenda 98/99 position tables are reconstructed from sources that
+   agree exactly — a Nacha-member education deck, moov-io/ach's parser source, and a real
+   bank-produced return file. Parsing (rather than originating) is the safe direction for that level
+   of confidence: a misread field surfaces as garbage we refuse, not as a malformed file a bank
+   executes. The guards build fixtures from the position table and assert their own 94-character
+   width, because the published worked examples in those decks transcribe at 92 and 93 characters.
+
+10. **Two banking calendars, because one is a bug.** `payroll-calendar.ts` keeps the Federal Reserve
+    calendar (does money move?) separate from the IRS legal-holiday calendar (when is a deposit due?).
+    They genuinely differ: a holiday falling on a Saturday costs the Fed nothing — Reserve Banks stay
+    open the preceding Friday — while the IRS observes it on that Friday; and District of Columbia
+    Emancipation Day is an IRS legal holiday the Fed does not observe at all. Friday 2026-07-03 is
+    both cases at once: banks open, payroll funds, deposit deadline moves. A single shared
+    `isHoliday()` gets one of the two wrong, silently. The deposit rule also implements Pub 15's
+    extra-day-per-legal-holiday allowance, which is *not* a next-business-day roll and can land later
+    than one.
+
+11. **State returns start with Florida, and only because Florida cannot be got wrong.** Item 16
+    required that state coverage never outrun correctness. Florida levies no wage income tax, so
+    there is no withholding table to be wrong about — it is the one state whose return can be trusted
+    before the tables are. `payroll-rt6.ts` computes every line from the same ledger and reconciles
+    against the reemployment tax actually accrued.
+
+### The two refusals, which are decisions and not gaps
+
+12. **The EFW2 layout is versioned by tax year, and an unread year is REFUSED.** `payroll-efw2.ts`
+    builds the SSA submission for tax year 2025, whose Publication 42-007 was retrieved in full and
+    whose fields were verified to tile positions 1–512 with no gap or overlap. Tax year 2026 could not
+    be retrieved — ssa.gov returns HTTP 403 to automated fetches — and it is known to *differ*: TY2026
+    adds Box 12 codes **TT** (qualified overtime compensation) and **TP** (cash tips), which this
+    engine already computes and which have no field anywhere in the 2025 layout. Placing them at
+    guessed positions produces a file the SSA rejects wholesale, or worse accepts with two money
+    fields silently dropped. The builder therefore emits nothing for an unverified year and names the
+    document that would unblock it. Adding a year is one table plus a citation — the same shape the
+    state withholding tables use.
+
+    Retrieving `26efw2.pdf` is a **human task**, like the partner-app registrations: a person with a
+    browser can download it in ten seconds, and no amount of agent effort gets past the edge block.
+
+13. **No MICR line is generated, ever.** ANSI X9.100-160-1 governs the MICR band and is paywalled.
+    Every obtainable vendor source contradicts the others — 62 versus 65 character positions, the EPC
+    field at "either, but not both, positions 44 or 45" versus "position 44-45", the auxiliary on-us
+    field starting at 44 versus 45, and one manual describing the on-us field as "positions 13-32"
+    and "nineteen spaces" in consecutive sentences. A MICR line one position out is rejected by a
+    reader-sorter or posted to the wrong account, and the band requires magnetic toner that no
+    software supplies. Checks therefore carry numbering, the amount in words, and the UCC § 4-404
+    six-month staleness legend, and print onto the bank-encoded stock small employers already buy.
+
+    This is the same rule the state tax tables follow, applied to a second domain: **a wrong table is
+    worse than an absent one, because the operator cannot tell it is wrong.** Item 15 is therefore
+    closed only in part, and the backlog says so.
+
+### What this supersedes
+
+The v2.1 amendment's closing sentence — "there is no check printing" — is superseded: checks print,
+without a MICR line. Everything else in that paragraph stands. **Nothing transmits.** There is still
+no e-file and no EFTPS enrolment (backlog item 12), which is unchanged and is not a code problem:
+it needs credentials and an enrolment a human completes.
