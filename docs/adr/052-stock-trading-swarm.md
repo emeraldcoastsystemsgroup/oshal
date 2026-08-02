@@ -169,12 +169,39 @@ live posture — live stays gated and is the subject of the open questions below
   the long-only/instrument questions below should be re-confirmed before any live order. Shorting
   and stop/trailing on the LIVE book are explicitly out of scope until that review.
 
-## Open questions for operator sign-off (before any code)
+## Operator sign-off — answered as built (reconciled 2026-08-02)
 
-1. **Autonomy:** fully auto within guardrails, or human-approve every order even in paper? (Proposed:
-   paper may auto-execute within configured guardrails; **live always requires per-order confirm** in
-   v1.)
-2. **Guardrails:** max position size, max daily orders, symbol allow/deny list, per-trade $ cap,
-   trading-hours window — what are the defaults?
-3. **Who is the adviser of record** for live mode, and what disclosure does the live-mode banner need?
-   This determines whether live ever leaves the operator's own account.
+This section was written as *"open questions for operator sign-off (before any code)"*. The code
+shipped; two of the three were answered **in the implementation**, and leaving them framed as
+pre-code questions misread a live system as unstarted. The third is genuinely still open and stays
+marked as such — it is the gate on live mode leaving the operator's own account.
+
+1. ✅ **Autonomy — the proposal was adopted, and live took a second lock.** Paper may auto-execute
+   within the guardrails; live needs **both** an environment arm and a per-order confirm:
+   `placeDecisionOrder` refuses with `403 live_blocked` unless `TRADING_LIVE_ENABLED === 'true'`
+   *and* the caller passed `confirm: true` ([trading-engine.ts](../../src/app/trading-engine.ts)).
+   The autonomous path is stricter still — a scheduled live leg needs the **double opt-in**
+   `TRADING_LIVE_ENABLED` **and** `TRADING_AUTOPILOT_LIVE`, both defaulting off in
+   `docker-compose.oshal-local.yml`, so the cron stays on the paper book even on an armed box. A
+   global `TRADING_HALT=true` kill switch refuses every leg. Reads were deliberately split from the
+   arm (`getBrokerReader` vs `getBrokerAdapter`): a connected live account stays *readable* —
+   balances, positions, order status, and reconciliation — while trading is disarmed, because
+   halting must not stop the ledger from syncing.
+2. ✅ **Guardrails — defaults set, enforced on the order path, and recorded on every decision.**
+   `guardrails()` / `guardrailViolation()`
+   ([trading-routes-helpers.ts](../../src/app/routes/trading-routes-helpers.ts)) enforce
+   `TRADING_MAX_QTY` (default **100** shares), `TRADING_MAX_NOTIONAL_USD` (default **$1,000**), and
+   an opt-in `TRADING_SYMBOL_ALLOWLIST` (default empty = no allow-list restriction). A breach is a
+   `422 guardrail_blocked` **before** the broker is called, and the active guardrail set is written
+   into the `guardrails` column of `oshal_trading_decisions` so an audit can see the bounds each
+   decision was made under. The trading-hours window is enforced separately by session logic in
+   [market-data.ts](../../src/features/trading/services/market-data.ts) (extended hours are their
+   own opt-in), not by this guardrail struct. **Deliberately NOT built:** a max-daily-orders cap —
+   the sizing bound is notional, not order count.
+3. ⬜ **Adviser of record + live-mode disclosure — STILL OPEN, and still the gate.** No adviser of
+   record has been named and no disclosure copy has been written; a repo-wide search for one finds
+   nothing. The posture this holds in place is unchanged from the original decision: live mode is
+   the operator's **own** account, `TRADING_LIVE_ENABLED` defaults false, and **this ADR still does
+   not authorize live trading for anyone else's money.** Until this question is answered by a human,
+   the compliance review named in Consequences has not happened, and the environment arm is the only
+   thing standing between the two states.

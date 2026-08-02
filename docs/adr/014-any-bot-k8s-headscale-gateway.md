@@ -94,10 +94,19 @@ OSHAL will use a **Kubernetes deployment workspace** that treats `any-bot` as a 
 
 ## References
 
-- `any-bot-k8s/README.md`
-- `any-bot-k8s/any-bot-stack.yaml`
-- `any-bot-k8s/secrets.example.yaml`
-- `any-bot-k8s/HANDOVER.md`
-- `headscale/README.md`
-- `ralf/phase-11-session-23-any-bot-k8s-gateway-task-brief.md`
-- `ralf/phase-11-session-23-any-bot-k8s-gateway-completion.md`
+Reconciled 2026-08-02: the workspace was authored under a top-level `any-bot-k8s/` and now ships as
+`ops/any-bot-k8s/`, so every path below was dead. These are the live targets, written as relative
+links so `node scripts/docs-link-check.js` fails if the tree moves again.
+
+- [ops/any-bot-k8s/README.md](../../ops/any-bot-k8s/README.md) — the deployment workspace guide
+- [ops/any-bot-k8s/any-bot-stack.yaml](../../ops/any-bot-k8s/any-bot-stack.yaml) — the UI/API split stack
+- [ops/any-bot-k8s/kustomization.yaml](../../ops/any-bot-k8s/kustomization.yaml) + [namespace.yaml](../../ops/any-bot-k8s/namespace.yaml)
+- [ops/any-bot-k8s/secrets.example.yaml](../../ops/any-bot-k8s/secrets.example.yaml) + [setup.env.example](../../ops/any-bot-k8s/setup.env.example)
+- [scripts/setup-any-bot-k8s.sh](../../scripts/setup-any-bot-k8s.sh) — the bring-up script
+- [docs/k8/any-bot-kubernetes-setup.md](../k8/any-bot-kubernetes-setup.md) — the operator-facing setup doc
+- [infra/headscale/README.md](../../infra/headscale/README.md) + [ARCHITECTURE.md](../../infra/headscale/ARCHITECTURE.md) — the overlay half (ADR-013)
+
+Not in this repo, deliberately: the session task brief/completion notes under `ralf/` and the
+workspace `HANDOVER.md`. `ralf/` is internal-only and refused by `scripts/publish-gate.sh`, and
+`**/HANDOVER.md` is gitignored by design (CLAUDE.md "Handover artifacts") — both live in the private
+archive per ADR-115 Rule 0b.

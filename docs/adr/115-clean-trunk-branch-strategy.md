@@ -2,7 +2,7 @@
 
 - Status: Accepted — CORE CUTOVER EXECUTED 2026-07-23/24: this repo (`emeraldcoastsystemsgroup/oshal`) is the development trunk and the private full-history repo is a reference archive (CLAUDE.md Rule 0b). The store cutover (`oshal-applications` → `oshal-apps`) is still pending a quiet swarm. (Reconciled 2026-07-31.)
 - Date: 2026-07-23
-- Related: [ADR-085](085-remote-app-packages-and-registries.md) (apps carve out of the kernel), [ADR-093](093-packaged-app-runtime-placement.md) (bot placement — the D1 interim this depends on), [ADR-090](090-skills-as-first-class-packages.md) (kernel skills = the package-facing API), [ADR-090-CI](090-github-actions-to-local-ci.md) (why CI is local), docs/release/PUBLIC-RELEASE-SOP.md
+- Related: [ADR-085](085-remote-app-packages-and-registries.md) (apps carve out of the kernel), [ADR-093](093-packaged-app-runtime-placement.md) (bot placement — the D1 interim this depends on), [ADR-090](090-skills-as-first-class-packages.md) (kernel skills = the package-facing API), [ADR-090-CI](090-github-actions-to-local-ci.md) (why CI is local), `docs/release/PUBLIC-RELEASE-SOP.md` (**not in this repo** — the go-public SOP is internal-only and lives in the private archive; `scripts/publish-gate.sh` refuses `scripts/release/` for the same reason)
 
 ## Context
 
@@ -110,24 +110,41 @@ one commit on the clean trunk, and verifies the result before anything is pushed
 - **Negative:** branch → PR → merge is slower than everyone-on-main, and this is a multi-agent repo
   where the shared index is already a constraint. Branches reduce index contention but add merge
   work; claims in COLLABORATE.md matter *more*, not less.
-- **Negative:** internal coordination (COLLABORATE.md) cannot live in the public trunk, so the
-  thread and the code are in different repos after cutover. Agents must read one and commit to the
-  other. **This is the weakest point of the design and needs a decision** — either the thread moves
-  to an internal-only channel that every agent reads, or it stays in the private repo and the public
-  trunk carries a pointer.
+- **Negative (resolved 2026-07-23, see Done-when 2):** internal coordination (COLLABORATE.md) cannot
+  live in the public trunk, so the thread and the code would be in different repos after cutover.
+  This was called out here as the weakest point of the design and needing a decision. The decision
+  taken was neither of the two options sketched above: the thread does not travel through git at
+  **all**. It is gitignored in the core trunk (`.gitignore`), refused by `scripts/publish-gate.sh`
+  (`INTERNAL_PATHS`), and therefore local to each working directory — which is workable precisely
+  because Rule 0a keeps the swarm to **one worktree**, so "local to the working directory" and
+  "visible to every agent" are the same set. The cost of the choice is real and accepted: the thread
+  does not survive a re-clone and a second checkout cannot see it, so anything that must outlive the
+  working directory belongs in an ADR, a runbook, or the BACKLOG — not in COLLABORATE.md.
 - **Negative:** the cutover has a real cost — every agent re-clones, and any work not pushed at
   freeze time is stranded. Hence the quiet-swarm precondition.
 
-## Done-when (open items)
+## Done-when — status verified 2026-08-02
 
-1. **Cutover executed** — the clean trunk holds a snapshot of private HEAD and every agent works
-   from it. Blocked on a quiet swarm.
-2. **COLLABORATE.md home decided** (see above) — the one design question this ADR does not answer.
-3. **Store-side guard** — `oshal-apps` gets its own pre-push separation check. Today the reverse
-   direction is only checked opportunistically, from the core repo, when the sibling checkout is on
-   the box.
-4. **The public store snapshot ships `COLLABORATE.md`** (627 tracked files, verified 2026-07-23).
-   Core's gate drops it explicitly; the store emit script does not. Fix before `oshal-apps` flips
-   public.
-5. **Branch protection** on both public trunks so only reviewed PRs merge — a GitHub setting, an
-   operator step.
+Every remaining item is **store-side**. The core half of this ADR is closed.
+
+1. ✅ **Core cutover executed (2026-07-23/24).** `emeraldcoastsystemsgroup/oshal` holds the gated
+   snapshot of private HEAD, every agent works from it, and the private full-history repo is a
+   reference archive — recorded as binding in CLAUDE.md Rule 0b. ⬜ **The store cutover
+   (`oshal-applications` → `oshal-apps`) is still open** and still blocked on the same quiet-swarm
+   bar §4 sets; `oshal-apps` exists on GitHub but has not received the snapshot.
+2. ✅ **COLLABORATE.md home decided: it never enters git.** Gitignored in the core trunk and refused
+   by `scripts/publish-gate.sh`, so the thread is local to the single shared working directory (Rule
+   0a) rather than living in either repo. See the reconciled Consequences bullet above for the cost
+   this accepts. This ADR no longer has an unanswered design question.
+3. ⬜ **Store-side guard** — still open. `oshal-apps` gets its own pre-push separation check; today
+   the reverse direction is only checked opportunistically, from the core repo, when the sibling
+   checkout is on the box. Verified 2026-08-02: the store checkout has no `.githooks/` and no
+   `core.hooksPath`, so nothing runs on a store push.
+4. ⬜ **The store snapshot still ships `COLLABORATE.md`** — re-verified 2026-08-02, the file is
+   still tracked in the store checkout. Core's gate drops it explicitly; the store emit script does
+   not. Fix before `oshal-apps` takes the snapshot.
+5. ✅ core / ⬜ store — **Branch protection.** Core `main` is protected by two **rulesets** (not
+   classic branch protection, which is why a `branches/main/protection` probe 404s): *"main: no
+   force-push, no delete"* (`deletion` + `non_fast_forward`) and *"main: pull request required"*
+   (1 approving review, dismiss-stale-on-push, require-last-push-approval, thread resolution), both
+   `enforcement: active` since 2026-07-29. `oshal-apps` has **no** rules on `main` yet.

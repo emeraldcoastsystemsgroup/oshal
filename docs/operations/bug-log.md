@@ -23,9 +23,28 @@ figure / anti-drift rules / seeded bug-log), `cf197b73` (scorecard fail-loud gua
 - **Tier 2:** counts generator (BUG-9 — **EXTEND `scripts/site-apps-catalog.js`**, the existing
   provider/app gate; do NOT build a competing script); ADR status drift (BUG-10 — **coordinate**, a
   bot is already stamping supersessions, e.g. `d9f99996`); evidence-generator honesty (presence-vs-live
-  labeling, BUG-4 residual); and fold the architecture-doc live-feature under-claims (personal-graph,
-  Token-Chase steps 3–5, A2A gateway all shipped-but-documented-as-roadmap) into the
-  `platform-feature-catalog.md` edit.
+  labeling, BUG-4 residual).
+- ~~**Tier 2 — architecture-doc live-feature under-claims**~~ — **DONE 2026-08-02.** All three named
+  under-claims are folded into `platform-feature-catalog.md` and corrected at their source:
+  - **personal-graph** — `connectors-and-graph-architecture.md` claimed it "has no import in
+    `server.ts` and no ingest scheduler … exercised only by unit tests" and that a persistent
+    `PgGraphStore` was "not yet built". Both routers are mounted `requiresAuth` behind
+    `PERSONAL_GRAPH_ROUTES`, ingest pulls live through the ADR-065 spec client, and `PgGraphStore`
+    ships owner-scoped (migrations 057 + 094). Corrected in place, and the capability was **added to
+    the catalog as §41** with its three genuine residuals (Pg store built-but-unwired, no scheduler,
+    not surfaced to Jarvis).
+  - **Token Chase** — catalog §29 carried "Caveat — not wired to HTTP … no savings-report API yet";
+    `server.ts` mounts `/api/token-chase` with `requiresAuth` and the routes expose the step-3
+    variant path plus `GET /savings`, `GET /savings/report` and `POST /runs/:id/savings`. Rewritten
+    as steps 3–4b.
+  - **A2A gateway** — absent from the catalog entirely while shipped; **added as §40** (agent card
+    `0.3.0`, JSON-RPC `message/send`/`tasks/get`/`tasks/cancel`, ticket on the ADR-083 rails under
+    `a2a:<agentId>`, outbound `a2a` harnessType, default-off + fail-closed inbound ceiling), with
+    the Plan-F deployment residual kept visible.
+  - Also folded in the same pass: the dated **"Go-live pending (Music + Movies, 2026-06-20)"**
+    banner (both apps carved to the store — a core rebuild is no longer their deploy path; only the
+    concierge round-trip survives as a real residual) and the **Unreal MCP "vendored"** line
+    (de-vendored 2026-07-23; nothing Unreal is tracked in this repo).
 - **Tier 3:** orphaned retired-feature docs (BUG-11), `docs/k8/` shipped-path (terraform),
   CLAUDE.md's stale extension-guide citation, stale infra facts (any-bot:latest, ports,
   Keycloak), index hygiene.

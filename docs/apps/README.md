@@ -33,7 +33,9 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
 - [sat-ops.md](./sat-ops.md) — **BUILT + DEPLOYED (ADR-102):** Sat Ops operator guide —
   `?app=sat-ops` fleet plane (3D orbit console, TLE catalog, conjunction screening, pass
   windows, approve-gated ADCS commands, drafting concierge) and how to run sat nodes
-  (RK4 or the NASA 42 referee). Evidence campaign under `docs/evidence/`.
+  (RK4 or the NASA 42 referee). The ADCS evidence campaign is **not in this repo** — the generated
+  `docs/evidence/` tree is internal-only and refused by `scripts/publish-gate.sh` (ADR-115 / CLAUDE.md
+  Rule 0b); the campaign's result is summarised in [sat-ops.md](./sat-ops.md) instead.
 - [camera-ops.md](./camera-ops.md) — **BUILT + active:** Camera Ops operator guide —
   `?app=camera` fleet control for the embedded simulator, browser/USB camera preview,
   and real GoPro USB/Wi-Fi/COHN devices through the camera-node heartbeat path, with
@@ -55,8 +57,10 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
   the Money-group cockpit tile). Includes the honest verdict on the calibration study.
 - [little-monsters](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/little-monsters) — Little Monsters K-12 study app (carved out to the oshal-applications store, ADR-085).
 - [portrait-studio](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/portrait-studio) — Portrait Studio (`?app=portrait-studio`, store package, ADR-085): photo → head crop → generated portrait. v1.3.0: 100 profiles × 100 backdrops (business, business casual, slice of life, work environments, history + fantasy, incl. character themes like a pet's face on a human-type body), with interchangeable clothing × hats × props × finishes × framings + grouped pickers; image engine = the media-generation kernel skill (`resolveStoryboardImageProvider`, image-to-image edit, fail-closed — needs the swarm's OpenAI credential or an explicit alternative provider).
-- ../intelligent-career-automation/ — apply-agent
-  specs and the application-form playbook.
+- `docs/intelligent-career-automation/` — **not in this repo.** The apply-agent specs and the
+  application-form playbook stayed in the private archive when career-hunter carved out (ADR-085 /
+  ADR-115); `scripts/publish-gate.sh` refuses the path. The shipped career surfaces live in the
+  [career-hunter store package](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/career-hunter).
 
 ## App specs & requirements
 

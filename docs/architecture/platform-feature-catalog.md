@@ -304,10 +304,13 @@ Every ticket flows through a complexity-gated pipeline:
 - **Paper-only by default** — live execution is off unless explicitly enabled
 - **Gravity Model research engine** — a research engine (ADR-054, `scripts/oshal-gravity.js`)
 
-## 29. Token-Chase Optimizer Step 3 (ADR-046)
+## 29. Token-Chase Optimizer, steps 3–4b (ADR-046)
 
 - **Cross-model replay** — replays one captured LLM call on a different model/provider lane and compares cost, latency, and accuracy
-- **Caveat — not wired to HTTP** — the service layer is wired, but the HTTP optimize routes are NOT yet mounted in `server.ts`, and there is no savings-report API yet
+- **Mounted and auth-gated** — `app.use('/api/token-chase', requiresAuth, …)` in `server.ts`. Surface: run/frame reads, frame inspect, `POST /runs/:id/replay` + `tail-replay`, and the step-3 optimize path `POST /runs/:id/frames/:seq/variant`
+- **Savings report API exists** — `GET /savings`, `GET /savings/report` (the step-4b judged report), `POST /runs/:id/savings`
+- **Step 4 — LLM-judge assessor** — grades baseline vs variant replay output via `JudgeService`, persisting `{judgeScore, dimensions, mode}` into the corpus with Jaccard retained as a comparable fallback. The 4b report **separates llm-judged from lexical-fallback frames** and never blends them into one "verified" number
+- <sub>Corrected 2026-08-02 (BUG-1 under-claim). This entry carried a "Caveat — not wired to HTTP: the HTTP optimize routes are NOT yet mounted in `server.ts`, and there is no savings-report API yet." Both halves were false against the tree — the mount and all three savings endpoints exist. See [platform-shared-services.md](./platform-shared-services.md) "Token Chase step 4 / 4b".</sub>
 
 ## 30. Jarvis / OSHAL Assistant (ADR-050, `/api/jarvis`)
 
@@ -331,7 +334,8 @@ Every ticket flows through a complexity-gated pipeline:
 ## 33. Unreal Engine MCP Worker (ADR-051)
 
 - **GPU worker over MCP** — a GPU PC running UE 5.5 plus a C++ plugin is driven over MCP (port 55557) via the remote-client
-- **Caveat — not run live** — vendored and registered, but NOT yet run live: the plugin is unbuilt and the bridge is unverified
+- **Referenced upstream, NOT vendored (de-vendored 2026-07-23 for licensing)** — the worker clones `chongdashu/unreal-mcp` into `./unreal-mcp/` at bring-up; the MCP is registered as `unrealMCP` in `config-seed/claude-code-mcp.json`. Nothing Unreal is tracked in this repo (verified 2026-08-02: `git ls-files` matches only ADR-051 and its next-steps doc)
+- **Caveat — not run live** — wired by inspection only: the plugin is unbuilt, the 55557 bridge is unverified end-to-end, and no GPU worker endpoint is provisioned. See [unreal-mcp-worker-next-steps.md](../apps/unreal-mcp-worker-next-steps.md)
 
 ## 34. Music — "Music" (`/api/spotify`)
 
@@ -347,10 +351,24 @@ Every ticket flows through a complexity-gated pipeline:
 - **Per-viewer watchlist + durable concierge** — saves titles to the user's `movies_watchlist`; the concierge keeps a stable, client-persisted conversation (Jarvis-style)
 - **TMDB key is operator-level** — a v3 API key OR a v4 read-access-token (client detects which), with a `TMDB_API_KEY` / `THEMOVIEDB_*` env fallback; **no per-user gate, so Movies is public-ready**
 
-> **Go-live pending (Music + Movies, as of 2026-06-20)** — three open items before these are fully live:
-> 1. **Cache-busted rebuild** — the new CLIs, tool kits, persona changes, and surface polish are on disk but NOT in the running `oshal-bot:latest`; they ship only on a `docker build --no-cache -f Dockerfile.oshal` + `up -d --force-recreate` (see ADR-062 / connector-backed-apps.md deploy gotcha).
-> 2. **Spotify allowlist** — the owner must add their OWN Spotify email under Dashboard → User Management or their Music tile returns 403 (dev-mode gate; max 5 Premium users).
-> 3. **Concierge chat round-trip** — discovery + CLI tools are verified live; the LLM-envelope reply path (`/chat` → orchestrator → `{say, show, playlist|watchlist, remember}`) has not been exercised end-to-end on these two (the identical path is proven on rides).
+> **Music + Movies now ship from the store (ADR-085 Wave 2), not from core.** `server.ts` unmounted
+> `/api/movies` (carve #1) and `/api/spotify` (carve #2); the installed packages
+> ([`movies/`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/movies),
+> [`spotify/`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/spotify))
+> mount the same paths via `ManifestRouteMounter`. What stays core per ADR-093's interim tier: the
+> `spotify-concierge` / `movies-concierge` bot-node quadruples and the `scripts/oshal-spotify.js` /
+> `scripts/oshal-tmdb.js` CLIs. Install them with `node scripts/oshal-app.js install <name>` — a
+> core image rebuild neither ships nor updates these two.
+>
+> <sub>Replaced 2026-08-02 — the "Go-live pending (Music + Movies, as of 2026-06-20)" banner that
+> stood here listed a **cache-busted core rebuild** as blocker 1, which stopped being the deploy path
+> for these apps at the carve, and repeated the Spotify allowlist gate already stated in the Music
+> caveat above. The one item that was neither dated nor duplicated is kept as a real residual:</sub>
+>
+> **Open residual — concierge chat round-trip.** Discovery + the CLI tools are verified live; the
+> LLM-envelope reply path (`/chat` → orchestrator → `{say, show, playlist|watchlist, remember}`) has
+> not been exercised end-to-end on these two. The identical path is proven on rides, so this is
+> unverified rather than known-broken.
 
 ## 36. Travel — "Travel" (`/api/travel`)
 
@@ -378,6 +396,25 @@ Every ticket flows through a complexity-gated pipeline:
 - **Slack feed intelligence** (ADR-037) — indexes the user's OWN Slack messages into a deduped `feed_messages` store (cron + on-view sync) via connector `slack`; the `feeds-curator` bot summarizes hot areas, trends, and "what did I miss"
 - **Sentiment columns reserved** for the sentiment team (`sentiment` / `sentiment_label` / `sentiment_at` on `feed_messages`)
 - Routes `/api/feeds`, migration 045
+
+## 40. Standards-facing A2A gateway (ADR-109, `/api/a2a`)
+
+- **External, non-OSHAL agents can join the swarm** — distinct from the operator's-own-devices `remote-client` rail. An agent card at `GET /.well-known/agent-card.json` (protocol `0.3.0`), JSON-RPC `message/send` / `tasks/get` / `tasks/cancel` at `POST /api/a2a`
+- **Inbound work is real work** — `message/send` files an actual ticket on the ADR-083 call-out rails under a synthetic `a2a:<agentId>` owner, so budgets, DLQ and run-trace all apply. The controller never names a bot and never calls an LLM (the two-runtime rule holds)
+- **Outbound is a first-class harness** — the `a2a` `harnessType` dispatches to an external agent as an ADR-033 harness sibling; cost lands real-or-honestly-flagged, never a silent `$0`
+- **Default-off and A2A-native auth** — the whole surface is a hard 404 unless `A2A_GATEWAY_ENABLED=true`; per-agent hashed credentials with capability scopes, never a global secret, and never OIDC (an external agent has no browser session). `/api/a2a/agents` credential management is `requiresAuth` + operator-only. Per-agent inbound ceiling `A2A_MAX_INBOUND_PER_HOUR` (default 20 tickets/agent/hour) **fails closed** to 429 when the count itself can't be read
+- **The published card leaks nothing** — skills are curated twice: the ADR-087 accessibility predicate (the same scoping that hides internal machinery from Jarvis) plus a defense-in-depth denylist over trading/dev/queue/factory/judge/packer/operator bots, so a drifted `accessRole` still can't publish one. Skill ids are name slugs — never agentIds, containers or ports — and the only URL on the card is the public JSON-RPC endpoint
+- **The Redis mesh stays internal** — this is the only path an external agent rides
+- **Honest residual** — deployment/interop items are tracked in BACKLOG "Plan F"; the gateway is not yet proven against a third-party vendor's agent
+
+## 41. Personal knowledge graph (ADR-066, `/api/personal-graph`)
+
+- **Connect → Pull → Ingest → Reverberate → Query, end-to-end** — `POST /api/personal-graph/ingest/:provider` pulls a provider's list through the ADR-065 spec client with credentials resolved per-caller via the ADR-056 broker, runs the provider's mapper, folds fragments into the store, then reverberates (cross-source entity dedup). `GET /api/personal-graph/*` serves stats / nodes / neighbors. Both routers are mounted `requiresAuth`
+- **Four ingest mappers** — google-calendar, gmail, github, strava — plus the `reverberate()` pass, covered by 16 unit specs
+- **Owner-scoped Postgres store is built** — migration `057-personal-graph.sql`; ADR-076 Phase 2 threaded owner scoping through `PgGraphStore` (required `ownerSub`, `user_sub` on every query, composite `(user_sub, id)` PK from migration `094` with matching RLS)
+- **Default-off** — routes mount only when `PERSONAL_GRAPH_ROUTES=on`
+- **Honest residuals** — `server.ts` still constructs `InMemoryGraphStore`, so the live graph is process-lifetime (wiring `PgGraphStore` is a composition change, not new code); there is no ingest scheduler (ingest is caller-triggered); and nothing surfaces the graph to Jarvis yet
+- <sub>Added 2026-08-02 (BUG-1 under-claim). This capability was absent from the catalog while `connectors-and-graph-architecture.md` described it as an unimported library — see the correction there.</sub>
 
 ---
 

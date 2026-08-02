@@ -78,6 +78,16 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | [workflows/](./workflows/README.md) | Tool approval / management / verification workflows. |
 | archive/ | *Not in this repo* — the graveyard (superseded handovers, closed-phase plans, historical snapshots) lives in the private archive; dropped from the public snapshot by design. |
 
+**The four "*Not in this repo*" rows are enforced, not just annotated.** `evidence/`,
+`intelligent-career-automation/`, `release/` and `archive/` are absent from this tree by design
+(re-verified 2026-08-02: none of the four exists on disk or is tracked). Three of them —
+`docs/evidence/`, `docs/intelligent-career-automation/`, `docs/archive/`, plus `scripts/release/`
+whose SOP the fourth documents — are named in `INTERNAL_PATHS` in
+[`scripts/publish-gate.sh`](../scripts/publish-gate.sh), so a push that reintroduces one is refused
+at the pre-push hook. They are listed here rather than deleted because docs elsewhere still cite
+them; the row is the redirect. **If you are following a pointer into one of these trees, it is in
+the private archive (ADR-115 / CLAUDE.md Rule 0b) — do not recreate it here.**
+
 **Outside `docs/` but documented on its own:** [`native/`](../native/README.md) — the compiled-kernel
 track (Rust → WASM port of the ADR-116 indicator layer), with its own README / ARCHITECTURE /
 BENCHMARKS / ROADMAP. Kept beside its code rather than here because the docs and the crate change

@@ -87,7 +87,13 @@ service secret — a node identity, never a browser.
 
 ## Evidence
 
-`docs/evidence/sat-ops-adcs-campaign-*.md` — 200 seeded randomized closed-loop scenarios
-(tumble→detumble, slew→settle, truth-scored hold, 30 s star-tracker outage ride-through,
-momentum fault→autonomous DESAT recovery), 100% pass with physics-derived criteria. Live
-NASA-42 missions and architecture: `docs/adr/102-sat-ops-satellites-as-swarm-nodes.md`.
+**The campaign files are not in this repo.** `docs/evidence/sat-ops-adcs-campaign-*.md` is part of
+the generated evidence tree, which is internal-only and refused by `scripts/publish-gate.sh` (ADR-115
+/ CLAUDE.md Rule 0b) — it lives in the private archive. What it recorded, so the result is not lost
+with the pointer: **200 seeded randomized closed-loop scenarios** (tumble→detumble, slew→settle,
+truth-scored hold, 30 s star-tracker outage ride-through, momentum fault→autonomous DESAT recovery),
+**100% pass** against physics-derived criteria.
+
+Reproduce it here rather than reading the archive: the estimator and its guards are in-repo
+(`src/features/sat-ops/`, `tests/unit/sat-mekf.spec.ts`). Live NASA-42 missions and the architecture
+are in [ADR-102](../adr/102-sat-ops-satellites-as-swarm-nodes.md).
