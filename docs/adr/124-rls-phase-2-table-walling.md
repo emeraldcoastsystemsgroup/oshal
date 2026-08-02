@@ -33,7 +33,14 @@ schema from the store repo and are out of scope here — including `lm_*`, which
 [migration 094](../../scripts/migrations/094-derived-owner-rls.sql) already documented as deferred
 to the little-monsters package because `lm_students`/`lm_tenants` identity is not an OIDC sub.
 
-That leaves **54 core-owned tables with RLS switched off**. This ADR disposes of all 54.
+That leaves **55 core-owned tables with RLS switched off**. This ADR disposes of all 55.
+
+> **Corrected 2026-08-02, by the guard itself.** The first count said 54. A plain `CREATE TABLE`
+> grep cannot see `ticket_governance`, whose DDL is `CREATE TABLE IF NOT EXISTS ${GOVERNANCE_TABLE}`.
+> The coverage guard resolves template names against the file's own `const`, so on its first live
+> run it failed on exactly one table — the one written up as DEFERRED below and never added to the
+> enforced list. That is the drift this guard exists to catch, caught on the change that added it;
+> recorded here rather than quietly patched.
 
 ## Decision
 
@@ -82,7 +89,7 @@ rows hang off them, so those 9841 become operator/system-visible only — **not 
 those 71 tickets are already invisible to non-operators under `tickets`' own policy. Zero orphans
 exist in either direction (0 history rows without a ticket, 0 checkpoints without a task).
 
-### 3. The exception list — 41 core tables that stay unwalled, each with a reason
+### 3. The exception list — 42 core tables that stay unwalled, each with a reason
 
 Enumerated and **machine-enforced** in `tests/rls-core-table-coverage-live.spec.ts`. The spec keeps
 the list honest in both directions: a new unwalled core table fails, and so does an exception whose
@@ -111,7 +118,7 @@ operator; tamper-proofing is already enforced by `set_by_operator` in `setBudget
 **PUBLIC (1)** — `market_bars`: RLS enabled with a deliberate permissive `market_bars_public` policy
 and deliberately not forced.
 
-**DEFERRED (7)** — these hold user rows and *could* be walled, but a real reader cannot present an
+**DEFERRED (8)** — these hold user rows and *could* be walled, but a real reader cannot present an
 identity yet. Walling first would be an outage, not a hardening. Done-whens below.
 
 ### 4. Per-request tenant context — what is actually missing

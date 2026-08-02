@@ -98,4 +98,9 @@ tests/workflow-runtime-boundary.spec.ts
 tests/workspace-bootstrap.spec.ts
 tests/swarm-apps-framework.spec.ts
 tests/alert-intake-rls-live.spec.ts
+# ADR-124 RLS Phase 2 (2026-08-02). Both need Postgres + migrations, which this gate stands
+# up. Verified green on the live stack: two-role 15/15 as the NOBYPASSRLS oshal_bot role,
+# coverage 4/4. Neither skips — they FAIL when DATABASE_URL is absent.
+tests/rls-two-role-isolation-live.spec.ts
+tests/rls-core-table-coverage-live.spec.ts
 tests/connector-webhook-rls-live.spec.ts
