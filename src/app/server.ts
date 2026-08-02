@@ -146,6 +146,7 @@
  * 140 | maintainer@emeraldcoastsystemsgroup.com   | Jarvis UX trio wiring: /api/voice now receives ctx (JVV-012 per-user TTS prefs endpoints + prefs-honoring synthesize), and /api/connect gains the liveness router (INSTALLER-GAPS G14 — the Connections badge live token check) on the same auth-gated mount.
  * 141 | maintainer@emeraldcoastsystemsgroup.com   | Global search grew the app/bot/connector result kinds: createGlobalSearchRoutes now receives swarmAppService.listApps as an injected, deliberately UNFILTERED lister (the features slice cannot reach the service, and AppsSearchSource owns the tested caller-visibility rule - pre-filtering here would make two filters where only one can be audited).
  * 142 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /metrics (Prometheus text exposition, @/shared/observability), mounted with /health above the OIDC middleware. The oshal-api-health scrape target pointed at /api/health, which returns JSON — Prometheus cannot parse it, so the scrape FAILED every cycle, `up` was pinned to 0 and SwarmApiUnreachable fired forever on a healthy box (found in the 2026-08-01 live drill). A real exposition makes that target's `up` mean what the rule claims it means, and gives the container-health rules series the swarm itself guarantees.
+ * 143 | maintainer@emeraldcoastsystemsgroup.com   | Operations Stream wiring: the Alertmanager webhook now receives the pool, so a delivery is LANDED durably before anything reads it and the route answers 202 after the commit (503 when landing fails, so the sender retries rather than losing the alert); a pool-less run keeps the previous in-memory path byte-for-byte. Mounted /api/ops/alert-pipeline (reads authenticated, every mutating route carrying requiresOperator on the route itself so a re-mount cannot widen it) and the two authenticated surfaces the intelligent-processing manifest registers as ribbon tools: /system-health (read-only) and /alert-pipeline-admin (operator-gated by its backing routes, rendering an honest operator-only panel on 403).
  */
 
 require('dotenv').config();
@@ -832,6 +833,19 @@ function createApp(): express.Application {
   app.get('/ui.html', requiresAuth, (req, res) => {
     logger.info('GET /ui.html (authenticated)');
     sendHtmlResponse(res, path.join(apiDir, 'ui.html'), '/ui.html');
+  });
+
+  // Operations Stream surfaces, both registered as ribbon tools by the
+  // intelligent-processing manifest. System Health is read-only for any authenticated caller;
+  // Pipeline Admin is operator-only, enforced by every route it calls rather than by this mount —
+  // the page itself renders an honest operator-only panel on a 403.
+  app.get('/system-health', requiresAuth, (req, res) => {
+    logger.info('GET /system-health (authenticated)');
+    sendHtmlResponse(res, path.join(apiDir, 'system-health.html'), '/system-health');
+  });
+  app.get('/alert-pipeline-admin', requiresAuth, (req, res) => {
+    logger.info('GET /alert-pipeline-admin (authenticated)');
+    sendHtmlResponse(res, path.join(apiDir, 'alert-pipeline-admin.html'), '/alert-pipeline-admin');
   });
 
   // Root route - requires auth, then lands on the deployment's home surface.
@@ -1563,7 +1577,19 @@ function createApp(): express.Application {
     const { createPoolRcaSpendReader } = require('./routes/alertmanager-rca-spend');
     app.use('/api/alerts', createAlertmanagerRoutes(ctx.ticketService, {
       rcaSpend: ctx.pool ? createPoolRcaSpendReader(ctx.pool) : null,
+      // With a pool the webhook LANDS the delivery before anything reads it and answers 202 after
+      // the commit (503 when the landing fails, so the sender retries). Without one it keeps the
+      // in-memory path exactly as before, so a pool-less run is unchanged.
+      pool: ctx.pool ?? null,
     }));
+  }
+
+  // Operations Stream read + admin surface. Reads are open to any authenticated caller; every
+  // mutating route additionally carries requiresOperator on the route itself, so re-mounting this
+  // line cannot silently widen it.
+  if (ctx.pool) {
+    const { createOpsPipelineRoutes } = require('./routes/ops-pipeline-routes');
+    app.use('/api/ops/alert-pipeline', createOpsPipelineRoutes({ pool: ctx.pool, requiresAuth }));
   }
 
   // Inbound SMS webhook (Twilio replies) -> POST /api/sms/inbound. Machine-to-machine: mounted

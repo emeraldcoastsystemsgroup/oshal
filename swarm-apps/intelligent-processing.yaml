@@ -29,6 +29,25 @@ status: active
 ticketType: intelligent-processing
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DEPENDENCIES — this queue reuses bots that already run; it mints none.
+#
+# `intelligent-operations` owns the incident bots this pipeline hands work to
+# (rca-specialist, incident-response-bot, incident-remediation-bot). Naming it
+# here makes the relationship explicit and blocks its removal while this queue is
+# active, so the pipeline can never be left pointing at bots that no longer load.
+# The bots themselves are referenced BY NAME in the workflow block below —
+# re-declaring them would fork the identity and split their cost attribution.
+#
+# connectors: [] — the pipeline reads the swarm's own metrics endpoints and its
+# own database. It holds no third-party credential, so it offers none.
+# ─────────────────────────────────────────────────────────────────────────────
+dependencies:
+  apps:
+    - intelligent-operations
+  tools: []
+  connectors: []
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WORKFLOW — reuse the framework's 3-phase incident-rca pipeline. The worker
 # (rca-specialist) and reviewer (queue-bot) are framework bots already active via
 # intelligent-operations.yaml, so they are referenced by name here, not
@@ -72,6 +91,23 @@ ui:
       icon: codicon-pulse
       iframeUrl: /intelligent-processing
       section: top
+    # Live pipeline state, read-only for any authenticated user: scrape targets,
+    # what is firing now and where each alert reached in the pipeline, open
+    # incidents worst-first, the funnel with its per-lane counts, and the
+    # autonomy ladder. Answers "is anything even watching" before anything else
+    # on the page means anything.
+    - toolName: operations-system-health
+      label: System Health
+      icon: codicon-pulse
+      iframeUrl: /system-health
+      section: top
+    # Claim rules, live dedup-key preview, topology and replay. Operator-gated —
+    # the ribbon entry is cosmetic; every backing route enforces it server-side.
+    - toolName: operations-pipeline-admin
+      label: Pipeline Admin
+      icon: codicon-settings-gear
+      iframeUrl: /alert-pipeline-admin
+      section: bottom
 
 ribbon:
   hideFrameworkItems: []

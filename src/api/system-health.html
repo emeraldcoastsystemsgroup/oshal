@@ -1,0 +1,1409 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>System Health — Operations Stream</title>
+<!-- Framework theme tokens + the bootstrap that follows the operator's theme live. Theme files
+     scope to [data-theme="…"] with no bare :root fallback, so the default on <html> above is what
+     gives this surface any colour at all. Host tokens are read-only here; every rule below either
+     consumes one or defines a surface-local token in :root. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);            /* translucent by design — never used as an opaque cover */
+    --solid: var(--bg-secondary);       /* opaque: sticky headers and the drilldown sit on this */
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --dim: var(--text-secondary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5e8fff);
+    --ok: var(--status-success, #34c759);
+    --warn: var(--status-warning, #ff9f0a);
+    --danger: var(--status-error, #ff453a);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden;
+    font: 14.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .page { max-width: 1240px; margin: 0 auto; padding: 24px 20px 90px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Header ─────────────────────────────────────────────────────────────── */
+  .hero { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hero h1 { font-size: 24px; margin: 0; }
+  .sub { color: var(--dim); font-size: 13.5px; margin: 8px 0 14px; max-width: 860px; line-height: 1.6; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; padding: 4px 9px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--muted); white-space: nowrap; }
+  .badge.ok { color: var(--ok); border-color: rgba(52,199,89,.45); background: rgba(52,199,89,.12); }
+  .badge.warn { color: var(--warn); border-color: rgba(255,159,10,.45); background: rgba(255,159,10,.12); }
+  .badge.bad { color: var(--danger); border-color: rgba(255,69,58,.45); background: rgba(255,69,58,.12); }
+  .badge.acc { color: var(--accent); border-color: rgba(94,143,255,.45); background: rgba(94,143,255,.12); }
+
+  .toolbar { position: sticky; top: 0; z-index: 6; display: flex; gap: 10px; flex-wrap: wrap;
+    align-items: center; background: var(--bg); padding: 9px 0 10px; border-bottom: 1px solid var(--line);
+    margin-bottom: 18px; }
+  .toolbar .grow { margin-left: auto; }
+  .toolbar label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+
+  /* ── Cards ──────────────────────────────────────────────────────────────── */
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px 18px; margin-bottom: 16px; }
+  .card > h2 { font-size: 14.5px; margin: 0 0 4px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .card > h2 .spacer { margin-left: auto; }
+  .card > h2 .step-no { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 700; }
+  .note { color: var(--muted); font-size: 12.5px; line-height: 1.6; margin: 6px 0 12px; }
+  .note b, .note strong { color: var(--dim); }
+  .callout { border: 1px solid rgba(255,159,10,.4); background: rgba(255,159,10,.08);
+    color: var(--dim); border-radius: 10px; padding: 10px 12px; font-size: 12.8px; line-height: 1.6; margin: 10px 0; }
+  .callout.bad { border-color: rgba(255,69,58,.45); background: rgba(255,69,58,.08); }
+  .callout.ok { border-color: rgba(52,199,89,.4); background: rgba(52,199,89,.08); }
+  .callout.info { border-color: rgba(94,143,255,.4); background: rgba(94,143,255,.08); }
+  .hidden { display: none !important; }
+
+  /* ── Controls ───────────────────────────────────────────────────────────── */
+  select { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13px; }
+  .btn { border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+    border-radius: 9px; padding: 8px 15px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn.sm { padding: 5px 10px; font-size: 12px; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .linkbtn { background: none; border: none; padding: 0; font: inherit; color: var(--accent);
+    cursor: pointer; text-align: left; font-weight: 600; }
+  .linkbtn:hover { text-decoration: underline; }
+
+  /* ── Tables ─────────────────────────────────────────────────────────────── */
+  .scroller { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { position: sticky; top: 0; background: var(--solid); color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .05em; font-weight: 700; white-space: nowrap; z-index: 1; }
+  tbody tr:hover { background: rgba(127,127,127,.06); }
+  td.mono, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); font-size: 13px; padding: 18px 4px; }
+  tr.down td { background: rgba(255,69,58,.09); }
+  tr.down td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+  tr.unknown td { background: rgba(255,159,10,.07); }
+  tr.unknown td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+  tr.clickable { cursor: pointer; }
+  .unk { color: var(--warn); font-style: italic; font-size: 12.5px; }
+  .sep { color: var(--muted); }
+
+  /* ── Tiles / meters ─────────────────────────────────────────────────────── */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 9px; margin-top: 10px; }
+  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel2); }
+  .tile .v { font-size: 21px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 3px; }
+  .tile .q { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+  .tile.zero .v { color: var(--muted); }
+  .tile.alarm { border-color: rgba(255,69,58,.5); background: rgba(255,69,58,.09); }
+  .tile.alarm .v { color: var(--danger); }
+  .tile.warn { border-color: rgba(255,159,10,.5); background: rgba(255,159,10,.09); }
+  .tile.good { border-color: rgba(52,199,89,.45); }
+  .counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 12px 0 4px; }
+  .counter { border: 1px solid var(--line); border-radius: 12px; padding: 13px 15px; background: var(--panel2); }
+  .counter.c1 { border-left: 4px solid var(--accent); }
+  .counter.c2 { border-left: 4px solid var(--warn); }
+  .counter.c3 { border-left: 4px solid var(--ok); }
+  .counter .v { font-size: 26px; font-variant-numeric: tabular-nums; }
+  .counter .k { font-size: 12px; font-weight: 700; margin-top: 2px; }
+  .counter .q { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+
+  .ratio { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 4px 0 2px; }
+  .ratio .big { font-size: 40px; font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .ratio .big.bad { color: var(--danger); }
+  .ratio .big.warn { color: var(--warn); }
+  .ratio .big.ok { color: var(--ok); }
+  .ratio .cap { font-size: 12.5px; color: var(--muted); }
+
+  .bar { height: 10px; border-radius: 5px; background: var(--panel2); overflow: hidden; min-width: 80px;
+    border: 1px solid var(--line); }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  .bar.mid > i { background: var(--warn); }
+  .bar.hot > i { background: var(--danger); }
+  .meter { display: grid; grid-template-columns: 1fr; gap: 6px; max-width: 460px; margin-top: 8px; }
+  .meter .lbl { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--dim); }
+
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 5px 16px; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; }
+
+  /* ── Funnel stage cards ─────────────────────────────────────────────────── */
+  .stages { display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 10px; margin-top: 12px; }
+  .stage { border: 1px solid var(--line); border-radius: 11px; padding: 11px 13px; background: var(--panel2); }
+  .stage.alarm { border-color: rgba(255,69,58,.55); background: rgba(255,69,58,.09); }
+  .stage .sname { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .stage .sval { font-size: 24px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .stage.alarm .sval { color: var(--danger); }
+  .stage .sq { font-size: 11.5px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+  .stage .sdelta { font-size: 11.5px; margin-top: 7px; color: var(--dim); }
+  .stage .sdelta b { color: var(--text); }
+  .stage .lanes { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 7px; font-size: 12px; }
+  .stage .lanes div { display: flex; justify-content: space-between; gap: 8px; }
+  .stage .lanes span.l { color: var(--muted); overflow-wrap: anywhere; }
+  .stage .lanes span.c { font-variant-numeric: tabular-nums; }
+
+  /* ── Firing stepper ─────────────────────────────────────────────────────── */
+  .fire { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel2);
+    margin-bottom: 10px; }
+  .fire .fh { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .fire .fname { font-weight: 700; }
+  .fire .ftarget { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--dim);
+    overflow-wrap: anywhere; }
+  .fire .fwhen { color: var(--muted); font-size: 12px; margin-left: auto; }
+  ol.steps { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 11px 0 0; padding: 0; }
+  ol.steps li { flex: 1 1 150px; min-width: 0; border: 1px solid var(--line); border-radius: 9px;
+    padding: 7px 9px; background: var(--bg); }
+  ol.steps li .sl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  ol.steps li .sv { font-size: 12.5px; margin-top: 3px; overflow-wrap: anywhere;
+    font-family: ui-monospace, Consolas, monospace; }
+  ol.steps li.done { border-color: rgba(52,199,89,.5); }
+  ol.steps li.done .sl { color: var(--ok); }
+  ol.steps li.stop { border-color: rgba(255,69,58,.6); background: rgba(255,69,58,.1); }
+  ol.steps li.stop .sl { color: var(--danger); }
+  ol.steps li.unsure { border-color: rgba(255,159,10,.55); background: rgba(255,159,10,.09); }
+  ol.steps li.unsure .sl { color: var(--warn); }
+  ol.steps li.skipped { opacity: .5; }
+  .verdict { font-size: 12.8px; line-height: 1.55; margin-top: 10px; color: var(--dim); }
+  .verdict.bad { color: var(--danger); }
+  .verdict.ok { color: var(--ok); }
+  .verdict.unsure { color: var(--warn); }
+
+  /* ── Drilldown ──────────────────────────────────────────────────────────── */
+  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 40; }
+  .drawer { position: fixed; inset: 0; z-index: 41; display: flex; justify-content: flex-end; }
+  .drawer .sheet { width: min(860px, 100%); height: 100%; background: var(--solid);
+    border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+  .drawer .dh { display: flex; align-items: center; gap: 10px; padding: 13px 16px;
+    border-bottom: 1px solid var(--line); background: var(--solid); position: sticky; top: 0; }
+  .drawer .dh h2 { font-size: 15px; margin: 0; overflow-wrap: anywhere; }
+  .drawer .dh .spacer { margin-left: auto; }
+  .drawer .db { padding: 14px 16px 60px; overflow-y: auto; flex: 1; }
+  .block { border: 1px solid var(--line); border-radius: 12px; padding: 13px 15px; margin-bottom: 14px;
+    background: var(--panel2); }
+  .block > h3 { font-size: 13px; margin: 0 0 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .block .bq { font-size: 11.5px; color: var(--muted); margin: 0 0 10px; line-height: 1.5; }
+  .block h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+    margin: 14px 0 6px; }
+  .block .scroller thead th { background: var(--panel2); }
+
+  /* ── Responsive ─────────────────────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .page { padding: 16px 13px 70px; }
+    .ratio .big { font-size: 32px; }
+    ol.steps li { flex: 1 1 100%; }
+    .stack thead { display: none; }
+    .stack, .stack tbody, .stack tr, .stack td { display: block; width: 100%; }
+    .stack tr { border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px; margin-bottom: 12px; }
+    .stack td { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: start;
+      border-bottom: 1px solid var(--line); padding: 7px 2px; }
+    .stack tr td:last-child { border-bottom: none; }
+    .stack td::before { content: attr(data-label); color: var(--muted); font-size: 10.5px;
+      text-transform: uppercase; letter-spacing: .05em; padding-top: 6px; }
+    .stack tr.down td:first-child, .stack tr.unknown td:first-child { box-shadow: none; }
+    select { font-size: 16px; }  /* no iOS zoom-on-focus */
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="page">
+
+  <div class="hero">
+    <h1>System Health</h1>
+    <span class="badge acc" id="refreshBadge">loading</span>
+  </div>
+  <p class="sub">
+    Read-only. The panels are ordered so each one answers a question the next depends on: nothing
+    below means anything until the scrape targets say something is watching, and no funnel number
+    means anything until you know which alerts are firing right now. Every figure on this screen is
+    read live from the pipeline — where a value cannot be read it says <i>unknown</i> rather than
+    standing a zero in for it.
+  </p>
+
+  <div class="toolbar">
+    <label for="winSel">Funnel window</label>
+    <select id="winSel" aria-label="Funnel window">
+      <option value="15">last 15 min</option>
+      <option value="60" selected>last 60 min</option>
+      <option value="360">last 6 h</option>
+      <option value="1440">last 24 h</option>
+    </select>
+    <span class="grow"></span>
+    <span class="badge" id="autoBadge">auto-refresh 30s</span>
+    <button class="btn sm" id="refreshNow" type="button">Refresh now</button>
+  </div>
+
+  <div id="sessionBanner"></div>
+
+  <!-- ══ 1. TARGETS ═════════════════════════════════════════════════════════ -->
+  <section class="card" id="panel-targets">
+    <h2><span class="step-no">1</span> Scrape targets <span class="badge" id="targetsBadge">—</span></h2>
+    <div class="note">
+      <b>Is anything even watching?</b> Every other number on this page is a count of what monitoring
+      noticed, so a target that stopped being scraped makes the panels below quiet rather than clean.
+      A down target is shown as its own state, not as a smaller number.
+    </div>
+    <div id="targetsError"></div>
+    <div class="ratio">
+      <span class="big" id="targetsRatio">—</span>
+      <span class="cap" id="targetsRatioNote">reading scrape state…</span>
+    </div>
+    <div class="tiles" id="targetsTiles"></div>
+    <div class="scroller">
+      <table class="stack" id="targetsTable">
+        <thead><tr>
+          <th>State</th><th>Job</th><th>Instance</th><th>Tier</th><th>Last scrape</th>
+        </tr></thead>
+        <tbody id="targetsBody"></tbody>
+      </table>
+    </div>
+    <div id="targetsEmpty" class="empty hidden"></div>
+  </section>
+
+  <!-- ══ 2. FIRING NOW ══════════════════════════════════════════════════════ -->
+  <section class="card" id="panel-firing">
+    <h2><span class="step-no">2</span> Firing now <span class="badge" id="firingBadge">—</span></h2>
+    <div class="note">
+      <b>Where did my alert go?</b> Each firing alert is drawn with its actual path through the
+      pipeline — landed, normalized, claimed by a rule, consolidated into an incident, turned into a
+      ticket — and the stage it stopped at is marked. An alert that is firing in Prometheus and has
+      no event row never reached this pipeline at all, which looks identical to "quiet" everywhere
+      else.
+    </div>
+    <div id="firingError"></div>
+    <div id="firingList"></div>
+    <div id="firingEmpty" class="empty hidden"></div>
+  </section>
+
+  <!-- ══ 3. OPEN INCIDENTS ══════════════════════════════════════════════════ -->
+  <section class="card" id="panel-incidents">
+    <h2><span class="step-no">3</span> Open incidents <span class="badge" id="incBadge">—</span></h2>
+    <div class="note">
+      Worst first — most severe by ordinal (1 is the most severe), then most recently active. Select
+      an incident to see its exact member and event composition and every outbound decision taken
+      about it. <b>Member overflow is shown separately</b> from the member count: the count is what
+      the incident carries, the overflow is what it had to stop carrying.
+      <b>Ticket ids are identifiers, not links</b> — open one in the Tickets workbench; this
+      deployment has no ticket deep-link URL to point at.
+    </div>
+    <div id="incError"></div>
+    <div class="scroller">
+      <table class="stack" id="incTable">
+        <thead><tr>
+          <th>Incident</th><th>Severity</th><th class="num">Occurrences</th><th>Members</th>
+          <th class="num">Reopens</th><th>Root candidate</th><th>Parked</th><th>Ticket</th><th>Age</th>
+        </tr></thead>
+        <tbody id="incBody"></tbody>
+      </table>
+    </div>
+    <div id="incEmpty" class="empty hidden"></div>
+  </section>
+
+  <!-- ══ 4. FUNNEL ══════════════════════════════════════════════════════════ -->
+  <section class="card" id="panel-funnel">
+    <h2><span class="step-no">4</span> Funnel <span class="badge" id="funnelBadge">—</span>
+      <span class="spacer"></span>
+      <span class="badge" id="funnelWindowBadge">—</span>
+    </h2>
+    <div class="note">
+      Every stage, in order, with the lanes that produced it and the change against the stage
+      immediately before it. <b>A stage at zero while the stage feeding it is not is the alarm</b> —
+      that is a pipeline which is up, healthy by every threshold, and doing nothing.
+    </div>
+    <div id="funnelError"></div>
+    <div class="counters" id="funnelCounters"></div>
+    <div class="note">
+      These three are different questions and are routinely swapped for one another. Suppression and
+      dedup make them diverge by an arbitrary factor, so none can be derived from another and none
+      may be read as another.
+    </div>
+    <div class="stages" id="funnelStages"></div>
+    <div id="funnelEmpty" class="empty hidden"></div>
+  </section>
+
+  <!-- ══ 5. LADDER ══════════════════════════════════════════════════════════ -->
+  <section class="card" id="panel-ladder">
+    <h2><span class="step-no">5</span> Autonomy ladder <span class="badge" id="ladderBadge">—</span></h2>
+    <div class="note">
+      What each claim rule is allowed to do on its own. <b>A0</b> parks the incident for a human.
+      <b>A1</b> writes the root cause and the remediation plan and stops. <b>A2</b> applies that plan.
+      The bounds beside it are what stops A2 running away: the kill switch, the sliding-hour apply
+      cap, and how much is currently parked instead of acted on.
+    </div>
+    <div id="ladderError"></div>
+    <div id="ladderKill"></div>
+    <div class="meter" id="ladderCap"></div>
+    <div class="tiles" id="ladderParked"></div>
+    <div class="scroller">
+      <table class="stack" id="ladderTable">
+        <thead><tr><th>Rule</th><th>Autonomy</th><th>What it may do</th><th>Enabled</th></tr></thead>
+        <tbody id="ladderBody"></tbody>
+      </table>
+    </div>
+    <div id="ladderEmpty" class="empty hidden"></div>
+  </section>
+
+  <!-- ══ 6. HEALTH SIGNALS ══════════════════════════════════════════════════ -->
+  <section class="card" id="panel-signals">
+    <h2><span class="step-no">6</span> Health signals <span class="badge" id="signalsBadge">—</span></h2>
+    <div class="note">
+      <b>These fire on the ABSENCE of data, not on a threshold.</b> A threshold rule can only fire on
+      data, so a pipeline that has stopped producing data produces no alarms and looks, on every
+      dashboard, like a quiet night. Each condition below is reported whether it is firing or not,
+      with the numbers it was decided from.
+    </div>
+    <div id="signalsError"></div>
+    <div class="tiles" id="signalsTiles"></div>
+    <div id="signalsEmpty" class="empty hidden"></div>
+  </section>
+
+</div>
+
+<!-- ══ INCIDENT DRILLDOWN ═══════════════════════════════════════════════════ -->
+<div id="drillBackdrop" class="backdrop hidden"></div>
+<div id="drill" class="drawer hidden" role="dialog" aria-modal="true" aria-labelledby="drillTitle">
+  <div class="sheet">
+    <div class="dh">
+      <h2 id="drillTitle">Incident</h2>
+      <span class="spacer"></span>
+      <button class="btn sm" id="drillClose" type="button">Close</button>
+    </div>
+    <div class="db" id="drillBody"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var BASE = '/api/ops/alert-pipeline';
+  var REFRESH_MS = 30000;
+  var INCIDENT_LIMIT = 50;
+  var $ = function (id) { return document.getElementById(id); };
+
+  var state = {
+    inFlight: false,
+    drillOpen: false,
+    drillId: null,
+    drillTrigger: null,
+    lastUpdated: null,
+    failures: [],
+    skipped: false
+  };
+
+  /* ── Rendering helpers ─────────────────────────────────────────────────── */
+
+  function esc(v) {
+    return String(v === null || v === undefined ? '' : v)
+      .replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+  }
+  /** First present field across candidate names, so a row reads under either casing. */
+  function f(row, names, fallback) {
+    for (var i = 0; i < names.length; i++) {
+      if (row && row[names[i]] !== undefined && row[names[i]] !== null) return row[names[i]];
+    }
+    return fallback === undefined ? null : fallback;
+  }
+  /**
+   * Presence-preserving read. `f` cannot tell "the server said null" from "the server did not
+   * answer this field", and on this screen those are different states: the first is a fact, the
+   * second is unknown. Every stage marker uses this rather than `f`.
+   */
+  function pick(row, names) {
+    for (var i = 0; i < names.length; i++) {
+      if (row && Object.prototype.hasOwnProperty.call(row, names[i])) {
+        return { present: true, value: row[names[i]] };
+      }
+    }
+    return { present: false, value: undefined };
+  }
+  function arr(v) { return Array.isArray(v) ? v : []; }
+  function isNum(v) { return typeof v === 'number' && isFinite(v); }
+  /** A number, or an explicit unknown — never a zero standing in for "we could not read it". */
+  function metric(v, why) {
+    if (isNum(v)) return esc(String(v));
+    var n = Number(v);
+    if (v !== null && v !== undefined && v !== '' && isFinite(n)) return esc(String(n));
+    return '<span class="unk" title="' + esc(why || 'the API did not report this value') + '">unknown</span>';
+  }
+  function text(v, fallbackHtml) {
+    var s = v === null || v === undefined ? '' : String(v);
+    return s === '' ? (fallbackHtml || '<span class="sep">—</span>') : esc(s);
+  }
+  function when(v) {
+    if (!v) return '—';
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+  }
+  function humanSeconds(s) {
+    if (!isFinite(s)) return '—';
+    var n = Math.max(0, Math.round(s));
+    if (n < 90) return n + 's';
+    if (n < 5400) return Math.round(n / 60) + 'm';
+    if (n < 172800) return Math.round(n / 3600) + 'h';
+    return Math.round(n / 86400) + 'd';
+  }
+  function age(v) {
+    if (!v) return '—';
+    var t = new Date(v).getTime();
+    if (!isFinite(t)) return '—';
+    return humanSeconds((Date.now() - t) / 1000) + ' ago';
+  }
+  function pct(n, d) { return d > 0 ? Math.round((n / d) * 100) : 0; }
+  function banner(host, kind, html) { host.innerHTML = '<div class="callout ' + kind + '">' + html + '</div>'; }
+  function clear(host) { host.innerHTML = ''; }
+  function setBadge(id, cls, label) {
+    var el = $(id);
+    el.className = 'badge' + (cls ? ' ' + cls : '');
+    el.textContent = label;
+  }
+  function tile(valueHtml, label, question, cls) {
+    return '<div class="tile' + (cls ? ' ' + cls : '') + '"><div class="v">' + valueHtml + '</div>'
+      + '<div class="k">' + esc(label) + '</div>'
+      + (question ? '<div class="q">' + esc(question) + '</div>' : '') + '</div>';
+  }
+
+  /* ── Transport ─────────────────────────────────────────────────────────── */
+
+  /**
+   * One fetch idiom for the whole surface. Returns { ok, status, body }. A non-JSON answer means the
+   * session was bounced to the identity provider rather than the API answering, which is reported as
+   * a signed-out banner instead of six empty panels that read like a healthy quiet estate.
+   */
+  function api(path) {
+    return fetch(BASE + path, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      credentials: 'same-origin'
+    }).then(function (res) {
+      var type = res.headers.get('content-type') || '';
+      if (type.indexOf('application/json') === -1) {
+        return {
+          ok: false, status: res.status, signedOut: true,
+          body: { error: 'the API answered with ' + (type || 'no content type') + ' — the session was most likely bounced to the identity provider' }
+        };
+      }
+      return res.json().catch(function () { return {}; }).then(function (json) {
+        return { ok: res.ok, status: res.status, body: json, signedOut: res.status === 401 };
+      });
+    }).catch(function (err) {
+      return { ok: false, status: 0, body: { error: (err && err.message) || 'network error' } };
+    });
+  }
+  function errText(r) {
+    var b = r && r.body;
+    var msg = b && (b.error || b.message);
+    return msg || ('HTTP ' + (r ? r.status : '?'));
+  }
+  /** Mark a panel unreadable. An endpoint that failed must never present as an empty panel. */
+  function panelFailed(name, errorId, badgeId, r) {
+    state.failures.push(name);
+    setBadge(badgeId, 'bad', 'unreadable');
+    banner($(errorId), 'bad',
+      '<b>This panel could not be read.</b> ' + esc(errText(r))
+      + '<br>Nothing below is being shown as zero — the state is unknown until this endpoint answers.');
+    if (r && r.signedOut) {
+      banner($('sessionBanner'), 'bad',
+        '<b>Your session is not authenticated.</b> Every panel on this screen is behind the platform '
+        + 'login, so the screen is blank because it cannot read, not because the pipeline is idle. '
+        + '<a href="/login">Sign in</a>.');
+    }
+  }
+
+  /* ══ 1. TARGETS ═════════════════════════════════════════════════════════ */
+
+  function prometheusUnreachable(alarms) {
+    for (var i = 0; i < alarms.length; i++) {
+      if (String(f(alarms[i], ['id'], '')) === 'prometheus-unreachable' && f(alarms[i], ['firing'], false) === true) {
+        return String(f(alarms[i], ['detail'], '')) || 'Prometheus did not answer';
+      }
+    }
+    return null;
+  }
+
+  function targetState(row) {
+    var up = pick(row, ['up']);
+    if (!up.present || up.value === null) return 'unknown';
+    return up.value === true ? 'up' : 'down';
+  }
+
+  function renderTargets(body, promDown) {
+    var rows = arr(f(body, ['targets'], []));
+    var counts = { up: 0, down: 0, unknown: 0 };
+    rows.forEach(function (row) { counts[targetState(row)] += 1; });
+
+    if (promDown) {
+      $('targetsRatio').className = 'big warn';
+      $('targetsRatio').textContent = 'unknown';
+      $('targetsRatioNote').textContent = 'Prometheus did not answer, so scrape state is UNKNOWN — not clear.';
+      banner($('targetsError'), 'bad',
+        '<b>Prometheus is unreachable, so no target can be reported.</b> ' + esc(promDown)
+        + '<br>An empty target list here is the absence of an answer, not an estate with nothing to scrape.');
+      $('targetsBody').innerHTML = '';
+      $('targetsTiles').innerHTML = '';
+      $('targetsTable').classList.add('hidden');
+      $('targetsEmpty').classList.add('hidden');
+      setBadge('targetsBadge', 'bad', 'scrape state unknown');
+      return;
+    }
+
+    clear($('targetsError'));
+    var total = rows.length;
+    var ratioEl = $('targetsRatio');
+    ratioEl.textContent = total > 0 ? (counts.up + ' / ' + total) : '0';
+    ratioEl.className = 'big ' + (total === 0 ? 'warn' : (counts.down > 0 ? 'bad' : (counts.unknown > 0 ? 'warn' : 'ok')));
+    $('targetsRatioNote').textContent = total === 0
+      ? 'Prometheus answered with an empty target list — nothing is configured to be scraped.'
+      : 'targets up' + (counts.down > 0 ? ' · ' + counts.down + ' down' : '')
+        + (counts.unknown > 0 ? ' · ' + counts.unknown + ' not reporting a state' : '');
+    setBadge('targetsBadge', total === 0 ? 'warn' : (counts.down > 0 ? 'bad' : 'ok'),
+      total === 0 ? 'no targets' : (counts.down > 0 ? counts.down + ' down' : 'all up'));
+
+    $('targetsTable').classList.toggle('hidden', total === 0);
+    $('targetsEmpty').classList.toggle('hidden', total > 0);
+    if (total === 0) {
+      $('targetsEmpty').innerHTML = 'Prometheus answered and listed no targets at all. Nothing is being '
+        + 'scraped, so every count below describes only what arrived by other means.';
+      $('targetsTiles').innerHTML = '';
+      $('targetsBody').innerHTML = '';
+      return;
+    }
+
+    var tiers = {};
+    rows.forEach(function (row) {
+      var tier = f(row, ['tier'], null);
+      var key = (tier === null || tier === '') ? '__no-tier__' : String(tier);
+      if (!tiers[key]) tiers[key] = { up: 0, down: 0, unknown: 0, total: 0 };
+      tiers[key][targetState(row)] += 1;
+      tiers[key].total += 1;
+    });
+    $('targetsTiles').innerHTML = Object.keys(tiers).sort().map(function (key) {
+      var t = tiers[key];
+      var label = key === '__no-tier__' ? 'no tier label' : key;
+      var cls = t.down > 0 ? 'alarm' : (t.unknown > 0 ? 'warn' : 'good');
+      return tile(esc(t.up + ' / ' + t.total), label,
+        t.down > 0 ? t.down + ' down in this tier' : (t.unknown > 0 ? t.unknown + ' not reporting a state' : 'every target up'),
+        cls);
+    }).join('');
+
+    var order = { down: 0, unknown: 1, up: 2 };
+    var sorted = rows.slice().sort(function (a, b) {
+      var d = order[targetState(a)] - order[targetState(b)];
+      if (d !== 0) return d;
+      var ja = String(f(a, ['job'], '')), jb = String(f(b, ['job'], ''));
+      if (ja !== jb) return ja < jb ? -1 : 1;
+      return String(f(a, ['instance'], '')) < String(f(b, ['instance'], '')) ? -1 : 1;
+    });
+
+    $('targetsBody').innerHTML = sorted.map(function (row) {
+      var st = targetState(row);
+      var scrape = pick(row, ['lastScrapeAgeSec', 'last_scrape_age_sec']);
+      var scrapeHtml = (!scrape.present || !isNum(scrape.value))
+        ? '<span class="unk" title="Prometheus reported no usable last-scrape time for this target">unknown</span>'
+        : esc(humanSeconds(scrape.value) + ' ago');
+      var tier = f(row, ['tier'], null);
+      var badge = st === 'up'
+        ? '<span class="badge ok">up</span>'
+        : (st === 'down'
+          ? '<span class="badge bad">down — not scraping</span>'
+          : '<span class="badge warn">state not reported</span>');
+      return '<tr class="' + (st === 'up' ? '' : st) + '">'
+        + '<td data-label="State">' + badge + '</td>'
+        + '<td data-label="Job" class="mono">' + text(f(row, ['job'], '')) + '</td>'
+        + '<td data-label="Instance" class="mono">' + text(f(row, ['instance'], '')) + '</td>'
+        + '<td data-label="Tier">' + (tier === null || tier === ''
+          ? '<span class="sep">none declared</span>' : esc(String(tier))) + '</td>'
+        + '<td data-label="Last scrape">' + scrapeHtml + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  /* ══ 2. FIRING NOW ══════════════════════════════════════════════════════ */
+
+  var STOP_REASON = {
+    landed: 'no event row exists for this identity in the pipeline’s trace window. The alert is '
+      + 'firing in Prometheus and the pipeline never received it — check the Alertmanager receiver, not the pipeline.',
+    normalized: 'the event landed but carries no resolvable target, so it can never be consolidated. '
+      + 'The sender is not labelling it with anything the identity ladder can use.',
+    claimed: 'no claim rule admitted it. Either nothing matches it (a coverage gap) or the rule that '
+      + 'would have is switched off.',
+    incident: 'a rule claimed it but no incident carries it yet — consolidation has not run over it, or it failed.',
+    ticket: 'the incident exists but nothing turned it into a ticket, so no human has been given it to work.'
+  };
+  var STEP_NOTE = {
+    landed: 'a normalized event row exists',
+    normalized: 'that row carries a usable target',
+    claimed: 'a claim rule admitted it',
+    incident: 'it was consolidated onto an incident',
+    ticket: 'a ticket was created from that incident'
+  };
+
+  function boolStep(pipeline, names) {
+    var got = pick(pipeline, names);
+    if (!got.present || got.value === undefined) return { st: 'unknown', value: null };
+    if (got.value === null) return { st: 'no', value: null };
+    return { st: got.value === true ? 'yes' : 'no', value: null };
+  }
+  function valueStep(pipeline, names) {
+    var got = pick(pipeline, names);
+    if (!got.present) return { st: 'unknown', value: null };
+    if (got.value === null || got.value === undefined || got.value === '') return { st: 'no', value: null };
+    return { st: 'yes', value: String(got.value) };
+  }
+
+  function severityBadge(sev) {
+    var s = String(sev || '').toLowerCase();
+    var cls = (s === 'critical' || s === 'error') ? 'bad' : (s === 'warning' ? 'warn' : 'acc');
+    return '<span class="badge ' + cls + '">' + text(sev, 'severity not stated') + '</span>';
+  }
+
+  function firingCard(entry) {
+    var p = f(entry, ['pipeline'], {}) || {};
+    var steps = [
+      { key: 'landed', label: 'landed', s: boolStep(p, ['landed']) },
+      { key: 'normalized', label: 'normalized', s: boolStep(p, ['normalized']) },
+      { key: 'claimed', label: 'claimed by rule', s: valueStep(p, ['claimedByRule', 'claimed_by_rule']) },
+      { key: 'incident', label: 'incident', s: valueStep(p, ['incidentId', 'incident_id']) },
+      { key: 'ticket', label: 'ticket', s: valueStep(p, ['ticketId', 'ticket_id']) }
+    ];
+    var stopAt = -1;
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i].s.st !== 'yes') { stopAt = i; break; }
+    }
+    var html = steps.map(function (step, idx) {
+      var cls;
+      if (stopAt === -1 || idx < stopAt) cls = 'done';
+      else if (idx === stopAt) cls = step.s.st === 'unknown' ? 'unsure' : 'stop';
+      else cls = 'skipped';
+      var val;
+      if (step.s.st === 'yes') val = step.s.value !== null ? esc(step.s.value) : 'yes';
+      else if (step.s.st === 'unknown') val = '<span class="unk">not reported</span>';
+      else val = (idx === stopAt) ? 'stopped here' : 'not reached';
+      return '<li class="' + cls + '"><div class="sl">' + esc(step.label) + '</div>'
+        + '<div class="sv">' + val + '</div>'
+        + '<div class="sl" style="text-transform:none;letter-spacing:0;margin-top:4px;">'
+        + esc(STEP_NOTE[step.key]) + '</div></li>';
+    }).join('');
+
+    var verdict;
+    if (stopAt === -1) {
+      verdict = '<div class="verdict ok"><b>Complete.</b> This alert reached a ticket — nothing about it is lost.</div>';
+    } else if (steps[stopAt].s.st === 'unknown') {
+      verdict = '<div class="verdict unsure"><b>Unknown at &ldquo;' + esc(steps[stopAt].label)
+        + '&rdquo;.</b> The API did not report this stage, so how far the alert got is not known — it is not "did not get there".</div>';
+    } else {
+      verdict = '<div class="verdict bad"><b>Stopped at &ldquo;' + esc(steps[stopAt].label) + '&rdquo;:</b> '
+        + esc(STOP_REASON[steps[stopAt].key]) + '</div>';
+    }
+
+    var started = f(entry, ['startedAt', 'started_at'], null);
+    return '<div class="fire">'
+      + '<div class="fh"><span class="fname">' + text(f(entry, ['alertname'], ''), '(unnamed alert)') + '</span>'
+      + severityBadge(f(entry, ['severity'], ''))
+      + '<span class="ftarget">' + text(f(entry, ['target'], ''), '<span class="unk">no target</span>') + '</span>'
+      + '<span class="fwhen">' + (started ? 'firing since ' + esc(when(started)) + ' · ' + esc(age(started))
+        : '<span class="unk">start time not reported</span>') + '</span></div>'
+      + '<ol class="steps">' + html + '</ol>' + verdict + '</div>';
+  }
+
+  function renderFiring(body, promDown) {
+    if (promDown) {
+      clear($('firingList'));
+      $('firingEmpty').classList.add('hidden');
+      banner($('firingError'), 'bad',
+        '<b>Prometheus did not answer, so the firing list is UNKNOWN — not empty.</b> ' + esc(promDown));
+      setBadge('firingBadge', 'bad', 'unknown');
+      return;
+    }
+    clear($('firingError'));
+    var rows = arr(f(body, ['firing'], []));
+    var stalled = rows.filter(function (entry) {
+      var p = f(entry, ['pipeline'], {}) || {};
+      return valueStep(p, ['ticketId', 'ticket_id']).st !== 'yes';
+    }).length;
+    setBadge('firingBadge', rows.length === 0 ? 'ok' : (stalled > 0 ? 'warn' : 'acc'),
+      rows.length === 0 ? 'nothing firing'
+        : rows.length + ' firing' + (stalled > 0 ? ' · ' + stalled + ' short of a ticket' : ''));
+    $('firingEmpty').classList.toggle('hidden', rows.length > 0);
+    if (rows.length === 0) {
+      $('firingEmpty').innerHTML = 'Prometheus answered and reported no firing alerts. Read that next '
+        + 'to the target panel above: silence only means health when something is still being scraped.';
+      clear($('firingList'));
+      return;
+    }
+    $('firingList').innerHTML = rows.map(firingCard).join('');
+  }
+
+  /* ══ 3. OPEN INCIDENTS ══════════════════════════════════════════════════ */
+
+  var PARK_FLAGS = {
+    'analysis-skipped:budget': 'budget-parked',
+    'auto-apply-parked:hourly-cap': 'apply-cap parked',
+    'auto-apply-blocked:recurrence': 'apply blocked — recurrence',
+    'auto-apply-blocked:core-infra': 'apply blocked — core infra'
+  };
+
+  function parkCell(row) {
+    var chips = [];
+    var flap = pick(row, ['flapParked', 'flap_parked']);
+    if (!flap.present) chips.push('<span class="badge warn">flap state not reported</span>');
+    else if (flap.value === true) chips.push('<span class="badge bad">flap-parked</span>');
+    var flags = arr(f(row, ['flags'], []));
+    flags.forEach(function (flag) {
+      var name = String(flag);
+      if (PARK_FLAGS[name]) chips.push('<span class="badge warn">' + esc(PARK_FLAGS[name]) + '</span>');
+      else chips.push('<span class="badge">' + esc(name) + '</span>');
+    });
+    if (chips.length === 0) chips.push('<span class="sep">not parked</span>');
+    return '<div class="chips">' + chips.join('') + '</div>';
+  }
+
+  function rootCell(row) {
+    var target = f(row, ['rootCandidateTarget', 'root_candidate_target'], null);
+    var reason = f(row, ['rootCandidateReason', 'root_candidate_reason'], null);
+    var ambiguous = f(row, ['rootCandidateAmbiguous', 'root_candidate_ambiguous'], false) === true;
+    if (target === null || target === '') {
+      return '<span class="sep">none chosen</span>'
+        + (reason ? '<div class="note" style="margin:4px 0 0;">' + esc(reason) + '</div>' : '');
+    }
+    return '<span class="mono">' + esc(String(target)) + '</span>'
+      + (ambiguous ? ' <span class="badge warn">ambiguous</span>' : '')
+      + '<div class="note" style="margin:4px 0 0;">'
+      + (reason ? 'chosen because: ' + esc(String(reason)) : '<span class="unk">no reason recorded for this choice</span>')
+      + '</div>';
+  }
+
+  function memberCell(row) {
+    var count = pick(row, ['memberCount', 'member_count']);
+    var overflow = pick(row, ['membersOverflow', 'members_overflow']);
+    var html = '<span class="num">' + metric(count.present ? count.value : undefined,
+      'the incident did not report a member count') + '</span> carried';
+    if (overflow.present && isNum(overflow.value) && overflow.value > 0) {
+      html += '<div style="margin-top:4px;"><span class="badge warn">+' + esc(String(overflow.value))
+        + ' over the cap, not carried</span></div>';
+    } else if (!overflow.present) {
+      html += '<div class="unk" style="margin-top:4px;">overflow not reported</div>';
+    }
+    return html;
+  }
+
+  function incidentRow(row) {
+    var id = String(f(row, ['incidentId', 'incident_id'], ''));
+    var label = f(row, ['incidentLabel', 'incident_label'], null)
+      || f(row, ['primaryAlertname', 'primary_alertname'], null);
+    var sevNum = f(row, ['severityNum', 'severity_num'], null);
+    var ticket = f(row, ['ticketId', 'ticket_id'], null);
+    var intake = f(row, ['intakeStatus', 'intake_status'], null);
+    var firstSeen = f(row, ['firstSeen', 'first_seen'], null);
+    var lastSeen = f(row, ['lastSeen', 'last_seen'], null);
+    return '<tr class="clickable" data-inc="' + esc(id) + '">'
+      + '<td data-label="Incident"><button class="linkbtn" type="button" data-inc="' + esc(id) + '">'
+        + (label ? esc(String(label)) : '(unlabelled incident)') + '</button>'
+        + '<div class="mono" style="color:var(--muted);margin-top:3px;">' + esc(id) + '</div></td>'
+      + '<td data-label="Severity">' + severityBadge(f(row, ['severity'], ''))
+        + '<div class="note" style="margin:4px 0 0;">ordinal ' + metric(sevNum, 'no severity ordinal was recorded')
+        + ' <span class="sep">(1 is most severe)</span></div></td>'
+      + '<td data-label="Occurrences" class="num">'
+        + metric(f(row, ['occurrenceCount', 'occurrence_count'], undefined), 'no occurrence count was recorded') + '</td>'
+      + '<td data-label="Members">' + memberCell(row) + '</td>'
+      + '<td data-label="Reopens" class="num">'
+        + metric(f(row, ['reopenCount', 'reopen_count'], undefined), 'no reopen count was recorded') + '</td>'
+      + '<td data-label="Root candidate">' + rootCell(row) + '</td>'
+      + '<td data-label="Parked">' + parkCell(row) + '</td>'
+      + '<td data-label="Ticket">' + (ticket ? '<span class="mono">' + esc(String(ticket)) + '</span>'
+        : '<span class="sep">no ticket</span>')
+        + (intake ? '<div style="margin-top:4px;"><span class="badge">intake: ' + esc(String(intake)) + '</span></div>' : '')
+        + '</td>'
+      + '<td data-label="Age">opened ' + esc(age(firstSeen))
+        + '<div class="note" style="margin:4px 0 0;">last seen ' + esc(age(lastSeen)) + '</div></td>'
+      + '</tr>';
+  }
+
+  function renderIncidents(body) {
+    var rows = arr(f(body, ['incidents'], []));
+    // Worst-first, restated client-side: the ordering IS the panel, and a surface that trusts an
+    // unstated server order silently reorders itself the day that query changes.
+    rows.sort(function (a, b) {
+      var sa = f(a, ['severityNum', 'severity_num'], 99);
+      var sb = f(b, ['severityNum', 'severity_num'], 99);
+      if (isNum(sa) && isNum(sb) && sa !== sb) return sa - sb;
+      var la = new Date(f(a, ['lastSeen', 'last_seen'], 0)).getTime() || 0;
+      var lb = new Date(f(b, ['lastSeen', 'last_seen'], 0)).getTime() || 0;
+      return lb - la;
+    });
+    var parked = rows.filter(function (row) {
+      return f(row, ['flapParked', 'flap_parked'], false) === true || arr(f(row, ['flags'], [])).length > 0;
+    }).length;
+    setBadge('incBadge', rows.length === 0 ? 'ok' : 'acc',
+      rows.length + ' open' + (parked > 0 ? ' · ' + parked + ' parked' : ''));
+    $('incTable').classList.toggle('hidden', rows.length === 0);
+    $('incEmpty').classList.toggle('hidden', rows.length > 0);
+    if (rows.length === 0) {
+      $('incEmpty').textContent = 'No incident is open. This is a real empty list from the incident '
+        + 'store, not an unread panel.';
+      $('incBody').innerHTML = '';
+      return;
+    }
+    $('incBody').innerHTML = rows.map(incidentRow).join('');
+  }
+
+  $('incBody').addEventListener('click', function (ev) {
+    var host = ev.target.closest('[data-inc]');
+    if (!host) return;
+    var id = host.getAttribute('data-inc');
+    if (!id) return;
+    openDrill(id, host);
+  });
+
+  /* ══ 4. FUNNEL ══════════════════════════════════════════════════════════ */
+
+  /** Mirrors FUNNEL_STAGES on the server, in order, with the question each stage answers. */
+  var STAGES = [
+    ['envelopes', 'How many deliveries arrived from Alertmanager?'],
+    ['events', 'How many individual alerts were unpacked out of them?'],
+    ['identity_dropped', 'How many carried nothing that could identify them?'],
+    ['noise', 'How many did a rule deliberately not want?'],
+    ['claimed', 'How many did a rule admit into the pipeline?'],
+    ['incidents_opened', 'How many opened a brand-new incident?'],
+    ['incidents_reopened', 'How many reopened an incident that had closed?'],
+    ['incidents_bundled', 'How many joined an existing incident instead of opening one?'],
+    ['tickets_created', 'How many became a ticket a human can actually work?'],
+    ['dispatch_attempted', 'How many times did the pipeline reach outward?'],
+    ['dispatch_suppressed', 'How many reaches were held back as duplicates?'],
+    ['dispatch_failed', 'How many reaches were attempted and did not land?'],
+    ['actions_applied', 'How many remediations were actually applied to the estate?']
+  ];
+
+  function laneName(source) {
+    var s = String(source === null || source === undefined ? '' : source);
+    if (s === '') return 'unnamed lane';
+    if (s === '__unknown__') return 'unknown lane (arrived on a lane the registry does not know)';
+    return s;
+  }
+
+  function renderFunnel(body) {
+    clear($('funnelError'));
+    var points = arr(f(body, ['points'], []));
+    var counters = f(body, ['counters'], {}) || {};
+    var windowMinutes = f(counters, ['windowMinutes', 'window_minutes'], null);
+    if (!isNum(windowMinutes) && points.length > 0) {
+      windowMinutes = f(points[0], ['windowMinutes', 'window_minutes'], null);
+    }
+    setBadge('funnelWindowBadge', 'acc', isNum(windowMinutes) ? 'window ' + windowMinutes + ' min' : 'window not stated');
+
+    $('funnelCounters').innerHTML = ''
+      + '<div class="counter c1"><div class="v">'
+        + metric(f(counters, ['uniqueIncidents', 'unique_incidents'], undefined), 'the counter summary did not report this')
+        + '</div><div class="k">Unique incidents</div>'
+        + '<div class="q">Distinct incident identities the pipeline dispatched about. This is a count of PROBLEMS. It is not a message count.</div></div>'
+      + '<div class="counter c2"><div class="v">'
+        + metric(f(counters, ['deliveryAttempts', 'delivery_attempts'], undefined), 'the counter summary did not report this')
+        + '</div><div class="k">Delivery attempts</div>'
+        + '<div class="q">Outbound attempts made, successful or not. This is a count of TRIES. It is neither an incident count nor a delivery count.</div></div>'
+      + '<div class="counter c3"><div class="v">'
+        + metric(f(counters, ['successfulFirstDeliveries', 'successful_first_deliveries'], undefined), 'the counter summary did not report this')
+        + '</div><div class="k">Successful first deliveries</div>'
+        + '<div class="q">Attempts that were neither suppressed nor failed. This is the only number that means something LANDED.</div></div>';
+
+    if (points.length === 0) {
+      $('funnelStages').innerHTML = '';
+      $('funnelEmpty').classList.remove('hidden');
+      $('funnelEmpty').textContent = 'No lane reported any activity in this window, so there are no stage '
+        + 'counts to show. That is an absence of lanes, not thirteen stages measured at zero — widen the '
+        + 'window or read the health signals below.';
+      setBadge('funnelBadge', 'warn', 'no lanes in window');
+      return;
+    }
+    $('funnelEmpty').classList.add('hidden');
+
+    var byStage = {};
+    points.forEach(function (point) {
+      var stage = String(f(point, ['stage'], ''));
+      if (!stage) return;
+      if (!byStage[stage]) byStage[stage] = { total: 0, lanes: [], bad: false };
+      var count = f(point, ['count'], null);
+      if (isNum(count)) byStage[stage].total += count; else byStage[stage].bad = true;
+      byStage[stage].lanes.push({ source: laneName(f(point, ['source'], '')), count: count });
+    });
+
+    var alarms = 0;
+    var prevName = null;
+    var cards = STAGES.map(function (entry) {
+      var name = entry[0], question = entry[1];
+      var here = byStage[name];
+      var prev = prevName ? byStage[prevName] : null;
+      var prevLabel = prevName;
+      prevName = name;
+      if (!here) {
+        return '<div class="stage"><div class="sname">' + esc(name.replace(/_/g, ' ')) + '</div>'
+          + '<div class="sval"><span class="unk">unknown</span></div>'
+          + '<div class="sq">' + esc(question) + '</div>'
+          + '<div class="sdelta">The API did not report this stage at all, so it is unknown — not zero.</div></div>';
+      }
+      var total = here.bad ? null : here.total;
+      var prevTotal = (prev && !prev.bad) ? prev.total : null;
+      var isAlarm = total === 0 && isNum(prevTotal) && prevTotal > 0;
+      if (isAlarm) alarms += 1;
+
+      var delta;
+      if (!prevLabel) delta = 'First stage — nothing precedes it.';
+      else if (!isNum(prevTotal) || !isNum(total)) delta = 'Change against ' + prevLabel.replace(/_/g, ' ') + ' is unknown.';
+      else if (prevTotal === 0) delta = 'Predecessor <b>' + esc(prevLabel.replace(/_/g, ' ')) + '</b> carried nothing, so there is no drop to measure.';
+      else if (total <= prevTotal) delta = '<b>' + esc(String(Math.round(((prevTotal - total) / prevTotal) * 100)))
+        + '% drop</b> against ' + esc(prevLabel.replace(/_/g, ' ')) + ' (' + esc(String(prevTotal)) + ')';
+      else delta = '<b>' + esc(String(Math.round(((total - prevTotal) / prevTotal) * 100)))
+        + '% more</b> than ' + esc(prevLabel.replace(/_/g, ' ')) + ' (' + esc(String(prevTotal)) + ')';
+
+      var lanes = here.lanes.map(function (lane) {
+        return '<div><span class="l">' + esc(lane.source) + '</span><span class="c">'
+          + metric(lane.count, 'this lane reported no usable count') + '</span></div>';
+      }).join('');
+
+      return '<div class="stage' + (isAlarm ? ' alarm' : '') + '">'
+        + '<div class="sname">' + esc(name.replace(/_/g, ' ')) + '</div>'
+        + '<div class="sval">' + (isNum(total) ? esc(String(total))
+          : '<span class="unk">unknown</span>') + '</div>'
+        + '<div class="sq">' + esc(question) + '</div>'
+        + '<div class="sdelta">' + delta + '</div>'
+        + (isAlarm ? '<div class="sdelta"><b>Nothing passed this stage</b> while the stage feeding it carried '
+          + esc(String(prevTotal)) + '. The volume stops here.</div>' : '')
+        + '<div class="lanes">' + lanes + '</div></div>';
+    }).join('');
+
+    $('funnelStages').innerHTML = cards;
+    setBadge('funnelBadge', alarms > 0 ? 'bad' : 'ok',
+      alarms > 0 ? alarms + ' stage' + (alarms === 1 ? '' : 's') + ' stopped' : 'volume passes every stage');
+  }
+
+  /* ══ 5. LADDER ══════════════════════════════════════════════════════════ */
+
+  var AUTONOMY_MEANING = {
+    A0: 'Parks the incident for a human. Nothing runs unattended.',
+    A1: 'Writes the root cause and the remediation plan, then stops.',
+    A2: 'Applies that remediation plan.'
+  };
+
+  function renderLadder(body) {
+    clear($('ladderError'));
+    var rules = arr(f(body, ['rules'], []));
+    var killPick = pick(body, ['killSwitch', 'kill_switch']);
+    var applyEnabled = killPick.present ? killPick.value === true : null;
+    var cap = f(body, ['hourlyCap', 'hourly_cap'], {}) || {};
+    var parked = f(body, ['parked'], {}) || {};
+    var windowMinutes = f(body, ['windowMinutes', 'window_minutes'], null);
+
+    var a2 = rules.filter(function (r) { return String(f(r, ['autonomyLevel', 'autonomy_level'], '')) === 'A2'
+      && f(r, ['enabled'], true) !== false; }).length;
+
+    if (applyEnabled === null) {
+      banner($('ladderKill'), 'bad', '<b>The kill switch state was not reported.</b> Whether an A2 rule '
+        + 'would apply anything right now is unknown — treat it as unsafe until this reads.');
+    } else if (applyEnabled) {
+      banner($('ladderKill'), 'warn', '<b>Auto-apply is ON</b> (<span class="mono">SELF_HEAL_AUTO_APPLY</span>). '
+        + 'An A2 rule may apply its remediation plan to the estate without a human, inside the bounds below. '
+        + esc(a2) + ' enabled rule' + (a2 === 1 ? ' is' : 's are') + ' at A2.');
+    } else {
+      banner($('ladderKill'), 'ok', '<b>Auto-apply is OFF</b> (<span class="mono">SELF_HEAL_AUTO_APPLY</span>). '
+        + 'Every A2 rule behaves exactly as A1 — proposals queue at the approve gate and nothing is applied.'
+        + (a2 > 0 ? ' ' + esc(a2) + ' rule' + (a2 === 1 ? '' : 's') + ' declared A2 and ' + (a2 === 1 ? 'is' : 'are')
+          + ' therefore holding at the gate.' : ''));
+    }
+
+    var limit = f(cap, ['limit'], null);
+    var used = f(cap, ['used'], null);
+    if (!isNum(limit) || !isNum(used)) {
+      $('ladderCap').innerHTML = '<div class="lbl"><span>Hourly apply cap</span>'
+        + '<span class="unk">not reported</span></div>';
+    } else {
+      var ratio = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : (used > 0 ? 100 : 0);
+      var cls = limit > 0 && used >= limit ? 'hot' : (ratio >= 70 ? 'mid' : '');
+      $('ladderCap').innerHTML = '<div class="lbl"><span>Hourly apply cap</span><span>'
+        + esc(used + ' of ' + limit + ' used' + (isNum(windowMinutes) ? ' in the last ' + windowMinutes + ' min' : ''))
+        + '</span></div>'
+        + '<div class="bar ' + cls + '"><i style="width:' + ratio + '%"></i></div>'
+        + '<div class="note" style="margin:2px 0 0;">'
+        + (limit === 0
+          ? 'The cap is 0, which is a real setting: every apply parks at the gate, visibly.'
+          : (used >= limit
+            ? 'The cap is spent — further applies park until the sliding hour moves on.'
+            : 'Attempts are counted, not successes: a failed apply still touched the system and still spends budget.'))
+        + '</div>';
+    }
+
+    $('ladderParked').innerHTML =
+      tile(metric(f(parked, ['budget'], undefined), 'the ladder did not report a budget-park count'),
+        'parked by budget',
+        'Held back because the sliding-hour analyst budget was exhausted' + (isNum(windowMinutes) ? ' (last ' + windowMinutes + ' min)' : ''),
+        isNum(f(parked, ['budget'], undefined)) && f(parked, ['budget'], 0) > 0 ? 'warn' : '')
+      + tile(metric(f(parked, ['flap'], undefined), 'the ladder did not report a flap-park count'),
+        'parked by flap',
+        'Held back because the incident is flapping, so acting on it would chase a bouncing signal'
+          + (isNum(windowMinutes) ? ' (last ' + windowMinutes + ' min)' : ''),
+        isNum(f(parked, ['flap'], undefined)) && f(parked, ['flap'], 0) > 0 ? 'warn' : '');
+
+    setBadge('ladderBadge', rules.length === 0 ? 'warn' : (applyEnabled ? 'warn' : 'ok'),
+      rules.length + ' rule' + (rules.length === 1 ? '' : 's')
+      + (applyEnabled === null ? ' · switch unknown' : (applyEnabled ? ' · applies ON' : ' · applies OFF')));
+
+    $('ladderTable').classList.toggle('hidden', rules.length === 0);
+    $('ladderEmpty').classList.toggle('hidden', rules.length > 0);
+    if (rules.length === 0) {
+      $('ladderEmpty').textContent = 'No claim rule is registered. An empty rule set means UNCONFIGURED, '
+        + 'not closed: the pipeline has nothing to filter on and admits everything that arrives.';
+      $('ladderBody').innerHTML = '';
+      return;
+    }
+    $('ladderBody').innerHTML = rules.map(function (rule) {
+      var level = String(f(rule, ['autonomyLevel', 'autonomy_level'], ''));
+      var enabled = pick(rule, ['enabled']);
+      var cls = level === 'A2' ? 'warn' : (level === 'A1' ? 'acc' : '');
+      var enabledHtml = !enabled.present ? '<span class="unk">not reported</span>'
+        : (enabled.value === false ? '<span class="badge">off</span>' : '<span class="badge ok">on</span>');
+      var meaning = AUTONOMY_MEANING[level];
+      if (level === 'A2' && applyEnabled === false) {
+        meaning = 'Declared A2, but auto-apply is off — it behaves as A1 and applies nothing.';
+      }
+      return '<tr>'
+        + '<td data-label="Rule" class="mono">' + text(f(rule, ['ruleId', 'rule_id'], ''), '(unnamed rule)') + '</td>'
+        + '<td data-label="Autonomy">' + (level ? '<span class="badge ' + cls + '">' + esc(level) + '</span>'
+          : '<span class="unk">not reported</span>') + '</td>'
+        + '<td data-label="What it may do">' + (meaning ? esc(meaning)
+          : '<span class="unk">unrecognised level — its behaviour cannot be stated</span>') + '</td>'
+        + '<td data-label="Enabled">' + enabledHtml + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  /* ══ 6. HEALTH SIGNALS ══════════════════════════════════════════════════ */
+
+  function renderSignals(body) {
+    clear($('signalsError'));
+    var alarms = arr(f(body, ['alarms'], []));
+    if (alarms.length === 0) {
+      $('signalsTiles').innerHTML = '';
+      $('signalsEmpty').classList.remove('hidden');
+      $('signalsEmpty').textContent = 'No absence condition was reported. Read that as a missing list, '
+        + 'not an all-clear: the evaluator returns every condition it knows about, firing or not, so an '
+        + 'empty array means the conditions were not evaluated.';
+      setBadge('signalsBadge', 'warn', 'no conditions reported');
+      return;
+    }
+    $('signalsEmpty').classList.add('hidden');
+    var firing = alarms.filter(function (a) { return f(a, ['firing'], false) === true; });
+    setBadge('signalsBadge', firing.length > 0 ? 'bad' : 'ok',
+      firing.length + ' firing of ' + alarms.length);
+    var sorted = alarms.slice().sort(function (a, b) {
+      var fa = f(a, ['firing'], false) === true ? 0 : 1;
+      var fb = f(b, ['firing'], false) === true ? 0 : 1;
+      if (fa !== fb) return fa - fb;
+      return String(f(a, ['id'], '')) < String(f(b, ['id'], '')) ? -1 : 1;
+    });
+    $('signalsTiles').innerHTML = sorted.map(function (alarm) {
+      var on = pick(alarm, ['firing']);
+      var cls = !on.present ? 'warn' : (on.value === true ? 'alarm' : '');
+      var stateHtml = !on.present ? '<span class="unk">state not reported</span>'
+        : (on.value === true ? '<span class="badge bad">firing</span>' : '<span class="badge ok">clear</span>');
+      return '<div class="tile ' + cls + '" style="grid-column:span 2;">'
+        + '<div>' + stateHtml + '</div>'
+        + '<div class="k" style="margin-top:7px;">' + text(f(alarm, ['id'], ''), '(unnamed condition)') + '</div>'
+        + '<div class="q">' + text(f(alarm, ['detail'], ''),
+          '<span class="unk">no detail was reported for this condition</span>') + '</div></div>';
+    }).join('');
+  }
+
+  /* ══ INCIDENT DRILLDOWN ═════════════════════════════════════════════════ */
+
+  function kvRow(label, html) { return '<dt>' + esc(label) + '</dt><dd>' + html + '</dd>'; }
+
+  function drillIncidentBlock(incident, snapshots) {
+    var overflow = pick(incident, ['membersOverflow', 'members_overflow']);
+    return '<div class="block"><h3>1 · The incident</h3>'
+      + '<p class="bq">What the pipeline decided this problem IS: one identity, one lifecycle, one severity.</p>'
+      + '<dl class="kv">'
+      + kvRow('Label', text(f(incident, ['incidentLabel', 'incident_label'], ''), '(unlabelled)'))
+      + kvRow('Incident id', '<span class="mono">' + text(f(incident, ['incidentId', 'incident_id'], '')) + '</span>')
+      + kvRow('Dedup key', '<span class="mono">' + text(f(incident, ['dedupKey', 'dedup_key'], ''),
+        '<span class="unk">no identity recorded</span>') + '</span>')
+      + kvRow('Identity source', '<span class="mono">' + text(f(incident, ['identitySource', 'identity_source'], ''),
+        '<span class="unk">not recorded</span>') + '</span>')
+      + kvRow('State', text(f(incident, ['state'], '')))
+      + kvRow('Severity', text(f(incident, ['severity'], '')) + ' <span class="sep">· ordinal</span> '
+        + metric(f(incident, ['severityNum', 'severity_num'], undefined), 'no ordinal recorded'))
+      + kvRow('Claimed by rule', text(f(incident, ['claimRuleId', 'claim_rule_id'], ''),
+        '<span class="unk">no rule claimed it</span>'))
+      + kvRow('Occurrences', metric(f(incident, ['occurrenceCount', 'occurrence_count'], undefined), 'not recorded'))
+      + kvRow('Members carried', metric(f(incident, ['memberCount', 'member_count'], undefined), 'not recorded'))
+      + kvRow('Members over the cap', overflow.present
+        ? metric(overflow.value, 'not recorded') + ' <span class="sep">(counted, not carried)</span>'
+        : '<span class="unk">not reported</span>')
+      + kvRow('Reopens', metric(f(incident, ['reopenCount', 'reopen_count'], undefined), 'not recorded'))
+      + kvRow('Root candidate', rootCell(incident))
+      + kvRow('Correlation', text(f(incident, ['correlationEngine', 'correlation_engine'], ''),
+        '<span class="unk">no engine recorded</span>') + ' <span class="sep">· depth</span> '
+        + metric(f(incident, ['correlationDepth', 'correlation_depth'], undefined), 'not recorded'))
+      + kvRow('Parked', parkCell(incident))
+      + kvRow('Intake', text(f(incident, ['intakeStatus', 'intake_status'], '')))
+      + kvRow('Ticket', text(f(incident, ['ticketId', 'ticket_id'], ''), '<span class="sep">no ticket</span>'))
+      + kvRow('First seen', esc(when(f(incident, ['firstSeen', 'first_seen'], null))) + ' <span class="sep">·</span> '
+        + esc(age(f(incident, ['firstSeen', 'first_seen'], null))))
+      + kvRow('Last seen', esc(when(f(incident, ['lastSeen', 'last_seen'], null))) + ' <span class="sep">·</span> '
+        + esc(age(f(incident, ['lastSeen', 'last_seen'], null))))
+      + kvRow('Evidence snapshots', esc(String(snapshots.length)))
+      + '</dl></div>';
+  }
+
+  function drillCompositionBlock(members, events) {
+    var memberRows = members.map(function (m) {
+      return '<tr><td class="mono">' + text(f(m, ['memberKey', 'member_key'], '')) + '</td>'
+        + '<td>' + text(f(m, ['alertname'], '')) + '</td>'
+        + '<td class="mono">' + text(f(m, ['target'], '')) + '</td>'
+        + '<td>' + text(f(m, ['severity'], '')) + '</td>'
+        + '<td>' + text(f(m, ['attachReason', 'attach_reason'], ''), '<span class="unk">not recorded</span>') + '</td>'
+        + '<td class="num">' + metric(f(m, ['dependencyHops', 'dependency_hops'], undefined), 'not recorded') + '</td>'
+        + '<td class="num">' + metric(f(m, ['occurrenceCount', 'occurrence_count'], undefined), 'not recorded') + '</td>'
+        + '<td>' + esc(age(f(m, ['lastSeen', 'last_seen'], null))) + '</td>'
+        + '<td>' + (f(m, ['resolvedAt', 'resolved_at'], null)
+          ? esc(when(f(m, ['resolvedAt', 'resolved_at'], null))) : '<span class="sep">still open</span>') + '</td></tr>';
+    }).join('');
+    var eventRows = events.map(function (e) {
+      var unclaimed = f(e, ['unclaimedReason', 'unclaimed_reason'], null);
+      return '<tr><td>' + esc(when(f(e, ['receivedAt', 'received_at'], null))) + '</td>'
+        + '<td>' + text(f(e, ['alertname'], '')) + '</td>'
+        + '<td class="mono">' + text(f(e, ['target'], '')) + '</td>'
+        + '<td>' + text(f(e, ['status'], '')) + '</td>'
+        + '<td>' + text(f(e, ['source'], '')) + '</td>'
+        + '<td>' + text(f(e, ['claimDecision', 'claim_decision'], ''), '<span class="unk">not recorded</span>') + '</td>'
+        + '<td>' + text(f(e, ['claimedByRule', 'claimed_by_rule'], ''), '<span class="sep">—</span>') + '</td>'
+        + '<td>' + (unclaimed ? '<span class="badge warn">' + esc(String(unclaimed).replace(/_/g, ' ')) + '</span>'
+          : '<span class="sep">—</span>') + '</td>'
+        + '<td class="mono">' + text(f(e, ['lastError', 'last_error'], ''), '<span class="sep">—</span>') + '</td></tr>';
+    }).join('');
+    return '<div class="block"><h3>2 · What it is made of</h3>'
+      + '<p class="bq">The exact members the incident carries and the events that composed it. This is what '
+      + '"one incident" actually collapsed — read it before trusting the count above.</p>'
+      + '<h4>Members (' + esc(String(members.length)) + ')</h4>'
+      + (members.length === 0
+        ? '<div class="empty">This incident carries no member rows.</div>'
+        : '<div class="scroller"><table><thead><tr><th>Member key</th><th>Alert</th><th>Target</th>'
+          + '<th>Severity</th><th>Attached because</th><th class="num">Hops</th><th class="num">Occurrences</th>'
+          + '<th>Last seen</th><th>Resolved</th></tr></thead><tbody>' + memberRows + '</tbody></table></div>')
+      + '<h4>Events (' + esc(String(events.length)) + ')</h4>'
+      + (events.length === 0
+        ? '<div class="empty">No stored event is attached to this incident.</div>'
+        : '<div class="scroller"><table><thead><tr><th>Received</th><th>Alert</th><th>Target</th><th>Status</th>'
+          + '<th>Lane</th><th>Decision</th><th>Claimed by</th><th>Unclaimed reason</th><th>Error</th>'
+          + '</tr></thead><tbody>' + eventRows + '</tbody></table></div>')
+      + '</div>';
+  }
+
+  function drillDispatchBlock(dispatch) {
+    var failed = f(dispatch, ['failed'], null);
+    var lastError = f(dispatch, ['lastError', 'last_error'], null);
+    var windowMinutes = f(dispatch, ['windowMinutes', 'window_minutes'], null);
+    var showError = isNum(failed) && failed > 0;
+    return '<div class="block"><h3>3 · What was done about it</h3>'
+      + '<p class="bq">Every outbound decision taken about this identity, split three ways. Suppressed is a '
+      + 'deliberate non-action, delivered is the only bucket that landed, and failed is an attempt that did not. '
+      + (isNum(windowMinutes) ? 'Window: ' + esc(String(windowMinutes)) + ' minutes.'
+        : 'The window was not stated; these are the ledger rows the server counted.') + '</p>'
+      + '<div class="tiles">'
+      + tile(metric(f(dispatch, ['total'], undefined), 'the dispatch tally did not report a total'), 'total decisions',
+        'Every ledger row for this identity. Equals suppressed + delivered + failed.')
+      + tile(metric(f(dispatch, ['suppressed'], undefined), 'not reported'), 'suppressed',
+        'Deliberately not sent — a duplicate of something already dispatched.')
+      + tile(metric(f(dispatch, ['delivered'], undefined), 'not reported'), 'delivered',
+        'Attempted and confirmed successful. The only bucket that means it landed.',
+        isNum(f(dispatch, ['delivered'], undefined)) && f(dispatch, ['delivered'], 0) > 0 ? 'good' : '')
+      + tile(metric(failed, 'not reported'), 'failed',
+        'Attempted and did not succeed — including attempts that were never answered.',
+        showError ? 'alarm' : '')
+      + '</div>'
+      + (showError
+        ? '<div class="callout bad" style="margin-top:12px;"><b>Most recent error</b><br>'
+          + (lastError ? '<span class="mono">' + esc(String(lastError)) + '</span>'
+            : '<span class="unk">the failed bucket is non-zero but no error text was recorded</span>')
+          + '</div>'
+        : '<div class="note" style="margin-top:12px;">No dispatch about this identity is in the failed bucket, '
+          + 'so no error is shown. A last error on its own is a stale artefact that implies a problem which is over.</div>')
+      + '</div>';
+  }
+
+  function renderDrill(body) {
+    var incident = f(body, ['incident'], {}) || {};
+    var members = arr(f(body, ['members'], []));
+    var events = arr(f(body, ['events'], []));
+    var snapshots = arr(f(body, ['snapshots'], []));
+    var dispatch = f(body, ['dispatch'], {}) || {};
+    $('drillBody').innerHTML = drillIncidentBlock(incident, snapshots)
+      + drillCompositionBlock(members, events)
+      + drillDispatchBlock(dispatch);
+  }
+
+  function openDrill(id, trigger) {
+    state.drillOpen = true;
+    state.drillId = id;
+    state.drillTrigger = trigger || null;
+    $('drill').classList.remove('hidden');
+    $('drillBackdrop').classList.remove('hidden');
+    $('drillTitle').textContent = 'Incident ' + id;
+    $('drillBody').innerHTML = '<div class="note">Reading this incident…</div>';
+    $('drillClose').focus();
+    paintRefreshBadge();
+    paintAutoBadge();
+    api('/incidents/' + encodeURIComponent(id)).then(function (r) {
+      if (!state.drillOpen || state.drillId !== id) return;
+      if (!r.ok) {
+        $('drillBody').innerHTML = '<div class="callout bad"><b>This incident could not be read.</b> '
+          + esc(errText(r)) + '</div>';
+        return;
+      }
+      renderDrill(r.body || {});
+    });
+  }
+  function closeDrill() {
+    if (!state.drillOpen) return;
+    state.drillOpen = false;
+    state.drillId = null;
+    $('drill').classList.add('hidden');
+    $('drillBackdrop').classList.add('hidden');
+    $('drillBody').innerHTML = '';
+    if (state.drillTrigger && document.contains(state.drillTrigger)) state.drillTrigger.focus();
+    state.drillTrigger = null;
+    refreshAll();
+  }
+  $('drillClose').addEventListener('click', closeDrill);
+  $('drillBackdrop').addEventListener('click', closeDrill);
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && state.drillOpen) closeDrill();
+  });
+
+  /* ══ REFRESH ORCHESTRATION ══════════════════════════════════════════════ */
+
+  function loadHealth() {
+    return api('/health').then(function (r) {
+      if (!r.ok) {
+        panelFailed('targets', 'targetsError', 'targetsBadge', r);
+        panelFailed('firing', 'firingError', 'firingBadge', r);
+        panelFailed('signals', 'signalsError', 'signalsBadge', r);
+        $('targetsRatio').className = 'big warn';
+        $('targetsRatio').textContent = 'unknown';
+        $('targetsRatioNote').textContent = 'The health endpoint did not answer.';
+        return;
+      }
+      var body = r.body || {};
+      var promDown = prometheusUnreachable(arr(f(body, ['alarms'], [])));
+      renderTargets(body, promDown);
+      renderFiring(body, promDown);
+      renderSignals(body);
+    });
+  }
+  function loadIncidents() {
+    return api('/incidents?state=open&limit=' + INCIDENT_LIMIT).then(function (r) {
+      if (!r.ok) { panelFailed('incidents', 'incError', 'incBadge', r); return; }
+      clear($('incError'));
+      renderIncidents(r.body || {});
+    });
+  }
+  function loadFunnel() {
+    var w = $('winSel').value;
+    return api('/funnel?windowMinutes=' + encodeURIComponent(w)).then(function (r) {
+      if (!r.ok) { panelFailed('funnel', 'funnelError', 'funnelBadge', r); return; }
+      renderFunnel(r.body || {});
+    });
+  }
+  function loadLadder() {
+    return api('/ladder').then(function (r) {
+      if (!r.ok) { panelFailed('ladder', 'ladderError', 'ladderBadge', r); return; }
+      renderLadder(r.body || {});
+    });
+  }
+
+  /** Scroll offsets are captured and restored around every render: a refresh that jumps an operator
+   *  back to the top mid-investigation costs more than the stale row it replaced. */
+  function captureScroll() {
+    var lefts = [];
+    var scrollers = document.querySelectorAll('.page .scroller');
+    for (var i = 0; i < scrollers.length; i++) lefts.push(scrollers[i].scrollLeft);
+    return { y: window.scrollY || window.pageYOffset || 0, lefts: lefts };
+  }
+  function restoreScroll(saved) {
+    var scrollers = document.querySelectorAll('.page .scroller');
+    for (var i = 0; i < scrollers.length && i < saved.lefts.length; i++) scrollers[i].scrollLeft = saved.lefts[i];
+    window.scrollTo(0, saved.y);
+  }
+
+  function paintRefreshBadge() {
+    if (state.inFlight) { setBadge('refreshBadge', 'acc', 'refreshing'); return; }
+    if (state.drillOpen) { setBadge('refreshBadge', 'warn', 'paused — incident open'); return; }
+    if (state.failures.length > 0) {
+      setBadge('refreshBadge', 'bad', state.failures.length + ' panel'
+        + (state.failures.length === 1 ? '' : 's') + ' unreadable');
+      return;
+    }
+    if (!state.lastUpdated) { setBadge('refreshBadge', 'acc', 'loading'); return; }
+    setBadge('refreshBadge', 'ok', 'updated ' + humanSeconds((Date.now() - state.lastUpdated.getTime()) / 1000) + ' ago');
+  }
+  function paintAutoBadge() {
+    if (state.drillOpen) { setBadge('autoBadge', 'warn', 'auto-refresh held'); return; }
+    if (state.skipped) { setBadge('autoBadge', 'warn', 'refresh skipped — still working'); return; }
+    setBadge('autoBadge', '', 'auto-refresh 30s');
+  }
+
+  /**
+   * A refresh is skipped outright while a drilldown is open or a previous pass is still running.
+   * Re-rendering under an operator who is mid-investigation is worse than showing them stale data,
+   * and overlapping passes fight each other for the same DOM.
+   */
+  function refreshAll() {
+    if (state.inFlight) { state.skipped = true; paintAutoBadge(); return; }
+    if (state.drillOpen) { state.skipped = true; paintAutoBadge(); return; }
+    state.skipped = false;
+    state.inFlight = true;
+    state.failures = [];
+    clear($('sessionBanner'));
+    paintRefreshBadge();
+    paintAutoBadge();
+    var saved = captureScroll();
+    Promise.all([loadHealth(), loadIncidents(), loadFunnel(), loadLadder()]).then(function () {
+      state.inFlight = false;
+      state.lastUpdated = new Date();
+      restoreScroll(saved);
+      paintRefreshBadge();
+      paintAutoBadge();
+    });
+  }
+
+  $('refreshNow').addEventListener('click', function () { refreshAll(); });
+  $('winSel').addEventListener('change', function () {
+    if (state.inFlight) return;
+    var saved = captureScroll();
+    state.inFlight = true;
+    paintRefreshBadge();
+    loadFunnel().then(function () {
+      state.inFlight = false;
+      restoreScroll(saved);
+      paintRefreshBadge();
+    });
+  });
+
+  setInterval(function () { refreshAll(); }, REFRESH_MS);
+  setInterval(paintRefreshBadge, 5000);
+  refreshAll();
+}());
+</script>
+</body>
+</html>
