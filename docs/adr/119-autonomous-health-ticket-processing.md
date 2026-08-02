@@ -136,3 +136,63 @@ made the restart-loop rule count scrapes, pushing all 34 bots into a pending res
 **P3's budget gate contained it** — all 32 false tickets parked in backlog at zero analyst
 spend, which is the ladder's cost bound doing exactly its job.
 
+
+
+## What the A2 legs found (2026-08-02)
+
+A1 was proven on 2026-08-01. The A2 legs ran the next night and found **two more breaks that
+made unattended apply impossible**, plus three behaviours nobody had written down. Neither break
+was visible to any of the 32 P1–P4 guards, for the same reason as last time: every one of them
+substitutes the `RemediationExecutor`, and both breaks were in what the executor talks to.
+
+1. **`POST /api/self-heal/apply` did not exist on any bot that runs.** It was registered from
+   `any-bot/server/app.js` — the `BOT_RUNTIME=any-bot` legacy server, which nothing in compose
+   runs. Every bot container, `oshal-local-self-healing` included, runs `BOT_RUNTIME=bot-node`
+   → `dist/app/bot-node-server.js`, which never mounted it. Proven before the fix: a POST from
+   the api container answered `Cannot POST /api/self-heal/apply` in HTML. Every unattended apply
+   would have escalated `auto-apply:apply-failed`. Fixed by mounting the SAME registrar on the
+   bot-node runtime (`src/app/bot-node-self-heal-route.ts`) — two implementations of a
+   container-restarting endpoint is how a whitelist or a fail-closed gate silently diverges.
+2. **The docker inspect template was invalid on every container.** `_inspectContainer` asked for
+   `{{.State.RestartCount}}` — not a field; docker answers `map has no entry for key
+   "RestartCount"` and emits nothing — and dereferenced `{{.State.Health.Status}}` unguarded,
+   which also errors on a container with no healthcheck. Every observation therefore threw and
+   returned `status:'not-found'` **with `success:true`**. A2's verification loop cannot observe
+   health through that, so a *successful* restart would still have escalated `verify-failed`.
+   The catch path now reports `inspectOk:false` instead of a clean-looking "not-found".
+
+With both fixed, the A2 legs behaved:
+
+| leg | evidence | outcome |
+|---|---|---|
+| **A2 auto-apply** | tickets `27e3805e` (incident-remediation), `703279ce` (cloud-ops-bot), `01b2c1ef` (home-bot) | **PASS ×3** — each `complete` / `auto_applied_verified` / `applied-and-verified`, container observed `running` before the ticket closed |
+| **hourly cap (bound 2)** | the 4th and later Mode-A proposals | **PASS** — `reason: hourly-cap-reached`, parked visibly at `customer_action`, no 4th restart |
+| **recurrence (bound 1)** | ticket `0f1e314c`, `recurrenceOf: 01b2c1ef` | **PASS** — `escalated`, flags `auto-apply-blocked:recurrence` + `needs-attention`, **no** `autoApply` record, so no second restart |
+| **core-infra (absolute)** | see below | **NOT EXERCISED** — the incident never reached the gate |
+
+**The core-infra leg did not get to run, and the reason is worth more than the leg.** Stopping
+`oshal-local-chromadb` and delivering its alert did **not** open a chromadb ticket: Stage-D
+bundling attached it to the open `oshal-local-research-bot` incident (`hops: 2` — chromadb ← api
+← research-bot), which is correct, and made chromadb that incident's `rootCandidate`
+(`reason: deepest-dependency`) and therefore its would-be apply target. But the RCA classified
+that incident **Mode B**, and Mode B never consults the auto-apply hook at all. So the absolute
+bound was never asked the question. To exercise it, a future drill needs a **Mode-A** proposal on
+an incident whose `rootCandidate` is core infra. Until then the bound's only proof is its unit
+guard (`core-infra-never-applies`).
+
+Three behaviours the drill surfaced that are not defects but will waste the next person's hour:
+
+- **A1's own output blocks A2 on the same key.** `customer_action` is an OPEN incident state, so
+  a refire *consolidates onto the A1 ticket* instead of opening a new incident — and a
+  consolidated refire never re-enters the pipeline. On a box that has run the A1 leg, the A2 leg
+  cannot trigger for that container until a human closes the ticket at the approve-or-close gate.
+  Observed exactly: the first A2 kill consolidated onto `34e1a1c8`, the A1 drill's own ticket.
+- **Alertmanager will not re-deliver a same-fingerprint refire.** With `group_interval: 5m` and
+  `repeat_interval: 4h`, a container that goes down, comes back and goes down again inside the
+  group interval produces **no second webhook** — the ladder never sees the second failure.
+  Restarting alertmanager does not clear it. Drill deliveries were therefore made by an
+  authenticated POST to the real fail-closed receiver, which skips alertmanager's dispatch and
+  nothing else.
+- **The P3 budget gate held under a 30-container correlated failure.** Stopping 30 bots at once
+  produced 30 tickets, every one parked `analysis-skipped:budget` at zero analyst spend — the
+  same containment the restart-loop jitter incident recorded, reproduced deliberately.

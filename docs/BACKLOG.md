@@ -100,7 +100,7 @@ the app's real routes (`grep -r '/api/<seg>' <deployed-app>`) before calling a d
 **Deferred because:** the code is merged and guarded; only the promotion is outstanding, and it
 needed a quiet tree the session did not have.
 
-## Alert triage & consolidation — intelligent-processing intake (P1–P4 built; P4 code+guards 2026-08-01, live drill pending)
+## Alert triage & consolidation — intelligent-processing intake (P1–P4 built; A1 drill 2026-08-01, A2 legs 2026-08-02 — one leg still owed)
 
 **Specified 2026-07-28** (operator directive: non-noisy alerts flow to the queue, duplicates get
 bundled and consolidated — the analyst + self-healing portion). The functional specification is
@@ -6709,7 +6709,19 @@ the gap.
 These came out of an actual deploy + the ADR-119 container-kill drill, not a review. Each is
 recorded here rather than in a session thread because each will otherwise be re-discovered.
 
-### Swarm-wiring agentId collision: a0000000-...-049 claimed by two apps 🟥
+### Swarm-wiring agentId collision: a0000000-...-049 claimed by two apps ✅ FIXED 2026-08-02
+
+**Closed.** The kernel keeps 049 (trading-research-analyst, registered since ADR-054); the
+STORE package moved — `lora-director` → `a0…065` (oshal-applications#47) with core migration
+`111-lora-director-agent-id.sql` as the DB half. Verified on the live box after the deploy:
+**zero** `SWARM WIRING COLLISION` lines on the boot that previously logged one every time, the
+lora manifest seeds `a0…065` and intelligent-trades seeds `a0…049`, and the `agents` rows read
+`065 | lora-director | active` and `049 | trading-research-analyst | active`. Nothing was
+stranded: `agent_config`, `agent_memories`, `agent_tools` and `chat_tasks` all held zero rows
+for 049. Guard: `tests/unit/swarm-wiring-collision.spec.ts` pins the exact pair, one name on
+049 across both registries and the persona, 065 unclaimed in core, and migration 111's
+direction. Original entry follows.
+
 
 `validate-swarm-wiring` logs an ERROR on **every api boot**: agentId
 `a0000000-0000-0000-0000-000000000049` is declared under two different names —
@@ -6724,7 +6736,25 @@ existing DB rows (mirroring `100-agent-identity-canon.sql`); compose `AGENT_ID`,
 and both registry variants agree; the boot ERROR is gone; and
 `tests/unit/swarm-wiring-collision.spec.ts` covers this pair so it cannot regress.
 
-### The api can boot "healthy" with ZERO connector tools (ENOMEM) 🟥
+### The api can boot "healthy" with ZERO connector tools (ENOMEM) ✅ FIXED 2026-08-02
+
+**Closed by PR #117 + #123.** Three parts, all three of the done-when clauses:
+(1) `/api/readiness` grew a **`catalogs` leg** that FAILS when a catalog source is unreadable,
+or offered entries and parsed none — an absent source stays `off`, because a box with no
+connector directory is a deployment shape, not a defect. Live after the deploy:
+`catalogs=ok`, `"309 entries loaded across 3 catalog source(s)"`.
+(2) The scandir is **retryable and loud**: `readCatalogDir` retries transient POSIX codes
+(ENOMEM/EMFILE/ENFILE/EAGAIN/EBUSY/EINTR) with a bounded backoff, logs ERROR when it gives up,
+and records the outcome — replacing the one-shot `readdirSync` in a `catch` that both
+`loadConnectorSpecs` and `loadWebhookEvents` had.
+(3) Guards `tests/unit/catalog-load-readiness.spec.ts` (12) prove the leg goes red when the load
+throws, and run the loader legs against a REAL temp directory through the REAL
+`loadConnectorSpecs`. `scripts/oshal-verify.sh` checks the leg too — never PENDING, since an
+empty catalog is not something the wizard goes on to satisfy.
+⚠ `tests/unit/readiness-report.spec.ts` was left behind by #117 and reddened `main` for ~40
+minutes; #123 repaired it by WIRING the real registry into its fixtures rather than stubbing
+the leg away. Original entry follows.
+
 
 Observed live during the 2026-08-01 deploy: while the bot-recreate storm had memory tight, the api
 booted with `ENOMEM: not enough memory, scandir '/app/swarm-apps/connectors'` from BOTH
