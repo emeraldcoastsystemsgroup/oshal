@@ -26,5 +26,9 @@
     "types": ["node", "react", "react-dom"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["node_modules", "dist", "tests", "**/*.spec.ts", "**/*.test.ts"]
+  "exclude": ["node_modules", "dist", "tests", "**/*.spec.ts", "**/*.test.ts"],
+  "ts-node": {
+    "files": true,
+    "transpileOnly": true
+  }
 }
