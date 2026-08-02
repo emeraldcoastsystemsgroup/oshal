@@ -56,6 +56,50 @@ the pieces deliberately left after that landing.
    point at a self-hosted Nominatim the same way `OSHAL_MAP_TILE_URL` already points at an operator's
    own tile server. The public OSM tile endpoint carries the same caveat and the same fix.
 
+## Guest Jarvis turn — merged, NOT deployed (and the site card that comes back with it)
+
+**Merged 2026-08-02**, core PR #109 (squash `828e585`). The running api is still built from
+`a8ea1ef`, so **the fix is not live yet** — `guestSpendsModel` is absent from the running
+container, and `src/shared/middleware/*.ts` is not among the bind-mounted paths, so this needs a
+real rebuild, not a file sync.
+
+**Why it was not deployed in the same session.** Two independent blockers, both worth checking
+before anyone tries again:
+
+1. **Local `HEAD` was 4 commits BEHIND `origin/main`.** `scripts/oshal-deploy.sh` deploys
+   *committed HEAD* via `git archive`, so running it in that state would have shipped the OLD code
+   and reported success. Advance `HEAD` to `origin/main` first and confirm it.
+2. **The shared tree was dirty with ~20 of another agent's uncommitted files.** Moving `HEAD` in a
+   shared checkout in that state is the Rule-0a hazard, not a formality.
+
+**Done when:**
+- [ ] `git rev-parse HEAD` == `git rev-parse origin/main` and the tree is quiet (no unreleased
+      `COLLABORATE.md` claims, no foreign dirty files).
+- [ ] `bash scripts/oshal-deploy.sh` completes and `deploy-parity-check.sh` is green.
+- [ ] The running api actually carries it:
+      `docker exec oshal-local-api grep -c guestSpendsModel /app/src/shared/middleware/guest-guard.ts`
+      returns non-zero. **Do not trust the deploy script's own success line for this** — verify the
+      bytes in the container.
+- [ ] End-to-end as a real guest, not by reading code: `POST /api/guest/start`, then
+      `POST /api/tasks`, then `POST /api/tasks/<id>/messages` — the last one must return 200 with an
+      answer, where it previously returned `403 guest_readonly`.
+- [ ] Only after that passes, restore the **OSHAL Assistant** guest card to `demos.html` in
+      `emeraldcoastsystemsgroup` (removed in that repo's PR #2 precisely because it did not work).
+      It is the ONLY card still pending — **Intelligent Education** and **Dungeon Master** were cut
+      in the same PR on the mistaken assumption they shared the 403, and were restored in that
+      repo's PR #3 after being tested as a real anonymous guest against production:
+      `POST /api/dnd/chat` -> 200 with narration, `POST /api/education/tutor-chat` -> 200 with a
+      tutor answer. Neither uses the shared task/chat path; each package mounts its own routes and
+      both segments carry an operator-approved Tier-A guest tier.
+
+**Diagnostic worth keeping:** a guest hitting a BLOCKED segment gets **403 at the guard, before the
+router**. A **404 means the request PASSED the guard** and the route simply does not exist. Guessing
+endpoint names and reading the 404s as denials is what produced the wrong conclusion above — probe
+the app's real routes (`grep -r '/api/<seg>' <deployed-app>`) before calling a demo dead.
+
+**Deferred because:** the code is merged and guarded; only the promotion is outstanding, and it
+needed a quiet tree the session did not have.
+
 ## Alert triage & consolidation — intelligent-processing intake (P1–P4 built; P4 code+guards 2026-08-01, live drill pending)
 
 **Specified 2026-07-28** (operator directive: non-noisy alerts flow to the queue, duplicates get
