@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | GET /api/readiness (INSTALLER-GAPS G9 + G7): per-capability readiness, because /api/health is a liveness probe that reports {"status":"ok"} on a box with no engine, no voice and a missing bot. Legs: llm (active/forced provider vs the explicit OSHAL_NO_AI declaration — G2's "noop must never be silent"), bots (routing-critical heartbeats, scoped to the ACTIVE registry so a kernel-bundle box is not failed for bots it deliberately does not run), credentials (each critical bot's harness has a credential behind it — the G7 "starts, heartbeats, fails on first use" trap), voice tts/stt (configured, or explicitly not declared), db. Public like /api/health; coarse states only (ok|off|fail + a short detail), no secrets. Consumed by scripts/oshal-verify.sh; returns HTTP 503 when not ready so runbooks can curl it directly.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the `catalogs` leg (BACKLOG "The api can boot healthy with ZERO connector tools"). Live 2026-08-01: the api booted with `ENOMEM: not enough memory, scandir '/app/swarm-apps/connectors'`, registered ZERO connector tools, and BOTH /api/health and this endpoint said ready — the exact "liveness read as readiness" failure G9 exists to end, one layer up. A subsystem that reads a catalog at boot now records what it loaded (@/shared/observability catalog-load registry) and this leg FAILS when any catalog's source was unreadable or offered entries and produced none. An absent source stays `off`: a box that ships no connectors is a deployment shape, not a defect.
  */
 
 import * as fs from 'fs';
@@ -18,6 +19,7 @@ import {
   loadSwarmVoiceConfig,
   resolveGlobalConfigPath,
 } from '@/features/voice-providers';
+import { degradedCatalogs, listCatalogLoads, type CatalogLoadRecord } from '@/shared/observability';
 import { createChildLogger } from '@/shared/logger';
 import { listConfiguredProviders } from './provider-routes';
 
@@ -43,6 +45,7 @@ export interface ReadinessReport {
     llm: ReadinessLeg;
     bots: ReadinessLeg;
     credentials: ReadinessLeg;
+    catalogs: ReadinessLeg;
     voiceTts: ReadinessLeg;
     voiceStt: ReadinessLeg;
     db: ReadinessLeg;
@@ -86,6 +89,10 @@ export interface ReadinessDeps {
   defaultHarness(): string;
   voiceStatus(kind: 'tts' | 'stt'): Promise<VoiceSideStatus | null>;
   dbOk(): Promise<boolean>;
+  /** Every catalog-load outcome recorded at boot (@/shared/observability). */
+  catalogLoads(): CatalogLoadRecord[];
+  /** The subset that loaded nothing it was supposed to load. */
+  degradedCatalogLoads(): CatalogLoadRecord[];
 }
 
 /** Provider-id → harness family, mirroring the bot-node execution fallback. */
@@ -175,6 +182,36 @@ function buildCredentialsLeg(deps: ReadinessDeps, expected: CriticalBot[]): Read
   return { state: 'ok', detail: `credentials present for: ${Array.from(verified).join(', ')}` };
 }
 
+/**
+ * @description The `catalogs` leg: a subsystem that reads a catalog of definitions at boot
+ * and loaded NONE of it is advertised and dead, and must not pass readiness. Distinguishes
+ * three shapes deliberately — nothing recorded at all is `off` (this build registers no
+ * catalogs, or nothing has loaded yet), an absent source is fine (a box with no connector
+ * directory), and unreadable/empty is `fail` with the reason on the line.
+ * @param loads - Every recorded catalog-load outcome.
+ * @param degraded - The outcomes that mean "loaded nothing it should have".
+ * @returns The leg.
+ */
+function buildCatalogsLeg(loads: CatalogLoadRecord[], degraded: CatalogLoadRecord[]): ReadinessLeg {
+  if (loads.length === 0) {
+    return { state: 'off', detail: 'no catalog-backed subsystem has reported a load' };
+  }
+  if (degraded.length > 0) {
+    const lines = degraded.map((r) => (
+      r.state === 'unreadable'
+        ? `${r.catalog}: source unreadable after ${r.attempts} attempt(s) — ${r.detail ?? 'no detail'} (${r.source})`
+        : `${r.catalog}: ${r.discovered} entries offered, 0 loaded (${r.source})`
+    ));
+    return { state: 'fail', detail: lines.join('; ') };
+  }
+  const present = loads.filter((r) => r.state !== 'absent');
+  if (present.length === 0) {
+    return { state: 'off', detail: `no catalog source present (${loads.length} declared, all absent)` };
+  }
+  const loaded = present.reduce((sum, r) => sum + r.loaded, 0);
+  return { state: 'ok', detail: `${loaded} entries loaded across ${present.length} catalog source(s)` };
+}
+
 function buildVoiceLeg(kind: 'tts' | 'stt', status: VoiceSideStatus | null): ReadinessLeg {
   if (!status) return { state: 'off', detail: `${kind} provider unresolvable — voice off` };
   if (status.browser) return { state: 'off', detail: `${status.providerId} (client-side, no server dependency)` };
@@ -196,6 +233,7 @@ export async function buildReadinessReport(deps: ReadinessDeps): Promise<Readine
   const llm = buildLlmLeg(deps);
   const { leg: bots, expected } = await buildBotsLeg(deps);
   const credentials = buildCredentialsLeg(deps, expected);
+  const catalogs = buildCatalogsLeg(deps.catalogLoads(), deps.degradedCatalogLoads());
   const [ttsStatus, sttStatus] = await Promise.all([deps.voiceStatus('tts'), deps.voiceStatus('stt')]);
   const voiceTts = buildVoiceLeg('tts', ttsStatus);
   const voiceStt = buildVoiceLeg('stt', sttStatus);
@@ -203,9 +241,10 @@ export async function buildReadinessReport(deps: ReadinessDeps): Promise<Readine
     ? { state: 'ok' as const, detail: 'postgres reachable' }
     : { state: 'fail' as const, detail: 'postgres unreachable' };
 
-  const legs = { llm, bots, credentials, voiceTts, voiceStt, db };
+  const legs = { llm, bots, credentials, catalogs, voiceTts, voiceStt, db };
   const summary = [
     `llm=${llm.state}`, `bots=${bots.state}`, `credentials=${credentials.state}`,
+    `catalogs=${catalogs.state}`,
     `voice.tts=${voiceTts.state}`, `voice.stt=${voiceStt.state}`, `db=${db.state}`,
   ].join(' ');
   const problems = Object.entries(legs)
@@ -315,6 +354,8 @@ export function createReadinessDeps(ctx: AppContext): ReadinessDeps {
       return fs.existsSync(path.join(os.homedir(), req.file));
     },
     defaultHarness: () => PROVIDER_HARNESS[process.env.FORCE_LLM_PROVIDER || 'openai-codex'] || 'cline',
+    catalogLoads: listCatalogLoads,
+    degradedCatalogLoads: degradedCatalogs,
     voiceStatus: probeVoiceSide,
     dbOk: async () => {
       try {

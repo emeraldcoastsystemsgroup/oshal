@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | LIVE FIX (ADR-119 A2 drill, 2026-08-02): _inspectContainer's docker Go template was invalid on every container, so EVERY inspect threw and returned status:'not-found'/health:'unknown' — while still reporting success:true. Two defects in one format string: RestartCount is a TOP-LEVEL inspect field, not .State.RestartCount ("map has no entry for key RestartCount"), and .State.Health.Status was dereferenced unconditionally, which also errors on a container with no healthcheck. Consequence: the A2 verification loop could never observe health, so a successful restart would still escalate verify-failed. Template corrected + Health guarded with {{if .State.Health}}; the catch path now reports inspectOk:false instead of masquerading as a clean 'not-found', and check-container-health propagates that as success:false so an unreadable docker socket is never read as "the container is gone".
  */
 
 /**
@@ -23,18 +24,23 @@ const logger = require('../../utils/logger');
  * Check Docker container health status.
  * Returns container state, health status, uptime, and recent restart count.
  * 
- * @param {Object} params - { container_name?: string, all?: boolean }
+ * @param {Object} params - { container_name?: string, all?: boolean, exec?: Function }
+ *   `exec` is an injected command runner (defaults to child_process.execSync). It exists
+ *   so the regression guard can drive REAL docker output and a REAL inspect failure
+ *   through this function instead of stubbing the function itself — the seam that broke
+ *   here was the docker template, and a guard that replaces the observation cannot see it.
  * @returns {Object} Health check results
  */
 async function checkContainerHealth(params = {}) {
-  const { container_name, all } = params;
+  const { container_name, all, exec } = params;
 
   try {
     if (container_name) {
-      // Check specific container
-      const result = _inspectContainer(container_name);
+      // Check specific container. success mirrors inspectOk: a failed inspect is NOT an
+      // observation, and the ADR-119 A2 verification loop must never read it as one.
+      const result = _inspectContainer(container_name, exec || execSync);
       return {
-        success: true,
+        success: result.inspectOk === true,
         container: container_name,
         ...result,
       };
@@ -45,7 +51,7 @@ async function checkContainerHealth(params = {}) {
       const containers = _listSwarmContainers();
       const results = containers.map(name => ({
         container: name,
-        ..._inspectContainer(name),
+        ..._inspectContainer(name, exec || execSync),
       }));
 
       const healthy = results.filter(r => r.status === 'running' && r.health === 'healthy').length;
@@ -64,7 +70,7 @@ async function checkContainerHealth(params = {}) {
     }
 
     // Default: check all swarm containers
-    return await checkContainerHealth({ all: true });
+    return await checkContainerHealth({ all: true, exec });
 
   } catch (error) {
     return {
@@ -255,13 +261,32 @@ async function scanErrorLogs(params = {}) {
 // ──────────────────────────────────────────────────────────────
 
 /**
- * Inspect a single Docker container and return structured status.
+ * The docker inspect Go template every container observation reads.
+ *
+ * Exported so its guard can assert the two field paths that were WRONG in the shipped
+ * version and broke the whole ADR-119 A2 verification loop:
+ *   - `RestartCount` is a TOP-LEVEL inspect field. `.State.RestartCount` does not exist
+ *     and makes the template a hard parse error on every container.
+ *   - `.State.Health` is absent on containers with no healthcheck, so `.State.Health.Status`
+ *     must be guarded — an unguarded deref errors on prometheus/alertmanager/cadvisor.
+ * A template error means NO output at all, which the catch below used to report as a clean
+ * `status: 'not-found'` — indistinguishable from a genuinely missing container.
  */
-function _inspectContainer(name) {
+const INSPECT_FORMAT =
+  '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
+  + '|{{.State.StartedAt}}|{{.RestartCount}}|{{.Config.Image}}';
+
+/**
+ * Inspect a single Docker container and return structured status.
+ *
+ * `inspectOk` distinguishes "docker answered and the container is not there" from
+ * "the inspect itself failed" (bad template, no socket, timeout). Callers MUST NOT
+ * treat the second as an observation.
+ */
+function _inspectContainer(name, exec = execSync) {
   try {
-    const format = '{{.State.Status}}|{{.State.Health.Status}}|{{.State.StartedAt}}|{{.State.RestartCount}}|{{.Config.Image}}';
-    const output = execSync(
-      `docker inspect --format '${format}' ${name} 2>/dev/null`,
+    const output = exec(
+      `docker inspect --format '${INSPECT_FORMAT}' ${name} 2>/dev/null`,
       { encoding: 'utf8', timeout: 5000 }
     ).trim();
 
@@ -270,9 +295,10 @@ function _inspectContainer(name) {
     // Calculate uptime
     const startTime = new Date(startedAt);
     const uptimeMs = Date.now() - startTime.getTime();
-    const uptimeMinutes = Math.floor(uptimeMs / 60000);
+    const uptimeMinutes = Number.isFinite(startTime.getTime()) ? Math.floor(uptimeMs / 60000) : 0;
 
     return {
+      inspectOk: true,
       status: status || 'unknown',
       health: health || 'none',
       startedAt: startedAt || 'unknown',
@@ -282,7 +308,8 @@ function _inspectContainer(name) {
     };
   } catch (error) {
     return {
-      status: 'not-found',
+      inspectOk: false,
+      status: 'inspect-failed',
       health: 'unknown',
       error: error.message,
       uptimeMinutes: 0,
@@ -317,4 +344,7 @@ module.exports = {
   'check-container-health': checkContainerHealth,
   'restart-container': restartContainer,
   'scan-error-logs': scanErrorLogs,
+  // Exposed for the regression guard only — the template is the artifact that broke.
+  INSPECT_FORMAT,
+  _inspectContainer,
 };

@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap close: mounted PUT /api/llm-provider (bot-node-llm-provider-route.ts) behind authorizeBotNodeCall — the endpoint BotNodeClient.switchProvider always targeted but which 404'd on every bot-node worker (ConfigSyncService.pushToBot returned pushed:false fleet-wide). A non-push change broadcasts up on swarm.config-change (X-Config-Source: oshal-push suppresses — echo-loop guard). Provider/model reporting (/api/health, swarm-execute + replay-call attribution defaults, startup logs) now reads the runtime's LIVE getActiveProvider() instead of boot-time consts, so a switch is immediately visible.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING: /api/swarm-execute now forwards the carried providerId/model/configVersion (the controller's push-on-dispatch stamp) into the envelope payload so the execution handler reconciles the runtime before executing. Additive + type-guarded — absent/malformed fields are simply not forwarded (the handler's parseCarriedDispatchConfig then treats it as the legacy absent path). No behavior change unless the controller stamps them (OSHAL_PUSH_ON_DISPATCH).
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /metrics (Prometheus text exposition, @/shared/observability). The 2026-08-01 container-kill drill proved cAdvisor emits zero series for any docker container on Docker Desktop's containerd/overlayfs image store, so every container_last_seen rule matched nothing and SwarmContainerDown was a target-less standing false alarm. Each worker now IS a labelled scrape target, so `up == 0` identifies the exact container that went down and the restart/memory/CPU rules key on the process's own gauges.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | LIVE FIX (ADR-119 A2 drill, 2026-08-02): mounted POST /api/self-heal/apply. The endpoint was registered only from any-bot/server/app.js (BOT_RUNTIME=any-bot, which nothing in compose runs), so on the real self-healing node the controller's A2 remediation seam hit an HTML 404 and every unattended apply would have escalated apply-failed. Same registrar, second host — never a re-typed copy of a container-restarting endpoint.
  */
 
 /**
@@ -62,6 +63,7 @@ import {
 } from './bot-node-execute-entitlement';
 import { parseTrustedProviderIntent } from './bot-node-provider-intent';
 import { registerBotNodeLlmProviderRoute } from './bot-node-llm-provider-route';
+import { registerBotNodeSelfHealRoute } from './bot-node-self-heal-route';
 
 const logger = createChildLogger({ module: 'bot-node-server' });
 
@@ -252,6 +254,13 @@ async function start(): Promise<void> {
     setActiveProvider: (provider, model) => runtime.setActiveProvider(provider, model),
     meshTransport,
   });
+
+  // ── POST /api/self-heal/apply — ADR-119 A2 remediation seam ─────────────────
+  // The controller's auto-apply engine reaches the self-healing node here. Mounted on
+  // EVERY bot node deliberately: the handler is fail-closed on the service secret and
+  // 403s off the self-healing node, so a visible 403 replaces an HTML 404 the controller
+  // would otherwise read as an unreachable remediation arm.
+  registerBotNodeSelfHealRoute(app);
 
   // ── Claude Code auth status + import stubs ──────────────────────
   // The api's POST /api/swarm/config/propagate/claude-code-auth endpoint

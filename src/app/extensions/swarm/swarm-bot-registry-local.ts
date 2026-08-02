@@ -522,6 +522,10 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   },
   // trading-research-analyst — finds + classifies gravity masses from news/research for Intelligent
   // Trades (ADR-054). REASON-ONLY inline on the api like trading-analyst. id 049 (047=security, 048 taken).
+  // 049 IS TRADING'S. The LoRA Studio store package kept this id through the ADR-085 carve and
+  // validate-swarm-wiring logged a collision on every api boot until 2026-08-02; the package moved
+  // to a0…065 (oshal-applications), and migration 111 restores any DB row the shared era mis-named.
+  // Guard: tests/unit/swarm-wiring-collision.spec.ts.
   {
     agentId: 'a0000000-0000-0000-0000-000000000049',
     name: 'trading-research-analyst',
