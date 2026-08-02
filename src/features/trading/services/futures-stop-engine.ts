@@ -31,6 +31,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — resolveInitialStop (candidates→widest, ATR fallback, floor/ceiling), validateStopPrice (2-tick clamp + 5-tick sanity), createFuturesStopEngine per-trade state machine (breakeven-gated chandelier trail, risk-goal arming, Strangle level tracking + ADX-gate latch + underwater stand-down + close-breach market exit). Ported from NT8Custom ATCEntryCountDynStops.cs / ATCEntryCountExport.cs for ADR-116.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The source trader's answers (2026-07-28) become defaults: Strangle gate defaults to 'adx-laguerre' (his stated "both conditions" = ADX + Laguerre RSI) and gains an 'adx-all' mode for the reading where both SECOND clauses are ANDed; initial-stop ATR multiple defaults to 3 (his "Initial Stop ATR Mult (i.e. 3)" floor minimum); new initialStopWaveSource knob defaulting to 'macd' because his current stop reads atcMACDWaveStops alone. Defaults extracted to the exported STOP_ENGINE_DEFAULTS so the backtester's sizing-time estimate cannot drift from the engine's real placement.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review fixes: explicit-undefined config values no longer clobber defaults (stripped before the merge — a NaN stop that never triggers was constructible); gateFires is an exhaustive switch whose default is the documented gate, never a silent 'adx-any'; initialStopWaveSource moved OFF StopEngineConfig (the engine never reads it) and lives only in STOP_ENGINE_DEFAULTS for the candidate-building caller.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The %ATR buffer variant the dictation asked for, as a sweepable config (BACKLOG "stop-stack remainder"): stopBufferMode 'ticks' (shipped code, default) | 'atr-percent' (dictated), resolveBuffer shared by the initial stop and the Strangle level, a one-tick floor so a quiet-tape buffer can never collapse to zero, and StopEngineBarInput.atr so the Strangle buffer can breathe with volatility per bar rather than being frozen at entry.
  *
  * @module futures-stop-engine
  */
@@ -69,6 +70,23 @@ export type StrangleExitMode =
 /** Base-trail arming mode (the source's TrailingStopMode enum, sans None=manual). */
 export type TrailMode = 'none' | 'ts' | 'ts-with-risk-goal';
 
+/**
+ * How the stop buffers (initial stop and Strangle level) are measured.
+ *
+ * The trader's SHIPPED C# uses fixed tick counts — 3 ticks under the initial-stop anchor, 2 ticks
+ * beyond the Strangle swing extreme. His DICTATION asked for a percent-of-ATR buffer instead, so
+ * that the same configuration breathes with volatility rather than being a constant that is
+ * generous on ES and invisible on CL. Both readings ship; the optimizer arbitrates.
+ *
+ * 'atr-percent' floors at ONE TICK. A percent buffer on a quiet tape can round to zero, and a
+ * zero-buffer stop sits exactly ON the swing extreme, where it is touched by the bar that made it.
+ */
+export type StopBufferMode =
+  /** As shipped: `bufferTicks × tickSize` (DEFAULT). */
+  | 'ticks'
+  /** The dictated variant: `bufferAtrPercent% × ATR`, floored at one tick. */
+  | 'atr-percent';
+
 /** Engine configuration. Defaults mirror the newest NT8 generation's shipped values. */
 export interface StopEngineConfig {
   direction: FuturesDirection;
@@ -82,8 +100,30 @@ export interface StopEngineConfig {
    * position sizes; see the sizing note on {@link initialStopMaxRiskAtrFactor}.
    */
   initialStopAtrMultiple?: number;
-  /** Initial-stop buffer in ticks (newest gen 3; older gen 2). */
+  /** Initial-stop buffer in ticks (newest gen 3; older gen 2). Read only in 'ticks' buffer mode. */
   initialStopBufferTicks?: number;
+  /**
+   * Buffer measurement for BOTH the initial stop and the Strangle level (default 'ticks' = the
+   * shipped code). Set 'atr-percent' to sweep the dictated variant; see {@link StopBufferMode}.
+   * One knob covers both buffers deliberately — the dictation asked for a %ATR *convention*, and
+   * two independent modes would let a sweep produce a hybrid he never described.
+   */
+  stopBufferMode?: StopBufferMode;
+  /**
+   * Initial-stop buffer as a percent of ATR at the entry bar, used when `stopBufferMode` is
+   * 'atr-percent'. Default 10 (≈ the shipped 3-tick ES buffer at a typical hourly ATR, so a sweep
+   * starts near parity rather than somewhere arbitrary) — a starting point to optimize, not a
+   * ported constant: the dictation named no percentage.
+   */
+  initialStopBufferAtrPercent?: number;
+  /**
+   * Strangle-level buffer as a percent of ATR, used when `stopBufferMode` is 'atr-percent'.
+   * Default 7 (≈ the shipped 2-tick buffer at the same reference). Evaluated per bar off
+   * {@link StopEngineBarInput.atr}, so the level breathes as volatility changes inside a trade;
+   * when the caller supplies no per-bar ATR it falls back to the entry bar's, which is the
+   * dictation's spirit at worst-case staleness rather than a silent revert to ticks.
+   */
+  strangleBufferAtrPercent?: number;
   /** ATR-fallback anchor: 'low' (newest gen + dictation) or 'close' (older gen). */
   initialStopFallbackAnchor?: 'low' | 'close';
   /**
@@ -146,6 +186,9 @@ export const STOP_ENGINE_DEFAULTS = Object.freeze({
    */
   initialStopWaveSource: 'macd' as 'macd' | 'all-waves',
   initialStopBufferTicks: 3,
+  stopBufferMode: 'ticks' as StopBufferMode,
+  initialStopBufferAtrPercent: 10,
+  strangleBufferAtrPercent: 7,
   initialStopFallbackAnchor: 'low' as 'low' | 'close',
   initialStopCandidateFilter: 'none' as 'none' | 'beyond-bar-extreme',
   initialStopMinRiskFloor: true,
@@ -160,6 +203,34 @@ export const STOP_ENGINE_DEFAULTS = Object.freeze({
   strangleLookbackCapBars: 255,
   strangleExitMode: 'close-breach-market' as StrangleExitMode,
 });
+
+/**
+ * @description The one place a stop buffer is measured, shared by the initial stop and the Strangle
+ * level so the two can never drift onto different conventions. In 'ticks' mode it is the shipped
+ * `bufferTicks × tickSize`; in 'atr-percent' mode it is `percent% × ATR` floored at one tick.
+ *
+ * The floor is load-bearing, not defensive padding: on a quiet tape a small percentage of a small
+ * ATR rounds toward zero, and a zero-buffer stop rests exactly ON the swing extreme that produced
+ * it — the level is then taken out by the very bar that made it, converting the dictated variant
+ * into a stop-loss generator. A non-finite ATR falls back to the tick buffer for the same reason.
+ * @param mode - Buffer measurement mode.
+ * @param tickSize - Instrument tick size.
+ * @param bufferTicks - Tick count for 'ticks' mode.
+ * @param atr - ATR to measure against in 'atr-percent' mode.
+ * @param atrPercent - Percent of ATR for 'atr-percent' mode.
+ * @returns The buffer distance in price units (always ≥ one tick).
+ */
+export function resolveStopBuffer(
+  mode: StopBufferMode,
+  tickSize: number,
+  bufferTicks: number,
+  atr: number,
+  atrPercent: number,
+): number {
+  if (mode !== 'atr-percent') return tickSize * bufferTicks;
+  if (!Number.isFinite(atr) || atr <= 0) return tickSize * bufferTicks;
+  return Math.max(tickSize, atr * atrPercent / 100);
+}
 
 /** A named candidate level for the initial stop (SuperTrend dot, PSAR, wave extreme…). */
 export interface InitialStopCandidate { name: string; value: number }
@@ -178,6 +249,13 @@ export interface StopEngineBarInput {
   minusDi?: number;
   /** Laguerre RSI 0–100 at this bar (only read by the dictated gate modes). */
   laguerreRsi?: number;
+  /**
+   * ATR at this bar. Read ONLY in 'atr-percent' buffer mode, where the Strangle level's buffer is
+   * re-measured each bar so it tracks volatility inside the trade. Omitted (or non-finite) falls
+   * back to the entry bar's ATR — the buffer then goes stale rather than silently reverting to
+   * ticks, which would make a swept 'atr-percent' run secretly a 'ticks' run.
+   */
+  atr?: number;
 }
 
 /** What the engine wants done after a bar: the resting stop level and/or an immediate exit. */
@@ -242,6 +320,10 @@ export interface InitialStopParams {
   tickSize: number;
   atrMultiple: number;
   bufferTicks: number;
+  /** Buffer measurement (default 'ticks' — the shipped code — when the caller omits it). */
+  bufferMode?: StopBufferMode;
+  /** Percent of ATR for 'atr-percent' buffer mode. */
+  bufferAtrPercent?: number;
   fallbackAnchor: 'low' | 'close';
   /** 'none' = accept every finite candidate (newest gen); 'beyond-bar-extreme' = older gen filter. */
   candidateFilter: 'none' | 'beyond-bar-extreme';
@@ -264,7 +346,13 @@ export interface InitialStopParams {
  */
 export function resolveInitialStop(p: InitialStopParams): number {
   const long = p.direction === 'long';
-  const buffer = p.tickSize * p.bufferTicks;
+  const buffer = resolveStopBuffer(
+    p.bufferMode ?? STOP_ENGINE_DEFAULTS.stopBufferMode,
+    p.tickSize,
+    p.bufferTicks,
+    p.atr,
+    p.bufferAtrPercent ?? STOP_ENGINE_DEFAULTS.initialStopBufferAtrPercent,
+  );
   const anchor = p.fallbackAnchor === 'low' ? (long ? p.bar.l : p.bar.h) : p.bar.c;
   const surviving = p.candidates
     .map((c) => c.value)
@@ -328,6 +416,16 @@ export function createFuturesStopEngine(config: StopEngineConfig): FuturesStopEn
   let level = NaN;
   let extremeClose = NaN;
   let extremeBar = -1; // offset into bars[]
+  /** ATR at entry — the 'atr-percent' Strangle buffer's fallback when a bar carries no ATR. */
+  let entryAtr = NaN;
+  /** ATR at the bar being processed, refreshed by onBar; drives the per-bar Strangle buffer. */
+  let currentAtr = NaN;
+
+  /** The Strangle-level buffer for the bar in hand, in the configured measurement. */
+  function strangleBuffer(): number {
+    const atr = Number.isFinite(currentAtr) ? currentAtr : entryAtr;
+    return resolveStopBuffer(cfg.stopBufferMode, cfg.tickSize, cfg.strangleBufferTicks, atr, cfg.strangleBufferAtrPercent);
+  }
 
   const beyondEntry = (close: number) => (long ? close > entryPrice : close < entryPrice);
   const profitSide = (v: number) => (long ? v > entryPrice : v < entryPrice);
@@ -345,7 +443,7 @@ export function createFuturesStopEngine(config: StopEngineConfig): FuturesStopEn
   function updateStrangleLevel(events: string[]): void {
     const bar = bars[bars.length - 1];
     if (!beyondEntry(bar.c)) return;
-    const buf = cfg.tickSize * cfg.strangleBufferTicks;
+    const buf = strangleBuffer();
     if (Number.isNaN(extremeClose) || extremeBar < 0) {
       extremeClose = bar.c;
       extremeBar = bars.length - 1;
@@ -447,6 +545,8 @@ export function createFuturesStopEngine(config: StopEngineConfig): FuturesStopEn
   return {
     onEntry(entry: number, entryBar: OhlcvBar, atr: number, candidates: InitialStopCandidate[] = []): StopEngineDecision {
       entryPrice = entry;
+      entryAtr = atr;
+      currentAtr = atr;
       bars.push(entryBar);
       const raw = resolveInitialStop({
         direction: cfg.direction,
@@ -457,6 +557,8 @@ export function createFuturesStopEngine(config: StopEngineConfig): FuturesStopEn
         tickSize: cfg.tickSize,
         atrMultiple: cfg.initialStopAtrMultiple,
         bufferTicks: cfg.initialStopBufferTicks,
+        bufferMode: cfg.stopBufferMode,
+        bufferAtrPercent: cfg.initialStopBufferAtrPercent,
         fallbackAnchor: cfg.initialStopFallbackAnchor,
         candidateFilter: cfg.initialStopCandidateFilter,
         minRiskFloor: cfg.initialStopMinRiskFloor,
@@ -477,6 +579,7 @@ export function createFuturesStopEngine(config: StopEngineConfig): FuturesStopEn
         return decide(true, ['strangle-market-exit']);
       }
       bars.push(input.bar); // per-trade engine: growth is bounded by trade duration; the swing SCAN is capped, storage need not be
+      if (input.atr != null && Number.isFinite(input.atr)) currentAtr = input.atr;
       if (cfg.useStrangleTrail) updateStrangleLevel(events);
       const profitable = beyondEntry(input.bar.c);
       if (latched && profitable) {

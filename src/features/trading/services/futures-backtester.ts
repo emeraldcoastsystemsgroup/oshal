@@ -18,6 +18,26 @@
  *    resting stop and would have market-exited resolves as the stop (it fires first, intrabar).
  *  - The stage-1 timed exit holds for exactly `timedBarsToExit` completed bars, then exits at the
  *    following open, labelled 'TimedExit' — the harness for optimizing entries in isolation.
+ *  - A resting LIMIT (the Export generation's Target-1 partial) fills the moment the bar trades
+ *    through it, at `max(target, open)` for a long — a gap through a limit fills BETTER, the mirror
+ *    of a stop's gap penalty. Limits pay no slippage; they fill at their price or better by
+ *    definition. When one bar touches BOTH the resting stop and the target, the STOP is booked:
+ *    intrabar order is unknowable at bar resolution and the conservative reading must win, or the
+ *    strategy's best trades get manufactured out of ambiguity.
+ *
+ * A partial scale-out books as its OWN blotter row (`exitName: 'Target1'`) with the runner left
+ * working — NinjaTrader's trade collection records each exit execution separately, and averaging
+ * the two into one row would destroy the exit-mix attribution the fitness functions read.
+ *
+ * MARGIN is modelled only when a CITED spec is supplied (see futures-margin.ts — there is no
+ * built-in performance-bond table, deliberately). With one, risk-percent size is capped to what the
+ * account can fund and a maintenance breach liquidates at the next open; without one, `marginModeled`
+ * reports false so a zero margin-call count can never be misread as "never breached". Notional and
+ * leverage are computed on every run regardless, from the real contract multiplier.
+ *
+ * The R10 DAILY-ADX REGIME GATE (futures-regime-gate.ts) is off by default and, when enabled,
+ * requires the `dailyBars` argument — an enabled gate with no daily series blocks every bar rather
+ * than trading unfiltered, exactly as an empty LTF series does.
  *
  * Costs are explicit and per-side: `slippageTicks` widens every fill against the trader (entries
  * pay up, exits pay down), and `commissionPerContract` is charged on entry and exit. Both default
@@ -37,6 +57,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — intraday bar-walk backtester for the ADR-116 strategy port: indicator precompute, entry-evaluator/stop-engine wiring, NT8 fill semantics (next-bar-open entries, intrabar stop triggers with gap fills, next-bar market exits), stage-1 timed-exit mode, per-trade MFE/MAE in currency+percent, equity curve, summary stats, and multi-market overlay.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Three modelling gaps the "Known limits" list owed (BACKLOG rows 402/414/415): the Export generation's Target-1 partial scale-out with its post-target MFE stop move (partials book as their own blotter row, limit fills take gap improvement and pay no slippage, stop-before-target on a both-touched bar); the margin model (fundable-size cap, maintenance margin calls liquidating at the next open, always-on notional/leverage from the real contract specs); and the R10 daily-ADX regime gate wired with the same no-look-ahead discipline as the LTF index, fail-closed when enabled without a daily series.
  *
  * @module futures-backtester
  */
@@ -55,6 +76,14 @@ import {
   createFuturesStopEngine, type StopEngineConfig, type InitialStopCandidate, resolveInitialStop,
   validateStopPrice, STOP_ENGINE_DEFAULTS,
 } from './futures-stop-engine';
+import {
+  resolveTarget1, target1FillPrice, resolvePostTargetStop, type TargetLadderConfig, type Target1Order,
+} from './futures-targets';
+import {
+  affordableContracts, isMarginCall, leverageAt, marginSpecStaleness, notionalValue,
+  MARGIN_MODEL_DEFAULTS, type MarginModelConfig,
+} from './futures-margin';
+import { buildDailyRegimeGate, type RegimeGateConfig } from './futures-regime-gate';
 
 /** One completed trade, with everything the fitness functions and a trade blotter need. */
 export interface BacktestTrade {
@@ -105,6 +134,30 @@ export interface BacktestResult {
   /** Trades that never opened because sizing returned 0 — a config smell worth surfacing. */
   skippedZeroQty: number;
   barsProcessed: number;
+  /**
+   * True only when a CITED margin spec was supplied. False means the margin counters below are all
+   * zero because nothing was checked — never because nothing was breached.
+   */
+  marginModeled: boolean;
+  /** Entries whose risk-percent size was reduced to what the account could fund. */
+  marginCappedTrades: number;
+  /** Signals refused outright because the account could not fund even one contract. */
+  skippedNoMargin: number;
+  /** Maintenance-margin breaches observed while in position. */
+  marginCalls: number;
+  /**
+   * Highest notional exposure the book ever carried, in contract currency. Derived from the real
+   * contract multiplier, so it is reported on EVERY run, margin spec or not.
+   */
+  peakNotional: number;
+  /** Highest notional/equity multiple the book ever carried. The "could this be funded?" number. */
+  peakLeverage: number;
+  /** Entry signals the daily-ADX regime gate refused (0 when the gate is disabled). */
+  regimeBlockedSignals: number;
+  /** Chart bars on which the regime gate stood aside, including its warmup (0 when disabled). */
+  regimeBlockedBars: number;
+  /** Non-fatal warnings the run wants a reader to see (e.g. a stale margin spec). */
+  warnings: string[];
 }
 
 /** Instrument economics the fill simulator needs. */
@@ -146,6 +199,22 @@ export interface BacktestConfig {
   timedBarsToExit?: number;
   /** Indicator tuning; defaults are the trader's shipped values. */
   indicators?: IndicatorConfig;
+  /**
+   * Export-generation Target-1 partial scale-out. Default OFF (the default generation, dynstops,
+   * ships no targets). Suppressed entirely in stage-1 timed mode, as in the source.
+   */
+  targets?: TargetLadderConfig;
+  /**
+   * Contract-margin model. Default off: with no CITED spec, sizing stays risk-percent only and
+   * `marginModeled` reports false. Notional/leverage are computed either way.
+   */
+  margin?: MarginModelConfig;
+  /**
+   * R10 daily-ADX regime gate. Default off. When ENABLED, `dailyBars` (the 4th argument to
+   * {@link runFuturesBacktest}) is required — an enabled gate with no daily series blocks every
+   * bar rather than trading unfiltered, matching the empty-LTF convention.
+   */
+  regimeGate?: RegimeGateConfig;
 }
 
 /** Indicator periods/params — defaults are the constructor arguments the strategies actually pass. */
@@ -327,6 +396,12 @@ interface OpenTrade {
   ensembleConf: EnsembleConfirmation | null;
   mfe: number; mae: number;
   barsHeld: number;
+  /** Resting Target-1 limit, null once it has filled or was never placed. */
+  target: Target1Order | null;
+  /** True once Target-1 has filled — arms the one-shot post-target stop move. */
+  targetFilled: boolean;
+  /** True once the post-target stop move has fired (it fires exactly once, as in the source). */
+  postTargetStopMoved: boolean;
 }
 
 /**
@@ -337,9 +412,11 @@ interface OpenTrade {
  * @param chartBars - Ascending intraday bars for the traded timeframe.
  * @param ltfBars - Ascending higher-timeframe bars for the trend filter (empty disables it).
  * @param config - Instrument, entry/stop configuration, costs, and stage-1 timed-exit mode.
+ * @param dailyBars - Ascending DAILY bars for the R10 regime gate. Required only when
+ *   `config.regimeGate.enabled` is set; the gate blocks every bar without them.
  * @returns Trades, equity curve, and summary statistics.
  */
-export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[], config: BacktestConfig): BacktestResult {
+export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[], config: BacktestConfig, dailyBars: FuturesBar[] = []): BacktestResult {
   const ind = { ...DEFAULT_INDICATORS, ...config.indicators };
   const { multiplier, tickSize, symbol } = config.instrument;
   const slip = (config.costs?.slippageTicks ?? 0) * tickSize;
@@ -361,10 +438,29 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
     ...config.entry, tickSize, pointValue: multiplier, useLtfTrendFilter: useLtf,
   });
 
+  const regime = buildDailyRegimeGate(chartCloses, dailyBars, config.regimeGate ?? {});
+  const marginSpec = config.margin?.spec ?? null;
+  const marginAction = config.margin?.marginCallAction ?? MARGIN_MODEL_DEFAULTS.marginCallAction;
+  const warnings: string[] = [];
+  if (marginSpec) {
+    const stale = marginSpecStaleness(
+      marginSpec,
+      config.margin?.specAsOfNow ?? (chartBars.length ? chartBars[chartBars.length - 1].t : marginSpec.asOf),
+      config.margin?.maxSpecAgeDays ?? MARGIN_MODEL_DEFAULTS.maxSpecAgeDays,
+    );
+    if (stale) warnings.push(stale);
+  }
+
   const trades: BacktestTrade[] = [];
   const equityCurve: EquityPoint[] = [{ time: chartBars.length ? chartBars[0].t : '', equity: startingEquity, tradeIndex: -1 }];
   let realized = 0;
   let skippedZeroQty = 0;
+  let marginCappedTrades = 0;
+  let skippedNoMargin = 0;
+  let marginCalls = 0;
+  let peakNotional = 0;
+  let peakLeverage = 0;
+  let regimeBlockedSignals = 0;
   let open: OpenTrade | null = null;
   /** An entry ordered at a bar close, filling at the next bar's open. */
   let pendingEntry: {
@@ -447,6 +543,54 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
     }), chartBars[i], tickSize);
   }
 
+  /**
+   * Book `quantity` contracts of the open trade out at `price` on bar i as one blotter row.
+   * A partial (quantity < open.quantity) leaves the remainder working — the same way NinjaTrader's
+   * trade collection records each exit execution separately — so a Target-1 scale-out shows up as
+   * its own row rather than being averaged into the runner's exit.
+   */
+  function bookTrade(i: number, price: number, exitName: string, quantity: number): void {
+    if (!open) return;
+    const long = open.direction === 'long';
+    const gross = (long ? price - open.entryPrice : open.entryPrice - price) * quantity * multiplier;
+    const comm = commission * quantity * 2; // both sides
+    const profit = gross - comm;
+    realized += profit;
+    trades.push({
+      direction: open.direction,
+      signalBar: open.signalBar, entryBar: open.entryBar, entryTime: open.entryTime, entryPrice: open.entryPrice,
+      exitBar: i, exitTime: chartBars[i].t, exitPrice: price, quantity, exitName,
+      profit, grossProfit: gross, commission: comm,
+      mfe: open.mfe * quantity * multiplier,
+      mae: open.mae * quantity * multiplier,
+      mfePct: open.entryPrice > 0 ? (open.mfe / open.entryPrice) * 100 : 0,
+      maePct: open.entryPrice > 0 ? (open.mae / open.entryPrice) * 100 : 0,
+      barsHeld: open.barsHeld,
+    });
+    equityCurve.push({ time: chartBars[i].t, equity: startingEquity + realized, tradeIndex: trades.length - 1 });
+  }
+
+  /**
+   * Fill the resting Target-1 limit on bar i, if the bar reached it. Books the partial, and either
+   * closes the trade outright (the one-lot `max(1, trunc(...))` case) or leaves the runner working
+   * with the post-target stop move armed.
+   */
+  function tryFillTarget(i: number): void {
+    if (!open?.target) return;
+    const fill = target1FillPrice(open.direction, open.target.price, chartBars[i]);
+    if (fill == null) return;
+    const qty = Math.min(open.target.quantity, open.quantity);
+    if (qty >= open.quantity) {
+      // The partial covers the whole position: this IS the exit, and no stop move can follow.
+      closeTrade(i, fill, 'Target1');
+      return;
+    }
+    bookTrade(i, fill, 'Target1', qty);
+    open.quantity -= qty;
+    open.target = null;
+    open.targetFilled = true;
+  }
+
   /** Close the open trade at `price` on bar i and record it. */
   function closeTrade(i: number, price: number, exitName: string): void {
     if (!open) return;
@@ -458,24 +602,31 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
     const favAtExit = long ? price - open.entryPrice : open.entryPrice - price;
     if (favAtExit > open.mfe) open.mfe = favAtExit;
     if (-favAtExit > open.mae) open.mae = -favAtExit;
-    const gross = (long ? price - open.entryPrice : open.entryPrice - price) * open.quantity * multiplier;
-    const comm = commission * open.quantity * 2; // both sides
-    const profit = gross - comm;
-    realized += profit;
-    trades.push({
-      direction: open.direction,
-      signalBar: open.signalBar, entryBar: open.entryBar, entryTime: open.entryTime, entryPrice: open.entryPrice,
-      exitBar: i, exitTime: chartBars[i].t, exitPrice: price, quantity: open.quantity, exitName,
-      profit, grossProfit: gross, commission: comm,
-      mfe: open.mfe * open.quantity * multiplier,
-      mae: open.mae * open.quantity * multiplier,
-      mfePct: open.entryPrice > 0 ? (open.mfe / open.entryPrice) * 100 : 0,
-      maePct: open.entryPrice > 0 ? (open.mae / open.entryPrice) * 100 : 0,
-      barsHeld: open.barsHeld,
-    });
-    equityCurve.push({ time: chartBars[i].t, equity: startingEquity + realized, tradeIndex: trades.length - 1 });
+    bookTrade(i, price, exitName, open.quantity);
     evaluator.onPositionClosed(open.direction);
     open = null;
+  }
+
+  /**
+   * The one-shot post-target stop move: once Target-1 resolves, the runner's stop jumps to a
+   * fraction of maximum favorable excursion. Tighten-only and clamped, like every other stop.
+   */
+  function applyPostTargetStop(i: number): void {
+    if (!open || !open.targetFilled || open.postTargetStopMoved) return;
+    const long = open.direction === 'long';
+    const mfePrice = long ? open.entryPrice + open.mfe : open.entryPrice - open.mfe;
+    const proposed = resolvePostTargetStop({
+      direction: open.direction, entryPrice: open.entryPrice, mfePrice,
+      atr: cs.atr[i], tickSize, config: config.targets,
+    });
+    const validated = validateStopPrice(open.direction, proposed, chartBars[i], tickSize);
+    const tightens = open.restingStop == null
+      || (long ? validated > open.restingStop : validated < open.restingStop);
+    if (tightens) {
+      open.restingStop = validated;
+      open.restingStopName = 'PostTargetStop';
+    }
+    open.postTargetStopMoved = true;
   }
 
   for (let i = 0; i < chartBars.length; i++) {
@@ -503,13 +654,25 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
         ensembleConf = createEnsembleConfirmation(config.entry.ensembleConfirmation);
         ensembleConf.onEntry(ensScore, pendingEntry.direction);
       }
+      // Target-1 is measured off the RAW (pre-clamp) initial stop, as in the source — see
+      // futures-targets.ts. Stage-1 timed mode places no stop AND no target.
+      const target = timedBars > 0 ? null : resolveTarget1({
+        direction: pendingEntry.direction, entryPrice: fill,
+        rawInitialStop: estimateStop(sig, pendingEntry.direction),
+        filledQuantity: pendingEntry.quantity, config: config.targets,
+      });
       open = {
         direction: pendingEntry.direction, signalBar: sig, entryBar: i, entryTime: bar.t, entryPrice: fill,
         quantity: pendingEntry.quantity, engine,
         restingStop: timedBars > 0 ? null : first.restingStop, // timed mode places no stops
         restingStopName: timedBars > 0 ? null : first.restingStopName,
         pendingMarketExit: null, ensembleConf, mfe: 0, mae: 0, barsHeld: 0,
+        target, targetFilled: false, postTargetStopMoved: false,
       };
+      const notional = notionalValue(fill, multiplier, open.quantity);
+      if (notional > peakNotional) peakNotional = notional;
+      const lev = leverageAt(fill, multiplier, open.quantity, startingEquity + realized);
+      if (lev > peakLeverage) peakLeverage = lev;
       pendingEntry = null;
     }
 
@@ -533,6 +696,23 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
           closeTrade(i, raw + (long ? -slip : slip), raw2 === 'Strangle' ? 'StrangleStop' : raw2);
         }
       }
+
+      // Target-1 fills only if the stop did NOT take the position out first. At bar resolution the
+      // order of two touches inside one bar is unknowable, so the CONSERVATIVE reading wins: a bar
+      // that reached both the stop and the target is booked as the stop. Assuming the target went
+      // first would manufacture the strategy's best trades out of ambiguity.
+      tryFillTarget(i);
+
+      // Maintenance margin, marked to market on the close — the check that stops a backtest holding
+      // a position a real account would have been liquidated out of.
+      if (open && marginSpec) {
+        const openPnl = (open.direction === 'long' ? bar.c - open.entryPrice : open.entryPrice - bar.c) * open.quantity * multiplier;
+        if (isMarginCall(startingEquity + realized + openPnl, open.quantity, marginSpec)) {
+          marginCalls++;
+          // A liquidation is a market order at this close → next bar's open, like every other one.
+          if (marginAction === 'flatten') open.pendingMarketExit = 'MarginCall';
+        }
+      }
     }
 
     if (open) {
@@ -551,9 +731,13 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
           adx: cs.adx[i], adxPrev: cs.adx[Math.max(0, i - 1)],
           plusDi: cs.plusDi[i], minusDi: cs.minusDi[i],
           laguerreRsi: cs.lagRsi[i],
+          atr: cs.atr[i], // only read in 'atr-percent' buffer mode; harmless otherwise
         });
         open.restingStop = d.restingStop;
         open.restingStopName = d.restingStopName;
+        // The post-target stop move runs AFTER the engine's own decision so it can only tighten
+        // what the stack proposed, never loosen it — and it fires exactly once per trade.
+        applyPostTargetStop(i);
         // Act on the BREACH bar (NT submits the market order at this close → fills next open).
         // The engine's own `exitAtMarket` is a second one-bar deferral for callers that do not
         // model fills; honoring both would exit two bars late with the position unprotected.
@@ -578,10 +762,30 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
         estimatedStopShort: estimateStop(i, 'short'),
       });
       if (decision.signal && decision.quantity >= 1 && i + 1 < chartBars.length) {
-        pendingEntry = {
-          direction: decision.signal, quantity: decision.quantity, signalBar: i,
-          ensembleEntryScore: decision.ensemble?.score,
-        };
+        if (!regime.allowed[i]) {
+          // The R10 gate stands aside: the signal existed and was refused, which is a different
+          // fact from "no signal" and is counted as such.
+          regimeBlockedSignals++;
+        } else {
+          // Margin caps the risk-percent size down to what the account can actually fund.
+          let quantity = decision.quantity;
+          if (marginSpec) {
+            const fundable = affordableContracts(equity, marginSpec, config.margin);
+            if (fundable < 1) {
+              skippedNoMargin++;
+              quantity = 0;
+            } else if (fundable < quantity) {
+              marginCappedTrades++;
+              quantity = fundable;
+            }
+          }
+          if (quantity >= 1) {
+            pendingEntry = {
+              direction: decision.signal, quantity, signalBar: i,
+              ensembleEntryScore: decision.ensemble?.score,
+            };
+          }
+        }
       } else if (decision.reasons.some((r) => r.endsWith('qty-zero'))) {
         skippedZeroQty++;
       }
@@ -624,6 +828,12 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
     winRate: trades.length ? trades.filter((t) => t.profit > 0).length / trades.length : 0,
     skippedZeroQty,
     barsProcessed: chartBars.length,
+    marginModeled: marginSpec != null,
+    marginCappedTrades, skippedNoMargin, marginCalls,
+    peakNotional, peakLeverage,
+    regimeBlockedSignals,
+    regimeBlockedBars: regime.blockedBars,
+    warnings,
   };
 }
 

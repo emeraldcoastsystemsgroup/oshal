@@ -15,6 +15,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Futures extension layer (ADR-116): export the instrument model (futures-contract), the completeness validator (futures-completeness), the data-source connector (mock + Kibot), and the paper futures broker. Additive; the equities surface is unchanged.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-116 optimization objectives (futures-fitness): the nine NT8 OptimizationFitness ports, the FITNESS_FUNCTIONS registry, fitnessNames(), the -1e10 min-trades sentinel and the C# banker's-rounding helper.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the Globex session + holiday calendar (futures-session-calendar): session-bucket predicate/counters, trading-day count, and the rule-computed US futures holiday schedule that expectedBarCount, the gap detector, and the mock source now share.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the three backtester modelling additions (BACKLOG rows 402/414/415): futures-targets (Export-generation Target-1 partial + post-target MFE stop move), futures-margin (cited performance-bond spec, fundable-size cap, maintenance call, notional/leverage), and futures-regime-gate (the R10 daily-ADX gate), plus the stop engine's %ATR buffer resolver.
  *
  * @module trading
  */
@@ -99,8 +100,17 @@ export type { DmiSeries, LaguerreRsiSeries } from './services/futures-indicators
 export { wilderAtr, dmiAdx, laguerreRsi, movingMedian } from './services/futures-indicators';
 export type { ChandelierBandsSeries, ChandelierBandsOptions, SuperTrendM11Series, SuperTrendM11Options, ParabolicSarSeries, ParabolicSarOptions } from './services/futures-trail-stops';
 export { chandelierBands, superTrendM11, parabolicSar } from './services/futures-trail-stops';
-export type { FuturesDirection, StrangleGateMode, StrangleExitMode, TrailMode, StopEngineConfig, InitialStopCandidate, StopEngineBarInput, StopEngineDecision, InitialStopParams, FuturesStopEngine } from './services/futures-stop-engine';
-export { createFuturesStopEngine, resolveInitialStop, validateStopPrice, STOP_ENGINE_DEFAULTS } from './services/futures-stop-engine';
+export type { FuturesDirection, StrangleGateMode, StrangleExitMode, TrailMode, StopBufferMode, StopEngineConfig, InitialStopCandidate, StopEngineBarInput, StopEngineDecision, InitialStopParams, FuturesStopEngine } from './services/futures-stop-engine';
+export { createFuturesStopEngine, resolveInitialStop, validateStopPrice, resolveStopBuffer, STOP_ENGINE_DEFAULTS } from './services/futures-stop-engine';
+// Export-generation Target-1 partial scale-out + the post-target MFE stop move.
+export type { TargetLadderConfig, Target1Order, Target1Params, PostTargetStopParams } from './services/futures-targets';
+export { resolveTarget1, target1FillPrice, resolvePostTargetStop, TARGET_LADDER_DEFAULTS } from './services/futures-targets';
+// Contract margin: a CITED performance-bond spec, the fundable-size cap, and notional/leverage.
+export type { FuturesMarginSpec, MarginModelConfig } from './services/futures-margin';
+export { marginPerContract, affordableContracts, isMarginCall, marginSpecStaleness, notionalValue, leverageAt, MARGIN_MODEL_DEFAULTS } from './services/futures-margin';
+// R10 daily-ADX regime gate (default OFF; see the module doc before quoting any result).
+export type { RegimeGateConfig, RegimeGateSeries } from './services/futures-regime-gate';
+export { buildDailyRegimeGate, REGIME_GATE_DEFAULTS } from './services/futures-regime-gate';
 // ADR-116 entry side — NT8Custom-parity entry indicators, wave tracking, and the entry evaluator.
 export type { LaguerreOscillatorOptions } from './services/futures-entry-indicators';
 export { laguerreOscillator, laguerreFilter, mfi, adaptiveLaguerreFilter } from './services/futures-entry-indicators';
