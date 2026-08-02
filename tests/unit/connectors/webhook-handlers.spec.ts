@@ -4,6 +4,13 @@
  * Asserts a verified event opens a ticket via the generic mapper, the mapper can ACK-without-ticket,
  * and the dbSeenStore dedups correctly with an injected query fn (no live database).
  *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial ADR-065 Phase 3 conformance.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ownerSubFor is now a required argument (machine-write identity): the handler used to mint tickets with no owner at all, which on the owner-RLS tickets table means a refused INSERT under a stamped connection and an unattributable row under an operator one. The happy-path case asserts the resolved owner reaches the sink, and a new case pins that it is derived PER EVENT rather than baked in.
+ *
  * @module tests/unit/connectors/webhook-handlers
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -17,16 +24,37 @@ describe('ticketingWebhookHandler', () => {
   it('opens a ticket from a verified event with provider/event labels + external anchor', async () => {
     const created: any[] = [];
     const sink: TicketSink = { createTicket: async (i) => { created.push(i); return { ticketId: 't1' }; } };
-    const handler = ticketingWebhookHandler(sink, (e) => ({ title: `push on ${(e.payload as any).ref}`, ticketType: 'incident', description: 'x' }));
+    const handler = ticketingWebhookHandler(
+      sink,
+      (e) => ({ title: `push on ${(e.payload as any).ref}`, ticketType: 'incident', description: 'x' }),
+      (e) => `webhook:${e.provider}`,
+    );
     await handler(ev());
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ externalProvider: 'github', externalId: 'd1', ticketType: 'incident' });
     expect(created[0].labels).toEqual(expect.arrayContaining(['webhook', 'provider:github', 'event:push']));
+    // The half that was missing entirely: without an owner the row cannot satisfy the owner-RLS
+    // WITH CHECK on tickets, so it is refused (or lands unattributable). See the machine-write
+    // identity class gate, tests/unit/machine-write-identity.spec.ts.
+    expect(created[0].ownerSub).toBe('webhook:github');
+  });
+
+  it('resolves the owner PER EVENT, so one provider secret cannot own another provider\u2019s tickets', async () => {
+    const created: any[] = [];
+    const sink: TicketSink = { createTicket: async (i) => { created.push(i); return { ticketId: 't1' }; } };
+    const handler = ticketingWebhookHandler(
+      sink,
+      () => ({ title: 't', ticketType: 'incident', description: 'x' }),
+      (e) => `webhook:${e.provider}`,
+    );
+    await handler(ev({ provider: 'github' }));
+    await handler(ev({ provider: 'stripe', deliveryId: 'd2' }));
+    expect(created.map((c) => c.ownerSub)).toEqual(['webhook:github', 'webhook:stripe']);
   });
 
   it('ACKs without a ticket when the mapper returns null', async () => {
     const sink: TicketSink = { createTicket: vi.fn() as any };
-    const handler = ticketingWebhookHandler(sink, () => null);
+    const handler = ticketingWebhookHandler(sink, () => null, (e) => `webhook:${e.provider}`);
     await handler(ev());
     expect(sink.createTicket).not.toHaveBeenCalled();
   });

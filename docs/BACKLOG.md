@@ -4432,7 +4432,7 @@ backup: it survives GC, not a re-clone.
 
 ---
 
-### Machine-write identity: audit every un-migrated identity-less WRITE, not just reads ⬜ (found by the 2026-08-01 container-kill drill)
+### Machine-write identity: audit every un-migrated identity-less WRITE, not just reads 🟨 AUDITED + CLASS GATE SHIPPED 2026-08-02 — four residuals open
 - **Reason:** the guc-strict entry above frames the risk as *starvation on reads*. The alert intake showed
   the sharper failure: an authenticated MACHINE route (Alertmanager webhook, bearer-token auth, no human
   behind it) inherited the global anonymous request identity, and the owner-RLS `WITH CHECK` on `tickets`
@@ -4453,6 +4453,65 @@ backup: it survives GC, not a re-clone.
   least-privilege `oshal_bot` role against a REAL RLS-enforcing `tickets`, with both halves of the fix
   mutation-proven. Every stubbed-gateway spec stayed green through this defect; copy the live shape, not
   the stub shape, for the rest of the class.
+
+**2026-08-02 — the audit ran.** Every machine-authenticated entry point is now enumerated in
+`tests/helpers/machine-write-inventory.ts` (21 entries: route, auth mechanism, owner-scoped tables
+written, identity posture, reviewed reason), and `tests/unit/machine-write-identity.spec.ts` is the
+class gate: it DISCOVERS machine-auth files from source (a new webhook goes red on arrival), RE-DERIVES
+the owner-scoped writes each one performs (so `ownerScopedTables: []` is not an escape hatch), enforces
+the rule *non-service-secret machine caller + owner-scoped write ⇒ must establish an identity*, and
+DRIVES six real handlers against identity-capturing collaborators to assert what the connection actually
+carried at the write. `tests/connector-webhook-rls-live.spec.ts` is the live half (real insert, real RLS,
+`oshal_bot`, fails rather than skips without `DATABASE_URL`, in `tests/e2e-green-suite.txt`).
+
+**Three more instances were found and FIXED in the same change:**
+- `POST /api/hooks/:provider/:event` (ADR-065 connector webhook ingress) — the QUIET variant. Dispatch
+  ran under `runWithSystemIdentity`, so nothing was refused; every webhook-born ticket simply landed
+  `owner_sub = NULL`, and one connector's signing secret carried operator read across every tenant's
+  tickets. Now `webhook:<provider>`, `isOperator:false`, on the connection AND the row.
+- `POST /auth/facebook/data-deletion` — the sharpest one. `oshal_connections` is FORCE-RLS (migration
+  060 Tier-2) and the DELETE ran anonymous non-operator, so it matched **zero rows on every call** while
+  answering Meta with a confirmation code: this class *and* a false deletion attestation. Now
+  `runWithSystemIdentity` (genuinely cross-owner — the signed_request carries only Facebook's own user
+  id, so no synthetic sub can express the statement) with the real `rowCount` logged.
+- `POST /api/channels/telegram/webhook` — the route wrapped only the swarm dispatch; the ACCOUNT-LINKING
+  write (the row that decides whose swarm an inbound message reaches) ran anonymous. Now: code claim and
+  owner lookup trusted-system (they are what tell us the owner), binding insert as that user.
+- Also narrowed, same pass: `POST /api/profile-studio/ingest` and `POST /api/apply/ingest` were writing
+  user-owned rows on the operator connection a valid `X-Service-Secret` inherits.
+
+**RESIDUALS — what is still open (done-when each):**
+1. **Narrow the `serviceSecretOr` operator stamp.** `src/app/server.ts` stamps
+   `isOperator: isOperator(req) || hasValidServiceSecret(req)`, so FOUR entries write owner-scoped
+   tables as operator rather than as the sub they already resolved for authz: `jarvis-service-callers`
+   (`jarvis_tasks`, `tickets`), `test-lab-golden` (`tickets` — it even stamps the right `ownerSub` on
+   the ROW and never on the connection), `internal-tool-bridge` (`access_audit_log` — its automatic
+   sibling was systemized precisely so an actor cannot suppress their own trail), and
+   `message-routes-service-callers` (`chat_tasks`). Not broken today; each is a secret-holder with
+   cross-tenant reach, and each becomes the alert-intake failure the day the stamp is tightened.
+   *Done when:* each resolves `getTrustedServiceUserSub(req)` into `runWithRequestIdentity` and
+   `MAX_AMBIENT_OPERATOR_ENTRIES` in the inventory ratchets to 0.
+2. **Behavioural proofs for the nine deferred entries** (`MAX_UNPROVEN_ENTRIES = 9`): a2a-rpc,
+   remote-client-plane, bot-node-swarm-execute, cli-token-auth, local-auth and the four above. Each
+   needs a driver in the class gate rather than a cross-reference to a sibling spec.
+   *Done when:* `MAX_UNPROVEN_ENTRIES` is 0 and the ratchet assertion is deleted as redundant.
+3. **Route-inventory drift.** `tests/helpers/unguarded-route-allowlist.ts` and `PUBLIC_BY_DESIGN` in
+   `src/features/security/route-audit.ts` both parse `app.use('/api…')` literals in `server.ts`, so
+   four machine-reachable surfaces are invisible to BOTH: `/api/hooks/*` (mounted from inside
+   `connector-webhook-routes.ts`), `/auth/facebook/data-deletion` and
+   `/api/channels/telegram/webhook` (non-`/api` and inline), and `/node/*` (`NODE_POOL_MODE`, mounted
+   via `require()` and completely UNAUTHENTICATED — it hot-loads a bot identity and writes persona
+   files, though it touches no owner-scoped table). *Done when:* the two lists see mounts registered
+   from a module, all four are reviewed entries, and `/node/*` either gets a guard or is deleted.
+4. **`internalCallerAllowed()` fails open.** `src/app/routes/llm-governance-routes.ts` returns `true`
+   when neither `OSHAL_INTERNAL_TOKEN` nor `SESSION_SECRET` is set — the only guard in this inventory
+   that is not fail-closed. No owner-scoped write behind it today. *Done when:* it fail-closes like
+   the Alertmanager bearer, with a unit case for the unset-secret path.
+
+**One correction to the entry above:** it frames the class as "the INSERT is refused". That is the
+LOUD half. The connector-webhook and Facebook instances failed the quiet way instead — an operator or
+anonymous connection that returns HTTP 200 while writing an owner-less row or deleting nothing at all.
+Enumerating only the routes that error would have missed both.
 
 ### Container-health signal on non-cAdvisor hosts — decide the supported collector story ⬜ (found by the 2026-08-01 container-kill drill)
 - **Reason:** the ADR-119 rules shipped keyed on `container_last_seen{name=~"oshal-local-.+"}`. On the

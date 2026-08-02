@@ -25,6 +25,14 @@
  *   happens instead of only at /ingest. Best-effort by design: telemetry never fails an application.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | /dispatch + /enqueue + /enqueue-queue
  *   accept targetRemoteClientId so a ticket/cron can pin the leaf node that drives the browser.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Machine-write identity (BACKLOG "Machine-write
+ *   identity: audit every un-migrated identity-less WRITE"): POST /ingest was the one handler in
+ *   this file that resolved a ticket WITHOUT re-entering the owner's identity, so its
+ *   updateStatus ran on the operator connection a valid X-Service-Secret inherits — an UPDATE of
+ *   a caller-supplied ticketId with no owner check. It now runs under
+ *   runWithRequestIdentity({ sub: userSub, isOperator: false }) when the callback carries a
+ *   userSub (it always does — the queue-record step above needs it), so RLS refuses a ticket that
+ *   user does not own. A userSub-less callback keeps the legacy path and logs a WARN.
  *
  * @module apply-ingest-routes
  */
@@ -256,11 +264,24 @@ export function createApplyIngestRoutes(ctx: AppContext): Router {
       });
     }
 
-    // 3) resolve the ticket
+    // 3) resolve the ticket — under the OWNER's identity, not the operator stamp a valid
+    //    X-Service-Secret otherwise inherits (server.ts stamps isOperator for it). Every sibling
+    //    handler in this file already re-enters runWithRequestIdentity; this one did not, which
+    //    made a caller-supplied ticketId an operator-privileged UPDATE of ANY user's ticket.
+    //    Scoping it to the asserted userSub makes RLS refuse a ticket that user does not own.
     if (ticketId) {
       const status = result === 'applied' ? 'complete' : (result === 'dismissed' ? 'cancelled' : 'customer_action');
-      try { await ctx.ticketService.updateStatus(ticketId, status); }
-      catch (err) { logger.warn({ err, ticketId, result }, 'ingest: ticket update failed'); }
+      if (!userSub) {
+        // The desktop worker always sends userSub (step 2 above cannot run without it). A callback
+        // that omits it has no owner to scope to, so it keeps the legacy ambient context — logged
+        // loudly rather than silently, see the BACKLOG "Machine-write identity" residual.
+        logger.warn({ ticketId, result }, 'ingest: ticket resolve without userSub — running unscoped');
+      }
+      try {
+        await (userSub
+          ? runWithRequestIdentity({ sub: userSub, isOperator: false }, () => ctx.ticketService.updateStatus(ticketId, status))
+          : ctx.ticketService.updateStatus(ticketId, status));
+      } catch (err) { logger.warn({ err, ticketId, result }, 'ingest: ticket update failed'); }
     }
 
     logger.info({ ticketId, postingId, result }, 'apply outcome ingested from desktop worker');

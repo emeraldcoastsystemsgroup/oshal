@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the chat-channel identity store: maps a messaging identity (Telegram chat/user id, later Discord) to exactly one OSHAL user_sub via a short-lived one-time link code the signed-in user generates in the cockpit and sends to the bot. This is the isolation boundary for the inbound channel surface — a shared demo bot must never leak one user's data into another's DM. Every read/write is user_sub-scoped; a migration should later fold these tables into the RLS policy set (query-level scoping is the v1 guard, matching the jarvis_tasks runtime-table pattern).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Machine-write identity (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE"). The Telegram webhook is a machine caller with no session, and chat-channel-routes.ts wraps only the SWARM DISPATCH in the linked user's identity — the LINKING write itself (and the resolveLink lookup that finds the owner in the first place) ran with the ambient anonymous non-operator context. The tables carry no RLS policy today, which is exactly why nothing surfaced it; the SEQ-1 note above already promises to fold them into the policy set, and on that day an unscoped INSERT into channel_links would fail the way the ADR-119 alert intake did. Identity is now established explicitly: the code claim and the owner lookup run under runWithSystemIdentity (proof-of-possession / bootstrap reads that MUST precede knowing the owner — the rail cli-token-routes established for the same chicken-and-egg), and the binding INSERT runs under runWithRequestIdentity({ sub: userSub, isOperator: false }) so the row is written as the user who owns it.
  */
 
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
 
 const logger = createChildLogger({ module: 'channel-link-service' });
 
@@ -107,26 +109,32 @@ export class ChannelLinkService {
     provider: string, code: string, channelUserId: string, chatId: string, displayName: string | null,
   ): Promise<string | null> {
     await this.ensureSchema();
-    const claimed = await this.pool.query(
+    // The CODE CLAIM is the chicken-and-egg step: it is what TELLS us the owner, so it cannot
+    // already be running as them. Trusted-system, exactly like the cli-token hash lookup — safe
+    // because it is pure proof-of-possession, keyed on a single-use 15-minute code, and returns
+    // only that one row.
+    const claimed = await runWithSystemIdentity(() => this.pool.query(
       `UPDATE channel_link_codes SET consumed_at = NOW()
         WHERE code = $1 AND provider = $2 AND consumed_at IS NULL AND expires_at > NOW()
         RETURNING user_sub`,
       [code.trim(), provider],
-    );
+    ));
     const row = claimed.rows[0] as { user_sub?: string } | undefined;
     if (!row?.user_sub) {
       logger.warn({ provider, channelUserId }, 'channel link code invalid/expired/consumed');
       return null;
     }
     const userSub = String(row.user_sub);
-    await this.pool.query(
+    // The BINDING is owner-scoped work and the owner is now known — write it as them, never as
+    // operator. This is the row that decides whose swarm an inbound message reaches.
+    await runWithRequestIdentity({ sub: userSub, isOperator: false }, () => this.pool.query(
       `INSERT INTO channel_links (provider, channel_user_id, chat_id, user_sub, display_name)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (provider, channel_user_id)
        DO UPDATE SET chat_id = EXCLUDED.chat_id, user_sub = EXCLUDED.user_sub,
                      display_name = EXCLUDED.display_name, linked_at = NOW()`,
       [provider, channelUserId, chatId, userSub, displayName],
-    );
+    ));
     logger.info({ provider, channelUserId, userSub }, 'channel identity linked');
     return userSub;
   }
@@ -137,11 +145,15 @@ export class ChannelLinkService {
    */
   async resolveLink(provider: string, channelUserId: string): Promise<ChannelLink | null> {
     await this.ensureSchema();
-    const res = await this.pool.query(
+    // The OWNER-DISCOVERY read, called from the unauthenticated webhook on every inbound message:
+    // it is what resolves which user this chat belongs to, so like the code claim it cannot run as
+    // them. Trusted-system, keyed on the exact (provider, channel_user_id) pair and returning that
+    // one row — the caller immediately re-enters the resolved user's identity for everything after.
+    const res = await runWithSystemIdentity(() => this.pool.query(
       `SELECT provider, channel_user_id, chat_id, user_sub, display_name, linked_at
          FROM channel_links WHERE provider = $1 AND channel_user_id = $2`,
       [provider, channelUserId],
-    );
+    ));
     return res.rows[0] ? this.mapRow(res.rows[0]) : null;
   }
 

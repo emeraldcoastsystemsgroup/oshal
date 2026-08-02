@@ -18,6 +18,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Made connector webhook catalog read and parse failures visible in structured logs
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exported connectorWebhookIngressEnabled() so the ON/OFF decision is a testable function instead of an inline env comparison in server.ts. ADR-065 Phase 4 listed "mount the webhook router" as outstanding while it was in fact mounted — nothing guarded that, so nothing noticed. The guard (tests/unit/connectors/connector-webhook-mount.spec.ts) now pins both halves: the gate, and that a mounted ingress REFUSES an unsigned or wrongly-signed delivery.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "ENOMEM / healthy-but-degraded": the catalog read is no longer a one-shot readdirSync in a catch. The 2026-08-01 boot hit `ENOMEM: scandir '/app/swarm-apps/connectors'` in BOTH loadConnectorSpecs and loadWebhookEvents, and each logged once and served on with nothing loaded. It now goes through readCatalogDir (bounded retry on transient POSIX codes) and records the outcome so the /api/readiness `catalogs` leg fails a box whose webhook catalog is unreadable or parsed to nothing.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | MACHINE-WRITE IDENTITY (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE"). This ingress was the third instance of the class that took down a2a-routes in July and the ADR-119 alert intake in August, and it failed in the second, quieter way: the dispatch ran under runWithSystemIdentity — the OPERATOR sentinel — so the INSERT was never refused, it simply landed a ticket with owner_sub = NULL. An owner-less row is invisible to every per-owner rail (RLS reads, "my tickets", budgets, DLQ attribution), and the operator stamp handed a party holding ONE connector's webhook secret read access across every tenant's tickets — precisely what Stage D's scan taught us to avoid. Replaced with the established rail: a synthetic namespaced webhookOwnerSub(provider) = `webhook:<provider>`, stamped via runWithRequestIdentity({ isOperator: false }) AFTER signature verification and stamped again as the row's owner_sub on both write paths (generic sink + the GitHub issue synchronizer). RLS is neither weakened nor bypassed and it holds under the K5 oshal_bot least-privilege posture. Guards: tests/unit/machine-write-identity.spec.ts (class-level) + tests/connector-webhook-rls-live.spec.ts (a REAL insert through REAL RLS).
  *
  * @module routes/connector-webhook-routes
  */
@@ -26,7 +27,7 @@ import path from 'path';
 import express, { type Express } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { readCatalogDir, recordCatalogLoad } from '@/shared/observability';
-import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { loadConnectorSpec } from '../connectors/runtime';
 import {
   createWebhookIngressRouter, resolveSecret,
@@ -109,6 +110,37 @@ export function loadWebhookEvents(specDir = SPEC_DIR): WebhookEventSpec[] {
   return events;
 }
 
+/**
+ * @description The synthetic, namespaced owner sub every webhook-born ticket is created under —
+ * and the identity the ingress stamps on its database connection, so the two halves of the owner
+ * RLS predicate agree (`owner_sub = current_setting('oshal.current_sub')`).
+ *
+ * WHY THIS EXISTS: POST /api/hooks/:provider/:event is a MACHINE caller. It authenticates with a
+ * provider signature (HMAC / shared secret / JWT — webhook-ingress.ts `verifySignature`), never an
+ * OIDC session, so the global request-identity middleware stamps anonymous non-operator. `tickets`
+ * carries the enforce-stage owner policy, so an anonymous connection cannot insert into it at all
+ * — the exact failure the ADR-119 alert intake hit live on 2026-08-01 ("new row violates row-level
+ * security policy for table tickets"), and the one a2a-routes hit in July.
+ *
+ * THE RAIL THIS FOLLOWS is `ownerSubForA2aAgent()` (`a2a:<agentId>`) and `ALERT_INTAKE_OWNER_SUB`
+ * (`alert:prometheus`): a namespaced synthetic sub, `isOperator: false`, stamped BOTH on the
+ * connection and as the row's owner. Per-provider rather than one flat `webhook:*` because the
+ * blast radius of a leaked provider secret should be that provider's own tickets and nothing else
+ * — the GitHub sync's `getTicketByExternalId` lookup is scoped by the same predicate.
+ *
+ * DELIBERATELY NOT `runWithSystemIdentity` (which this handler previously used): the SYSTEM
+ * sentinel is `isOperator: true`, so a party holding one connector's webhook secret would read
+ * across every tenant's tickets, and the row it created carried NO owner at all — unattributable
+ * to any per-owner rail. Deliberately not the deployment operator's sub either: that attributes
+ * machine-authored work to a human who did not cause it.
+ *
+ * @param provider - The connector provider slug from the verified event (e.g. `github`).
+ * @returns The synthetic owner sub, e.g. `webhook:github`.
+ */
+export function webhookOwnerSub(provider: string): string {
+  return `webhook:${provider}`;
+}
+
 /** Adapt the swarm ticket service to the narrow TicketSink the handler needs, filling sane defaults. */
 export function makeTicketSink(ticketService: { createTicket: (i: any) => Promise<{ ticketId: string }> }): TicketSink {
   return {
@@ -117,6 +149,9 @@ export function makeTicketSink(ticketService: { createTicket: (i: any) => Promis
       externalProvider: i.externalProvider, externalId: i.externalId, externalUrl: null,
       status: 'backlog', workspaceId: null, assignedAgentId: null, parentTicketId: null,
       priority: 'medium', labels: i.labels, metadata: i.metadata,
+      // The machine owner. Without it the owner-RLS WITH CHECK refuses the row outright once the
+      // connection is stamped non-operator (see webhookOwnerSub above) — both halves ship together.
+      ownerSub: i.ownerSub,
     }),
   };
 }
@@ -134,22 +169,41 @@ function defaultMapper(e: WebhookEvent) {
 
 /**
  * @description Builds the verified-event dispatcher, specializing configured GitHub issue events while preserving generic connector behavior.
+ *
+ * IDENTITY: the whole dispatch runs under `runWithRequestIdentity({ sub: webhookOwnerSub(provider),
+ * isOperator: false })`, established only AFTER `dispatchWebhook` has verified the provider
+ * signature, so an unsigned delivery is rejected while still anonymous and never reaches the machine
+ * identity. Both write paths (the generic ticket sink and the GitHub issue synchronizer) stamp that
+ * same sub as the row's `owner_sub`, so the connection GUC and the row agree.
+ *
  * @param ticketService - Canonical ticket service used by both webhook paths
  * @returns Webhook callback for the ingress router
  */
 export function createConnectorWebhookHandler(
   ticketService: GitHubTicketWebhookTicketService,
 ): (event: WebhookEvent) => Promise<void> {
-  const genericHandler = ticketingWebhookHandler(makeTicketSink(ticketService), defaultMapper);
-  const githubIssueSync = createGitHubTicketWebhookSync({ ticketService });
-
-  return async (event) => runWithSystemIdentity(async () => {
-    if (event.provider === 'github' && event.event === 'issues') {
-      await githubIssueSync.handle(event.event, event.payload);
-      return;
-    }
-    await genericHandler(event);
+  const genericHandler = ticketingWebhookHandler(
+    makeTicketSink(ticketService),
+    defaultMapper,
+    (e) => webhookOwnerSub(e.provider),
+  );
+  // The GitHub branch below is guarded on provider === 'github', so its owner is a constant —
+  // built once, with the SAME sub the connection is stamped with for that provider.
+  const githubIssueSync = createGitHubTicketWebhookSync({
+    ticketService,
+    ownerSub: webhookOwnerSub('github'),
   });
+
+  return async (event) => runWithRequestIdentity(
+    { sub: webhookOwnerSub(event.provider), isOperator: false },
+    async () => {
+      if (event.provider === 'github' && event.event === 'issues') {
+        await githubIssueSync.handle(event.event, event.payload);
+        return;
+      }
+      await genericHandler(event);
+    },
+  );
 }
 
 /**
