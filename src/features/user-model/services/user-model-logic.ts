@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Haven user model (ADR-079) pure logic: fact merge semantics (confidence/recency/supersede), hot-core rendering for prompt injection, decay, teach parsing, secret filtering, extraction JSON parsing, and proactive-suggestion computation. Pure functions only — the SQL layer stays thin and this stays unit-testable without a DB.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extended suggestion kinds so ambient daily reviews can reuse the owner-scoped proposal inbox without creating reminders or tasks automatically.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added the 'connector-attention' suggestion kind so a derived connector signal (expiring token, broken connection) reaches the same owner-scoped inbox as every other suggestion. Its messages are computed in connector-signal-facts.ts from the caller's own connection rows, not from fact text, so nothing is inferred from a rendered string.
  */
 
 /** The facets a user-model fact can belong to, in hot-core render priority order. */
@@ -201,9 +202,19 @@ export function parseExtraction(raw: string): FactCandidate[] {
   return out;
 }
 
-/** A proactive suggestion Haven surfaces when the user arrives. */
+/**
+ * A proactive suggestion Haven surfaces when the user arrives — and, for the subset listed in
+ * PUSHABLE_SUGGESTION_KINDS, may push outward once the user has explicitly opted in.
+ */
 export interface SuggestionCandidate {
-  kind: 'stale-goal' | 'teach-nudge' | 'ambient-reminder' | 'ambient-task' | 'ambient-follow-up';
+  kind:
+    | 'stale-goal'
+    | 'teach-nudge'
+    | 'ambient-reminder'
+    | 'ambient-task'
+    | 'ambient-follow-up'
+    /** A connected account expiring or broken (derived from the owner's own connection rows). */
+    | 'connector-attention';
   message: string;
 }
 

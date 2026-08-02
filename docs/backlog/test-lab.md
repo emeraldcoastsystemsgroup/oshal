@@ -76,7 +76,12 @@ you want them updated before then.
 ## Deferred features (lower priority, noted earlier)
 - **Travel rewards / account-linking** via the ADR-056 data-access broker (the unbuilt half of the
   travel concierge — highest-value, highest-sensitivity, deliberately deferred).
-- **Jarvis multi-app chaining** — Jarvis does one action per ask; a multi-step planner would let it run
-  coupled commands end-to-end itself (today the Test Lab orchestrates couples).
+- ~~**Jarvis multi-app chaining**~~ — **BUILT** (verified against the tree 2026-08-02, entry was
+  stale). Jarvis emits an ordered ```oshal:plan directive, the controller compiles it onto the
+  existing graph rail (`multi-app-plan.ts` → `multi-app-plan-compiler.ts` → `plan-step-executor.ts`),
+  and the engine walks it step-by-step with data passed between app bots and an approval gate before
+  any outward step. Guards: `tests/unit/multi-app-planner.spec.ts`,
+  `tests/unit/jarvis-plan-residuals.spec.ts`. The Test Lab no longer has to orchestrate couples
+  itself for the cross-app case.
 - **Email the nightly report** — the send endpoint is `requiresAuth`, not service-secret, so the
   host-side nightly runner can't call it; report is committed + on disk for now.

@@ -15,6 +15,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation: MultiAppPlan/MultiAppPlanStep zod schema, parseMultiAppPlan (fail-closed), isMultiAppPlan (>=2 steps → plan, else single dispatch), extractPlanDirective (```oshal:plan fence), stripPlanDirective.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | describePlan: the plan a user can SEE. A multi-step plan was dispatched behind a one-line "I've lined up N steps" ack, so nobody could tell WHICH apps were about to run or which step would pause for approval before acting outward. Rendering it is part of bounding the planner, not cosmetics.
  *
  * @module multi-app-plan
  */
@@ -110,4 +111,28 @@ export function stripPlanDirective(text: string): string {
     .replace(UNTERMINATED_PLAN_FENCE, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** Longest step instruction shown in the plan summary before it is elided. */
+const STEP_SUMMARY_CHARS = 110;
+
+/**
+ * @description Render a plan as the numbered, human-readable list the user is shown when Jarvis
+ * starts it. This is the "visible plan" half of bounding the planner: the ack must say which app
+ * each step runs on, in what order, and — critically — which step will STOP and ask before it acts
+ * outward, so nothing outward-acting is ever a surprise. Pure; the control fence is never exposed.
+ * @param plan - the parsed plan (agentIds, if resolved, are deliberately not shown)
+ * @returns a Markdown block listing the steps, or '' for an empty plan
+ */
+export function describePlan(plan: MultiAppPlan): string {
+  if (!plan.steps.length) return '';
+  const lines = plan.steps.map((step, index) => {
+    const instruction = step.prompt.replace(/\s+/g, ' ').trim();
+    const shown = instruction.length > STEP_SUMMARY_CHARS
+      ? `${instruction.slice(0, STEP_SUMMARY_CHARS - 1).trimEnd()}…`
+      : instruction;
+    const gate = step.outward ? ' _(I\'ll ask you before this one runs)_' : '';
+    return `${index + 1}. **${step.app}** — ${shown}${gate}`;
+  });
+  return [`Here's the plan (${plan.steps.length} steps):`, ...lines].join('\n');
 }

@@ -32,6 +32,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Headless access: callerSub falls back to the trusted-service identity (X-Service-Secret + x-oshal-user-sub) so the swarm CLI and internal bots drive /ask like the chat window.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: split this 2.5×-over-cap file into cohesive jarvis-* siblings (orchestrator/directives/provider-intent-detect/visuals/tool-catalog/overview/task-store). This file is now the router + request glue; the moved public symbols are re-exported so importers + tests are unchanged. No behaviour change.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted the three jarvis-ambient decomposition siblings (core/ui/recognition) in JARVIS_CLIENT_ASSETS so the load-ordered classic scripts serve from /assets like the existing jarvis-speakers siblings. jarvis-ambient.js itself was over the 1000-code-line cap; behavior is unchanged.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Multi-app planner residuals: the dispatch ack now SHOWS the compiled plan (describePlan — which apps, in what order, which step pauses for approval) instead of only "I've lined up N steps", and a work item whose ticket ended escalated/cancelled reports an honest failure line instead of status 'error' with a null message. Both are honesty properties of the planner, not cosmetics.
  *
  * @module jarvis-routes
  */
@@ -50,6 +51,7 @@ import {
 } from '@/features/visual-response';
 import { isBotAccessibleTo } from '@/app/extensions/swarm/swarm-bot-registry';
 import {
+  describePlan,
   extractPlanDirective,
   isMultiAppPlan,
   stripPlanDirective,
@@ -87,6 +89,7 @@ import {
   persistJarvisTurn,
   markJarvisSessionTaskStatus,
   mapJarvisTaskStatusFromTicketStatus,
+  jarvisFailureNoteForTicketStatus,
   storedVisual,
 } from './jarvis-task-store';
 
@@ -507,13 +510,17 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
       }
       const tasks = rows.map((r) => {
         let status = r.status;
+        let error = r.error as string | null;
         if (r.kind === 'complex' && r.ticket_id && ticketStatus.has(r.ticket_id)) {
           const ts = ticketStatus.get(r.ticket_id)!;
           status = mapJarvisTaskStatusFromTicketStatus(ts);
+          // A ticket that escalated never wrote to the shelf row's error column, so a failed
+          // multi-app plan arrived as status 'error' with a null message. Say what happened.
+          if (!error) error = jarvisFailureNoteForTicketStatus(ts);
         }
         const visual = storedVisual({ visual: r.visual });
         return {
-          id: r.id, title: r.title, status, result: r.result as string | null, error: r.error,
+          id: r.id, title: r.title, status, result: r.result as string | null, error,
           kind: r.kind, ticketId: r.ticket_id, delivered: r.delivered === true, createdAt: r.created_at, finishedAt: r.finished_at,
           ...(visual ? { visual } : {}),
         };
@@ -742,8 +749,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           const { byKey } = await loadEffectiveRoutes(ctx);
           const planDispatched = await compileAndDispatchPlan(ctx, sub, sessionId, plan, byKey);
           if (planDispatched.length) {
-            const ack = stripPlanDirective(extractJarvisDirectives(answer).cleanAnswer)
-              || `On it — I've lined up ${plan.steps.length} steps across your apps and started them. I'll let you know when they're done.`;
+            // The user MUST be able to see what was just started on their behalf — which apps, in
+            // what order, and which step will stop and ask before acting outward. A bare "N steps"
+            // ack made a multi-app run the one thing in Jarvis you could not inspect.
+            const lead = stripPlanDirective(extractJarvisDirectives(answer).cleanAnswer)
+              || 'On it — I\'ve started this across your apps and I\'ll let you know when it\'s done.';
+            const ack = [lead, describePlan(plan)].filter(Boolean).join('\n\n');
             await persistJarvisTurn(ctx, sessionId, 'assistant', ack);
             await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
             const jp = askJobs.get(jobId);
