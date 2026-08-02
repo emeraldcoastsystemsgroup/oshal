@@ -4,8 +4,9 @@
  * Goes red if any of these regress:
  *  - the shared-secret compare reverts to a timing-oracle `===` (helper unit tests
  *    + a source tripwire on authorizeRemoteClient);
- *  - the router-local per-caller rate limiter is unmounted, stops being flag-gated
- *    (must be a no-op by default), or loses its per-clientId keying;
+ *  - the router-local per-caller rate limiter is unmounted, moves back ahead of the
+ *    auth gate, or loses its explicit-opt-out escape hatch (its default-ON posture,
+ *    per-clientId keying and cap behaviour live in remote-client-rate-limit.spec.ts);
  *  - the node-token path breaks: the ENTIRE worker plane (register → heartbeat →
  *    enqueue → claim → complete) must work with ONLY a per-node token identity
  *    (the req.oidc shape createCliTokenAuthMiddleware injects) and NO shared
@@ -19,6 +20,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the remote-client auth hardening (timing-safe compare, per-caller rate limit, worker-plane-on-node-token proof)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | 2026-07-31 23:21:37 America/Chicago — Raises the first HTTP router boot timeout because full-suite dynamic import load can exceed 15s before the auth assertions execute.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Re-point the two rate-limit assertions at the default-ON limiter. This spec PINNED the bug it was written to guard: it asserted the limiter must be "a no-op by default (flag off)", which is exactly why /api/remote-clients ran unlimited in every deployment (no compose file or .env ever set the flag). The default-off case becomes the explicit-opt-out case, and the source tripwire drops its keyGenerator substring check — that belonged to a substring, not to behaviour, and the keying is now proven over real requests in remote-client-rate-limit.spec.ts. Ordering (limiter AFTER auth) stays a source assertion because no HTTP call can observe it.
  */
 
 import { readFileSync } from 'fs';
@@ -112,18 +114,20 @@ describe('authorizeRemoteClient wiring tripwires (source-level)', () => {
     expect(source).not.toMatch(/sharedSecret\s*===\s*(headerValue|bearer)/);
   });
 
-  it('mounts the flag-gated per-caller limiter AFTER the auth gate', () => {
+  it('mounts the per-caller limiter AFTER the auth gate', () => {
     // 2026-07-24 adversarial-review fix: keying on the attacker-controllable /:clientId
     // ahead of auth let an unauthenticated flood mint a bucket per fabricated id and let a
     // known clientId be 429-starved by anonymous traffic. The limiter now mounts AFTER
     // authorizeRemoteClient so the clientId is proven; the global 1000/min/IP limiter bounds
     // unauthenticated floods. This tripwire is inverted from its original (pre-fix) assertion.
-    const limiterAt = source.indexOf("makeLimiter('remote_clients'");
+    // (Ordering is the ONE thing a source read can prove that an HTTP call can not — the
+    //  limiter's behaviour, keying and default-on posture are proven over real requests in
+    //  tests/unit/remote-client-rate-limit.spec.ts.)
+    const limiterAt = source.indexOf('router.use(createRemoteClientRateLimiter(');
     const authAt = source.indexOf('router.use(authorizeRemoteClient)');
     expect(limiterAt).toBeGreaterThan(-1);
     expect(authAt).toBeGreaterThan(-1);
     expect(authAt).toBeLessThan(limiterAt);
-    expect(source).toContain('keyGenerator: remoteClientRateLimitKey');
   });
 });
 
@@ -290,12 +294,16 @@ describe('remote-client auth over HTTP', () => {
     expect(intruderBeat.status).toBe(403);
   }, 15_000);
 
-  it('rate limiter is a no-op by default (flag off)', async () => {
+  it('rate limiter is a pass-through only when EXPLICITLY disabled', async () => {
+    // The escape hatch, not the default: an operator unblocking a hot node sets the flag to
+    // `off`. With it unset the limiter is ON — proven in tests/unit/remote-client-rate-limit.spec.ts.
     process.env.REMOTE_CLIENT_SHARED_SECRET = SECRET;
+    process.env.OSHAL_RATE_LIMIT_REMOTE_CLIENTS = 'off';
+    process.env.OSHAL_RATE_LIMIT_REMOTE_CLIENTS_MAX = '2';
     const base = await bootApp();
     for (let i = 0; i < 5; i++) {
       const res = await fetch(`${base}/rl-off-device`, { headers: { 'x-remote-client-key': SECRET } });
-      // Unregistered device → 404; NEVER 429 while the flag is off.
+      // Unregistered device → 404; NEVER 429 once the operator has opted out, even past MAX.
       expect(res.status).toBe(404);
     }
   }, 15_000);
