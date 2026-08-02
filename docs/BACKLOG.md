@@ -6465,11 +6465,13 @@ These are the deliberately-deferred remainders:
   non-stub answer, and strict mode documents when to use it (customer handover, post-deploy).
 
 
-## Payroll app (ADR-123) — deliberately deferred, with the reason ⬜ (2026-08-01)
+## Payroll app (ADR-123) — deferred with the reason; 11/13/14/16 shipped, 15 partly ✅ (2026-08-02)
 
-Payroll v1.1 shipped as a store package. Everything below was *chosen* not to build, not missed —
+Payroll ships as a store package (v2.2.0). Everything below was *chosen* not to build, not missed —
 each entry says why, so it is not silently re-litigated. Nothing here is required for the shipped
-scope to be correct; each is a coverage or product gap.
+scope to be correct; each is a coverage or product gap. Items marked SHIPPED have been built since
+this section was written and are kept here with what they uncovered, because the landmines outlive
+the gap.
 
 1. **State withholding beyond the shipped set.** Four states ship verified tables (PA, IL, KY flat;
    MO progressive) plus the nine no-wage-income-tax states; every other state falls back to an
@@ -6536,40 +6538,85 @@ scope to be correct; each is a coverage or product gap.
     **Still open, each with its own done-when:** items 11–16 below.
 
 
-11. **Electronic W-2 filing (SSA EFW2).** The W-2 is issuable as a document but there is no
-    machine-readable submission. **Deferred because** EFW2 is a second rigid fixed-width spec
-    (RA/RE/RW/RS/RT/RF records) and the paper/PDF path already unblocks a small employer.
-    **Done when:** an EFW2 file validates against AccuWage, its RT totals reconcile to the sum of the
-    RW records, and a guard asserts that reconciliation the way the NACHA guards read control totals
-    back out of the file rather than trusting the builder.
+11. **Electronic W-2 filing (SSA EFW2)** - SHIPPED in v2.2 for verified tax years (2026-08-02).
+    `payroll-efw2.ts` builds the RA/RE/RW/RT/RF submission at 512 fixed positions, and its RT totals
+    are read back **out of the finished file** rather than compared to the builder's own arithmetic.
+    The RW and RT field ORDERS diverge (RW runs Q, C, V, Y, AA, BB, DD, FF; RT runs Q, DD, C,
+    sick-pay, V, Y, AA, BB, FF), so a positional loop swaps DD and C and mis-aligns everything after
+    them - both maps are keyed by name and a guard asserts it with distinguishable amounts.
+    **HUMAN TASK, and the only thing blocking tax year 2026:** SSA Publication 42-007 for TY2026
+    could not be retrieved (`https://www.ssa.gov/employer/efw/26efw2.pdf` returns HTTP 403 to every
+    automated fetch - WebFetch, curl and PowerShell, multiple user agents). TY2026 **adds Box 12
+    codes TT and TP**, which the engine already computes and which have no field in the verified 2025
+    layout, so the builder refuses that year BY NAME rather than guessing. A person with a browser can
+    download it in ten seconds. **Done when:** `26efw2.pdf` is retrieved, its layout added to
+    `EFW2_VERIFIED_TAX_YEARS` with the TT/TP money-field positions cited, and a file validated through
+    AccuWage Online (itself a human step - an SSA web tool, not an API).
 
-12. **EFTPS deposit initiation and 941 e-file.** The deposit SCHEDULE and the 941 worksheet exist;
-    nothing transmits. **Deferred because** both need enrolment and credentials, and the worksheet
+12. **EFTPS deposit initiation and 941 e-file** - STILL OPEN, and the only item in this group that
+    is not a code problem. The deposit SCHEDULE and the 941 worksheet exist; nothing transmits. **Deferred because** both need enrolment and credentials, and the worksheet
     already tells an employer exactly what to pay and by when. **Done when:** a deposit is initiated
     through an enrolled channel and the confirmation number is recorded against the obligation, so
     the deposit report shows paid-vs-owed rather than owed-only.
 
-13. **ACH returns and notifications of change.** A generated file can come back rejected (R01
-    insufficient funds, R03 no account, R02 account closed) or corrected (NOC/COR with new routing or
-    account details). Today a payment row is written `pending` and nothing ever moves it.
-    **Done when:** a return/NOC file can be imported, the matching payment row moves to
-    returned/corrected, the employee’s bank account is flagged (or auto-updated from a NOC), and the
-    run surfaces which people were NOT actually paid. Without this, a failed deposit is invisible.
+13. **ACH returns and notifications of change** - SHIPPED in v2.2 (2026-08-02).
+    `payroll-ach-returns.ts` parses the return/NOC file, the matching payment moves to
+    returned/corrected, an NOC correction is applied behind an explicit confirm (re-validating the ABA
+    check digit), and the run surfaces exactly who was NOT paid.
+    **A prerequisite this uncovered:** `buildAchFile` assigned each entry a trace number and threw it
+    away, and a return identifies its entry ONLY by that original trace - so there was nothing to
+    match against. The builder now returns the traces and the ACH route persists them. **Runs whose
+    ACH file was generated before v2.2 have no stored trace and must be matched by hand**; the
+    settlement view reports that count rather than hiding it.
+    **Provenance is weaker than the rest of this app, and is stated in the module header:** the Nacha
+    Operating Rules are paywalled and were never read. The addenda 98/99 layouts are reconstructed
+    from concurring secondary sources (a Nacha-member education deck, moov-io/ach's parser source, a
+    real bank-produced return file). We PARSE only and never originate a return, dishonour or
+    reversal, which is the safe direction at that confidence level.
 
-14. **Bank-holiday calendar.** Pay dates shift off weekends but not off Federal Reserve holidays, and
-    deposit due dates have the same gap. A Friday pay date on Christmas Day does not fund.
-    **Done when:** an effective-dated holiday table drives both the pay-date shift and the deposit due
-    date, chaining through consecutive closures, with the shifted date and its reason shown at run
-    creation.
+14. **Bank-holiday calendar** - SHIPPED in v2.2 (2026-08-02). `payroll-calendar.ts` drives both the
+    pay-date shift and the deposit due date, chaining through consecutive closures, with the reason
+    shown.
+    **The finding that mattered: ONE holiday list is a bug - there are TWO calendars.** The Federal
+    Reserve decides whether money moves; the IRS decides when a deposit is due, and they disagree. A
+    holiday falling on SATURDAY costs the Fed nothing (Reserve Banks stay open the preceding Friday -
+    zero banking days lost) while the IRS observes it on that Friday. DC Emancipation Day is an IRS
+    legal holiday the Fed does not observe at all. Friday 2026-07-03 is both at once: banks open,
+    payroll funds, deposit deadline moves. The semiweekly rule also implements Pub 15's
+    extra-day-per-legal-holiday allowance, which is NOT a next-business-day roll and can land later
+    than one.
+    **Only 2026's IRS list has been read from that year's Pub 15.** Later years are computed from the
+    same rules (which reproduce the verified 2026 list exactly) and returned with `verified: false`.
+    Pub 15 republishes the list annually - re-read it each year rather than trusting the derivation.
 
-15. **Check printing with MICR.** Employees not on direct deposit get a payment row but no document.
-    **Done when:** a check PDF prints with a valid MICR line, the check number is allocated from a
-    sequence, and the existing check-number uniqueness index prevents reuse.
+15. **Check printing** - PARTLY SHIPPED in v2.2 (2026-08-02); the MICR half is REFUSED, not pending.
+    Numbering, the printable check with the amount in words, and the UCC 4-404 six-month staleness
+    legend all ship. Numbers come from an atomic single-statement sequence, and the existing
+    uniqueness index prevents reuse.
+    **No MICR line is generated, and that is a decision rather than a gap.** ANSI X9.100-160-1 is
+    paywalled, and every obtainable vendor source contradicts the others: 62 vs 65 character
+    positions; the EPC field at "either, but not both, positions 44 or 45" vs "position 44-45"; the
+    auxiliary on-us field starting at 44 vs 45; and one manual calling the on-us field "positions
+    13-32" and "nineteen spaces" in consecutive sentences. A line one position out is rejected by a
+    reader-sorter or posted to the wrong account, and the band needs magnetic toner no software
+    supplies. Checks print onto bank-encoded stock, which is what small employers already buy. Same
+    rule as the state tax tables: **a wrong table is worse than an absent one.**
+    **Done when (if ever):** someone buys ANSI X9.100-160-1 and X9.100-20, the field positions are
+    cited from the standard rather than from vendors, and a printed sample is accepted by a real
+    reader-sorter. Until a paid-for standard is in hand this stays refused - do NOT "fix" it by
+    picking whichever vendor number appears most often.
 
-16. **State quarterly returns (FL RT-6 first).** Federal is covered; state unemployment returns are
-    not. **Done when:** RT-6 produces its line values from the same ledger with a reconciliation
-    against SUTA accrued, following the 941 pattern — and only for states whose withholding table is
-    already verified, so coverage never outruns correctness.
+16. **State quarterly returns (FL RT-6 first)** - SHIPPED in v2.2 (2026-08-02). `payroll-rt6.ts`
+    produces every line from the ledger and reconciles against the reemployment tax accrued, following
+    the 941 pattern. Florida qualified under the "never outrun correctness" rule precisely BECAUSE it
+    levies no wage income tax - there is no withholding table to be wrong about.
+    The $7,000 base is per employee per calendar year with a quarterly year-to-date carry (the FUTA
+    trap). It deliberately does NOT generate the payment coupon's OCR scanline - no retrieved document
+    describes that string's structure or check digit - and does NOT roll the penalty-after date off a
+    weekend, because Florida's rule for that appears in none of the department's documents and the
+    IRS calendar is the wrong authority for a state deadline (it includes DC Emancipation Day).
+    **Next state done when:** the same, for a state whose withholding table is already verified -
+    which today means PA, IL, KY or MO (see item 1), not an arbitrary next state.
 
 ## HUMAN: migrate platform SaaS accounts to real ECSG accounts (operator-led; record it) ⬜ PAUSED BY DESIGN
 
