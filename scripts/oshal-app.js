@@ -11,6 +11,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: validate `uses:` (kernel skills) shape, and warn when an author lists the `presentations` APP as a dependency when they mean the always-present deck-generation SKILL. Skill IDs are deliberately NOT re-listed here — the authoritative fail-closed check is server-side (readManifest) + CI (check-kernel-skills.ts); a second list in this CLI would drift.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-097 store follow-up: `init` scaffold stamps `suite:` (the app's ONE primary catalog shelf) so generated packages never land unshelved; `validate` warns on a missing suite and errors on a non-string one. The suite ENUM is deliberately NOT re-listed here — the authoritative fail-closed value check is server-side (swarm-app-loader against SWARM_APP_SUITES), same no-second-source reasoning as `uses:`.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11 done-when 6: `uninstall`'s impact scan now mirrors the SERVER's tool semantics (tool-ownership.ts) — tools PROVIDED = the manifest's tools[].name only (never ui.static[].toolName, those are ribbon surface ids); other installed packages whose dependencies.tools name one are TOOL DEPENDENTS and BLOCK the uninstall exactly like app-level dependents (--force overrides). A dependent blocks, it never RETAINS the tool — under --force the tool goes with its owner, same as the server.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Default the store to the PUBLIC repo, matching scripts/oshal-install.sh. The CLI defaulted to the private trunk, so `oshal-app.js install <name>` 404'd for anyone outside the org while the shell installer — same product, same install — succeeded from the public snapshot. The trunk is now reached by naming it (--repo / OSHAL_STORE_REPO) plus OSHAL_STORE_TOKEN.
  *
  * The npm-of-OSHAL-apps helper. An OSHAL app package is a folder with a definition
  * file (oshal-app.yaml — the package.json analog), personas, compiled routes, migrations,
@@ -30,8 +31,12 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const yaml = require('js-yaml');
 
-// The default app store (git host is irrelevant — any git-subdir source works).
-const DEFAULT_STORE_REPO = 'https://github.com/emeraldcoastsystemsgroup/oshal-applications';
+// The default app store: the PUBLIC store, the same one scripts/oshal-install.sh downloads and
+// the only one a deployment without OSHAL_STORE_TOKEN can read. Pointing this at the private
+// trunk made `install <name>` fail for everyone outside the org while the shell installer
+// succeeded from the public snapshot. The trunk is reachable by setting the store explicitly.
+// (git host is irrelevant — any git-subdir source works.)
+const DEFAULT_STORE_REPO = 'https://github.com/emeraldcoastsystemsgroup/oshal-apps';
 
 // Registered cockpit skins a package may select via `theme:` (mirror of COCKPIT_THEMES in
 // src/pages/cockpit/js/theme-manager.js — keep in sync; a package may also ship a bundled ui/*.css).
