@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guarded first-seen projections against historical and non-opened issue events
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Covered external closure of an untriaged backlog projection
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Proved open-shal issue intake uses the shared core queue with open-shal work and oshal release routing
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ownerSub is now a required option (machine-write identity): every projection this synchronizer created landed owner_sub NULL on the owner-RLS tickets table. Every call site here passes the synthetic machine sub the ingress stamps on the connection, and the first-projection case asserts the row carries it — the half that, absent, refuses the INSERT no matter how the connection is stamped.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -15,6 +16,12 @@ import {
   resolveGitHubTicketFeeds,
   type GitHubTicketFeedConfig,
 } from '@/features/intake/providers';
+
+/**
+ * The synthetic machine owner the ingress stamps on the connection (webhookOwnerSub('github')).
+ * Every projection must carry it as owner_sub or the owner-RLS WITH CHECK refuses the row.
+ */
+const WEBHOOK_OWNER_SUB = 'webhook:github';
 
 const CORE_FEED: GitHubTicketFeedConfig = {
   id: 'core',
@@ -68,7 +75,7 @@ function issuePayload(action: string, overrides: Record<string, unknown> = {}) {
 describe('GitHub ticket webhook sync', () => {
   it('creates a configured repository issue in backlog with queue and repository routing metadata', async () => {
     const ticketService = buildTicketService();
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('opened'));
 
@@ -78,6 +85,7 @@ describe('GitHub ticket webhook sync', () => {
       'emeraldcoastsystemsgroup/oshal#42',
     );
     expect(ticketService.createTicket).toHaveBeenCalledWith(expect.objectContaining({
+      ownerSub: WEBHOOK_OWNER_SUB,
       title: 'Make the cockpit mobile friendly',
       description: 'The header overflows on narrow screens.',
       ticketType: 'oshal-dev',
@@ -104,6 +112,7 @@ describe('GitHub ticket webhook sync', () => {
   it('routes open-shal issue 1 through the core queue to open-shal work and oshal release', async () => {
     const ticketService = buildTicketService();
     const sync = createGitHubTicketWebhookSync({
+      ownerSub: WEBHOOK_OWNER_SUB,
       ticketService,
       feeds: resolveGitHubTicketFeeds({}),
     });
@@ -154,7 +163,7 @@ describe('GitHub ticket webhook sync', () => {
       status: 'backlog',
       metadata: { preserved: true },
     });
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('edited', {
       title: 'Updated mobile request',
@@ -179,7 +188,7 @@ describe('GitHub ticket webhook sync', () => {
       status: 'approved',
       metadata: { githubIssue: { updatedAt: '2026-07-20T03:00:00.000Z' } },
     });
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('closed', {
       updated_at: '2026-07-20T02:30:00.000Z',
@@ -192,7 +201,7 @@ describe('GitHub ticket webhook sync', () => {
 
   it('does not import an issue created before the configured activation boundary', async () => {
     const ticketService = buildTicketService();
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('opened', {
       created_at: '2026-07-20T01:59:59.000Z',
@@ -204,7 +213,7 @@ describe('GitHub ticket webhook sync', () => {
 
   it('does not create a projection from a first-seen closed event', async () => {
     const ticketService = buildTicketService();
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('closed'));
 
@@ -215,7 +224,7 @@ describe('GitHub ticket webhook sync', () => {
   it('enforces configured intake labels before creating a first projection', async () => {
     const ticketService = buildTicketService();
     const feed = { ...CORE_FEED, labels: ['request'] };
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [feed] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [feed], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('opened'));
 
@@ -226,7 +235,7 @@ describe('GitHub ticket webhook sync', () => {
   it('creates a post-cutover issue when a later labeled event first satisfies the feed filter', async () => {
     const ticketService = buildTicketService();
     const feed = { ...CORE_FEED, labels: ['request'] };
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [feed] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [feed], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('labeled', {
       labels: [{ name: 'request' }],
@@ -238,7 +247,7 @@ describe('GitHub ticket webhook sync', () => {
 
   it('derives the same label-based priority used by pull reconciliation', async () => {
     const ticketService = buildTicketService();
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     await sync.handle('issues', issuePayload('opened', {
       labels: [{ name: 'request' }, { name: 'p1-high' }],
@@ -252,7 +261,7 @@ describe('GitHub ticket webhook sync', () => {
 
   it('ignores issue events from repositories that are not configured', async () => {
     const ticketService = buildTicketService();
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
     const payload = issuePayload('opened');
     payload.repository.full_name = 'emeraldcoastsystemsgroup/untrusted';
 
@@ -265,7 +274,7 @@ describe('GitHub ticket webhook sync', () => {
 
   it('ignores pull requests delivered through the GitHub issues event shape', async () => {
     const ticketService = buildTicketService();
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('opened', {
       pull_request: { url: 'https://api.github.com/repos/emeraldcoastsystemsgroup/oshal/pulls/42' },
@@ -282,7 +291,7 @@ describe('GitHub ticket webhook sync', () => {
       status: 'approved',
       metadata: {},
     });
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('closed'));
 
@@ -300,7 +309,7 @@ describe('GitHub ticket webhook sync', () => {
       status: 'approved',
       metadata: {},
     });
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     await sync.handle('issues', issuePayload('closed', { state_reason: 'not_planned' }));
 
@@ -317,7 +326,7 @@ describe('GitHub ticket webhook sync', () => {
       status: 'backlog',
       metadata: {},
     });
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('closed'));
 
@@ -335,7 +344,7 @@ describe('GitHub ticket webhook sync', () => {
       status: 'complete',
       metadata: {},
     });
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     const result = await sync.handle('issues', issuePayload('reopened'));
 
@@ -354,7 +363,7 @@ describe('GitHub ticket webhook sync', () => {
     ['a non-numeric issue number', 'issues', issuePayload('opened', { number: 'forty-two' })],
   ])('safely ignores %s', async (_case, eventName, payload) => {
     const ticketService = buildTicketService();
-    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED] });
+    const sync = createGitHubTicketWebhookSync({ ticketService, feeds: [CORE_FEED], ownerSub: WEBHOOK_OWNER_SUB });
 
     await expect(sync.handle(eventName, payload)).resolves.toEqual(
       expect.objectContaining({ action: 'ignored' }),

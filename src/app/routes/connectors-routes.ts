@@ -41,6 +41,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account-per-provider closed out (ADR-113 section 4). (a) The CREATE TABLE no longer declares UNIQUE (user_sub, provider) — it was created and then dropped again by ensureTenancySchema on every fresh boot, and under OSHAL_SCHEMA_BOOTSTRAP=validate-only it survived, so a migration-driven deployment silently OVERWROTE the first account on the second connect. scripts/migrations/101-connections-multi-account.sql is the owner-role half; the per-account partial unique indexes are the only uniqueness now. (b) /start forces the provider's ACCOUNT CHOOSER once the caller already holds a connection for that provider (or asks with ?another=1) — Google's default prompt=consent silently re-authorises the SAME account, which made "two Gmails" unreachable from the UI no matter how the schema was shaped. (c) DELETE /:provider revoked ONE refresh token and then deleted EVERY row for the provider; it now revokes each account it removes and re-seeds the scope default. (d) /list publishes defaultConnectionId + multiAccount so a consumer can see which account a bare token request will resolve to. Guards: tests/unit/connector-multi-account.spec.ts.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto default-ON boot posture: after ensureDekSchema, log LOUD (error) when OSHAL_ENVELOPE_CRYPTO is on (now the default) but SESSION_SECRET is unset — connector token crypto will throw at the kek() boundary, so surface the misconfig at boot rather than on the first connect. Imported envelopeEnabled for the check.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G14: getValidAccessToken accepts opts.forceRefresh — when a refresh token exists, skip the still-valid-expiry shortcut and exercise a REAL provider refresh, so the connector-liveness probe learns whether the provider still honors the grant (revoked Testing-mode Google → `refresh 400`) instead of trusting the DB row. Default path (no flag) is byte-for-byte unchanged.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | MACHINE-WRITE IDENTITY (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE"). The Facebook data-deletion callback DELETEd from oshal_connections with no database identity established. Meta calls it server-to-server with a signed_request and no OIDC session, so the global middleware stamps anonymous non-operator — and oshal_connections carries FORCE ROW LEVEL SECURITY (migration 060 Tier-2, user_sub/tenant_id). The DELETE therefore matched ZERO rows on every call while the handler happily returned {url, confirmation_code}: a silent no-op that is simultaneously this audit class and a false deletion attestation to Meta. The statement now runs under runWithSystemIdentity and reports its real rowCount. Deliberate deviation from the synthetic-machine-sub rail (alert:prometheus / a2a:<id> / webhook:<provider>) and the ONLY one in this pass: those work because the machine OWNS the rows it writes, whereas here the row belongs to a real user whose sub Facebook never tells us — the operation is cross-owner by definition. Bounded the way cli-token-routes bounds its own pre-identity lookup: a single statement, no scan, keyed on an HMAC-verified account id, returning nothing to the caller but a confirmation code.
  * -----------------------------------------------------------------------------
  *
  * @module connectors-routes
@@ -50,6 +51,7 @@ import { Router, type Request, type Response } from 'express';
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import type { AppContext } from '@/app/composition/app-context';
 import { ensureDekSchema, encryptToken, decryptToken, envelopeEnabled } from './connector-token-crypto';
 import {
@@ -1430,8 +1432,23 @@ export function createFacebookDataDeletionRoute(ctx: AppContext) {
         const data = req.body?.signed_request && secret ? parseSignedRequest(req.body.signed_request, secret) : null;
         if (!data || !data.user_id) { res.status(400).json({ error: 'invalid signed_request' }); return; }
         const code = crypto.randomBytes(8).toString('hex');
-        await ctx.pool.query("DELETE FROM oshal_connections WHERE provider = 'facebook' AND account_id = $1", [String(data.user_id)]);
-        logger.info({ fbUserId: data.user_id, code }, 'Facebook data deletion processed');
+        // IDENTITY: oshal_connections is FORCE-RLS (migration 060 Tier-2). Meta calls this
+        // server-to-server, so the ambient identity is anonymous non-operator and this DELETE
+        // silently matched zero rows while still returning a confirmation code. The row belongs
+        // to a real user whose sub the signed_request never carries, so the synthetic-machine-sub
+        // rail cannot express it — this is a genuinely cross-owner statement and the trusted
+        // SYSTEM sentinel is the sanctioned way to mark one. Kept as narrow as the cli-token
+        // pre-identity lookup: ONE statement, no scan, keyed on the HMAC-verified account id.
+        const deleted = await runWithSystemIdentity(() => ctx.pool.query(
+          "DELETE FROM oshal_connections WHERE provider = 'facebook' AND account_id = $1 RETURNING user_sub",
+          [String(data.user_id)],
+        ));
+        // rowCount is the attestation. A zero here used to be invisible; Meta is told the data is
+        // gone either way, so a silent zero must be loud in our logs.
+        logger.info(
+          { fbUserId: data.user_id, code, deletedConnections: deleted.rowCount ?? 0 },
+          'Facebook data deletion processed',
+        );
         res.json({ url: `${base}/auth/facebook/data-deletion?code=${code}`, confirmation_code: code });
       } catch (err: any) {
         logger.error({ err }, 'Facebook data deletion failed');

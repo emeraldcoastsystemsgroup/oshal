@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Enforced the configured no-history boundary for first-seen webhook issues
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cancelled untriaged internal projections when their GitHub issue closes
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Shared legal close and reopen projection with REST reconciliation
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Machine-write identity: buildCreateInput minted the internal projection with NO ownerSub, so every webhook-born GitHub ticket landed owner_sub = NULL on an owner-RLS table — insertable only because the caller wrapped dispatch in the operator sentinel, and thereafter invisible to every per-owner rail. ownerSub is now a REQUIRED option (the synthetic `webhook:github` machine sub the ingress also stamps on the connection), so the row and the connection GUC satisfy the same predicate. Required, not defaulted: a silent default is how this shipped owner-less in the first place.
  */
 
 import { z } from 'zod';
@@ -76,6 +77,14 @@ export interface GitHubTicketWebhookTicketService {
 export interface GitHubTicketWebhookSyncOptions {
   ticketService: GitHubTicketWebhookTicketService;
   feeds?: readonly GitHubTicketFeedConfig[];
+  /**
+   * The synthetic machine sub that owns webhook-born projections — the SAME sub the ingress
+   * stamps on the database connection (`webhookOwnerSub('github')`). Required: `tickets` is
+   * owner-RLS'd and a NULL owner can never satisfy
+   * `owner_sub = current_setting('oshal.current_sub')`, so an omitted owner is a refused INSERT
+   * under a stamped connection and an unattributable row under an operator one.
+   */
+  ownerSub: string;
 }
 
 /**
@@ -117,6 +126,7 @@ export function createGitHubTicketWebhookSync(
       feedsByRepository,
       eventName,
       payload,
+      options.ownerSub,
     ),
   };
 }
@@ -126,6 +136,7 @@ async function handleVerifiedEvent(
   feeds: ReadonlyMap<string, GitHubTicketFeedConfig>,
   eventName: string,
   payload: unknown,
+  ownerSub: string,
 ): Promise<GitHubTicketWebhookSyncResult> {
   if (eventName.trim().toLowerCase() !== 'issues') {
     return ignored('unsupported-event');
@@ -143,13 +154,14 @@ async function handleVerifiedEvent(
   if (!feed) {
     return ignored('unconfigured-repository');
   }
-  return synchronizeIssue(ticketService, feed, parsed.data);
+  return synchronizeIssue(ticketService, feed, parsed.data, ownerSub);
 }
 
 async function synchronizeIssue(
   ticketService: GitHubTicketWebhookTicketService,
   feed: GitHubTicketFeedConfig,
   payload: GitHubIssuesPayload,
+  ownerSub: string,
 ): Promise<GitHubTicketWebhookSyncResult> {
   const externalId = `${feed.issueRepository}#${payload.issue.number}`;
   const existing = await ticketService.getTicketByExternalId('github', externalId);
@@ -158,7 +170,7 @@ async function synchronizeIssue(
     if (rejectionReason) {
       return ignored(rejectionReason);
     }
-    const created = await ticketService.createTicket(buildCreateInput(feed, payload, externalId));
+    const created = await ticketService.createTicket(buildCreateInput(feed, payload, externalId, ownerSub));
     return { action: 'created', ticketId: created.ticketId };
   }
   if (isStaleEvent(existing, payload)) {
@@ -208,8 +220,12 @@ function buildCreateInput(
   feed: GitHubTicketFeedConfig,
   payload: GitHubIssuesPayload,
   externalId: string,
+  ownerSub: string,
 ): CreateInternalTicketInput {
   return {
+    // The synthetic machine owner (`webhook:github`), matching the sub the ingress stamps on the
+    // connection. Both halves of the owner-RLS predicate must agree or the INSERT is refused.
+    ownerSub,
     title: payload.issue.title,
     ticketType: feed.ticketType,
     description: payload.issue.body ?? '',

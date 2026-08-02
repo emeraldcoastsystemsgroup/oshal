@@ -10,6 +10,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Proved GitHub issue events take the specialized sync path without duplicate generic tickets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Proved exact-byte HMAC verification, GitHub delivery identifiers, and trusted system dispatch
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guarded production middleware order so global JSON parsing cannot consume signed webhook bytes
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | MACHINE-WRITE IDENTITY. SEQ 3's "trusted system dispatch" assertion pinned the WRONG posture and this spec was green while every webhook-born ticket landed owner_sub NULL: runWithSystemIdentity is isOperator:true, so nothing was refused, the row was simply unattributable, and one connector's signing secret bought read access to every tenant's tickets. Both cases now assert the replacement rail — a synthetic non-operator `webhook:<provider>` sub on the connection AND the same value as the row's owner_sub — plus a case proving two providers do not share an owner. The class-level gate is tests/unit/machine-write-identity.spec.ts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEQ 4's guard read server.ts as TEXT and searched for an inline parser ternary. The web-hardening lane moved that logic into createGlobalJsonParser (features/security/hardening/body-limits.ts) and the guard went RED on main while the behaviour was completely intact — a substring guard rotting, not a regression. It now drives the REAL middleware the server mounts: a /api/hooks body must arrive unparsed (HMAC needs the original bytes) while an ordinary route is parsed, so the reservation is proven specific rather than a parser that does nothing.
  *
  * @module tests/unit/connectors/connector-webhook-routes
@@ -62,9 +63,9 @@ describe('createConnectorWebhookHandler', () => {
   it('sends configured GitHub issue events only through the idempotent issue synchronizer', async () => {
     vi.stubEnv('GITHUB_TICKET_FEEDS', JSON.stringify([configuredFeed()]));
     const ticketService = buildTicketService();
-    let systemIdentity = false;
+    let identityAtLookup: ReturnType<typeof getRequestIdentity>;
     ticketService.getTicketByExternalId.mockImplementation(async () => {
-      systemIdentity = getRequestIdentity()?.system === true;
+      identityAtLookup = getRequestIdentity();
       return null;
     });
     const handler = createConnectorWebhookHandler(ticketService as unknown as GitHubTicketWebhookTicketService);
@@ -82,11 +83,17 @@ describe('createConnectorWebhookHandler', () => {
       'emeraldcoastsystemsgroup/oshal#42',
     );
     expect(ticketService.createTicket).toHaveBeenCalledTimes(1);
-    expect(systemIdentity).toBe(true);
+    // IDENTITY: the synthetic machine sub, established before the very first query — NOT the
+    // SYSTEM sentinel this used to assert. isOperator:false is the load-bearing half: it is what
+    // keeps a webhook secret from reading across tenants while the lookup runs.
+    expect(identityAtLookup).toEqual({ sub: 'webhook:github', isOperator: false });
     expect(ticketService.createTicket).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Mobile cockpit request',
       externalId: 'emeraldcoastsystemsgroup/oshal#42',
       status: 'backlog',
+      // The other half of the owner-RLS predicate. Without it the stamped connection still
+      // cannot insert, because NULL never equals the stamped sub.
+      ownerSub: 'webhook:github',
     }));
   });
 
@@ -106,6 +113,7 @@ describe('createConnectorWebhookHandler', () => {
     expect(ticketService.getTicketByExternalId).not.toHaveBeenCalled();
     expect(ticketService.createTicket).toHaveBeenCalledTimes(1);
     expect(ticketService.createTicket).toHaveBeenCalledWith(expect.objectContaining({
+      ownerSub: 'webhook:example',
       title: '[example] changed',
       externalId: 'delivery-2',
       status: 'backlog',
