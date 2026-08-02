@@ -10,6 +10,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7 guards: catalog parse/degrade, catalog-pinned install fail-closed shapes, and the operator gate on install-remote.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the shipped store default. The route defaulted to the PRIVATE trunk while the shell installer downloaded the PUBLIC snapshot, so the cockpit asked for a repo it could not read and Discover degraded to empty everywhere but the operator's box. Asserted on the URL the code actually requests, plus a check that the installer CLI's default has not drifted away from it again.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express, { Router, type NextFunction, type Request, type Response } from 'express';
@@ -98,6 +99,36 @@ describe('marketplaceUrl — the catalog lives beside the packages', () => {
     expect(marketplaceUrl('https://github.com/org/store.git/', 'main'))
       .toBe('https://raw.githubusercontent.com/org/store/main/marketplace.json');
     expect(marketplaceUrl('https://gitlab.com/org/store', 'main')).toBeNull();
+  });
+});
+
+describe('the shipped default store is the PUBLIC one', () => {
+  // Guard for the split-brain found 2026-08-02: this route defaulted to the private trunk while
+  // scripts/oshal-install.sh downloaded the public snapshot. One product, two stores — and the one
+  // the cockpit asked for is unreadable without a token, so Discover degraded to empty for every
+  // deployment that is not the operator's own box.
+  const PUBLIC_CATALOG =
+    'https://raw.githubusercontent.com/emeraldcoastsystemsgroup/oshal-apps/main/marketplace.json';
+
+  it('resolves the built-in default to the public store catalog', () => {
+    expect(marketplaceUrl()).toBe(PUBLIC_CATALOG);
+  });
+
+  it('actually FETCHES the public catalog when no store is configured', async () => {
+    const fetchStub = stubCatalogFetch(200, marketplaceBody());
+    await fetchStoreCatalog(true);
+    expect(fetchStub).toHaveBeenCalled();
+    // Assert the URL the code requested, not the constant it was built from.
+    expect(String(fetchStub.mock.calls[0][0])).toBe(PUBLIC_CATALOG);
+  });
+
+  it('ships the same default in the installer CLI', async () => {
+    // A config-value assertion, deliberately: the CLI is a standalone node script with no
+    // importable surface, and the two defaults disagreeing is the exact bug being guarded.
+    const { readFileSync } = await import('node:fs');
+    const cli = readFileSync(new URL('../../scripts/oshal-app.js', import.meta.url), 'utf8');
+    const declared = cli.match(/const DEFAULT_STORE_REPO = '([^']+)'/)?.[1];
+    expect(declared).toBe('https://github.com/emeraldcoastsystemsgroup/oshal-apps');
   });
 });
 

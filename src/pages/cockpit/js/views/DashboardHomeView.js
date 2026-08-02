@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Published responsive application/core GitHub request and defect entry points on the cockpit home screen
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Point the four request/defect links at the repos a user can actually open. All four 404'd: app work went to the private application trunk, and core work went to open-shal — the pre-cutover repo, a frozen reference archive since ADR-115. The public trunks (oshal / oshal-apps) are where issues are accepted, which is already what README's request queues say.
  */
 
 /**
@@ -57,10 +58,10 @@ export class DashboardHomeView {
             <p>App work routes to the application queue. Platform, cockpit, and orchestration work routes to the active core queue.</p>
           </div>
           <div class="dash-request-actions">
-            <a class="dash-request-link" href="https://github.com/emeraldcoastsystemsgroup/oshal-applications/issues/new?labels=enhancement&amp;title=%5BRequest%5D%20">App request</a>
-            <a class="dash-request-link" href="https://github.com/emeraldcoastsystemsgroup/oshal-applications/issues/new?labels=bug%2Cdefect&amp;title=%5BDefect%5D%20">App defect</a>
-            <a class="dash-request-link" href="https://github.com/emeraldcoastsystemsgroup/open-shal/issues/new?labels=enhancement&amp;title=%5BRequest%5D%20">Core request</a>
-            <a class="dash-request-link" href="https://github.com/emeraldcoastsystemsgroup/open-shal/issues/new?labels=bug%2Cdefect&amp;title=%5BDefect%5D%20">Core defect</a>
+            <a class="dash-request-link" href="https://github.com/emeraldcoastsystemsgroup/oshal-apps/issues/new?labels=enhancement&amp;title=%5BRequest%5D%20">App request</a>
+            <a class="dash-request-link" href="https://github.com/emeraldcoastsystemsgroup/oshal-apps/issues/new?labels=bug%2Cdefect&amp;title=%5BDefect%5D%20">App defect</a>
+            <a class="dash-request-link" href="https://github.com/emeraldcoastsystemsgroup/oshal/issues/new?labels=enhancement&amp;title=%5BRequest%5D%20">Core request</a>
+            <a class="dash-request-link" href="https://github.com/emeraldcoastsystemsgroup/oshal/issues/new?labels=bug%2Cdefect&amp;title=%5BDefect%5D%20">Core defect</a>
           </div>
           <p class="dash-request-policy">Defects stay open. Accepted <code>code-write</code> requests close only through a proven release PR. GitHub collaborator access is required during prerelease.</p>
         </section>

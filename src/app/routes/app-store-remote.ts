@@ -24,6 +24,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7: GET /api/swarm/apps/catalog (marketplace.json via the store repo, OSHAL_STORE_TOKEN-aware, honest degrade) + operator-only POST /api/swarm/apps/install-remote (catalog-pinned source -> scripts/oshal-app.js install -> SwarmAppService.loadApp hot-load). Closes the "install-remote planned, not built" backlog entry.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Default the store to the PUBLIC repo. This route defaulted to the private trunk while scripts/oshal-install.sh downloaded the public snapshot — one product, two stores, and the one the cockpit asked for is unreadable without a token, so every signed-in user without OSHAL_STORE_TOKEN saw an empty Discover shelf and an honest-but-useless "not anonymously readable". The private trunk is now the OVERRIDE (set OSHAL_STORE_REPO on a box that should read it), not the default.
  */
 import path from 'path';
 import { execFile } from 'child_process';
@@ -36,8 +37,12 @@ const logger = createChildLogger({ module: 'app-store-remote' });
 
 const WORKSPACE_ROOT = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
 const DEPLOYED_APPS_DIR = path.join(WORKSPACE_ROOT, 'deployed-apps');
-/** The store repo the catalog is read from (the CLI installer's default store). */
-const STORE_REPO = process.env.OSHAL_STORE_REPO || 'https://github.com/emeraldcoastsystemsgroup/oshal-applications';
+/**
+ * The store repo the catalog is read from — the PUBLIC store, which is what the installer
+ * (scripts/oshal-install.sh) downloads and the only one an unauthenticated deployment can read.
+ * A box that should read the private trunk instead sets OSHAL_STORE_REPO + OSHAL_STORE_TOKEN.
+ */
+const STORE_REPO = process.env.OSHAL_STORE_REPO || 'https://github.com/emeraldcoastsystemsgroup/oshal-apps';
 const STORE_REF = process.env.OSHAL_STORE_REF || 'main';
 const FETCH_TIMEOUT_MS = 10_000;
 const CATALOG_TTL_MS = 5 * 60 * 1000;
