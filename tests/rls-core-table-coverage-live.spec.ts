@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-124 RLS Phase 2 drift guard. The BACKLOG's residual list had been wrong for a month in BOTH directions — it still named five tables migration 094 closed, and named none of the 114 tables a live inventory found with RLS switched off. Prose cannot hold this: the guard derives the CORE table set from the tree (CREATE TABLE across scripts/migrations + src + any-bot, resolving ${IDENT} template names), intersects it with the live database, and fails unless every core table is either ENABLE+FORCE RLS'd or carries a written justification here. Stale exceptions fail too — an entry whose table has since been walled, dropped, or left the core tree must be deleted, so the list cannot rot into an allowlist nobody reads.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added ticket_governance, which this guard caught on its FIRST live run — the table was written up as DEFERRED in ADR-124 but never added to the enforced list, and it is invisible to a plain CREATE TABLE grep because its DDL is `CREATE TABLE IF NOT EXISTS ${GOVERNANCE_TABLE}`. Exactly the drift the guard exists to catch, on the very change that introduced it; recorded rather than quietly patched because it also corrects the core-unwalled count from 54 to 55.
  */
 
 /**
@@ -94,6 +95,7 @@ const JUSTIFIED_EXCEPTIONS: Record<string, string> = {
   market_bars: 'PUBLIC — OHLCV reference data. RLS is ENABLED with a deliberate permissive market_bars_public policy and deliberately NOT forced; every caller is meant to read the same bars.',
 
   // ── DEFERRED (done-whens in ADR-124) ──────────────────────────────────────
+  ticket_governance: 'DEFERRED — its ticket_id is TEXT and only 69 of 215 rows still match a live ticket; the other 146 are orphaned queue-manager state whose parent was deleted. A derived policy would hide two thirds of the table from the /api/qm/activity ops read surface. Reap the orphans first, then it takes the 113 pattern with a ::uuid cast.',
   human_feedback: 'DEFERRED — reviewer verdicts keyed by ticket_external_id (TEXT), not the tickets uuid, so the derived-owner pattern needs a stable external_id -> tickets mapping first. Empty today.',
   tool_approval_requests: 'DEFERRED — has a task_id and would take the oshal_owns_task policy, but it is the fail-CLOSED tool-approval gate: a scoping mistake hides approval requests from the operator resolving them. Wall it with a live proof of the operator read path, not blind.',
   oshal_trading_daily_equity: 'DEFERRED — read by host CLIs (site-oshal-report.js, oshal-deck-data.js) that open a raw pg Pool on DATABASE_URL. The operator DSN is oshal_app (NOSUPERUSER, NOBYPASSRLS) and no script stamps a GUC, so walling silently empties the daily oshal report.',
