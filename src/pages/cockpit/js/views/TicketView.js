@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Normalized ticket list and child-row state rendering so raw legacy values like Todo no longer disagree with the detail pane lifecycle labels
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Improved ticket filter/search behavior so child matches surface the parent row and filtered-out selections do not leave stale detail panes behind
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Cleared stale ticket detail when search or project filters produce an empty result set so the right pane never shows hidden work
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Mirror ticket selection onto the view root as a has-selection class. On a phone the stacked split gave the list 45vh unconditionally, so with a ticket OPEN the detail pane could be ~113px tall — less than its own pinned chrome — and the ticket body was crushed to zero height with the overflow clipped unreachable (caught by tests/cockpit-mobile-375-scroll.spec.ts). CSS uses the class to shrink the list while a ticket is open; JS only carries the state.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Normalized ticket artifact code-server links onto shared workspace paths so cockpit no longer leaks host-local absolute paths into swarm code-server URLs
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Restored parent-child expansion inside grouped ticket views so grouped status/date modes keep hierarchy drill-in instead of flattening subtasks into dead badges
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Made the ticket cost tab distinguish missing telemetry from real zero-cost work so empty cost states stop pretending they are measured totals
@@ -528,6 +529,7 @@ export class TicketView {
     }
 
     this.selectedId = null;
+    this._syncSelectionClass(null);
     const pane = this.container.querySelector('#tvDetailPane');
     if (pane) {
       pane.innerHTML = `<div class="ticket-detail-empty">
@@ -649,8 +651,22 @@ export class TicketView {
     }
   }
 
+  /**
+   * @description Reflect whether a ticket is open onto the `.ticket-view` root as a
+   * `has-selection` class. Pure CSS state carrier: at phone widths the stylesheet shrinks
+   * the list pane while a ticket is open so the detail pane — whose header/actions/tabs are
+   * pinned — actually has room for its scrolling body.
+   * @param {?string} ticketId - Currently selected ticket id, or null when none.
+   * @returns {void}
+   */
+  _syncSelectionClass(ticketId) {
+    const view = this.container.querySelector('.ticket-view');
+    if (view) view.classList.toggle('has-selection', Boolean(ticketId));
+  }
+
   async _selectTicket(ticketId) {
     this.selectedId = ticketId;
+    this._syncSelectionClass(ticketId);
     this.container.querySelectorAll('.ticket-row').forEach(r => {
       r.classList.toggle('selected', r.dataset.id === ticketId);
     });
@@ -911,6 +927,7 @@ export class TicketView {
     dialog.querySelector('.confirm-delete-btn').addEventListener('click', async () => {
       close();
       this.selectedId = null;
+      this._syncSelectionClass(null);
       if (typeof ticket.onDelete === 'function') {
         await ticket.onDelete();
         return;
