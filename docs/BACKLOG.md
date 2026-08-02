@@ -4357,6 +4357,37 @@ nothing has run on the GPU box yet. Design + decisions in [ADR-071](adr/071-char
 - **Break-glass:** `OSHAL_DB_GUC_STRICT=off` restores the pre-flip fail-open-to-operator behavior on any
   starvation incident.
 
+### Route-auth inventory reds on every new limiter-only mount ⬜ (found 2026-08-01)
+
+The runtime route auditor skips limiter-only mounts **by rule**; `tests/unit/server-route-auth-inventory.spec.ts`
+skips them **by allowlist**. The two agree only until someone mounts a new rate limiter — then the CI
+gate reds on a route with no auth hole at all. It happened twice in one day: PR #92's
+`expensiveOpLimiter` on `/api/jarvis` redded the gate on `main`, and the next lane had to mirror an
+existing allowlist entry to unblock the trunk. A gate that reds for a non-defect trains everyone to
+wave it through, which is the failure mode the guard doctrine exists to prevent — so fix it, don't
+annotate it.
+
+**Done when** the spec derives its exemptions from the same rule the runtime scanner uses (one source
+of truth, not two lists); adding a new limiter-only mount does NOT red the gate; and a genuinely
+unauthenticated route still does — proven by adding one of each in the test.
+
+---
+
+### Land or abandon the preserved index-only notification-prefs work ⬜ (2026-08-01)
+
+During the 2026-08-01 deploy the shared checkout's **index** held notification-prefs work
+(`src/app/routes/notify-routes.ts`, `src/features/notifications/**`, `src/pages/welcome/welcome.js`,
+plus two specs) that existed **nowhere else** — not in the working tree, not in a commit, not on
+`main`. It was deliberately not reset away, and is preserved three ways: local tag
+`wip/notification-prefs-index-snapshot-20260801` (`git show wip/notification-prefs-index-snapshot-20260801 -- <path>`),
+`../oshal-staged-wip-backup.patch` outside the repo, and the session scratchpad.
+
+**Done when** the owner rebases it onto `main` and lands it, or explicitly abandons it — and the tag
+is deleted either way so nobody has to guess whether it still matters. Note a local tag is not a
+backup: it survives GC, not a re-clone.
+
+---
+
 ### Machine-write identity: audit every un-migrated identity-less WRITE, not just reads ⬜ (found by the 2026-08-01 container-kill drill)
 - **Reason:** the guc-strict entry above frames the risk as *starvation on reads*. The alert intake showed
   the sharper failure: an authenticated MACHINE route (Alertmanager webhook, bearer-token auth, no human

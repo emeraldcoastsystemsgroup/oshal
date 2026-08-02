@@ -143,11 +143,13 @@ Monitoring specifics for this box: Prometheus's default 9090 is held by `oshal-h
 the overlay needs `PROMETHEUS_PORT=9091`; and `docker compose up -d` does **not** reload a
 bind-mounted config - use `scripts/monitoring-up.sh`, which SIGHUPs prometheus + alertmanager.
 
-The original deploy-time proofs this cycle was waiting on. Each links to the authoritative done-when text
-in [../BACKLOG.md](../BACKLOG.md) — read it there rather than trusting this summary, and stamp it
-there when the proof is done.
+**CYCLE CLOSED 2026-08-01** — every proof below was executed on the running stack and its result is
+recorded inline. They are kept rather than deleted because the *procedure* is the reusable part.
+Each links to the authoritative done-when text in [../BACKLOG.md](../BACKLOG.md); stamp it there.
 
-**1. K5 — the least-privilege bot role (BACKLOG "K5", code shipped, live soak outstanding).**
+**1. K5 — the least-privilege bot role — ✅ PROVEN 2026-08-01.** `099-bot-db-role.sql` applied and
+   `oshal_bot` came back `rolsuper=f rolbypassrls=f rolcanlogin=t`. Still owed: the two-user RLS live
+   test re-run with bots up, and the dev-password rotation on any shared box. Original procedure:
    1. Confirm migration `099-bot-db-role.sql` applied, then
       `SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname='oshal_bot'` → expect
       `f` / `f`. If the row is missing, see §A.5 — the migration will not retry itself.
@@ -156,11 +158,23 @@ there when the proof is done.
    4. Rotate the dev password on any shared box (`ALTER ROLE oshal_bot WITH PASSWORD …` +
       `BOT_DATABASE_URL` in `.env`).
 
-**2. K6 — re-check the entitlement denial log** on the dev box after the deploy (BACKLOG "K6"). The
+**2. K6 — ✅ no denials observed** in the first 10 minutes after the deploy (the one advisory error
+   line was the agent-id collision, not an entitlement denial). The
    flip to `enforce` was justified by a 7-day soak that found zero would-be denials; confirm that
    still holds once the new image is running, and that an operator path works.
 
-**3. ADR-119 P4 — the live container-kill drill** (BACKLOG "Alert triage & consolidation", P4). Five
+**3. ADR-119 P4 — the live container-kill drill — ✅ RUN, AND IT FOUND THREE BREAKS** (fixed in
+   #99/#100, then re-run green). The first run proved the ladder was not operational even though every
+   unit guard passed: the intake could not insert a ticket (owner-RLS refused the identity-less machine
+   write), the rules matched nothing (cAdvisor emits no container series on Docker Desktop 29's
+   containerd image store), and `ALERT_WEBHOOK_TOKEN` was never forwarded into the api by compose —
+   and since the receiver is fail-closed, the ladder was unreachable while merely *looking* quiet.
+   Final run: stop `research-bot` → alert in ~95s carrying `container=oshal-local-research-bot
+   intake=auto` → ticket `34e1a1c8-…` owned by `alert:prometheus`, RCA ran, action gated at
+   `customer_action` → restart → FR-E4 resolved both members. Zero active alerts on a healthy stack,
+   where before there were two permanent false alarms. **Keep this lesson: all four phases stubbed the
+   ticket gateway in their guards, which is exactly why it shipped green.** A2's legs (auto-apply on,
+   the recurrence bound, the core-infra bound) are still owed. Original procedure — five
    steps, in order, and they need the monitoring overlay plus the profile-gated `self-healing-bot`
    container, `ALERT_WEBHOOK_TOKEN` (matching `alertmanager.yml`) and `SWARM_SERVICE_SECRET`:
    A1 leg with the kill switch off → A2 leg with `SELF_HEAL_AUTO_APPLY=true` → the recurrence bound →
@@ -168,7 +182,10 @@ there when the proof is done.
    `ops/monitoring/alert-rules.yml`** for the four container-health rules (`intake: auto`), so once
    the overlay is up their incidents auto-flow into analysis, metered by P3's budget/flap gates.
 
-**4. Store packages needing re-registration on the core box.** Verified against the
+**4. Store packages — ✅ RE-STAGED AND RELOADED 2026-08-01** from the store's merged `origin/main`
+   (never the working tree): career-hunter 1.6.0, switchboard 0.3.0, game-show 0.10.0, dnd 0.19.0 and
+   hello-oshal 1.1.0 — which the table below missed and `app-store-drift-check.sh` caught. Trust the
+   script over a hand-written list. Drift check clean afterwards. Original note, verified against the
    `oshal-applications` thread, not assumed — re-check with `app-store-drift-check.sh`, which reads
    actual volume state:
 
@@ -184,6 +201,11 @@ there when the proof is done.
    volume recipe) and `payroll` 1.0.0/1.1 (installed and hot-loaded, live-smoked).
 
 **5. `src/api/jarvis.html`** — bind-mounted per file; do the §B.2 copy after the recreate (PR #90).
+   ✅ Handled on the dev box as part of a wider fix worth generalising: the entire bind-mounted set
+   (`src/api`, `src/pages`, `ai-lab/bot-personas`, `ops/monitoring`, `swarm-apps` — 271 files) was
+   refreshed from `origin/main`. **A checkout that lags `main` serves stale cockpit and persona assets
+   from disk however current the image is, so reconcile ALL bind-mounted paths after a recreate, not
+   just this one file.**
 
 **6. Known still-unproven, not deploy blockers** — recorded so they are not mistaken for regressions:
    the installer-gaps remainders (per-app smoke `--apps`, the `noop`-returns-text no-AI surface state,
