@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added direct per-ticket cost summary query with per-agent and per-model aggregation for cockpit ticket activity rollups
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | persistCostEvent additionally appends ONE oshal_cost_events ledger row per cost event (migration 078). chat_tasks accumulates a task's lifetime totals, which makes it unusable for time-windowed reads — cost-governance daily budget caps were attributing a long-lived task's whole history to the trailing 24h. The ledger write is independently non-fatal (table may predate the migration) so the chat_tasks rollup is never lost to a missing ledger table.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Ledger rows now carry the token split + call duration (migration 090; BACKLOG: traces show per-call cost but not tokens/durations). appendCostLedgerRow was dropping event.inputTokens/outputTokens — numbers every producer already supplies for the chat_tasks rollup — and CostEvent had no duration field even though the execution handlers measure one. New optional CostEvent.durationMs threads through; a 42703 undefined-column error (DB predates 090) falls back to the legacy 6-column insert so the cost row is never lost to the new columns.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-124 (RLS Phase 2): oshal_cost_events is now FORCE-RLS'd (migration 112), so an insert whose owner_sub does not match the stamped connection identity is REFUSED by Postgres with SQLSTATE 42501. Both ledger catches logged every failure at warn and moved on, which meant an RLS refusal silently dropped a cost row and windowed budget caps quietly failed OPEN — the exact shape of the ADR-119 intake defect, where a swallowed row-level-security rejection looked like success for weeks. The refusal now logs at ERROR, names both halves of the mismatch (the row's ownerSub and the fact that the connection identity is what has to match it), and is distinguishable in logs from a genuinely missing table. Behaviour is otherwise unchanged: the write stays non-fatal so a cost-ledger gap can never brick a dispatch.
  */
 
 import type { Pool } from 'pg';
@@ -15,6 +16,21 @@ import { createChildLogger } from '@/shared/logger';
 import type { ModelUsageStats } from '@/shared/types';
 
 const logger = createChildLogger({ module: 'cost-tracking-service' });
+
+/**
+ * @description True when a failed write was refused by row-level security rather than by a
+ * missing table or a dead connection. Postgres raises SQLSTATE 42501 for a WITH CHECK
+ * violation, so an ownerSub that disagrees with the identity stamped on the connection looks
+ * identical to any other error unless it is separated out. It must be separated out: a
+ * swallowed RLS refusal on the cost ledger is invisible spend, and the windowed budget caps
+ * that read this table then fail OPEN (ADR-124).
+ * @param err - The error thrown by the ledger insert.
+ * @returns Whether Postgres refused the row on policy grounds.
+ */
+export function isRlsRefusal(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  return e?.code === '42501' || /row-level security/i.test(e?.message ?? '');
+}
 
 /**
  * @description Cost event recorded after each LLM call.
@@ -528,6 +544,15 @@ export class CostTrackingService {
         await this.appendLegacyCostLedgerRow(event, ownerSub);
         return;
       }
+      if (isRlsRefusal(err)) {
+        logger.error(
+          { err, taskId: event.taskId, ownerSub },
+          'oshal_cost_events ledger row REFUSED by row-level security — the row is lost and windowed '
+            + 'budget caps will under-count (fail OPEN). The owner_sub on the row must equal the sub stamped '
+            + 'on the connection, or the writer must run under runWithSystemIdentity (ADR-124)',
+        );
+        return;
+      }
       logger.warn(
         { err, taskId: event.taskId },
         'Failed to append oshal_cost_events ledger row — windowed budget spend will not see this event',
@@ -554,6 +579,15 @@ export class CostTrackingService {
         'oshal_cost_events lacks the 090 token/duration columns — wrote the legacy row; apply migration 090',
       );
     } catch (err) {
+      if (isRlsRefusal(err)) {
+        logger.error(
+          { err, taskId: event.taskId, ownerSub },
+          'oshal_cost_events ledger row REFUSED by row-level security — the row is lost and windowed '
+            + 'budget caps will under-count (fail OPEN). The owner_sub on the row must equal the sub stamped '
+            + 'on the connection, or the writer must run under runWithSystemIdentity (ADR-124)',
+        );
+        return;
+      }
       logger.warn(
         { err, taskId: event.taskId },
         'Failed to append oshal_cost_events ledger row — windowed budget spend will not see this event',
