@@ -6,6 +6,17 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Internal tool bridge for the Claude Code MCP server:
  *                     |                             | list a bot's swarm-registered tools and execute one
  *                     |                             | through the SAME server-side executor, user-scoped.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: /execute was a confused deputy. It is mounted
+ *                     |                             | behind serviceSecretOr(requiresAuth), so an ORDINARY
+ *                     |                             | OIDC session reaches it; it then took the acting sub
+ *                     |                             | from `req.body.userSub` and handed it to the executor,
+ *                     |                             | which stamps a valid X-Service-Secret + X-OSHAL-User-Sub
+ *                     |                             | onto the outbound call — a session acting as any user on
+ *                     |                             | any globally-registered tool name, with no authorization
+ *                     |                             | check at all. Now: a session caller can only ever act as
+ *                     |                             | getCaller(req).sub (the body field is ignored; only the
+ *                     |                             | secret-gated header is trusted), and the tool must be
+ *                     |                             | ENABLED for the named agent before it is executed.
  */
 
 /**
@@ -26,7 +37,7 @@ import { Router, type Request, type Response } from 'express';
 import type { AppContext } from '@/app/composition/app-context';
 import { AgentToolRepository } from '@/entities/tool';
 import { ToolExecutorService } from '@/features/chat-orchestration';
-import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { getCaller, getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { emitAuditEvent } from '@/features/governance';
@@ -55,6 +66,23 @@ export async function emitToolAudit(
     decision: outcome === 'ok' ? 'allow' : 'info',
     metadata: { agentId, outcome },
   });
+}
+
+/**
+ * @description Resolve the identity a bridged tool execution ACTS AS.
+ *
+ * Only two sources are legitimate, and the request body is neither. A genuine service call
+ * (the stdio MCP bridge, a bot node) presents `X-Service-Secret` and stamps `X-OSHAL-User-Sub`;
+ * `getTrustedServiceUserSub` honors that header ONLY after a constant-time secret compare. Any
+ * other caller reached this router through `requiresAuth`, so the one identity it may act as is
+ * its own validated OIDC session. Reading `req.body.userSub` — as this route used to — let a plain
+ * signed-in browser name any victim and have the framework stamp a real service secret onto the
+ * outbound call on its behalf.
+ * @param req - The incoming request.
+ * @returns The sub to scope the execution to, or undefined for an unowned system dispatch.
+ */
+export function resolveActingSub(req: Request): string | undefined {
+  return getTrustedServiceUserSub(req) ?? getCaller(req).sub ?? undefined;
 }
 
 function normalizeSchema(schema: unknown): Record<string, unknown> {
@@ -102,7 +130,15 @@ export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
     }
   });
 
-  /** POST /api/tools/execute — { agentId, toolName, input, taskId } → run one tool, user-scoped. */
+  /**
+   * POST /api/tools/execute — { agentId, toolName, input, taskId } → run one tool, user-scoped.
+   *
+   * Two gates, both load-bearing. IDENTITY: the acting sub comes from the secret-gated header or
+   * the caller's own session — never the body (see resolveActingSub). AUTHORIZATION: the named tool
+   * must be ENABLED for the named agent. Without that check the executor resolves a descriptor from
+   * the PROCESS-WIDE dynamic registry, so any caller who reached this router could invoke any tool
+   * any app had ever registered — including route-backed `api` tools that drive physical devices.
+   */
   router.post('/execute', async (req: Request, res: Response): Promise<void> => {
     const { agentId, toolName, input, taskId } = (req.body || {}) as {
       agentId?: string; toolName?: string; input?: Record<string, unknown>; taskId?: string;
@@ -111,9 +147,22 @@ export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
       res.status(400).json({ error: 'agentId and toolName are required' });
       return;
     }
-    // Acting user: the trusted service-stamped sub (x-oshal-user-sub), else a session caller.
-    const userSub = getTrustedServiceUserSub(req)
-      ?? (typeof (req.body as { userSub?: unknown }).userSub === 'string' ? String((req.body as { userSub?: string }).userSub) : undefined);
+    const userSub = resolveActingSub(req);
+    let enabled: Awaited<ReturnType<AgentToolRepository['getEnabledTools']>>;
+    try {
+      enabled = await repo.getEnabledTools(String(agentId));
+    } catch (err) {
+      // FAIL CLOSED. An unreadable authorization list is not permission to run the tool.
+      logger.error({ err, agentId, toolName }, 'tool bridge could not read the agent tool grants — refusing');
+      res.status(503).json({ error: 'tool authorization unavailable' });
+      return;
+    }
+    if (!enabled.some((t) => t.name === String(toolName))) {
+      logger.warn({ agentId, toolName }, 'tool bridge refused a tool that is not enabled for this agent');
+      void emitToolAudit(ctx.pool, userSub ?? null, String(toolName), String(agentId), 'error');
+      res.status(403).json({ error: `Tool "${toolName}" is not enabled for agent ${agentId}` });
+      return;
+    }
     try {
       const output = await executor.executeTool(
         String(taskId || `mcp-${agentId}`),
