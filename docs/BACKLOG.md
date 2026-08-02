@@ -6530,3 +6530,63 @@ whose failure mode is at an integration boundary (a DB write under RLS, a module
 config the image reads), at least one guard must exercise the REAL boundary — and a sweep names the
 specs that currently stub their own subject (start with anything stubbing a ticket/store gateway or
 an aliased `require`).
+
+## Apply pipeline — claims leak, in-flight runs die silently, and "applied" carries no provenance ⬜ OPEN
+
+**Operator report (2026-08-01):** *"i didnt see any computer screen do the submit of jobs .. though it
+seems there was an update on if i applied.. can you tell me and verify if the application was real"* —
+the right question, and the audit below is why. Distinct from
+[the autofill entry above](#job-application-autofill--the-surface-never-appeared--the-pipeline-is-too-fragile-to-rely-on--built-but-unusable):
+that one is about the pipeline being *fragile to invoke*; these are about it failing **silently and
+irreversibly** once invoked, and about the record afterwards being unfalsifiable.
+
+**What the audit found on the live store (1 user, 164 rows marked `applied`):**
+
+1. **539 postings hold a stuck claim.** `user_signals.apply_active = 0` is the apply-operator claim
+   lock (`0 = claimed/in-flight`). 539 rows are locked with `status <> 'applied'` — 487 of them are
+   finished packets sitting in "Ready for submission". Nothing ever releases a claim when a run dies,
+   is never picked up, or the api restarts mid-flight, so **every one of those jobs is permanently
+   unsubmittable** and the queue believes a run owns it. There is no reaper.
+2. **The server's in-flight registry and the worker's own state disagree, and nobody reconciles.**
+   Caught live: `GET /api/apply-operator/inflight` reported `apply-582843-…` (Palo Alto Networks)
+   in flight for **16.8 minutes and climbing**, while the only worker
+   (`oshal-chat-0ce849b6…`) heartbeated `taskQueueDepth: 0, state: "ready", available: true,
+   wedged: false` — alive, healthy, idle. The task had been dispatched and dropped; no browser was
+   ever driven. That is exactly why the operator saw no screen do anything.
+3. **A silently-dead run has no ceiling.** Nothing times out an in-flight task, so it stays "in
+   flight" forever and the posting stays claimed (feeding #1).
+4. **`status='applied'` records no provenance.** Two routes set it and neither touches a browser:
+   `POST /jobs/:id/status` (the board's "Mark applied" button) and
+   `POST /applications/:postingId/applied`. In the data model a hand-marked row is **indistinguishable
+   from a verified submission**. Of the 164: 56 carry a `confirmation_path` screenshot that exists on
+   disk (one was opened and visually confirmed — real Chrome, real Ashby page, "Your application was
+   successfully submitted"), 96 have notes asserting a confirmation, 18 point at screenshots on a
+   *different machine* (`C:\Users\gabec\.oshal-node\…`, so unverifiable from the swarm), and
+   **28 have no evidence of any kind** (no screenshot, no notes) — all dated 2026-06-12 → 2026-07-02.
+   Those 28 cannot be proven or disproven today.
+
+**Done when:**
+- A **claim reaper** releases `apply_active` when a run has no live claimant — proven by a guard that
+  seeds a claimed posting with no in-flight task and asserts it returns to `apply_active = 1`; and the
+  539 existing stuck rows are released once (count asserted before/after).
+- An in-flight task **times out** into a terminal, visible state (`failed`/`abandoned`) with the
+  posting released — proven by a guard that dispatches, never acks, and asserts the terminal state
+  inside the bound.
+- **In-flight is reconciled against worker truth**: a task in the server registry whose assigned
+  worker reports `taskQueueDepth: 0` / not-working for longer than the ack window is declared orphaned,
+  not left running. Guard asserts the orphan is detected from that exact divergence.
+- The **Submissions surface distinguishes** *queued* / *claimed by worker X* / *submitted+verified* /
+  *failed*, and never renders a silently-dead run as in-progress. A run with no worker progress shows
+  as "no worker picked this up", not a spinner.
+- **`applied` carries provenance** — a column recording how it was set (`verified-submission` with a
+  confirmation artifact vs `manual-mark`) — and every surface that reports "Submitted" reflects it, so
+  a hand-marked row can never be read as a machine-verified one. Backfill the existing 164 from the
+  evidence classes above; the 28 evidence-free rows are labelled `unverified`, not silently promoted.
+
+**Related open question (same session, not yet diagnosed):** ~20 packets auto-drafted 22:56–23:19 on
+2026-08-01 that the operator did not pick. The 2026-07-24 directive + `career_automation_settings`
+default-deny gate (migration 091) was supposed to make auto-generation opt-in and absent-row = OFF.
+Either the gate regressed, or a different caller bypasses `enqueueForUser`'s trigger check. **Done
+when:** the drafting burst is traced to its caller and either the gate is repaired with a guard that
+goes red on an automated draft with no opt-in row, or the caller is shown to be an explicit human
+action.
