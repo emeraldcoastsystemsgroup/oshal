@@ -649,20 +649,43 @@ assembled. `CONNECTOR_SPEC_ROUTES` remains opt-in; the local compose profile ena
 `CONNECTOR_WEBHOOKS`, while live GitHub delivery still requires migration 056, a shared secret, and
 native webhooks registered in both issue repositories. The remaining ~20 bespoke connectors
 (Spotify UI routes, Gmail routes, etc.) are not yet ported onto the runtime — they continue to call
-the ADR-056 broker directly. The personal knowledge graph (`src/features/personal-graph/`) has no
-import in `server.ts` and no ingest scheduler; it is exercised only by unit tests.
+the ADR-056 broker directly.
 
-### Personal knowledge graph (ADR-066) — foundation built, off by default
+### Personal knowledge graph (ADR-066) — wired end-to-end, off by default
 
-The library at `src/features/personal-graph/` is complete as a foundation:
+> **Corrected 2026-08-02.** The two paragraphs this replaces said *"the personal knowledge graph has
+> no import in `server.ts` and no ingest scheduler; it is exercised only by unit tests"* and
+> *"Nothing in `server.ts` imports this code. The next steps — a persistent `PgGraphStore` (ADR-057),
+> an ingest scheduler …, and surfacing the graph to Jarvis — are not yet built."* The first sentence
+> of each is **false against the tree** and had been for some time; this is the BUG-1 under-claim
+> class (a shipped feature documented as roadmap costs the same credibility as the reverse). The
+> corrected state is below, including what genuinely remains.
 
-- Schema, `GraphStore` interface, `InMemoryGraphStore`: built and tested.
-- Four ingest mappers (google-calendar, gmail, github, strava): built and tested.
-- `reverberate()` pass: built and tested.
+**Built and wired.** `src/app/server.ts` imports `InMemoryGraphStore`, `createPersonalGraphRoutes`
+and `createPersonalGraphIngestRoutes`, and mounts both routers behind `requiresAuth` — the full
+Connect → Pull → Ingest → Reverberate → Query loop, not a library sitting unused:
 
-Nothing in `server.ts` imports this code. The next steps — a persistent `PgGraphStore` (ADR-057),
-an ingest scheduler that pulls via ticketed broker calls (ADR-056), and surfacing the graph to
-Jarvis — are not yet built.
+- Schema, the `GraphStore` interface, and `InMemoryGraphStore` — built and tested.
+- Four ingest mappers (google-calendar, gmail, github, strava) and the `reverberate()`
+  cross-source pass — built and tested (16 specs).
+- `POST /api/personal-graph/ingest/:provider` pulls the provider's list through the **ADR-065 spec
+  client** with credentials resolved per-caller through the ADR-056 broker, runs the mapper, folds
+  fragments into the store, then reverberates. `GET /api/personal-graph/*` serves stats / nodes /
+  neighbors.
+- A persistent `PgGraphStore` (ADR-057) **is built** — migration `057-personal-graph.sql`, and
+  ADR-076 Phase 2 threaded owner scoping through it (constructed for one required `ownerSub`,
+  every query carries `user_sub`, composite `(user_sub, id)` PK from migration `094` with matching
+  RLS policies).
+
+**Off by default, and the honest remainder.** The routes mount only when `PERSONAL_GRAPH_ROUTES=on`.
+Three things are genuinely still open, and none of them is "nothing imports it":
+
+1. **`PgGraphStore` is built but not wired** — `server.ts` still constructs `InMemoryGraphStore`, so
+   the graph is process-lifetime and does not survive a restart. Wiring the Postgres store is a
+   composition change, not new code.
+2. **No ingest scheduler** — ingest is caller-triggered by the route above; nothing pulls on a
+   timer.
+3. **Not surfaced to Jarvis** — no Jarvis route or orchestrator reads the graph.
 
 ---
 

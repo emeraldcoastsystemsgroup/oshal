@@ -7,9 +7,14 @@
 # injection in the Forge surface (which calls POST /api/swarm/apps/load —
 # the bot never calls it itself).
 #
-# Pattern: the codex pack from scripts/codex-harness/ —
-# one bot, one ticket, full quality contract embedded in the persona.
-# No multi-bot agentic flow.
+# Pattern: the repo's architectural default — ONE bot per ticket-type workflow, with the full
+# quality contract embedded in the persona rather than in an external reviewer. No multi-bot
+# agentic flow. See CLAUDE.md "Architectural default: one bot per ticket-type workflow" and
+# docs/building-a-bot.md; docs/apps/skill-import.md (ADR-089) is the non-interactive sibling that
+# emits the SAME persona+manifest shape from an external SKILL.md.
+# (The original lineage was an internal codex pack that stayed in the private archive at the
+# ADR-115 cutover — deliberately not referenced here, because a pointer into a tree this repo
+# does not contain is a dead pointer.)
 #
 # This app is itself a chat surface, not a ticket pipeline. The codex-packer
 # bot runs inline in the api container (container: oshal-api in the registry).
