@@ -74,6 +74,14 @@ do not narrate it in summaries. Engineer around it.** The mechanics, which are n
   — and if it's empty, `git merge origin/main` integrates without touching their files.
 - **A push race is normal, not an incident.** `cannot lock ref` / `fetch first` means another agent
   pushed mid-operation: re-fetch, re-check overlap, merge, push again. Do it silently.
+- **The private-index recipe never writes to disk — re-sync the tree before you leave.** Committing
+  from `origin/main` blobs keeps other agents safe, but the working tree does not move: after a run
+  of lanes it can be dozens of commits behind what is merged, and files those lanes CREATED exist
+  only in git. That matters beyond tidiness - `src/api`, `src/pages`, persona YAML, `ops/monitoring`
+  and `swarm-apps` are **bind-mounted**, so the running stack serves them FROM THE TREE and a freshly
+  deployed box can still show stale UI. It also makes committed work look uncommitted: a borrowed
+  HEAD plus a stale index once showed 838 phantom changes on a tree with zero unpushed commits.
+  Before ending a session bring the tree back to `origin/main` (snapshot first if anything is dirty).
 - **Working together > detecting collisions.** Claim files in COLLABORATE.md before you touch them,
   keep claims narrow, release them the moment you're done, and read the thread before you start.
 
