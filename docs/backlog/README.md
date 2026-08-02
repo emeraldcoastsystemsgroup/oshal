@@ -17,3 +17,5 @@ backlog is [../BACKLOG.md](../BACKLOG.md) — every entry there has done-when cr
 - [lm-class-config-open-work.md](./lm-class-config-open-work.md) — Little Monsters class
   configuration, open work / handover.
 - [lm-feature-backlog.md](./lm-feature-backlog.md) — Little Monsters feature backlog.
+- [non-human-checklist.md](./non-human-checklist.md) — machine-doable burn-down tracker with
+  done-when criteria and human-only exclusions.

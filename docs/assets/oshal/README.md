@@ -14,6 +14,9 @@ Use this folder when someone asks "what is OSHAL?", "what did we prove?", or "ho
   - live demo talk track with commands, expected outcomes, and recovery notes
 - [sales-deck-outline.md](./sales-deck-outline.md)
   - slide-by-slide narrative for a short OSHAL pitch deck
+- [OSHAL-overview-deck.md](./OSHAL-overview-deck.md)
+  - Marp source for the OSHAL overview deck; render to PDF, PPTX, or HTML with the command in
+    the file header
 - [native-kernel-deck.pptx](./native-kernel-deck.pptx)
   - "Should we rewrite it in a compiled language?" — 16 slides on the profile-first method, the 5-7x
     bit-exact result, and the limits. **GENERATED, do not hand-edit:**

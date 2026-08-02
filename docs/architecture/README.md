@@ -176,6 +176,12 @@ The guiding model is:
   - the platform feature catalog derived from codebase inspection, ADRs, and live validation
 - [facebook-bot-credential-management.md](./facebook-bot-credential-management.md)
   - Facebook bot credential-management spec
+- [078-argo-batch-proveout-status.md](./078-argo-batch-proveout-status.md)
+  - ADR-078 Argo batch prove-out status: what was scaffolded, what was live-validated, what
+    changed after adversarial review, and which cluster/terraform pieces remain absent
+- [three-orphan-boundary-decisions.md](./three-orphan-boundary-decisions.md)
+  - evidence packet for three orphan-code boundary decisions that need operator judgment rather
+    than blind deletion
 
 ### Plans & Historical (kept for context; see docs standard on as-built vs plan docs)
 

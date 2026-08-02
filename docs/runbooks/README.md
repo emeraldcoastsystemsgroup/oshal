@@ -48,6 +48,8 @@ OSHAL pipelines and surfaces. One file per procedure.
 - [ci-cd.md](./ci-cd.md) — the GitHub Actions pipeline, now MANUAL-ONLY (workflow_dispatch + PR;
   never push/cron — automatic runs billed ~$15). deploy/firetv workflows stay archived. The
   openswarm forward-sync section is still current.
+- [update-check.md](./update-check.md) — daily app/core update detection, operator-gated apply
+  flow, private-store token behavior, and troubleshooting.
 
 ## Enable / operate a feature
 
