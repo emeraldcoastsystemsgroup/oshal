@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Split message read/write guards so history reads fail closed when RLS hides another user's task.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Chat-path token broker list += 'twilio' so the communications-bot's phone/text leg (scripts/oshal-twilio.js) receives the caller's own SID:AuthToken secret in conversational threads.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | EXECUTE-TIME ENTITLEMENT ON THE OTHER BOT ENDPOINT (BACKLOG "Bot-endpoint privilege model - authorize the ACTUAL endpoint call", which names /api/send-message explicitly). This route honoured a caller-supplied body.agentId VERBATIM and called ctx.orchestrator.processMessage directly, never through executeBotOrInline - so the gate K6 flipped to enforce covered /api/swarm-execute and the executeBotOrInline chokepoint but NOT here. A signed-in non-operator could reach exactly the ADR-087 operator+swarm machinery K7 scoped (oshal-developer, devops-bot, vault-bot, security-analyst, code-developer, ...) by naming its agentId on a task they legitimately own; the IDOR guard above checks the THREAD, not the bot. The resolved agentId now runs through assertExecuteEntitlement with `direct` set ONLY for genuine interactive identity callers - a valid service-secret call is swarm dispatch and stays trusted, so the manifest/incident-worker localhost fallback and the headless CLI are byte-identical - and CallerNotEntitledError maps to 403 caller_not_entitled_to_agent. Guard: tests/unit/send-message-entitlement.spec.ts.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guest turns are forced chatOnly, not overridable from the body. Guests reached this route for the first time when the capability matrix granted /api/tasks/:id/messages; without this an anonymous visitor could post chatOnly: false and create a ticket that dispatches real work into the swarm build pipeline.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -21,6 +22,7 @@ import { resolveBotCreds } from './connector-token-broker';
 import { canAccessResource, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { assertExecuteEntitlement, CallerNotEntitledError } from '@/app/bot-node-execute-entitlement';
 import { connectorProvidersForManifestWorker } from '@/app/manifest-worker-connector-scope';
+import { isGuestRequest } from '@/shared/middleware/guest-session';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'message-routes' });
@@ -167,7 +169,11 @@ function handleSendMessage(ctx: AppContext) {
           resolvedAgentId,
           source: source ?? 'api',
           text,
-          chatOnly: chatOnly === true,
+          // Guests are UNAUTHENTICATED, so their turn answers and stops: forcing chatOnly
+          // keeps an anonymous visitor from creating a ticket and dispatching real work into
+          // the swarm build pipeline. Not overridable from the body — a guest asking for
+          // chatOnly: false would otherwise re-open exactly that path.
+          chatOnly: chatOnly === true || isGuestRequest(req),
         },
       );
       executionContext = {

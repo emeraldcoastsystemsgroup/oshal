@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 3: dropped 'video' from the hardcoded Tier-C list — the Video Studio carved to the store; the D4 unapproved default keeps guests read-only on the packaged mount regardless (and its every handler self-gates on callerSub anyway).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Pumpkin public demo: retain the safe Tier-B server posture while advertising its explicitly browser-local interactive controls. No guest mutation grant is added.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Guest voice I/O: added GUEST_ALLOWED_MUTATIONS (the symmetric mirror of GUEST_BLOCKED_GETS) and granted /api/voice/transcribe + /api/voice/synthesize. Jarvis is Tier-A, but its mic posts to /api/voice/transcribe — a DIFFERENT segment that fell to the Tier-B default, so every guest push-to-talk 403'd and the UI reported "Didn't catch that". Narrow literal-prefix grants, not Tier A on `voice`, so anything else mounted there stays read-only; both routes resolve the deployment's default STT/TTS via resolveForApp() (no per-user token) and stay under the guest-guard mutation rate limit.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guest Jarvis TEXT turn: the same defect as entry 9, on the path nobody checked. `jarvis` is Tier-A, but its turn posts to /api/tasks + /api/tasks/:id/messages — segment `tasks`, which fell to the Tier-B default, so every guest turn 403'd guest_readonly and the public demo could not answer a single question. Reshaped GUEST_ALLOWED_MUTATIONS from literal PREFIXES to ANCHORED method+pattern grants first: a bare '/api/tasks' prefix would also have granted DELETE /api/tasks/:id and POST /api/tasks/:id/workspace/bootstrap. Grants now carry spendsModel so the guard can meter the routes that reach a model; guest turns are additionally forced chatOnly in handleSendMessage and broker no connector tokens (a guest sub owns none). Guard: tests/unit/guest-jarvis-turn.spec.ts.
  */
 
 /**
@@ -73,25 +74,98 @@ export const GUEST_ALWAYS_ALLOW_APPS = ['guest', 'auth', 'branding', 'ui', 'heal
 export const GUEST_BLOCKED_GETS: readonly string[] = [];
 
 /**
- * Tier-B endpoints a guest MAY mutate — the symmetric mirror of
- * `GUEST_BLOCKED_GETS`. Matched as a literal path prefix, and checked only after
- * the Tier-C and approved-`blocked` denials, so a hard block always wins.
+ * @description ONE route a guest may mutate, despite its segment being Tier-B.
+ *
+ * `pattern` is matched against the WHOLE path (anchor it). That is deliberate: the
+ * earlier literal-prefix form meant granting `/api/tasks` would also have granted
+ * `DELETE /api/tasks/:id` and `POST /api/tasks/:id/workspace/bootstrap`. A grant
+ * must never widen past the route it names.
+ */
+export interface GuestMutationGrant {
+  /** The single HTTP method this grant covers. */
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** Anchored matcher for the full request path. */
+  pattern: RegExp;
+  /** True when reaching this route spends model tokens (subject to the turn cap). */
+  spendsModel: boolean;
+  /** Why an anonymous caller may reach it. */
+  why: string;
+}
+
+/**
+ * Tier-B routes a guest MAY mutate — the symmetric mirror of `GUEST_BLOCKED_GETS`.
+ * Checked only after the Tier-C and approved-`blocked` denials, so a hard block
+ * always wins.
  *
  * This exists because a Tier-A app can depend on a route in a DIFFERENT segment.
- * Jarvis is Tier A, but its microphone posts to `/api/voice/transcribe`, whose
- * segment (`voice`) fell to the Tier-B default — so every guest push-to-talk got
- * 403 `guest_readonly` and the UI reported "Didn't catch that". Granting the two
- * voice-I/O routes here (rather than making the whole `voice` segment Tier A)
- * keeps anything else mounted under `/api/voice` read-only to guests.
+ * Jarvis is Tier A, but nothing it posts to lives under `/api/jarvis`: its mic posts
+ * to `/api/voice/transcribe` and its actual turn posts to `/api/tasks` +
+ * `/api/tasks/:id/messages`. Every one of those segments fell to the Tier-B default,
+ * so a guest got 403 `guest_readonly` — the mic reported "Didn't catch that" and the
+ * text turn failed outright, which is what made the public Jarvis demo useless.
+ * Granting the four routes here (rather than making `voice` or `tasks` Tier A) keeps
+ * everything else mounted on those segments read-only.
  *
- * Cost posture: both routes resolve the DEPLOYMENT's default STT/TTS provider
- * (`resolveForApp()` — no per-user connector token), and the guest guard's
- * per-sub mutation rate limit applies to them like any other Tier-A write.
+ * Cost posture — why an anonymous caller may spend anything at all:
+ * - The voice routes resolve the DEPLOYMENT's default STT/TTS provider
+ *   (`resolveForApp()`), never a per-user connector token.
+ * - The Jarvis turn brokers connector credentials for the CALLER's sub. A guest sub
+ *   owns none, so `resolveBotCreds` returns `{}` — the assistant answers from the
+ *   model and reaches none of the operator's Gmail/trading/storage data.
+ * - Guest turns are forced `chatOnly` in `handleSendMessage`, so they answer and stop:
+ *   no ticket is created and nothing dispatches into the swarm build pipeline.
+ * - Both the per-sub sliding-window mutation limit AND the per-sub lifetime turn cap
+ *   in the guest guard apply.
  */
-export const GUEST_ALLOWED_MUTATIONS: readonly string[] = [
-  '/api/voice/transcribe', // speech-to-text: the Jarvis mic (push-to-talk + wake word)
-  '/api/voice/synthesize', // text-to-speech: Jarvis's spoken reply
+export const GUEST_ALLOWED_MUTATIONS: readonly GuestMutationGrant[] = [
+  {
+    method: 'POST',
+    pattern: /^\/api\/voice\/transcribe\/?$/,
+    spendsModel: true,
+    why: 'speech-to-text: the Jarvis mic (push-to-talk + wake word)',
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/voice\/synthesize\/?$/,
+    spendsModel: true,
+    why: "text-to-speech: Jarvis's spoken reply",
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/tasks\/?$/,
+    spendsModel: false,
+    why: 'open a conversation — a task row owned by the guest sub, no model call',
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/tasks\/[^/]+\/messages\/?$/,
+    spendsModel: true,
+    why: 'the Jarvis turn itself (forced chatOnly for guests)',
+  },
 ];
+
+/**
+ * @description Finds the guest mutation grant covering a request, if any.
+ * @param path - Full request path.
+ * @param method - HTTP method.
+ * @returns The matching grant, or undefined when no grant covers it.
+ */
+export function guestMutationGrant(path: string, method: string): GuestMutationGrant | undefined {
+  const m = method.toUpperCase();
+  return GUEST_ALLOWED_MUTATIONS.find((g) => g.method === m && g.pattern.test(path));
+}
+
+/**
+ * @description True when a guest request reaches a model and must count against the
+ * per-session turn cap. Read by the guest guard; kept here so the grant table stays
+ * the single source of truth for both "may they?" and "does it cost?".
+ * @param path - Full request path.
+ * @param method - HTTP method.
+ * @returns True when the route spends model tokens.
+ */
+export function guestSpendsModel(path: string, method: string): boolean {
+  return guestMutationGrant(path, method)?.spendsModel === true;
+}
 
 /** UX notation hints surfaced to the frontend (Phase 2 renders the banners). */
 export const GUEST_NOTATIONS: Record<string, string> = {
@@ -210,10 +284,11 @@ export function guestDecision(path: string, method: string): GuestDecision {
     if (GUEST_BLOCKED_GETS.some((p) => path.startsWith(p))) return 'guest_blocked';
     return 'allow';
   }
-  // Narrow per-route mutation grants (e.g. the voice I/O a Tier-A app needs from
-  // another segment). Reached only after every denial above, so a Tier-C app or an
-  // approved `blocked` tier can never be widened by a prefix listed here.
-  if (GUEST_ALLOWED_MUTATIONS.some((p) => path.startsWith(p))) return 'allow';
+  // Narrow per-route mutation grants (the voice I/O and task routes a Tier-A app
+  // needs from another segment). Reached only after every denial above, so a Tier-C
+  // app or an approved `blocked` tier can never be widened by a grant listed here,
+  // and each grant is anchored so it cannot widen past the route it names.
+  if (guestMutationGrant(path, method)) return 'allow';
   return 'guest_readonly';
 }
 

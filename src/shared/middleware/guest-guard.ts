@@ -4,13 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guest-mode guard (Phase 1). The actual server-side lockdown: a single top-level middleware mounted before all /api route mounts that, for guest requests only, denies Tier-C apps entirely and blocks mutations on Tier-B apps. Keys ONLY on req.oidc.user.is_guest (never on the service-secret header) so a guest cannot escape the guard by forging X-Service-Secret.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Per-sub LIFETIME model-turn cap (GUEST_MODEL_TURN_CAP, default 25) alongside the sliding window. The window limits the RATE; on its own it still let one anonymous visitor spend rateMax() every window for the whole 12h session TTL. Counted only for grants marked spendsModel, so opening a conversation stays free. Returns 429 guest_turn_cap.
  */
 
 import type { Request, RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller } from '@/shared/middleware/authz';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
-import { guestDecision } from '@/shared/middleware/guest-capability-matrix';
+import { guestDecision, guestSpendsModel } from '@/shared/middleware/guest-capability-matrix';
 
 const logger = createChildLogger({ module: 'guest-guard' });
 
@@ -52,6 +53,39 @@ function overRateLimit(req: Request): boolean {
   return false;
 }
 
+// LIFETIME cap on model-spending turns per guest sub. The sliding window above limits
+// the RATE; on its own it still lets one anonymous visitor spend `rateMax()` every
+// window for the whole 12h session TTL. This is the total. Counted only for grants
+// marked `spendsModel`, so opening a conversation stays free.
+const guestTurns = new Map<string, { count: number; first: number }>();
+function turnCap(): number {
+  const v = Number(process.env.GUEST_MODEL_TURN_CAP);
+  return Number.isFinite(v) && v > 0 ? v : 25;
+}
+/** Entries older than this are dropped — well past the longest guest session TTL. */
+const TURN_TTL_MS = 24 * 60 * 60 * 1000;
+/** Returns true when the guest has spent their whole session's model-turn budget. */
+function overTurnCap(req: Request): boolean {
+  const sub = getCaller(req).sub;
+  if (!sub) return false;
+  const now = Date.now();
+  const seen = guestTurns.get(sub);
+  const entry = seen && now - seen.first < TURN_TTL_MS ? seen : { count: 0, first: now };
+  if (entry.count >= turnCap()) {
+    guestTurns.set(sub, entry);
+    return true;
+  }
+  entry.count += 1;
+  guestTurns.set(sub, entry);
+  // Opportunistic cleanup so the map doesn't grow unbounded across many guests.
+  if (guestTurns.size > 5000) {
+    for (const [k, v] of guestTurns) {
+      if (now - v.first >= TURN_TTL_MS) guestTurns.delete(k);
+    }
+  }
+  return false;
+}
+
 /**
  * @description Top-level guard enforcing the guest capability matrix. Non-guest
  * requests pass through with zero cost. Guests get 403 on blocked apps and on
@@ -70,6 +104,17 @@ export function createGuestGuard(): RequestHandler {
         res.status(429).json({
           error: 'guest_rate_limited',
           message: 'Guest mode has a usage limit. Please slow down or sign in.',
+          guest: true,
+        });
+        return;
+      }
+      // Lifetime budget for the routes that actually reach a model. Checked after the
+      // rate limit so a burst is throttled before it burns the session's total.
+      if (guestSpendsModel(req.path, req.method) && overTurnCap(req)) {
+        logger.info({ path: req.path, method: req.method }, 'Guest model turn cap reached');
+        res.status(429).json({
+          error: 'guest_turn_cap',
+          message: 'This guest session has used its free turns. Sign in to keep going.',
           guest: true,
         });
         return;
