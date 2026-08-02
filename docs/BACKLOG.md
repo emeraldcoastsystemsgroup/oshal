@@ -3,6 +3,59 @@
 Tracking items deferred from the OSHAL build session. Each item has the
 deferral reason and the "done" condition so future work isn't ambiguous.
 
+## Rides map — follow-ups after the 2026-08-01 map/fare fix (core PR #102, store PR #40)
+
+**Context.** Map support in the Rides surface was fully CODED and permanently dark: the Google Maps
+integration is gated on `GOOGLE_MAPS_BROWSER_KEY`, which was set in no file in either repo, so
+`/api/rides/config` had only ever answered `provider:'fallback'` and the surface rendered a CSS grid
+with two pins nailed at `left:28%`/`left:76%`. Separately `pseudoKm()` SHA-256-hashed the two address
+STRINGS into a pseudo-distance that every fare derived from. Both are fixed — keyless OpenStreetMap
+over vendored Leaflet is now the real default, Google is the keyed upgrade, and fares are haversine
+over the pins the CLI was already geocoding (unresolved address → `null`, never a guess). These are
+the pieces deliberately left after that landing.
+
+1. **Deploy it.** The installed package in the workspace volume is still 1.0.0, so the running
+   cockpit still shows the drawing. **Done when:** `oshal-app install` has run from the merged store
+   SHA and `/api/rides/config` on the live box answers `provider:'osm'` with a tile URL. ⚠ The
+   `/api/rides/vendor` static mount is NEW — a surface-only hot-load serves an HTML file whose
+   Leaflet `<script>` 404s, i.e. a map container with no library in it. The install is what starts
+   serving the vendored bytes.
+
+2. **Jarvis cannot use the new geocoding subcommands.**
+   `src/app/routes/jarvis-tool-catalog.ts` still documents only `estimate` / `ride` for
+   `oshal-uber-rides.js`. The CLI now also exposes `geocode "<address>"` and `reverse <lat> <lon>`,
+   which are exactly what a "where is X / what's at these coordinates" ask needs, and Jarvis has no
+   idea they exist. Left undone only because that file was outside the session's claim.
+   **Done when:** the catalog entry lists both subcommands and a Jarvis ask that needs a coordinate
+   resolves through the CLI instead of guessing. Small and safe — one usage string.
+
+3. **The route line is a straight line on the OSM path.** Google's `DirectionsService` draws the real
+   road route when a key is configured; keyless, the surface draws a dashed great-circle with a
+   tooltip that says so, and the road distance is the measured straight line × a stated 1.3 factor.
+   That is honest but coarse — the factor is a modelling assumption, not a measurement, on every
+   keyless install. **Done when:** either a self-hostable routing engine (OSRM/Valhalla, same
+   engine-is-just-a-URL shape as `ARANGO_URL` in ADR-045) is wired behind an optional
+   `OSHAL_ROUTING_URL` so `distanceKm` becomes a real driving distance and the polyline follows
+   roads, or a decision is recorded that the straight-line + factor is good enough for a handoff
+   whose real price Uber quotes anyway. **Do NOT** point this at the public OSRM demo server — its
+   terms rule that out, the same reason geocoding is serialized behind one rate-limited queue.
+
+4. **Google Maps has no registered app.** The upgrade path now works the moment a key exists, but no
+   key has ever been minted. Per `partner-app-registration.md` this is shape A under the business
+   email, and it needs Maps JavaScript + Places + Directions enabled on a **billing-enabled** Cloud
+   project. **Done when:** either the key is registered, HTTP-referrer-restricted (it is a BROWSER
+   key — it ships to the page), and set in `.env`; or a decision is recorded that keyless OSM is the
+   shipped experience and the Google branch stays a documented opt-in. Operator call — it is the only
+   item here with a recurring bill attached.
+
+5. **Nominatim is a courtesy, not a dependency we control.** Geocoding runs through one serialized
+   ~1 req/s, User-Agent'd, per-process cache against the PUBLIC endpoint. That is inside their usage
+   policy for a personal swarm and outside it for anything with real users, and the cache dies with
+   the process. **Done when:** the shared cache is durable (a `rides_geocode` table or the existing
+   Redis, keyed on the normalised address) so restarts don't re-ask, and `OSHAL_GEOCODER_URL` can
+   point at a self-hosted Nominatim the same way `OSHAL_MAP_TILE_URL` already points at an operator's
+   own tile server. The public OSM tile endpoint carries the same caveat and the same fix.
+
 ## Alert triage & consolidation — intelligent-processing intake (P1–P4 built; P4 code+guards 2026-08-01, live drill pending)
 
 **Specified 2026-07-28** (operator directive: non-noisy alerts flow to the queue, duplicates get
