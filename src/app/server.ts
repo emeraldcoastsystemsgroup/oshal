@@ -147,6 +147,7 @@
  * 141 | maintainer@emeraldcoastsystemsgroup.com   | Global search grew the app/bot/connector result kinds: createGlobalSearchRoutes now receives swarmAppService.listApps as an injected, deliberately UNFILTERED lister (the features slice cannot reach the service, and AppsSearchSource owns the tested caller-visibility rule - pre-filtering here would make two filters where only one can be audited).
  * 142 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /metrics (Prometheus text exposition, @/shared/observability), mounted with /health above the OIDC middleware. The oshal-api-health scrape target pointed at /api/health, which returns JSON — Prometheus cannot parse it, so the scrape FAILED every cycle, `up` was pinned to 0 and SwarmApiUnreachable fired forever on a healthy box (found in the 2026-08-01 live drill). A real exposition makes that target's `up` mean what the rule claims it means, and gives the container-health rules series the swarm itself guarantees.
  * 143 | maintainer@emeraldcoastsystemsgroup.com   | Operations Stream wiring: the Alertmanager webhook now receives the pool, so a delivery is LANDED durably before anything reads it and the route answers 202 after the commit (503 when landing fails, so the sender retries rather than losing the alert); a pool-less run keeps the previous in-memory path byte-for-byte. Mounted /api/ops/alert-pipeline (reads authenticated, every mutating route carrying requiresOperator on the route itself so a re-mount cannot widen it) and the two authenticated surfaces the intelligent-processing manifest registers as ribbon tools: /system-health (read-only) and /alert-pipeline-admin (operator-gated by its backing routes, rendering an honest operator-only panel on 403).
+ * 144 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/harvest (routes/harvest-routes.ts) — the harvest console's catalogue + closed-loop simulate call over the marine and ground slices. requiresAuth is passed into the factory (the budget-routes/trace-routes idiom) so the guard rides each route and a re-mount cannot widen it. Auth here is a CPU control, not a privacy one: simulateEnergyBudget integrates ceil(durationHours*3600/stepSeconds) steps SYNCHRONOUSLY on this process, so an anonymous unbounded run would wedge the controller's only thread — the route additionally caps integration steps and retained samples, not just the individual fields. Guard: tests/unit/harvest-routes.spec.ts.
  */
 
 require('dotenv').config();
@@ -217,6 +218,7 @@ import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
 import { createLocalAuthMiddlewareSet, createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-routes';
 import { createBudgetRoutes } from './routes/budget-routes';
+import { createHarvestRoutes } from './routes/harvest-routes';
 import { registerA2aGatewayRoutes } from './routes/a2a-routes';
 import { createTraceRoutes } from './routes/trace-routes';
 import { createQueueDlqRoutes } from './routes/queue-dlq-routes';
@@ -1140,6 +1142,11 @@ function createApp(): express.Application {
   // Cost-governance — spend budgets (oshal_budgets) + spend reads. requiresAuth-gated; the
   // factory scopes cross-user reads/writes to the operator allowlist internally.
   app.use('/api/budgets', createBudgetRoutes(requiresAuth, { pool: ctx.pool }));
+  // Harvest console — the illustrative site/soil catalogue + one closed-loop simulate call over
+  // the marine and ground slices. Stateless (no pool: the budget is pure arithmetic), but the
+  // factory applies requiresAuth per-route because the integration loop is synchronous on this
+  // process — an anonymous caller could otherwise burn the controller's only thread.
+  app.use('/api/harvest', createHarvestRoutes(requiresAuth));
   // Inbound A2A gateway (BACKLOG Plan F): whole surface 404s unless A2A_GATEWAY_ENABLED=true;
   // the well-known card is public-by-spec, POST /api/a2a uses per-agent Bearer (A2A-native,
   // NOT OIDC), /api/a2a/agents is requiresAuth + operator-only. message/send files a REAL
