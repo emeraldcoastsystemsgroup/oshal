@@ -386,3 +386,33 @@ describe('durable alert landing', () => {
     }
   });
 });
+
+describe('background sweep identity', () => {
+  // The 5s straggler sweep is background work with no request in scope. Under
+  // OSHAL_DB_GUC_STRICT=deny an unidentified connection is REFUSED, so an unwrapped sweep
+  // claims nothing while the timer keeps firing and the logs stay busy — "retried on the next
+  // tick" silently becomes "never retried". Observed on a live deploy; this pins the wrapper.
+  it('claims pending events under a declared system identity', async () => {
+    const identity = await import('@/shared/services/database/request-identity');
+    const sysSpy = vi.spyOn(identity, 'runWithSystemIdentity');
+
+    vi.useFakeTimers();
+    let harness: Harness | undefined;
+    try {
+      harness = await makeHarness({ withDatabase: true });
+      sysSpy.mockClear();
+      const before = harness.db.countOf('select-pending');
+
+      await vi.advanceTimersByTimeAsync(6000);
+
+      // The sweep ran...
+      expect(harness.db.countOf('select-pending')).toBeGreaterThan(before);
+      // ...and it declared an identity rather than reaching the pool unidentified.
+      expect(sysSpy).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      await harness?.close();
+      sysSpy.mockRestore();
+    }
+  });
+});

@@ -52,7 +52,7 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { hmacWebhookGuard } from '@/features/security';
 import type { TicketService } from '@/features/ticketing';
-import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
+import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
 import {
   EnvelopeStore,
@@ -720,7 +720,11 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
         return;
       }
       sweeping = true;
-      void drainPendingEvents()
+      // The sweep is background work with no request in scope, so it must declare a system
+      // identity: with OSHAL_DB_GUC_STRICT=deny an unidentified connection is refused outright
+      // and the sweep silently claims nothing, which turns "retried on the next tick" into
+      // "never retried" while the timer keeps firing and the logs look busy.
+      void runWithSystemIdentity(() => drainPendingEvents())
         .catch((err) => logger.error({ err }, 'Pending alert-event sweep failed'))
         .finally(() => { sweeping = false; });
     }, PENDING_SWEEP_INTERVAL_MS);
