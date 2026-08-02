@@ -14,6 +14,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: buildBots / buildComms / buildActivity / buildCalendar overview panels + the email-digest envelope decrypt helper (route decomposition, no behaviour change).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the key derivation - SESSION_SECRET unset now throws at the call site instead of silently deriving a well-known AES key any reader of this public repo can compute. Guard: tests/unit/no-dev-secret-fallback.spec.ts. Callers already try/catch decryptEnvelope, so an unset secret degrades to digest:null - never a 500.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | buildBots online now uses resolveDisplayOnline(heartbeat, container): inline/api-hosted bots (dnd/spaces/security-analyst/…) never heartbeat, so the Command Center swarm map painted them permanently offline even while they ran real work (dnd active-but-offline was the tell). Roster is getActiveRegistry() (dynamic-inclusive) so each bot's container is available for the inline check.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | buildComms stops crying wolf on a box that has not installed the comms app. `oshal_email_digests` and `oshal_inbox_messages` are APP-owned tables (ADR-085 wave 3 carved email-summarizer to the store; verify-runtime-schema-validate-only.ts dropped them from the core schema contract for exactly this reason), so on a CRM-only install the relations genuinely do not exist and both catches fired a warn on EVERY Command Center load — a permanent false alarm in a customer's logs (gsquared INCIDENT-2026-07-30 issue 10). Now classified through logAppTableRead: Postgres 42P01 (undefined_table) = "app not installed", logged at DEBUG and degraded to an empty panel; every OTHER failure (pool exhaustion, dropped connection, permission denied) is a REAL fault and is promoted from warn to ERROR with the stack, so the real ones stop hiding inside the noise. Same classification the sibling jarvis-brief-sections.ts already used. The fix is deliberately NOT a core migration: provisioning an app-owned table from kernel migrations would re-import a carved app schema into the kernel and violate ADR-085 / CLAUDE.md rule 0c. Guard: tests/unit/jarvis-overview-app-table-degrade.spec.ts.
  *
  * @module jarvis-overview
  */
@@ -47,6 +48,30 @@ function decryptEnvelope(blob: string): string {
 
 /** Ticket states that are no longer "active work". */
 const CLOSED_TICKET_STATES = new Set(['complete', 'cancelled']);
+
+/** Postgres `undefined_table`. The one error code that means "this app is not installed here". */
+const PG_UNDEFINED_TABLE = '42P01';
+
+/**
+ * @description Classify a failed read of an APP-owned table so an uninstalled app cannot
+ * masquerade as a fault. `oshal_email_digests` / `oshal_inbox_messages` ship with the comms
+ * STORE package, not the kernel (ADR-085 wave 3), so on a box that never installed it the
+ * relation legitimately does not exist and Postgres answers 42P01. That is an expected
+ * steady state, not an incident — logging it at warn/error on every Command Center load
+ * trains an operator to ignore the panel's logs entirely, which is how a REAL failure
+ * (pool exhaustion, dropped connection, revoked grant) goes unseen. So: 42P01 degrades at
+ * debug; everything else is promoted to error WITH the stack.
+ * @param err - the error the app-table query rejected with
+ * @param panel - the overview panel being built, for the structured log line
+ * @returns nothing — emits exactly one structured log line at the level the cause deserves
+ */
+function logAppTableRead(err: unknown, panel: string): void {
+  if ((err as { code?: string } | null)?.code === PG_UNDEFINED_TABLE) {
+    logger.debug({ panel }, `overview: ${panel} — comms app not installed on this box, panel degrades empty`);
+    return;
+  }
+  logger.error({ err, stack: (err as Error)?.stack, panel }, `overview: ${panel} read failed`);
+}
 
 /** The swarm map: every registered bot + its live online status (heartbeats) + whether it was
  *  ACTUALLY CALLED to process in the last 2 min. "Active" comes from chat_tasks executions (cost
@@ -89,14 +114,14 @@ export async function buildComms(ctx: AppContext, sub: string): Promise<Record<s
   try {
     const row = (await ctx.pool.query('SELECT summary, updated_at FROM oshal_email_digests WHERE user_sub = $1', [sub])).rows[0];
     if (row?.summary) { try { digest = { summary: decryptEnvelope(row.summary), updatedAt: row.updated_at }; } catch { /* key/format mismatch — skip */ } }
-  } catch (err) { logger.warn({ err }, 'overview: email digest unavailable'); }
+  } catch (err) { logAppTableRead(err, 'email digest'); }
   try {
     signals = (await ctx.pool.query(
       `SELECT from_addr, subject, snippet, received_at FROM oshal_inbox_messages
         WHERE user_sub = $1 AND category = 'social' AND received_at > NOW() - interval '7 days'
         ORDER BY received_at DESC LIMIT 8`, [sub])).rows
       .map((r) => ({ from: r.from_addr, subject: r.subject, snippet: r.snippet, at: r.received_at }));
-  } catch (err) { logger.warn({ err }, 'overview: social signals unavailable'); }
+  } catch (err) { logAppTableRead(err, 'social signals'); }
   return { digest, signals };
 }
 

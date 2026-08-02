@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Video Series dispatch: render episodes on the remote Vids node ONE AT A TIME, then assemble. Serialized because the node drives a single Chrome; resumable because a re-render is real money.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Node package dir + exe resolve through vids-node-availability (the old default was a controller-side path that has never existed on the node), and the storyboarded-render dispatch now checks the node is FREE before enqueueing — the reconciler sweeps every 20s and would otherwise dispatch straight into the nightly recap's window.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: render-node selection is owner-scoped. findShellWorker/findVidsWorker picked on LIVENESS ALONE, so on a multi-user swarm one user's series rendered on whatever desktop happened to be connected — driving another person's logged-in Chrome and Google account with the requester's Drive token exported into that shell. The owner now comes from the SERIES ROW (video_series.user_sub, NOT NULL), never from the caller, and candidates run through filterUsableDevices BEFORE the preference order so a foreign VIDS_RENDER_CLIENT_ID pin resolves to null instead of executing. Guard: tests/unit/series-dispatch-device-ownership.spec.ts.
  */
 /**
  * @description Video Series — remote-node render dispatch.
@@ -38,6 +39,7 @@ import { createChildLogger } from '@/shared/logger';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 import { buildRenderPlan, SCREENPLAY_WRITER_AGENT_ID, type CastMember, type Scene } from '@/app/series-pipeline';
 import { nodePkgDir, nodeExe, checkVidsNodeAvailability } from '@/app/vids-node-availability';
+import { filterUsableDevices, type DeviceRequester } from '@/features/remote-client';
 
 const logger = createChildLogger({ module: 'series-dispatch' });
 
@@ -58,11 +60,37 @@ function isShellWorker(c: { capabilities?: unknown }): boolean {
   return caps.includes('shell.exec');
 }
 
-/** @description Pick an online worker that can run the node-side renderer. @returns {{clientId:string, agentId?:string} | null} the worker */
-function findShellWorker(): { clientId: string; agentId?: string } | null {
-  let clients: Array<{ clientId: string; agentId?: string; status?: string; healthy?: boolean; capabilities?: unknown }> = [];
-  try { clients = remoteClientRegistry.listClients() as typeof clients; } catch { clients = []; }
-  const candidates = clients.filter(isShellWorker);
+/** A registered node as these selectors read it. `ownerSub` is what makes the pick a privilege
+ *  decision rather than a load-balancing one — it is the person whose desktop this is. */
+interface CandidateNode {
+  clientId: string;
+  agentId?: string;
+  status?: string;
+  healthy?: boolean;
+  capabilities?: unknown;
+  tags?: unknown;
+  ownerSub?: string | null;
+}
+
+/** Every connected node, or an empty list when the registry is unavailable. */
+function connectedNodes(): CandidateNode[] {
+  try { return remoteClientRegistry.listClients() as CandidateNode[]; } catch { return []; }
+}
+
+/**
+ * @description Pick an online worker that can run the node-side renderer, restricted to the
+ * machines this requester is allowed to drive.
+ *
+ * OWNERSHIP IS PART OF THE FILTER, not a check bolted on afterwards: a render node is somebody's
+ * real desktop with their Google session open, and the render shells out with the requester's Drive
+ * access token in its environment. Narrowing the candidates BEFORE the preference order is what
+ * stops `VIDS_RENDER_CLIENT_ID` — a deployment-wide pin — from parking every user's render on one
+ * person's box; a pin the requester may not use now resolves to null (clean "no node" error).
+ * @param requester - The identity the render runs on behalf of (the series owner).
+ * @returns {{clientId:string, agentId?:string} | null} the worker, or null when none is usable
+ */
+function findShellWorker(requester: DeviceRequester): { clientId: string; agentId?: string } | null {
+  const candidates = filterUsableDevices(requester, connectedNodes().filter(isShellWorker));
   if (!candidates.length) return null;
   const preferred = (process.env.VIDS_RENDER_CLIENT_ID || '').trim();
   if (preferred) return candidates.find((c) => c.clientId === preferred) ?? null;
@@ -98,17 +126,40 @@ function isVidsWorker(c: { capabilities?: unknown; tags?: unknown }): boolean {
 }
 
 /**
- * @description Pick an online Vids worker, or null when none is connected.
+ * @description Pick an online Vids worker this requester may drive, or null when none is usable.
+ * Same ownership rule as findShellWorker: the node runs a logged-in Google Vids session belonging to
+ * a person, so liveness alone is not a licence to render somebody else's episode on it.
+ * @param requester - The identity the render runs on behalf of (the series owner).
  * @returns {{clientId: string, agentId?: string} | null} the worker, or null
  */
-function findVidsWorker(): { clientId: string; agentId?: string } | null {
-  let clients: Array<{ clientId: string; agentId?: string; status?: string; healthy?: boolean; capabilities?: unknown; tags?: unknown }> = [];
-  try { clients = remoteClientRegistry.listClients() as typeof clients; } catch { clients = []; }
-  const candidates = clients.filter(isVidsWorker);
+function findVidsWorker(requester: DeviceRequester): { clientId: string; agentId?: string } | null {
+  const candidates = filterUsableDevices(requester, connectedNodes().filter(isVidsWorker));
   if (!candidates.length) return null;
   const online = candidates.find((c) => (c.status ?? 'online') === 'online' && (c.healthy ?? true));
   return online ?? candidates[0];
 }
+
+/**
+ * @description The identity a render for this series runs as: the series' OWN owner row.
+ *
+ * Deliberately read from `video_series.user_sub` (NOT NULL) rather than accepted as an argument.
+ * Every caller of these dispatchers is internal — the orchestrator, the reconciler on its 20s timer,
+ * an operator clicking render — and a sub that travels as a parameter through three layers is a sub
+ * that can arrive wrong. The row is the one place that cannot disagree with who owns the series.
+ * @param pool - Database pool.
+ * @param seriesId - The series being rendered.
+ * @returns The owner's OIDC sub, or null when the series is gone (then nothing may be dispatched).
+ */
+async function seriesOwnerSub(pool: Pool, seriesId: string): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT user_sub FROM video_series WHERE series_id = $1`, [seriesId]);
+  const sub = (rows[0] as { user_sub?: string | null } | undefined)?.user_sub;
+  return sub ? String(sub) : null;
+}
+
+/** The message an owner-scoped miss returns. Same wording whichever selector missed, because the
+ *  operator-visible fact is identical: no node this series' owner may drive is available. */
+const NO_USABLE_NODE = 'No render node is available to this series\' owner. Connect a node on that '
+  + 'account (`oshal-vids worker`), or have an operator bind an existing node to it.';
 
 /**
  * @description True while any episode of this series is still occupying the node. The node
@@ -178,13 +229,12 @@ export async function dispatchEpisode(
   const free = await checkVidsNodeAvailability(pool, { skipProbe: true });
   if (!free.available) return { ok: false, episodeId: episode.episodeId, error: `the render node is not free: ${free.reason}` };
 
-  const worker = findVidsWorker();
+  const ownerSub = await seriesOwnerSub(pool, episode.seriesId);
+  if (!ownerSub) return { ok: false, episodeId: episode.episodeId, error: 'series not found — refusing to render work with no owner' };
+
+  const worker = findVidsWorker({ sub: ownerSub });
   if (!worker) {
-    return {
-      ok: false,
-      episodeId: episode.episodeId,
-      error: 'No Vids worker is registered. Start one on a machine with a screen: `oshal-vids worker`.',
-    };
+    return { ok: false, episodeId: episode.episodeId, error: NO_USABLE_NODE };
   }
 
   const taskId = randomUUID();
@@ -284,7 +334,7 @@ export async function dispatchStoryboardedEpisode(
 ): Promise<DispatchResult> {
   const { rows } = await pool.query(
     `SELECT e.episode_id, e.title, e.ordinal, e.scenes, e.frame_ids, e.status,
-            s.title AS series_title, s.cast_bible, s.orientation, s.intro_clip
+            s.title AS series_title, s.cast_bible, s.orientation, s.intro_clip, s.user_sub
        FROM video_episodes e JOIN video_series s ON s.series_id = e.series_id
       WHERE e.episode_id = $1`, [episodeId],
   );
@@ -307,8 +357,14 @@ export async function dispatchStoryboardedEpisode(
   const free = await checkVidsNodeAvailability(pool, { skipProbe: true });
   if (!free.available) return { ok: false, episodeId, error: `the render node is not free: ${free.reason}` };
 
-  const worker = findShellWorker();
-  if (!worker) return { ok: false, episodeId, error: 'No render node is connected (no worker advertising shell.exec).' };
+  // The owner comes off the joined series row. This dispatch exports the caller's Drive access
+  // token into a PowerShell environment on the chosen box, so picking a box the owner does not own
+  // hands their Google token to somebody else's machine — the reason selection is identity-scoped.
+  const ownerSub = (e.user_sub as string | null) ?? null;
+  if (!ownerSub) return { ok: false, episodeId, error: 'series has no owner — refusing to render' };
+
+  const worker = findShellWorker({ sub: ownerSub });
+  if (!worker) return { ok: false, episodeId, error: NO_USABLE_NODE };
 
   const plan = buildRenderPlan(scenes, frameIds, (Array.isArray(e.cast_bible) ? e.cast_bible : []) as CastMember[]);
   // The plan travels as base64 JSON so no quoting on either side can corrupt a prompt.
@@ -371,7 +427,7 @@ export async function dispatchAssembly(
   opts: { ticketId?: string; introClip?: string } = {},
 ): Promise<DispatchResult> {
   const { rows } = await pool.query(
-    `SELECT e.episode_id, e.title, e.clip_paths, e.status, s.title AS series_title
+    `SELECT e.episode_id, e.title, e.clip_paths, e.status, s.title AS series_title, s.user_sub
        FROM video_episodes e JOIN video_series s ON s.series_id = e.series_id
       WHERE e.episode_id = $1`,
     [episodeId],
@@ -383,8 +439,13 @@ export async function dispatchAssembly(
   const clips = Array.isArray(e.clip_paths) ? (e.clip_paths as string[]) : [];
   if (!clips.length) return { ok: false, episodeId, error: 'no clip paths recorded — nothing to assemble' };
 
-  const worker = findVidsWorker();
-  if (!worker) return { ok: false, episodeId, error: 'No Vids worker is registered.' };
+  // Assembly reads this owner's clips out of the node's content folder and writes the finished
+  // episode back there, so it is owner-scoped for the same reason the render is.
+  const ownerSub = (e.user_sub as string | null) ?? null;
+  if (!ownerSub) return { ok: false, episodeId, error: 'series has no owner — refusing to assemble' };
+
+  const worker = findVidsWorker({ sub: ownerSub });
+  if (!worker) return { ok: false, episodeId, error: NO_USABLE_NODE };
 
   const taskId = randomUUID();
   try {
