@@ -1,6 +1,6 @@
 # ADR-030: Home Persona Layer — Persistent Front-of-House Identity
 
-**Status:** Superseded in part by ADR-050 (one voice / hidden routing — delivered as the Jarvis app) and ADR-079 (user model, learning loop, pull-based proactivity — as-built 2026-07-06). Haven is NOT a separate surface: Haven = Jarvis + the ADR-079 user model. Still open from this ADR: conversational onboarding (property 4), persona-wrapping of specialist replies (property 5 beyond Jarvis synthesis), push proactivity, and Haven-as-default-login-surface.
+**Status:** Superseded in part by ADR-050 (one voice / hidden routing — delivered as the Jarvis app) and ADR-079 (user model, learning loop, proactivity — pull as-built 2026-07-06, **push as-built 2026-08-02**). Haven is NOT a separate surface: Haven = Jarvis + the ADR-079 user model. Property 3 (proactive initiation) is now built in both directions: the pull strip when the user arrives, and an opt-in outward push (default OFF, two gates — see the ADR-079 2026-08-02 update). Haven-as-default-login-surface is settled the other way: login lands on `/cockpit/` (operator, 2026-07-07), per-deployment overridable via `LANDING_PATH`. Still open from this ADR: conversational onboarding (property 4) and persona-wrapping of specialist replies (property 5 beyond Jarvis synthesis) — done-when criteria in [Haven deferred properties](../backlog/haven-deferred-properties.md).
 **Date:** 2026-04-01 (reconciled 2026-07-06)
 **Deciders:** oshal maintainers
 

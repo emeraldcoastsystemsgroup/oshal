@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Haven user model (ADR-079) persistence: user_model_facts / user_model_suggestions / user_model_state tables (owner-scoped RLS at the lazy-DDL chokepoint, A1.2 pattern), fact upsert via the pure merge logic, teach/forget, decay sweep, and suggestion persistence with dedupe. Thin SQL over user-model-logic.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added a public deduplicated proposal method used by ambient daily reviews to surface confirmation questions through the existing user-model suggestion inbox.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Closed three ADR-079 deferrals in the sweep: connector-signal facts (derive one owner-scoped signal fact per connected provider, retire the keys a disconnected provider no longer justifies, and raise a 'connector-attention' suggestion), cross-session compaction (deterministically deactivate the weakest tail so the active model stays bounded), and the haven_push_deliveries ledger the opt-in outward push uses to stay once-per-suggestion and inside its daily cap.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -15,6 +16,14 @@ import {
   computeSuggestions, decayFact, isStorableFact, mergeFactUpdate, parseTeach,
   type FactCandidate, type SuggestionCandidate, type UserModelFacet, type UserModelFact,
 } from './user-model-logic';
+import {
+  CONNECTOR_FACT_KEY_PREFIX,
+  connectorAttentionMessages,
+  connectorSignalCandidates,
+  connectorSignalFactKeys,
+  readConnectorSignalRows,
+} from './connector-signal-facts';
+import { planModelCompaction } from './model-compaction';
 
 const logger = createChildLogger({ module: 'user-model-service' });
 
@@ -71,14 +80,27 @@ export class UserModelService {
           last_learned_at TIMESTAMPTZ,
           last_sweep_at TIMESTAMPTZ
         )`,
+        // Outward-push ledger: one row per suggestion actually delivered. It is what makes the
+        // opt-in push once-per-suggestion and rate-capped ACROSS restarts — an in-memory guard
+        // would re-push everything after a container recreate.
+        `CREATE TABLE IF NOT EXISTS haven_push_deliveries (
+          user_sub TEXT NOT NULL,
+          suggestion_id TEXT NOT NULL,
+          channel TEXT,
+          sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (user_sub, suggestion_id)
+        )`,
+        'CREATE INDEX IF NOT EXISTS haven_push_deliveries_user_time ON haven_push_deliveries (user_sub, sent_at DESC)',
         ...buildOwnerRlsPolicyStatements('user_model_facts', 'user_sub'),
         ...buildOwnerRlsPolicyStatements('user_model_suggestions', 'user_sub'),
         ...buildOwnerRlsPolicyStatements('user_model_state', 'user_sub'),
+        ...buildOwnerRlsPolicyStatements('haven_push_deliveries', 'user_sub'),
       ],
       requirements: [
         { table: 'user_model_facts', columns: ['fact_id', 'user_sub', 'facet', 'fact_key', 'fact_value', 'confidence', 'active'] },
         { table: 'user_model_suggestions', columns: ['suggestion_id', 'user_sub', 'kind', 'message', 'status'] },
         { table: 'user_model_state', columns: ['user_sub', 'last_learned_at', 'last_sweep_at'] },
+        { table: 'haven_push_deliveries', columns: ['user_sub', 'suggestion_id', 'channel', 'sent_at'] },
       ],
     });
     this.ensured = true;
@@ -142,9 +164,11 @@ export class UserModelService {
   }
 
   /**
-   * @description Lazy per-user sweep (throttled to once per {@link SWEEP_MIN_MINUTES}): decay
-   * idle facts, deactivate the faded, then compute + dedupe-persist proactive suggestions.
-   * Runs when the user arrives (pull-based proactivity) — no idle background work.
+   * @description Lazy per-user sweep (throttled to once per {@link SWEEP_MIN_MINUTES}): decay idle
+   * facts, refresh the connector-signal facts from the caller's own connections, compact the model
+   * back inside its size bound, then compute + dedupe-persist proactive suggestions. Runs when the
+   * user arrives (pull-based) and from the opt-in push cron for users who turned push on.
+   * @param userSub - The owner whose model to sweep. Every read/write below is scoped to it.
    */
   async sweep(userSub: string): Promise<void> {
     await this.ensureSchema();
@@ -165,9 +189,112 @@ export class UserModelService {
           [userSub, fact.factId, decayed.confidence, decayed.active]);
       }
     }
-    for (const suggestion of computeSuggestions(facts, now)) {
+    const connectorSuggestions = await this.syncConnectorSignals(userSub, now);
+    await this.compact(userSub, now);
+    for (const suggestion of [...computeSuggestions(facts, now), ...connectorSuggestions]) {
       await this.persistSuggestion(userSub, suggestion);
     }
+  }
+
+  /**
+   * @description Refresh the `signal`-facet facts derived from the caller's OWN connected accounts:
+   * merge one fact per connected provider (health, capabilities, expiry countdown — never a token,
+   * never a raw scope, never an account identifier) and deactivate the `connector-*` facts a
+   * disconnected provider no longer justifies, so Haven stops claiming a connection the user
+   * removed. Non-fatal: a connector-schema problem returns no suggestions and leaves the model be.
+   * @param userSub - The owner whose connections to read. The read is `WHERE user_sub = $1`.
+   * @param now - The evaluation instant (drives the expiry countdown).
+   * @returns The attention suggestions the current connector estate warrants (possibly empty).
+   */
+  async syncConnectorSignals(userSub: string, now: Date = new Date()): Promise<SuggestionCandidate[]> {
+    await this.ensureSchema();
+    try {
+      const rows = await readConnectorSignalRows(this.pool, userSub);
+      const liveKeys = connectorSignalFactKeys(rows);
+      for (const candidate of connectorSignalCandidates(rows, now)) {
+        await this.mergeFact(userSub, candidate);
+      }
+      // Retire the connector facts this estate no longer supports. Deactivate (never delete) so the
+      // owner can still see what Haven used to believe on GET /api/user-model.
+      await this.pool.query(
+        `UPDATE user_model_facts SET active = FALSE
+          WHERE user_sub = $1 AND facet = 'signal' AND active = TRUE
+            AND fact_key LIKE $2 AND NOT (fact_key = ANY($3::text[]))`,
+        [userSub, `${CONNECTOR_FACT_KEY_PREFIX}%`, liveKeys],
+      );
+      return connectorAttentionMessages(rows, now).map((message) => ({
+        kind: 'connector-attention' as const, message,
+      }));
+    } catch (error) {
+      logger.error({ err: error, stack: (error as Error).stack }, 'connector-signal sync failed (model left unchanged)');
+      return [];
+    }
+  }
+
+  /**
+   * @description Bound the active model: deactivate the weakest compactable tail past the ceiling
+   * (see planModelCompaction — explicit teaches and identity facts are never compacted). Nothing is
+   * deleted; the owner still sees compacted facts and their evidence still lives in the owner-ACL'd
+   * long-tail RAG collection.
+   * @param userSub - The owner whose model to compact.
+   * @param now - The evaluation instant.
+   * @returns How many facts were deactivated.
+   */
+  async compact(userSub: string, now: Date = new Date()): Promise<number> {
+    await this.ensureSchema();
+    const plan = planModelCompaction(await this.getFacts(userSub, true), now);
+    if (plan.retire.length === 0) return 0;
+    const result = await this.pool.query(
+      'UPDATE user_model_facts SET active = FALSE WHERE user_sub = $1 AND fact_id = ANY($2::text[])',
+      [userSub, plan.retire],
+    );
+    logger.info({ retired: plan.retire.length, keptActive: plan.keptActive }, 'user model compacted');
+    return result.rowCount ?? 0;
+  }
+
+  /**
+   * @description Suggestion ids already pushed outward to this user (any day) — the once-per-
+   * suggestion half of the push guard.
+   * @param userSub - The owner.
+   * @returns The pushed suggestion ids.
+   */
+  async pushedSuggestionIds(userSub: string): Promise<string[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      'SELECT suggestion_id FROM haven_push_deliveries WHERE user_sub = $1', [userSub],
+    );
+    return result.rows.map((row) => String(row.suggestion_id));
+  }
+
+  /**
+   * @description How many outward pushes this user has received in the last 24 hours — the rate-cap
+   * half of the push guard.
+   * @param userSub - The owner.
+   * @returns The count of pushes in the trailing 24h.
+   */
+  async pushesSentLastDay(userSub: string): Promise<number> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      "SELECT COUNT(*)::int AS n FROM haven_push_deliveries WHERE user_sub = $1 AND sent_at > now() - INTERVAL '24 hours'",
+      [userSub],
+    );
+    return Number(result.rows[0]?.n ?? 0);
+  }
+
+  /**
+   * @description Record that one suggestion was actually delivered outward. Only ever called after a
+   * real delivery, so a failed send is retried rather than silently swallowed.
+   * @param userSub - The owner.
+   * @param suggestionId - The suggestion that was pushed.
+   * @param channel - The channel it went over (for the audit trail).
+   */
+  async recordPush(userSub: string, suggestionId: string, channel: string): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query(
+      `INSERT INTO haven_push_deliveries (user_sub, suggestion_id, channel) VALUES ($1,$2,$3)
+       ON CONFLICT (user_sub, suggestion_id) DO NOTHING`,
+      [userSub, suggestionId, channel.slice(0, 40)],
+    );
   }
 
   /** Dedupe-persist one suggestion (UNIQUE user/kind/message makes re-suggesting a no-op). */

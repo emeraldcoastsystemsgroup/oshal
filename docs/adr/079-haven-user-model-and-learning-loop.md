@@ -67,7 +67,44 @@ call per learning exchange (accountable, kill-switchable); extraction quality de
 inline brain — the fail-closed filter means it errs toward learning less, not leaking; pull-based
 proactivity means no true push notifications yet (deliberate — outward sends stay approval-gated).
 
-**Deferred:** push proactivity (device/notification rails), connector-signal facts (token expiry,
-new-capability matches), conversational onboarding flows (ADR-030 property 4), persona voice
-wrapping of *specialist* bot replies (property 5 beyond Jarvis's own synthesis), cross-session
-model summarization compaction.
+**Deferred:** conversational onboarding flows (ADR-030 property 4) and persona voice wrapping of
+*specialist* bot replies (property 5 beyond Jarvis's own synthesis). Both carry done-when criteria in
+[Haven deferred properties](../backlog/haven-deferred-properties.md).
+
+## Update — 2026-08-02: push proactivity, connector-signal facts, and compaction are built
+
+Three of the five deferrals above are closed. Slice 4's "nothing is ever pushed outward" is now
+"nothing is pushed outward *unless the user asked for it*" — the pull strip is unchanged and remains
+the default experience.
+
+- **Push proactivity (opt-in, default OFF).** `haven-proactivity.ts` owns the gate and the policy;
+  `haven-proactivity-cron.ts` delivers through the EXISTING per-user `NotificationRouter` (email /
+  SMS / voice / Telegram senders, their availability checks, and the user's quiet hours) — there is
+  no second notifier. Two gates: `HAVEN_PUSH_CRON=1` enables the capability for a deployment, and
+  each user switches themselves on at `GET/POST /api/user-model/proactivity`, which also reports an
+  honest reason when it is off.
+
+  The gate reads the `haven-proactive` preference row **directly, with no fallback**, and that is the
+  load-bearing detail: `NotificationRouter.resolveRouting` falls back to the `default` topic row and
+  then to *email-if-Gmail-else-none*, so routing the decision through it would have made unsolicited
+  assistant messages the default for every Gmail-connected user and let the welcome wizard's generic
+  "text me" answer stand in for consent to something else entirely. Bounded further by a per-user
+  daily cap, a once-ever-per-suggestion ledger (`haven_push_deliveries`), and a rule that a
+  `teach-nudge` is never pushed — a UI tip is not worth a phone buzz.
+
+- **Connector-signal facts.** `connector-signal-facts.ts` derives one `signal`-facet fact per
+  connected provider from the caller's OWN `oshal_connections` rows (health, capability labels,
+  expiry countdown), refreshed in the throttled sweep and retired when a provider is disconnected.
+  Never a token, never a raw scope string, never an account identifier: scopes are mapped to a fixed
+  label table so provider-controlled text cannot reach a prompt, and the read is a parameterized
+  `WHERE user_sub = $1` with no unscoped variant. An expiring or broken connection also raises a
+  `connector-attention` suggestion — which is what gives push something real to say.
+
+- **Cross-session compaction.** `model-compaction.ts` bounds the ACTIVE model (decay bounded a fact's
+  confidence, not the model's size, so a heavy user's hot core filled with stale entities). It is
+  deterministic and LLM-free, it **deactivates rather than deletes** — compacted facts still appear
+  in `GET /api/user-model` and their evidence still lives in the owner-ACL'd long-tail collection —
+  and it never touches an explicit teach or an identity fact.
+
+Guards: `tests/unit/haven-push-proactivity.spec.ts`,
+`tests/unit/haven-connector-signal-facts.spec.ts`, `tests/unit/haven-model-compaction.spec.ts`.

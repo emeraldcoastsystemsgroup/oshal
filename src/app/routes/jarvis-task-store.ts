@@ -11,6 +11,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: ensureJarvisSchema / saveTaskPending / finishTask / findJarvisTaskSessionId / buildOpenWorkBlock / persistJarvisTurn / markJarvisSessionTaskStatus / mapJarvisTaskStatusFromTicketStatus / storedVisual (route decomposition, no behaviour change).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | jarvisFailureNoteForTicketStatus: an escalated/cancelled ticket left the shelf row's error column NULL, so a failed multi-app plan rendered as status 'error' with no message. Say the run stopped — never summarize an outcome that does not exist.
  *
  * @module jarvis-task-store
  */
@@ -227,6 +228,26 @@ export function mapJarvisTaskStatusFromTicketStatus(ticketStatus: string): strin
   if (ticketStatus === 'complete' || ticketStatus === 'customer_action') return 'done';
   if (ticketStatus === 'cancelled' || ticketStatus === 'escalated') return 'error';
   return 'running';
+}
+
+/**
+ * @description The sentence a work item shows when its ticket ended badly. A ticket that escalates
+ * (a multi-app plan step whose bot could not be reached, a graph run that failed) leaves the shelf
+ * row's own `error` column NULL, because nothing wrote to it — so the surface used to render a
+ * failed item as status 'error' with no message at all. The honest fix is to SAY the run did not
+ * finish. It deliberately does not summarize or guess an outcome: there is no result to summarize,
+ * and inventing one is exactly the fabrication the planner must never do.
+ * @param ticketStatus - The linked ticket's terminal status.
+ * @returns A user-facing failure line, or null when the status is not a failure.
+ */
+export function jarvisFailureNoteForTicketStatus(ticketStatus: string): string | null {
+  if (ticketStatus === 'escalated') {
+    return 'This one did not finish — a step failed and the run stopped there. Nothing was made up in its place; open the ticket for the details.';
+  }
+  if (ticketStatus === 'cancelled') {
+    return 'This one was cancelled before it finished.';
+  }
+  return null;
 }
 
 /** @description Validates and returns persisted visual-artifact metadata, or undefined if it fails

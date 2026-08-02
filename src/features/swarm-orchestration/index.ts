@@ -144,6 +144,7 @@ export {
   isMultiAppPlan,
   extractPlanDirective,
   stripPlanDirective,
+  describePlan,
   type MultiAppPlan,
   type MultiAppPlanStep,
 } from './services/multi-app-plan';

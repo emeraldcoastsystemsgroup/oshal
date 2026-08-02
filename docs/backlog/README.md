@@ -7,6 +7,9 @@ backlog is [../BACKLOG.md](../BACKLOG.md) — every entry there has done-when cr
 - [test-lab.md](./test-lab.md) — AI Test Lab backlog (ADR-063).
 - [trading-advisor.md](./trading-advisor.md) — trading advisor backlog.
 - [bot-ui-db-persistence.md](./bot-ui-db-persistence.md) — Bot UI DB persistence (Option B).
+- [haven-deferred-properties.md](./haven-deferred-properties.md) — the ADR-030 persona properties
+  and the ADR-079 deferred list: what closed (push proactivity, connector-signal facts, compaction)
+  and what is still open (conversational onboarding, persona-wrapping of specialist replies).
 - [jarvis-voice-and-visuals.md](./jarvis-voice-and-visuals.md) — Jarvis typed visual responses,
   ambient voice UX, selectable/private TTS, live-provider acceptance, native transcript boundaries,
   and safe next-step expansion.
