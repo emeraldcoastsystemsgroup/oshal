@@ -163,8 +163,32 @@ Each links to the authoritative done-when text in [../BACKLOG.md](../BACKLOG.md)
    flip to `enforce` was justified by a 7-day soak that found zero would-be denials; confirm that
    still holds once the new image is running, and that an operator path works.
 
-**3. ADR-119 P4 — the live container-kill drill — ✅ RUN, AND IT FOUND THREE BREAKS** (fixed in
-   #99/#100, then re-run green). The first run proved the ladder was not operational even though every
+**3. ADR-119 P4 — the live container-kill drill — ✅ A1 RUN 2026-08-01, ✅ A2 LEGS RUN 2026-08-02.**
+   **The A2 legs found two MORE breaks, both of which made unattended apply impossible**, and both
+   invisible to all 32 P1–P4 guards for the same reason the first three were: every guard stubs the
+   `RemediationExecutor`, and both breaks were in what the executor talks to. `POST /api/self-heal/apply`
+   was registered only on the `BOT_RUNTIME=any-bot` legacy server that nothing in compose runs, so the
+   real self-healing node answered an HTML 404; and the docker inspect template asked for
+   `{{.State.RestartCount}}` (not a field — docker emits nothing) with an unguarded
+   `{{.State.Health.Status}}`, so every observation threw and returned `status:'not-found'` **with
+   `success:true`** — meaning a *successful* restart would still have escalated `verify-failed`. Both
+   fixed in PR #117. Results, with the kill switch on: **auto-apply PASS ×3** (tickets `27e3805e`
+   incident-remediation, `703279ce` cloud-ops-bot, `01b2c1ef` home-bot — each `complete` /
+   `auto_applied_verified` / `applied-and-verified`, target observed running before close); **hourly cap
+   PASS** (the 4th proposal onward: `reason: hourly-cap-reached`, parked at `customer_action`);
+   **recurrence PASS** (ticket `0f1e314c`, `recurrenceOf: 01b2c1ef` → `escalated` with
+   `auto-apply-blocked:recurrence` + `needs-attention` and NO apply record); **core-infra NOT
+   EXERCISED** — the chromadb alert bundled onto the research-bot incident (Stage-D, `hops: 2`) and
+   became its `rootCandidate`, but that incident finalized **Mode B**, and Mode B never consults the
+   auto-apply hook. Kill switch flipped back to `false` and the api recreated. Full write-up in
+   ADR-119 §"What the A2 legs found". **Three things that will cost the next person an hour:** a
+   `customer_action` ticket is an OPEN incident, so a refire CONSOLIDATES onto it and never re-enters
+   the pipeline — A1's own output blocks A2 on the same key until a human closes the ticket;
+   alertmanager will not re-deliver a same-fingerprint refire inside `group_interval`/`repeat_interval`
+   (5m/4h) and restarting it does not clear that, so drill deliveries go to the real fail-closed
+   receiver directly; and stopping 30 bots at once parked all 30 tickets `analysis-skipped:budget` at
+   zero spend, which is the P3 cost bound working. Original 2026-08-01 record follows.
+   **The first run found three breaks** (fixed in #99/#100, then re-run green). The first run proved the ladder was not operational even though every
    unit guard passed: the intake could not insert a ticket (owner-RLS refused the identity-less machine
    write), the rules matched nothing (cAdvisor emits no container series on Docker Desktop 29's
    containerd image store), and `ALERT_WEBHOOK_TOKEN` was never forwarded into the api by compose —
@@ -173,8 +197,8 @@ Each links to the authoritative done-when text in [../BACKLOG.md](../BACKLOG.md)
    intake=auto` → ticket `34e1a1c8-…` owned by `alert:prometheus`, RCA ran, action gated at
    `customer_action` → restart → FR-E4 resolved both members. Zero active alerts on a healthy stack,
    where before there were two permanent false alarms. **Keep this lesson: all four phases stubbed the
-   ticket gateway in their guards, which is exactly why it shipped green.** A2's legs (auto-apply on,
-   the recurrence bound, the core-infra bound) are still owed. Original procedure — five
+   ticket gateway in their guards, which is exactly why it shipped green.** A2's legs ran 2026-08-02 — auto-apply and
+   the recurrence bound PASS, the core-infra bound still unexercised (see above). Original procedure — five
    steps, in order, and they need the monitoring overlay plus the profile-gated `self-healing-bot`
    container, `ALERT_WEBHOOK_TOKEN` (matching `alertmanager.yml`) and `SWARM_SERVICE_SECRET`:
    A1 leg with the kill switch off → A2 leg with `SELF_HEAL_AUTO_APPLY=true` → the recurrence bound →
