@@ -4,7 +4,7 @@
 (2026-08-02). The consolidation cutover is **not** done; see "What is not yet true" below.
 **Date:** 2026-08-02
 **Builds on:** [ADR-119](119-autonomous-health-ticket-processing.md) (the autonomy ladder),
-[ADR-045](045-graph-extension.md) (the graph tier),
+[ADR-045](045-two-tier-graph-database-and-connector.md) (the graph tier),
 [alert-triage-and-consolidation-spec.md](../architecture/alert-triage-and-consolidation-spec.md)
 **Implemented by:** [src/features/alert-pipeline/](../../src/features/alert-pipeline/),
 [ops-pipeline-routes.ts](../../src/app/routes/ops-pipeline-routes.ts),

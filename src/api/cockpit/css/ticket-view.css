@@ -555,6 +555,17 @@
     flex: 1;
   }
 
+  /* With a ticket OPEN on a phone the email-split metaphor yields to the
+     detail: the list keeps a slim scrollable strip for context/switching and
+     the detail pane gets the screen. Without this, 45vh of list left the
+     detail pane shorter than its own pinned chrome — the body was crushed to
+     zero height and its content clipped unreachable. The has-selection class
+     is maintained by TicketView._syncSelectionClass; guarded by
+     tests/cockpit-mobile-375-scroll.spec.ts (rootOverflowPx). */
+  .ticket-view.has-selection .ticket-list-pane {
+    max-height: 15vh;
+  }
+
   /* Hide the resize handle — dragging is not useful in stacked mode */
   .ticket-resize-handle {
     display: none;
@@ -601,6 +612,15 @@
      would otherwise crush the ticket text into a sliver. */
   .td-header {
     padding: 10px 12px;
+    /* The full header (meta rows, contributing bots, project controls) can be
+       taller than the entire pane on a 667px phone; with every chrome row
+       flex-shrink:0 that pushed .td-body to zero height and overflowed the pane
+       by the excess — ticket text a phone user could never reach. Cap the
+       header and let ITS overflow scroll internally: the header's top stays
+       pinned, everything in it stays reachable, and the body keeps real
+       height. Guarded by tests/cockpit-mobile-375-scroll.spec.ts. */
+    max-height: 45%;
+    overflow-y: auto;
   }
 
   .td-header-row {
@@ -623,9 +643,17 @@
     display: none;
   }
 
+  /* One row that scrolls sideways, the same idiom as .td-tabs below: wrapping
+     into two rows doubled the pinned chrome's height, and every pinned pixel
+     comes straight out of the scrolling ticket body on a 667px phone. */
   .td-actions {
     padding: 8px 12px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .td-actions > * {
+    flex-shrink: 0;
   }
 
   /* Let the tab strip scroll sideways instead of wrapping into a tall block. */
