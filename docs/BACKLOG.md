@@ -480,7 +480,7 @@ rather than a WSL fallback, callers handle `$null` by failing loudly, and the he
 place both wrappers use instead of being copied a third time. Not done tonight on purpose: it is
 live stack-recovery code and deserves a test-run, not an unattended edit.
 
-## brace-expansion CVE-2026-14257 quarantine (trivy gate)
+## brace-expansion CVE-2026-14257 quarantine (trivy gate) ✅ RETIRED 2026-08-02
 
 **Quarantined 2026-07-25** (`.trivyignore`, honored by `gate_trivy` from the committed tree).
 Upstream fixed the DoS only in v5.0.8; the v1/v2 majors have no fixed release, and v5's export
@@ -496,6 +496,29 @@ cross-major archiver API change under exceljs — riskier than the DoS it avoids
 compat fixed releases appeared and the lockfile picked them up, or (b) eslint's and exceljs's
 chains both resolve brace-expansion@>=5.0.8 naturally (check `npm ls brace-expansion`), and the
 trivy gate passes without the entry.
+
+**Closed via (a), 2026-08-02.** The entry's premise -- "the v1/v2 majors have no fixed release" --
+stopped being true four days after it was written. Upstream backported the fix:
+
+| line | patched at | published | tree was | tree now |
+|---|---|---|---|---|
+| 1.x | **1.1.17** | 2026-07-29 | 1.1.16 (vulnerable) | **1.1.18** |
+| 2.x | **2.1.3** | 2026-07-28 | 2.1.2 (vulnerable) | **2.1.4** |
+| 5.x | 5.0.8 | 2026-07-23 | 5.0.8 | **5.0.9** |
+
+Patched ranges confirmed against GHSA-mh99-v99m-4gvg, not inferred from publish dates. Because
+these are PATCH bumps inside the existing majors, the v5 export-shape change (`{expand}` named vs
+bare function) that broke minimatch@3/@5 never came into play -- the exact failure the original
+quarantine was built around.
+
+Verified before deleting the entry: `npm update brace-expansion` touched package-lock.json only
+(9 insertions / 9 deletions, package.json untouched); `npx eslint "src/**/*.ts"` exits 0, so the
+"expand is not a function" breakage that killed the previous attempt does not recur; and a trivy
+filesystem scan of the updated lockfile no longer reports CVE-2026-14257 (the two findings left
+are unrelated and unquarantined -- uuid CVE-2026-41907 and xml2js CVE-2023-0842, both MEDIUM).
+
+The image-level gate scans the built image rather than the lockfile, so it only goes green once
+the image is rebuilt from this lockfile -- which `ci-local.sh` does as part of its own run.
 
 ## App store (ADR-085) — completing the swarm reset ✅ MIGRATION COMPLETE 2026-07-19 (all carve-eligible app surfaces carved to the store; kernel down to 10 core-platform manifests — see the completion stamp in §3)
 
