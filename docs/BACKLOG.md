@@ -432,6 +432,54 @@ launcher, its downstream chain verified to run from `C:\Projects\oshal`, and its
 action repointed + test-run green; Evidence-Nightly explicitly documented as archive-resident (or
 relocated to a private path).
 
+**Re-confirmed 2026-08-02, and it bit exactly as predicted.** A store-publish step was added to the
+trunk's `scripts/run-evidence-nightly.ps1` and merged, on the assumption that the nightly runs the
+trunk. It does not: the task's action is
+`wscript.exe //B //Nologo "C:\Projects\open-shal-swarm-harness-agent-llm\scripts\run-evidence-nightly-hidden.vbs"`.
+The step would have shipped looking wired and never executed once — the same failure shape as the
+bug it was fixing (the public store sat one commit stale for nine days). The step has been removed
+from that file and replaced with a comment saying why, so the next person does not re-add it.
+
+The store publish now has its own **trunk-resident** task instead:
+`scripts/publish-store-nightly.ps1` + `publish-store-nightly-hidden.vbs` (self-locating, the
+`publish-lab-report-hidden.vbs` pattern) registered at 01:00 by
+`scripts/register-store-publish-nightly.ps1`. That is a template for the four movable tasks above —
+self-locating launcher, own log dir, non-zero exit on failure.
+
+**Generalise before repointing the remaining four:** `Get-ScheduledTask | ForEach-Object { $_.Actions }`
+is the only trustworthy source for which checkout a task runs. The task NAME, the presence of a
+same-named script in the trunk, and the BACKLOG all agreed with each other and were all wrong about
+Evidence-Nightly until the action itself was read.
+
+### Sub-item: `bash` under a scheduled task is WSL, not Git Bash ⬜ NOT STARTED
+
+Found 2026-08-02 while test-running the new store-publish wrapper, which failed on its first run:
+
+```
+scripts/publish-store.sh: line 30: set: pipefail: invalid option name
+```
+
+`bash` on PATH resolves to `C:\Windows\System32\bash.exe` -- the **WSL launcher**, which on this box
+currently answers with an EMPTY `$BASH_VERSION` and does not support `set -o pipefail`. Any
+scheduled task that shells out to a bare `bash` gets that, not Git Bash (5.2.37), and WSL also has
+a different filesystem view (`/mnt/c`), so it is the wrong interpreter for scripts that drive
+docker and git on the Windows side regardless of health.
+
+`scripts/publish-store-nightly.ps1` resolves Git Bash by absolute path, **proves** it by checking
+`$BASH_VERSION` is non-empty, and aborts rather than falling back.
+
+**The trap is still live elsewhere.** `Get-BashExe` in `scripts/oshal-stack-watchdog.ps1` checks the
+two Git paths first (so it wins today) but then falls back to `Get-Command bash.exe` -- i.e. to WSL
+bash -- with no validation. If Git ever moves or is upgraded to a different path, stack *recovery*
+silently starts running its commands under a broken WSL shell, which is the worst possible time to
+discover this. `scripts/publish-lab-report.ps1` hardcodes the Git path with no fallback at all, so
+it fails loudly instead, which is better but still brittle.
+
+**Done when:** `Get-BashExe` validates its choice (non-empty `$BASH_VERSION`) and returns `$null`
+rather than a WSL fallback, callers handle `$null` by failing loudly, and the helper lives in ONE
+place both wrappers use instead of being copied a third time. Not done tonight on purpose: it is
+live stack-recovery code and deserves a test-run, not an unattended edit.
+
 ## brace-expansion CVE-2026-14257 quarantine (trivy gate)
 
 **Quarantined 2026-07-25** (`.trivyignore`, honored by `gate_trivy` from the committed tree).

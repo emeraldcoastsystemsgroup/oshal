@@ -49,42 +49,15 @@ cmd /c "npm run evidence:nightly >> `"$log`" 2>&1"
 $exit = $LASTEXITCODE
 Note "=== nightly evidence refresh finished (exit $exit) ==="
 
-# --- Public app store refresh -------------------------------------------------------------
-# WHY HERE: the public store (oshal-apps) is a DERIVED snapshot of the oshal-applications trunk,
-# and refreshing it was a human remembering to run a script. Nobody did, for nine days, while 95
-# commits and five packages landed -- and scripts/oshal-install.sh downloads that snapshot, so
-# every fresh install got a stale store. This rides the batch that already runs rather than a
-# GitHub Actions schedule: Actions minutes are billed on the private trunk, and a nightly cron
-# there would cost real money to do what this box can do for free.
-#
-# Non-fatal by design: this is a release step bolted onto an evidence run, and a failed publish
-# must not turn the evidence exit code red. publish-store.sh is itself fail-closed (four content
-# gates plus a gitleaks scan that now refuses to pass on an empty mount), and it exits 0 without
-# committing when the cut is identical to what is already live -- so a quiet night mints nothing.
-#
-# Set OSHAL_PUBLISH_STORE_NIGHTLY=false to skip it.
-if ($env:OSHAL_PUBLISH_STORE_NIGHTLY -eq 'false') {
-  Note "store publish: skipped (OSHAL_PUBLISH_STORE_NIGHTLY=false)"
-} else {
-  # Same resolution order as scripts/app-store-drift-check.sh: env override, sibling, known path.
-  $storeDir = $env:OSHAL_STORE_DIR
-  if (-not $storeDir) {
-    $sibling = Join-Path (Split-Path -Parent $repo) 'oshal-applications'
-    if (Test-Path (Join-Path $sibling 'marketplace.json')) { $storeDir = $sibling }
-    elseif (Test-Path 'C:\Projects\oshal-applications\marketplace.json') { $storeDir = 'C:\Projects\oshal-applications' }
-  }
-  if (-not $storeDir) {
-    Note "store publish: no store checkout found - skipped (set OSHAL_STORE_DIR)"
-  } else {
-    Note "store publish: cutting from $storeDir"
-    Push-Location $storeDir
-    cmd /c "bash scripts/publish-store.sh >> `"$log`" 2>&1"
-    $pubExit = $LASTEXITCODE
-    Pop-Location
-    if ($pubExit -eq 0) { Note "store publish: OK" }
-    else { Note "store publish: FAILED (exit $pubExit) - see above; the public store is now STALE" }
-  }
-}
+# NOT HERE: the public app-store refresh. It was added here first and that was wrong -- this
+# task's scheduled action executes the FROZEN ADR-115 archive checkout
+# (open-shal-swarm-harness-agent-llm), and the trunk's own run-evidence-nightly-hidden.vbs
+# hardcodes that same archive path, so a step added to this file never runs. See the BACKLOG entry
+# "Nightly scheduled tasks still launch from the frozen archive repo", which also records why THIS
+# task cannot simply be repointed: it writes its board to docs/evidence/, internal-only and absent
+# from the public trunk by design. The store publish therefore has its own trunk-resident task
+# with a self-locating launcher -- scripts/publish-store-nightly.ps1, registered 01:00 by
+# scripts/register-store-publish-nightly.ps1.
 
 # Keep the last 14 nightly logs.
 Get-ChildItem $logDir -Filter '*.log' | Sort-Object Name -Descending | Select-Object -Skip 14 |
