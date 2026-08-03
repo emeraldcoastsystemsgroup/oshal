@@ -480,6 +480,52 @@ rather than a WSL fallback, callers handle `$null` by failing loudly, and the he
 place both wrappers use instead of being copied a third time. Not done tonight on purpose: it is
 live stack-recovery code and deserves a test-run, not an unattended edit.
 
+## The scheduled Local CI gate judges local HEAD, which on this box lags main ⬜ NOT STARTED
+
+**Found 2026-08-02** while checking whether the nightly gate would confirm the brace-expansion
+lockfile change. It would not have.
+
+`prepare_head_src()` in `scripts/ci-local.sh` builds the gate's source export with
+`git archive HEAD` (line ~156). In `--scheduled` mode that is the OSHAL Local CI task's 23:30 run,
+and on this box **HEAD is not main**. Measured at the time of writing:
+
+| | commit | when |
+|---|---|---|
+| local `HEAD` | `5ddd2da` | 2026-08-02 10:58 |
+| `origin/main` | `efa4d6e` | 2026-08-03 00:06 |
+
+Three commits and thirteen hours apart. This is not drift to be tidied up -- it is the **designed
+steady state**. Rule 0a has agents commit through a private `GIT_INDEX_FILE` + `commit-tree` +
+push-by-SHA precisely so the shared HEAD and index are never moved, so HEAD only advances when
+somebody deliberately re-syncs the tree. The nightly gate therefore judges whatever commit the
+tree happens to be pinned at, which may be hours or days behind what actually shipped.
+
+Consequences, in order of how bad they are:
+
+1. **Code that landed on main is never gated by the nightly.** Everything merged since the last
+   tree re-sync is invisible to it.
+2. **A green nightly reads as "main is green" and is not evidence of that.** It is evidence about
+   a stale snapshot. Same shape as the other two findings this session -- a check that looks like
+   coverage and is not.
+3. The `--head` rationale is still right: an unattended gate must not judge a mid-edit tree
+   (comment at line 18). Judging `origin/main` satisfies that just as well, and is what the gate
+   was morally always trying to do.
+
+**The fix, roughly:** in `--scheduled` mode, `git fetch origin` first and archive `origin/main`
+instead of `HEAD`; log the ref AND short sha being judged so the run and any alert email say which
+commit was tested; if the fetch fails, judge HEAD but say loudly in the log that it is doing so.
+Interactive `--head` runs should keep judging HEAD -- a developer running it locally means "test
+what I committed".
+
+**Done when:** a scheduled run's log names the ref and sha it judged, that sha equals
+`origin/main` at run time, and a commit merged to main since the last tree re-sync is demonstrably
+covered by the next nightly.
+
+**Deliberately not done 2026-08-02:** this is the live gate that emails failure alerts, the change
+was found ~15 minutes before its 23:30 run, and there was no time to exercise a full pass first.
+An untested edit to an unattended alerting gate is how you get a 2am false alarm nobody trusts --
+same reasoning as the `Get-BashExe` sub-item above.
+
 ## brace-expansion CVE-2026-14257 quarantine (trivy gate) ✅ RETIRED 2026-08-02
 
 **Quarantined 2026-07-25** (`.trivyignore`, honored by `gate_trivy` from the committed tree).
