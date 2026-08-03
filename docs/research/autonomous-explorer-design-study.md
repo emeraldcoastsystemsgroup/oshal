@@ -2,9 +2,12 @@
 
 **Status:** Research study. Simulation only. Nothing has been built, wetted, or tested.
 **Date:** 2026-08-02
-**Code:** [src/shared/energy/](../../src/shared/energy/), [src/shared/geometry/](../../src/shared/geometry/),
-[src/features/marine/](../../src/features/marine/), [src/features/ground/](../../src/features/ground/),
-[src/features/rotor-design/](../../src/features/rotor-design/)
+**Code:** the engines are not in this repo. They live in the `ocean-lab` package in the public
+app store: [energy/](https://github.com/emeraldcoastsystemsgroup/oshal-apps/tree/main/ocean-lab/src-routes/engine/energy), [geometry/](https://github.com/emeraldcoastsystemsgroup/oshal-apps/tree/main/ocean-lab/src-routes/engine/geometry), [marine/](https://github.com/emeraldcoastsystemsgroup/oshal-apps/tree/main/ocean-lab/src-routes/engine/marine),
+[ground/](https://github.com/emeraldcoastsystemsgroup/oshal-apps/tree/main/ocean-lab/src-routes/engine/ground), [rotor-design/](https://github.com/emeraldcoastsystemsgroup/oshal-apps/tree/main/ocean-lab/src-routes/engine/rotor-design). This study was written while they
+still sat under `src/shared/` and `src/features/`; they were carved out of the kernel under Rule 0c
+(core PR #137, store PR #54) because a tidal-site model serves a user doing a job — it is not
+swarm orchestration.
 **Report:** [ambient-energy-vessel-report.pdf](ambient-energy-vessel-report.pdf) — drawings, the
 governing math, a 432-design sweep, and a bill of materials.
 **Decision record:** none. No ADR was written, and none of this was decided through one.
