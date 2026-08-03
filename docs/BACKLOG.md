@@ -21,13 +21,28 @@ the pieces deliberately left after that landing.
    Leaflet `<script>` 404s, i.e. a map container with no library in it. The install is what starts
    serving the vendored bytes.
 
-2. **Jarvis cannot use the new geocoding subcommands.**
+2. **Jarvis cannot use the new geocoding subcommands.** ✅ DONE 2026-08-02
    `src/app/routes/jarvis-tool-catalog.ts` still documents only `estimate` / `ride` for
    `oshal-uber-rides.js`. The CLI now also exposes `geocode "<address>"` and `reverse <lat> <lon>`,
    which are exactly what a "where is X / what's at these coordinates" ask needs, and Jarvis has no
    idea they exist. Left undone only because that file was outside the session's claim.
    **Done when:** the catalog entry lists both subcommands and a Jarvis ask that needs a coordinate
    resolves through the CLI instead of guessing. Small and safe — one usage string.
+
+   Done: the entry now reads `estimate` · `ride` · `geocode "<address>"` (address → lat/lon) ·
+   `reverse <lat> <lon>` (coordinates → address). The direction words matter as much as the
+   subcommand names — a bare name routes nothing, the assistant has to recognise that "what is at
+   these coordinates" maps to `reverse`.
+
+   Guarded by `tests/unit/jarvis-tool-catalog.spec.ts`, deliberately TWO-SIDED: each subcommand is
+   asserted present in `buildToolsBlock()`'s output AND implemented as a `case` arm in the CLI, so
+   dropping it from either side goes red. Mutation-proved both ways (catalog reverted → 3 red, CLI
+   subcommand removed → 1 red, restored → 6 green).
+
+   Worth keeping: the guard's first draft matched the CLI name loosely and picked up the tools
+   block's own PREAMBLE ("e.g. an Uber ride → oshal-uber-rides.js") instead of the catalog entry —
+   so `ride` passed against the words "an Uber ride" while asserting nothing. It is anchored on the
+   entry's `→ node /app/scripts/<script>` suffix now.
 
 3. **The route line is a straight line on the OSM path.** Google's `DirectionsService` draws the real
    road route when a key is configured; keyless, the surface draws a dashed great-circle with a
