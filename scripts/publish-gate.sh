@@ -117,7 +117,12 @@ fi
 # Adding genuinely curated media is deliberate: put it in an allowed directory, or add the
 # directory here in the same commit that adds the file — having looked at it.
 MEDIA_RE='\.(png|jpe?g|gif|webp|bmp|tiff?|heic|pdf|zip|docx|xlsx|pptx|mp4|mov|avi|mkv|mp3|wav|sqlite|db)$'
-MEDIA_ALLOW='^(artifacts/jarvis-rich-ux-mockups/|docs/OSHAL-WHITEPAPER\.pdf$|docs/assets/|packages/[^/]+/images/|packages/[^/]+/icon\.png$|site/[^/]+/assets/|src/pages/cockpit/icons/)'
+                                                                                 # ↓ audited 2026-08-02: raw bytes AND all decompressed
+                                                                                 #   streams scanned — zero hits for user paths, AppData,
+                                                                                 #   scratchpad or file: URIs; metadata is Chromium/Skia only.
+                                                                                 #   Listed as an EXACT FILE, like the whitepaper, so other
+                                                                                 #   binaries landing in docs/research/ still trip the gate.
+MEDIA_ALLOW='^(artifacts/jarvis-rich-ux-mockups/|docs/OSHAL-WHITEPAPER\.pdf$|docs/research/ambient-energy-vessel-report\.pdf$|docs/assets/|packages/[^/]+/images/|packages/[^/]+/icon\.png$|site/[^/]+/assets/|src/pages/cockpit/icons/)'
 STRAY_MEDIA="$(git ls-files | grep -iE "$MEDIA_RE" | grep -vE "$MEDIA_ALLOW" || true)"
 if [ -n "$STRAY_MEDIA" ]; then
   bad "binary media tracked outside a curated directory (checks above are text-only and CANNOT read these):"
