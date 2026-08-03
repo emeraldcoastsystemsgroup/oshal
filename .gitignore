@@ -36,6 +36,15 @@ workspace/
 # un-ignore anything else. (ADR-115 cutover, 2026-07-23)
 !src/entities/workspace/
 workspace-shared/
+
+# Runtime app staging in the workspace volume — never tracked (Rule 0c, ADR-085). The api
+# stages installed store packages into deployed-apps/ at runtime; they are a materialised
+# copy of the store, not source. Left un-ignored, a stray `git add -A` commits an entire
+# application into the platform trunk, which is the one thing Rule 0c exists to prevent.
+# ROOT-ANCHORED deliberately: a bare `apps/` also matches docs/apps/ (45 tracked files) and
+# would silently drop them from a fresh snapshot — the exact trap `workspace/` fell into above.
+/apps/
+/deployed-apps/
 tmp/
 temp/
 .oshal/
