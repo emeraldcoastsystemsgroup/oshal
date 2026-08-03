@@ -141,13 +141,26 @@ Replay an envelope, a dead-letter row, or a time range from the admin screen. It
 construction: the same identity lands on the same incident and bubbles it rather than duplicating.
 Range replays are bounded and report how many were skipped.
 
-## Not yet cut over
+## Reading incident state
 
-Consolidation still runs through the existing ticket-metadata path, so **`oshal_incident` is not
-populated by live intake** — only by replay. Landing, normalize, identity and the decision record
-are live; incident state has not moved out of ticket metadata yet. Until it does, read live
-incident state from `tickets` (`external_provider = 'prometheus'`) and use `oshal_alert_event` for
-the intake funnel.
+`oshal_incident` is the state of record — identity, occurrence tally, reopen history — and the
+ticket it points at is the operator artifact. They are linked, not duplicated:
+
+```sql
+select i.incident_label, i.state, i.occurrence_count, i.reopen_count, i.ticket_id,
+       i.dedup_key, i.identity_source
+  from oshal_incident i
+ where i.state in ('open','resolved')
+ order by i.severity_num, i.last_seen desc;
+```
+
+A refire never re-points `ticket_id` — the ticket a recurrence opens is a *different* ticket, and
+arm C gives that recurrence its own row. `claim_rule_id` is NULL by design until the rule set is
+served from `oshal_alert_claim_rule`, because the current declarative matchers have no identifier.
+
+**Still written only by replay:** `oshal_incident_snapshot`. Intake does not yet freeze evidence at
+ticket-cut, and `correlation_engine` stays `none` on intake-created incidents because correlation
+runs through the bundling service rather than the topology traversal.
 
 ## Related
 
