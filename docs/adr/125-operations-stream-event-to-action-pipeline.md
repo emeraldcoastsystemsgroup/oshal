@@ -1,7 +1,7 @@
 # ADR-125 — Operations Stream: the event-to-action pipeline gets a durable memory
 
-**Status:** Accepted — migrations 104–109 applied, pipeline landing live on the local stack
-(2026-08-02). The consolidation cutover is **not** done; see "What is not yet true" below.
+**Status:** Accepted — migrations 104–109 applied; landing live 2026-08-02, consolidation cut over
+2026-08-03. Incident state is now a row. See "What is not yet true" for what remains.
 **Date:** 2026-08-02
 **Builds on:** [ADR-119](119-autonomous-health-ticket-processing.md) (the autonomy ladder),
 [ADR-045](045-two-tier-graph-database-and-connector.md) (the graph tier),
@@ -156,13 +156,35 @@ Live on the local stack: envelopes land, events normalize and are decided, `0` p
 dead-letters under real Alertmanager traffic. Both surfaces serve and are auth-gated. 100 tests
 across 8 spec files, each mutation-tested.
 
+### The consolidation cutover (2026-08-03)
+
+Intake now writes `oshal_incident` on every decision that produced or bubbled a ticket. The
+identity is resolved at the claim stage — not at landing, so the two never race for the column —
+and stamped onto the event alongside the incident back-reference, with `COALESCE` so a replay
+re-deciding an event cannot blank the key it consolidated under.
+
+Three boundaries are deliberate:
+
+- **The ticket stays the operator artifact and is linked, not duplicated.** The incident row holds
+  the identity, the occurrence tally and the reopen history; the ticket holds the human workflow.
+  A refire never re-points `ticket_id` — the ticket a recurrence opens is a *different* ticket, and
+  arm C already gave that recurrence its own row.
+- **Only ticketed decisions mint an incident.** Noise, drops and resolutions are recorded on the
+  event and mint nothing; an incident that existed because something was *dropped* would make
+  "open incidents" meaningless.
+- **An incident-write failure never strands the event.** It is logged and the event is still
+  decided, so a transient failure cannot leave a row the sweep re-claims forever.
+
+`claim_rule_id` is written as NULL on purpose: the declarative claim rules are anonymous matchers
+with no identifier. "Which rule admitted this" stays honestly unanswered until the rule set is
+served from `oshal_alert_claim_rule`, whose rows have ids.
+
 ### What is not yet true
 
-**`oshal_incident` is not being populated by the intake.** Consolidation still runs through the
-existing ticket-metadata path; the new incident, member, dispatch and snapshot tables are written
-only by the replay route. The stores, API and screens are live, but the headline change — incident
-state *out* of ticket metadata — is **not cut over**. That is the next unit of work: replace the
-consolidation call in the intake path and backfill in-flight tickets.
+Snapshots (`oshal_incident_snapshot`) are still written only by the replay route — intake does not
+yet freeze evidence at ticket-cut. Correlation still runs through the bundling service's own
+candidate query rather than the topology traversal, so `correlation_engine` stays `none` on
+intake-created incidents.
 
 The discovery drivers that would populate topology from real estates (hypervisors, clusters) do
 not exist. The tables and the graph model are ready for them; each driver is a connector plus a

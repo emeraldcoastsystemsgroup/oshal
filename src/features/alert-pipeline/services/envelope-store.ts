@@ -135,6 +135,21 @@ export interface EventDecisionDetail {
   unclaimedReason?: UnclaimedReason | null;
   /** The incident the event landed on, when the decision produced or joined one. */
   incidentId?: string | null;
+  /**
+   * The consolidation identity, resolved by the claim stage rather than at landing. Landing
+   * stores what arrived; deciding stores what it means, so the two never race for the column.
+   */
+  dedupKey?: string | null;
+  /**
+   * The exact pre-image that was hashed, human-readable. Without it a wrong key cannot be
+   * diagnosed after the fact — the digest alone says nothing about which fields produced it.
+   */
+  identitySource?: string | null;
+  /**
+   * True when the identity rendered empty and the upstream fingerprint stood in. A rising rate
+   * means an alert shape whose labels are not covered, which is alertable rather than a log line.
+   */
+  usedFingerprintFallback?: boolean;
 }
 
 /** @description An item that could not be understood or processed, parked for replay. */
@@ -248,6 +263,11 @@ const DECIDE_EVENT_SQL = `
          claimed_by_rule  = $3,
          unclaimed_reason = $4,
          incident_id      = $5,
+         -- COALESCE so a later decision never blanks an identity an earlier pass resolved:
+         -- a replay that re-decides an event must not erase the key it consolidated under.
+         dedup_key        = COALESCE($6, dedup_key),
+         identity_source  = COALESCE($7, identity_source),
+         used_fingerprint_fallback = COALESCE($8, used_fingerprint_fallback),
          processed_at     = now()
    WHERE event_id = $1`;
 
@@ -640,6 +660,9 @@ export class EnvelopeStore {
         extra.claimedByRule ?? null,
         extra.unclaimedReason ?? null,
         extra.incidentId ?? null,
+        extra.dedupKey ?? null,
+        extra.identitySource ?? null,
+        extra.usedFingerprintFallback ?? null,
       ]);
       logger.debug({ eventId, decision, rule: extra.claimedByRule ?? null }, 'Recorded alert event decision');
     } catch (error) {

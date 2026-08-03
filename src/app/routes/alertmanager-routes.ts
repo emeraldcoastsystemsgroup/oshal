@@ -55,7 +55,14 @@ import type { TicketService } from '@/features/ticketing';
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
 import {
+  DEFAULT_IDENTITY_FIELDS,
+  DispatchLog,
   EnvelopeStore,
+  IncidentStore,
+  hasUsableIdentity,
+  renderDedupKey,
+  renderIdentitySource,
+  resolveDeploymentId,
   type AlertEventRow,
   type ClaimDecision,
   type LandEnvelopeResult,
@@ -70,6 +77,7 @@ import {
   AlertIntakeStats,
   RcaBudgetGate,
   canonicalizeAlert,
+  consolidationTtlSeconds,
   unclaimedPolicy,
   type CanonicalAlert,
   type ClaimResolution,
@@ -114,9 +122,29 @@ export interface AlertmanagerRouteOptions {
  * event row stores. Returned rather than written inline so the same intake serves both the
  * in-memory path (which only tallies) and the landed path (which also stamps the row).
  */
+/**
+ * @description Decisions that produced or bubbled a ticket, and therefore have an incident behind
+ * them. Noise, drops and resolutions are recorded on the event row and mint nothing — an incident
+ * that exists only because something was dropped would make "open incidents" meaningless.
+ */
+const TICKETED_DECISIONS: ReadonlySet<ClaimDecision> = new Set<ClaimDecision>([
+  'created',
+  'consolidated',
+  'bundled',
+  'reopened',
+]);
+
 interface IntakeDecision {
   decision: ClaimDecision;
   unclaimedReason?: UnclaimedReason | null;
+  /** The ticket this alert bubbled or opened, so the incident row can point at it. */
+  ticketId?: string | null;
+  /** Where the ticket parked, mirrored onto a newly created incident. */
+  intakeStatus?: string | null;
+  /** The rule that admitted it, recorded on the incident at genesis. */
+  claimRuleId?: string | null;
+  /** True when the identity fell back to the upstream fingerprint — a coverage signal. */
+  usedFingerprintFallback?: boolean;
 }
 
 /** A canonical alert past the claim gate: re-keyed by its rule, plus how that rule routes it. */
@@ -380,6 +408,11 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
   // events it expands into are the queue the intake works from. Absent => the intake runs
   // entirely in memory over the request body, which is what a pool-less run can honestly offer.
   const envelopes = options.pool ? new EnvelopeStore(options.pool) : null;
+  // The incident row is the state of record; the dispatch ledger is the audit behind it. Both are
+  // pool-gated exactly like the landing store, so a pool-less run keeps the previous shape.
+  const incidents = options.pool ? new IncidentStore(options.pool) : null;
+  const dispatches = options.pool ? new DispatchLog(options.pool) : null;
+  const deploymentId = resolveDeploymentId();
 
   // Shared-secret guard for machine-to-machine posting (Alertmanager bearer token).
   // FAIL-CLOSED: with no ALERT_WEBHOOK_TOKEN configured the receiver rejects everything.
@@ -517,7 +550,16 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
       rootFilter: claim?.rootFilter ?? [],
     });
     tallyOutcome(tally, stats, outcome, intakeStatus, canonical);
-    return { decision: outcome.decision };
+    return {
+      decision: outcome.decision,
+      ticketId: outcome.ticketId,
+      intakeStatus,
+      // The declarative claim rules carry no identifier — they are anonymous matchers. Genesis
+      // records null rather than a synthesised id, so "which rule admitted this" stays honestly
+      // unanswered until the rule set is served from oshal_alert_claim_rule, where rows have ids.
+      claimRuleId: null,
+      usedFingerprintFallback: claim?.usedFingerprintFallback ?? false,
+    };
   };
 
   /**
@@ -579,13 +621,109 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
    * @param executor - The claiming transaction's connection.
    * @returns Nothing.
    */
+  /**
+   * @description Resolves the consolidation identity for a landed event: the normalized
+   * (target, alertname) pair, joined with the unit separator and hashed, namespaced by the
+   * deployment so a shared database cannot cross-suppress environments. Returns null when the
+   * event carries neither half — such an alert is unactionable and must not mint an incident.
+   * @param event - The landed event.
+   * @returns The identity, or null when the event has no usable one.
+   */
+  const resolveEventIdentity = (event: AlertEventRow): { dedupKey: string; identitySource: string } | null => {
+    if (!hasUsableIdentity(event)) return null;
+    return {
+      identitySource: renderIdentitySource(event, DEFAULT_IDENTITY_FIELDS),
+      dedupKey: renderDedupKey(event, DEFAULT_IDENTITY_FIELDS, deploymentId),
+    };
+  };
+
+  /**
+   * @description Writes the durable incident for a decided event and points it at the ticket the
+   * triage path produced. The incident row — not the ticket's metadata blob — is the state of
+   * record: it carries the identity, the occurrence tally and the reopen history, and its partial
+   * unique index is what makes "one open incident per identity" a database guarantee rather than
+   * a convention. The ticket remains the operator artifact and is linked, not duplicated.
+   *
+   * This never throws into the caller's decision: an incident-write failure must not strand an
+   * event that already has a ticket. It is logged and the event is still decided, so the row is
+   * not re-claimed forever by the sweep.
+   * @param event - The landed event.
+   * @param decided - What the triage path did with it.
+   * @param identity - The resolved consolidation identity, or null when it has none.
+   * @returns The incident id, or null when no incident was written.
+   */
+  const recordIncident = async (
+    event: AlertEventRow,
+    decided: IntakeDecision,
+    identity: { dedupKey: string; identitySource: string } | null,
+  ): Promise<string | null> => {
+    // Only a decision that produced or bubbled a ticket has an incident. Noise, drops and
+    // resolutions are recorded on the event itself and deliberately mint nothing.
+    if (!incidents || !identity || !TICKETED_DECISIONS.has(decided.decision)) return null;
+    try {
+      const outcome = await incidents.consolidate(
+        { ...event, dedupKey: identity.dedupKey, identitySource: identity.identitySource },
+        {
+          reopenWindowSeconds: consolidationTtlSeconds(),
+          claimRuleId: decided.claimRuleId ?? null,
+          intakeStatus: decided.intakeStatus ?? 'backlog',
+          ownerSub: ALERT_INTAKE_OWNER_SUB,
+        },
+      );
+      const incident = outcome.incident;
+      await incidents.upsertMember(incident.incidentId, {
+        memberKey: identity.dedupKey,
+        alertname: event.alertname,
+        target: event.target,
+        severity: event.severity,
+        severityNum: event.severityNum,
+        fingerprint: event.fingerprint || null,
+        attachReason: outcome.wasCreated ? 'genesis' : 'same-key',
+      });
+      // Link the ticket once. A refire must not re-stamp it: the ticket a recurrence opens is a
+      // different ticket, and arm C already gave that recurrence its own incident row.
+      if (decided.ticketId && incident.ticketId !== decided.ticketId) {
+        await incidents.updateIncident(incident.incidentId, incident.revision, { ticketId: decided.ticketId });
+      }
+      await dispatches?.record({
+        incidentId: incident.incidentId,
+        dedupKey: identity.dedupKey,
+        targetChannel: 'ticket',
+        action: outcome.wasReopened ? 'reopen' : outcome.wasCreated ? 'create' : 'update',
+        attempted: true,
+        suppressed: false,
+        success: true,
+        statusCode: null,
+        error: null,
+        ticketId: decided.ticketId ?? null,
+        ttlSeconds: null,
+        payload: null,
+      });
+      return incident.incidentId;
+    } catch (err) {
+      logger.error(
+        { err, eventId: event.eventId, dedupKey: identity.dedupKey },
+        'Incident row write failed — the ticket stands and the event is still decided',
+      );
+      return null;
+    }
+  };
+
   const decideLandedEvent = async (store: EnvelopeStore, event: AlertEventRow, executor: Queryable): Promise<void> => {
     try {
       const decided = await intakeAlert(toWireAlert(event), emptyTally());
+      const identity = resolveEventIdentity(event);
+      const incidentId = await recordIncident(event, decided, identity);
       await store.decideEvent(
         event.eventId,
         decided.decision,
-        { unclaimedReason: decided.unclaimedReason ?? null },
+        {
+          unclaimedReason: decided.unclaimedReason ?? null,
+          incidentId,
+          dedupKey: identity?.dedupKey ?? null,
+          identitySource: identity?.identitySource ?? null,
+          usedFingerprintFallback: decided.usedFingerprintFallback ?? false,
+        },
         executor,
       );
     } catch (err) {
