@@ -6986,3 +6986,26 @@ Either the gate regressed, or a different caller bypasses `enqueueForUser`'s tri
 when:** the drafting burst is traced to its caller and either the gate is repaired with a guard that
 goes red on an automated draft with no opt-in row, or the caller is shown to be an explicit human
 action.
+
+## Two guard specs red at random in the full unit run — a tree walk against a 5s default timeout
+
+**Context.** `npm run test:unit` (535 files, ~157s) reports one failed test per run, and **which**
+spec fails changes between runs: `tests/unit/no-dev-secret-fallback.spec.ts` on one run,
+`tests/unit/repo-separation.spec.ts` on the next. Run either one alone and it passes — 4/4 and 7/7,
+about 1.5s each. Both walk the tree from disk inside vitest's default 5000ms per-test timeout, and
+under 500+ concurrent spec files on this Windows/NTFS box the walk does not finish in time. Nothing
+is wrong with the assertions; the budget is wrong.
+
+This is worse than an ordinary flake because **both specs are guards, not feature tests**:
+`repo-separation` is the Rule 0c / ADR-115 enforcement that keeps application code out of the
+kernel, and `no-dev-secret-fallback` is the security burn-down's hardcoded-dev-key guard. Per the
+2026-07-19 hardening doctrine, a red gate nobody acts on trains everyone to ignore red — and the
+usual next step for a spec that fails "for environment reasons" is a skip, at which point the guard
+does not exist at all. Found 2026-08-03 while verifying the tree before a deploy; both guards were
+confirmed genuinely green in isolation, so nothing was shipped on a false pass.
+
+**Done when:** `npm run test:unit` is green three consecutive full runs, and the fix is an explicit
+per-test timeout on the scanning specs (or a single shared/cached tree walk reused by both) —
+**not** `it.skip`, `--no-threads`, and not a raised GLOBAL `testTimeout`, which would slacken the
+budget for all 5392 tests to paper over two. A regression guard is not required here: the specs
+already exist; what is missing is that they finish.
