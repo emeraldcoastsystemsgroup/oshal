@@ -9,6 +9,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: TOOL_CATALOG + buildToolsBlock (ADR-087 access-role-scoped auto tool-feed) + withImageDeliverableContract (route decomposition, no behaviour change).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Advertise oshal-uber-rides.js's geocode/reverse subcommands. The CLI grew them with the rides map fix (they are what the surface calls to drop and drag pins), but this catalog is Jarvis's ONLY view of a tool — the block it builds says "a script not listed here is off-limits" — so a capability absent from the usage string does not exist as far as Jarvis is concerned. It was answering "where is X" / "what is at these coordinates" by guessing while a real geocoder sat one subcommand away.
  *
  * @module jarvis-tool-catalog
  */
@@ -32,7 +33,7 @@ const INTERNAL: SwarmAccessRole[] = ['operator', 'swarm'];
  *  here still gets auto-surfaced by name so a newly-added CLI is never invisible to Jarvis — list a
  *  script here with accessRoles that exclude 'jarvis' to deliberately hide it (ADR-087). */
 const TOOL_CATALOG: Record<string, ToolCatalogEntry> = {
-  'oshal-uber-rides.js': { usage: 'Uber RIDES — request/estimate a ride. `estimate "<pickup>" "<dropoff>"` · `ride "<pickup>" "<dropoff>" [type]`' },
+  'oshal-uber-rides.js': { usage: 'Uber RIDES + geocoding. `estimate "<pickup>" "<dropoff>"` · `ride "<pickup>" "<dropoff>" [type]` · `geocode "<address>"` (address → lat/lon) · `reverse <lat> <lon>` (coordinates → address)' },
   'oshal-uber.js': { usage: 'Uber EATS — restaurants & food delivery. `search "<food>"` · `menu "<storeId>"` · `order "<storeId>"`' },
   'oshal-walmart.js': { usage: 'Walmart shopping. `search "<item>"` · `deals` · `cart "<ITEMID_QTY,...>"`' },
   'oshal-weather.js': { usage: 'NWS severe-alert trading feed only (NOT a local forecast). Local forecasts belong to weather-bot / format-weather.' },
