@@ -12,7 +12,7 @@ Prometheus rule fires
   → normalize + expand                   → oshal_alert_event
   → identity + dedup key                 → event.dedup_key
   → claim match                          → event.claim_decision
-  → consolidate                          → oshal_incident (see "Not yet cut over")
+  → consolidate                          → oshal_incident + oshal_incident_member
   → correlate over topology              → oshal_topology_{node,edge}
   → freeze evidence                      → oshal_incident_snapshot
   → ticket → RCA → action                → oshal_alert_dispatch
