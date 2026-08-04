@@ -1,0 +1,132 @@
+<!doctype html>
+<!-- data-theme is set here as well as by surface-theme.js: the theme files scope every token to
+     [data-theme="…"] with no :root fallback, so a page that waits for the script paints once with
+     no tokens at all. The script corrects it to the reader's actual theme immediately. -->
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<link rel="stylesheet" href="/shared/ui/css/surface-reading.css" />
+<script src="/shared/ui/js/surface-reading.js"></script>
+<!-- Served from the @vscode/codicons package by the /fonts static mount. Same-origin on purpose:
+     an external CDN would be blocked and would leak a request off the customer's box. -->
+<link rel="stylesheet" href="/fonts/codicon.css" />
+<style>
+  /* Palette comes from the framework tokens — no literal hex, so this page is correct in all
+     eleven themes rather than only the dark one. */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 26px 22px 40px;
+    background: var(--bg-primary, #14161c); color: var(--text-primary, #e6e8ee);
+    font: 0.95rem/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; font-weight: 650; }
+  .lede { color: var(--text-muted, #9aa0ae); margin: 0 0 26px; max-width: 62ch; }
+  h2 {
+    font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; font-weight: 700;
+    color: var(--text-muted, #9aa0ae); margin: 26px 0 10px;
+  }
+  h2:first-of-type { margin-top: 0; }
+  /* auto-fit + minmax: one column on a phone, as many as fit on a monitor, with no breakpoint
+     to maintain. The rail this page replaces could not do that — it was a fixed vertical strip
+     whatever the screen. */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+  .card {
+    display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+    background: var(--bg-tertiary, #232733); color: inherit;
+    border: 1px solid var(--border-color, #2e3342); border-radius: 10px;
+    padding: 13px 15px; cursor: pointer; font: inherit;
+  }
+  .card:hover { border-color: var(--accent-primary, #4a7bd0); background: var(--bg-card, #1c1f27); }
+  .card:focus-visible { outline: 2px solid var(--accent-primary, #4a7bd0); outline-offset: 2px; }
+  .card .codicon { font-size: 18px; color: var(--accent-primary, #4a7bd0); flex: none; }
+  .card .t { font-weight: 600; }
+  .empty { color: var(--text-muted, #9aa0ae); }
+</style>
+<!-- AFTER our own <style>, so the shared glass treatment wins where the two overlap — the same
+     order the other tool surfaces use. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <h1>Settings</h1>
+  <p class="lede">
+    Everything that is not part of your day-to-day work lives here, so the sidebar stays your
+    application. Nothing shown below is hidden from you — it has simply moved off the rail.
+  </p>
+
+  <h2>Your workspace</h2>
+  <div class="grid" id="appGrid"><span class="empty">Loading…</span></div>
+
+  <h2 id="platformHead" hidden>Platform</h2>
+  <div class="grid" id="platformGrid" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // Which entries read as "yours" versus "the platform underneath". Purely presentational
+  // grouping — the ribbon decides what this page is allowed to offer at all.
+  var WORKSPACE = ['settings', 'tool-notify', 'tool-my-data', 'tool-budgets'];
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function card(t) {
+    var icon = /^codicon /.test(t.icon || '') ? t.icon : 'codicon codicon-gear';
+    return '<button class="card" type="button" data-view="' + esc(t.id) + '">'
+      + '<span class="' + esc(icon) + '"></span>'
+      + '<span class="t">' + esc(t.label || t.id) + '</span></button>';
+  }
+
+  function render(tools) {
+    var mine = [], plat = [];
+    tools.forEach(function (t) { (WORKSPACE.indexOf(t.id) !== -1 ? mine : plat).push(t); });
+
+    var appGrid = document.getElementById('appGrid');
+    appGrid.innerHTML = mine.length
+      ? mine.map(card).join('')
+      : '<span class="empty">No workspace settings available to you.</span>';
+
+    if (plat.length) {
+      document.getElementById('platformHead').hidden = false;
+      var pg = document.getElementById('platformGrid');
+      pg.hidden = false;
+      pg.innerHTML = plat.map(card).join('');
+    }
+
+    // Ask the ribbon to switch view. The ribbon resolves the id against the views it actually
+    // admitted, so a card can never reach a surface the profile withheld.
+    document.querySelectorAll('.card').forEach(function (b) {
+      b.addEventListener('click', function () {
+        parent.postMessage({ type: 'app-navigate', view: b.dataset.view }, '*');
+      });
+    });
+  }
+
+  window.addEventListener('message', function (e) {
+    var d = e && e.data;
+    if (!d || typeof d !== 'object' || d.type !== 'platform-hub-tools') return;
+    render(Array.isArray(d.tools) ? d.tools : []);
+  });
+
+  // The ribbon owns the list; announce readiness and let it answer. Hardcoding the tools here
+  // would drift the moment one is added, renamed, or operator-gated.
+  parent.postMessage({ type: 'platform-hub-ready' }, '*');
+
+  // If the shell never answers, say so plainly rather than sitting on "Loading…" forever.
+  setTimeout(function () {
+    var g = document.getElementById('appGrid');
+    if (g && /Loading/.test(g.textContent)) {
+      g.innerHTML = '<span class="empty">Settings could not be loaded. Reload the page.</span>';
+    }
+  }, 4000);
+})();
+</script>
+</body>
+</html>

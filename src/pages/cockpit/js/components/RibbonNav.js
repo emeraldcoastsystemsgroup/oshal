@@ -36,6 +36,9 @@ const HARDCODED_VIEWS = [
 
 const PINNED_PLATFORM_VIEW_IDS = ['operations', 'connectors'];
 
+/** The single rail entry that a focused app shows in place of the platform tool set. */
+const PLATFORM_HUB_ID = 'tool-platform-hub';
+
 /** Resolve active profile name from URL ?app= or ?profile= only.
  *
  * Previous versions cached the URL choice in localStorage so that a plain
@@ -129,8 +132,32 @@ export class RibbonNav {
       const d = e && e.data;
       if (d === 'lm-classes-changed') { this._reloadDynamicTools('tool-lm-class-'); return; }
       if (!d || typeof d !== 'object') return;
+      // The platform hub asks for the tools it should offer. Answering with the REGISTERED views
+      // (not a hardcoded list in the page) is what keeps the hub from drifting as tools are added
+      // or gated — a tool an operator may not have is never sent, so it can never be offered.
+      if (d.type === 'platform-hub-ready') {
+        const src = e.source;
+        if (src) {
+          src.postMessage({
+            type: 'platform-hub-tools',
+            tools: this.views
+              .filter(v => v.platformTool || v.id === 'settings')
+              .map(v => ({ id: v.id, label: v.label, icon: v.icon })),
+          }, '*');
+        }
+        return;
+      }
       let id = null;
       if (d.type === 'app-navigate' && d.tool) id = 'tool-' + String(d.tool);
+      // `view` addresses a view by its own id, so the hub can reach a tool that is registered but
+      // deliberately not on the rail. Resolved against this.views — the admitted set — so this
+      // still cannot grant a surface the profile never admitted.
+      else if (d.type === 'app-navigate' && d.view) {
+        const want = String(d.view);
+        if (this.views.find(v => v.id === want)) { this.setActive(want); return; }
+        logger.warn('Bridge navigation target not registered — ignored', { target: want });
+        return;
+      }
       else if (d.type === 'app-tools-changed' && d.prefix) { this._reloadDynamicTools('tool-' + String(d.prefix)); return; }
       else if (d.type === 'lm-navigate' && d.view) {
         const view = String(d.view);
@@ -174,10 +201,21 @@ export class RibbonNav {
     this.activeView = this.profile?.defaultView || 'tickets';
     this.views = this._buildFrameworkViews();
     this._appendPlatformTools();
+
+    // Platform chrome is OPT-IN for a focused app, opt-out for the operator cockpit. An app that
+    // genuinely wants the operator tools on its rail says so with `ribbon.showPlatformTools: true`;
+    // it is deliberately an explicit opt-in, because the previous default shipped a dozen operator
+    // tools to every customer's staff and no manifest key could decline them.
+    this.hidePlatformChrome = !!resolveRequestedProfileName()
+      && this.profile?.ribbon?.showPlatformTools !== true
+      && !this.studentMode;
+    if (this.hidePlatformChrome) this._appendPlatformHub();
+
     logger.info('Ribbon initialised with profile', {
       profile: this.profile?.name,
       defaultView: this.activeView,
       viewCount: this.views.length,
+      hidePlatformChrome: this.hidePlatformChrome,
     });
     this.render();
     this._loadToolViews();
@@ -323,6 +361,41 @@ export class RibbonNav {
    * @returns {void}
    */
   _appendPlatformTools() {
+    // Everything this adds is PLATFORM chrome, not the app's. Tag it all so the rail can collapse
+    // it behind one entry for a focused app. Tagging by diffing the view list rather than at each
+    // push site: there are a dozen of those, and one missed tag is a tool that leaks back onto a
+    // customer's rail — the exact failure this whole change exists to stop.
+    const before = this.views.length;
+    this._appendPlatformToolsInner();
+    for (let i = before; i < this.views.length; i++) this.views[i].platformTool = true;
+  }
+
+  /**
+   * @description Register the single "Settings" rail entry a focused app shows in place of the
+   * platform tool set. The tools it fronts stay REGISTERED as views — they are only withheld from
+   * the rail — so deep links and the iframe navigate bridge keep working and nothing is lost.
+   *
+   * A static page under `src/pages/cockpit/tools/`, like the four platform tools that already ship
+   * that way, so it needs no Express route.
+   * @returns {void}
+   */
+  _appendPlatformHub() {
+    if (this.views.find(v => v.id === PLATFORM_HUB_ID)) return;
+    this.views.push({
+      id: PLATFORM_HUB_ID,
+      icon: 'codicon codicon-gear',
+      label: 'Settings',
+      section: 'bottom',
+      toolUi: { iframeUrl: '/cockpit/tools/platform.html' },
+    });
+  }
+
+  /**
+   * @description The platform-tool list itself. Called only via {@link RibbonNav#_appendPlatformTools},
+   * which tags everything this appends.
+   * @returns {void}
+   */
+  _appendPlatformToolsInner() {
     // Student/kiosk rail: no operator platform chrome (Operations, Connectors,
     // Optimizer, Workflow Studio). Leave the rail to the app's own screens only.
     if (this.studentMode) return;
@@ -542,7 +615,22 @@ export class RibbonNav {
     // Settings) — leaving only the app's own top-rail student screens.
     const homeViews = this.views.filter(v => v.section === 'home');
     const topViews = this.views.filter(v => v.section !== 'home' && v.section !== 'bottom');
-    const bottomViews = this.studentMode ? [] : this.views.filter(v => v.section === 'bottom');
+    let bottomViews = this.studentMode ? [] : this.views.filter(v => v.section === 'bottom');
+
+    // A FOCUSED app (?app=<name>) shows the app's own screens plus ONE door to everything else.
+    // Previously the platform appended its whole tool set to every cockpit — Optimizer, Workflow
+    // Studio, Run Trace, Dead Letters, Budgets — on top of whatever the app declared, and a
+    // manifest had no way to decline: `hideFrameworkItems` only reaches the hardcoded framework
+    // views, never the appended ones. A customer's staff opened the product they were sold and
+    // found a dozen operator tools, most of which answer 403 to them. That is what "it is not
+    // usable or configurable" meant, and it is a positioning failure, not a layout one.
+    //
+    // The plain /cockpit/ (no ?app=) is the OPERATOR view and keeps the full dense rail.
+    if (this.hidePlatformChrome) {
+      bottomViews = bottomViews.filter(v => !v.platformTool && v.id !== 'settings');
+      const hub = this.views.find(v => v.id === PLATFORM_HUB_ID);
+      if (hub) bottomViews.push(hub);
+    }
 
     this.container.innerHTML = `
       <nav class="ribbon-nav" id="ribbonNavInner">
