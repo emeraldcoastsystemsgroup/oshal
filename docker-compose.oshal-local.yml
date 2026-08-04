@@ -1843,8 +1843,14 @@ services:
       # tools to the CLI session, so career_database stayed a ghost. Codex's sandbox CAN shell out
       # (CODEX_SANDBOX_MODE=danger-full-access), so Jarvis runs the mounted CLIs directly —
       # the same proven pattern as email-bot/home-bot/cloud-ops-bot. Overrides the *bot-env default.
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
+      # Parameterised, default UNCHANGED. A deployment whose host has no ~/.codex/auth.json must run
+      # this bot on another engine, and the only way to say so was to EDIT this line — which left
+      # that box's git tree permanently dirty and made the documented core update
+      # (`git reset --hard origin/main`, gated on a clean tree) silently destroy the setting, taking
+      # the assistant down. Setting JARVIS_LLM_PROVIDER / JARVIS_LLM_MODEL in .env survives updates.
+      # With both unset this renders byte-identical to the literals it replaces.
+      FORCE_LLM_PROVIDER: ${JARVIS_LLM_PROVIDER:-openai-codex}
+      FORCE_LLM_MODEL: ${JARVIS_LLM_MODEL:-gpt-5.5}
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       # career_database tool (node scripts/oshal-jobhunter.js query) reads the user's jobs DB here.
       JOBHUNTER_STORE_ROOT: /app/output/career-hunter-data
