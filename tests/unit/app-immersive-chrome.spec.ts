@@ -143,7 +143,26 @@ describe('global assistant load-order contract', () => {
   it('cache-busts both changed cockpit scripts for installed PWAs', () => {
     const index = readFileSync(resolve('src/pages/cockpit/index.html'), 'utf8');
     const worker = readFileSync(resolve('src/pages/cockpit/service-worker.js'), 'utf8');
-    expect(index).toContain('js/jarvis-orb.js?v=2');
-    expect(worker).toContain("const CACHE_VERSION = 'oshal-cockpit-v28'");
+    expect(index).toContain('js/jarvis-orb.js?v=3');
+    expect(worker).toContain("const CACHE_VERSION = 'oshal-cockpit-v29'");
+  });
+
+  it('expands the assistant panel without re-opening the mobile viewport fix', () => {
+    const orb = readFileSync(resolve('src/pages/cockpit/js/jarvis-orb.js'), 'utf8');
+
+    // The expanded state pins its geometry with the safe-area insets, exactly as the phone rule
+    // does. A future "just make it bigger" edit that reaches for 100vw/100vh instead would slide
+    // the chat input under a phone's URL bar again — the bug change-log entry 2 exists to fix.
+    expect(orb).toContain('#jarvisOrbPanel.wide');
+    expect(orb).toMatch(/#jarvisOrbPanel\.wide[\s\S]{0,400}env\(safe-area-inset-top/);
+    expect(orb).not.toMatch(/#jarvisOrbPanel\.wide[\s\S]{0,400}height:\s*100vh/);
+
+    // The docked panel must keep its dynamic-viewport height.
+    expect(orb).toContain('100dvh');
+
+    // Expand is delegated from the panel click handler and toggles aria-pressed, so the control
+    // reports its own state to a screen reader rather than being a mystery glyph.
+    expect(orb).toContain("e.target.id === 'jarvisOrbExpand'");
+    expect(orb).toContain("setAttribute('aria-pressed'");
   });
 });
