@@ -637,9 +637,7 @@ export class RibbonNav {
         ${homeViews.length ? `<div class="ribbon-home">${homeViews.map(v => this._btn(v)).join('')}</div>` : ''}
         <div class="ribbon-scroll">
           ${this._renderGroups(topViews)}
-        </div>
-        <div class="ribbon-bottom">
-          ${bottomViews.map(v => this._btn(v)).join('')}
+          ${bottomViews.length ? `<div class="ribbon-bottom">${bottomViews.map(v => this._btn(v)).join('')}</div>` : ''}
         </div>
       </nav>
     `;

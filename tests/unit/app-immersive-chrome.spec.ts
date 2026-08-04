@@ -144,7 +144,7 @@ describe('global assistant load-order contract', () => {
     const index = readFileSync(resolve('src/pages/cockpit/index.html'), 'utf8');
     const worker = readFileSync(resolve('src/pages/cockpit/service-worker.js'), 'utf8');
     expect(index).toContain('js/jarvis-orb.js?v=3');
-    expect(worker).toContain("const CACHE_VERSION = 'oshal-cockpit-v30'");
+    expect(worker).toContain("const CACHE_VERSION = 'oshal-cockpit-v31'");
   });
 
   it('expands the assistant panel without re-opening the mobile viewport fix', () => {

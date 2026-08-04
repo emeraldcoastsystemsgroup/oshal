@@ -149,6 +149,12 @@
    both fixed regions read as one system and the scrollable middle stands out
    between them; the negative bottom margin bleeds the band to the nav's
    bottom edge. */
+/* The settings tray now lives INSIDE the scrollable area rather than pinned beneath it.
+   Pinned, it carried `flex-shrink: 0` and simply never yielded: every icon it held came out
+   of the application's tray, and on a laptop that left the app four icons of usable rail with
+   a dozen settings icons below the divider. A navigation whose own chrome crowds out the
+   product is not navigation. Scrolling as one list means the app's screens always come first
+   and can never be squeezed — the settings entries just follow them. */
 .ribbon-bottom {
   display: flex;
   flex-direction: column;
@@ -159,9 +165,7 @@
   border-top: 1px solid var(--border-color);
   padding-top: 8px;
   margin-top: 4px;
-  margin-bottom: -8px;
-  padding-bottom: 8px;
-  background: var(--bg-tertiary);
+  padding-bottom: 4px;
 }
 
 /* Ribbon button */
@@ -294,8 +298,9 @@
   }
   /* Drawer uses 16px top padding — bleed the pinned home tray's tint to match. */
   .ribbon-home { margin-top: -16px; padding-top: 16px; }
-  /* The tray tint runs to the drawer's true bottom edge (incl. the home-
-     indicator safe area) via its own padding, since the nav no longer pads. */
+  /* Clears the home-indicator safe area at the true bottom edge, since the nav no longer pads.
+     (The tray carried a tint when it was a pinned band; inside the scrolling column it is just
+     the last group in the list, so the separator border alone marks it.) */
   .ribbon-bottom {
     margin-bottom: 0;
     padding-bottom: calc(8px + env(safe-area-inset-bottom));

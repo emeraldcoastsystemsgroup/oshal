@@ -84,6 +84,25 @@ describe('a focused app owns its rail', () => {
     expect(hub).toMatch(/var\(--bg-primary/);
   });
 
+  it('never lets the settings tray crowd out the application', () => {
+    const src = read(RIBBON);
+    const css = readFileSync(resolve(process.cwd(), 'src/pages/cockpit/css/ribbon.css'), 'utf8');
+
+    // The settings tray renders INSIDE the scrollable area. Pinned as a sibling it carried
+    // `flex-shrink: 0` and never yielded, so every icon it held came straight out of the app's
+    // tray — a customer's laptop showed four icons of application above a dozen of settings.
+    expect(src).toMatch(/<div class="ribbon-scroll">[\s\S]{0,300}ribbon-bottom/);
+    // ...and NOT as a sibling after the scroll container closes.
+    expect(src).not.toMatch(/<\/div>\s*<div class="ribbon-bottom">/);
+
+    // The app's own screens are rendered before it, so they are what the user sees first.
+    expect(src).toMatch(/_renderGroups\(topViews\)[\s\S]{0,200}bottomViews/);
+
+    // The scroll tray must keep the properties that let it actually own the height.
+    expect(css).toMatch(/\.ribbon-scroll \{[^}]*flex: 1 1 auto/);
+    expect(css).toMatch(/\.ribbon-scroll \{[^}]*min-height: 0/);
+  });
+
   it('does not strand the user on a silent failure', () => {
     const hub = read(HUB);
     // If the shell never answers the ready message, say so rather than showing "Loading…" forever.
