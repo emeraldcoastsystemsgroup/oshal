@@ -25,6 +25,7 @@ const UTILITIES = path.join(process.cwd(), 'src/api/utilities.html');
  */
 function stripComments(src: string): string {
   return src
+    .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
 }
@@ -148,13 +149,27 @@ describe('provider-panel-shows-registry-precedence', () => {
     expect(resolved.filter((r) => r.providerSource === 'registry-harness').length).toBeGreaterThan(0);
   });
 
-  it('the panel explains itself when NO bot is provider-overridable (today: none are)', () => {
-    // Comments stripped: the first version of this assertion passed against its own explanatory
-    // comment, which mentioned the same expression it was checking for.
+  it('utilities-is-connections-not-bot-config: the connections screen carries no per-bot config', () => {
+    // /utilities is LOGIN AUTHORIZATION — the place you grant OSHAL access to an account. Per-bot
+    // provider/model is CONFIGURATION and belongs to /config, which already owned it. A duplicate
+    // panel here pushed "Your accounts" — the only reason anyone opens this page — below a wall of
+    // bot settings, and the operator could not find it when he needed to reconnect a broker before
+    // its token expired. Guard the SEPARATION, not the one panel that violated it: any future
+    // bot-config control on this page should red this, not just the removed one.
+    // Comments stripped (HTML and JS): an earlier guard here passed against its own explanatory
+    // comment, and the note explaining this removal names the very symbols it forbids.
     const html = stripComments(readFileSync(UTILITIES, 'utf8'));
-    // An empty "only bots I can change" list must read as an explanation, not as a loading bug.
-    expect(html).toMatch(/pinnedCount\s*===\s*BOT_STATE\.length/);
-    expect(html).toMatch(/none of their providers can be changed from here/i);
+    for (const symbol of [
+      'BOT_STATE', 'loadBotProviders', 'renderBotProviders', 'saveBotProvider',
+      'botProviderOptions', 'PROVIDER_SOURCE_LABEL', 'providerOverridable', 'precedenceNote',
+    ]) {
+      expect(html, `${symbol} is bot configuration — it belongs to /config, not the connections screen`)
+        .not.toContain(symbol);
+    }
+    // No per-bot runtime push-down from this page either — that write is /config's to make.
+    expect(html).not.toMatch(/\/runtime['"`]/);
+    // ...while the controls this screen DOES own are still here: starting an account connection.
+    expect(html).toMatch(/\/api\/connect\/'\s*\+\s*id\s*\+\s*'\/start/);
   });
 
   it('GET /api/agents carries the resolved precedence fields for the surface to render', async () => {
@@ -214,20 +229,12 @@ describe('provider-panel-shows-registry-precedence', () => {
     expect(unreadable.modelOverridable).toBe(true);
   });
 
-  it('the Utilities panel disables the control FROM providerOverridable and renders the API reason', () => {
-    const html = readFileSync(UTILITIES, 'utf8');
-    // Reads the resolved fields rather than re-deriving them from harnessType.
-    expect(html).toMatch(/bot\.providerOverridable\s*===\s*false/);
-    expect(html).toMatch(/pinned\s*\?\s*' disabled/);
-    // The reason is the API's sentence, not a local paraphrase.
-    expect(html).toMatch(/esc\(bot\.precedenceNote/);
-    // The tier label comes from providerSource.
-    expect(html).toMatch(/PROVIDER_SOURCE_LABEL\[bot\.providerSource\]/);
-    // The write targets the authoritative push-down route, and a 502 is reported as NOT applied.
-    expect(html).toMatch(/\/api\/agents\/'\s*\+\s*encodeURIComponent\(agentId\)\s*\+\s*'\/runtime/);
-    expect(html).toMatch(/res\.status\s*===\s*502/);
-    expect(html).toMatch(/Nothing was recorded/);
-    // A disabled select must not contribute a providerId to the request body.
-    expect(html).toMatch(/!provEl\.disabled\s*&&\s*provEl\.value/);
-  });
+  // NOTE: the surface-rendering guard that used to sit here asserted the /utilities panel disabled
+  // its control from providerOverridable and printed the API's reason verbatim. That panel moved to
+  // /config, and config-admin's provider picker does NOT yet consult providerOverridable — it offers
+  // a <select> for bots whose registry harness makes the choice a no-op. That is a PRE-EXISTING gap
+  // in config-admin, not something this removal introduced, and re-pointing the guard at a surface
+  // that cannot satisfy it would have shipped a red gate or a fake-green one. Tracked in
+  // docs/BACKLOG.md as "config-admin provider picker is precedence-blind"; the RULE itself stays
+  // fully guarded by the resolver tests above, which are the ones that matter for correctness.
 });

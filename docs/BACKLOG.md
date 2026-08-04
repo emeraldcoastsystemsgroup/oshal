@@ -3,6 +3,32 @@
 Tracking items deferred from the OSHAL build session. Each item has the
 deferral reason and the "done" condition so future work isn't ambiguous.
 
+## config-admin's provider picker is precedence-blind ⬜ NOT STARTED
+
+**Context.** Per-bot provider/model configuration was duplicated onto `/utilities` (the account
+connection screen) and has been removed from there — that page is login authorization, and the
+duplicate pushed "Your accounts" below a wall of bot settings until the operator could not find the
+control he opened the page for. `/config` already owned per-bot settings and keeps them.
+
+**The gap.** The removed `/utilities` panel consulted the resolved precedence fields on
+`GET /api/agents` — `providerOverridable`, `providerSource`, `precedenceNote` — so a bot whose
+registry harness outranks the operator's pick showed a **disabled** control and said why.
+`src/pages/config-admin/config-admin-agent-panel.js:405` renders `#agentProviderInput` as an
+unconditional `<select>` and reads none of those fields. Since every bot in this deployment declares
+a registry harness, **every provider choice made at `/config` today is a silent no-op** — the
+registry wins and the UI never says so. The write path is also different: `/config` saves the
+profile, where the removed panel pushed to `PUT /api/agents/:id/runtime` and surfaced a 502 as "not
+applied, nothing recorded".
+
+This is pre-existing — the removal did not cause it, it only left `/config` as the sole surface.
+The precedence RULE remains fully guarded by the resolver tests in
+`tests/unit/bot-provider-precedence.spec.ts`; what is unguarded is any surface drawing it.
+
+**Done when.** `/config`'s provider field is disabled from `providerOverridable`, renders
+`precedenceNote` verbatim rather than a paraphrase, and its save reports a bot-side refusal instead
+of recording a change that did not land — with a mutation-tested guard pointed at
+config-admin-agent-panel.js restoring the coverage retired in this change.
+
 ## Rides map — follow-ups after the 2026-08-01 map/fare fix (core PR #102, store PR #40)
 
 **Context.** Map support in the Rides surface was fully CODED and permanently dark: the Google Maps
