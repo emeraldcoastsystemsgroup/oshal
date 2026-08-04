@@ -32,8 +32,13 @@
   padding: 0;
 }
 
+/* The root size is RELATIVE on purpose. An absolute `font-size: 14px` here silently discarded the
+   reader's own browser/OS font-size preference — the exact failure a user reported when they could
+   not read an assistant answer. `87.5%` is 14px against a default 16px root, so the rendering is
+   unchanged for a reader who never set a preference, while a reader who set 20px now gets 17.5px
+   and the app scales on top of their choice rather than overriding it (WCAG 1.4.4). */
 html {
-  font-size: 14px;
+  font-size: calc(87.5% * var(--reading-scale, 1));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

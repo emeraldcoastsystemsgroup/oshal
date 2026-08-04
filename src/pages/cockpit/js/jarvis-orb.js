@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fit the assistant panel within mobile safe areas and dynamic viewport height.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Honor manifest-driven assistant suppression before or after profile resolution and restore the orb for non-immersive apps.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Tolerant JSON parsing on the super-admin self-edit calls: startSession/commit called r.json() raw, so any HTML reply (proxy 502 page, unmounted route's HTML 404) surfaced to the operator as `SyntaxError: Unexpected token '<' … <!DOCTYPE`. parseJsonResponse() reads text, tries JSON, and falls back to a readable {error} so the pane always shows "HTTP <status> — server returned a non-JSON response" instead of doctype vomit.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Expand/restore control on the panel header. A user reported being unable to read an assistant answer: the docked panel is 400px wide, which is a phone-width reading column on a desktop monitor, and browser zoom does not help because the panel is sized by THIS document, not by the iframe's content. Expanded reuses the same pinned safe-area geometry the phone rule already proves, so the docked size and the mobile dynamic-viewport fix (entry 2) are untouched, and no Fullscreen API delegation is needed. The choice persists, and Escape restores before it closes.
  */
 
 /**
@@ -102,6 +103,15 @@
       + '  box-shadow: 0 28px 64px -16px rgba(0,0,0,.7); overflow: hidden;'
       + '  display: none; flex-direction: column; }'
       + '#jarvisOrbPanel.open { display: flex; }'
+      // Expanded reuses the SAME pinned-inset geometry the phone rule below already proves out,
+      // just at every width. Deliberately a CSS class and not the Fullscreen API: the orb lives in
+      // the cockpit's top document, so this needs no allow="fullscreen" delegation on the iframe,
+      // no cockpit-view-controller change, and it cannot re-open the URL-bar/dvh bug that change
+      // log entry 2 exists to fix. The docked 400x640 rule above is untouched.
+      + '#jarvisOrbPanel.wide {'
+      + '  left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px));'
+      + '  top: max(16px, env(safe-area-inset-top, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px));'
+      + '  width: auto; height: auto; max-height: none; }'
       + '#jarvisOrbHead {'
       + '  display: flex; align-items: center; gap: 10px; padding: 11px 14px;'
       + '  background: linear-gradient(135deg,#0f766e,#155e75); color: #ecfeff; flex: none; }'
@@ -155,7 +165,9 @@
       + '  left: 8px; right: 8px; width: auto; height: auto; max-height: none;'
       + '  top: calc(env(safe-area-inset-top, 0px) + 10px);'
       + '  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);'
-      + '  border-radius: 16px; } }';
+      + '  border-radius: 16px; }'
+      // Under 520px the panel already fills the screen, so an Expand button would do nothing.
+      + '  #jarvisOrbHead button.expand { display: none; } }';
     var style = document.createElement('style');
     style.id = 'jarvisOrbStyles';
     style.textContent = css;
@@ -187,6 +199,7 @@
       + '<span class="chip" title="You are signed in as a super-admin">super-admin</span>'
       + '<span class="spacer"></span>'
       + '<button type="button" class="dev" id="jarvisOrbDevToggle" title="Developer diagnostics">Dev</button>'
+      + '<button type="button" class="expand" id="jarvisOrbExpand" title="Expand" aria-label="Expand the assistant panel" aria-pressed="false">&#10530;</button>'
       + '<button type="button" id="jarvisOrbClose" title="Close" aria-label="Close">&times;</button>'
       + '</div>'
       + '<div id="jarvisOrbBody"><div id="jarvisOrbDev"></div></div>';
@@ -210,12 +223,45 @@
     }
     function close() { panel.classList.remove('open'); fab.style.display = ''; }
 
+    // The docked panel is 400px wide, which is a phone-width reading column on a desktop monitor.
+    // A reader who needs the room needs it EVERY time, so the choice is remembered rather than
+    // re-made on each open. Never throws — storage may be unavailable in a sandboxed frame.
+    var WIDE_KEY = 'jarvis-orb-wide';
+    function wideSaved() {
+      try { return localStorage.getItem(WIDE_KEY) === '1'; } catch (_) { return false; }
+    }
+    function applyWide(on) {
+      panel.classList.toggle('wide', !!on);
+      var btn = panel.querySelector('#jarvisOrbExpand');
+      if (btn) {
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.setAttribute('title', on ? 'Restore' : 'Expand');
+        btn.setAttribute('aria-label', on ? 'Restore the assistant panel' : 'Expand the assistant panel');
+        btn.innerHTML = on ? '&#10532;' : '&#10530;';
+      }
+    }
+    applyWide(wideSaved());
+
     fab.addEventListener('click', open);
     panel.addEventListener('click', function (e) {
-      if (e.target && e.target.id === 'jarvisOrbClose') close();
+      if (!e.target) return;
+      if (e.target.id === 'jarvisOrbClose') { close(); return; }
+      if (e.target.id === 'jarvisOrbExpand') {
+        var next = !panel.classList.contains('wide');
+        try { localStorage.setItem(WIDE_KEY, next ? '1' : '0'); } catch (_) {}
+        applyWide(next);
+      }
     });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && panel.classList.contains('open')) close();
+      if (e.key !== 'Escape' || !panel.classList.contains('open')) return;
+      // Escape steps back one level — restore first, close only when already docked. Closing an
+      // expanded panel outright would lose the answer the reader expanded in order to read.
+      if (panel.classList.contains('wide')) {
+        try { localStorage.setItem(WIDE_KEY, '0'); } catch (_) {}
+        applyWide(false);
+        return;
+      }
+      close();
     });
 
     if (devToggle) {

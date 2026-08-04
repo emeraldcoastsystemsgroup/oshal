@@ -22,6 +22,8 @@
      above is what gives the surface colours until the bootstrap resolves the operator's choice. -->
 <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
 <script src="/shared/ui/js/surface-theme.js"></script>
+<link rel="stylesheet" href="/shared/ui/css/surface-reading.css" />
+<script src="/shared/ui/js/surface-reading.js"></script>
 <style>
   :root {
     /* Short alias names DERIVED from the framework theme tokens (surface-themes.css) rather than
@@ -73,18 +75,32 @@
   .bubble.has-copy { opacity:1; }
   .bubble .you { color:var(--faint); font-size:.86rem; margin-bottom:5px; word-break:break-word; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .bubble .you b { color:var(--muted); font-weight:600; }
-  .bubble .ai { width:100%; min-width:0; max-width:100%; padding-inline:2px; color:var(--text); font-size:1.02rem; line-height:1.5; font-family:var(--font-d); font-weight:500; overflow-wrap:anywhere; word-break:normal; }
-  .result-panel { width:min(860px,100%); margin:16px auto 4px; padding:16px 18px; text-align:left;
+  .bubble .ai { width:100%; min-width:0; max-width:100%; padding-inline:2px; color:var(--text); font-size:calc(1.02rem * var(--reading-scale,1)); line-height:1.5; font-family:var(--font-d); font-weight:500; overflow-wrap:anywhere; word-break:normal; }
+  /* The column is capped in `ch`, not `px`. It therefore grows with the type and holds a ~68
+     character line at every reading scale AND every panel width — which is what makes the expand
+     control safe. The previous `min(860px,100%)` meant a maximised panel ran the same small text
+     to ~112 characters per line: wider, and harder to read, not easier. */
+  .result-panel { width:min(var(--reading-measure,68ch),100%); margin:16px auto 4px; padding:16px 18px; text-align:left;
     background:linear-gradient(160deg,rgba(255,255,255,.065),rgba(255,255,255,.022)); border:1px solid var(--line);
     border-radius:16px; box-shadow:0 18px 48px rgba(0,0,0,.16); }
   .result-panel[hidden] { display:none; }
   .result-panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px;
-    color:var(--accent); font-size:11px; font-weight:750; letter-spacing:.12em; text-transform:uppercase; }
-  .result-panel .bx { max-width:100%; color:var(--text); font-size:.96rem; line-height:1.55; overflow-wrap:anywhere; }
+    color:var(--accent); font-size:11px; font-weight:750; letter-spacing:.12em; text-transform:uppercase; flex-wrap:wrap; }
+  /* The actions wrap rather than pushing "Full discussion" off the right edge of the 400px
+     embedded panel — the same reachability rule the boards follow. */
+  .result-panel-actions { display:flex; align-items:center; gap:6px; margin-left:auto; flex-wrap:wrap; }
+  /* Two A's at different sizes is the conventional, wordless text-size affordance, and it reads at
+     a glance to the person who needs it most. The control is IN the answer panel, not buried in a
+     settings screen: a reader who cannot read the answer should not have to go hunting. */
+  #readingSizeBtn { font-family:var(--font-d); letter-spacing:0; line-height:1; }
+  #readingSizeBtn .aa-lg { font-size:1.45em; margin-left:1px; }
+  .result-panel .bx { max-width:100%; color:var(--text); font-size:calc(.96rem * var(--reading-scale,1)); line-height:1.55; overflow-wrap:anywhere; }
   .result-panel .bx p:first-child { margin-top:0; }
   .result-panel .bx p:last-child { margin-bottom:0; }
   .result-panel .bx .tablewrap { overflow-x:auto; margin:10px 0; }
-  .result-panel .bx table.md { border-collapse:collapse; font-size:13px; width:100%; }
+  /* A table inside an answer was the smallest type on the surface at a flat 13px. It scales too —
+     a reader who asked for larger text meant the whole answer, not the prose around the numbers. */
+  .result-panel .bx table.md { border-collapse:collapse; font-size:calc(13px * var(--reading-scale,1)); width:100%; }
   .result-panel .bx table.md th,.result-panel .bx table.md td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
   .result-panel .bx table.md th { background:var(--glass); color:var(--accent); }
 
@@ -130,11 +146,32 @@
   .attach-chip .attach-x:hover { color:var(--danger); }
   @media (max-width:700px){
     /* Keep one user line plus two answer lines reserved. A reply now fills this slot instead of
-       pushing every control and the mobile page scrollbar down by roughly 53px. */
-    .bubble { height:4.5rem; min-height:4.5rem; flex:none; }
+       pushing every control and the mobile page scrollbar down by roughly 53px.
+       The slot SCROLLS and scales: a fixed 4.5rem height silently truncated any longer caption with
+       no way to reach the rest, and this rule also fires inside the 400px-wide embedded assistant
+       panel — so on a desktop, not just a phone. Reserving the space was right; making the overflow
+       unreachable was not. */
+    .bubble { height:calc(4.5rem * var(--reading-scale,1)); min-height:calc(4.5rem * var(--reading-scale,1)); flex:none; overflow-y:auto; }
     .controls { margin-top:12px; }
     .ctlrow { gap:6px; margin-top:8px; }
     .chips { gap:6px; margin-top:10px; }
+  }
+
+  /* ── Room for the answer on a short viewport ──────────────────────────────
+     Keyed on HEIGHT, deliberately. This surface was laid out for a full window, where
+     `padding-top:clamp(72px,25vh,220px)` plus a 204px orb canvas plus a 54px margin is a
+     handsome ~400px of chrome. Inside the embedded assistant panel (about 590px of usable
+     height) that same chrome pushed the answer two-thirds of the way down and left roughly
+     ten lines visible — which is most of why an answer "could not be read".
+
+     Height rather than width because the constraint IS vertical: a phone at 390x844 has plenty
+     of height and keeps the full hero, while the 400x640 panel and a short laptop get the room.
+     Scaling the type without also making room would have shown the reader LESS text, so these
+     two changes are correct only together. */
+  @media (max-height:760px) {
+    .main { padding-top:clamp(12px,3vh,40px); }
+    .canvas-wrap { width:min(104px,26vw); margin:4px auto 16px; }
+    .result-panel { margin-top:8px; }
   }
 
   /* ── Section label (matches sibling surfaces) ────────────────────────── */
@@ -197,21 +234,24 @@
   #convo:empty { display:none; }
   #convo:empty + .convo-empty { display:block; }
   .convo-empty { display:none; color:var(--faint); font-size:12px; padding:2px 2px; }
-  .msg { margin:0 0 14px; line-height:1.6; min-width:0; }
-  .msg .who { font-size:10.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--faint); margin-bottom:4px; font-weight:700; }
+  /* Everything below scales with the reader's chosen size. The rule is "the whole answer, not just
+     the prose" — an answer whose headings, tables, code and diagram captions stayed at their
+     original 10.5–14px would still be unreadable to the reader who asked for larger text. */
+  .msg { margin:0 0 14px; line-height:1.6; min-width:0; font-size:calc(1rem * var(--reading-scale,1)); }
+  .msg .who { font-size:calc(10.5px * var(--reading-scale,1)); text-transform:uppercase; letter-spacing:.5px; color:var(--faint); margin-bottom:4px; font-weight:700; }
   .msg.user .bx { background:var(--glass); border:1px solid var(--line); border-radius:12px; padding:9px 13px; display:inline-block; max-width:100%; word-break:break-word; }
   .msg.bot .bx { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 15px; overflow-wrap:anywhere; }
-  .bx h2 { font-size:14px; color:var(--accent); margin:12px 0 6px; }
-  .bx h3 { font-size:12.5px; margin:10px 0 4px; }
+  .bx h2 { font-size:calc(14px * var(--reading-scale,1)); color:var(--accent); margin:12px 0 6px; }
+  .bx h3 { font-size:calc(12.5px * var(--reading-scale,1)); margin:10px 0 4px; }
   .bx ul { margin:6px 0; padding-left:18px; } .bx li { margin:3px 0; }
   .bx p { margin:7px 0; } .bx strong { color:var(--text); } .bx code { background:var(--glass); padding:1px 5px; border-radius:5px; }
   .bx .md-image-note { display:inline-flex; align-items:center; max-width:100%; color:var(--muted); border:1px dashed var(--line); border-radius:9px; padding:5px 8px; overflow-wrap:anywhere; }
   .bx .tablewrap { overflow-x:auto; margin:9px 0; }
-  .bx table.md { border-collapse:collapse; font-size:12px; width:100%; }
+  .bx table.md { border-collapse:collapse; font-size:calc(12px * var(--reading-scale,1)); width:100%; }
   .bx table.md th, .bx table.md td { border:1px solid var(--line); padding:6px 9px; text-align:left; }
   .bx table.md th { background:var(--glass); color:var(--accent); }
-  .bx pre.code { background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:8px; padding:10px 12px; overflow-x:auto; font-size:11.5px; }
-  .bx .mermaid { background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:10px; padding:12px; margin:9px 0; white-space:pre-wrap; font-size:11.5px; text-align:center; }
+  .bx pre.code { background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:8px; padding:10px 12px; overflow-x:auto; font-size:calc(11.5px * var(--reading-scale,1)); }
+  .bx .mermaid { background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:10px; padding:12px; margin:9px 0; white-space:pre-wrap; font-size:calc(11.5px * var(--reading-scale,1)); text-align:center; }
   .bx .mermaid[data-rendered] { white-space:normal; }
   .bx .mermaid svg { max-width:100%; height:auto; }
   .ans-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:9px; }
@@ -373,7 +413,12 @@
           </div>
 
           <section class="result-panel" id="resultPanel" aria-label="Latest Jarvis result" hidden>
-            <div class="result-panel-head"><span>Latest result</span><button class="ctl" id="resultDiscussionBtn" type="button">Full discussion</button></div>
+            <div class="result-panel-head"><span>Latest result</span>
+              <span class="result-panel-actions">
+                <button class="ctl" id="readingSizeBtn" type="button" aria-label="Text size — cycles through Normal, Large, Larger and Largest" title="Text size">A<span class="aa-lg">A</span></button>
+                <button class="ctl" id="resultPrintBtn" type="button" aria-label="Print or save this conversation" title="Print this conversation">Print</button>
+                <button class="ctl" id="resultDiscussionBtn" type="button">Full discussion</button>
+              </span></div>
             <div class="bx" id="resultContent"></div>
           </section>
 
@@ -2121,6 +2166,68 @@ if (window.JarvisPersonConsent) {
 $('discussionBtn')?.setAttribute('aria-expanded', 'false');
 $('discussionBtn')?.addEventListener('click', openDiscussion);
 $('resultDiscussionBtn')?.addEventListener('click', openDiscussion);
+
+/* ── Text size ──────────────────────────────────────────────────────────────
+   Steps the shared reading scale (see /shared/ui/js/surface-reading.js). The write goes to
+   localStorage, which is what re-scales every OTHER open surface via the `storage` event — so
+   sizing the answer up here also sizes up the cockpit and any other surface already open. */
+$('readingSizeBtn')?.addEventListener('click', () => {
+  const level = window.OshalReading?.step() || 'cozy';
+  const words = { cozy: 'Normal', comfortable: 'Large', large: 'Larger', xlarge: 'Largest' };
+  // Announce in plain words, never the raw multiplier — and announce it, because the control
+  // cycles: without feedback a reader cannot tell they have reached the largest step.
+  $('readingSizeBtn')?.setAttribute('title', 'Text size: ' + (words[level] || level));
+  try { statusEl.textContent = 'Text size: ' + (words[level] || level); } catch (_) {}
+});
+
+/* ── Print / save this conversation ─────────────────────────────────────────
+   Opens a TOP-LEVEL window and writes an ink-on-paper document into it. Two reasons it is not
+   `window.print()` on this surface: printing from inside a same-origin iframe is inconsistent
+   across browsers, and this surface is a dark, chrome-heavy dashboard whose printout would be
+   unreadable and waste a cartridge. The new window is plain black-on-white, so the browser's own
+   "Save as PDF" also produces something worth keeping — which is what "refer to it later" means. */
+function printConversation() {
+  const turns = [];
+  document.querySelectorAll('#convo .msg').forEach((m) => {
+    const who = m.classList.contains('user') ? 'You' : (assistantLabel() || 'Jarvis');
+    const bx = m.querySelector('.bx');
+    if (bx && bx.textContent.trim()) turns.push({ who, html: bx.innerHTML });
+  });
+  // Fall back to the latest result when the conversation panel has not been opened this session.
+  if (!turns.length) {
+    const latest = $('resultContent');
+    if (latest && latest.textContent.trim()) {
+      turns.push({ who: assistantLabel() || 'Jarvis', html: latest.innerHTML });
+    }
+  }
+  if (!turns.length) { try { statusEl.textContent = 'Nothing to print yet.'; } catch (_) {} return; }
+
+  const win = window.open('', '_blank');
+  if (!win) { try { statusEl.textContent = 'Allow pop-ups to print the conversation.'; } catch (_) {} return; }
+  const when = new Date().toLocaleString();
+  const title = (assistantLabel() || 'Jarvis') + ' — conversation';
+  // The turn HTML is already-rendered, already-sanitised markdown from renderMarkdown(); it is
+  // moved across verbatim so the printout matches the screen exactly. The two interpolated
+  // strings are escaped.
+  win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + esc(title) + '</title><style>'
+    + 'body{background:#fff;color:#111;font:12pt/1.55 Georgia,"Times New Roman",serif;max-width:44em;margin:2.5em auto;padding:0 1.5em}'
+    + 'h1{font:700 16pt/1.2 Georgia,serif;margin:0 0 .2em}.when{color:#555;font-size:10pt;margin:0 0 2em}'
+    + '.t{margin:0 0 1.6em;page-break-inside:avoid}.who{font:700 9pt/1 Arial,sans-serif;letter-spacing:.09em;'
+    + 'text-transform:uppercase;color:#666;margin:0 0 .45em}.bx{margin:0}'
+    + 'table{border-collapse:collapse;width:100%;font-size:10.5pt;margin:.7em 0}'
+    + 'th,td{border:1px solid #999;padding:5px 8px;text-align:left}th{background:#eee}'
+    + 'pre{background:#f4f4f4;border:1px solid #ddd;padding:.6em;overflow-x:auto;font-size:9.5pt;white-space:pre-wrap}'
+    + 'img,svg{max-width:100%;height:auto}a{color:#111}'
+    + '@media print{body{margin:0;max-width:none}@page{margin:2cm}}'
+    + '</style></head><body><h1>' + esc(title) + '</h1><p class="when">' + esc(when) + '</p>'
+    + turns.map((t) => '<div class="t"><p class="who">' + esc(t.who) + '</p><div class="bx">' + t.html + '</div></div>').join('')
+    + '</body></html>');
+  win.document.close();
+  win.focus();
+  // Let images and any rendered diagram settle before the dialog opens, or the first page prints blank.
+  setTimeout(() => { try { win.print(); } catch (_) {} }, 350);
+}
+$('resultPrintBtn')?.addEventListener('click', printConversation);
 $('responseDiscussionBtn')?.setAttribute('aria-expanded', 'false');
 $('discussionClose')?.addEventListener('click', closeDiscussion);
 $('discussionOverlay')?.addEventListener('click', closeDiscussion);

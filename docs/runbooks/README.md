@@ -57,6 +57,10 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Enable / operate a feature
 
+- [provider-profiles.md](./provider-profiles.md) — running the swarm on **one API key** (xAI/Grok,
+  Groq, DeepSeek, Mistral, …): why a provider is not a harness, the three env vars that repoint the
+  deployment default, the provider→credential table, and the reason the env alone does not move the
+  fleet — a registry `harnessType` outranks `FORCE_LLM_PROVIDER` and nearly every bot pins one.
 - [local-transcription.md](./local-transcription.md) — speaker-labelled transcription that
   never leaves the host (`local-stt` + the pinned sherpa-onnx sidecar): when to use it instead
   of a cloud STT provider, why Moonshine rather than Whisper for diarized turns, the separate
