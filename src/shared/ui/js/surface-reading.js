@@ -33,7 +33,15 @@
 (function () {
   // Ordered smallest to largest: `step()` walks this array, so order is behaviour, not cosmetics.
   var LEVELS = ['cozy', 'comfortable', 'large', 'xlarge'];
-  var FALLBACK = 'cozy';
+
+  // The default is 'comfortable', NOT the historical 'cozy'. The report that prompted this rail was
+  // "I get a response which is awesome, but I can't read the outcome — can you enlarge the print?"
+  // Shipping a stepper that starts at the size being complained about answers nobody: the surface
+  // looks byte-for-byte unchanged until the reader finds a control they have no reason to look for,
+  // and the reader who could not read the answer is exactly the reader least likely to go hunting.
+  // 'cozy' remains one step DOWN for anyone who wants the old density back, and a saved preference
+  // always wins over this default.
+  var FALLBACK = 'comfortable';
   var KEY = 'oshal-reading-scale';
 
   /**

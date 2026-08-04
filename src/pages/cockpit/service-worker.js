@@ -36,7 +36,7 @@
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v32';
+const CACHE_VERSION = 'oshal-cockpit-v33';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data
@@ -114,10 +114,27 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Shared design CSS must be fresh. These files are theme/system contracts, not
-  // bulky offline assets; serving a stale copy can corrupt every embedded
-  // surface while the route itself looks healthy in a direct HTTP probe.
-  if (url.pathname.startsWith('/shared/ui/css/')) {
+  // Shared design CSS and the cockpit's own code must be fresh. These files are theme/system
+  // contracts and application logic, not bulky offline assets; serving a stale copy can corrupt
+  // every embedded surface while the route itself looks healthy in a direct HTTP probe.
+  //
+  // /cockpit/ IS INCLUDED DELIBERATELY. It previously fell through to the stale-while-revalidate
+  // branch below, which returns `cached || network` — the cached copy is served INSTANTLY and the
+  // new one only lands in the cache for NEXT time. So every deploy cost the user one stale page
+  // load: they reloaded, saw the old UI, and reasonably concluded nothing had shipped. That is not
+  // a theoretical race — it burned most of a day of "the fix is deployed" / "no it isn't", with
+  // the bytes on the server verifiably correct the whole time. The server already sends
+  // `Cache-Control: no-cache, must-revalidate` for this path (cockpit-static-routes.ts); the SW
+  // cache is separate storage and silently overrode that intent. Offline still works: the fetch
+  // rejects and we fall back to the cached copy, and the shell stays precached at install.
+  //
+  // Navigations are excluded — they are handled by their own network-first branch below, which
+  // additionally routes a lapsed session to /login instead of an unusable cached shell.
+  const alwaysFresh =
+    url.pathname.startsWith('/shared/ui/css/') ||
+    (url.pathname.startsWith('/cockpit/') && request.mode !== 'navigate');
+
+  if (alwaysFresh) {
     event.respondWith(
       fetch(request, { redirect: 'manual', cache: 'reload' })
         .then((response) => {

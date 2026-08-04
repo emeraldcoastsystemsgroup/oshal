@@ -51,6 +51,28 @@ describe('shared reading-comfort rail', () => {
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 
+  it('DEFAULTS to a level that is actually larger than the size that was complained about', () => {
+    const js = read(READING_JS);
+    const css = read(READING_CSS);
+
+    // The original fix shipped the stepper with FALLBACK='cozy' — scale 1, the historical
+    // rendering. Every surface therefore looked completely unchanged, and the reader who reported
+    // "I can't read the outcome" saw exactly what they reported, because the remedy was hidden
+    // behind a control they had to discover. Landing a control is not the same as landing the fix.
+    //
+    // Resolved through the CSS rather than asserted as a string: pinning the literal 'comfortable'
+    // would stay green if that level's scale were later edited down to 1, which is the same bug
+    // wearing a different name.
+    const fallback = /var FALLBACK\s*=\s*'([^']+)'/.exec(js)?.[1];
+    expect(fallback, 'surface-reading.js must declare a FALLBACK level').toBeTruthy();
+
+    const rule = new RegExp(`html\\[data-reading='${fallback}'\\]\\s*\\{[^}]*\\}`).exec(css)?.[0];
+    expect(rule, `the CSS must style the default level '${fallback}'`).toBeTruthy();
+
+    const scale = Number(/--reading-scale:\s*([\d.]+)/.exec(rule!)?.[1]);
+    expect(scale).toBeGreaterThan(1);
+  });
+
   it('applies the saved level at load and live-follows changes on both listeners', () => {
     const js = read(READING_JS);
 

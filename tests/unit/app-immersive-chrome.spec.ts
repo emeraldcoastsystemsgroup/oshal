@@ -144,7 +144,30 @@ describe('global assistant load-order contract', () => {
     const index = readFileSync(resolve('src/pages/cockpit/index.html'), 'utf8');
     const worker = readFileSync(resolve('src/pages/cockpit/service-worker.js'), 'utf8');
     expect(index).toContain('js/jarvis-orb.js?v=3');
-    expect(worker).toContain("const CACHE_VERSION = 'oshal-cockpit-v32'");
+    expect(worker).toContain("const CACHE_VERSION = 'oshal-cockpit-v33'");
+  });
+
+  it('serves cockpit code fresh instead of one deploy behind', () => {
+    const worker = readFileSync(resolve('src/pages/cockpit/service-worker.js'), 'utf8');
+
+    // Cockpit JS/CSS used to fall through to the stale-while-revalidate branch, which returns
+    // `cached || network`: the user got the PREVIOUS build and the new one was merely warmed for
+    // next time. Every deploy therefore needed two page loads to become visible, so a correct
+    // deploy was indistinguishable from a failed one from the user's seat.
+    expect(worker).toMatch(/alwaysFresh\s*=[\s\S]{0,240}startsWith\('\/cockpit\/'\)/);
+
+    // Navigations must NOT be swallowed here — their own branch redirects a lapsed session to
+    // /login rather than serving a cached shell that cannot load its own gated assets.
+    expect(worker).toMatch(/alwaysFresh\s*=[\s\S]{0,240}request\.mode\s*!==\s*'navigate'/);
+
+    // The always-fresh branch must actually bypass the HTTP cache. Without `cache: 'reload'` the
+    // SW's own fetch can be answered from a stale browser-cached copy and then written into the
+    // new version's cache — a bump that evicts the old cache and immediately refills it with the
+    // same stale bytes.
+    expect(worker).toMatch(/if \(alwaysFresh\) \{[\s\S]{0,200}cache:\s*'reload'/);
+
+    // Offline must still work: the fresh fetch falls back to whatever was cached.
+    expect(worker).toMatch(/if \(alwaysFresh\) \{[\s\S]{0,900}catch\(\(\) => caches\.match\(request\)\)/);
   });
 
   it('expands the assistant panel without re-opening the mobile viewport fix', () => {
