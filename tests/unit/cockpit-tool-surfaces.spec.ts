@@ -16,7 +16,11 @@ import { registerCockpitStaticRoutes } from '@/app/routes/cockpit-static-routes'
 /** Native fetch captured before any test could stub the global. */
 const realFetch = globalThis.fetch;
 
-const SURFACES = ['budgets', 'notify', 'dlq', 'my-data'] as const;
+// `platform` is the Settings hub a focused app shows in place of the platform tool set. It is held
+// to exactly the same standards as the four read surfaces — same auth, same theming, same load
+// order — because it is the ONE door a customer's staff sees, and a flash of untokened content or
+// an anonymous read there is worse than on a tool an end user never opens.
+const SURFACES = ['budgets', 'notify', 'dlq', 'my-data', 'platform'] as const;
 const TOOLS_DIR = path.join(process.cwd(), 'src/pages/cockpit/tools');
 const RIBBON_NAV = path.join(process.cwd(), 'src/pages/cockpit/js/components/RibbonNav.js');
 
@@ -122,7 +126,7 @@ describe('ribbon registration — every new tool entry points at a file that exi
   const ribbon = readFileSync(RIBBON_NAV, 'utf8');
   const urls = [...ribbon.matchAll(/iframeUrl:\s*'(\/cockpit\/tools\/[^']+)'/g)].map((m) => m[1]);
 
-  it('registers all four tool surfaces in the platform-tools list', () => {
+  it('registers every tool surface in the platform-tools list', () => {
     expect(urls).toHaveLength(SURFACES.length);
     for (const name of SURFACES) {
       expect(urls).toContain(`/cockpit/tools/${name}.html`);
