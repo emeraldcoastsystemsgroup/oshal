@@ -1233,6 +1233,11 @@ services:
       # pure static surfaces (safe to mount wholesale). For src/api we mount ONLY jarvis.html
       # (a single static surface) so we DON'T shadow the image's baked vite dist under src/api.
       - ./src/pages:/app/src/pages:ro
+      # src/shared/ui is the SHARED surface layer — themes, the reading scale, the surface
+      # bridge. Sixteen surfaces plus the store packages load it, so a one-line legibility or
+      # theme fix here otherwise needs a full image rebuild to reach any box. Static assets
+      # only (css/js served by express.static), so mounting it shadows no compiled output.
+      - ./src/shared/ui:/app/src/shared/ui:ro
       - ./src/api/jarvis.html:/app/src/api/jarvis.html:ro
       - ./src/api/jarvis-stage.js:/app/src/api/jarvis-stage.js:ro
       - ./src/api/jarvis-stage.css:/app/src/api/jarvis-stage.css:ro
