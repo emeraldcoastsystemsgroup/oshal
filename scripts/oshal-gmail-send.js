@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation (header added retroactively - file predates change-log enforcement)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Two bugs that made this CLI unable to send anything but an mp4, and then unable to send at all. (a) ENVELOPE-CRYPTO DRIFT, the third and last CLI carrying it: OSHAL_ENVELOPE_CRYPTO defaulted ON 2026-07-20 so connector tokens re-encrypt to `v2:` per-user-DEK blobs, but this file's decrypt knew only the legacy single-KEK format and THREW UNCAUGHT out of getAccessToken - every send died with "Unsupported state or unable to authenticate data". oshal-gmail.js (SEQ 6) and oshal-recap-email.js (SEQ 3) were ported at the time and this one was missed. Fixed by REUSING the sibling's exported decryptToken rather than pasting a third copy, and an access_token decrypt failure now falls through to a refresh_token refresh instead of aborting - same shape as both siblings. (b) The attachment Content-Type was hardcoded `video/mp4` from the recap-video use case, so a PDF/PNG/zip attachment went out mislabelled as video; now derived from the file extension with an application/octet-stream fallback. Guard: tests/unit/gmail-send-attachment-mime.spec.ts.
  */
 /* Send an email (optionally with one attachment) via the OSHAL Google connection token.
  * Reuses the oshal-gmail.js auth (controller-provided token, else DB refresh-token decrypt).
@@ -16,18 +17,35 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+// Format-aware connector-token decrypt lives in the sibling CLI and is exported for exactly this
+// reuse. Requiring it is safe: oshal-gmail.js guards its entry point behind `require.main === module`.
+// Do NOT paste a fourth copy of the v2 unwrap — the drift that broke all three CLIs was copy-paste.
+const { decryptToken } = require('./oshal-gmail');
+
+/**
+ * @description Attachment MIME type from the filename extension. This CLI was written for the
+ * recap-video path and hardcoded `video/mp4`, which mislabels every other attachment kind.
+ * @param {string} name attachment basename
+ * @returns {string} a MIME type, or application/octet-stream when the extension is unknown
+ */
+function mimeFor(name) {
+  const types = {
+    '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.png': 'image/png', '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+    '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.json': 'application/json',
+    '.html': 'text/html', '.zip': 'application/zip', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  };
+  return types[path.extname(String(name)).toLowerCase()] || 'application/octet-stream';
+}
 
 function resolveProvidedToken() {
   try { const t = fs.readFileSync(path.join(process.cwd(), '.oshal-cred-google'), 'utf8').trim(); if (t) return t; } catch {}
   return process.env.OSHAL_CRED_GOOGLE || undefined;
 }
 function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
 function encrypt(plain) {
   const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key(), iv);
   const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
@@ -46,11 +64,19 @@ async function getAccessToken(pool) {
   }
   if (!row) { console.error('SEND_FAIL no Google connection'); process.exit(2); }
   console.error('scopes:', row.scope || row.scopes || '(unknown)');
-  if (row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60000) return { token: decrypt(row.access_token), account: row.account_email };
+  if (row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60000) {
+    try {
+      return { token: await decryptToken(pool, row.user_sub, row.access_token), account: row.account_email };
+    } catch (e) {
+      // Format drift (a v2 blob whose DEK we cannot unwrap) or a stale blob must not be fatal —
+      // the refresh_token below is the recovery path. Aborting here is what killed every send.
+      console.error('access_token decrypt failed (' + e.message + '); refreshing via refresh_token');
+    }
+  }
   if (!row.refresh_token) { console.error('SEND_FAIL no refresh token'); process.exit(2); }
   const clientId = process.env.GOOGLE_CONNECT_CLIENT_ID || process.env.OIDC_CLIENT_ID || '';
   const clientSecret = process.env.GOOGLE_CONNECT_CLIENT_SECRET || process.env.OIDC_CLIENT_SECRET || '';
-  const body = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: decrypt(row.refresh_token), grant_type: 'refresh_token' });
+  const body = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: await decryptToken(pool, row.user_sub, row.refresh_token), grant_type: 'refresh_token' });
   const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
   if (!r.ok) { console.error('SEND_FAIL token refresh ' + r.status + ' ' + (await r.text()).slice(0, 200)); process.exit(3); }
   const tok = await r.json();
@@ -70,7 +96,7 @@ async function send(token, account, to, subject, body, attachPath) {
     mime = lines.concat([
       `Content-Type: multipart/mixed; boundary="${bnd}"`, '',
       `--${bnd}`, 'Content-Type: text/plain; charset="UTF-8"', '', body, '',
-      `--${bnd}`, `Content-Type: video/mp4; name="${name}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${name}"`, '', b, `--${bnd}--`, '',
+      `--${bnd}`, `Content-Type: ${mimeFor(name)}; name="${name}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${name}"`, '', b, `--${bnd}--`, '',
     ]).join('\r\n');
   } else {
     mime = lines.concat(['Content-Type: text/plain; charset="UTF-8"', '', body]).join('\r\n');
@@ -84,7 +110,7 @@ async function send(token, account, to, subject, body, attachPath) {
   console.log('SEND_OK id=' + j.id + ' to=' + to + ' from=' + account);
 }
 
-(async () => {
+async function main() {
   const [to, subject, bodyFile, attachPath] = process.argv.slice(2);
   if (!to || !subject) { console.error('usage: oshal-gmail-send.js <to> <subject> <bodyFile> [attachment]'); process.exit(1); }
   const body = bodyFile && fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, 'utf8') : (bodyFile || '');
@@ -93,4 +119,12 @@ async function send(token, account, to, subject, body, attachPath) {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   try { const { token, account } = await getAccessToken(pool); await send(token, account, to, subject, body, attachPath); }
   finally { await pool.end(); }
-})().catch((e) => { console.error('SEND_FAIL ' + (e && e.message || e)); process.exit(1); });
+}
+
+// Guarded so the guard spec can require mimeFor without firing a live send (the IIFE this
+// replaced ran on import, which is why this file had no test).
+if (require.main === module) {
+  main().catch((e) => { console.error('SEND_FAIL ' + (e && e.message || e)); process.exit(1); });
+}
+
+module.exports = { mimeFor, send };
