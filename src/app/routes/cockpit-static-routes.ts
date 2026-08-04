@@ -39,10 +39,29 @@ export function registerCockpitStaticRoutes(options: CockpitStaticRoutesOptions)
 
   // Force revalidation on cockpit HTML/JS/CSS. Cloudflare edge-caches static assets by
   // default (hours), ignoring max-age=0, so freshly deployed cockpit JS kept serving stale
-  // on the hosted URL. `no-cache` => browser AND CF must revalidate with the origin every
-  // time (cheap 304 when unchanged), so a rebuild is visible on the next reload.
+  // on the hosted URL.
+  //
+  // `no-cache` WAS NOT ENOUGH, and this is measured, not theorised. On the hosted deployment:
+  //
+  //   origin :35457 -> Cache-Control: no-cache, must-revalidate      (what we set)
+  //   edge   https:// -> Cache-Control: max-age=14400, must-revalidate  (what the browser got)
+  //
+  // Cloudflare's "Browser Cache TTL" zone setting defaults to 4 hours and REWRITES the header it
+  // sends downstream for anything it considers cacheable. `no-cache` is still cacheable-with-
+  // revalidation, so it was rewritten — pinning freshly deployed assets in every user's browser
+  // for four hours while the origin, the edge and the container all verifiably held the new
+  // bytes. That is what made a correct deploy indistinguishable from a failed one.
+  //
+  // `no-store` is not merely a stronger hint: it makes the response non-cacheable outright, which
+  // takes it out of the set that Browser Cache TTL applies to. Cost is a full re-fetch instead of
+  // a 304 — trivial for these files, and they were already revalidating on every request anyway.
+  // The PWA is unaffected: the service worker's Cache Storage is separate from the HTTP cache and
+  // is not bound by no-store, so offline still works from the precached shell.
+  //
+  // The zone setting (Caching -> Configuration -> Browser Cache TTL -> "Respect Existing Headers")
+  // is the cleaner fix, but it lives in someone's dashboard; this one ships with the code.
   const noCache: express.RequestHandler = (_req, res, next) => {
-    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    res.setHeader('Cache-Control', 'no-store, must-revalidate');
     next();
   };
 

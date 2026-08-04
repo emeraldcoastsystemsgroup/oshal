@@ -572,7 +572,10 @@ function createApp(): express.Application {
       if (/\.css$/i.test(filePath)) {
         res.type('text/css');
       }
-      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      // no-store, not no-cache: Cloudflare's Browser Cache TTL rewrites the header on anything
+      // cacheable (measured: origin no-cache -> edge max-age=14400), which pinned shared design
+      // CSS in every browser for four hours after a deploy. See cockpit-static-routes.ts.
+      res.setHeader('Cache-Control', 'no-store, must-revalidate');
     },
   }));
 
@@ -588,7 +591,11 @@ function createApp(): express.Application {
       if (/\.js$/i.test(filePath)) {
         res.type('application/javascript');
       }
-      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      // no-store for the same measured reason as the CSS mount above. This one carries
+      // surface-reading.js, so a stale copy is precisely the "the text is still too small"
+      // report — on standalone surfaces like Jarvis, which sit outside the cockpit service
+      // worker's scope and therefore have no second line of defence against the HTTP cache.
+      res.setHeader('Cache-Control', 'no-store, must-revalidate');
     },
   }));
 
