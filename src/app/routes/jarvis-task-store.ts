@@ -12,6 +12,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: ensureJarvisSchema / saveTaskPending / finishTask / findJarvisTaskSessionId / buildOpenWorkBlock / persistJarvisTurn / markJarvisSessionTaskStatus / mapJarvisTaskStatusFromTicketStatus / storedVisual (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | jarvisFailureNoteForTicketStatus: an escalated/cancelled ticket left the shelf row's error column NULL, so a failed multi-app plan rendered as status 'error' with no message. Say the run stopped — never summarize an outcome that does not exist.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Persist captured deliverables on the task (files JSONB) so a finished task still offers its download after a reload, not only in the reply that happened to be on screen. Reset files alongside result/visual on re-file: a task re-run under the same id must never surface the previous run's links.
  *
  * @module jarvis-task-store
  */
@@ -24,6 +25,7 @@ import {
   type VisualResponseArtifact,
 } from '@/features/visual-response';
 import { createChildLogger } from '@/shared/logger';
+import type { CapturedFile } from './jarvis-deliverable-files';
 
 const logger = createChildLogger({ module: 'jarvis-task-store' });
 
@@ -61,6 +63,7 @@ export async function ensureJarvisSchema(pool: AppContext['pool']): Promise<void
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS ticket_id TEXT',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS visual JSONB',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS delivered BOOLEAN DEFAULT FALSE',
+        'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS files JSONB',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS summarize_started_at TIMESTAMPTZ',
         'CREATE INDEX IF NOT EXISTS idx_jarvis_tasks_user ON jarvis_tasks (user_sub, created_at DESC)',
       ],
@@ -79,6 +82,7 @@ export async function ensureJarvisSchema(pool: AppContext['pool']): Promise<void
             'ticket_id',
             'visual',
             'delivered',
+            'files',
             'created_at',
             'finished_at',
             'summarize_started_at',
@@ -102,25 +106,33 @@ export async function saveTaskPending(
   try {
     await pool.query(
       `INSERT INTO jarvis_tasks (id, user_sub, session_id, title, status, kind, ticket_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (id) DO UPDATE SET title = $4, status = $5, kind = $6, ticket_id = COALESCE($7, jarvis_tasks.ticket_id), error = NULL, result = NULL, visual = NULL, finished_at = NULL`,
+       ON CONFLICT (id) DO UPDATE SET title = $4, status = $5, kind = $6, ticket_id = COALESCE($7, jarvis_tasks.ticket_id), error = NULL, result = NULL, visual = NULL, files = NULL, finished_at = NULL`,
       [id, sub, sessionId, title.slice(0, 200), status, kind, ticketId ?? null],
     );
   } catch (err) { logger.warn({ err }, 'jarvis: saveTaskPending failed'); }
 }
 
-/** @description Marks a work task done (with result) or errored — durable so it survives restarts. */
+/** @description Marks a work task done (with result) or errored — durable so it survives restarts.
+ *  `files` are deliverables already copied into the OWNER's private folder by
+ *  captureDeliverableFiles; storing them here is what lets a completed task still offer its
+ *  download after a reload, rather than only in the reply that happened to be on screen. */
 export async function finishTask(
   pool: AppContext['pool'],
   id: string,
   ok: boolean,
   payload: string,
   visual?: VisualResponseArtifact,
+  files?: CapturedFile[],
 ): Promise<void> {
   try {
     await pool.query(
       `UPDATE jarvis_tasks SET status = $2, ${ok ? 'result' : 'error'} = $3,
-        visual = $4::jsonb, finished_at = NOW() WHERE id = $1`,
-      [id, ok ? 'done' : 'error', (payload || '').slice(0, 20000), visual ? JSON.stringify(visual) : null],
+        visual = $4::jsonb, files = $5::jsonb, finished_at = NOW() WHERE id = $1`,
+      [
+        id, ok ? 'done' : 'error', (payload || '').slice(0, 20000),
+        visual ? JSON.stringify(visual) : null,
+        files && files.length ? JSON.stringify(files) : null,
+      ],
     );
   } catch (err) { logger.warn({ err }, 'jarvis: finishTask failed'); }
 }
@@ -277,4 +289,34 @@ export function storedVisual(metadata: Record<string, unknown> | undefined): Vis
   ) return undefined;
   if (visual.url !== `/api/jarvis/visuals/${visual.artifactId}`) return undefined;
   return candidate as VisualResponseArtifact;
+}
+
+/** The only URL shape a captured deliverable may ever be offered under. Anchored, so a stored row
+ *  cannot smuggle an absolute `https://…` (or a protocol-relative `//host/…`) into the download
+ *  control and turn a task result into an off-site link the user would reasonably trust. */
+const DOWNLOAD_URL_PREFIX = '/api/files/download?';
+
+/**
+ * @description Validate the `files` column before it is handed to a browser.
+ *
+ * The column is server-written, so this is defence in depth rather than a suspected hole — but it
+ * is the difference between a malformed row rendering nothing and a malformed row rendering an
+ * attacker-controlled link, and it costs one pass over at most five entries.
+ *
+ * @param raw - The parsed `files` JSONB value.
+ * @returns The valid entries, or an empty array.
+ */
+export function storedFiles(raw: unknown): CapturedFile[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((entry): entry is CapturedFile => {
+    if (!entry || typeof entry !== 'object') return false;
+    const f = entry as Partial<CapturedFile>;
+    return typeof f.name === 'string'
+      && f.name.trim().length > 0
+      && f.name.length <= 260
+      && typeof f.downloadUrl === 'string'
+      && f.downloadUrl.startsWith(DOWNLOAD_URL_PREFIX)
+      && Number.isFinite(f.bytes)
+      && Number(f.bytes) >= 0;
+  }).slice(0, 5);
 }

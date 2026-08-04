@@ -45,6 +45,7 @@ import { executeBotOrInline } from './inline-bot-execution';
 import { createOptionalJarvisVisual } from './jarvis-visual-response';
 import { extractJsonObject, extractJarvisDirectives } from './jarvis-directives';
 import { finishTask, findJarvisTaskSessionId, persistJarvisTurn, saveTaskPending } from './jarvis-task-store';
+import { captureDeliverableFiles } from './jarvis-deliverable-files';
 import {
   providerRecordsMatchingTrustedIntent,
   summarizeProviderBoundRecords,
@@ -745,12 +746,28 @@ async function summarizeComplexTask(
         ],
       });
     }
-    await finishTask(ctx.pool, taskId, true, finalSummary, visual);
+    // Copy any file the worker produced into the CALLER'S OWN private folder and turn the mention
+    // into a real download. Without this the answer says the report "is available in the workspace
+    // app directory" — a path inside the bot's container that no part of the product can serve and
+    // no user can reach. Scanned against the RAW deliverable because that is where the true paths
+    // appear; the summary is a separate LLM rendering of it, so the same substitutions are applied
+    // to the summary afterwards for the case where it quoted a path verbatim.
+    //
+    // Best-effort by construction: on any failure `files` is empty and the summary is untouched,
+    // so a capture problem can never cost the user the answer itself.
+    const captured = await captureDeliverableFiles(ctx, sub, taskId, deliverable);
+    let summaryWithLinks = finalSummary;
+    for (const { from, to } of captured.replacements) {
+      summaryWithLinks = summaryWithLinks.split(from).join(to);
+    }
+
+    await finishTask(ctx.pool, taskId, true, summaryWithLinks, visual, captured.files);
     if (taskSessionId) {
-      await persistJarvisTurn(ctx, taskSessionId, 'assistant', finalSummary, {
+      await persistJarvisTurn(ctx, taskSessionId, 'assistant', summaryWithLinks, {
         sourceJarvisTaskId: taskId,
         sourceTicketId: ticketId,
         ...(visual ? { visual } : {}),
+        ...(captured.files.length ? { files: captured.files } : {}),
       });
     }
   } catch (err) {

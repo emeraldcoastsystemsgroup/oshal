@@ -625,7 +625,10 @@ describe('Jarvis task lifecycle persistence', () => {
 
     const [sql, values] = pool.query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('visual = $4::jsonb');
-    expect(values).toEqual(['work-1', 'done', 'The forecast is ready.', JSON.stringify(visual)]);
+    // Trailing null is the `files` slot (captured deliverables). This call passes none, and the
+    // distinction matters: null must be written, not omitted, so a retry cannot leave a previous
+    // run's downloads attached to a fresh result.
+    expect(values).toEqual(['work-1', 'done', 'The forecast is ready.', JSON.stringify(visual), null]);
   });
 
   it('clears stale visual metadata when a work item is retried', async () => {

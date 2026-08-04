@@ -138,8 +138,13 @@ function readIfSafe(candidate: string): { name: string; buf: Buffer } | null {
  *   id. This is the authorisation anchor: the bytes land in this user's store and nobody else's.
  * @param taskId - Task id, used only as a subfolder label so a user's captures stay separable.
  * @param text - The worker deliverable text.
- * @returns The captured files and the rewritten text. When nothing is captured the text is
- *   returned UNCHANGED apart from the workspace-path notice, so the answer never claims a
+ * @returns The captured files, the rewritten text, and the path->URL `replacements` applied.
+ *   The replacements are returned because the text scanned here is the RAW worker output — the
+ *   only place the true paths reliably appear — while the text shown to the user is a separate
+ *   LLM-written summary of it. The caller applies the same substitutions to that summary. They
+ *   are server-side only and deliberately NOT part of CapturedFile: an absolute internal path is
+ *   not something to persist on the task or hand to a browser.
+ *   When nothing is captured the text is returned UNCHANGED, so the answer never claims a
  *   download that does not exist.
  */
 export async function captureDeliverableFiles(
@@ -147,10 +152,11 @@ export async function captureDeliverableFiles(
   ownerSub: string,
   taskId: string,
   text: string,
-): Promise<{ files: CapturedFile[]; text: string }> {
-  if (!ownerSub) return { files: [], text };
+): Promise<{ files: CapturedFile[]; text: string; replacements: Array<{ from: string; to: string }> }> {
+  const replacements: Array<{ from: string; to: string }> = [];
+  if (!ownerSub) return { files: [], text, replacements };
   const candidates = extractWorkspacePaths(text);
-  if (!candidates.length) return { files: [], text };
+  if (!candidates.length) return { files: [], text, replacements };
 
   const files: CapturedFile[] = [];
   let rewritten = String(text || '');
@@ -172,6 +178,7 @@ export async function captureDeliverableFiles(
       files.push({ name: read.name, downloadUrl: saved.downloadUrl, bytes: read.buf.length });
       // Replace BOTH shapes: the markdown link's target and any bare mention left in prose.
       rewritten = rewritten.split(candidate).join(saved.downloadUrl);
+      replacements.push({ from: candidate, to: saved.downloadUrl });
     } catch (err) {
       // Quota exhaustion is the expected failure and must not fail the answer — the user still
       // gets their result, just without an attached copy.
@@ -182,5 +189,5 @@ export async function captureDeliverableFiles(
   if (!files.length) {
     logger.info({ taskId, candidates: candidates.length }, 'jarvis: no deliverable captured');
   }
-  return { files, text: rewritten };
+  return { files, text: rewritten, replacements };
 }

@@ -91,13 +91,13 @@ class DelayedLifecyclePool {
       this.tasks.set(String(id), {
         id: String(id), user_sub: String(userSub), session_id: String(sessionId), title: String(title),
         status: String(status), result: null, error: null, kind: String(kind), ticket_id: ticketId,
-        visual: null, delivered: previous?.delivered ?? false,
+        visual: null, files: null, delivered: previous?.delivered ?? false,
         created_at: previous?.created_at ?? '2026-07-10T15:00:00.000Z', finished_at: null,
         summarize_started_at: null,
       });
       return { rows: [], rowCount: 1 };
     }
-    if (sql.startsWith('SELECT id, title, status, result, error, kind, ticket_id, visual, delivered')) {
+    if (sql.startsWith('SELECT id, title, status, result, error, kind, ticket_id, visual, files, delivered')) {
       const rows = [...this.tasks.values()].filter((task) => task.user_sub === values[0]);
       return { rows, rowCount: rows.length };
     }
@@ -132,6 +132,10 @@ class DelayedLifecyclePool {
       if (task.status === 'done') task.result = String(values[2]);
       else task.error = String(values[2]);
       task.visual = values[3] ? JSON.parse(String(values[3])) as Record<string, unknown> : null;
+      // $5 is the captured-deliverables slot. Mirrored here (rather than ignored) so the fake pool
+      // keeps modelling the real write: finishTask always sets it, and a null must overwrite a
+      // previous run's files rather than leave them attached to a fresh result.
+      task.files = values[4] ? JSON.parse(String(values[4])) as Record<string, unknown>[] : null;
       task.finished_at = new Date().toISOString();
       return { rows: [], rowCount: 1 };
     }

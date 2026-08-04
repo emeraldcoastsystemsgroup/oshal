@@ -91,6 +91,7 @@ import {
   mapJarvisTaskStatusFromTicketStatus,
   jarvisFailureNoteForTicketStatus,
   storedVisual,
+  storedFiles,
 } from './jarvis-task-store';
 
 // ── Re-exports: keep the public surface the unit tests + external importers resolve from here. ──
@@ -497,7 +498,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     try {
       const rows = (await ctx.pool.query(
-        `SELECT id, title, status, result, error, kind, ticket_id, visual, delivered, created_at, finished_at
+        `SELECT id, title, status, result, error, kind, ticket_id, visual, files, delivered, created_at, finished_at
            FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 50`, [sub])).rows;
       // For complex tasks (filed with the swarm), the live status lives on the ticket — map it in.
       const hasComplex = rows.some((r) => r.kind === 'complex' && r.ticket_id);
@@ -519,10 +520,15 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           if (!error) error = jarvisFailureNoteForTicketStatus(ts);
         }
         const visual = storedVisual({ visual: r.visual });
+        // Deliverables the task produced, already copied into THIS caller's private folder. The
+        // row is scoped by user_sub above, and every URL is re-validated to the owner-scoped
+        // download shape before it reaches a browser.
+        const files = storedFiles(r.files);
         return {
           id: r.id, title: r.title, status, result: r.result as string | null, error,
           kind: r.kind, ticketId: r.ticket_id, delivered: r.delivered === true, createdAt: r.created_at, finishedAt: r.finished_at,
           ...(visual ? { visual } : {}),
+          ...(files.length ? { files } : {}),
         };
       });
       // For finished complex tasks, have Jarvis READ the deliverable and summarize it in his voice

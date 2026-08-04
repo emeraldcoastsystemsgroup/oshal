@@ -256,6 +256,14 @@
   .bx .mermaid svg { max-width:100%; height:auto; }
   .ans-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:9px; }
   .ans-chips .chip { color:var(--accent); font-weight:600; }
+  /* Deliverable downloads. Scales with the reading preference like the rest of the answer —
+     a control the reader cannot read is the same defect as prose they cannot read. */
+  .dl-row { align-items:center; }
+  .dl-label { color:var(--muted); font-size:calc(.82rem * var(--reading-scale,1)); }
+  a.dl-chip { text-decoration:none; display:inline-flex; align-items:center; gap:6px;
+    font-size:calc(.82rem * var(--reading-scale,1)); }
+  a.dl-chip:hover { border-color:var(--accent); }
+  .dl-size { color:var(--muted); font-weight:400; }
   .spin { color:var(--muted); font-size:12.5px; }
   .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--accent); animation:p 1s infinite; }
   @keyframes p { 0%,100%{opacity:.3} 50%{opacity:1} }
@@ -901,10 +909,20 @@ function renderMarkdown(md) {
   // the owner-scoped visual-artifact service and permit tracking/data exfiltration via a remote URL.
   const safeUrl = (u) => {
     const raw = String(u).trim();
-    if (raw.startsWith('/app/workspace-shared/')) {
-      const workspaceFile = /^\/app\/workspace-shared\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*$/i;
-      return raw.length <= 500 && workspaceFile.test(raw) ? '/code?file=' + encodeURIComponent(raw) : '#';
-    }
+    // A raw workspace path is NOT a download. It used to render as `/code?file=…`, which opens
+    // code-server — an operator tool that is not deployed on a customer box at all. So the answer
+    // showed a link, the user clicked it, and nothing they could reach came back. That is the
+    // "it says the report is downloadable but it isn't" report.
+    //
+    // Any workspace path still present HERE is by definition one the server did NOT capture (see
+    // jarvis-deliverable-files.ts — captured files are rewritten to owner-scoped
+    // /api/files/download URLs before the text ever reaches this renderer). Unreachable by
+    // construction, so it renders inert rather than as a link that lies about being one.
+    //
+    // This MUST be handled before the general test below, not deleted: '/app/workspace-shared/…'
+    // starts with a single '/', so removing this branch does not fall through to '#' — it returns
+    // the path verbatim as an href and produces a 404 instead of an inert span.
+    if (raw.startsWith('/app/workspace-shared/')) return '#';
     return /^(https?:\/\/|\/(?!\/))/i.test(raw) ? raw : '#';
   };
   const inline = (s) => esc(s)
@@ -1519,6 +1537,29 @@ function workspaceChipHtml(taskId) {
   const id = typeof taskId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/.test(taskId) ? taskId : '';
   return id ? `<div class="ans-chips"><span class="chip" data-open-task="${esc(id)}">Open workspace ↗</span></div>` : '';
 }
+/* A finished task's deliverables, copied server-side into THIS user's own private folder and
+   offered under the owner-scoped download route. Before this, the answer told the user their
+   report was "available in the workspace app directory" — a path inside the bot's container that
+   nothing in the product can serve and no user can open. The bytes now live somewhere they own.
+
+   The URL shape is re-checked here even though the server validates it on the way out: this
+   renders into the answer surface, and an absolute or protocol-relative URL reaching an <a href>
+   from stored data is the one thing that would turn a task result into an off-site link. */
+function downloadsHtml(files) {
+  const list = Array.isArray(files) ? files.slice(0, 5) : [];
+  const rows = list.filter((f) => f && typeof f.name === 'string'
+      && typeof f.downloadUrl === 'string' && f.downloadUrl.startsWith('/api/files/download?'))
+    .map((f) => {
+      const kb = Number(f.bytes) > 0 ? Math.max(1, Math.round(Number(f.bytes) / 1024)) : 0;
+      const size = kb ? ` <span class="dl-size">${kb} KB</span>` : '';
+      // `download` so it saves rather than navigating the panel away from the answer.
+      return `<a class="chip dl-chip" href="${esc(f.downloadUrl)}" download rel="noopener">`
+        + `<span aria-hidden="true">⤓</span> ${esc(f.name)}${size}</a>`;
+    });
+  return rows.length
+    ? `<div class="ans-chips dl-row"><span class="dl-label">Saved to your files:</span>${rows.join('')}</div>`
+    : '';
+}
 function wireWorkspaceChips(container) {
   container?.querySelectorAll('[data-open-task]').forEach((c) => c.onclick = () => openApp('/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000050&taskId=' + encodeURIComponent(c.getAttribute('data-open-task'))));
 }
@@ -1533,7 +1574,7 @@ async function openJob(jobId) {
         : '';
       d = {
         status: durable.status, answer: durable.result || note, error: durable.error,
-        label: durable.title, visual: durable.visual, jarvisTaskId: durable.id,
+        label: durable.title, visual: durable.visual, files: durable.files, jarvisTaskId: durable.id,
         ticketId: durable.ticketId, taskId: durable.ticketId || undefined,
       };
     } else {
@@ -1545,6 +1586,7 @@ async function openJob(jobId) {
     let html = renderMarkdown(d.answer);
     if (d.handoffs && d.handoffs.length) html += chipsHtml(d.handoffs);
     html += visualReplayHtml(d.visual);
+    html += downloadsHtml(d.files);
     html += workspaceChipHtml(d.ticketId || d.sourceTicketId || d.taskId);
     showInlineResult(html);
     const bx = addConvo(assistantLabel(), 'bot', html);

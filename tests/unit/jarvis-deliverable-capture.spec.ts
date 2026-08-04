@@ -156,3 +156,52 @@ describe('deliverable capture — path extraction', () => {
     expect(extractWorkspacePaths(many)).toHaveLength(5);
   });
 });
+
+describe('deliverable capture — wired into the completion path', () => {
+  const ORCH = 'src/app/routes/jarvis-orchestrator.ts';
+  const STORE = 'src/app/routes/jarvis-task-store.ts';
+  const ROUTES = 'src/app/routes/jarvis-routes.ts';
+  const JARVIS_HTML = 'src/api/jarvis.html';
+  const readFile = (p: string): string =>
+    require('node:fs').readFileSync(require('node:path').resolve(process.cwd(), p), 'utf8');
+
+  it('captures against the RAW deliverable, not the LLM summary', () => {
+    const src = readFile(ORCH);
+    // The summary is the model's rendering of the work; the true paths live in the worker output.
+    // Scanning the summary alone finds nothing whenever the model paraphrased the path — which is
+    // most of the time, and is why the user saw a bolded **/deliverables** with no link.
+    expect(src).toMatch(/captureDeliverableFiles\(ctx,\s*sub,\s*taskId,\s*deliverable\)/);
+    // ...and the substitutions are then applied to the text the user actually reads.
+    expect(src).toMatch(/captured\.replacements[\s\S]{0,160}summaryWithLinks\s*=\s*summaryWithLinks\.split/);
+    expect(src).toMatch(/finishTask\([^)]*summaryWithLinks[^)]*captured\.files\)/);
+  });
+
+  it('resets files when a task is re-filed under the same id', () => {
+    const src = readFile(STORE);
+    // result/visual are already reset here. Omitting files would let a re-run surface the PREVIOUS
+    // run's downloads next to a fresh answer — stale links that look authoritative.
+    const conflict = /ON CONFLICT \(id\) DO UPDATE SET[^`]*/.exec(src)?.[0] ?? '';
+    expect(conflict).toContain('files = NULL');
+  });
+
+  it('validates stored files to the owner-scoped download shape before serving them', () => {
+    const src = readFile(STORE);
+    expect(src).toContain("const DOWNLOAD_URL_PREFIX = '/api/files/download?'");
+    // Anchored: startsWith, never includes/indexOf — otherwise 'https://evil/?x=/api/files/download?'
+    // would pass and render as an off-site link inside a task result.
+    expect(src).toMatch(/downloadUrl\.startsWith\(DOWNLOAD_URL_PREFIX\)/);
+    expect(src).not.toMatch(/downloadUrl\.includes\(DOWNLOAD_URL_PREFIX\)/);
+    expect(readFile(ROUTES)).toMatch(/storedFiles\(r\.files\)/);
+  });
+
+  it('stops rendering an unreachable workspace path as if it were a link', () => {
+    const html = readFile(JARVIS_HTML);
+    // /code opens code-server, which is not deployed on a customer box — the link was the
+    // "it says downloadable but it isn't" defect.
+    expect(html).not.toContain("'/code?file=' + encodeURIComponent(raw)");
+    // The branch must SURVIVE, returning '#'. Deleting it does not fall through to '#': the path
+    // starts with a single '/', so the general test below returns it verbatim as an href.
+    expect(html).toMatch(/raw\.startsWith\('\/app\/workspace-shared\/'\)\)\s*return\s*'#'/);
+    expect(html).toContain('downloadsHtml(d.files)');
+  });
+});
