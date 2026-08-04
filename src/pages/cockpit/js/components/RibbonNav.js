@@ -37,7 +37,35 @@ const HARDCODED_VIEWS = [
 const PINNED_PLATFORM_VIEW_IDS = ['operations', 'connectors'];
 
 /** The single rail entry that a focused app shows in place of the platform tool set. */
-const PLATFORM_HUB_ID = 'tool-platform-hub';
+export const PLATFORM_HUB_ID = 'tool-platform-hub';
+
+/**
+ * @description Decide which views make up the pinned-settings tray at the foot of the rail.
+ *
+ * Pure and exported so it can be unit-tested against real view shapes. The duplicate-Settings
+ * bug this guards lived in three lines of inline filtering inside render(), where nothing could
+ * reach it: the hub is already a member of `views` (that is how it stays navigable when withheld
+ * from the rail), so re-pushing it to force it last produced a second identical button.
+ *
+ * @param {Array<object>} views - All registered views.
+ * @param {object} opts - Options.
+ * @param {boolean} opts.studentMode - Kiosk rail: no settings tray at all.
+ * @param {boolean} opts.hidePlatformChrome - Focused app: collapse platform tools behind the hub.
+ * @returns {Array<object>} The tray's views, in render order, with no duplicates.
+ */
+export function computeBottomTray(views, opts) {
+  const { studentMode = false, hidePlatformChrome = false } = opts || {};
+  if (studentMode) return [];
+  const bottom = views.filter(v => v.section === 'bottom');
+  if (!hidePlatformChrome) return bottom;
+  // Platform tools and the framework Settings entry leave the rail; the hub replaces them and is
+  // appended last, so it sits below the app's own bottom items rather than among them.
+  const kept = bottom.filter(
+    v => !v.platformTool && v.id !== 'settings' && v.id !== PLATFORM_HUB_ID,
+  );
+  const hub = views.find(v => v.id === PLATFORM_HUB_ID);
+  return hub ? [...kept, hub] : kept;
+}
 
 /** Resolve active profile name from URL ?app= or ?profile= only.
  *
@@ -615,8 +643,6 @@ export class RibbonNav {
     // Settings) — leaving only the app's own top-rail student screens.
     const homeViews = this.views.filter(v => v.section === 'home');
     const topViews = this.views.filter(v => v.section !== 'home' && v.section !== 'bottom');
-    let bottomViews = this.studentMode ? [] : this.views.filter(v => v.section === 'bottom');
-
     // A FOCUSED app (?app=<name>) shows the app's own screens plus ONE door to everything else.
     // Previously the platform appended its whole tool set to every cockpit — Optimizer, Workflow
     // Studio, Run Trace, Dead Letters, Budgets — on top of whatever the app declared, and a
@@ -626,11 +652,10 @@ export class RibbonNav {
     // usable or configurable" meant, and it is a positioning failure, not a layout one.
     //
     // The plain /cockpit/ (no ?app=) is the OPERATOR view and keeps the full dense rail.
-    if (this.hidePlatformChrome) {
-      bottomViews = bottomViews.filter(v => !v.platformTool && v.id !== 'settings');
-      const hub = this.views.find(v => v.id === PLATFORM_HUB_ID);
-      if (hub) bottomViews.push(hub);
-    }
+    const bottomViews = computeBottomTray(this.views, {
+      studentMode: this.studentMode,
+      hidePlatformChrome: this.hidePlatformChrome,
+    });
 
     this.container.innerHTML = `
       <nav class="ribbon-nav" id="ribbonNavInner">

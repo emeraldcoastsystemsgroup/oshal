@@ -9,10 +9,72 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { computeBottomTray, PLATFORM_HUB_ID } from '@/pages/cockpit/js/components/RibbonNav.js';
+
+/** The tray as a focused app actually presents it: the app's own bottom items, the framework
+ *  Settings entry, the appended platform tools, and the hub — all registered together. */
+const VIEWS = [
+  { id: 'sales-home', section: 'top' },
+  { id: 'sales-admin', section: 'bottom' },
+  { id: 'sales-import', section: 'bottom' },
+  { id: 'settings', section: 'bottom' },
+  { id: 'operations', section: 'bottom', platformTool: true },
+  { id: 'tool-token-chase', section: 'bottom', platformTool: true },
+  { id: 'tool-dlq', section: 'bottom', platformTool: true },
+  { id: PLATFORM_HUB_ID, section: 'bottom' },
+];
 
 const RIBBON = 'src/pages/cockpit/js/components/RibbonNav.js';
 const HUB = 'src/pages/cockpit/tools/platform.html';
 const read = (p: string): string => readFileSync(resolve(process.cwd(), p), 'utf8');
+
+describe('the settings tray, computed', () => {
+  const ids = (v: Array<{ id: string }>): string[] => v.map((x) => x.id);
+
+  it('renders each entry EXACTLY once', () => {
+    const tray = computeBottomTray(VIEWS, { hidePlatformChrome: true });
+
+    // The shipped bug: the hub is already a member of `views` (that is how it stays navigable
+    // while withheld from the rail), so re-pushing it to force it last rendered a SECOND
+    // identical button. A customer saw two "Settings" entries opening the same screen.
+    expect(ids(tray)).toEqual([...new Set(ids(tray))]);
+    expect(ids(tray).filter((id) => id === PLATFORM_HUB_ID)).toHaveLength(1);
+  });
+
+  it('keeps the app’s own items and drops platform chrome', () => {
+    const tray = computeBottomTray(VIEWS, { hidePlatformChrome: true });
+
+    expect(ids(tray)).toContain('sales-admin');
+    expect(ids(tray)).toContain('sales-import');
+    for (const gone of ['settings', 'operations', 'tool-token-chase', 'tool-dlq']) {
+      expect(ids(tray)).not.toContain(gone);
+    }
+  });
+
+  it('puts the one door last, below the app’s own entries', () => {
+    const tray = computeBottomTray(VIEWS, { hidePlatformChrome: true });
+    expect(tray[tray.length - 1].id).toBe(PLATFORM_HUB_ID);
+  });
+
+  it('leaves the operator cockpit’s dense tray untouched', () => {
+    // No ?app= → hidePlatformChrome false → every bottom view survives, in declaration order.
+    const tray = computeBottomTray(VIEWS, { hidePlatformChrome: false });
+    expect(ids(tray)).toEqual([
+      'sales-admin', 'sales-import', 'settings', 'operations',
+      'tool-token-chase', 'tool-dlq', PLATFORM_HUB_ID,
+    ]);
+  });
+
+  it('gives a kiosk rail no settings tray at all', () => {
+    expect(computeBottomTray(VIEWS, { studentMode: true, hidePlatformChrome: true })).toEqual([]);
+  });
+
+  it('does not invent a hub that was never registered', () => {
+    const withoutHub = VIEWS.filter((v) => v.id !== PLATFORM_HUB_ID);
+    const tray = computeBottomTray(withoutHub, { hidePlatformChrome: true });
+    expect(ids(tray)).toEqual(['sales-admin', 'sales-import']);
+  });
+});
 
 describe('a focused app owns its rail', () => {
   it('makes platform chrome opt-IN, never something a manifest must fight off', () => {
@@ -36,10 +98,12 @@ describe('a focused app owns its rail', () => {
   it('withholds tagged tools from the rail but keeps them registered', () => {
     const src = read(RIBBON);
 
-    // Withheld from the RAIL only. If they were dropped from this.views instead, deep links and
-    // the iframe navigate bridge would silently break, and the hub could not reach them at all.
-    expect(src).toMatch(/bottomViews\s*=\s*bottomViews\.filter\(v => !v\.platformTool/);
+    // Withheld from the RAIL only — the tray is a computed view of this.views, never a mutation
+    // of it. If the tools were dropped from this.views instead, deep links and the iframe
+    // navigate bridge would silently break, and the hub could not reach them at all.
+    // (Which tools the tray drops is asserted behaviourally above, against real view shapes.)
     expect(src).not.toMatch(/this\.views\s*=\s*this\.views\.filter\(v => !v\.platformTool/);
+    expect(src).toMatch(/const bottomViews = computeBottomTray\(this\.views/);
   });
 
   it('offers exactly one door in place of the tool set', () => {
