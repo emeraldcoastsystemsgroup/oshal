@@ -9,13 +9,19 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | persistCostEvent additionally appends ONE oshal_cost_events ledger row per cost event (migration 078). chat_tasks accumulates a task's lifetime totals, which makes it unusable for time-windowed reads — cost-governance daily budget caps were attributing a long-lived task's whole history to the trailing 24h. The ledger write is independently non-fatal (table may predate the migration) so the chat_tasks rollup is never lost to a missing ledger table.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Ledger rows now carry the token split + call duration (migration 090; BACKLOG: traces show per-call cost but not tokens/durations). appendCostLedgerRow was dropping event.inputTokens/outputTokens — numbers every producer already supplies for the chat_tasks rollup — and CostEvent had no duration field even though the execution handlers measure one. New optional CostEvent.durationMs threads through; a 42703 undefined-column error (DB predates 090) falls back to the legacy 6-column insert so the cost row is never lost to the new columns.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-124 (RLS Phase 2): oshal_cost_events is now FORCE-RLS'd (migration 112), so an insert whose owner_sub does not match the stamped connection identity is REFUSED by Postgres with SQLSTATE 42501. Both ledger catches logged every failure at warn and moved on, which meant an RLS refusal silently dropped a cost row and windowed budget caps quietly failed OPEN — the exact shape of the ADR-119 intake defect, where a swallowed row-level-security rejection looked like success for weeks. The refusal now logs at ERROR, names both halves of the mismatch (the row's ownerSub and the fact that the connection identity is what has to match it), and is distinguishable in logs from a genuinely missing table. Behaviour is otherwise unchanged: the write stays non-fatal so a cost-ledger gap can never brick a dispatch.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add recordCostOnce(outboxId, event): receipt insertion, chat_tasks mutation, and cost-ledger append share one transaction so durable remote-task settlement replay cannot double bill or acknowledge a partial cost publication.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Serialize distinct remote-task cost effects for the same chat-task rollup with a transaction advisory lock, preventing concurrent outbox workers from losing an increment.
  */
 
-import type { Pool } from 'pg';
+import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import type { ModelUsageStats } from '@/shared/types';
 
 const logger = createChildLogger({ module: 'cost-tracking-service' });
+
+interface CostQueryable {
+  query<R extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<R>>;
+}
 
 /**
  * @description True when a failed write was refused by row-level security rather than by a
@@ -124,8 +130,7 @@ export class CostTrackingService {
    * Persists to chat_tasks if pool is available, always tracks in memory.
    */
   async recordCost(event: CostEvent): Promise<void> {
-    this.events.push(event);
-    this.runningTotal += event.totalCost;
+    this.trackInMemory(event);
 
     if (this.pool) {
       try {
@@ -139,6 +144,50 @@ export class CostTrackingService {
       { agentId: event.agentId, model: event.modelId, cost: event.totalCost, tokens: event.inputTokens + event.outputTokens },
       'Cost event recorded',
     );
+  }
+
+  /**
+   * @description Records one replayable cost effect exactly once by durable outbox id.
+   * The receipt and every database mutation commit together; any error rolls back and
+   * leaves the upstream outbox pending for a safe retry.
+   * @param outboxId - Stable remote-task settlement outbox UUID.
+   * @param event - Cost event reconstructed from the durable task settlement.
+   * @returns True when this call recorded cost, false when the receipt already existed.
+   */
+  async recordCostOnce(outboxId: string, event: CostEvent): Promise<boolean> {
+    if (!this.pool) throw new Error('recordCostOnce requires a PostgreSQL pool');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inserted = await client.query<{ outbox_id: string }>(
+        `INSERT INTO remote_task_cost_receipts (outbox_id, task_id, owner_sub)
+         VALUES ($1::uuid, $2, $3) ON CONFLICT (outbox_id) DO NOTHING RETURNING outbox_id`,
+        [outboxId, event.taskId, event.ownerSub ?? null],
+      );
+      if (!inserted.rows[0]) {
+        await client.query('COMMIT');
+        return false;
+      }
+      // A receipt fences replay of one outbox row; this task-scoped lock also fences
+      // two different settlement rows that legitimately contribute to one rollup.
+      await client.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended('remote-task-cost:' || $1::text, 0)
+         )`,
+        [event.taskId],
+      );
+      await this.persistCostEvent(event, client, true);
+      await client.query('COMMIT');
+      this.trackInMemory(event);
+      logger.info({ outboxId, taskId: event.taskId }, 'Recorded idempotent remote-task cost effect');
+      return true;
+    } catch (error) {
+      await rollbackCostTransaction(client, outboxId);
+      logger.error({ err: error, outboxId, taskId: event.taskId }, 'Idempotent remote-task cost effect failed');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /**
@@ -199,6 +248,18 @@ export class CostTrackingService {
    */
   getRecentEvents(limit = 50): CostEvent[] {
     return this.events.slice(-limit);
+  }
+
+  /** @description Updates process-local observability only after the chosen durability contract succeeds. */
+  private trackInMemory(event: CostEvent): void {
+    this.events.push(event);
+    this.runningTotal += event.totalCost;
+  }
+
+  /** @description Narrows the nullable pool for persistence helpers. */
+  private requirePool(): Pool {
+    if (!this.pool) throw new Error('Cost persistence requires a PostgreSQL pool');
+    return this.pool;
   }
 
   /**
@@ -410,107 +471,85 @@ export class CostTrackingService {
     }
   }
 
-  private async persistCostEvent(event: CostEvent): Promise<void> {
-    const existingResult = await this.pool!.query<TaskCostRow>(
-      `SELECT
-        task_id,
-        title,
-        status,
-        processing_mode,
-        agent_id,
-        provider_id,
-        message_count,
-        turn_count,
-        total_input_tokens,
-        total_output_tokens,
-        total_input_cost,
-        total_output_cost,
-        total_cost,
-        total_requests,
-        cost_currency,
-        usage_by_model,
-        metadata,
-        owner_sub,
-        created_at
-      FROM chat_tasks
-      WHERE task_id = $1
-      LIMIT 1`,
-      [event.taskId],
-    );
-
+  private async persistCostEvent(
+    event: CostEvent,
+    database: CostQueryable = this.requirePool(),
+    strictLedger = false,
+  ): Promise<void> {
+    const existing = await this.findTaskCost(event.taskId, database);
     const eventUsageByModel = buildUsageByModel(event);
-    if (existingResult.rows.length === 0) {
-      await this.pool!.query(
-        `INSERT INTO chat_tasks (
-          task_id, title, status, processing_mode, agent_id, provider_id,
-          message_count, turn_count, total_input_tokens, total_output_tokens,
-          total_input_cost, total_output_cost, total_cost, total_requests,
-          cost_currency, usage_by_model, metadata, owner_sub, created_at, updated_at
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10,
-          $11, $12, $13, $14,
-          $15, $16::jsonb, $17::jsonb, $18, NOW(), NOW()
-        )`,
-        [
-          event.taskId,
-          event.ticketExternalId || event.taskId,
-          'processing',
-          'agentic',
-          event.agentId,
-          event.providerId,
-          0,
-          0,
-          event.inputTokens,
-          event.outputTokens,
-          event.inputCost,
-          event.outputCost,
-          event.totalCost,
-          event.requestCount ?? 1,
-          event.currency || 'USD',
-          JSON.stringify(eventUsageByModel),
-          JSON.stringify({}),
-          event.ownerSub ?? null,
-        ],
-      );
-      await this.appendCostLedgerRow(event, event.ownerSub ?? null);
+    if (!existing) {
+      await this.insertTaskCost(event, eventUsageByModel, database);
+      await this.appendCostLedgerRow(event, event.ownerSub ?? null, database, strictLedger);
       return;
     }
+    await this.updateTaskCost(event, existing, eventUsageByModel, database);
+    await this.appendCostLedgerRow(event, event.ownerSub ?? existing.owner_sub ?? null, database, strictLedger);
+  }
 
-    const existing = existingResult.rows[0];
-    const mergedUsageByModel = mergeUsageByModel(parseUsageByModel(existing.usage_by_model), eventUsageByModel);
-    await this.pool!.query(
-      `UPDATE chat_tasks
-      SET
-        agent_id = $2,
-        provider_id = $3,
-        total_input_tokens = $4,
-        total_output_tokens = $5,
-        total_input_cost = $6,
-        total_output_cost = $7,
-        total_cost = $8,
-        total_requests = $9,
-        cost_currency = $10,
-        usage_by_model = $11::jsonb,
-        owner_sub = COALESCE(owner_sub, $12),
-        updated_at = NOW()
-      WHERE task_id = $1`,
+  /** @description Reads the current rollup while the caller's transaction/lock remains active. */
+  private async findTaskCost(taskId: string, database: CostQueryable): Promise<TaskCostRow | null> {
+    const result = await database.query<TaskCostRow>(
+      `SELECT agent_id, provider_id, total_input_tokens, total_output_tokens,
+        total_input_cost, total_output_cost, total_cost, total_requests,
+        cost_currency, usage_by_model, owner_sub
+      FROM chat_tasks WHERE task_id = $1 LIMIT 1`,
+      [taskId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** @description Creates the initial chat-task rollup for one cost event. */
+  private async insertTaskCost(
+    event: CostEvent,
+    usageByModel: Record<string, ModelUsageStats>,
+    database: CostQueryable,
+  ): Promise<void> {
+    await database.query(
+      `INSERT INTO chat_tasks (
+        task_id, title, status, processing_mode, agent_id, provider_id,
+        message_count, turn_count, total_input_tokens, total_output_tokens,
+        total_input_cost, total_output_cost, total_cost, total_requests,
+        cost_currency, usage_by_model, metadata, owner_sub, created_at, updated_at
+      ) VALUES (
+        $1, $2, 'processing', 'agentic', $3, $4, 0, 0, $5, $6,
+        $7, $8, $9, $10, $11, $12::jsonb, '{}'::jsonb, $13, NOW(), NOW()
+      )`,
       [
         event.taskId,
-        existing.agent_id || event.agentId,
-        existing.provider_id || event.providerId,
-        normalizeCount(existing.total_input_tokens) + event.inputTokens,
-        normalizeCount(existing.total_output_tokens) + event.outputTokens,
-        normalizeAmount(existing.total_input_cost) + event.inputCost,
-        normalizeAmount(existing.total_output_cost) + event.outputCost,
-        normalizeAmount(existing.total_cost) + event.totalCost,
-        normalizeCount(existing.total_requests) + (event.requestCount ?? 1),
-        existing.cost_currency || event.currency || 'USD',
-        JSON.stringify(mergedUsageByModel),
+        event.ticketExternalId || event.taskId,
+        event.agentId,
+        event.providerId,
+        event.inputTokens,
+        event.outputTokens,
+        event.inputCost,
+        event.outputCost,
+        event.totalCost,
+        event.requestCount ?? 1,
+        event.currency || 'USD',
+        JSON.stringify(usageByModel),
         event.ownerSub ?? null,
       ],
     );
-    await this.appendCostLedgerRow(event, event.ownerSub ?? existing.owner_sub ?? null);
+  }
+
+  /** @description Adds one event to an existing rollup after its writer has been serialized. */
+  private async updateTaskCost(
+    event: CostEvent,
+    existing: TaskCostRow,
+    usageByModel: Record<string, ModelUsageStats>,
+    database: CostQueryable,
+  ): Promise<void> {
+    const merged = mergeUsageByModel(parseUsageByModel(existing.usage_by_model), usageByModel);
+    await database.query(
+      `UPDATE chat_tasks SET agent_id = $2, provider_id = $3,
+        total_input_tokens = $4, total_output_tokens = $5,
+        total_input_cost = $6, total_output_cost = $7, total_cost = $8,
+        total_requests = $9, cost_currency = $10, usage_by_model = $11::jsonb,
+        owner_sub = COALESCE(owner_sub, $12), updated_at = NOW()
+      WHERE task_id = $1`,
+      buildTaskCostUpdateValues(event, existing, merged),
+    );
   }
 
   /**
@@ -528,9 +567,14 @@ export class CostTrackingService {
    * @param ownerSub - Accountable end-user sub, falling back to the task row's existing owner.
    * @returns Resolves once the ledger row is written or the failure is logged.
    */
-  private async appendCostLedgerRow(event: CostEvent, ownerSub: string | null): Promise<void> {
+  private async appendCostLedgerRow(
+    event: CostEvent,
+    ownerSub: string | null,
+    database: CostQueryable,
+    strict: boolean,
+  ): Promise<void> {
     try {
-      await this.pool!.query(
+      await database.query(
         `INSERT INTO oshal_cost_events
            (task_id, owner_sub, agent_id, provider_id, model_id, cost_usd, input_tokens, output_tokens, duration_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -541,9 +585,10 @@ export class CostTrackingService {
       );
     } catch (err) {
       if ((err as { code?: string }).code === '42703') {
-        await this.appendLegacyCostLedgerRow(event, ownerSub);
+        await this.appendLegacyCostLedgerRow(event, ownerSub, database, strict);
         return;
       }
+      if (strict) throw err;
       if (isRlsRefusal(err)) {
         logger.error(
           { err, taskId: event.taskId, ownerSub },
@@ -567,9 +612,14 @@ export class CostTrackingService {
    * @param ownerSub - Accountable end-user sub resolved by the caller.
    * @returns Resolves once the legacy row is written or the failure is logged.
    */
-  private async appendLegacyCostLedgerRow(event: CostEvent, ownerSub: string | null): Promise<void> {
+  private async appendLegacyCostLedgerRow(
+    event: CostEvent,
+    ownerSub: string | null,
+    database: CostQueryable,
+    strict: boolean,
+  ): Promise<void> {
     try {
-      await this.pool!.query(
+      await database.query(
         `INSERT INTO oshal_cost_events (task_id, owner_sub, agent_id, provider_id, model_id, cost_usd)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [event.taskId, ownerSub, event.agentId, event.providerId, event.modelId, event.totalCost],
@@ -579,6 +629,7 @@ export class CostTrackingService {
         'oshal_cost_events lacks the 090 token/duration columns — wrote the legacy row; apply migration 090',
       );
     } catch (err) {
+      if (strict) throw err;
       if (isRlsRefusal(err)) {
         logger.error(
           { err, taskId: event.taskId, ownerSub },
@@ -593,6 +644,15 @@ export class CostTrackingService {
         'Failed to append oshal_cost_events ledger row — windowed budget spend will not see this event',
       );
     }
+  }
+}
+
+/** @description Rolls back a failed exactly-once cost transaction without hiding rollback failure. */
+async function rollbackCostTransaction(client: PoolClient, outboxId: string): Promise<void> {
+  try {
+    await client.query('ROLLBACK');
+  } catch (rollbackError) {
+    logger.error({ err: rollbackError, outboxId }, 'Remote-task cost transaction rollback failed');
   }
 }
 
@@ -632,6 +692,28 @@ interface TaskCostRow {
   metadata: Record<string, unknown> | string | null;
   owner_sub: string | null;
   created_at: string | Date | null;
+}
+
+/** @description Builds the additive rollup update without hiding its normalization rules in SQL. */
+function buildTaskCostUpdateValues(
+  event: CostEvent,
+  existing: TaskCostRow,
+  usageByModel: Record<string, ModelUsageStats>,
+): unknown[] {
+  return [
+    event.taskId,
+    existing.agent_id || event.agentId,
+    existing.provider_id || event.providerId,
+    normalizeCount(existing.total_input_tokens) + event.inputTokens,
+    normalizeCount(existing.total_output_tokens) + event.outputTokens,
+    normalizeAmount(existing.total_input_cost) + event.inputCost,
+    normalizeAmount(existing.total_output_cost) + event.outputCost,
+    normalizeAmount(existing.total_cost) + event.totalCost,
+    normalizeCount(existing.total_requests) + (event.requestCount ?? 1),
+    existing.cost_currency || event.currency || 'USD',
+    JSON.stringify(usageByModel),
+    event.ownerSub ?? null,
+  ];
 }
 
 function buildUsageByModel(event: CostEvent): Record<string, ModelUsageStats> {

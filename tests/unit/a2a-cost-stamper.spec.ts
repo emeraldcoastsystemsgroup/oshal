@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Review-fix coverage for createA2ACostStamper() against a mocked pg pool: the costUnknown honesty marker (zero-cost, requestCount 0, metadata.costUnknown=true), the previously-missing reported-dollar-cost stamp (a remote agent's real totalCostUsd now lands as a dollar-only supplemental row instead of a silent unflagged $0), the genuinely-free case (usage reported, totalCost 0 — nothing to bill, pool never touched), the no-Postgres visible-skip for both branches, and a DB failure being logged non-fatally rather than thrown.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Follow the refactored insertTaskCost SQL bindings: status, processing mode, message/turn counts, and empty metadata are now SQL literals, so total_cost and total_requests bind at $9/$10 rather than the former $13/$14. The production values remain correct; the regression was stale test indexing after the durable cost-settlement refactor.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
@@ -80,10 +81,12 @@ describe('createA2ACostStamper — costUnknown honesty marker', () => {
 
     const insert = calls.find((c) => c.sql.includes('INSERT INTO chat_tasks'));
     expect(insert).toBeTruthy();
-    // total_cost ($13) and total_requests ($14) are params[12] / params[13] in
-    // persistCostEvent's INSERT — both must be exactly 0 for the honesty marker.
-    expect(insert!.params[12]).toBe(0);
-    expect(insert!.params[13]).toBe(0);
+    // insertTaskCost binds total_cost as $9 and total_requests as $10. Several
+    // fixed fields are SQL literals now, so their zero-based parameter indexes
+    // are 8 and 9; both must be exactly 0 for the honesty marker.
+    expect(insert!.sql).toMatch(/total_cost, total_requests,[\s\S]*\$9, \$10,/);
+    expect(insert!.params[8]).toBe(0);
+    expect(insert!.params[9]).toBe(0);
 
     const metadataUpdate = calls.find((c) => c.sql.includes('UPDATE chat_tasks') && c.sql.includes('metadata'));
     expect(metadataUpdate).toBeTruthy();
@@ -101,14 +104,15 @@ describe('createA2ACostStamper — reported dollar cost (review-fix)', () => {
 
     const insert = calls.find((c) => c.sql.includes('INSERT INTO chat_tasks'));
     expect(insert).toBeTruthy();
-    // params[12] = total_cost — the real reported dollar figure, no longer $0.
-    expect(insert!.params[12]).toBe(0.0123);
-    // params[8]/[9] = total_input_tokens/total_output_tokens, params[13] =
+    // params[8] = total_cost — the real reported dollar figure, no longer $0.
+    expect(insert!.sql).toMatch(/total_cost, total_requests,[\s\S]*\$9, \$10,/);
+    expect(insert!.params[8]).toBe(0.0123);
+    // params[4]/[5] = total_input_tokens/total_output_tokens, params[9] =
     // total_requests — all stay 0 here. The generic token pipeline (not this
     // stamper) owns tokens/requests for this taskId; this is a dollar-only top-up.
-    expect(insert!.params[8]).toBe(0);
+    expect(insert!.params[4]).toBe(0);
+    expect(insert!.params[5]).toBe(0);
     expect(insert!.params[9]).toBe(0);
-    expect(insert!.params[13]).toBe(0);
 
     const metadataUpdate = calls.find((c) => c.sql.includes('UPDATE chat_tasks') && c.sql.includes('metadata'));
     const metadata = JSON.parse(metadataUpdate!.params[1] as string);

@@ -10,6 +10,7 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Step 1c (ADR-081): when OSHAL_DEV_REPO_URL is set, clone/refresh the bot's own platform-repo working copy at /app/dev-repo (idempotent: clone-if-missing else fetch + pull --rebase), enable the versioned guard hooks (core.hooksPath .githooks), set the git identity, and wire an env-reading credential helper (OSHAL_DEV_REPO_TOKEN — never persisted to .git/config). Non-fatal: a bot with a stale/absent clone still boots and reports the state.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | Fix ticket-time dev-repo git auth (BACKLOG 2026-07-09): the helper lived ONLY in /root/.gitconfig, but the codex harness spawns ticket work with HOME=<workspace>/.codex-home, so ticket-time git never loaded it ("could not read Username"). Helper is now ALSO repo-local (HOME-independent) and falls back to a container-local /run/oshal-dev-token file (mode 600, NOT on any volume — dies with the container) in case the codex spawn env is scrubbed. The secret still never persists.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrected BOT_RUNTIME comments to match the current bot-node controller/worker split so docs and entrypoint guidance agree.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Refuse the unsigned legacy any-bot HTTP runtime whenever delegation verification/signing material enables the task-bound security posture.
 # =============================================================================
 #
 # @description Bot startup entrypoint for per-container architecture.
@@ -170,6 +171,11 @@ fi
 BOT_RUNTIME="${BOT_RUNTIME:-swarm}"
 
 if [ "$BOT_RUNTIME" = "any-bot" ]; then
+  if [ -n "${OSHAL_DELEGATION_PUBLIC_KEYS:-}" ] || [ -n "${OSHAL_DELEGATION_SIGNING_PRIVATE_KEY:-}" ]; then
+    echo "[bot-entrypoint] FATAL: BOT_RUNTIME=any-bot cannot run while HTTP delegation enforcement is configured." >&2
+    echo "[bot-entrypoint] Use BOT_RUNTIME=bot-node; the legacy runtime has no Ed25519 verifier or shared replay ledger." >&2
+    exit 78
+  fi
   echo "[bot-entrypoint] ANY-BOT RUNTIME — starting any-bot server (LLM execution node) ..."
   echo "[bot-entrypoint]   The swarm controller dispatches work to this node via HTTP."
   echo "[bot-entrypoint]   This node handles: provider config, credentials, CLI spawning, cost capture."

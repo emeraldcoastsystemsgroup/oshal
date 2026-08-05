@@ -1,81 +1,149 @@
 <#
-  publish-ecsg-recap.ps1 - mirror the day's trade recap onto the company site (demos page).
+  publish-ecsg-recap.ps1 - mirror one provenance-bound recap to the company site.
 
-  The company site hosts its OWN copies under /downloads/recaps/ and reads /js/recaps.json, so it
-  is a genuine second publish, not a link to the primary site. Before 2026-07-31 nothing automated
-  touched it: the demos page advertised "Latest session - July 24" while agenticfederal had been
-  publishing nightly for a week. Any surface that only updates when a human remembers is a surface
-  that is eventually wrong, so the nightly publisher now calls this.
-
-  Deploy model is PUSH-TO-MAIN (the site builds from the repo). Never `npm run deploy` here.
-
-  Usage: publish-ecsg-recap.ps1 -Date YYYY-MM-DD [-SiteRepo path] [-Out path] [-SkipPush]
-  Exit 0 = mirrored (and pushed unless -SkipPush). Non-zero = the real error printed.
+  The manifest-authorized PDF/video are copied into a disposable origin/main clone, committed by
+  exact path, pushed, and verified byte-for-byte in production. The operator's checkout is never
+  switched or staged.
 
   CHANGE LOG
   -----------------------------------------------------------------------------
   SEQ | AUTHOR                                     | DESCRIPTION
   -----------------------------------------------------------------------------
-  1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - mirror dated video/pdf into downloads/recaps, upsert js/recaps.json sorted newest-first, commit + push. Carries the honesty note through so a numbers-only day reads the same on both surfaces.
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Initial mirror with newest-first recap index.
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Publish from current main and verify production artifacts.
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Restore the operator's original branch after publication.
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Read BOM-less JSON explicitly as UTF-8 under Windows PowerShell 5.1.
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Replace shared-checkout mutation with an isolated origin/main worktree; require the immutable delivery manifest; atomically update strict JSON; record run/delivery IDs and hashes; verify membership plus exact production bytes, including legitimate older backfills.
+  6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve retry diagnostics during production propagation instead of silently discarding verification failures.
+  7 | maintainer@emeraldcoastsystemsgroup.com   | Use a disposable origin/main clone rather than registering a publication worktree against the operator repository.
+  8 | maintainer@emeraldcoastsystemsgroup.com   | Derive the display label from the validated request date and reject ambiguous recap-index schemas before mutation.
+  9 | maintainer@emeraldcoastsystemsgroup.com   | Revalidate the complete final index, including the new operator note, immediately before its atomic write.
+  10 | maintainer@emeraldcoastsystemsgroup.com  | Publish and verify the PPTX addressed by the deck URL so deckSha256/deckBytes describe the bytes a visitor actually downloads.
+  11 | maintainer@emeraldcoastsystemsgroup.com  | Freeze the manifest, linked build, deck, PDF, and video once so a concurrent recap cannot change delivery during the mirror.
+  12 | maintainer@emeraldcoastsystemsgroup.com  | Validate the production index with the ECSG path policy and log each bounded artifact-download failure with its exact byte or hash reason.
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$Date,
-  [string]$SiteRepo = 'C:\Projects\emeraldcoastsystemsgroup',
   [string]$Out = 'C:\Projects\open-shal-swarm-harness-agent-llm\packages\oshal-vids-operator\out',
-  [string]$Note,
+  [string]$SiteRepo = 'C:\Projects\emeraldcoastsystemsgroup',
+  [string]$Manifest = '',
+  [string]$Note = '',
   [switch]$SkipPush
 )
-# NOT 'Stop': git writes progress to stderr, which Stop + 2>&1 turns into a terminating
-# NativeCommandError in PowerShell 5.1. Real failures are gated explicitly below.
 $ErrorActionPreference = 'Continue'
-function Note2($m) { Write-Host ("[publish-ecsg] " + $m) }
-function Fail($m) { Write-Host ("[publish-ecsg] FAILED: " + $m); exit 1 }
-if ($Date -notmatch '^\d{4}-\d{2}-\d{2}$') { Fail "bad -Date '$Date' (want YYYY-MM-DD)" }
-if (-not (Test-Path $SiteRepo)) { Fail "site repo not found: $SiteRepo" }
+. (Join-Path $PSScriptRoot 'lib\recap-publication.ps1')
 
-# 1) What do we have for this day? A video is OPTIONAL - a numbers-only day still publishes.
-$video = Join-Path $Out 'trade-recap.mp4'
-$pdf   = Join-Path $Out "$Date.pdf"
-if (-not (Test-Path $pdf)) { Fail "missing $pdf - nothing to mirror" }
-$hasVideo = (Test-Path $video) -and ((Get-Item $video).Length -gt 1MB)
+function Note2($message) { Write-Host ("[publish-ecsg] " + $message) }
+function Fail($message) { throw [System.InvalidOperationException]::new([string]$message) }
 
-$recapsDir = Join-Path $SiteRepo 'downloads\recaps'
-New-Item -ItemType Directory -Force $recapsDir | Out-Null
-Copy-Item $pdf (Join-Path $recapsDir "$Date.pdf") -Force
-if ($hasVideo) { Copy-Item $video (Join-Path $recapsDir "$Date.mp4") -Force }
-
-# 2) Label from the day's own deck data when available (keeps both sites phrased identically).
-$label = ([datetime]$Date).ToString('MMMM d, yyyy')
-$deckDataPath = Join-Path $Out 'deck-data.json'
-if (Test-Path $deckDataPath) {
-  try { $dd = Get-Content $deckDataPath -Raw | ConvertFrom-Json; if ($dd.date) { $label = $dd.date } } catch { }
+function Add-EcsgRecapCommit([string]$Repo, [string[]]$Paths, [string]$Message, [bool]$Push) {
+  & git -C $Repo add -- @Paths 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail 'git add failed for the exact ECSG recap paths' }
+  & git -C $Repo diff --cached --quiet -- @Paths
+  $diffExit = $LASTEXITCODE
+  if ($diffExit -gt 1) { Fail 'git diff --cached failed for the ECSG recap paths' }
+  if ($diffExit -eq 1) {
+    & git -C $Repo commit -q -m $Message -- @Paths
+    if ($LASTEXITCODE -ne 0) { Fail 'git commit failed' }
+  } else { Note2 'nothing changed for this delivery; production will still be verified' }
+  if (-not $Push) { Note2 '-SkipPush set: isolated commit was validated but not pushed'; return }
+  & git -C $Repo push origin HEAD:main 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail 'git push failed (origin/main moved or credentials are unavailable)' }
 }
 
-# 3) Upsert into js/recaps.json, SORTED newest-first (never a blind prepend - a backfilled older
-# date has to land in its right place, not on top).
-$idxPath = Join-Path $SiteRepo 'js\recaps.json'
-if (-not (Test-Path $idxPath)) { Fail "missing $idxPath" }
-$idx = Get-Content $idxPath -Raw | ConvertFrom-Json
-$entry = [ordered]@{ date = $Date; label = $label; deck = "/downloads/recaps/$Date.pdf" }
-if ($hasVideo) { $entry.video = "/downloads/recaps/$Date.mp4" }
-if ($Note) { $entry.note = $Note }
-$rest = @($idx.recaps | Where-Object { $_.date -ne $Date })
-$all = @(@([pscustomobject]$entry) + $rest | Sort-Object -Property date -Descending)
-# BOM-less UTF-8: PS 5.1's Set-Content -Encoding utf8 writes a BOM that strict JSON parsers reject.
-[System.IO.File]::WriteAllText($idxPath, ([pscustomobject]@{ recaps = $all } | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
-Note2 "recaps.json: $Date upserted ($(@($all).Count) sessions, leads with $(@($all)[0].date))"
+function Test-EcsgProduction($Delivery, $DeckArtifact, $PdfArtifact, $VideoArtifact) {
+  for ($attempt = 1; $attempt -le 18; $attempt++) {
+    try {
+      $indexUri = "https://emeraldcoastsystemsgroup.com/js/recaps.json?cb=$([guid]::NewGuid().ToString('N'))"
+      $remoteIndex = Read-RemoteRecapIndex $indexUri 'ecsg' 'ECSG production recap index'
+      $entry = @($remoteIndex.Entries | Where-Object {
+        [string]$_.date -ceq [string]$Delivery.requestedDate -and
+        [string]$_.runId -ceq [string]$Delivery.runId -and
+        [string]$_.deliveryId -ceq [string]$Delivery.deliveryId
+      }) | Select-Object -First 1
+      if (-not (Test-RecapIndexEntry $entry $Delivery $DeckArtifact $PdfArtifact $VideoArtifact)) {
+        throw 'production index is missing the exact delivery provenance entry'
+      }
+      $base = 'https://emeraldcoastsystemsgroup.com/downloads/recaps'
+      $checks = @(
+        @{ Label = 'deck'; Uri = "$base/$($Delivery.requestedDate).pptx?cb=$attempt"; Artifact = $DeckArtifact },
+        @{ Label = 'PDF'; Uri = "$base/$($Delivery.requestedDate).pdf?cb=$attempt"; Artifact = $PdfArtifact },
+        @{ Label = 'video'; Uri = "$base/$($Delivery.requestedDate).mp4?cb=$attempt"; Artifact = $VideoArtifact }
+      )
+      $failures = @(Get-RemoteRecapArtifactFailures $checks)
+      if ($failures.Count -gt 0) { throw "artifact verification failed: $($failures -join '; ')" }
+      return $true
+    } catch {
+      # Propagation is expected to be transient, but the reason for each retry
+      # remains visible so a terminal verification failure is diagnosable.
+      Note2 "production verification attempt $attempt failed: $($_.Exception.Message)"
+    }
+    Start-Sleep -Seconds 10
+  }
+  return $false
+}
 
-# 4) Commit + push with explicit pathspecs so nothing else in the tree is swept in.
-$paths = @("downloads/recaps/$Date.pdf", 'js/recaps.json')
-if ($hasVideo) { $paths += "downloads/recaps/$Date.mp4" }
-git -C $SiteRepo add @paths
-$staged = git -C $SiteRepo diff --cached --name-only
-if (-not $staged) { Note2 "nothing changed for $Date - already mirrored"; exit 0 }
-$msg = "demos: $label report" + $(if ($hasVideo) { " - narrated video + deck" } else { " - numbers + deck" })
-git -C $SiteRepo commit -q -m $msg -- @paths
-if ($LASTEXITCODE -ne 0) { Fail 'git commit failed' }
-if ($SkipPush) { Note2 '-SkipPush set; committed but not pushed'; exit 0 }
-git -C $SiteRepo push | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail 'git push failed (check GitHub creds)' }
-Note2 "DONE: $Date mirrored to the company site"
+$checkout = $null
+$deliverySnapshot = $null
+$publishExit = 0
+try {
+  Assert-RecapPublicationDate $Date
+  if (-not $Manifest) { $Manifest = Join-Path $Out 'RECAP.manifest.json' }
+  $runner = Join-Path $PSScriptRoot 'run-daily-recap.ps1'
+  $deliverySnapshot = New-VerifiedRecapDeliverySnapshot $Manifest $Out $Date $runner
+  $Out = $deliverySnapshot.Path
+  $Manifest = $deliverySnapshot.Manifest
+  $delivery = $deliverySnapshot.Delivery
+  $deckArtifact = Get-RecapDeliveryArtifact $delivery 'deck.pptx'
+  $pdfArtifact = Get-RecapDeliveryArtifact $delivery "$Date.pdf"
+  $videoArtifact = Get-RecapDeliveryArtifact $delivery 'trade-recap.mp4'
+
+  # The label is provenance-neutral presentation metadata. Deriving it from the
+  # validated date prevents a mutable deck-data file from relabeling verified bytes.
+  $parsedDate = [datetime]::ParseExact($Date, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+  $label = $parsedDate.ToString('MMMM d, yyyy', [Globalization.CultureInfo]::InvariantCulture)
+  $checkout = New-RecapPublicationCheckout $SiteRepo
+  $repo = $checkout.Path
+  $recapsDir = Join-Path $repo 'downloads\recaps'
+  if (-not (Test-Path -LiteralPath $recapsDir -PathType Container)) { Fail "missing ECSG recap directory: $recapsDir" }
+
+  Copy-VerifiedRecapArtifact (Join-Path $Out 'deck.pptx') (Join-Path $recapsDir "$Date.pptx") $deckArtifact
+  Copy-VerifiedRecapArtifact (Join-Path $Out "$Date.pdf") (Join-Path $recapsDir "$Date.pdf") $pdfArtifact
+  Copy-VerifiedRecapArtifact (Join-Path $Out 'trade-recap.mp4') (Join-Path $recapsDir "$Date.mp4") $videoArtifact
+
+  $indexPath = Join-Path $repo 'js\recaps.json'
+  $index = Read-RecapJsonStrict $indexPath 'ECSG recap index'
+  $existingEntries = @(Get-RecapIndexEntries $index 'ECSG recap index' 'ecsg')
+  $entry = [ordered]@{
+    date = $Date; label = $label; runId = [string]$delivery.runId; deliveryId = [string]$delivery.deliveryId
+    deck = "/downloads/recaps/$Date.pptx"; video = "/downloads/recaps/$Date.mp4"
+    deckSha256 = [string]$deckArtifact.sha256; deckBytes = [long]$deckArtifact.bytes
+    pdfSha256 = [string]$pdfArtifact.sha256; pdfBytes = [long]$pdfArtifact.bytes
+    videoSha256 = [string]$videoArtifact.sha256; videoBytes = [long]$videoArtifact.bytes
+  }
+  if ($Note) { $entry.note = $Note }
+  $rest = @($existingEntries | Where-Object { [string]$_.date -cne $Date })
+  $index = [ordered]@{ recaps = @(@($entry) + $rest | Sort-Object { [string]$_.date } -Descending) }
+  [void](Get-RecapIndexEntries $index 'ECSG recap index' 'ecsg')
+  Write-RecapJsonAtomic $indexPath $index
+  Note2 "index bound $Date to run $($delivery.runId) / delivery $($delivery.deliveryId)"
+
+  $paths = @("downloads/recaps/$Date.pptx", "downloads/recaps/$Date.pdf", "downloads/recaps/$Date.mp4", 'js/recaps.json')
+  Add-EcsgRecapCommit $repo $paths ("demos: $label verified recap") (-not $SkipPush)
+  if (-not $SkipPush) {
+    if (-not (Test-EcsgProduction $delivery $deckArtifact $pdfArtifact $videoArtifact)) {
+      Fail "production did not serve the exact manifest bytes for run $($delivery.runId) after 3 minutes"
+    }
+    Note2 "DONE + VERIFIED: production index and artifacts match run $($delivery.runId)"
+  }
+} catch {
+  Write-Host ("[publish-ecsg] FAILED: " + $_.Exception.Message)
+  $publishExit = 1
+} finally {
+  try { Remove-RecapPublicationCheckout $checkout }
+  catch { Write-Host ("[publish-ecsg] FAILED: " + $_.Exception.Message); $publishExit = 1 }
+  try { Remove-RecapDeliverySnapshot $deliverySnapshot }
+  catch { Write-Host ("[publish-ecsg] FAILED: " + $_.Exception.Message); $publishExit = 1 }
+}
+exit $publishExit

@@ -10,7 +10,50 @@ creates a `daily-trade-recap` ticket at status `backlog`, and `QueueManagerServi
 4. `communications-bot` — draft social post + email owner an approval link
 5. approval gate — owner approves before anything is delivered
 
-Nothing posts to a public channel automatically.
+Nothing in this graph workflow posts to a public channel before the approval gate.
+
+The Windows host also has a separate, explicitly operator-authorized nightly delivery rail:
+`scripts/run-daily-recap.ps1`. That runner drives the render workstation, emails and archives the
+finished recap, then automatically publishes the exact same verified delivery to AgenticFederal
+and Emerald Coast Systems Group. These are different entry points: the graph remains approval-gated;
+the host task is the unattended production publisher and returns non-zero if either site is stale.
+
+### Host-runner provenance and recovery
+
+The host runner does not trust reusable filenames. A completed render produces an immutable
+`build-artifacts-<runId>.json` plus the current `BUILD.manifest.json` pointer. The build manifest
+binds the requested market date, all four build inputs, and all four rendered pieces by byte length
+and SHA-256. Final assembly produces `recap-artifacts-<runId>-<deliveryId>.json` plus
+`RECAP.manifest.json`, binding that build to the deck, dated PDF, and final video.
+
+- `-SkipBuild` is allowed only when the completed build manifest matches the requested date and
+  current input hashes.
+- `-ResumePull` reuses a local piece only when both its length and SHA-256 match that build.
+- One host-wide mutex covers the complete normal run, including shared staging, assembly, and
+  publication names. A second scheduled or manual run fails before staging; manifest-only
+  verification remains available while a run is active.
+- Publishers freeze one verified manifest/build/output snapshot and use it for both sites; a
+  concurrent new run cannot mix deliveries.
+- Production is complete only after the public index provenance and downloaded artifact hashes
+  match the frozen delivery.
+
+The manifests are local integrity and coherence records, not signatures. They close stale-file,
+partial-write, substitution-race, and cross-run mixing failures, but they do not authenticate bytes
+against an attacker who can rewrite both the artifact and its manifest. Keep the output directory
+writable only by the scheduled-task account and administrators; treat unexpected ACL expansion as a
+pipeline security incident. Cryptographic signing is required before manifests can cross an
+untrusted storage boundary.
+
+Manual recovery and verification:
+
+```powershell
+powershell -File scripts/run-daily-recap.ps1 -Date 2026-08-05 -SkipBuild -ResumePull
+powershell -File scripts/run-daily-recap.ps1 `
+  -VerifyDeliveryManifest C:\path\to\RECAP.manifest.json `
+  -DeliveryArtifactRoot C:\path\to\out
+```
+
+Verifier exit codes are `0` valid, `1` readable but mismatched, and `2` unreadable or malformed.
 
 ---
 

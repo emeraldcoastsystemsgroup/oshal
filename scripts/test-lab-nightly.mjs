@@ -1,5 +1,12 @@
 #!/usr/bin/env node
-/*
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial host-side nightly golden-scenario runner, report writer, and optional report committer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require TEST_LAB_OWNER_SUB and send it only in the secret-authenticated trust header so the API can establish a non-operator owner identity instead of using its ambient service-secret operator stamp.
+ *
  * AI Test Lab — nightly runner (host-side) — ADR-063 §nightly.
  * -----------------------------------------------------------------------------
  * Drives the headless golden loop (POST /api/test-lab/golden/run with the service secret), then
@@ -11,7 +18,8 @@
  * the report is for the operator to approve — it is never applied or committed automatically.
  *
  * Usage:  node scripts/test-lab-nightly.mjs [scenarioId|all] [--no-commit]
- * Env:    SWARM_SERVICE_SECRET (read from .env), TEST_LAB_API (default http://127.0.0.1:5000)
+ * Env:    SWARM_SERVICE_SECRET + TEST_LAB_OWNER_SUB (read from .env),
+ *         TEST_LAB_API (default http://127.0.0.1:5000)
  */
 'use strict';
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -32,17 +40,25 @@ function envFromDotenv(key) {
 }
 
 const SECRET = envFromDotenv('SWARM_SERVICE_SECRET');
+const OWNER_SUB = envFromDotenv('TEST_LAB_OWNER_SUB').trim();
 // The api container publishes 5000 → host ${OSHAL_API_PORT:-35457}; track that default.
 const API = process.env.TEST_LAB_API || `http://127.0.0.1:${envFromDotenv('OSHAL_API_PORT') || '35457'}`;
 const scenarioId = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'all';
 const noCommit = process.argv.includes('--no-commit');
 
 if (!SECRET) { console.error('SWARM_SERVICE_SECRET not found (env or .env). Cannot authenticate headless.'); process.exit(2); }
+if (!OWNER_SUB) { console.error('TEST_LAB_OWNER_SUB not found (env or .env). Cannot attribute owner-scoped writes.'); process.exit(2); }
 
 function isoStamp() { return new Date().toISOString(); }
 function dateSlug() { return new Date().toISOString().slice(0, 10); }
 
-const HDRS = { 'content-type': 'application/json', 'x-service-secret': SECRET };
+// The shared secret authenticates this runner; the separate header says which single user's rows
+// it may access. The API honors that owner only after validating the secret and stamps it into RLS.
+const HDRS = {
+  'content-type': 'application/json',
+  'x-service-secret': SECRET,
+  'x-oshal-user-sub': OWNER_SUB,
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**

@@ -12,6 +12,8 @@
  *                       intentionally light here because authored workflows are pre-structured by the author.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | decideBranch (bot-picked branch) + dispatchPrompt helper; runClusterStep (concurrent member dispatch + reviewer PASS/FAIL gate) + resolveAgent.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | dispatchAgentPrompt: the multi-app planner's plan-step primitive — resolve the step's bot, send its substituted prompt as a full task run, and return the reply for data-passing. Generalized the private dispatchPrompt with a chatOnly flag (default true; plan steps run full). Structural method (not on EngineServices) so the workflow-studio interface stays unwidened.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prohibit the unsigned localhost execution fallback whenever the bot client reports that signed HTTP delegation is enforced.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Thread the persisted workflow-ticket owner and principal issuer through bot delegation, and authenticate every localhost machine fallback with that owner.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -19,6 +21,7 @@ import type { TicketService } from '@/features/ticketing';
 import type { BotNodeClient } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import type {
   EngineServices,
   EngineTicketContext,
@@ -44,6 +47,21 @@ interface AuthoredWorkflowDispatchResult {
   success: boolean;
   response?: string;
   error?: string;
+}
+
+interface EngineDispatchIdentity {
+  userSub?: string;
+  principalIssuer?: string;
+}
+
+function resolveEngineDispatchIdentity(ticket: EngineTicketContext): EngineDispatchIdentity {
+  const raw = ticket.raw as Partial<InternalTicket> | undefined;
+  const userSub = typeof raw?.ownerSub === 'string' ? raw.ownerSub.trim() : '';
+  const principalIssuer = readOwnerPrincipalIssuer(raw?.metadata);
+  return {
+    ...(userSub ? { userSub } : {}),
+    ...(principalIssuer ? { principalIssuer } : {}),
+  };
 }
 
 /** Dependencies for the authored-workflow EngineServices adapter. Mirrors the
@@ -90,6 +108,7 @@ export class EngineServicesAdapter implements EngineServices {
     regressionFeedback?: string,
   ): Promise<ExecutionResult> {
     const ticketId = this.ticketIdOf(ticket);
+    const dispatchIdentity = resolveEngineDispatchIdentity(ticket);
     // Resolve the pinned bot: explicit agentId wins; else resolve a bound name.
     let agentId = config.agentId;
     if (!agentId && config.agentBinding && this.deps.resolveAgentIdByName) {
@@ -118,7 +137,11 @@ export class EngineServicesAdapter implements EngineServices {
     const sendViaLocalhost = async (): Promise<AuthoredWorkflowDispatchResult> => {
       const response = await fetch(`http://localhost:${port}/api/send-message`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...serviceSecretHeaders() },
+        headers: {
+          'Content-Type': 'application/json',
+          ...serviceSecretHeaders(),
+          ...(dispatchIdentity.userSub ? { 'x-oshal-user-sub': dispatchIdentity.userSub } : {}),
+        },
         body: JSON.stringify({
           taskId: ticketId,
           ticketId,
@@ -164,6 +187,7 @@ export class EngineServicesAdapter implements EngineServices {
           workspaceFolderId: ticketId,
           agentId,
           agenticMode: true,
+          ...dispatchIdentity,
         });
         dispatchResult = {
           success: result.success === true,
@@ -171,6 +195,7 @@ export class EngineServicesAdapter implements EngineServices {
           error: result.success ? undefined : result.response || 'bot-node returned success=false',
         };
       } catch (botErr) {
+        if (this.deps.botNodeClient.isDelegationEnforced()) throw botErr;
         logger.warn(
           { err: (botErr as Error).message, ticketId, agentId },
           'Bot-node dispatch unavailable — falling back to localhost /api/send-message',
@@ -222,7 +247,7 @@ export class EngineServicesAdapter implements EngineServices {
       outcomes.map((o) => `- ${o}`).join('\n'),
     ].filter(Boolean).join('\n');
 
-    const reply = (await this.dispatchPrompt(ticketId, agentId, text)) ?? '';
+    const reply = (await this.dispatchPrompt(ticket, agentId, text)) ?? '';
     const lower = reply.trim().toLowerCase();
     const matched = outcomes.find((o) => lower === o.toLowerCase())
       ?? outcomes.find((o) => lower.includes(o.toLowerCase()))
@@ -257,7 +282,7 @@ export class EngineServicesAdapter implements EngineServices {
 
     // Ranked cluster: all members work the step at once; a member that errors is isolated.
     const settled = await Promise.allSettled(
-      memberIds.map((id) => this.dispatchPrompt(ticketId, id, text).then((resp) => ({ id, resp: resp ?? '' }))),
+      memberIds.map((id) => this.dispatchPrompt(ticket, id, text).then((resp) => ({ id, resp: resp ?? '' }))),
     );
     const responses = settled
       .filter((s): s is PromiseFulfilledResult<{ id: string; resp: string }> => s.status === 'fulfilled' && Boolean(s.value.resp))
@@ -274,7 +299,7 @@ export class EngineServicesAdapter implements EngineServices {
     const reviewerId = config.reviewer ? await this.resolveAgent(config.reviewer) : undefined;
     if (reviewerId) {
       const judgePrompt = buildClusterJudgePrompt(ticket.title, responses.map((r) => r.resp));
-      const verdict = (await this.dispatchPrompt(ticketId, reviewerId, judgePrompt)) ?? '';
+      const verdict = (await this.dispatchPrompt(ticket, reviewerId, judgePrompt)) ?? '';
       const parsed = parseClusterVerdict(verdict, responses.length);
       passed = parsed.passed;
       if (passed && parsed.winnerIndex != null) winnerAgentId = responses[parsed.winnerIndex].id;
@@ -308,7 +333,7 @@ export class EngineServicesAdapter implements EngineServices {
       return { dispatched: false, reason: 'no bot resolved' };
     }
     try {
-      const response = await this.dispatchPrompt(ticketId, agentId, config.prompt, false);
+      const response = await this.dispatchPrompt(ticket, agentId, config.prompt, false);
       logger.info({ ticketId, agentId, workType: config.workType }, 'plan-step dispatched to bot');
       return { dispatched: true, response, agentId };
     } catch (err) {
@@ -333,7 +358,14 @@ export class EngineServicesAdapter implements EngineServices {
    * localhost /api/send-message fallback). chatOnly (default true) makes it a quick answer for the
    * ai-decision branch question; plan steps pass chatOnly=false for a full accountable task run.
    */
-  private async dispatchPrompt(ticketId: string, agentId: string, text: string, chatOnly = true): Promise<string | undefined> {
+  private async dispatchPrompt(
+    ticket: EngineTicketContext,
+    agentId: string,
+    text: string,
+    chatOnly = true,
+  ): Promise<string | undefined> {
+    const ticketId = this.ticketIdOf(ticket);
+    const dispatchIdentity = resolveEngineDispatchIdentity(ticket);
     if (this.deps.botNodeClient) {
       try {
         const result = await this.deps.botNodeClient.execute(agentId, {
@@ -342,17 +374,23 @@ export class EngineServicesAdapter implements EngineServices {
           workspaceFolderId: ticketId,
           agentId,
           agenticMode: true,
+          ...dispatchIdentity,
         });
         if (result.success === true) return result.response;
         logger.warn({ ticketId, agentId }, 'decision bot-node returned success=false — localhost fallback');
       } catch (botErr) {
+        if (this.deps.botNodeClient.isDelegationEnforced()) throw botErr;
         logger.warn({ err: (botErr as Error).message, ticketId, agentId }, 'decision bot-node unavailable — localhost fallback');
       }
     }
     const port = this.deps.port ?? process.env.PORT ?? '5000';
     const response = await fetch(`http://localhost:${port}/api/send-message`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...serviceSecretHeaders() },
+      headers: {
+        'Content-Type': 'application/json',
+        ...serviceSecretHeaders(),
+        ...(dispatchIdentity.userSub ? { 'x-oshal-user-sub': dispatchIdentity.userSub } : {}),
+      },
       body: JSON.stringify({
         taskId: ticketId,
         ticketId,

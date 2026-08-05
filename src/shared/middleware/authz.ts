@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | New shared authorization helpers to close object-level authorization (IDOR) gaps. Provides caller-identity extraction from the OIDC session, an operator (admin) allowlist (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS), and per-resource ownership checks. Object-level handlers must call canAccessResource() and return 404 on failure so resource ids are not oracle-able. Operator-only listing/override routes use requireOperator().
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | requiresOperator: middleware-shaped operator gate for whole mounts (requireOperator is handler-shaped and can't be listed in app.use). First consumer: /api/security — the Security Center exposes the platform's own weak points and redacted secret previews, so it must never be reachable by basic users.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added requireServiceSecret for privileged machine-only control planes. Unlike the compatibility-only requireServiceSecretWhenConfigured helper, the strict gate fails closed when SWARM_SERVICE_SECRET is absent and never falls back to a human session.
  */
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
@@ -174,6 +175,30 @@ export function serviceSecretOr(fallback: RequestHandler): RequestHandler {
     }
     fallback(req, res, next);
   };
+}
+
+/**
+ * @description Strict machine-to-machine authorization for privileged control planes.
+ * A configured, matching `X-Service-Secret` is always required: an absent deployment
+ * secret returns 503 (the control plane is not safely configured), and a missing or
+ * incorrect caller secret returns 401. There is deliberately no OIDC fallback because
+ * callers of this middleware are controller/node protocols rather than user surfaces.
+ *
+ * @param req - Express request carrying the machine credential.
+ * @param res - Express response used for a generic fail-closed result.
+ * @param next - Next middleware, called only after an exact constant-time match.
+ */
+export function requireServiceSecret(req: Request, res: Response, next: NextFunction): void {
+  const configured = String(process.env.SWARM_SERVICE_SECRET || '').trim();
+  if (!configured) {
+    res.status(503).json({ success: false, error: 'Service unavailable' });
+    return;
+  }
+  if (!hasValidServiceSecret(req)) {
+    res.status(401).json({ success: false, error: 'Unauthorized' });
+    return;
+  }
+  next();
 }
 
 /**

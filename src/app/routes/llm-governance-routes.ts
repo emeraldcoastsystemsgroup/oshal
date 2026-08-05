@@ -4,7 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | NEW: read-only admin route exposing LLM governance status (enforcement on/off, caps, today spend vs cap per scope). Additive; registered by a maintainer in server.ts.
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Update docs/ paths after docs directory consolidation
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Update docs/ paths after docs directory consolidation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Make the machine-only governance check fail closed when no internal signing secret is configured and compare presented credentials in constant time, preventing an unconfigured public quota-exhaustion path and timing oracle.
  */
 
 /**
@@ -18,6 +19,7 @@
  * a maintainer mounts it in server.ts (see docs/architecture/model-gateway.md).
  */
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Express, Request, RequestHandler, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import {
@@ -36,14 +38,17 @@ const VALID_SCOPES: ReadonlySet<string> = new Set(['global', 'day', 'owner_sub',
 /**
  * @description Shared-secret guard for the internal /check endpoint. Bots call
  * it across the docker network; it must not be abusable publicly (recording
- * usage from an unauthenticated caller would be a quota-exhaustion DoS). When a
- * secret is configured the caller must send it back; in dev (no secret set) it is
- * permissive so local runs work without ceremony.
+ * usage from an unauthenticated caller would be a quota-exhaustion DoS). The
+ * endpoint stays closed until a secret is configured, including in development.
+ * Comparing fixed-length digests avoids leaking the secret length or prefix.
  */
 function internalCallerAllowed(req: Request): boolean {
   const secret = process.env.OSHAL_INTERNAL_TOKEN || process.env.SESSION_SECRET || '';
-  if (!secret) return true; // dev / unconfigured — no guard
-  return req.get('x-oshal-internal') === secret;
+  const presented = req.get('x-oshal-internal');
+  if (!secret || !presented) return false;
+  const expectedDigest = createHash('sha256').update(secret).digest();
+  const presentedDigest = createHash('sha256').update(presented).digest();
+  return timingSafeEqual(presentedDigest, expectedDigest);
 }
 
 const logger = createChildLogger({ module: 'llm-governance-routes' });

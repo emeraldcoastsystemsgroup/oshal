@@ -13,12 +13,36 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch timeout default 900000→3900000 (BOT_NODE_DISPATCH_TIMEOUT_MS): must OUTLIVE the bot-side 60-min execution ceiling (operator idle-timeout directive 2026-07-24) or the controller aborts work a bot is still legitimately doing at 15 min.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Idle-timeout follow-up (adversarial review): execute()/replayCall() moved off global fetch onto node:http/https (postJsonNoUndiciCeiling) — undici's ~5-min headersTimeout aborted dispatches at 5 min regardless of the raised 65-min timeoutMs, so a bot working up to the 60-min idle ceiling was cut off. http.request has no inactivity ceiling; the overall timeoutMs timer is the only bound (destroys the request as a TimeoutError). Mirrors postSendMessageNoTimeout in dispatch-manifest-worker.ts.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Add resolveDisplayOnline(): the single display-layer online rule the cockpit/overview surfaces share. Inline/api-hosted bots (container oshal-api, e.g. dnd/spaces/security-analyst) never publish a heartbeat, so the heartbeat-only online check rendered every one of them OFFLINE even while working (dnd had 122 real runs). resolveDisplayOnline = hasHeartbeat OR (enabled AND isControllerInlineContainer(container)) — classify inline-ness from the LIVE registry container (the same predicate resolveBotNodeUrl dispatches on), NEVER agents.metadata.inlineControllerBot (a stale append-merged copy that mislabels the promoted trading-analyst node as inline). The `enabled` gate (DB status) keeps an operator-disabled inline bot offline so a disable action is honoured everywhere consistently. Routing/eligibility stays heartbeat-only, unchanged.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Issue fail-closed Ed25519 HTTP delegation tokens bound to the trusted target, task, subject, and verified principal issuer whenever controller signing material is configured.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Expose delegation enforcement state so orchestrators can prohibit unsigned localhost fallback, and split execute transport handling into a bounded helper without changing the signed request contract.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Authenticate provider/model push-down with X-Service-Secret so the credential-bearing /api/llm-provider mutation works behind the bot-node machine gate.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Bind the complete canonical swarm-execute request body into the signed token to prevent prompt, entitlement, credential, or provider-intent mutation.
  */
 
 import * as http from 'node:http';
 import * as https from 'node:https';
 import { createChildLogger } from '@/shared/logger';
 import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { normalizePrincipalIssuer } from '@/shared/middleware/principal-issuer';
+import {
+  createDelegationTokenIssuer,
+  type DelegationTokenIssuer,
+} from '@/shared/security/delegation-token';
+import {
+  CONTROLLER_SYSTEM_SUBJECT,
+  DELEGATION_HTTP_HEADER,
+  PLATFORM_SYSTEM_PRINCIPAL_ISSUER,
+  SWARM_EXECUTE_DELEGATION_SCOPE,
+  delegationAudienceFromEnvironment,
+  delegationIssuerFromEnvironment,
+  hasDelegationSigningConfiguration,
+  isExplicitSystemSubject,
+} from '@/shared/security/delegation-http-policy';
+import { delegationRequestBodySha256 } from '@/shared/security/delegation-request-binding';
+import {
+  getRequestIdentity,
+  isSystemIdentity,
+} from '@/shared/services/database/request-identity';
 import type { TrustedProviderIntent } from '@/app/bot-node-provider-intent';
 import type { SkillCapabilityId } from '@/shared/skill-profiles';
 
@@ -165,6 +189,10 @@ export interface BotNodeRequest {
    *  (e.g. which connected Gmail it may read) to THIS user. Threaded to the bot's
    *  CLI spawn env as OSHAL_USER_SUB. Omit only for non-user system dispatches. */
   userSub?: string;
+  /** Verified namespace that authenticated userSub. Interactive calls source this from the
+   * trusted request-identity context; durable/background callers must carry the issuer persisted
+   * with the owner. It is never inferred from a subject string or accepted from an HTTP header. */
+  principalIssuer?: string;
   /** Token broker (security fix): short-lived, single-user access tokens the
    *  controller decrypted for THIS caller, as an env-key map (e.g.
    *  { OSHAL_CRED_GOOGLE, OSHAL_CRED_TWITTER }). The bot writes these into its
@@ -249,6 +277,14 @@ export interface BotEndpointRegistryEntry {
 
 export type BotEndpointRegistryProvider = () => ReadonlyArray<BotEndpointRegistryEntry>;
 
+/** @description Construction boundaries for deterministic delegation-aware client tests. */
+export interface BotNodeClientOptions {
+  /** Environment containing controller-only signing material and issuer/audience policy. */
+  env?: Readonly<Record<string, string | undefined>>;
+  /** Injectable controller-only issuer; supplying it enables delegation enforcement. */
+  delegationIssuer?: DelegationTokenIssuer;
+}
+
 /**
  * @description Thin HTTP client for dispatching work from the swarm controller
  * to any-bot nodes. This is the correct architecture boundary:
@@ -266,8 +302,11 @@ export type BotEndpointRegistryProvider = () => ReadonlyArray<BotEndpointRegistr
 export class BotNodeClient {
   private readonly resolveEndpoint: BotEndpointResolver;
   private readonly timeoutMs: number;
+  private readonly delegationIssuer: DelegationTokenIssuer | null;
+  private readonly delegationTokenIssuerName: string | null;
+  private readonly delegationAudience: string | null;
 
-  constructor(resolveEndpoint: BotEndpointResolver, timeoutMs?: number) {
+  constructor(resolveEndpoint: BotEndpointResolver, timeoutMs?: number, options: BotNodeClientOptions = {}) {
     this.resolveEndpoint = resolveEndpoint;
     // The dispatch timeout must OUTLIVE the bot-side execution ceiling (60 min as of
     // the 2026-07-24 idle-timeout directive) or the controller aborts work the bot is
@@ -276,6 +315,18 @@ export class BotNodeClient {
     this.timeoutMs = timeoutMs
       ?? (process.env.BOT_NODE_DISPATCH_TIMEOUT_MS ? parseInt(process.env.BOT_NODE_DISPATCH_TIMEOUT_MS, 10) : undefined)
       ?? 3_900_000;
+    const delegationEnv = options.env ?? process.env;
+    const delegationEnabled = options.delegationIssuer !== undefined
+      || hasDelegationSigningConfiguration(delegationEnv);
+    this.delegationIssuer = delegationEnabled
+      ? options.delegationIssuer ?? createDelegationTokenIssuer({ env: delegationEnv })
+      : null;
+    this.delegationTokenIssuerName = delegationEnabled
+      ? delegationIssuerFromEnvironment(delegationEnv)
+      : null;
+    this.delegationAudience = delegationEnabled
+      ? delegationAudienceFromEnvironment(delegationEnv)
+      : null;
   }
 
   /**
@@ -289,12 +340,14 @@ export class BotNodeClient {
    * @throws Error when the bot node is unreachable, returns an error, or times out
    */
   async execute(agentId: string, request: BotNodeRequest): Promise<BotNodeResponse> {
+    assertTargetBinding(agentId, request.agentId);
     const endpoint = this.resolveEndpoint(agentId);
     if (!endpoint) {
       throw new Error(`No endpoint found for agent ${agentId} — bot node may not be registered`);
     }
 
     const url = `${endpoint}/api/swarm-execute`;
+    const delegated = this.buildDelegatedDispatch(agentId, request);
     logger.info(
       { agentId, url, taskId: request.taskId, textLength: request.text.length },
       'Dispatching work to bot node',
@@ -303,44 +356,75 @@ export class BotNodeClient {
     // node:http, not fetch: undici's ~5-min headersTimeout would abort a dispatch to a bot
     // that legitimately runs up to the 60-min harness idle ceiling. this.timeoutMs is the only bound.
     try {
-      const response = await postJsonNoUndiciCeiling(
-        url,
-        JSON.stringify(request),
-        { 'Content-Type': 'application/json', ...serviceSecretHeaders() },
-        this.timeoutMs,
-      );
-
-      if (!response.ok) {
-        throw new Error(`Bot node returned ${response.status}: ${response.text || 'No response body'}`);
-      }
-
-      const result = JSON.parse(response.text) as BotNodeResponse;
-
-      logger.info(
-        {
-          agentId,
-          taskId: request.taskId,
-          success: result.success,
-          durationMs: result.durationMs,
-          responseLength: result.response?.length ?? 0,
-          cost: result.cost,
-          model: result.model,
-          provider: result.provider,
-        },
-        'Bot node execution completed',
-      );
-
-      if (!result.success) {
-        throw new Error(`Bot node execution failed: ${result.error || 'Unknown error'}`);
-      }
-
-      return result;
+      return await this.postExecution(url, agentId, request.taskId, delegated);
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError') {
         throw new Error(`Bot node execution timed out after ${this.timeoutMs}ms for agent ${agentId}`);
       }
       throw error;
     }
+  }
+
+  private async postExecution(
+    url: string,
+    agentId: string,
+    taskId: string,
+    delegated: { request: BotNodeRequest; headers: Record<string, string> },
+  ): Promise<BotNodeResponse> {
+    const response = await postJsonNoUndiciCeiling(
+      url,
+      JSON.stringify(delegated.request),
+      {
+        'Content-Type': 'application/json',
+        ...serviceSecretHeaders(),
+        ...delegated.headers,
+      },
+      this.timeoutMs,
+    );
+    if (!response.ok) {
+      throw new Error(`Bot node returned ${response.status}: ${response.text || 'No response body'}`);
+    }
+    const result = JSON.parse(response.text) as BotNodeResponse;
+    logger.info({
+      agentId,
+      taskId,
+      success: result.success,
+      durationMs: result.durationMs,
+      responseLength: result.response?.length ?? 0,
+      cost: result.cost,
+      model: result.model,
+      provider: result.provider,
+    }, 'Bot node execution completed');
+    if (!result.success) {
+      throw new Error(`Bot node execution failed: ${result.error || 'Unknown error'}`);
+    }
+    return result;
+  }
+
+  private buildDelegatedDispatch(
+    agentId: string,
+    request: BotNodeRequest,
+  ): { request: BotNodeRequest; headers: Record<string, string> } {
+    if (!this.delegationIssuer || !this.delegationTokenIssuerName || !this.delegationAudience) {
+      return { request, headers: {} };
+    }
+    const principal = resolveDelegatedPrincipal(request);
+    const delegatedRequest = {
+      ...request,
+      userSub: principal.sub,
+      principalIssuer: principal.issuer,
+    };
+    const token = this.delegationIssuer.issue({
+      iss: this.delegationTokenIssuerName,
+      aud: this.delegationAudience,
+      sub: principal.sub,
+      principal_iss: principal.issuer,
+      azp: agentId,
+      task_id: request.taskId,
+      body_sha256: delegationRequestBodySha256(delegatedRequest),
+      scope: [...SWARM_EXECUTE_DELEGATION_SCOPE],
+    });
+    return { request: delegatedRequest, headers: { [DELEGATION_HTTP_HEADER]: token } };
   }
 
   /**
@@ -386,6 +470,15 @@ export class BotNodeClient {
    */
   hasEndpoint(agentId: string): boolean {
     return this.resolveEndpoint(agentId) !== null;
+  }
+
+  /**
+   * @description Reports whether controller signing material makes signed HTTP delegation mandatory.
+   * Callers use this posture signal to reject legacy localhost fallbacks after a bot-node failure.
+   * @returns True when every swarm-execute request must cross the signed bot-node boundary.
+   */
+  isDelegationEnforced(): boolean {
+    return this.delegationIssuer !== null;
   }
 
   /**
@@ -452,7 +545,11 @@ export class BotNodeClient {
       method: 'PUT',
       // X-Config-Source marks this as an OSHAL-originated push so the bot does NOT
       // broadcast it back up as a local change (ADR-034 feedback-loop guard).
-      headers: { 'Content-Type': 'application/json', 'X-Config-Source': 'oshal-push' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Config-Source': 'oshal-push',
+        ...serviceSecretHeaders(),
+      },
       body: JSON.stringify({ provider: providerId, model, credentials }),
     });
 
@@ -482,6 +579,70 @@ export class BotNodeClient {
     } catch {
       return null;
     }
+  }
+}
+
+interface DelegatedPrincipal {
+  sub: string;
+  issuer: string;
+}
+
+function resolveDelegatedPrincipal(request: BotNodeRequest): DelegatedPrincipal {
+  const identity = getRequestIdentity();
+  const requestedSub = normalizeDelegationSubject(request.userSub);
+  if (!requestedSub) {
+    if (!isSystemIdentity(identity)) {
+      throw new Error('Delegation requires an explicit authenticated or system subject');
+    }
+    return { sub: CONTROLLER_SYSTEM_SUBJECT, issuer: PLATFORM_SYSTEM_PRINCIPAL_ISSUER };
+  }
+  if (isExplicitSystemSubject(requestedSub)) {
+    return resolveSystemPrincipal(requestedSub, request.principalIssuer, identity);
+  }
+  if (!identity || (!isSystemIdentity(identity) && identity.sub !== requestedSub)) {
+    throw new Error('Delegation subject does not match the trusted request identity');
+  }
+  const suppliedIssuer = normalizePrincipalIssuer(request.principalIssuer);
+  const contextIssuer = identity.sub === requestedSub
+    ? normalizePrincipalIssuer(identity.principalIssuer)
+    : null;
+  if (contextIssuer && suppliedIssuer && contextIssuer !== suppliedIssuer) {
+    throw new Error('Delegation principal issuer does not match the trusted request identity');
+  }
+  const issuer = contextIssuer ?? suppliedIssuer;
+  if (!issuer) throw new Error('User-bound delegation requires a verified principal issuer');
+  return { sub: requestedSub, issuer };
+}
+
+function resolveSystemPrincipal(
+  subject: string,
+  requestedIssuer: string | undefined,
+  identity: ReturnType<typeof getRequestIdentity>,
+): DelegatedPrincipal {
+  if (!isSystemIdentity(identity)) {
+    throw new Error('System delegation requires the trusted system execution context');
+  }
+  const suppliedIssuer = normalizePrincipalIssuer(requestedIssuer);
+  if (suppliedIssuer && suppliedIssuer !== PLATFORM_SYSTEM_PRINCIPAL_ISSUER) {
+    throw new Error('System delegation principal issuer is not trusted');
+  }
+  return { sub: subject, issuer: PLATFORM_SYSTEM_PRINCIPAL_ISSUER };
+}
+
+function normalizeDelegationSubject(value: string | undefined): string | null {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > 512
+    || value.trim() !== value
+    || /[\u0000-\u001F\u007F]/.test(value)
+  ) return null;
+  return value;
+}
+
+function assertTargetBinding(trustedAgentId: string, requestAgentId: string): void {
+  if (trustedAgentId !== requestAgentId) {
+    throw new Error('Bot node request agentId does not match the trusted dispatch target');
   }
 }
 

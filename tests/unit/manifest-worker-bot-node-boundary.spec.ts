@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Localhost-dispatch tests now capture via a real loopback /api/send-message stub — dispatch rides node:http.request (fa042a24, undici 5-min headersTimeout), so the old globalThis.fetch mock intercepted nothing; fetch is now poisoned to prove the localhost leg never regresses onto it
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep legacy-local boundary doubles complete after delegation enforcement became a required BotNodeClient capability, explicitly selecting unsigned compatibility mode without weakening the production fail-closed contract.
  */
 
 import * as http from 'node:http';
@@ -252,6 +253,7 @@ describe('dispatchManifestWorkerTicket bot-node boundary', () => {
     const stores = buildConversationStores();
     const botNodeClient = {
       hasEndpoint: vi.fn(() => false),
+      isDelegationEnforced: vi.fn(() => false),
       execute: vi.fn(async () => {
         throw new Error('should not execute remotely');
       }),
@@ -876,6 +878,7 @@ describe('dispatchManifestWorkerTicket bot-node boundary', () => {
     const ticketService = buildTicketService();
     const botNodeClient = {
       hasEndpoint: vi.fn(() => false),
+      isDelegationEnforced: vi.fn(() => false),
       execute: vi.fn(async () => {
         throw new Error('should not execute remotely');
       }),

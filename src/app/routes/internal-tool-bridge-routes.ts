@@ -17,6 +17,7 @@
  *                     |                             | getCaller(req).sub (the body field is ignored; only the
  *                     |                             | secret-gated header is trusted), and the tool must be
  *                     |                             | ENABLED for the named agent before it is executed.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Narrow service-secret requests to their trusted user sub before grant lookup, execution, and explicit access-audit writes; a machine call without X-OSHAL-User-Sub now fails closed instead of inheriting operator-level database access.
  */
 
 /**
@@ -38,6 +39,7 @@ import type { AppContext } from '@/app/composition/app-context';
 import { AgentToolRepository } from '@/entities/tool';
 import { ToolExecutorService } from '@/features/chat-orchestration';
 import { getCaller, getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { emitAuditEvent } from '@/features/governance';
@@ -98,6 +100,9 @@ function normalizeSchema(schema: unknown): Record<string, unknown> {
 
 export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
   const router = Router();
+  // Tool execution is always on behalf of a user. The shared secret authenticates the harness;
+  // this middleware supplies the separate, least-privilege owner identity for every DB call.
+  router.use(requireTrustedServiceUserIdentity);
   const repo = new AgentToolRepository(ctx.pool);
   const executor = new ToolExecutorService({
     streamManager: ctx.streamManager,

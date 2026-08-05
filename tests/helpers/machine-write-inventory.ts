@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The machine-write identity inventory (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE, not just reads"). Sibling of unguarded-route-allowlist.ts: that list answers "may this mount be anonymous?", this one answers the question that actually took production down twice — "when this MACHINE caller writes an owner-scoped row, whose identity is on the connection?". a2a-routes hit it in July (anonymous sub '' vs the FORCE RLS WITH CHECK on tickets) and the ADR-119 alert intake in August (PR #99, same failure, found by a container-kill drill and not by any of its 32 green unit guards). Enforced by tests/unit/machine-write-identity.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Closed all four ambient service-secret operator residuals with trusted caller-scoped identities and behavioral drivers; added the strictly machine-authenticated, node-local-only node-pool control surface to discovery coverage and lowered both debt ratchets.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added the final five real HTTP/auth-boundary identity drivers and reduced the unproven-entry ratchet to zero; every owner-scoped machine surface in this inventory is now behaviorally observed at its database/cost write seam.
  */
 
 /**
@@ -49,9 +51,10 @@ export type IdentityPosture =
   | { kind: 'trusted-system'; why: string }
   /**
    * Nothing established: the entry point inherits the operator stamp a valid service secret gets
-   * from the global middleware. NOT a failure today — and NOT acceptable long term, because it
-   * hands a secret-holder cross-tenant reach. Permitted only for `service-secret` auth, and only
-   * with a BACKLOG reference.
+   * from the global middleware and hands a secret-holder cross-tenant reach. This posture is
+   * retained only as an explicit regression marker: `MAX_AMBIENT_OPERATOR_ENTRIES` is zero, so any
+   * entry selecting it fails the class gate immediately and must migrate to caller-scoped or
+   * deliberately documented trusted-system identity.
    */
   | { kind: 'ambient-service-secret-operator'; backlogRef: string }
   /** The caller is a real signed-in human; their session already is the identity. */
@@ -119,13 +122,12 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
     auth: 'per-credential-bearer',
     ownerScopedTables: ['tickets'],
     identity: { kind: 'synthetic-machine-sub', sub: 'a2a:<agentId>' },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
       'The July instance of this class, and the rail every later fix copies. rpc.handle runs inside '
       + 'runWithRequestIdentity({ sub: ownerSubForA2aAgent(agent.agentId), isOperator:false }) and '
-      + 'a2a-rpc-service stamps the same sub as the ticket owner. Behavioural proof deferred: driving '
-      + 'the RPC needs a pool-backed credential store; its guards are tests/unit/a2a-gateway.spec.ts '
-      + 'and tests/unit/a2a-cost-stamper.spec.ts.',
+      + 'a2a-rpc-service stamps the same sub as the ticket owner. The class driver now authenticates '
+      + 'a real Bearer JSON-RPC message/send request and observes both values at createTicket.',
   },
   {
     id: 'connector-webhook-ingress',
@@ -238,12 +240,11 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
         + 'which must be recorded for many owners from one shared-secret worker plane (SEQ 8). The '
         + 'chat turn itself does re-enter the node owner sub (SEQ 5), so only the metering is system.',
     },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
-      'Already migrated — listed so the inventory is the complete picture rather than only the broken '
-      + 'rows. Behavioural proof deferred: driving the worker plane needs the mesh + registry '
-      + 'fixtures. Its own guards are tests/unit/remote-client-auth.spec.ts + '
-      + 'tests/unit/remote-client-device-ownership.spec.ts.',
+      'The real shared-secret HTTP plane registers an owner-bound client, durably enqueues/claims/settles '
+      + 'a metered leaf task, and drives the production settlement publisher. The injected atomic cost '
+      + 'sink observes the SYSTEM sentinel and the task owner at the write boundary.',
   },
   {
     id: 'sms-inbound',
@@ -276,11 +277,29 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
         + 'many owners; recordCost writes FORCE-RLS chat_tasks and there is no single owner to scope '
         + 'the process to. Documented at SEQ 11.',
     },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
-      'Already migrated (SEQ 11). Behavioural proof deferred here because driving the bot-node '
-      + 'entrypoint needs a provider runtime to boot; its own guard is '
-      + 'tests/unit/bot-node-swarm-execute-auth.spec.ts.',
+      'The import-safe production execution seam is wired directly into bot-node-server.ts. A real '
+      + 'HTTP driver passes the actual shared-secret middleware, crosses an async boundary through '
+      + 'that seam, and observes the SYSTEM sentinel at the simulated cost write.',
+  },
+  {
+    id: 'node-pool-control',
+    entryPoint: 'GET/POST /node/* (node-pool process control surface)',
+    file: 'src/app/routes/node-pool-routes.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'The strict machine-only router writes only bounded node-local persona and Cline credential '
+        + 'configuration files; it never reads from or writes to Postgres.',
+    },
+    behaviorallyProven: true,
+    note:
+      'requireServiceSecret fails closed when the deployment secret is absent or mismatched, persona '
+      + 'paths are confined to approved roots, credential values never enter logs, and the complete '
+      + 'behavioral guard is tests/unit/node-pool-routes-security.spec.ts.',
   },
   {
     id: 'cli-token-auth',
@@ -295,10 +314,11 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
         + 'caller-scoped or synthetic sub can express. Proof-of-possession on a 48-hex hash returning '
         + 'exactly that one row (SEQ 3).',
     },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
-      'Already migrated, and the precedent every other bootstrap read in this inventory cites. Guard: '
-      + 'tests/unit/token-middleware-rls.spec.ts (the PAT lookup starved to zero rows under guc-strict).',
+      'A real Bearer PAT request now drives createCliTokenAuthMiddleware over HTTP and observes both '
+      + 'the proof-of-possession lookup and best-effort last-used write under the SYSTEM sentinel before '
+      + 'the token owner is stamped onto req.oidc.',
   },
   {
     id: 'jarvis-service-callers',
@@ -307,14 +327,14 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
     auth: 'service-secret',
     ownerScopedTables: ['jarvis_tasks', 'tickets'],
     identity: {
-      kind: 'ambient-service-secret-operator',
-      backlogRef: 'docs/BACKLOG.md — Machine-write identity (residual: narrow the serviceSecretOr operator stamp)',
+      kind: 'caller-scoped',
+      via: 'requireTrustedServiceUserIdentity(getTrustedServiceUserSub(req)) before the Jarvis router',
     },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
-      'callerSub() honors X-OSHAL-User-Sub for AUTHZ but never puts it on the connection, so the write '
-      + 'runs operator and the only scoping is the literal WHERE user_sub = $2. Works; too much reach. '
-      + 'Not silently broken, so it is declared debt rather than a fix in this pass.',
+      'The router now rejects a valid secret without X-OSHAL-User-Sub and re-enters every Jarvis '
+      + 'sub-router/detached turn as that owner with isOperator:false. The driver executes the real '
+      + 'mark-delivered UPDATE and observes both the connection sub and matching user_sub parameter.',
   },
   {
     id: 'test-lab-golden',
@@ -323,14 +343,14 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
     auth: 'service-secret',
     ownerScopedTables: ['tickets'],
     identity: {
-      kind: 'ambient-service-secret-operator',
-      backlogRef: 'docs/BACKLOG.md — Machine-write identity (residual: narrow the serviceSecretOr operator stamp)',
+      kind: 'caller-scoped',
+      via: 'trusted TEST_LAB_OWNER_SUB header through requireTrustedServiceUserIdentity',
     },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
-      'Stamps ownerSub: TEST_LAB_OWNER_SUB on the row (the synthetic-sub half is already right) but '
-      + 'never establishes it on the connection, so it survives only on the operator stamp. The day '
-      + 'the nightly runs on anything but the service secret it becomes the alert-intake failure.',
+      'The host runner now requires TEST_LAB_OWNER_SUB and sends it as X-OSHAL-User-Sub beside the '
+      + 'validated secret. The router stamps that same sub on the connection and ticket row, scopes '
+      + 'batch polling to it, and its real detached-ticket driver observes both halves.',
   },
   {
     id: 'internal-tool-bridge',
@@ -339,14 +359,14 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
     auth: 'service-secret',
     ownerScopedTables: ['access_audit_log'],
     identity: {
-      kind: 'ambient-service-secret-operator',
-      backlogRef: 'docs/BACKLOG.md — Machine-write identity (residual: narrow the serviceSecretOr operator stamp)',
+      kind: 'caller-scoped',
+      via: 'requireTrustedServiceUserIdentity before tool grant lookup, execution, and explicit audit',
     },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
-      'emitToolAudit writes the append-only audit trail. The AUTOMATIC writer next door '
-      + '(audit-capture-middleware) was explicitly systemized because "an actor could suppress their '
-      + 'own audit trail"; this explicit call site never was.',
+      'The explicit audit represents one user-bound tool action, unlike the cross-owner automatic '
+      + 'audit writer, so it runs under that actor with isOperator:false. The real HTTP driver denies '
+      + 'a missing binding and observes the trusted actor at the access_audit_log INSERT.',
   },
   {
     id: 'message-routes-service-callers',
@@ -355,13 +375,14 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
     auth: 'service-secret',
     ownerScopedTables: ['chat_tasks'],
     identity: {
-      kind: 'ambient-service-secret-operator',
-      backlogRef: 'docs/BACKLOG.md — Machine-write identity (residual: narrow the serviceSecretOr operator stamp)',
+      kind: 'caller-scoped',
+      via: 'requireTrustedServiceUserIdentity plus trusted owner propagation into PM ticket/task rows',
     },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
-      'Uses hasValidServiceSecret + getTrustedServiceUserSub for AUTHZ only; the resolved sub never '
-      + 'reaches oshal.current_sub, so the chat_tasks write rides the operator stamp.',
+      'The router rejects a service secret without X-OSHAL-User-Sub, removes body.userSub as an '
+      + 'identity source, re-enters as the trusted owner, and propagates that owner onto both PM '
+      + 'ticket and chat-task rows. The real route driver observes the task write under that sub.',
   },
   {
     id: 'graph-routes',
@@ -445,10 +466,11 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
         + 'running as it — the same chicken-and-egg as the cli-token hash lookup. Its table carries its '
         + 'own owner policy built by buildOwnerRlsPolicyStatements.',
     },
-    behaviorallyProven: false,
+    behaviorallyProven: true,
     note:
-      'Pre-identity by construction. Guards: tests/unit/local-auth-routes.spec.ts, '
-      + 'tests/unit/local-auth-session.spec.ts, tests/unit/local-auth-middleware.spec.ts.',
+      'Pre-identity by construction. The real public bootstrap endpoint now creates its first admin '
+      + 'over HTTP against an identity-capturing pool and proves the local_users INSERT runs under '
+      + 'the SYSTEM sentinel while carrying the deterministic local user_sub.',
   },
 ];
 
@@ -473,12 +495,14 @@ export const DISCOVERY_EXEMPT_FILES: readonly { file: string; why: string }[] = 
  * A RATCHET, not a budget: it is the count at the commit that introduced this file, and the gate
  * fails if the inventory ever exceeds it. Lower it when you add a proof; never raise it.
  */
-export const MAX_UNPROVEN_ENTRIES = 9;
+export const MAX_UNPROVEN_ENTRIES = 0;
 
 /**
  * @description The maximum number of entries allowed to sit at
- * `identity.kind === 'ambient-service-secret-operator'`. Same ratchet. These are not broken today
- * — they ride the operator stamp `hasValidServiceSecret` earns in server.ts — but every one of
- * them is a secret-holder with cross-tenant reach, and the count must only fall.
+ * `identity.kind === 'ambient-service-secret-operator'`. The ratchet is now zero: every reviewed
+ * service-secret write surface must replace the server's compatibility operator stamp with an
+ * explicitly bound, non-operator caller before touching owner-scoped state. Keep the retired
+ * identity kind in the union so a regression is reported as debt instead of disappearing from
+ * the inventory model.
  */
-export const MAX_AMBIENT_OPERATOR_ENTRIES = 4;
+export const MAX_AMBIENT_OPERATOR_ENTRIES = 0;

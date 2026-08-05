@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Is the render node free? One fail-closed gate over every signal that says otherwise — an in-flight render, the nightly recap agent, a held lease, a missing signed-in browser, and the memory/stray-Chrome pressure that turned a 20-minute build into two hours on 2026-07-28.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Await durable probe enqueue and result reads under the trusted controller identity so node availability checks survive API restarts without an in-memory task fallback.
  */
 /**
  * @description The render node's availability gate.
@@ -33,6 +34,7 @@
 import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 
 const logger = createChildLogger({ module: 'vids-node-availability' });
@@ -194,7 +196,7 @@ export async function runNodeShell(
 ): Promise<{ ok: boolean; stdout: string; error?: string }> {
   const taskId = randomUUID();
   try {
-    remoteClientRegistry.enqueueTask(clientId, {
+    await runWithSystemIdentity(() => remoteClientRegistry.enqueueTask(clientId, {
       taskId,
       correlationId: taskId,
       fromAgentId: VIDS_OPERATOR_AGENT_ID,
@@ -202,14 +204,16 @@ export async function runNodeShell(
       intent: 'mcp.call-tool' as const,
       input: { name: 'shell.exec', arguments: { command } },
       createdAt: new Date().toISOString(),
-    });
+    }));
   } catch (err) {
     return { ok: false, stdout: '', error: `enqueue failed: ${(err as Error).message}` };
   }
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const result = remoteClientRegistry.getCompletedResult(clientId, taskId) as
+    const result = await runWithSystemIdentity(
+      () => remoteClientRegistry.getCompletedResult(clientId, taskId),
+    ) as
       { status?: string; output?: { stdout?: string }; error?: string } | null;
     if (result) {
       const stdout = String(result.output?.stdout ?? '');

@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Durable revocation + shorter TTL: tokens now carry a jti and a 30-day (was 90) TTL; POST /api/tv/pair/revoke (requiresAuth) upserts a per-user min_iat watermark in tv_token_revocations so "sign out all my TVs" invalidates every existing token and survives restarts. The auth middleware checks the watermark (cached) ONLY when a TV token is actually presented, so normal session traffic is unaffected; the check fails open on a DB error (signature is still verified).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Lazy-DDL chokepoint + tier-1 RLS (A1.2 follow-up): new ensureTvRevocationSchema creates tv_token_revocations if absent (DDL mirrors docker/postgres/migrations/003_tv_token_revocations.sql, which no automated runner applies — so this is the table's only fresh-deploy creation path) and appends buildOwnerRlsPolicyStatements so it is never policy-less. Fired once, non-fatally, at router creation when a pool is provided; the revoke/watermark paths keep their existing fail-open behavior.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | guc-strict fix: revocationWatermark queried FORCE-RLS tv_token_revocations from the auth middleware — BEFORE any request identity exists — so under OSHAL_DB_GUC_STRICT=deny the read silently returned no rows (not an error → the fail-open path) and minIat stayed 0: "sign out all my TVs" no longer invalidated anything. The watermark read now runs under runWithSystemIdentity (trusted pre-identity auth path, scoped to the sub already proven by the token's HMAC signature). Guard: tests/unit/token-middleware-rls.spec.ts.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Carry the approving session's verified issuer in newly signed TV tokens and restore it during authentication. Existing issuer-less tokens retain core access but cannot be guessed into an issuer-bound application account.
  */
 import { Router, RequestHandler, Request, Response } from 'express';
 import crypto from 'crypto';
@@ -17,6 +18,10 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import {
+  getAuthenticatedPrincipalIssuer,
+  normalizePrincipalIssuer,
+} from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'tv-pairing' });
 
@@ -33,6 +38,7 @@ const TV_COOKIE = 'oshal_tv';
 const TV_HEADER = 'x-oshal-tv-token';
 
 interface TvClaims {
+  iss?: string;
   sub: string;
   name?: string;
   email?: string;
@@ -71,9 +77,10 @@ function sign(data: string): string {
  * @param user the authenticated approver (sub required).
  * @returns the signed token string the TV will present as the `oshal_tv` cookie.
  */
-function mintToken(user: { sub: string; name?: string; email?: string }): string {
+function mintToken(user: { iss?: string; sub: string; name?: string; email?: string }): string {
   const now = Math.floor(Date.now() / 1000);
   const claims: TvClaims = {
+    ...(user.iss ? { iss: user.iss } : {}),
     sub: user.sub, name: user.name, email: user.email, iat: now, exp: now + TOKEN_TTL_SEC,
     jti: crypto.randomUUID(),
   };
@@ -129,6 +136,7 @@ function verifyToken(token: string): TvClaims | null {
   try {
     const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as TvClaims;
     if (!claims.sub || typeof claims.exp !== 'number' || claims.exp < Math.floor(Date.now() / 1000)) return null;
+    if (claims.iss !== undefined && !normalizePrincipalIssuer(claims.iss)) return null;
     return claims;
   } catch {
     return null;
@@ -175,10 +183,11 @@ function tvTokenFromReq(req: Request): string | undefined {
 }
 
 /** @description Pulls the authenticated approver from req.oidc (set by the OIDC session). */
-function approver(req: Request): { sub: string; name?: string; email?: string } | null {
+function approver(req: Request): { iss?: string; sub: string; name?: string; email?: string } | null {
   const u = (req as { oidc?: { user?: { sub?: string; oid?: string; name?: string; email?: string } } }).oidc?.user;
   const sub = u?.sub || u?.oid;
-  return sub ? { sub: String(sub), name: u?.name, email: u?.email } : null;
+  const issuer = getAuthenticatedPrincipalIssuer(req);
+  return sub ? { ...(issuer ? { iss: issuer } : {}), sub: String(sub), name: u?.name, email: u?.email } : null;
 }
 
 /**
@@ -200,7 +209,13 @@ export function createTvTokenAuthMiddleware(pool?: Pool): RequestHandler {
       if (claims.iat < (await revocationWatermark(pool, claims.sub))) return next();
       (req as { oidc?: unknown }).oidc = {
         isAuthenticated: () => true,
-        user: { sub: claims.sub, name: claims.name, email: claims.email, preferred_username: claims.email },
+        user: {
+          ...(claims.iss ? { iss: claims.iss } : {}),
+          sub: claims.sub,
+          name: claims.name,
+          email: claims.email,
+          preferred_username: claims.email,
+        },
         idToken: 'tv-token',
         accessToken: 'tv-token',
       };

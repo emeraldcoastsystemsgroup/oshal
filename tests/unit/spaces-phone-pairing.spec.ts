@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 mobile-ingest security guard. Proves the phone-pairing token boundary the Spaces LiDAR ingest depends on: a valid short-lived pairing token minted via insertCliToken authenticates the tokened ingest under the OWNER sub (ACCEPT), while a missing, foreign-Bearer, unknown, EXPIRED, or revoked credential resolves no owner and the requiresAuth gate 401s (REJECT — the rejection cases are the point, there are NO anonymous writes). Also pins the middleware lookup to the expiry guard (`expires_at > NOW()`) so the fake pool here and the real SQL can't drift, and confirms the mint stores only a hash + an expiry, never the plaintext.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Track the optional persisted principal issuer in the token-store stand-in while retaining legacy issuer-less phone credential coverage.
  */
 import { describe, it, expect } from 'vitest';
 import express from 'express';
@@ -22,6 +23,7 @@ interface TokenRow {
   id: string; user_sub: string; email: string | null; label: string;
   token_hash: string; created_at: Date; last_used_at: Date | null;
   revoked_at: Date | null; expires_at: Date | null;
+  node_client_id?: string | null; principal_issuer?: string | null;
 }
 
 /**
@@ -42,6 +44,8 @@ function fakePool(): { pool: Pool; rows: TokenRow[]; queries: string[] } {
           label: String(params[3]), token_hash: String(params[4]),
           created_at: new Date(), last_used_at: null, revoked_at: null,
           expires_at: (params[5] as Date | null) ?? null,
+          node_client_id: (params[6] as string | null) ?? null,
+          principal_issuer: (params[7] as string | null) ?? null,
         });
         return { rows: [], rowCount: 1 };
       }

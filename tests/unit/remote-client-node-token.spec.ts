@@ -20,6 +20,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the per-node token work: the pure scope matrix, the REAL createCliTokenAuthMiddleware confining a bound token over HTTP, the REAL remote-client router enforcing the register-body binding, rotation over a fake pool, and both halves of the shared-secret retirement switch.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extend the token-store model and rotation proof to preserve an owner's verified issuer namespace in successor node credentials.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Inject the explicit test-only task journal so token-store pool fixtures do not masquerade as the production journal database.
  */
 
 import crypto from 'crypto';
@@ -29,8 +31,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   decideNodeTokenScope,
   nodeTokenBindingMatches,
+  RemoteTaskJournalService,
   sharedSecretRetired,
 } from '../../src/features/remote-client';
+import { InMemoryRemoteTaskJournalFixture } from '../helpers/in-memory-remote-task-journal';
 import {
   CLI_TOKEN_PREFIX,
   createCliTokenAuthMiddleware,
@@ -82,6 +86,7 @@ interface TokenRow {
   expires_at: Date | null;
   revoked_at: Date | null;
   node_client_id: string | null;
+  principal_issuer: string | null;
 }
 
 /**
@@ -94,7 +99,7 @@ class FakeTokenPool {
 
   async query(sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> {
     const text = sql.replace(/\s+/g, ' ').trim();
-    if (text.startsWith('SELECT id, user_sub, email, node_client_id FROM oshal_cli_tokens')) {
+    if (text.startsWith('SELECT id, user_sub, email, node_client_id, principal_issuer FROM oshal_cli_tokens')) {
       const hash = params[0] as string;
       const now = Date.now();
       const hit = this.rows.find((r) => (
@@ -112,12 +117,13 @@ class FakeTokenPool {
       return { rows: [], rowCount: hits.length };
     }
     if (text.startsWith('INSERT INTO oshal_cli_tokens')) {
-      const [id, userSub, email, label, tokenHash, expiresAt, nodeClientId] = params as [
-        string, string, string | null, string, string, Date | null, string | null,
+      const [id, userSub, email, label, tokenHash, expiresAt, nodeClientId, principalIssuer] = params as [
+        string, string, string | null, string, string, Date | null, string | null, string | null,
       ];
       this.rows.push({
         id, user_sub: userSub, email, label, token_hash: tokenHash,
         expires_at: expiresAt, revoked_at: null, node_client_id: nodeClientId,
+        principal_issuer: principalIssuer,
       });
       return { rows: [], rowCount: 1 };
     }
@@ -129,7 +135,12 @@ class FakeTokenPool {
   }
 
   /** Seeds a token row directly and returns its plaintext (bypassing the mint route). */
-  seed(opts: { sub: string; nodeClientId?: string | null; revoked?: boolean }): string {
+  seed(opts: {
+    sub: string;
+    nodeClientId?: string | null;
+    revoked?: boolean;
+    principalIssuer?: string | null;
+  }): string {
     const token = `${CLI_TOKEN_PREFIX}${crypto.randomBytes(24).toString('hex')}`;
     this.rows.push({
       id: crypto.randomUUID(),
@@ -140,6 +151,7 @@ class FakeTokenPool {
       expires_at: null,
       revoked_at: opts.revoked ? new Date() : null,
       node_client_id: opts.nodeClientId ?? null,
+      principal_issuer: opts.principalIssuer ?? null,
     });
     return token;
   }
@@ -284,7 +296,12 @@ describe('rotateNodeToken', () => {
     const otherDevice = pool.seed({ sub: OWNER, nodeClientId: SIBLING });
     const accountPat = pool.seed({ sub: OWNER });
 
-    const rotated = await rotateNodeToken(pool.asPool(), { clientId: MINE, ownerSub: OWNER });
+    const principalIssuer = 'https://issuer.example.test/realms/devices';
+    const rotated = await rotateNodeToken(pool.asPool(), {
+      clientId: MINE,
+      ownerSub: OWNER,
+      principalIssuer,
+    });
 
     expect(rotated.revokedCount).toBe(2);
     expect(rotated.nodeClientId).toBe(MINE);
@@ -295,6 +312,7 @@ describe('rotateNodeToken', () => {
     expect(live.map((r) => r.token_hash)).toContain(hashCliToken(rotated.token));
     expect(live.map((r) => r.token_hash)).toContain(hashCliToken(otherDevice));
     expect(live.map((r) => r.token_hash)).toContain(hashCliToken(accountPat));
+    expect(pool.rows.find((r) => r.id === rotated.id)?.principal_issuer).toBe(principalIssuer);
   });
 
   it('never crosses owners: another user tokens for the same clientId are untouched', async () => {
@@ -353,7 +371,11 @@ describe('remote-client router — shared-secret retirement and the rotate surfa
     const app = express();
     app.use(express.json());
     app.use(stampedIdentity());
-    app.use('/api/remote-clients', createRemoteClientRoutes({ pool: pool?.asPool() }));
+    const taskJournalService = new RemoteTaskJournalService(new InMemoryRemoteTaskJournalFixture());
+    app.use('/api/remote-clients', createRemoteClientRoutes({
+      pool: pool?.asPool(),
+      taskJournalService,
+    }));
     const server = app.listen(0);
     servers.push(server);
     const address = server.address();

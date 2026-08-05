@@ -11,6 +11,7 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | World classify re-enable rails: forward WORLD_CLASSIFY_BUDGET_PER_HOUR/PER_DAY (the global LLM-call ceiling the 2026-06-29 burn proved missing), and default WORLD_CLASSIFY_PROVIDERS to claude alone — the codex default routed every other chunk to a CLI documented broken in this container (read-only-fs app-server), which silently lexicon-degraded half the classify work.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | K5 (BACKLOG kernel audit): every bot-side DATABASE_URL now defaults to the least-privilege oshal_bot role (migration 099) and reads its OWN interpolation var BOT_DATABASE_URL — bots no longer inherit the operator's DATABASE_URL, which on legacy .envs was the RLS-bypassing superuser. The api keeps oshal_app (runtime) + the superuser BOOTSTRAP_DATABASE_URL (migrations/provisioning) unchanged. Custom-DB deployments must now set BOT_DATABASE_URL beside DATABASE_URL. Guard: tests/unit/bot-db-least-privilege.spec.ts.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | K8: TOOL_AUTH_GOOGLE_SEARCH default auto→off — the one prompt-to-external-vendor tool lane that defaulted open while aws/kubectl/gcloud/docker were off; opt back in per-deployment via .env. K3: the self-healing-bot service gets its OWN AGENT_ID a0…056 — a0…030 was a three-way collision with codex-packer (two manifests + this service), so heartbeats/chat_tasks/tickets under 030 were ambiguous between the Bot Forge and the docker-socket bot. Migration 100 covers existing rows. Guards: compose-tool-auth-defaults.spec.ts + swarm-wiring-collision.spec.ts.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Separate Ed25519 delegation roles: bot-node containers receive only the public verification ring while the swarm controller receives only the active private signing key and key id.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -267,6 +268,14 @@ x-bot-env: &bot-env
   # if a bot tried to shell out to `aws`, the call would be blocked.
   # ── Infrastructure ──
   REDIS_URL: redis://oshal-redis:6379
+  # Bot-side verification only. The value is a one-line JSON object mapping key ids to public
+  # Ed25519 JWKs. Supplying it makes /api/swarm-execute require a signed, single-use token and
+  # Redis replay consumption; malformed/partial configuration or a blank SWARM_SERVICE_SECRET
+  # fails bot startup. Never place the controller's private JWK in this anchor.
+  OSHAL_DELEGATION_PUBLIC_KEYS: '${OSHAL_DELEGATION_PUBLIC_KEYS:-}'
+  OSHAL_DELEGATION_ISSUER: ${OSHAL_DELEGATION_ISSUER:-urn:oshal:controller}
+  OSHAL_DELEGATION_AUDIENCE: ${OSHAL_DELEGATION_AUDIENCE:-urn:oshal:bot-node}
+  OSHAL_DELEGATION_CLOCK_SKEW_SECONDS: ${OSHAL_DELEGATION_CLOCK_SKEW_SECONDS:-30}
   # SECURITY (K5): bots connect as the least-privilege oshal_bot role — NOSUPERUSER,
   # NOBYPASSRLS, DML-only, provisioned idempotently by migration 099. Postgres exempts
   # superusers from RLS, so the old `oshal` default made every bot node an RLS bypass —
@@ -698,6 +707,15 @@ services:
       <<: *bot-env
       # Override: swarm controller, NOT any-bot
       BOT_RUNTIME: swarm
+      # Controller-side signing only. Explicitly clear the public ring inherited from *bot-env so
+      # role separation remains visible in the effective container environment. A key or kid alone
+      # counts as configured and fails startup instead of silently sending unsigned work.
+      OSHAL_DELEGATION_PUBLIC_KEYS: ""
+      OSHAL_DELEGATION_SIGNING_KID: ${OSHAL_DELEGATION_SIGNING_KID:-}
+      OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: '${OSHAL_DELEGATION_SIGNING_PRIVATE_KEY:-}'
+      OSHAL_DELEGATION_ISSUER: ${OSHAL_DELEGATION_ISSUER:-urn:oshal:controller}
+      OSHAL_DELEGATION_AUDIENCE: ${OSHAL_DELEGATION_AUDIENCE:-urn:oshal:bot-node}
+      OSHAL_DELEGATION_TTL_SECONDS: ${OSHAL_DELEGATION_TTL_SECONDS:-4200}
       BOT_NAME: project-manager
       AGENT_ID: a0000000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/project-manager.yaml

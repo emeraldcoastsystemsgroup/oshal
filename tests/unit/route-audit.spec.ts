@@ -21,6 +21,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — manifest-walk guard (public fires / oidc-by-omission does not / reviewed public stays quiet), real-server.ts clean-audit sync check, balanced-paren parser guard, and the exact-or-slash-boundary allowlist matcher guard.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the PROGRAMMATIC two-list sync check the backlog's done-when asks for, plus the method-coverage guard behind it. The scanner used to match only `app.use(` (its own docblock called app.get/app.post "out of scope"), so four unguarded inline-handler mounts were invisible to it and the Security Center reported "0 route_auth findings" while structurally blind — and two of the four ('/api/security/csp-report', '/api/branding') existed ONLY in the CI spec's UNGUARDED_ALLOWLIST, never in PUBLIC_BY_DESIGN. The lists referenced each other in prose comments alone, so nothing could catch that. Now: the scanner walks every Express method, and this spec imports BOTH lists and asserts the containment relationship in both directions.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed the manual limiter-only exception from list reconciliation; both scanners now derive that handler-less shape through one shared classifier.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Split list synchronization from parser-method coverage so governance-counted describe callbacks remain below fifty physical lines.
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
@@ -28,7 +30,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { auditRoutes, PUBLIC_BY_DESIGN } from '@/features/security';
-import { UNGUARDED_ALLOWLIST, LIMITER_ONLY_PATHS } from '../helpers/unguarded-route-allowlist';
+import { UNGUARDED_ALLOWLIST } from '../helpers/unguarded-route-allowlist';
 
 const REAL_SERVER_TS = path.resolve(__dirname, '..', '..', 'src', 'app', 'server.ts');
 
@@ -144,17 +146,16 @@ describe('route auditor — PUBLIC_BY_DESIGN stays reconciled with the real moun
 // could not see those two inline-handler mounts in the first place — the divergence and the
 // blindness hid each other. Both are fixed; these assertions are what keeps them fixed.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('route auditor — PUBLIC_BY_DESIGN and the CI UNGUARDED_ALLOWLIST stay in sync', () => {
-  /** Mirror of the scanner's own matcher: exact, or on a `/`-segment boundary. */
-  const coveredByScanner = (p: string): boolean =>
-    PUBLIC_BY_DESIGN.some((entry) => p === entry || p.startsWith(`${entry}/`));
+/** Mirror of the scanner's own matcher: exact, or on a `/`-segment boundary. */
+const coveredByScanner = (p: string): boolean =>
+  PUBLIC_BY_DESIGN.some((entry) => p === entry || p.startsWith(`${entry}/`));
 
+describe('route auditor — PUBLIC_BY_DESIGN and the CI UNGUARDED_ALLOWLIST stay in sync', () => {
   it('every CI-reviewed unguarded mount is also public-by-design to the scanner', () => {
     // Direction 1 — the Security Center must not report a standing HIGH finding for a mount a
-    // human already reviewed in CI. A limiter-only mount is the ONE documented exception: the
-    // scanner skips those by rule, so they must NOT carry a PUBLIC_BY_DESIGN entry.
+    // human already reviewed in CI. Limiter-only registrations are derived by the shared
+    // classifier and therefore never enter this anonymous-handler allowlist.
     const missing = UNGUARDED_ALLOWLIST
-      .filter((e) => !LIMITER_ONLY_PATHS.includes(e.path))
       .filter((e) => !coveredByScanner(e.path))
       .map(
         (e) =>
@@ -164,19 +165,6 @@ describe('route auditor — PUBLIC_BY_DESIGN and the CI UNGUARDED_ALLOWLIST stay
           `reason (or remove it here if the mount got guarded).`,
       );
     expect(missing).toEqual([]);
-  });
-
-  it('a limiter-only mount is justified by the rule, not by a scanner allowlist entry', () => {
-    // Direction 1b — pins the exception itself, so nobody "fixes" the check above by adding
-    // '/api/intake' to PUBLIC_BY_DESIGN and thereby whitelisting every real /api/intake/* route.
-    for (const p of LIMITER_ONLY_PATHS) {
-      expect(
-        PUBLIC_BY_DESIGN.includes(p),
-        `${p} is limiter-only: the scanner skips it by rule (it registers no handlers). Adding it ` +
-          `to PUBLIC_BY_DESIGN would also whitelist every genuinely-guarded ${p}/* route.`,
-      ).toBe(false);
-      expect(UNGUARDED_ALLOWLIST.some((e) => e.path === p)).toBe(true);
-    }
   });
 
   it('every CORE mount the scanner declares public-by-design is reviewed in the CI list', () => {
@@ -200,7 +188,9 @@ describe('route auditor — PUBLIC_BY_DESIGN and the CI UNGUARDED_ALLOWLIST stay
       );
     expect(unreviewed).toEqual([]);
   });
+});
 
+describe('route auditor — inline and array method coverage', () => {
   it('the scanner is not blind to inline-handler mounts (app.get/app.post)', () => {
     // THE blindness pin. auditRoutes() matched only `app.use(` until 2026-07-29, so an
     // anonymous `app.post('/api/x', handler)` produced NO finding — a clean report for the wrong

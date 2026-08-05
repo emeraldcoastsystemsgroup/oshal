@@ -19,6 +19,8 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING: /api/swarm-execute now forwards the carried providerId/model/configVersion (the controller's push-on-dispatch stamp) into the envelope payload so the execution handler reconciles the runtime before executing. Additive + type-guarded — absent/malformed fields are simply not forwarded (the handler's parseCarriedDispatchConfig then treats it as the legacy absent path). No behavior change unless the controller stamps them (OSHAL_PUSH_ON_DISPATCH).
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /metrics (Prometheus text exposition, @/shared/observability). The 2026-08-01 container-kill drill proved cAdvisor emits zero series for any docker container on Docker Desktop's containerd/overlayfs image store, so every container_last_seen rule matched nothing and SwarmContainerDown was a target-less standing false alarm. Each worker now IS a labelled scrape target, so `up == 0` identifies the exact container that went down and the restart/memory/CPU rules key on the process's own gauges.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | LIVE FIX (ADR-119 A2 drill, 2026-08-02): mounted POST /api/self-heal/apply. The endpoint was registered only from any-bot/server/app.js (BOT_RUNTIME=any-bot, which nothing in compose runs), so on the real self-healing node the controller's A2 remediation seam hit an HTML 404 and every unattended apply would have escalated apply-failed. Same registrar, second host — never a re-typed copy of a container-restarting endpoint.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Require and consume single-use Ed25519 delegation tokens on /api/swarm-execute when public keys are configured, bind the signed identity to the local agent/body/task, and prohibit unsigned mesh execution in that posture.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Route authorized HTTP execution through an import-safe system-identity seam so strict-RLS behavior can be exercised without importing the auto-starting server entrypoint.
  */
 
 /**
@@ -64,6 +66,12 @@ import {
 import { parseTrustedProviderIntent } from './bot-node-provider-intent';
 import { registerBotNodeLlmProviderRoute } from './bot-node-llm-provider-route';
 import { registerBotNodeSelfHealRoute } from './bot-node-self-heal-route';
+import {
+  createBotNodeDelegationRuntime,
+  getVerifiedDelegationClaims,
+  prohibitUnsignedMeshExecution,
+} from './bot-node-delegation';
+import { runBotNodeExecutionWithSystemIdentity } from './bot-node-request-identity';
 
 const logger = createChildLogger({ module: 'bot-node-server' });
 
@@ -106,6 +114,7 @@ async function start(): Promise<void> {
 
   // ── Redis mesh transport ────────────────────────────────────────
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+  const delegationRuntime = createBotNodeDelegationRuntime({ localAgentId: agentId, redisUrl });
 
   const meshTransport = new RedisMeshTransport({ redisUrl });
 
@@ -159,7 +168,7 @@ async function start(): Promise<void> {
     channel: primaryChannel,
     consumerId: agentId,
     consumerGroup: 'swarm-execution',
-    handler: executionHandler,
+    handler: prohibitUnsignedMeshExecution(delegationRuntime.enforcementEnabled, executionHandler),
     workItemRepository,
     additionalChannels,
     // ADR-083: ANSWER the queue manager's call-out. Without this, BID_REQUEST envelopes
@@ -307,7 +316,12 @@ async function start(): Promise<void> {
   // CALLER (interactive userSub+direct delegation) against the target bot
   // (ADR-087 accessRoles + operator allowlist; OSHAL_EXECUTE_ENTITLEMENT mode).
   const executeEntitlementGate = createExecuteEntitlementGate({ defaultAgentId: agentId });
-  app.post('/api/swarm-execute', authorizeBotNodeExecutionCall, executeEntitlementGate, async (req, res) => {
+  app.post(
+    '/api/swarm-execute',
+    authorizeBotNodeExecutionCall,
+    delegationRuntime.authorize,
+    executeEntitlementGate,
+    async (req, res) => {
     const startedAt = Date.now();
     const body = req.body as {
       text?: string;
@@ -317,6 +331,7 @@ async function start(): Promise<void> {
       agenticMode?: boolean;
       direct?: boolean;
       userSub?: string;
+      principalIssuer?: string;
       creds?: Record<string, string>;
       byoLlmConnection?: { baseUrl: string; apiKey: string; model: string };
       providerIntent?: unknown;
@@ -332,7 +347,8 @@ async function start(): Promise<void> {
       return;
     }
     const targetAgentId = body.agentId || agentId;
-    const scopedUserSub = normalizeBotNodeUserSub(body.userSub);
+    const verifiedDelegation = getVerifiedDelegationClaims(res);
+    const scopedUserSub = normalizeBotNodeUserSub(verifiedDelegation?.sub ?? body.userSub);
     const brokeredCreds = sanitizeBotNodeCreds(body.creds);
     const hasProviderIntent = Object.prototype.hasOwnProperty.call(body, 'providerIntent');
     const providerIntent = parseTrustedProviderIntent(body.providerIntent);
@@ -354,6 +370,7 @@ async function start(): Promise<void> {
         agenticMode: body.agenticMode ?? true,
         direct: body.direct === true,
         userSub: scopedUserSub,
+        ...(verifiedDelegation ? { principalIssuer: verifiedDelegation.principal_iss } : {}),
         // Token broker: short-lived per-user access tokens the controller decrypted for
         // this caller (OSHAL_CRED_GOOGLE/OSHAL_CRED_TWITTER). Forwarded to the execution
         // handler, which writes them into the task workspace as .oshal-cred-<provider> files.
@@ -377,7 +394,7 @@ async function start(): Promise<void> {
       // process). Run under the SYSTEM sentinel so recordCost's chat_tasks write (FORCE-RLS)
       // keeps operator visibility once OSHAL_DB_GUC_STRICT denies the identity-less case —
       // matching the SwarmAgentWorker path, which already runs SYSTEM.
-      const result = await runWithSystemIdentity(() => executionHandler(envelope));
+      const result = await runBotNodeExecutionWithSystemIdentity(() => executionHandler(envelope));
       const durationMs = Date.now() - startedAt;
       res.json(buildBotNodeHttpResponse(result, {
         durationMs,
@@ -503,6 +520,7 @@ async function start(): Promise<void> {
     logger.info({ signal }, 'Shutting down bot node');
     clearInterval(heartbeatInterval);
     await agentWorker.stop();
+    await delegationRuntime.close();
     if (pool) await pool.end();
     process.exit(0);
   };

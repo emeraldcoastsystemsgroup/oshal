@@ -265,8 +265,6 @@ interface NodeAssignmentRequest {
   model: string;                // "claude-sonnet-4-6"
   provider: string;             // "bedrock"
   credentials?: Record<string, string>;  // provider-specific auth
-  toolAuthorizations?: string[];         // tool IDs with auth modes
-  ttlSeconds?: number;          // auto-release after idle period
 }
 
 interface NodeAssignmentResponse {
@@ -279,6 +277,52 @@ interface NodeAssignmentResponse {
 **`POST /node/release`** — clears persona, unsubscribes from agent channel, returns to idle pool.
 
 **`GET /node/status`** — returns current assignment or `idle`, with metrics snapshot.
+
+#### Implemented security contract (2026-08-05)
+
+All three endpoints are a machine-only control plane. Every request requires an exact
+`X-Service-Secret` match against configured `SWARM_SERVICE_SECRET`; an unconfigured node
+fails closed with `503`, and missing/incorrect caller credentials receive `401`. The allocator
+sends the same header on assign and release. Human OIDC sessions are not a fallback.
+
+Assignment JSON is strict and bounded. Unknown fields are rejected, credential-bearing bodies
+are never logged or echoed, and `toolAuthorizations` / `ttlSeconds` remain reserved until their
+enforcement exists (sending either is an error rather than an unenforced security promise).
+Persona YAML must be a bounded regular `.yaml`/`.yml` file whose canonical path is under the
+kernel persona directory or an operator-configured `NODE_POOL_PERSONA_ROOTS` entry. Canonical-path
+containment prevents `..` and symlink escapes; a declared persona agent id must match the requested
+agent id.
+
+Before assignment, the node snapshots its persona and Cline configuration files. Fresh provider
+state is written with owner-only file permissions. Release and failed assignment restore the exact
+snapshot (or delete newly-created files), preventing credentials from surviving into the next bot.
+Assign and release transitions are serialized so a release cannot race an in-flight worker hook.
+An owner-only active-session marker is written before any assignment file. If the process dies before
+normal restoration completes, pool-mode startup detects that marker and deletes every managed persona
+and provider file before advertising an idle node. The lost in-memory baseline is deliberately not
+guessed after a crash: the next assignment must supply fresh state. Existing symlinks at managed output
+paths are rejected so a configuration-volume link cannot redirect credential writes elsewhere.
+
+The allocator treats constructor-supplied endpoints as operator configuration. Endpoints learned
+from Redis must use `http`/`https`, contain only an origin, and have a hostname equal to the node id
+or one explicitly listed in `NODE_POOL_ALLOWED_HOSTS`. Node ids cannot contain Redis-key separators
+or prototype keys. These constraints prevent registry poisoning from redirecting provider
+credentials to an SSRF target.
+
+Assignment and release use positive acknowledgement, not optimistic registry cleanup. Any timeout,
+transport error, endpoint validation failure, or non-2xx response moves the node to `quarantined`,
+removes it from the idle set, and records the reason in assignment history. A failed release retains
+the active assignment mapping because the prior credentials may still be resident. The allocator
+returns a node to idle only after `/node/release` acknowledges cleanup (a retry against an already-idle
+node is valid) or an operator explicitly re-registers the node after inspection.
+
+Redis transitions keep the idle set as the final reuse authority. An `active` hash entry is accepted
+only when the node status, quarantine set, and persisted assignment all agree; partial-write residue is
+quarantined instead of returned as a live assignment. If registry cleanup fails after a positive node
+release, the clean node is withheld rather than advertised idle. Restart registration first deletes the
+node's stale assignment and every active-agent mapping that points to it, then restores idle membership
+last. These fences trade temporary capacity for preventing a stale credential-bearing identity from
+being routed or reassigned after an uncertain Redis outcome.
 
 ### 5.4 Assignment Flow
 1. Swarm receives work for `code-reviewer` bot
@@ -297,18 +341,21 @@ interface NodeAssignmentResponse {
 ### 6.1 Node Lifecycle State Machine
 ```
 IDLE --> ASSIGNING --> ACTIVE --> RELEASING --> IDLE
-                         |
-                         v
-                       FAILED --> IDLE (after cleanup)
+          |                 |
+          +--------+--------+
+                   v
+             QUARANTINED
+        (release retry or inspected re-register)
 ```
 
 ### 6.2 Redis Registry Schema
 ```
-node:pool:{nodeId}:status          -> "idle" | "assigning" | "active" | "releasing"
+node:pool:{nodeId}:status          -> "idle" | "assigning" | "active" | "releasing" | "quarantined"
 node:pool:{nodeId}:assignment      -> JSON { agentId, agent, model, provider, assignedAt }
 node:pool:{nodeId}:heartbeat       -> timestamp (EXPIRE-based liveness)
 node:pool:idle                     -> Redis SET of idle nodeIds (O(1) SPOP)
 node:pool:active                   -> Redis HASH { agentId -> nodeId } (routing lookup)
+node:pool:quarantined              -> Redis SET of nodeIds withheld from reuse
 node:pool:history:{nodeId}         -> Redis LIST of recent assignments (forensics)
 ```
 
@@ -582,7 +629,7 @@ Kubernetes HPA based on pending message count. Auto-scale node pool up/down. Hea
 
 ### 15.4 Persona loading failures
 **Risk:** Corrupt YAML, missing file, invalid agent type.  
-**Mitigation:** Assignment endpoint validates everything before switching state. Return error to allocator, node stays idle, allocator tries another node.
+**Mitigation:** Assignment endpoint validates before activation and restores its pre-assignment snapshot on failure. Because a network failure can hide whether cleanup ran, the allocator quarantines every failed/unknown assignment instead of guessing that the node is idle; a confirmed release retry or inspected re-registration is required before reuse.
 
 ### 15.5 Message ordering during reassignment
 **Risk:** Bot released and re-assigned to different node mid-conversation.  

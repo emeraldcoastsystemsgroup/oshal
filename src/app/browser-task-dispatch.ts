@@ -32,11 +32,13 @@
  *   an explicit `system` flag; neither present = fail closed. Operators and (with the existing
  *   OSHAL_ALLOW_LEGACY_UNOWNED escape) unowned devices are unchanged, so the operator's own
  *   single-node setup keeps working. Guard: tests/unit/browser-task-dispatch.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Await PostgreSQL-authoritative task enqueue and cross into system identity only for explicitly platform-originated dispatches; user work retains its request identity for owner RLS.
  *
  * @module app/browser-task-dispatch
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 import { filterUsableDevices, type DeviceRequester, type RemoteClientRecord } from '@/features/remote-client';
 
@@ -130,7 +132,7 @@ export interface BrowserTaskInput {
  * @param input - The task to dispatch.
  * @returns The dispatch outcome (clientId + taskId when enqueued).
  */
-export function dispatchBrowserTask(input: BrowserTaskInput): DispatchResult {
+export async function dispatchBrowserTask(input: BrowserTaskInput): Promise<DispatchResult> {
   // Fail closed: no user sub and not explicitly platform-originated = unknown requester, which the
   // ownership filter denies outright rather than letting it inherit whichever desktop is online.
   const requester: DeviceRequester = input.system ? { system: true } : { sub: input.userSub ?? null };
@@ -160,7 +162,8 @@ export function dispatchBrowserTask(input: BrowserTaskInput): DispatchResult {
     createdAt: new Date().toISOString(),
   };
   try {
-    const task = remoteClientRegistry.enqueueTask(client.clientId, envelope);
+    const enqueue = () => remoteClientRegistry.enqueueTask(client.clientId, envelope);
+    const task = input.system ? await runWithSystemIdentity(enqueue) : await enqueue();
     logger.info(
       { clientId: client.clientId, taskId: task.taskId, fromAgentId: input.fromAgentId, staged: Boolean(input.workspacePath), controllerUrl },
       'browser task dispatched to leaf node',

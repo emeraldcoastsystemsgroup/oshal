@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The conductor: one function that walks a video series through write -> approve -> storyboard -> render -> done, one safe step per call. Idempotent, resumable, and it stops dead at the approval gate so nothing an image or a clip costs is spent without the operator's go.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Ran the render reconciler sweep under runWithSystemIdentity — a cross-owner background sweep over the RLS video_episodes table; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Await PostgreSQL-authoritative remote task result reads during the system-identity render reconciliation sweep.
  */
 /**
  * @description Video Series — the orchestrator.
@@ -311,7 +312,7 @@ export async function reconcilePendingRenders(ctx: AppContext): Promise<number> 
   for (const p of pending) {
     let result: { status?: string; output?: unknown } | null = null;
     for (const c of clients) {
-      const r = remoteClientRegistry.getCompletedResult(c.clientId, p.vids_job_id);
+      const r = await remoteClientRegistry.getCompletedResult(c.clientId, p.vids_job_id);
       if (r) { result = r as { status?: string; output?: unknown }; break; }
     }
     if (!result) continue; // still running

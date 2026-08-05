@@ -13,6 +13,7 @@
  *   that workspace. This locks the fix: selection is owner-scoped BEFORE the preference order, a
  *   foreign pin dispatches NOTHING, the picker never enumerates another user's box, and the operator +
  *   legacy-unowned compat paths (the live single-node setup) still work.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Await journal-backed browser dispatch so every ownership assertion observes the committed enqueue result.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,10 +79,10 @@ afterEach(() => {
 });
 
 describe('owner-scoped dispatch — a leaf node is somebody\'s real computer', () => {
-  it('REFUSES to run Alice\'s task on Bob\'s machine even when she names it explicitly', () => {
+  it('REFUSES to run Alice\'s task on Bob\'s machine even when she names it explicitly', async () => {
     // The exploit: /api/apply-operator/{submit,enqueue} take targetRemoteClientId from the REQUEST BODY
     // on a requiresAuth (not operator-gated) mount, and it became the dispatch pin unchecked.
-    const r = dispatchBrowserTask({
+    const r = await dispatchBrowserTask({
       taskId: 'apply-1', fromAgentId: 'career-bot', userSub: ALICE,
       prompt: 'drive the browser', preferredClientId: 'node-bob',
     });
@@ -89,17 +90,17 @@ describe('owner-scoped dispatch — a leaf node is somebody\'s real computer', (
     expect(hoisted.enqueued).toHaveLength(0);   // nothing reached Bob's desktop
   });
 
-  it('auto-picks only Alice\'s OWN node, never falling through to Bob\'s', () => {
+  it('auto-picks only Alice\'s OWN node, never falling through to Bob\'s', async () => {
     // With no pin the old order ended in "any online node" — which is how a foreign box got selected.
-    const r = dispatchBrowserTask({ taskId: 'apply-2', fromAgentId: 'career-bot', userSub: ALICE, prompt: 'x' });
+    const r = await dispatchBrowserTask({ taskId: 'apply-2', fromAgentId: 'career-bot', userSub: ALICE, prompt: 'x' });
     expect(r.ok).toBe(true);
     expect(r.clientId).toBe('node-alice');
     expect(hoisted.enqueued.map((e) => e.clientId)).toEqual(['node-alice']);
   });
 
-  it('leaves Alice with NO worker when only Bob\'s machine is online (fails closed, not over)', () => {
+  it('leaves Alice with NO worker when only Bob\'s machine is online (fails closed, not over)', async () => {
     hoisted.state.clients = [node('node-bob', BOB)];
-    const r = dispatchBrowserTask({ taskId: 'apply-3', fromAgentId: 'career-bot', userSub: ALICE, prompt: 'x' });
+    const r = await dispatchBrowserTask({ taskId: 'apply-3', fromAgentId: 'career-bot', userSub: ALICE, prompt: 'x' });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/not connected/i);
     expect(hoisted.enqueued).toHaveLength(0);
@@ -112,39 +113,39 @@ describe('owner-scoped dispatch — a leaf node is somebody\'s real computer', (
     expect(defaultClientId).toBe('node-alice');
   });
 
-  it('denies an UNATTRIBUTED dispatch (no userSub, not flagged system) rather than picking any box', () => {
-    const r = dispatchBrowserTask({ taskId: 'apply-4', fromAgentId: 'career-bot', prompt: 'x' });
+  it('denies an UNATTRIBUTED dispatch (no userSub, not flagged system) rather than picking any box', async () => {
+    const r = await dispatchBrowserTask({ taskId: 'apply-4', fromAgentId: 'career-bot', prompt: 'x' });
     expect(r.ok).toBe(false);
     expect(hoisted.enqueued).toHaveLength(0);
   });
 
-  it('still lets genuinely platform-originated work run (system flag)', () => {
-    const r = dispatchBrowserTask({ taskId: 'sys-1', fromAgentId: 'scheduler', system: true, prompt: 'x' });
+  it('still lets genuinely platform-originated work run (system flag)', async () => {
+    const r = await dispatchBrowserTask({ taskId: 'sys-1', fromAgentId: 'scheduler', system: true, prompt: 'x' });
     expect(r.ok).toBe(true);
   });
 });
 
 describe('owner-scoped dispatch — the operator and legacy-unowned compat paths keep working', () => {
-  it('lets an OPERATOR drive any node, and see the whole fleet', () => {
+  it('lets an OPERATOR drive any node, and see the whole fleet', async () => {
     process.env.OSHAL_OPERATOR_SUBS = OPERATOR;
-    expect(dispatchBrowserTask({
+    expect((await dispatchBrowserTask({
       taskId: 'op-1', fromAgentId: 'career-bot', userSub: OPERATOR, prompt: 'x', preferredClientId: 'node-bob',
-    }).ok).toBe(true);
+    })).ok).toBe(true);
     expect(listApplyWorkers({ sub: OPERATOR }).workers).toHaveLength(2);
   });
 
-  it('an UNOWNED node is operator-only by default, and opens up under OSHAL_ALLOW_LEGACY_UNOWNED', () => {
+  it('an UNOWNED node is operator-only by default, and opens up under OSHAL_ALLOW_LEGACY_UNOWNED', async () => {
     // The live box registered before the owner binding shipped, so it carries ownerSub=null. The
     // deployment sets OSHAL_ALLOW_LEGACY_UNOWNED=true, which is what keeps that setup working.
     hoisted.state.clients = [node('node-legacy')];
 
-    expect(dispatchBrowserTask({ taskId: 'l-1', fromAgentId: 'b', userSub: ALICE, prompt: 'x' }).ok).toBe(false);
+    expect((await dispatchBrowserTask({ taskId: 'l-1', fromAgentId: 'b', userSub: ALICE, prompt: 'x' })).ok).toBe(false);
 
     process.env.OSHAL_OPERATOR_SUBS = OPERATOR;
-    expect(dispatchBrowserTask({ taskId: 'l-2', fromAgentId: 'b', userSub: OPERATOR, prompt: 'x' }).ok).toBe(true);
+    expect((await dispatchBrowserTask({ taskId: 'l-2', fromAgentId: 'b', userSub: OPERATOR, prompt: 'x' })).ok).toBe(true);
 
     process.env.OSHAL_ALLOW_LEGACY_UNOWNED = 'true';
-    expect(dispatchBrowserTask({ taskId: 'l-3', fromAgentId: 'b', userSub: ALICE, prompt: 'x' }).ok).toBe(true);
+    expect((await dispatchBrowserTask({ taskId: 'l-3', fromAgentId: 'b', userSub: ALICE, prompt: 'x' })).ok).toBe(true);
   });
 });
 
@@ -157,7 +158,7 @@ describe('canUseDevice — mirrors canAccessResource so HTTP and dispatch answer
     expect(canUseDevice({ system: true }, { ownerSub: ALICE })).toBe(true);
   });
 
-  it('denies an unknown requester on an UNOWNED device even with the legacy flag on', () => {
+  it('denies an unknown requester on an UNOWNED device even with the legacy flag on', async () => {
     // Regression: the unknown-requester check used to sit BELOW the unowned branch, so this exact
     // combination — no sub + unbound device + OSHAL_ALLOW_LEGACY_UNOWNED=true, which is the live
     // deployment — returned true and let unattributed work pick somebody's desktop. The original
@@ -169,7 +170,7 @@ describe('canUseDevice — mirrors canAccessResource so HTTP and dispatch answer
     expect(canUseDevice({ sub: ALICE }, {})).toBe(true);
 
     hoisted.state.clients = [node('node-legacy')];
-    expect(dispatchBrowserTask({ taskId: 'u-1', fromAgentId: 'b', prompt: 'x' }).ok).toBe(false);
+    expect((await dispatchBrowserTask({ taskId: 'u-1', fromAgentId: 'b', prompt: 'x' })).ok).toBe(false);
     expect(hoisted.enqueued).toHaveLength(0);
   });
 

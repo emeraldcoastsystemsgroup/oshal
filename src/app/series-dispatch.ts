@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Video Series dispatch: render episodes on the remote Vids node ONE AT A TIME, then assemble. Serialized because the node drives a single Chrome; resumable because a re-render is real money.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Node package dir + exe resolve through vids-node-availability (the old default was a controller-side path that has never existed on the node), and the storyboarded-render dispatch now checks the node is FREE before enqueueing — the reconciler sweeps every 20s and would otherwise dispatch straight into the nightly recap's window.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: render-node selection is owner-scoped. findShellWorker/findVidsWorker picked on LIVENESS ALONE, so on a multi-user swarm one user's series rendered on whatever desktop happened to be connected — driving another person's logged-in Chrome and Google account with the requester's Drive token exported into that shell. The owner now comes from the SERIES ROW (video_series.user_sub, NOT NULL), never from the caller, and candidates run through filterUsableDevices BEFORE the preference order so a foreign VIDS_RENDER_CLIENT_ID pin resolves to null instead of executing. Guard: tests/unit/series-dispatch-device-ownership.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Await all journal-backed render, storyboarding, and assembly enqueues under trusted controller identity before persisting dispatch success.
  */
 /**
  * @description Video Series — remote-node render dispatch.
@@ -36,6 +37,7 @@
 import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 import { buildRenderPlan, SCREENPLAY_WRITER_AGENT_ID, type CastMember, type Scene } from '@/app/series-pipeline';
 import { nodePkgDir, nodeExe, checkVidsNodeAvailability } from '@/app/vids-node-availability';
@@ -259,7 +261,7 @@ export async function dispatchEpisode(
   };
 
   try {
-    const task = remoteClientRegistry.enqueueTask(worker.clientId, envelope);
+    const task = await runWithSystemIdentity(() => remoteClientRegistry.enqueueTask(worker.clientId, envelope));
     await pool.query(
       `UPDATE video_episodes
           SET status = 'rendering', vids_job_id = $2, error = NULL, updated_at = now()
@@ -390,7 +392,7 @@ export async function dispatchStoryboardedEpisode(
 
   const taskId = randomUUID();
   try {
-    const task = remoteClientRegistry.enqueueTask(worker.clientId, {
+    const task = await runWithSystemIdentity(() => remoteClientRegistry.enqueueTask(worker.clientId, {
       taskId,
       correlationId: opts.ticketId || taskId,
       fromAgentId: SCREENPLAY_WRITER_AGENT_ID,
@@ -398,7 +400,7 @@ export async function dispatchStoryboardedEpisode(
       intent: 'mcp.call-tool' as const,
       input: { name: 'shell.exec', arguments: { command } },
       createdAt: new Date().toISOString(),
-    });
+    }));
     await pool.query(
       `UPDATE video_episodes SET status='rendering', vids_job_id=$2, error=NULL, updated_at=now() WHERE episode_id=$1`,
       [episodeId, task.taskId],
@@ -449,7 +451,7 @@ export async function dispatchAssembly(
 
   const taskId = randomUUID();
   try {
-    const task = remoteClientRegistry.enqueueTask(worker.clientId, {
+    const task = await runWithSystemIdentity(() => remoteClientRegistry.enqueueTask(worker.clientId, {
       taskId,
       correlationId: opts.ticketId || taskId,
       fromAgentId: SCREENPLAY_WRITER_AGENT_ID,
@@ -466,7 +468,7 @@ export async function dispatchAssembly(
         },
       },
       createdAt: new Date().toISOString(),
-    });
+    }));
     logger.info({ episodeId, taskId: task.taskId, clips: clips.length }, 'episode assembly dispatched');
     return { ok: true, episodeId, taskId: task.taskId, clientId: worker.clientId };
   } catch (err) {

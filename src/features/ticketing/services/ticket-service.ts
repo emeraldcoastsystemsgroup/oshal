@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 graph ingestion: createTicket and assignAgent now emit sanitized ticket-created / agent-assigned events onto the shared ticketEvents bus (ids/title/status only — never the description), giving the swarm operational graph an observable lifecycle seam without instrumenting call sites. Status transitions were already emitted by the stores.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestTicketByMetadataKey delegation — the consolidation stage's open-vs-recurrence decision (newest ticket per incident key, any status; FR-C5)
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E4): VALID_TRANSITIONS allows backlog → complete — the opt-in self-resolve close for a fully-resolved alert incident that never left backlog (previously an Invalid state transition, forcing a fake promote before closing)
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Persist verified ticket-owner issuer provenance in reserved metadata so later background bot dispatch can sign the original identity namespace without accepting a caller-spoofed value.
  */
 
 import {
@@ -28,6 +29,7 @@ import {
 } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
 import { ticketEvents } from '@/shared/ticket-events';
+import { bindOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 
 const logger = createChildLogger({ module: 'TicketService' });
 
@@ -119,10 +121,11 @@ export class TicketService {
     // written as queue=chat) is respected; otherwise the ticketType maps to its
     // owning app queue. This is the single point that reclassifies every creation
     // path that flows through the service.
-    const metadata = applyDerivedQueueMetadata(input.metadata ?? {}, {
+    const derivedMetadata = applyDerivedQueueMetadata(input.metadata ?? {}, {
       ticketType: input.ticketType,
       metadata: input.metadata ?? {},
     });
+    const metadata = bindOwnerPrincipalIssuer(derivedMetadata, input.ownerSub);
     logger.info(
       { title: input.title, ticketType: input.ticketType, status: resolvedStatus, queueId: metadata.queueId },
       'Creating ticket',

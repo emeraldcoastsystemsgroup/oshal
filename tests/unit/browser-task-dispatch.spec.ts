@@ -13,6 +13,7 @@
  *   device-ownership environment variables around the generic browser-task dispatch tests so the
  *   owner-scoped picker contract is deterministic after suites that exercise operator or legacy
  *   unowned-device compatibility flags.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Await the durable journal enqueue now that browser dispatch is asynchronous and does not acknowledge work before PostgreSQL accepts it.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,8 +67,8 @@ afterEach(() => {
 });
 
 describe('dispatchBrowserTask — the generic browser-task rail', () => {
-  it('enqueues a codex.exec envelope with the CALLER\'s agent id + prompt (no app vocabulary)', () => {
-    const r = dispatchBrowserTask({ taskId: 't1', userSub: OWNER, fromAgentId: 'caller-bot-xyz', prompt: 'do the thing in the browser' });
+  it('enqueues a codex.exec envelope with the CALLER\'s agent id + prompt (no app vocabulary)', async () => {
+    const r = await dispatchBrowserTask({ taskId: 't1', userSub: OWNER, fromAgentId: 'caller-bot-xyz', prompt: 'do the thing in the browser' });
     expect(r.ok).toBe(true);
     expect(r.clientId).toBe('node-a');
     const { env } = hoisted.enqueued[0];
@@ -83,9 +84,9 @@ describe('dispatchBrowserTask — the generic browser-task rail', () => {
     expect(env.workspacePath).toBeUndefined();               // omitted when nothing staged
   });
 
-  it('passes the chosen worker\'s callback URL to a prompt-builder form', () => {
+  it('passes the chosen worker\'s callback URL to a prompt-builder form', async () => {
     let seen = '';
-    dispatchBrowserTask({
+    await dispatchBrowserTask({
       taskId: 't2', userSub: OWNER, fromAgentId: 'b', workspacePath: 't2', model: 'gpt-5.5-codex',
       prompt: ({ controllerUrl, client }) => { seen = controllerUrl; return `post back to ${controllerUrl} / ${client.clientId}`; },
     });
@@ -96,28 +97,28 @@ describe('dispatchBrowserTask — the generic browser-task rail', () => {
     expect(env.workspacePath).toBe('t2');                    // staged folder carried
   });
 
-  it('honors an explicit node pick, and errors when that pick is not available', () => {
+  it('honors an explicit node pick, and errors when that pick is not available', async () => {
     hoisted.state.clients = [structuredClone(NODE_A), {
       ...structuredClone(NODE_A), clientId: 'node-b', tailnetHostname: 'render-box', agentId: 'agent-b',
     }];
-    expect(dispatchBrowserTask({ taskId: 't3', userSub: OWNER, fromAgentId: 'b', prompt: 'x', preferredClientId: 'node-b' }).clientId).toBe('node-b');
+    expect((await dispatchBrowserTask({ taskId: 't3', userSub: OWNER, fromAgentId: 'b', prompt: 'x', preferredClientId: 'node-b' })).clientId).toBe('node-b');
     // A pinned node that isn't connected → clean no-worker error, not a wrong-node dispatch.
-    const r = dispatchBrowserTask({ taskId: 't4', userSub: OWNER, fromAgentId: 'b', prompt: 'x', preferredClientId: 'node-ghost' });
+    const r = await dispatchBrowserTask({ taskId: 't4', userSub: OWNER, fromAgentId: 'b', prompt: 'x', preferredClientId: 'node-ghost' });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/No online desktop worker/i);
   });
 
-  it('treats a wedged (non-draining) worker as unavailable', () => {
+  it('treats a wedged (non-draining) worker as unavailable', async () => {
     hoisted.state.clients = [{ ...structuredClone(NODE_A), taskQueueDepth: 2 }];
-    const r = dispatchBrowserTask({ taskId: 't5', userSub: OWNER, fromAgentId: 'b', prompt: 'x' });
+    const r = await dispatchBrowserTask({ taskId: 't5', userSub: OWNER, fromAgentId: 'b', prompt: 'x' });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/No online desktop worker/i);
     expect(hoisted.enqueued).toHaveLength(0);                // nothing dispatched onto a wedged box
   });
 
-  it('returns a clean error (never throws) when no browser-capable node is connected', () => {
+  it('returns a clean error (never throws) when no browser-capable node is connected', async () => {
     hoisted.state.clients = [];
-    const r = dispatchBrowserTask({ taskId: 't6', userSub: OWNER, fromAgentId: 'b', prompt: 'x' });
+    const r = await dispatchBrowserTask({ taskId: 't6', userSub: OWNER, fromAgentId: 'b', prompt: 'x' });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/box is not connected/i);
   });

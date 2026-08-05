@@ -10,6 +10,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-083: the generic 'task' lane now routes by CALL-OUT, not a pinned guess — when no agent is pinned, resolveTaskWorker broadcasts a BID_REQUEST to online knowledge owners and the AgentRouter cascade decides. Lane flexibility: an unclaimed COMPLEX task promotes to the build/decompose lane (promoteToSwarm); an unclaimed simple task lands on the general fallback owner. App-specific ticketTypes (trading-decision, education, …) keep their manifest-declared workerBot untouched.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 addendum (skill profiles): after building the worker prompt, resolve the owning app's `summarize` profile by ticketType and compose its domain pattern into the text. Controller-side resolution (the bot node has no registry); the pattern rides as prompt text so the LLM work + cost stay on the accountable bot (ADR-036). No-op when the app declared no profile.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING (controller half): when OSHAL_PUSH_ON_DISPATCH is on, stamp each BotNodeClient.execute dispatch (single-owner + multi-bid fan-out) with the target agent's authoritative provider/model/configVersion via resolveDispatchConfigFields(deps.runtimeParamsResolver, agentId). Fail-open by contract (absent resolver / no record / resolver error → {}), and the env flag defaults OFF → the dispatched request is byte-identical to the legacy shape. The bot half self-corrects a divergent runtime before executing (bot-node-dispatch-config.ts).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Carry persisted ticket-owner principal issuer provenance into every single-owner and fan-out HTTP delegation request.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Reject localhost execution fallback when controller signing is enabled so bot-node transport or endpoint failures cannot bypass signed delegation.
  */
 
 import * as http from 'node:http';
@@ -29,6 +31,7 @@ import { createChildLogger } from '@/shared/logger';
 import { serviceSecretHeaders } from '@/shared/middleware/authz';
 import { isSuperAdminSub } from '@/shared/middleware/superadmin';
 import { resolveSkillProfileByTicketType, composeSkillProfilePrompt } from '@/shared/skill-profiles';
+import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import {
   parseTrustedProviderIntent,
   trustedProviderAgentId,
@@ -821,6 +824,7 @@ export async function dispatchManifestWorkerTicket(
             agentId: owner.agentId,
             agenticMode: true,
             userSub: ticket.ownerSub ?? undefined,
+            principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
             ...(creds && Object.keys(creds).length > 0 ? { creds } : {}),
             ...ownerConfigFields,
           });
@@ -909,6 +913,7 @@ export async function dispatchManifestWorkerTicket(
           agentId: workerAgentId,
           agenticMode: true,
           userSub: ticket.ownerSub ?? undefined,
+          principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
           ...(creds && Object.keys(creds).length > 0 ? { creds } : {}),
           ...(providerIntent ? { providerIntent } : {}),
           ...configFields,
@@ -920,7 +925,7 @@ export async function dispatchManifestWorkerTicket(
           error: result.success ? undefined : result.response || 'bot-node returned success=false',
         };
       } catch (botErr) {
-        if (providerIntent) throw botErr;
+        if (providerIntent || deps.botNodeClient.isDelegationEnforced()) throw botErr;
         // Fall through to localhost when the bot-node path is unavailable
         // (e.g. resolver returned null for codex-cli harness bots).
         logger.warn(
@@ -930,6 +935,9 @@ export async function dispatchManifestWorkerTicket(
         dispatchResult = await sendViaLocalhost();
       }
     } else {
+      if (deps.botNodeClient?.isDelegationEnforced()) {
+        throw new Error('Signed HTTP delegation requires a dedicated bot-node endpoint');
+      }
       if (providerIntent) {
         throw new Error('Trusted provider intent requires a dedicated bot-node endpoint');
       }

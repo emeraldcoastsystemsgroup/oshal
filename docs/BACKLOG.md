@@ -4559,7 +4559,7 @@ nothing has run on the GPU box yet. Design + decisions in [ADR-071](adr/071-char
 - **Break-glass:** `OSHAL_DB_GUC_STRICT=off` restores the pre-flip fail-open-to-operator behavior on any
   starvation incident.
 
-### Route-auth inventory reds on every new limiter-only mount ⬜ (found 2026-08-01)
+### Route-auth inventory reds on every new limiter-only mount ✅ CLOSED 2026-08-05 (found 2026-08-01)
 
 The runtime route auditor skips limiter-only mounts **by rule**; `tests/unit/server-route-auth-inventory.spec.ts`
 skips them **by allowlist**. The two agree only until someone mounts a new rate limiter — then the CI
@@ -4572,6 +4572,13 @@ annotate it.
 **Done when** the spec derives its exemptions from the same rule the runtime scanner uses (one source
 of truth, not two lists); adding a new limiter-only mount does NOT red the gate; and a genuinely
 unauthenticated route still does — proven by adding one of each in the test.
+
+**Closed:** runtime auditing and `tests/unit/server-route-auth-inventory.spec.ts` now share
+`isLimiterOnlyMiddleware`; the manual `/api/intake` and `/api/jarvis` exceptions were removed.
+`tests/unit/route-audit.spec.ts` and the server-route inventory suite exercise a synthetic
+limiter-only mount and a genuinely open mount in opposite directions. The combined focused matrix
+passes 29/29, so a harmless limiter no longer trains the gate red while a real anonymous route still
+does.
 
 ---
 
@@ -4590,7 +4597,7 @@ backup: it survives GC, not a re-clone.
 
 ---
 
-### Machine-write identity: audit every un-migrated identity-less WRITE, not just reads 🟨 AUDITED + CLASS GATE SHIPPED 2026-08-02 — four residuals open
+### Machine-write identity: audit every un-migrated identity-less WRITE, not just reads ✅ CLOSED 2026-08-05
 - **Reason:** the guc-strict entry above frames the risk as *starvation on reads*. The alert intake showed
   the sharper failure: an authenticated MACHINE route (Alertmanager webhook, bearer-token auth, no human
   behind it) inherited the global anonymous request identity, and the owner-RLS `WITH CHECK` on `tickets`
@@ -4639,32 +4646,46 @@ carried at the write. `tests/connector-webhook-rls-live.spec.ts` is the live hal
   user-owned rows on the operator connection a valid `X-Service-Secret` inherits.
 
 **RESIDUALS — what is still open (done-when each):**
-1. **Narrow the `serviceSecretOr` operator stamp.** `src/app/server.ts` stamps
-   `isOperator: isOperator(req) || hasValidServiceSecret(req)`, so FOUR entries write owner-scoped
-   tables as operator rather than as the sub they already resolved for authz: `jarvis-service-callers`
+1. **✅ Narrow the `serviceSecretOr` operator stamp (closed 2026-08-05).** `src/app/server.ts` still
+   establishes `isOperator: isOperator(req) || hasValidServiceSecret(req)` as a compatibility base;
+   before this closure, FOUR entries wrote owner-scoped tables as that operator rather than as the
+   sub they already resolved for authz: `jarvis-service-callers`
    (`jarvis_tasks`, `tickets`), `test-lab-golden` (`tickets` — it even stamps the right `ownerSub` on
    the ROW and never on the connection), `internal-tool-bridge` (`access_audit_log` — its automatic
    sibling was systemized precisely so an actor cannot suppress their own trail), and
-   `message-routes-service-callers` (`chat_tasks`). Not broken today; each is a secret-holder with
-   cross-tenant reach, and each becomes the alert-intake failure the day the stamp is tightened.
-   *Done when:* each resolves `getTrustedServiceUserSub(req)` into `runWithRequestIdentity` and
-   `MAX_AMBIENT_OPERATOR_ENTRIES` in the inventory ratchets to 0.
-2. **Behavioural proofs for the nine deferred entries** (`MAX_UNPROVEN_ENTRIES = 9`): a2a-rpc,
-   remote-client-plane, bot-node-swarm-execute, cli-token-auth, local-auth and the four above. Each
-   needs a driver in the class gate rather than a cross-reference to a sibling spec.
-   *Done when:* `MAX_UNPROVEN_ENTRIES` is 0 and the ratchet assertion is deleted as redundant.
-3. **Route-inventory drift.** `tests/helpers/unguarded-route-allowlist.ts` and `PUBLIC_BY_DESIGN` in
+   `message-routes-service-callers` (`chat_tasks`). The old behavior let any secret-holder reach
+   every tenant and would have become the alert-intake write failure if the base stamp tightened.
+   **Closed:** one shared middleware now validates `getTrustedServiceUserSub(req)`, refuses a valid
+   secret without that binding, and re-enters owner-scoped work via
+   `runWithRequestIdentity({ sub, isOperator:false })`. All four routers mount it before their reads,
+   writes, sub-routers, or detached work. Message intake also stamps that owner on its ticket/task
+   rows and no longer accepts `body.userSub`; the nightly runner sends its required
+   `TEST_LAB_OWNER_SUB`. Four real HTTP drivers observe the non-operator identity at the actual write,
+   and `MAX_AMBIENT_OPERATOR_ENTRIES` is now 0.
+2. **✅ Behavioural proofs for the five deferred entries (closed 2026-08-05):** a2a-rpc,
+   remote-client-plane, bot-node-swarm-execute, cli-token-auth, and local-auth. Each needs a driver in
+   the class gate rather than a cross-reference to a sibling spec.
+   **Closed:** real HTTP/auth-boundary drivers now observe A2A ticket creation under `a2a:<agentId>`,
+   durable remote-client cost settlement under the SYSTEM sentinel, bot-node async execution through
+   its import-safe production SYSTEM seam, PAT pre-identity lookup/telemetry under SYSTEM, and the
+   first local-user bootstrap INSERT under SYSTEM. `MAX_UNPROVEN_ENTRIES` is 0; the zero assertion is
+   intentionally retained so adding an unproven machine surface fails immediately.
+3. **✅ Route-inventory drift (closed 2026-08-05).** `tests/helpers/unguarded-route-allowlist.ts` and `PUBLIC_BY_DESIGN` in
    `src/features/security/route-audit.ts` both parse `app.use('/api…')` literals in `server.ts`, so
    four machine-reachable surfaces are invisible to BOTH: `/api/hooks/*` (mounted from inside
    `connector-webhook-routes.ts`), `/auth/facebook/data-deletion` and
    `/api/channels/telegram/webhook` (non-`/api` and inline), and `/node/*` (`NODE_POOL_MODE`, mounted
-   via `require()` and completely UNAUTHENTICATED — it hot-loads a bot identity and writes persona
-   files, though it touches no owner-scoped table). *Done when:* the two lists see mounts registered
-   from a module, all four are reviewed entries, and `/node/*` either gets a guard or is deleted.
-4. **`internalCallerAllowed()` fails open.** `src/app/routes/llm-governance-routes.ts` returns `true`
-   when neither `OSHAL_INTERNAL_TOKEN` nor `SESSION_SECRET` is set — the only guard in this inventory
-   that is not fail-closed. No owner-scoped write behind it today. *Done when:* it fail-closes like
-   the Alertmanager bearer, with a unit case for the unset-secret path.
+   via `require()` and previously had no guard — it hot-loads a bot identity and writes persona files,
+   though it touches no owner-scoped table). **Closed:** the shared contract in
+   `src/features/security/route-surface-contracts.ts` enumerates module-registered/non-`/api`
+   surfaces for both runtime and CI consumers, with behavior locked by
+   `tests/unit/route-surface-contracts.spec.ts`; `/node/*` now uses the strict service-secret gate and
+   is covered by `tests/unit/node-pool-routes-security.spec.ts`.
+4. **✅ `internalCallerAllowed()` fails open (closed 2026-08-05).** `src/app/routes/llm-governance-routes.ts` returned `true`
+   when neither `OSHAL_INTERNAL_TOKEN` nor `SESSION_SECRET` was set — the only guard in this inventory
+   that was not fail-closed. It now refuses the unset and mismatched cases with constant-time digest
+   comparison; `tests/unit/llm-governance-internal-auth.spec.ts` locks both refusals and the exact-token
+   success path.
 
 **One correction to the entry above:** it frames the class as "the INSERT is refused". That is the
 LOUD half. The connector-webhook and Facebook instances failed the quiet way instead — an operator or

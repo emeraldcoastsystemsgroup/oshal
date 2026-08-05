@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added remote-client runtime service for local MCP execution and control-plane sync
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Self-heal a lost registration instead of wedging. register() ran ONCE in start() and never again, while the control-plane registry is in-memory — so any api restart orphaned the node and every later poll/heartbeat failed forever until a human restarted the machine (the documented #1 failure of the remote-execution path; 188 errors from one client in 24h). Poll and heartbeat now re-register on an unregistered response and retry, sharing one in-flight attempt and floored to one per heartbeat interval so two timers cannot flood. Also fixed the heartbeat timer callbacks: `void p` does not handle a rejection, so a failing heartbeat became an unhandled rejection that Node terminates the process on by default.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Serialize overlapping poll ticks with one in-flight promise and refuse to claim while currentTaskId is set, preventing duplicate claim/execution when a slow task outlives the polling interval.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -36,6 +37,8 @@ export class RemoteClientService {
   private pollingTimer: NodeJS.Timeout | null = null;
   private running = false;
   private currentTaskId: string | null = null;
+  /** One shared polling pass prevents interval overlap from claiming concurrent work. */
+  private pollInFlight: Promise<void> | null = null;
   private lastKnownToolCount = 0;
   private registeredAgentId: string;
   /** In-flight re-registration, shared so concurrent 404s trigger one attempt, not several. */
@@ -115,10 +118,17 @@ export class RemoteClientService {
    * reason someone is watching.
    */
   async pollOnce(): Promise<void> {
-    if (!this.running || this.config.disablePolling) {
-      return;
-    }
+    if (!this.running || this.config.disablePolling || this.currentTaskId) return;
+    if (this.pollInFlight) return this.pollInFlight;
+    const poll = this.pollOnceExclusive().finally(() => {
+      if (this.pollInFlight === poll) this.pollInFlight = null;
+    });
+    this.pollInFlight = poll;
+    return poll;
+  }
 
+  /** @description Performs the network claim inside the poll mutex. */
+  private async pollOnceExclusive(): Promise<void> {
     let claim;
     try {
       claim = await this.controlPlane.claimNextTask();

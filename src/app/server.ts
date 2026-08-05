@@ -157,6 +157,9 @@
  *                     |                             | its own barrel, so keeping it would have left an orphaned module
  *                     |                             | on a laptop-hosted control plane. Promote it back if a second
  *                     |                             | real consumer ever appears.
+ * 146 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the verified principal issuer in AsyncLocalStorage so Ed25519 HTTP delegation binds the caller's full identity namespace instead of guessing from a potentially colliding subject string.
+ * 147 | maintainer@emeraldcoastsystemsgroup.com   | Wire remote-client task settlement to atomic outboxId cost receipts so journal replay cannot double bill after a partial downstream failure.
+ * 148 | maintainer@emeraldcoastsystemsgroup.com   | Supply the work-item repository to strict remote-task settlement publication so journal delivery waits for durable landing before compatibility mesh notification.
  */
 
 require('dotenv').config();
@@ -334,6 +337,7 @@ import {
 } from '@/features/security';
 // RLS request-identity binding for the GUC-aware pool wrapper (canonical RLS path).
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 // Prometheus exposition for the swarm's own container-health rules (ADR-119).
 import { PROMETHEUS_CONTENT_TYPE, renderRuntimeMetrics } from '@/shared/observability';
 import { gucEnabled } from '@/shared/services/database/guc-pool';
@@ -742,7 +746,11 @@ function createApp(): express.Application {
   if (gucEnabled()) {
     app.use((req, _res, next) => {
       runWithRequestIdentity(
-        { sub: getCaller(req).sub, isOperator: isOperator(req) || hasValidServiceSecret(req) },
+        {
+          sub: getCaller(req).sub,
+          principalIssuer: getAuthenticatedPrincipalIssuer(req),
+          isOperator: isOperator(req) || hasValidServiceSecret(req),
+        },
         () => next(),
       );
     });
@@ -1503,13 +1511,13 @@ function createApp(): express.Application {
     meshCommunicationService: ctx.swarm.meshCommunicationService,
     runtimeRegistryService: ctx.swarm.runtimeRegistryService,
     orchestrator: ctx.orchestrator,
-    // Task-result landing: remote task completions/failures attach to their
-    // originating work item via the remoteTaskResult mesh subscriber.
+    // Task-result landing: the journal outbox awaits this repository directly;
+    // remoteTaskResult mesh delivery is a compatibility notification, not the durability boundary.
     workItemRepository: ctx.swarm.workItemRepository,
     // ADR-036 cost capture for leaf-node LLM tasks (apply / linkedin / any dispatchBrowserTask):
     // a completed/failed codex.exec run is metered into chat_tasks attributed to its accountable bot.
-    recordCost: ctx.swarm.costTrackingService
-      ? (event) => ctx.swarm.costTrackingService!.recordCost(event)
+    recordCostOnce: ctx.swarm.costTrackingService
+      ? (outboxId, event) => ctx.swarm.costTrackingService!.recordCostOnce(outboxId, event)
       : undefined,
   }));
   app.use('/api/v1/agent', requiresAuth, createScheduleRoutes(scheduleController));

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the wedged-edge-node fix. The control-plane registry is in-memory, so an api restart drops every registration while the daemon keeps polling; register() ran once at start() and never again, so the node failed forever until a human restarted the machine. Proves both halves: the routes answer an unknown client 404 + code (not 400, which the daemon could not distinguish from a malformed call), and the daemon re-registers and recovers on that answer — deduped, floored, and never for a non-404.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | De-flake (BACKLOG "remote-client specs are flaky under full-suite parallelism"). Each of the three route tests booted its OWN express server, so each paid the one-time dynamic-import/transform of the real router graph on vitest's 5s DEFAULT — the cost the two sibling specs already document and buy 15s for, which is why they are not on the flaky list and this file was. Now one server per file in a beforeAll with an explicit 30s budget; the assertions themselves run in ms. The entry's stated cause (port contention) is disproven in place: listen(0) already binds an ephemeral port, so its "allocate ephemeral ports" done-when was already met and would have changed nothing.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the poll-in-flight mutex and currentTaskId fence so overlapping timer ticks cannot claim or execute a second task.
  */
 
 import express, { type Request, type Response } from 'express';
@@ -74,14 +75,14 @@ describe('control plane answers an unregistered client so the daemon can recover
 
   const machineHeaders = { 'x-remote-client-key': SECRET, 'content-type': 'application/json' };
 
-  it('answers a task poll from an unknown client with 404 and a machine-readable code', async () => {
+  it('fails task polling closed while no durable journal is configured', async () => {
     const res = await fetch(`${origin}/api/remote-clients/ghost-client/tasks/next`, {
       headers: machineHeaders,
     });
 
-    expect(res.status, 'a forgotten registration is not a malformed request').toBe(404);
+    expect(res.status, 'task routes must not fall back to process memory').toBe(503);
     const body = (await res.json()) as { code?: string };
-    expect(body.code).toBe('remote_client_unregistered');
+    expect(body.code).toBe('remote_task_journal_unavailable');
   });
 
   it('answers a heartbeat from an unknown client the same way', async () => {
@@ -236,6 +237,29 @@ describe('the daemon re-registers instead of wedging', () => {
     await expect(service.pollOnce()).rejects.toThrow();
 
     expect(register, 'the retry floor must hold within one heartbeat interval').toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one claim and execution across overlapping polling ticks', async () => {
+    const { service, claimNextTask } = makeService();
+    claimNextTask.mockResolvedValue({ claimed: true, task: { taskId: 'slow-task' } });
+    let releaseExecution: (() => void) | undefined;
+    const execution = new Promise<void>((resolve) => { releaseExecution = resolve; });
+    const executeTask = vi.fn(async () => execution);
+    Reflect.set(service, 'executeTask', executeTask);
+
+    const first = service.pollOnce();
+    const second = service.pollOnce();
+    await vi.waitFor(() => expect(executeTask).toHaveBeenCalledTimes(1));
+    expect(claimNextTask).toHaveBeenCalledTimes(1);
+    releaseExecution?.();
+    await Promise.all([first, second]);
+  });
+
+  it('does not claim while a current task is still unsettled', async () => {
+    const { service, claimNextTask } = makeService();
+    Reflect.set(service, 'currentTaskId', 'held-task');
+    await service.pollOnce();
+    expect(claimNextTask).not.toHaveBeenCalled();
   });
 });
 

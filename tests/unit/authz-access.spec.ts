@@ -15,6 +15,7 @@ import {
   isOperator,
   canAccessResource,
   requireOperator,
+  requireServiceSecret,
   serviceSecretOr,
   serviceSecretHeaders,
 } from '../../src/shared/middleware/authz';
@@ -168,5 +169,35 @@ describe('serviceSecretOr', () => {
     const { next, fallback } = run('anything');
     expect(fallback).toHaveBeenCalledTimes(1);
     expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('requireServiceSecret', () => {
+  function run(configured: string | undefined, provided: string | undefined) {
+    if (configured === undefined) delete process.env.SWARM_SERVICE_SECRET;
+    else process.env.SWARM_SERVICE_SECRET = configured;
+    const next = vi.fn();
+    const json = vi.fn();
+    const res = { status: vi.fn(() => ({ json })) } as unknown as Response;
+    const headers = provided === undefined ? {} : { 'x-service-secret': provided };
+    requireServiceSecret({ headers } as unknown as Request, res, next);
+    return { next, json, status: res.status as ReturnType<typeof vi.fn> };
+  }
+
+  it('fails closed with 503 when the deployment secret is absent', () => {
+    const result = run(undefined, undefined);
+    expect(result.status).toHaveBeenCalledWith(503);
+    expect(result.next).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing or incorrect caller secret', () => {
+    expect(run('expected-secret', undefined).status).toHaveBeenCalledWith(401);
+    expect(run('expected-secret', 'wrong-secret').status).toHaveBeenCalledWith(401);
+  });
+
+  it('continues only for the exact configured secret', () => {
+    const result = run('expected-secret', 'expected-secret');
+    expect(result.next).toHaveBeenCalledTimes(1);
+    expect(result.status).not.toHaveBeenCalled();
   });
 });

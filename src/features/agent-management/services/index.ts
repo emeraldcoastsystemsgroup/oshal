@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | IMP-1: Exported AgentEligibilityService for richer availability model beyond heartbeat-only filtering
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Exported DynamicComposeService so the swarm extension can wire the AgentFactoryService launch deps (createAndStartAgent) through the barrel instead of a deep import
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported delegation-aware BotNodeClient construction options through the feature barrel.
  */
 
 export { RedisMeshTransport, type RedisMeshTransportOptions } from './redis-mesh-transport';
@@ -122,6 +123,7 @@ export {
   resolveDisplayOnline,
   type BotNodeResponse,
   type BotNodeRequest,
+  type BotNodeClientOptions,
   type BotEndpointResolver,
 } from './bot-node-client';
 export {

@@ -89,9 +89,12 @@ central ledger), latency, and retries captured.
 ### Headless wiring (why it can run with no browser)
 
 - The engine is mounted under `serviceSecretOr()` at `POST /api/test-lab/golden/run`, so the
-  host-side runner authenticates with the `SWARM_SERVICE_SECRET` header (no OIDC session).
-- Tickets are created server-side via `ctx.ticketService` (a fixed `TEST_LAB_OWNER_SUB`), so they
-  flow through the real queue.
+  host-side runner authenticates with `SWARM_SERVICE_SECRET` (no OIDC session). It also sends the
+  configured `TEST_LAB_OWNER_SUB` in `X-OSHAL-User-Sub`; the API accepts that binding only after
+  validating the secret, then stamps it as a non-operator database identity for the entire batch.
+- Tickets are created server-side via `ctx.ticketService` with that same owner sub, so the row owner
+  and the RLS connection identity agree. A secret-authenticated request missing the owner binding is
+  rejected before any scenario starts instead of receiving cross-tenant operator access.
 - Results are read from the bind-mounted `workspace-shared/<ticketId>/deliverables/`.
 - The git commit happens on the **host** (the report path `docs/` isn't mounted into the container).
 
@@ -106,8 +109,8 @@ node scripts/test-lab-nightly.mjs all          # full set + commit the report
 node scripts/test-lab-nightly.mjs g-phone-validator --no-commit   # one scenario, no commit
 ```
 
-Requirements: `SWARM_SERVICE_SECRET` set (already in `.env`); the api container running; the swarm
-worker bots online (the tickets need them to produce results).
+Requirements: `SWARM_SERVICE_SECRET` and `TEST_LAB_OWNER_SUB` set in `.env`; the api container
+running; the swarm worker bots online (the tickets need them to produce results).
 
 ### The morning report
 
@@ -121,7 +124,8 @@ Written to `docs/test-lab-reports/<date>.md` (+ `latest.md`, `baseline.json`) an
 ### Tuning
 
 - `TEST_LAB_MAX_ATTEMPTS` (default 2) — re-runs before giving up.
-- `TEST_LAB_OWNER_SUB` — the OIDC sub the nightly tickets are attributed to.
+- `TEST_LAB_OWNER_SUB` — required OIDC sub the nightly runner sends as its trusted user binding;
+  tickets, evaluation calls, persistence, and batch polling are scoped to this owner.
 - `TEST_LAB_API` (host runner) — defaults to `http://127.0.0.1:${OSHAL_API_PORT:-35457}` (the
   api container's 5000 published to the host). The runner waits for this endpoint to be reachable
   before kicking off, so a 04:30 wake where Docker is still starting doesn't lose the night.

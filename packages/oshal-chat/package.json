@@ -22,17 +22,20 @@
     "start": "npm run build && node scripts/start-electron.js .",
     "dev": "npm run build && node scripts/start-electron.js . --enable-logging",
     "dist": "npm run build && electron-builder",
+    "test:pack": "node scripts/test-packed-install.mjs",
     "test:remote": "node scripts/test-remote-control.mjs",
     "test:wake": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-background-wake.ps1"
   },
   "dependencies": {
-    "@nut-tree-fork/nut-js": "^4.2.6"
+    "electron": "43.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.0",
-    "electron-builder": "^24.13.3",
-    "typescript": "^5.4.0",
-    "electron": "^31.0.0"
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   },
   "build": {
     "appId": "us.agenticfederal.oshal.node",

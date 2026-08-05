@@ -22,6 +22,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch now rides the shared
  *   browser-task-dispatch rail (dispatchBrowserTask) instead of hand-rolling the pick+envelope+enqueue;
  *   supplies its OWN linkedin-profile-operator id + prompt. Behaviour-preserving.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Await the durable PostgreSQL browser-task enqueue before returning profile-update dispatch success.
  *
  * @module app/profile-studio-dispatch
  */
@@ -106,8 +107,8 @@ export function buildProfilePrompt(plan: LinkedInProfilePlan): string {
  * @param plan - The approved plan to apply.
  * @returns The dispatch outcome (clientId + taskId when enqueued).
  */
-export function dispatchProfileUpdate(plan: LinkedInProfilePlan): ProfileDispatchResult {
-  const result = dispatchBrowserTask({
+export async function dispatchProfileUpdate(plan: LinkedInProfilePlan): Promise<ProfileDispatchResult> {
+  const result = await dispatchBrowserTask({
     taskId: `liprofile-${plan.id}-${Date.now()}`,
     fromAgentId: PROFILE_OPERATOR_AGENT_ID,
     userSub: plan.userSub,                // so the leaf-node cost lands attributed to this owner

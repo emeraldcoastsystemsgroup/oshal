@@ -33,6 +33,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: split this 2.5×-over-cap file into cohesive jarvis-* siblings (orchestrator/directives/provider-intent-detect/visuals/tool-catalog/overview/task-store). This file is now the router + request glue; the moved public symbols are re-exported so importers + tests are unchanged. No behaviour change.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted the three jarvis-ambient decomposition siblings (core/ui/recognition) in JARVIS_CLIENT_ASSETS so the load-ordered classic scripts serve from /assets like the existing jarvis-speakers siblings. jarvis-ambient.js itself was over the 1000-code-line cap; behavior is unchanged.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Multi-app planner residuals: the dispatch ack now SHOWS the compiled plan (describePlan — which apps, in what order, which step pauses for approval) instead of only "I've lined up N steps", and a work item whose ticket ended escalated/cancelled reports an honest failure line instead of status 'error' with a null message. Both are honesty properties of the planner, not cosmetics.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Narrow valid service-secret calls to their trusted user sub before any Jarvis owner-scoped read/write; a machine credential without X-OSHAL-User-Sub now fails closed instead of retaining the global cross-tenant operator database stamp.
  *
  * @module jarvis-routes
  */
@@ -42,6 +43,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
 import type { AppContext } from '@/app/composition/app-context';
 import type { InternalTicket } from '@/entities/ticket';
 import {
@@ -402,6 +404,9 @@ function storedJarvisSourceId(value: unknown): string | undefined {
  */
 export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
   const router = Router();
+  // serviceSecretOr authenticates the machine at the outer mount. Jarvis is user-bound, so replace
+  // that broad operator stamp with the asserted owner before any sub-router or detached turn runs.
+  router.use(requireTrustedServiceUserIdentity);
   const visualResponseService = new VisualResponseService(ctx.pool);
   void ensureJarvisSchema(ctx.pool);   // durable Tasks list table
 

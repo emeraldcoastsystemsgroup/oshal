@@ -14,52 +14,51 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Scope the device LIST + single-device read to the caller (closes the documented residual of the 2026-07-09 ownership pass). A device list is a list of real people computers, and it also hands out the clientId that PINS dispatch - so an unscoped list was the discovery half of the cross-user leaf-node dispatch hole closed the same day in device-access.ts. Session callers now see only devices canAccessResource admits (operators still see the fleet); machine callers - the node daemon and the platform dispatchers - are unchanged because they must route work across every device. A denied single read 404s rather than 403s so ids cannot be probed for existence. Guard: tests/unit/remote-client-device-ownership.spec.ts.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: close two cross-user execution paths that the owner-scoped DISPATCHER fix (31a51352) does not cover, found by an adversarial design review. (1) MESH TASK INJECTION: the subscribeAgent callback converts an inbound envelope into registry.enqueueTask, and toTaskEnvelope accepts a verbatim embedded payload.task with arbitrary intent/input (codex.exec at danger-full-access). handleSendSwarmMessage is device-gated on the SENDER clientId and then calls sendDirect() on an UNCHECKED body toAgentId - so a user who legitimately owns one node could name another user node and execute on their desktop, bypassing requireDeviceAccess AND the dispatcher gate. New mayInjectTask() guards the CONVERSION (covers direct + broadcast; the sender agent id is server-derived from the authenticated device, never body-supplied): device-to-device traffic must pass canUseDevice, non-device senders are platform traffic and unchanged, and a refused envelope is still delivered as an inert MESSAGE, never as execution. (2) OWNERSHIP TAKEOVER: adopting an EXISTING but unbound device was open to any signed-in user - with OSHAL_ALLOW_LEGACY_UNOWNED on, canAccessResource admits everyone against a null owner and registry.register() lets a supplied ownerSub overwrite, so re-registering someone else clientId made you its permanent owner and every later gate then agreed. Only an operator may adopt an existing unbound device; first-time enrollment registers a NEW clientId, and the node own machine-trust re-registration is unaffected. Guards: tests/unit/remote-client-device-ownership.spec.ts.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Worker-plane auth hardening (docs/backlog/hardening.md #7, backward compatible — enrolled shared-secret nodes keep working): (1) the swarm-wide shared-secret compare is now constant-time via timingSafeSecretEquals (sha256-digest both sides + crypto.timingSafeEqual) — `===` was a timing oracle on a public origin; (2) a router-LOCAL, flag-gated (OSHAL_RATE_LIMIT_REMOTE_CLIENTS, default OFF = no-op) rate limiter mounts ahead of auth, keyed PER CALLER on the /:clientId path segment (never per shared IP — behind cloudflared/NAT an IP key pools the fleet into one bucket) — closes the operator-action-queue rate-limit item without touching over-cap server.ts; (3) the shared-secret branch is formally DEPRECATED in favour of per-node tokens (`Bearer oshal_pat_…` → the upstream cli-token middleware authenticates the node's OWNER; the session branch + requireDeviceAccess then bind it to its own devices — issue = POST /api/join/enroll or POST /api/cli-tokens, verify = createCliTokenAuthMiddleware): the branch now warns once per boot and stamps x-oshal-shared-secret-deprecated on its responses so re-enrollment progress is observable. Guard: tests/unit/remote-client-auth.spec.ts (worker plane proven on a node token with NO shared secret configured).
- * 13 | maintainer@emeraldcoastsystemsgroup.com   | SHARED SECRET RETIREMENT (docs/backlog/hardening.md #7). Three legs. (a) FAIL-CLOSED SWITCH: REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true refuses the swarm-wide-secret branch outright (401 code shared_secret_retired) so a deployment can prove no node still depends on it; default false keeps field nodes working, and the branch stays loudly deprecated either way. (b) PER-NODE BINDING ENFORCEMENT: a node-bound token (cli-token-routes node_client_id) is already confined to its own /:clientId plane by the auth middleware, but POST /register carries the device identity in the BODY - handleRegisterClient now refuses a body clientId that is not the presented token's, so a device credential cannot enrol, and take delivery of work for, a sibling machine. (c) ROTATION SURFACE: POST /:clientId/token/rotate mints the successor credential and revokes every prior generation in one call (owner-or-operator session, or the node presenting its own current token). Guard: tests/unit/remote-client-node-token.spec.ts.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Rate-limiter keying fix (adversarial review): the per-clientId limiter mounted BEFORE auth let an unauthenticated flood mint a fresh bucket per fabricated clientId (bypass) and let a known clientId be 429-starved by anonymous traffic. Moved it AFTER authorizeRemoteClient — the clientId is now proven and unauthenticated floods are rejected before touching a legit node's bucket (the global 1000/min/IP limiter bounds those).
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | SHARED SECRET RETIREMENT (docs/backlog/hardening.md #7). Three legs. (a) FAIL-CLOSED SWITCH: REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true refuses the swarm-wide-secret branch outright (401 code shared_secret_retired) so a deployment can prove no node still depends on it; default false keeps field nodes working, and the branch stays loudly deprecated either way. (b) PER-NODE BINDING ENFORCEMENT: a node-bound token (cli-token-routes node_client_id) is already confined to its own /:clientId plane by the auth middleware, but POST /register carries the device identity in the BODY - handleRegisterClient now refuses a body clientId that is not the presented token's, so a device credential cannot enrol, and take delivery of work for, a sibling machine. (c) ROTATION SURFACE: POST /:clientId/token/rotate mints the successor credential and revokes every prior generation in one call (owner-or-operator session, or the node presenting its own current token). Guard: tests/unit/remote-client-node-token.spec.ts.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The per-caller limiter was BUILT but INERT: makeLimiter('remote_clients', …) returns a pass-through unless OSHAL_RATE_LIMIT_REMOTE_CLIENTS is explicitly on, and that flag is set in no compose file, no .env.example and no running container — the live api's boot log carried exactly one 'rate-limit preset enabled' line (limiter=internal). Swapped to createRemoteClientRateLimiter(), which keeps the same key/window/cap and the same env var but defaults ON, so this deliberately-outside-requiresAuth worker plane is bounded per caller on every deployment instead of only where an operator remembered a flag. Guard: tests/unit/remote-client-rate-limit.spec.ts.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Preserve verified principal issuer provenance when an owner rotates their own node token; operator rotations for another owner deliberately leave it unset rather than combining the operator's issuer with someone else's subject.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Wire production task routes to the PostgreSQL journal with startup readiness gating, owner-aware RLS operations, immediate settlement replay, and atomic outboxId cost deduplication; process memory now retains only registration and swarm-message state.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Extract held-task workspace synchronization into a focused route module, retaining machine-vs-session RLS identity and logging every filesystem catch while keeping this route factory within code-line governance.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Inject the work-item repository into the durable settlement publisher so landing persistence is acknowledged by the journal outbox rather than by the lossy compatibility mesh consumer.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Extract mesh task validation and owner-scoped injection checks into a focused module, keeping this route file below the 1,000-physical-line governance limit.
  */
 
 import { randomUUID } from 'crypto';
-import { promises as fsp } from 'fs';
-import { basename, resolve, sep } from 'path';
-import { Router, raw, type NextFunction, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { canAccessResource, getCaller, isOperator, requireOperator } from '@/shared/middleware/authz';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { DEFAULT_CHAT_AGENT_ID } from '@/features/chat-orchestration';
 import {
-  A2ATaskEnvelopeSchema,
   RemoteClientHeartbeatSchema,
   RemoteClientRegistrationSchema,
-  A2ATaskResultSchema,
-  type A2ATaskEnvelope,
-  type A2ATaskResult,
 } from '@/shared/types';
-import type { CostEvent } from '@/features/operational-intelligence';
 import {
   AgentRuntimeRegistryService,
   MESH_CHANNELS,
   MeshCommunicationService,
   type AgentRuntimeRegistration,
-  type MeshEnvelope,
   type MeshSubscription,
 } from '@/features/agent-management';
 import {
   createRemoteClientRateLimiter,
   sharedSecretRetired,
   nodeTokenBindingMatches,
-  RemoteClientClaimResponseSchema,
+  PostgresRemoteTaskJournalRepository,
   RemoteClientRegistryService,
-  RemoteClientTaskCompletionSchema,
-  RemoteClientTaskSchema,
+  RemoteClientOwnerConflictError,
+  RemoteClientOwnerTransitionBusyError,
+  RemoteTaskJournalService,
+  RemoteTaskJournalUnavailableError,
   RemoteClientSwarmClaimResponseSchema,
   RemoteClientSwarmSendRequestSchema,
   RemoteClientSwarmSendResponseSchema,
   RemoteClientChatRequestSchema,
   RemoteClientChatAcceptResponseSchema,
   RemoteClientNotFoundError,
-  canUseDevice,
   runRemoteChatTurn,
   timingSafeSecretEquals,
   type RemoteChatOrchestrator,
@@ -67,14 +66,20 @@ import {
   type RemoteClientRecord,
 } from '@/features/remote-client';
 import {
-  buildRemoteTaskResultEnvelopes,
   subscribeRemoteTaskResults,
   type RemoteTaskResultLandingRepository,
 } from './remote-client-task-results';
 import { readNodeTokenBinding, rotateNodeToken } from './cli-token-routes';
-
+import {
+  createRemoteTaskOutboxPublisher,
+  registerRemoteClientTaskOperations,
+  type RecordRemoteTaskCostOnce,
+} from './remote-client-task-operations';
+import { registerRemoteClientWorkspaceRoutes } from './remote-client-workspace-routes';
+import { mayInjectRemoteTask, toRemoteTaskEnvelope } from './remote-client-mesh-task';
+export { buildRemoteTaskCostEvent } from './remote-client-task-operations';
+export { taskWorkspaceFolder } from './remote-client-workspace-routes';
 const logger = createChildLogger({ module: 'remote-client-routes' });
-
 /**
  * @description Answers a poll/heartbeat call whose clientId this process has no registration for.
  *
@@ -126,9 +131,10 @@ interface RemoteClientRouteOptions {
   orchestrator?: RemoteChatOrchestrator;
   /** When provided (with a mesh service), remote task results land on the originating work item. */
   workItemRepository?: RemoteTaskResultLandingRepository;
-  /** When provided, a completed/failed leaf-node LLM task's token+cost is metered into chat_tasks,
-   *  attributed to the accountable bot (the task's fromAgentId). See recordRemoteTaskCost. */
-  recordCost?: (event: CostEvent) => Promise<void>;
+  /** Exactly-once settlement cost sink. Its outbox receipt and cost mutations commit together. */
+  recordCostOnce?: RecordRemoteTaskCostOnce;
+  /** Explicit test seam; production constructs the PostgreSQL service from pool. */
+  taskJournalService?: RemoteTaskJournalService;
 }
 
 interface RemoteClientRouteContext {
@@ -136,36 +142,71 @@ interface RemoteClientRouteContext {
   meshCommunicationService?: MeshCommunicationService;
   runtimeRegistryService?: AgentRuntimeRegistryService;
   orchestrator?: RemoteChatOrchestrator;
-  recordCost?: (event: CostEvent) => Promise<void>;
+  workItemRepository?: RemoteTaskResultLandingRepository;
+  recordCostOnce?: RecordRemoteTaskCostOnce;
   meshSubscriptionsByClient: Map<string, { agentId: string; subscription: MeshSubscription }>;
   startedAtByClient: Map<string, string>;
 }
 
-/**
- * @description Creates remote-client registry and task-dispatch routes.
- */
+/** @description Creates remote-client registry and task-dispatch routes. */
 export function createRemoteClientRoutes(options: RemoteClientRouteOptions = {}): Router {
   const router = Router();
-  const context: RemoteClientRouteContext = {
+  const context = createRouteContext(options);
+  subscribeTaskResultLanding(options);
+  configureTaskJournal(options, context);
+  registerRemoteClientSurface(router, context);
+  logger.info(
+    {
+      hasMeshBridge: Boolean(context.meshCommunicationService),
+      hasRuntimeRegistry: Boolean(context.runtimeRegistryService),
+      hasChatBridge: Boolean(context.orchestrator),
+    },
+    'Remote client routes registered',
+  );
+  return router;
+}
+
+/** @description Creates per-router state without duplicating infrastructure services. */
+function createRouteContext(options: RemoteClientRouteOptions): RemoteClientRouteContext {
+  return {
     pool: options.pool,
     meshCommunicationService: options.meshCommunicationService,
     runtimeRegistryService: options.runtimeRegistryService,
     orchestrator: options.orchestrator,
-    recordCost: options.recordCost,
+    workItemRepository: options.workItemRepository,
+    recordCostOnce: options.recordCostOnce,
     meshSubscriptionsByClient: new Map<string, { agentId: string; subscription: MeshSubscription }>(),
     startedAtByClient: new Map<string, string>(),
   };
+}
 
-  // Controller-side landing for remote task results: consume the well-known
-  // remoteTaskResult channel and attach each result to its originating work item
-  // (external_id = the task envelope's correlationId). Without this, the mesh
-  // replies forwardTaskResultToSwarm emits are produced and never consumed.
+/** @description Connects durable mesh settlement events to their originating work items. */
+function subscribeTaskResultLanding(options: RemoteClientRouteOptions): void {
   if (options.meshCommunicationService && options.workItemRepository) {
     subscribeRemoteTaskResults(options.meshCommunicationService, {
       workItemRepository: options.workItemRepository,
     });
   }
+}
 
+/** @description Starts schema verification and outbox replay; task routes fail 503 until ready. */
+function configureTaskJournal(
+  options: RemoteClientRouteOptions,
+  context: RemoteClientRouteContext,
+): void {
+  let service = options.taskJournalService;
+  if (!service && options.pool) {
+    service = new RemoteTaskJournalService(new PostgresRemoteTaskJournalRepository(options.pool));
+  }
+  if (!service) return;
+  const publisher = createRemoteTaskOutboxPublisher(context);
+  void registry.configureTaskJournal(service, publisher).catch((error) => {
+    logger.error({ err: error }, 'Remote task journal startup failed; task routes remain unavailable');
+  });
+}
+
+/** @description Mounts the authenticated presence, task, workspace, and messaging surface. */
+function registerRemoteClientSurface(router: Router, context: RemoteClientRouteContext): void {
   router.use(authorizeRemoteClient);
   // Router-local per-caller rate limit (operator-action-queue 2026-07-18). ON by default —
   // it used to ride the flag-gated hardening preset, which defaults OFF and whose flag no
@@ -188,11 +229,14 @@ export function createRemoteClientRoutes(options: RemoteClientRouteOptions = {})
   // Machine callers (shared secret = the node daemon + platform dispatchers)
   // pass through unchanged — that is the pre-existing machine trust boundary.
   router.post('/:clientId/heartbeat', requireDeviceAccess, (req, res) => void handleHeartbeat(req, res, context));
-  router.get('/:clientId/tasks/next', requireDeviceAccess, handleClaimNextTask);
-  router.post('/:clientId/tasks', requireDeviceAccess, handleEnqueueTask);
-  router.get('/:clientId/tasks/:taskId/result', requireDeviceAccess, handleGetTaskResult);
-  router.post('/:clientId/tasks/:taskId/complete', requireDeviceAccess, (req, res) => void handleCompleteTask(req, res, context));
-  router.post('/:clientId/tasks/:taskId/fail', requireDeviceAccess, (req, res) => void handleFailTask(req, res, context));
+  registerRemoteClientTaskOperations(router, requireDeviceAccess, {
+    registry,
+    isMachineCaller,
+    meshCommunicationService: context.meshCommunicationService,
+    workItemRepository: context.workItemRepository,
+    recordCostOnce: context.recordCostOnce,
+  });
+  registerRemoteClientWorkspaceRoutes(router, requireDeviceAccess, { registry, isMachineCaller });
   router.get('/:clientId/swarm/next', requireDeviceAccess, handleClaimNextSwarmMessage);
   router.post('/:clientId/swarm/send', requireDeviceAccess, (req, res) => void handleSendSwarmMessage(req, res, context));
   router.post('/:clientId/chat', requireDeviceAccess, (req, res) => void handleChatTurn(req, res, context));
@@ -201,27 +245,6 @@ export function createRemoteClientRoutes(options: RemoteClientRouteOptions = {})
   // caller to their own device; a node presenting its OWN current node token passes the same
   // gate as its owner, which is what lets an edge daemon rotate itself unattended.
   router.post('/:clientId/token/rotate', requireDeviceAccess, (req, res) => void handleRotateNodeToken(req, res, context));
-
-  // Scoped per-task workspace sync. A node can read/write ONLY the shared task
-  // folder for a task it currently holds (in-flight). Never the whole volume.
-  router.get('/:clientId/tasks/:taskId/workspace', requireDeviceAccess, (req, res) => void handleWorkspaceManifest(req, res));
-  router.get('/:clientId/tasks/:taskId/workspace/file', requireDeviceAccess, (req, res) => void handleWorkspaceGetFile(req, res));
-  router.put(
-    '/:clientId/tasks/:taskId/workspace/file',
-    requireDeviceAccess,
-    raw({ type: () => true, limit: '64mb' }),
-    (req, res) => void handleWorkspacePutFile(req, res),
-  );
-
-  logger.info(
-    {
-      hasMeshBridge: Boolean(context.meshCommunicationService),
-      hasRuntimeRegistry: Boolean(context.runtimeRegistryService),
-      hasChatBridge: Boolean(context.orchestrator),
-    },
-    'Remote client routes registered',
-  );
-  return router;
 }
 
 /** Request stamped with WHICH branch of authorizeRemoteClient admitted it. */
@@ -304,6 +327,28 @@ function isMachineCaller(req: Request): boolean {
   return (req as RemoteAuthedRequest).remoteClientAuthMode === 'secret';
 }
 
+/** @description Crosses RLS as system only after the shared-secret branch authenticated the caller. */
+function runAuthorizedMachineIdentity<T>(req: Request, operation: () => Promise<T>): Promise<T> {
+  return isMachineCaller(req) ? runWithSystemIdentity(operation) : operation();
+}
+
+/** @description Maps durable journal and owner-guard failures without exposing another user's sub. */
+function handleOwnerOrJournalError(error: unknown, res: Response): boolean {
+  if (error instanceof RemoteTaskJournalUnavailableError) {
+    res.status(503).json({ error: error.message, code: error.code });
+    return true;
+  }
+  if (error instanceof RemoteClientOwnerTransitionBusyError) {
+    res.status(409).json({ error: error.message, code: error.code });
+    return true;
+  }
+  if (error instanceof RemoteClientOwnerConflictError) {
+    res.status(409).json({ error: error.message, code: error.code });
+    return true;
+  }
+  return false;
+}
+
 /**
  * @description Device-ownership gate for session callers (repo-audit 2026-07-05:
  * any authenticated user could enqueue shell-exec-class tasks to, and read
@@ -353,9 +398,13 @@ async function handleSetOwner(req: Request, res: Response): Promise<void> {
   const ownerSub = typeof body.ownerSub === 'string' ? body.ownerSub.trim() : '';
 
   try {
-    const client = registry.setOwner(clientId, ownerSub || null);
+    const client = await runAuthorizedMachineIdentity(
+      req,
+      () => registry.setOwner(clientId, ownerSub || null),
+    );
     res.json({ client });
   } catch (error) {
+    if (handleOwnerOrJournalError(error, res)) return;
     logger.error({ err: error, clientId }, 'Failed to update remote client owner binding');
     res.status(404).json({ error: 'Remote client not found' });
   }
@@ -410,6 +459,7 @@ async function handleRotateNodeToken(
       clientId,
       ownerSub,
       email: ownerSub === sub ? email ?? null : null,
+      principalIssuer: ownerSub === sub ? getAuthenticatedPrincipalIssuer(req) : null,
       label: `node ${clientId}`,
     });
     res.status(201).json({
@@ -479,7 +529,7 @@ async function handleRegisterClient(req: Request, res: Response, context: Remote
       registration.ownerSub = isOperator(req) ? (registration.ownerSub ?? sub ?? undefined) : (sub ?? undefined);
     }
 
-    const client = registry.register(registration);
+    const client = await runAuthorizedMachineIdentity(req, () => registry.register(registration));
 
     ensureSwarmSubscription(client, context);
     await runSideEffect(
@@ -495,6 +545,7 @@ async function handleRegisterClient(req: Request, res: Response, context: Remote
 
     res.status(201).json({ client, registeredAt: client.registeredAt });
   } catch (error) {
+    if (handleOwnerOrJournalError(error, res)) return;
     logger.error({ err: error }, 'Failed to register remote client');
     res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to register remote client' });
   }
@@ -563,202 +614,6 @@ async function handleHeartbeat(req: Request, res: Response, context: RemoteClien
     }
     logger.error({ err: error, clientId }, 'Failed to record remote client heartbeat');
     res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to record heartbeat' });
-  }
-}
-
-/**
- * @description Claims the next task for a registered remote client.
- */
-async function handleClaimNextTask(req: Request, res: Response): Promise<void> {
-  const clientId = normalizeParam(req.params.clientId);
-
-  try {
-    const task = registry.claimNextTask(clientId);
-    const response = RemoteClientClaimResponseSchema.parse({
-      claimed: task != null,
-      task,
-    });
-
-    if (!response.claimed) {
-      res.status(204).end();
-      return;
-    }
-
-    res.json(response);
-  } catch (error) {
-    if (handleUnregisteredClient(error, res, clientId, 'claim-task')) {
-      return;
-    }
-    logger.error({ err: error, clientId }, 'Failed to claim remote client task');
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to claim remote client task' });
-  }
-}
-
-/**
- * @description Enqueues a new task for a remote client.
- */
-async function handleEnqueueTask(req: Request, res: Response): Promise<void> {
-  const clientId = normalizeParam(req.params.clientId);
-
-  try {
-    const task = registry.enqueueTask(clientId, RemoteClientTaskSchema.parse(req.body));
-    res.status(201).json({ task });
-  } catch (error) {
-    logger.error({ err: error, clientId }, 'Failed to enqueue remote client task');
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to enqueue remote client task' });
-  }
-}
-
-/**
- * @description Returns the completion result for a task the client has finished.
- * 404 while the task is still queued/in-flight (or unknown) — a direct enqueuer
- * polls this to read a tool's output (e.g. a `screen.capture` PNG data URL).
- */
-async function handleGetTaskResult(req: Request, res: Response): Promise<void> {
-  const clientId = normalizeParam(req.params.clientId);
-  const taskId = normalizeParam(req.params.taskId);
-
-  try {
-    const result = registry.getCompletedResult(clientId, taskId);
-    if (!result) {
-      res.status(404).json({ error: 'No completed result for this task yet' });
-      return;
-    }
-    res.json(A2ATaskResultSchema.parse(result));
-  } catch (error) {
-    logger.error({ err: error, clientId, taskId }, 'Failed to read remote client task result');
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to read task result' });
-  }
-}
-
-/**
- * @description Build the CostEvent for a completed/failed leaf-node task, or null when there is no
- * LLM cost to record. The leaf node (packages/oshal-chat) already parses codex/claude token+cost and
- * forwards it in result.output.{usage,cost,provider}; this reads that blob and attributes it to the
- * ACCOUNTABLE bot (the task's fromAgentId) — the ADR-036 cost-capture the mesh path skipped. Returns
- * null for a task the dispatcher didn't attribute, or a non-LLM task (shell/screen/desktop) that
- * carries no usage and no cost. Exported for the regression guard.
- * @param sourceTask - The originating in-flight task envelope (carries fromAgentId + userSub + model).
- * @param result - The completion/failure result (carries the output blob with usage/cost/provider).
- * @returns A CostEvent to record, or null when nothing should be billed.
- */
-export function buildRemoteTaskCostEvent(sourceTask: A2ATaskEnvelope | null, result: A2ATaskResult): CostEvent | null {
-  const agentId = sourceTask?.fromAgentId;
-  if (!agentId) return null; // unattributed task — nothing accountable to bill
-  const out = (result?.output && typeof result.output === 'object') ? result.output as Record<string, unknown> : {};
-  const usage = (out.usage && typeof out.usage === 'object') ? out.usage as Record<string, unknown> : {};
-  const inputTokens = Number(usage.inputTokens ?? usage.input_tokens ?? 0) || 0;
-  const outputTokens = Number(usage.outputTokens ?? usage.output_tokens ?? 0) || 0;
-  const totalCost = Number(out.cost ?? out.costUSD ?? 0) || 0;
-  // Non-LLM leaf tasks (shell.exec / screen.capture / desktop.control) carry no usage/cost — bill nothing.
-  if (inputTokens === 0 && outputTokens === 0 && totalCost === 0) return null;
-  const correlationId = result?.correlationId || sourceTask?.correlationId || sourceTask?.taskId || '';
-  const dispatchedModel = ((sourceTask?.input as Record<string, unknown> | undefined)?.arguments as Record<string, unknown> | undefined)?.model;
-  const providerId = String(out.provider || 'openai-codex');
-  return {
-    // Composite key mirrors the standard bot-node path so a leaf cost row never merges into an
-    // unrelated bot's chat_tasks row for the same ticket.
-    taskId: `${correlationId}::${agentId}`,
-    agentId,
-    providerId,
-    modelId: String(dispatchedModel || providerId),
-    inputTokens,
-    outputTokens,
-    inputCost: 0,
-    outputCost: 0,
-    totalCost,
-    currency: 'USD',
-    ticketExternalId: correlationId || undefined,
-    ownerSub: (sourceTask as { userSub?: string } | null)?.userSub || undefined,
-    requestCount: 1,
-    estimated: false,
-    durationMs: Number(out.durationMs) || undefined,
-  };
-}
-
-/**
- * @description Meter a completed/failed leaf-node LLM task into chat_tasks. MUST run the write under
- * SYSTEM identity: chat_tasks + oshal_cost_events are FORCE-RLS and an identity-less caller is DENIED
- * under OSHAL_DB_GUC_STRICT (this route is shared-secret machine trust, no request identity) — exactly
- * why the standard path wraps its recordCost in runWithSystemIdentity too. No-op when there is no
- * recordCost wired or nothing to bill.
- */
-async function recordRemoteTaskCost(sourceTask: A2ATaskEnvelope | null, result: A2ATaskResult, context: RemoteClientRouteContext): Promise<void> {
-  if (!context.recordCost) return;
-  const event = buildRemoteTaskCostEvent(sourceTask, result);
-  if (!event) return;
-  await runWithSystemIdentity(() => context.recordCost!(event));
-}
-
-/**
- * @description Records a successful task completion and forwards a mesh reply when applicable.
- */
-async function handleCompleteTask(req: Request, res: Response, context: RemoteClientRouteContext): Promise<void> {
-  const clientId = normalizeParam(req.params.clientId);
-  const taskId = normalizeParam(req.params.taskId);
-
-  try {
-    const sourceTask = registry.getInFlightTask(clientId, taskId);
-    const result = registry.completeTask(clientId, RemoteClientTaskCompletionSchema.parse({
-      ...req.body,
-      clientId,
-      taskId,
-      status: 'completed',
-      completedAt: new Date().toISOString(),
-    }));
-
-    await runSideEffect(
-      'remote-task-complete-forward',
-      () => forwardTaskResultToSwarm(sourceTask, result, context),
-      { clientId, taskId, hasSourceTask: Boolean(sourceTask) },
-    );
-    // Meter the leaf-node LLM cost into chat_tasks (ADR-036), attributed to the accountable bot.
-    await runSideEffect(
-      'remote-task-record-cost',
-      () => recordRemoteTaskCost(sourceTask, result, context),
-      { clientId, taskId, agentId: sourceTask?.fromAgentId },
-    );
-
-    res.json(A2ATaskResultSchema.parse(result));
-  } catch (error) {
-    logger.error({ err: error, clientId, taskId }, 'Failed to complete remote client task');
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to complete remote client task' });
-  }
-}
-
-/**
- * @description Records a task failure and forwards a mesh reply when applicable.
- */
-async function handleFailTask(req: Request, res: Response, context: RemoteClientRouteContext): Promise<void> {
-  const clientId = normalizeParam(req.params.clientId);
-  const taskId = normalizeParam(req.params.taskId);
-
-  try {
-    const sourceTask = registry.getInFlightTask(clientId, taskId);
-    const result = registry.failTask(clientId, RemoteClientTaskCompletionSchema.parse({
-      ...req.body,
-      clientId,
-      taskId,
-      status: 'failed',
-      completedAt: new Date().toISOString(),
-    }));
-
-    await runSideEffect(
-      'remote-task-fail-forward',
-      () => forwardTaskResultToSwarm(sourceTask, result, context),
-      { clientId, taskId, hasSourceTask: Boolean(sourceTask) },
-    );
-    // A failed run can still have burned tokens (the leaf POSTs /fail with output.usage) — meter it too.
-    await runSideEffect(
-      'remote-task-record-cost',
-      () => recordRemoteTaskCost(sourceTask, result, context),
-      { clientId, taskId, agentId: sourceTask?.fromAgentId },
-    );
-
-    res.json(A2ATaskResultSchema.parse(result));
-  } catch (error) {
-    logger.error({ err: error, clientId, taskId }, 'Failed to record remote client task failure');
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to record remote client task failure' });
   }
 }
 
@@ -957,9 +812,9 @@ function ensureSwarmSubscription(client: RemoteClientRecord, context: RemoteClie
     agentId,
     async (envelope) => {
       try {
-        const task = toTaskEnvelope(envelope, agentId);
+        const task = toRemoteTaskEnvelope(envelope, agentId);
         if (task && mayInjectTask(envelope.fromAgentId, clientId)) {
-          registry.enqueueTask(clientId, task);
+          await runWithSystemIdentity(() => registry.enqueueTask(clientId, task));
           return;
         }
         if (task) {
@@ -1050,285 +905,9 @@ async function broadcastPresence(
   });
 }
 
-/**
- * @description Forwards task completion or failure to the original swarm requester
- * AND to the controller's remoteTaskResult landing channel (consumed by
- * subscribeRemoteTaskResults, which attaches the result to the originating work
- * item). Envelope shapes — including the guaranteed correlation id — live in
- * remote-client-task-results.ts.
- */
-async function forwardTaskResultToSwarm(
-  sourceTask: A2ATaskEnvelope | null,
-  result: ReturnType<typeof A2ATaskResultSchema.parse>,
-  context: RemoteClientRouteContext,
-): Promise<void> {
-  if (!sourceTask || !context.meshCommunicationService) {
-    return;
-  }
-
-  for (const envelope of buildRemoteTaskResultEnvelopes(sourceTask, result)) {
-    await context.meshCommunicationService.send(envelope);
-  }
-}
-
-// Root of the shared workspace volume inside the controller container — the same
-// `oshal_workspace` mount the in-Docker bots use (/app/workspace-shared by default).
-const WORKSPACE_ROOT = (
-  process.env.SHARED_WORKSPACE_ROOT ||
-  process.env.WORKSPACE_DIR ||
-  process.env.WORKSPACE_ROOT ||
-  '/app/workspace-shared'
-).trim();
-
-/** A workspace folder name must be a single safe path segment (no traversal). */
-function sanitizeFolderId(value: string | undefined): string | null {
-  if (!value) return null;
-  const seg = basename(String(value));
-  if (!seg || seg === '.' || seg === '..' || seg.includes('/') || seg.includes('\\')) return null;
-  return seg;
-}
-
-/**
- * @description Absolute path of a task's shared workspace folder under the SAME
- * WORKSPACE_ROOT the held-task file routes read from. Exported so controller-side
- * dispatchers (e.g. apply-dispatch) can STAGE files a remote node will pull when it
- * holds the task — the resume-packet delivery rail that replaces docker-cp for a
- * worker that isn't co-located with the api container. Returns null for an unsafe
- * folderId (traversal / empty). Set the enqueued task's `workspacePath` to `folderId`
- * so `resolveHeldWorkspace` maps back to this same directory.
- * @param folderId - Single safe path segment (typically the taskId).
- * @returns Absolute directory path, or null when the folderId is unsafe.
- */
-export function taskWorkspaceFolder(folderId: string): string | null {
-  const seg = sanitizeFolderId(folderId);
-  return seg ? resolve(WORKSPACE_ROOT, seg) : null;
-}
-
-/**
- * @description Resolves the shared workspace folder for a task the client currently
- * HOLDS. Returns null if the client doesn't hold the task or it has no workspace —
- * so a node can never reach a folder for work it wasn't assigned.
- */
-function resolveHeldWorkspace(clientId: string, taskId: string): { dir: string; folderId: string } | null {
-  const task = registry.getInFlightTask(clientId, taskId);
-  if (!task) return null; // not holding this task → no access
-  const folderId = sanitizeFolderId(task.workspacePath);
-  if (!folderId) return null; // task carries no workspace
-  return { dir: resolve(WORKSPACE_ROOT, folderId), folderId };
-}
-
-/** Joins a relative path under `dir`, rejecting any escape outside it (the security boundary). */
-function safeJoin(dir: string, rel: string): string | null {
-  const root = resolve(dir);
-  const target = resolve(root, rel);
-  if (target !== root && !target.startsWith(root + sep)) return null;
-  return target;
-}
-
-/** Recursively lists files under `dir` as workspace-relative paths with size + mtime. */
-async function listWorkspaceFiles(dir: string): Promise<Array<{ path: string; size: number; mtimeMs: number }>> {
-  const out: Array<{ path: string; size: number; mtimeMs: number }> = [];
-  const root = resolve(dir);
-  const walk = async (current: string): Promise<void> => {
-    let entries: import('fs').Dirent[];
-    try {
-      entries = await fsp.readdir(current, { withFileTypes: true });
-    } catch {
-      return; // folder may not exist yet — treat as empty
-    }
-    for (const entry of entries) {
-      const abs = resolve(current, entry.name);
-      if (entry.isDirectory()) {
-        await walk(abs);
-      } else if (entry.isFile()) {
-        const stat = await fsp.stat(abs).catch(() => null);
-        if (stat) out.push({ path: abs.slice(root.length + 1).split(sep).join('/'), size: stat.size, mtimeMs: Math.round(stat.mtimeMs) });
-      }
-    }
-  };
-  await walk(root);
-  return out;
-}
-
-/**
- * @description GET /:clientId/tasks/:taskId/workspace — manifest (relative file list)
- * of the held task's shared folder. Empty list if the folder doesn't exist yet.
- */
-async function handleWorkspaceManifest(req: Request, res: Response): Promise<void> {
-  const ws = resolveHeldWorkspace(normalizeParam(req.params.clientId), normalizeParam(req.params.taskId));
-  if (!ws) {
-    res.status(403).json({ error: 'No workspace for a task this client holds' });
-    return;
-  }
-  try {
-    res.json({ folderId: ws.folderId, files: await listWorkspaceFiles(ws.dir) });
-  } catch (error) {
-    logger.error({ err: error, folderId: ws.folderId }, 'Failed to list remote workspace');
-    res.status(500).json({ error: 'Failed to list workspace' });
-  }
-}
-
-/** GET /:clientId/tasks/:taskId/workspace/file?path=<rel> — one file's bytes. */
-async function handleWorkspaceGetFile(req: Request, res: Response): Promise<void> {
-  const ws = resolveHeldWorkspace(normalizeParam(req.params.clientId), normalizeParam(req.params.taskId));
-  if (!ws) {
-    res.status(403).json({ error: 'No workspace for a task this client holds' });
-    return;
-  }
-  const rel = typeof req.query.path === 'string' ? req.query.path : '';
-  const target = safeJoin(ws.dir, rel);
-  if (!rel || !target) {
-    res.status(400).json({ error: 'Invalid path' });
-    return;
-  }
-  try {
-    const data = await fsp.readFile(target);
-    res.setHeader('content-type', 'application/octet-stream');
-    res.send(data);
-  } catch {
-    res.status(404).json({ error: 'File not found' });
-  }
-}
-
-/**
- * @description PUT /:clientId/tasks/:taskId/workspace/file?path=<rel> — write ONE file
- * into the held task's folder. Additive: creates/overwrites only this path, never
- * deletes siblings (so other rounds' handovers + .tokenchase capture survive).
- */
-async function handleWorkspacePutFile(req: Request, res: Response): Promise<void> {
-  const ws = resolveHeldWorkspace(normalizeParam(req.params.clientId), normalizeParam(req.params.taskId));
-  if (!ws) {
-    res.status(403).json({ error: 'No workspace for a task this client holds' });
-    return;
-  }
-  const rel = typeof req.query.path === 'string' ? req.query.path : '';
-  const target = safeJoin(ws.dir, rel);
-  if (!rel || !target) {
-    res.status(400).json({ error: 'Invalid path' });
-    return;
-  }
-  try {
-    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
-    await fsp.mkdir(resolve(target, '..'), { recursive: true });
-    await fsp.writeFile(target, body);
-    res.json({ ok: true, path: rel, bytes: body.length });
-  } catch (error) {
-    logger.error({ err: error, folderId: ws.folderId, path: rel }, 'Failed to write remote workspace file');
-    res.status(500).json({ error: 'Failed to write file' });
-  }
-}
-
-/**
- * @description Converts one mesh envelope to a remote-client task when intent payload is present.
- */
-/**
- * @description May an inbound mesh envelope from `fromAgentId` be converted into an EXECUTABLE task
- * on `targetClientId`?
- *
- * The mesh subscriber is a task-injection primitive: `toTaskEnvelope` accepts a verbatim embedded
- * `payload.task` with arbitrary `intent`/`input` (i.e. `codex.exec` at `danger-full-access`). The
- * publisher route, `POST /:clientId/swarm/send`, is device-gated on the SENDER's box and then sends
- * to an unchecked `toAgentId` from the request body — so a user who legitimately owns one node could
- * name someone else's node and execute on their desktop, bypassing both the route gate and the
- * dispatcher gate. Guarding the CONVERSION covers direct and broadcast alike, and the sender id is
- * trustworthy here because it is server-derived from the authenticated device, never body-supplied.
- *
- * Only DEVICE-to-DEVICE traffic is restricted: a sender that is not itself a registered device is a
- * swarm bot / platform component, which is the normal way work reaches a node.
- * @param fromAgentId - The envelope's sender agent id.
- * @param targetClientId - The device that would run the task.
- * @returns true when the conversion may proceed.
- */
+/** @description Backward-compatible route export over the isolated mesh execution boundary. */
 export function mayInjectTask(fromAgentId: string, targetClientId: string): boolean {
-  const clients = registry.listClients();
-  const sender = clients.find((c) => (c.agentId || c.clientId) === fromAgentId || c.clientId === fromAgentId);
-  if (!sender) return true;                                   // a bot / platform sender, not a device
-  const target = clients.find((c) => c.clientId === targetClientId);
-  if (!target) return true;                                   // nothing to protect
-  if (sender.clientId === target.clientId) return true;       // a device talking to itself
-  return canUseDevice({ sub: sender.ownerSub ?? null }, target);
-}
-
-function toTaskEnvelope(envelope: MeshEnvelope, remoteAgentId: string): A2ATaskEnvelope | null {
-  const payload = toRecord(envelope.payload);
-  if (!payload) {
-    return null;
-  }
-
-  const embeddedTask = toRecord(payload.task);
-  if (embeddedTask) {
-    try {
-      return A2ATaskEnvelopeSchema.parse({
-        ...embeddedTask,
-        taskId: readString(embeddedTask.taskId) ?? randomUUID(),
-        correlationId: readString(embeddedTask.correlationId) ?? envelope.correlationId,
-        fromAgentId: readString(embeddedTask.fromAgentId) ?? envelope.fromAgentId,
-        toAgentId: readString(embeddedTask.toAgentId) ?? remoteAgentId,
-        createdAt: readString(embeddedTask.createdAt) ?? new Date().toISOString(),
-        status: 'queued',
-      });
-    } catch (error) {
-      logger.warn(
-        { err: error, correlationId: envelope.correlationId, fromAgentId: envelope.fromAgentId },
-        'Ignored invalid embedded remote task payload',
-      );
-    }
-  }
-
-  const intent = readString(payload.intent);
-
-  // Fallback: a standard swarm execution envelope (assembled prompt in `text`, no
-  // explicit MCP intent and not a typed message like a chat.reply) is delivered to
-  // a remote worker node as an `mcp.call-tool` for the `swarm.exec` tool, which runs
-  // it with whichever local CLI the user is signed into. This is what lets the
-  // orchestrator route real work to a desktop node without a bespoke dispatch path.
-  if (!intent) {
-    const text = readString(payload.text);
-    if (text && !readString(payload.type)) {
-      try {
-        // Carry the run's shared workspace folder so the node syncs that one folder.
-        const folder = readString(payload.workspaceFolderId) ?? readString(payload.workspaceTaskId);
-        return A2ATaskEnvelopeSchema.parse({
-          taskId: readString(payload.workspaceTaskId) ?? readString(payload.taskId) ?? randomUUID(),
-          // Prefer the ticket external id so the task-result landing can find the
-          // originating work items (external_id = correlationId contract).
-          correlationId: readString(payload.correlationId) ?? readString(payload.externalId) ?? envelope.correlationId,
-          fromAgentId: envelope.fromAgentId,
-          toAgentId: remoteAgentId,
-          intent: 'mcp.call-tool',
-          input: { name: 'swarm.exec', arguments: { prompt: text } },
-          workspacePath: folder || undefined,
-          createdAt: new Date().toISOString(),
-          status: 'queued',
-        });
-      } catch (error) {
-        logger.warn({ err: error, correlationId: envelope.correlationId }, 'Ignored execution envelope for remote swarm.exec conversion');
-      }
-    }
-    return null;
-  }
-
-  try {
-    return A2ATaskEnvelopeSchema.parse({
-      taskId: readString(payload.taskId) ?? randomUUID(),
-      correlationId: readString(payload.correlationId) ?? envelope.correlationId,
-      fromAgentId: envelope.fromAgentId,
-      toAgentId: remoteAgentId,
-      intent,
-      input: toRecord(payload.input) ?? {},
-      artifacts: Array.isArray(payload.artifacts) ? payload.artifacts : [],
-      workspacePath: readString(payload.workspacePath),
-      replyTo: readString(payload.replyTo),
-      createdAt: readString(payload.createdAt) ?? new Date().toISOString(),
-      status: 'queued',
-    });
-  } catch (error) {
-    logger.warn(
-      { err: error, correlationId: envelope.correlationId, fromAgentId: envelope.fromAgentId, intent },
-      'Ignored invalid mesh envelope for remote task conversion',
-    );
-    return null;
-  }
+  return mayInjectRemoteTask(registry, fromAgentId, targetClientId);
 }
 
 /**

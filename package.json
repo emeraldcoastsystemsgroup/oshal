@@ -218,11 +218,20 @@
     "@babel/core": "^7.29.7",
     "esbuild": "^0.28.1",
     "form-data": "^4.0.6",
+    "ip-address": "10.4.0",
     "joi": "17.13.4",
+    "postcss": "8.5.25",
     "protobufjs": "^7.6.3",
     "qs": "^6.15.2",
+    "socket.io-parser": "4.2.7",
     "ws": "^8.21.0",
     "sharp": "^0.35.3",
+    "exceljs": {
+      "uuid": "11.1.1"
+    },
+    "mavlink-mappings-gen": {
+      "xml2js": "0.6.2"
+    },
     "minimatch@>=10": {
       "brace-expansion": "^5.0.8"
     }

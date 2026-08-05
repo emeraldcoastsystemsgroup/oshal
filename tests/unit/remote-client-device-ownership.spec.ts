@@ -7,11 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Control-plane URL fixtures follow PLAYWRIGHT_PORT via the shared apiOrigin() helper instead of hardcoded localhost:35457 literals (byte-identical under the default env)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | First test gets the sibling 15s budget: it pays the one-time router-graph import/transform, which exceeds the 5s default on a cold vite cache (fresh npm ci) — surfaced by the trunk cutover's fresh install
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | First test timeout raised 15s → 30s after the full unit suite showed the same import-heavy route graph can exceed 15s under parallel load while passing alone in ~9s.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Inject and await the explicit test-only task journal so ownership tests exercise the PostgreSQL-authoritative async route contract without a production memory fallback.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { apiOrigin } from '../helpers';
+import { RemoteTaskJournalService } from '@/features/remote-client';
+import { InMemoryRemoteTaskJournalFixture } from '../helpers/in-memory-remote-task-journal';
 
 const ENV_KEYS = [
   'OSHAL_OPERATOR_SUBS',
@@ -61,16 +64,27 @@ describe('remote-client device ownership binding', () => {
   async function bootApp(): Promise<string> {
     // Import fresh so the module-level registry is shared within one app but the
     // route wiring picks up this test's env.
-    const { createRemoteClientRoutes } = await import('../../src/app/routes/remote-client-routes');
+    const { createRemoteClientRoutes, remoteClientRegistry } = await import('../../src/app/routes/remote-client-routes');
     const app = express();
     app.use(express.json());
     app.use(headerDrivenOidc());
-    app.use('/api/remote-clients', createRemoteClientRoutes());
+    app.use('/api/remote-clients', createRemoteClientRoutes({
+      taskJournalService: new RemoteTaskJournalService(new InMemoryRemoteTaskJournalFixture()),
+    }));
+    await waitForJournal(remoteClientRegistry);
     const server = app.listen(0);
     servers.push(server);
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('test server did not bind to a port');
     return `http://127.0.0.1:${address.port}/api/remote-clients`;
+  }
+
+  /** @description Waits for the route factory's asynchronous schema/replay readiness gate. */
+  async function waitForJournal(registry: { isTaskJournalReady(): boolean }): Promise<void> {
+    for (let attempt = 0; attempt < 20 && !registry.isTaskJournalReady(); attempt += 1) {
+      await Promise.resolve();
+    }
+    if (!registry.isTaskJournalReady()) throw new Error('test task journal did not become ready');
   }
 
   /** Registers a device AS THE NODE DAEMON (shared secret) asserting its owner. */

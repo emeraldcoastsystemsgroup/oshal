@@ -49,6 +49,7 @@
  *   "ADR-070 privilege rule" mislabel in the header (ADR-070 is multi-provider video generation;
  *   the queue/worker privilege rule is grounded in ADR-085 — flagged by ADR-101's numbering note).
  *   No code change.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Await the durable PostgreSQL browser-task enqueue before reporting a job-application dispatch as accepted.
  *
  * @module app/apply-dispatch
  */
@@ -164,7 +165,7 @@ export async function dispatchApply(input: ApplyDispatchInput): Promise<Dispatch
 
   // Hand the generic rail the career identity + prompt (built with the chosen worker's callback URL)
   // + the pre-staged workspace. The rail picks the node, builds the envelope, and enqueues.
-  const result = dispatchBrowserTask({
+  const result = await dispatchBrowserTask({
     taskId,
     correlationId: input.ticketId || taskId,
     fromAgentId: CAREER_HUNTER_AGENT_ID,

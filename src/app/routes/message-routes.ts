@@ -13,16 +13,18 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Chat-path token broker list += 'twilio' so the communications-bot's phone/text leg (scripts/oshal-twilio.js) receives the caller's own SID:AuthToken secret in conversational threads.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | EXECUTE-TIME ENTITLEMENT ON THE OTHER BOT ENDPOINT (BACKLOG "Bot-endpoint privilege model - authorize the ACTUAL endpoint call", which names /api/send-message explicitly). This route honoured a caller-supplied body.agentId VERBATIM and called ctx.orchestrator.processMessage directly, never through executeBotOrInline - so the gate K6 flipped to enforce covered /api/swarm-execute and the executeBotOrInline chokepoint but NOT here. A signed-in non-operator could reach exactly the ADR-087 operator+swarm machinery K7 scoped (oshal-developer, devops-bot, vault-bot, security-analyst, code-developer, ...) by naming its agentId on a task they legitimately own; the IDOR guard above checks the THREAD, not the bot. The resolved agentId now runs through assertExecuteEntitlement with `direct` set ONLY for genuine interactive identity callers - a valid service-secret call is swarm dispatch and stays trusted, so the manifest/incident-worker localhost fallback and the headless CLI are byte-identical - and CallerNotEntitledError maps to 403 caller_not_entitled_to_agent. Guard: tests/unit/send-message-entitlement.spec.ts.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guest turns are forced chatOnly, not overridable from the body. Guests reached this route for the first time when the capability matrix granted /api/tasks/:id/messages; without this an anonymous visitor could post chatOnly: false and create a ticket that dispatches real work into the swarm build pipeline.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Narrow service-secret message calls to the trusted user sub before chat-task/ticket writes, fail closed when that binding is absent, and remove the legacy body.userSub fallback so request content can never select the database or connector owner.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { DEFAULT_CHAT_AGENT_ID, resolveProjectManagerTicketExecutionContext } from '@/features/chat-orchestration';
 import { resolveBotCreds } from './connector-token-broker';
-import { canAccessResource, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { canAccessResource, getCaller, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { assertExecuteEntitlement, CallerNotEntitledError } from '@/app/bot-node-execute-entitlement';
 import { connectorProvidersForManifestWorker } from '@/app/manifest-worker-connector-scope';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
+import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'message-routes' });
@@ -33,16 +35,22 @@ const logger = createChildLogger({ module: 'message-routes' });
  * are allowed so the orchestrator can create a brand-new chat thread.
  */
 async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
-  if (hasValidServiceSecret(req)) {
-    return true;
-  }
-  const task = await ctx.taskStore.get(taskId).catch(() => null);
+  const task = await ctx.taskStore.get(taskId).catch((err) => {
+    logger.debug({ err, taskId }, 'message ownership lookup could not read chat task');
+    return null;
+  });
   if (task) {
-    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
-    return canAccessResource(req, owner);
+    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
+      logger.debug({ err, taskId }, 'message ownership lookup could not resolve ticket owner');
+      return null;
+    });
+    return callerOwnsResource(req, owner);
   }
-  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
-  return owner ? canAccessResource(req, owner) : true;
+  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
+    logger.debug({ err, taskId }, 'message ownership lookup could not resolve missing-task owner');
+    return null;
+  });
+  return owner ? callerOwnsResource(req, owner) : true;
 }
 
 /**
@@ -51,16 +59,35 @@ async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string
  * visible under RLS and no ticket owner can be resolved.
  */
 async function callerMayReadMessages(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
-  if (hasValidServiceSecret(req)) {
-    return true;
-  }
-  const task = await ctx.taskStore.get(taskId).catch(() => null);
+  const task = await ctx.taskStore.get(taskId).catch((err) => {
+    logger.debug({ err, taskId }, 'message history lookup could not read chat task');
+    return null;
+  });
   if (task) {
-    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
-    return canAccessResource(req, owner);
+    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
+      logger.debug({ err, taskId }, 'message history lookup could not resolve ticket owner');
+      return null;
+    });
+    return callerOwnsResource(req, owner);
   }
-  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
-  return owner ? canAccessResource(req, owner) : false;
+  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
+    logger.debug({ err, taskId }, 'message history lookup could not resolve missing-task owner');
+    return null;
+  });
+  return owner ? callerOwnsResource(req, owner) : false;
+}
+
+/** Compare ownership against the validated session or the secret-gated service assertion. */
+function callerOwnsResource(req: Request, ownerSub: string | null | undefined): boolean {
+  const trustedServiceSub = getTrustedServiceUserSub(req);
+  return trustedServiceSub ? trustedServiceSub === ownerSub : canAccessResource(req, ownerSub);
+}
+
+/** Resolve the owner only from authenticated transport identity, never request content. */
+function messageCallerSub(req: Request): string | undefined {
+  return getCaller(req).sub
+    ?? getTrustedServiceUserSub(req)
+    ?? undefined;
 }
 
 /**
@@ -101,6 +128,9 @@ function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, tas
  */
 export function createMessageRoutes(ctx: AppContext): Router {
   const router = Router();
+  // A machine credential identifies the dispatcher, while X-OSHAL-User-Sub identifies the owner
+  // whose chat rows and connector tokens it may touch. Establish the latter as non-operator here.
+  router.use(requireTrustedServiceUserIdentity);
 
   router.post('/send-message', handleSendMessage(ctx));
   router.post('/tasks/:taskId/messages', handleSendMessage(ctx));
@@ -135,6 +165,7 @@ function handleSendMessage(ctx: AppContext) {
       res.status(400).json({ error: 'taskId and text are required' });
       return;
     }
+    const callerSub = messageCallerSub(req);
 
     // IDOR guard: don't let a caller post into another user's existing task thread.
     if (!(await callerMayAccessTask(ctx, req, taskId))) {
@@ -169,6 +200,7 @@ function handleSendMessage(ctx: AppContext) {
           resolvedAgentId,
           source: source ?? 'api',
           text,
+          ownerSub: callerSub,
           // Guests are UNAUTHENTICATED, so their turn answers and stops: forcing chatOnly
           // keeps an anonymous visitor from creating a ticket and dispatching real work into
           // the swarm build pipeline. Not overridable from the body — a guest asking for
@@ -188,12 +220,9 @@ function handleSendMessage(ctx: AppContext) {
       // Token broker: scope to the authenticated caller + hand the bot its short-lived
       // per-user tokens (so the chat path's bot tools never need SESSION_SECRET).
       // Resolve the acting user from the OIDC session OR a trusted service-secret call
-      // (x-oshal-user-sub) OR an explicit body field. Without this, controller-dispatched
-      // worker tasks (service-secret, no OIDC session) lose user context and every
-      // user-scoped tool the worker calls — trading, career, gmail — returns 401.
-      const callerSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub
-        ?? getTrustedServiceUserSub(req)
-        ?? (typeof (req.body as { userSub?: unknown })?.userSub === 'string' ? String((req.body as { userSub?: string }).userSub) : undefined);
+      // (x-oshal-user-sub). Request content is deliberately excluded from identity: a caller must
+      // never select another user's connector scope by changing an ordinary JSON field. The trusted
+      // header keeps controller-dispatched worker tasks scoped without giving the body authority.
       // gcp: brokers the caller's Google Cloud token to cloud-ops-bot so scripts/oshal-gcp.js
       // + the private scripts/oshal-gcp-diag.js diagnostics work without SESSION_SECRET on the bot.
       const brokerProviders = source === 'dispatch-manifest-worker'
