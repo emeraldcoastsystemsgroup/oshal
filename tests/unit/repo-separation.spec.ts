@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-115 guard: prove the repo-separation check both PASSES on this tree and goes RED on each way application code can walk back into the kernel. ADR-085 carved 21 app surfaces out of core and nothing has stopped one returning since; the public core trunk is app-free by construction, so a re-mixed app is a release defect found at publish time. Fixture checkouts (not this tree) exercise the failure paths, so the shared index is never touched.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export-shape guard: run the check from inside a .git-LESS fixture with NO --core flag — the exact ci-local --head GATE_SRC shape where the unconditional `git rev-parse --show-toplevel` (the second git dependence, missed by the 07-23 trackedFiles fix) crashed the gate on a healthy tree. Goes red if either git dependence returns.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give each disk/subprocess-heavy separation case a local 30-second ceiling. Concurrent full-suite load can exhaust Vitest's 5-second default on Windows even when the guard is healthy; a suite-local helper keeps every mutation case active without weakening unrelated unit-test budgets.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -15,6 +16,12 @@ import { join, resolve } from 'path';
 
 const REPO_ROOT = resolve(__dirname, '../..');
 const GUARD = join(REPO_ROOT, 'scripts/check-repo-separation.js');
+const REPOSITORY_GUARD_TIMEOUT_MS = 30_000;
+
+/** Register a repository guard with a bounded timeout local to this disk-heavy suite. */
+function repositoryGuard(name: string, test: () => void): void {
+  it(name, test, REPOSITORY_GUARD_TIMEOUT_MS);
+}
 
 /** The ten kernel-resident manifests a valid fixture must contain (ADR-085 completion). */
 const KERNEL_MANIFESTS = [
@@ -100,17 +107,17 @@ function withFixture(
 }
 
 describe('repo separation (ADR-115): application code never mixes into the swarm repo', () => {
-  it('passes on this repository', () => {
+  repositoryGuard('passes on this repository', () => {
     const { code, output } = runGuard();
     expect(output).toContain('Repo separation holds');
     expect(code).toBe(0);
   });
 
-  it('passes on a compliant kernel fixture', () => {
+  repositoryGuard('passes on a compliant kernel fixture', () => {
     withFixture(undefined, ({ code }) => expect(code).toBe(0));
   });
 
-  it('passes when run from inside a .git-less EXPORT with no --core (ci-local --head GATE_SRC shape)', () => {
+  repositoryGuard('passes when run from inside a .git-less EXPORT with no --core (ci-local --head GATE_SRC shape)', () => {
     // The gate runs `cd $GATE_SRC && node scripts/check-repo-separation.js` against a `git archive`
     // export — no .git, no --core flag. That path crashed "fatal: not a git repository" twice: first
     // in trackedFiles() (fixed 07-23), then in the coreDir resolution the same fix missed. Running
@@ -133,7 +140,7 @@ describe('repo separation (ADR-115): application code never mixes into the swarm
     }
   });
 
-  it('FAILS when a store package manifest is tracked in the kernel', () => {
+  repositoryGuard('FAILS when a store package manifest is tracked in the kernel', () => {
     withFixture(
       (dir) => {
         mkdirSync(join(dir, 'movies'), { recursive: true });
@@ -147,7 +154,7 @@ describe('repo separation (ADR-115): application code never mixes into the swarm
     );
   });
 
-  it('FAILS when a non-kernel manifest appears in swarm-apps/', () => {
+  repositoryGuard('FAILS when a non-kernel manifest appears in swarm-apps/', () => {
     withFixture(
       (dir) => writeFileSync(join(dir, 'swarm-apps/eats.yaml'), 'name: eats\n', 'utf8'),
       ({ code, output }) => {
@@ -158,7 +165,7 @@ describe('repo separation (ADR-115): application code never mixes into the swarm
     );
   });
 
-  it('FAILS when a kernel manifest goes missing (a core-platform app was carved by mistake)', () => {
+  repositoryGuard('FAILS when a kernel manifest goes missing (a core-platform app was carved by mistake)', () => {
     withFixture(
       (dir) => rmSync(join(dir, 'swarm-apps/jarvis.yaml')),
       ({ code, output }) => {
@@ -168,7 +175,7 @@ describe('repo separation (ADR-115): application code never mixes into the swarm
     );
   });
 
-  it('FAILS when installed-application staging directories are tracked', () => {
+  repositoryGuard('FAILS when installed-application staging directories are tracked', () => {
     withFixture(
       (dir) => {
         mkdirSync(join(dir, 'deployed-apps/dnd'), { recursive: true });
