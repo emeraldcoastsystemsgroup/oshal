@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Extracted agent panel, auth state management, renderers from config-admin.js (1277 → <1000 decomposition)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Made provider controls honor server-resolved precedence and push runtime changes before recording profile state
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -177,8 +178,23 @@ export async function saveSelectedAgentProfile(app) {
     return;
   }
   const payload = buildSelectedAgentProfilePayload(app.elements.selectedAgentPanel);
+  const agent = findSelectedAgent(app.state.agents, app.state.selectedAgentProfile.agentId);
+  const runtimePayload = buildSelectedAgentRuntimePayload(
+    app.elements.selectedAgentPanel,
+    agent,
+    app.state.selectedAgentProfile,
+  );
+  let runtimeApplied = false;
   app.setStatus(`Saving bot profile for ${app.state.selectedAgentProfile.name}...`, 'info');
   try {
+    if (runtimePayload) {
+      app.setStatus(`Pushing runtime settings to ${app.state.selectedAgentProfile.name}...`, 'info');
+      await putJson(
+        `/api/agents/${encodeURIComponent(app.state.selectedAgentProfile.agentId)}/runtime`,
+        runtimePayload,
+      );
+      runtimeApplied = true;
+    }
     const response = await putJson(`/api/agents/${encodeURIComponent(app.state.selectedAgentProfile.agentId)}/profile`, { profile: payload });
     app.state.selectedAgentProfile = response.profile || app.state.selectedAgentProfile;
     app.state.agents = app.state.agents.map((agent) => (
@@ -190,6 +206,14 @@ export async function saveSelectedAgentProfile(app) {
     await refreshSelectedAgentAuthStatus(app);
     app.setStatus(`Saved bot profile for ${app.state.selectedAgentProfile.name}.`, 'success');
   } catch (error) {
+    if (runtimePayload && !runtimeApplied) {
+      app.setStatus(`Not applied — the bot did not accept its runtime settings (${toErrorMessage(error)}). Nothing was recorded.`, 'error');
+      return;
+    }
+    if (runtimeApplied) {
+      app.setStatus(`Runtime settings were applied, but profile metadata was not saved: ${toErrorMessage(error)}`, 'error');
+      return;
+    }
     app.setStatus(`Failed to save bot profile: ${toErrorMessage(error)}`, 'error');
   }
 }
@@ -402,8 +426,8 @@ export function renderSelectedAgentPanelMarkup(app) {
         <label class="field"><span>Name</span><input id="agentNameInput" type="text" value="${escapeHtmlAttribute(profile.name)}"></label>
         <label class="field"><span>Project URL</span><input id="agentProjectUrlInput" type="url" value="${escapeHtmlAttribute(profile.projectUrl || '')}" placeholder="https://github.com/..."></label>
         <label class="field"><span>Theme Preference</span><select id="agentThemeInput">${renderThemeOptions(profile.themePreference)}</select></label>
-        <label class="field"><span>Provider</span><select id="agentProviderInput">${renderProviderOptionMarkup(app.state.providers, profile.providerId)}</select></label>
-        <label class="field"><span>Model</span><select id="agentModelInput">${renderModelOptionMarkup(app.state.providers, profile.providerId, profile.modelId)}</select></label>
+        ${renderProviderFieldMarkup(app.state.providers, agent, profile)}
+        ${renderModelFieldMarkup(app.state.providers, agent, profile)}
         <label class="field"><span>Status</span><select id="agentStatusInput">${renderStatusOptions(profile.status)}</select></label>
         <label class="field field-wide"><span>Selector Skills</span><textarea id="agentSelectorSkillsInput" placeholder="Describe the routing and skills this bot should advertise.">${escapeHtml(profile.selectorSkillsText || '')}</textarea><span class="field-copy">This persists through the narrow OSHAL profile route and feeds selector composition.</span></label>
         <div class="field field-wide checkbox-field"><span>Bulk Config Controls</span><label class="checkbox-row" for="agentExcludeFromBulkInput"><input id="agentExcludeFromBulkInput" type="checkbox"${profile.excludeFromBulkConfig ? ' checked' : ''}><span>Exclude this bot from bulk configure actions unless the caller explicitly includes excluded bots.</span></label></div>
@@ -488,34 +512,75 @@ function renderThemeOptions(selectedTheme) {
  * @description Render model options for the selected bot profile form.
  */
 export function renderModelOptionMarkup(providers, providerId, selectedModelId) {
+  const preferredModelId = resolvePreferredModelId(providers, providerId, selectedModelId);
   if (!Array.isArray(providers) || providers.length === 0) {
-    const fallback = selectedModelId || '';
-    return fallback ? `<option value="${escapeHtml(fallback)}" selected>${escapeHtml(fallback)}</option>` : '<option value="">No models available</option>';
+    return preferredModelId ? `<option value="${escapeHtml(preferredModelId)}" selected>${escapeHtml(preferredModelId)}</option>` : '<option value="">No models available</option>';
   }
   const providerMeta = providers.find((p) => p.id === providerId);
   const models = Array.isArray(providerMeta?.models) ? providerMeta.models : [];
   if (models.length === 0) {
-    const fallback = selectedModelId || providerMeta?.defaultModelId || '';
-    return fallback ? `<option value="${escapeHtml(fallback)}" selected>${escapeHtml(fallback)}</option>` : '<option value="">No models available</option>';
+    return preferredModelId ? `<option value="${escapeHtml(preferredModelId)}" selected>${escapeHtml(preferredModelId)}</option>` : '<option value="">No models available</option>';
   }
-  const preferredModelId = selectedModelId || providerMeta?.defaultModelId || models[0]?.id || '';
-  return models.map((model) => {
+  const options = models.map((model) => {
     const modelId = readString(model.id);
     const modelLabel = readString(model.name || model.id) || 'Unnamed Model';
     const selected = modelId === preferredModelId ? ' selected' : '';
     return `<option value="${escapeHtml(modelId)}"${selected}>${escapeHtml(modelLabel)}</option>`;
   }).join('');
+  const selectedKnown = models.some((model) => readString(model.id) === preferredModelId);
+  return preferredModelId && !selectedKnown
+    ? `<option value="${escapeHtml(preferredModelId)}" selected>${escapeHtml(preferredModelId)}</option>${options}`
+    : options;
 }
 
 function renderProviderOptionMarkup(providers, selectedValue) {
   if (!Array.isArray(providers) || providers.length === 0) {
     return `<option value="${escapeHtml(selectedValue || 'anthropic')}">${escapeHtml(selectedValue || 'anthropic')}</option>`;
   }
-  return providers.map((provider) => {
+  const options = providers.map((provider) => {
     const selected = provider.id === selectedValue ? ' selected' : '';
     const label = readString(provider.displayName || provider.name || provider.id);
     return `<option value="${escapeHtml(provider.id)}"${selected}>${escapeHtml(label)}</option>`;
   }).join('');
+  const selectedKnown = providers.some((provider) => provider.id === selectedValue);
+  return selectedValue && !selectedKnown
+    ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>${options}`
+    : options;
+}
+
+function resolvePreferredModelId(providers, providerId, selectedModelId) {
+  const selected = readString(selectedModelId);
+  if (selected) return selected;
+  const providerMeta = Array.isArray(providers) ? providers.find((p) => p.id === providerId) : null;
+  return readString(providerMeta?.defaultModelId || providerMeta?.models?.[0]?.id);
+}
+
+/**
+ * @description Render the provider picker from the server-resolved precedence policy.
+ * The API's precedence note is displayed verbatim; the browser never re-derives the rule.
+ */
+function renderProviderFieldMarkup(providers, agent, profile) {
+  const providerPinned = agent.providerOverridable === false;
+  const savedProvider = readString(profile.providerId).toLowerCase() === 'auto'
+    ? ''
+    : readString(profile.providerId);
+  const selectedProvider = providerPinned
+    ? readString(agent.effectiveProvider) || savedProvider
+    : savedProvider || readString(agent.effectiveProvider);
+  const precedenceNote = readString(agent.precedenceNote);
+  return `
+    <label class="field"><span>Provider</span>
+      <select id="agentProviderInput" data-original-value="${escapeHtmlAttribute(selectedProvider)}" aria-describedby="agentProviderPrecedence"${providerPinned ? ' disabled' : ''}>${renderProviderOptionMarkup(providers, selectedProvider)}</select>
+      <span id="agentProviderPrecedence" class="field-copy" data-provider-source="${escapeHtmlAttribute(agent.providerSource || 'unknown')}">${escapeHtml(precedenceNote)}</span>
+    </label>`;
+}
+
+/** @description Render the model picker, which can remain writable under a pinned harness. */
+function renderModelFieldMarkup(providers, agent, profile) {
+  const modelPinned = agent.modelOverridable === false;
+  const providerId = readString(agent.effectiveProvider) || readString(profile.providerId);
+  const modelId = resolvePreferredModelId(providers, providerId, profile.modelId || agent.effectiveModel);
+  return `<label class="field"><span>Model</span><select id="agentModelInput" data-original-value="${escapeHtmlAttribute(modelId)}"${modelPinned ? ' disabled' : ''}>${renderModelOptionMarkup(providers, providerId, modelId)}</select></label>`;
 }
 
 function renderStatusOptions(selectedStatus) {
@@ -534,16 +599,57 @@ function renderAuthModeOptions(selectedValue) {
 // ── Payload Builders ────────────────────────────────────────────────────────
 
 function buildSelectedAgentProfilePayload(container) {
-  return {
+  const providerInput = container.querySelector('#agentProviderInput');
+  const modelInput = container.querySelector('#agentModelInput');
+  const payload = {
     name: container.querySelector('#agentNameInput')?.value.trim() || '',
     status: container.querySelector('#agentStatusInput')?.value || 'active',
-    providerId: container.querySelector('#agentProviderInput')?.value || 'anthropic',
-    modelId: container.querySelector('#agentModelInput')?.value.trim() || '',
     projectUrl: container.querySelector('#agentProjectUrlInput')?.value.trim() || '',
     selectorSkillsText: container.querySelector('#agentSelectorSkillsInput')?.value || '',
     themePreference: container.querySelector('#agentThemeInput')?.value || 'midnight',
     excludeFromBulkConfig: container.querySelector('#agentExcludeFromBulkInput')?.checked === true,
   };
+  // Disabled precedence-bound inputs are display-only and must never contribute persisted values.
+  if (providerInput && !providerInput.disabled) payload.providerId = providerInput.value || 'anthropic';
+  if (modelInput && !modelInput.disabled) payload.modelId = modelInput.value.trim();
+  return payload;
+}
+
+/**
+ * @description Build an authoritative runtime update only when provider/model values changed.
+ * A pinned provider select never contributes its DOM value; model-only changes carry the API's
+ * effective provider so bot-node's provider-required switch endpoint remains internally coherent.
+ */
+function buildSelectedAgentRuntimePayload(container, agent, profile) {
+  const providerInput = container.querySelector('#agentProviderInput');
+  const modelInput = container.querySelector('#agentModelInput');
+  const providerId = readString(providerInput?.value);
+  const modelId = readString(modelInput?.value);
+  const currentProvider = readString(profile.providerId).toLowerCase() === 'auto'
+    ? readString(agent?.effectiveProvider)
+    : readString(profile.providerId) || readString(agent?.effectiveProvider);
+  const originalProvider = readOriginalInputValue(providerInput, currentProvider);
+  const originalModel = readOriginalInputValue(modelInput, profile.modelId || agent?.effectiveModel);
+  const providerChanged = !!providerInput && !providerInput.disabled
+    && providerId !== originalProvider;
+  const modelChanged = !!modelInput && !modelInput.disabled
+    && modelId !== originalModel;
+  if (!providerChanged && !modelChanged) return null;
+
+  const effectiveProvider = providerChanged
+    ? providerId
+    : readString(agent?.effectiveProvider) || readString(profile.providerId);
+  return {
+    ...(effectiveProvider ? { providerId: effectiveProvider } : {}),
+    ...(modelChanged ? { modelId } : {}),
+  };
+}
+
+function readOriginalInputValue(input, fallback) {
+  if (input?.dataset && Object.prototype.hasOwnProperty.call(input.dataset, 'originalValue')) {
+    return readString(input.dataset.originalValue);
+  }
+  return readString(fallback);
 }
 
 function buildBulkTemplatePayload(container) {

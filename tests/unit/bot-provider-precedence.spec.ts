@@ -4,17 +4,25 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard provider-panel-shows-registry-precedence. Pins the rule itself (a non-cline registry harnessType outranks the per-bot DB record; 'auto' is the no-opinion sentinel, not a provider; the MODEL stays overridable when the provider does not, because the bot-node config bootstrap maps modelId onto the harness's model env var), pins that a FAILED registry read fails CLOSED instead of promoting the DB record (the aliased require() the controller uses does not resolve under vitest, so this environment exercises that branch deterministically), pins that /api/agents carries the resolved fields, and pins that the Utilities panel disables the control FROM providerOverridable, renders the API's own reason verbatim, never sends a providerId from a disabled select, and reports a 502 push refusal as not-applied. The classification runs over the REAL active registry so it is not fixture-only. NOT asserted: "some bot is overridable" - every shipped registry entry declares a harness today, and a gate that a legitimate future cline bot would turn red is a gate nobody can act on.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-pointed the retired Utilities surface guard at Config Admin and added executable refusal coverage proving a disabled provider cannot leak into runtime/profile writes
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveEffectiveBotProvider } from '@/shared/llm-runtime';
 import { getActiveRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
 import { AgentProfileController } from '@/features/agent-profile';
 import type { AgentProfileService } from '@/features/agent-profile';
+import {
+  renderSelectedAgentPanelMarkup,
+  saveSelectedAgentProfile,
+} from '../../src/pages/config-admin/config-admin-agent-panel.js';
 
 const UTILITIES = path.join(process.cwd(), 'src/api/utilities.html');
+const CONFIG_ADMIN_PANEL = path.join(process.cwd(), 'src/pages/config-admin/config-admin-agent-panel.js');
+
+afterEach(() => vi.unstubAllGlobals());
 
 /**
  * @description Blank out comment bodies so a code shape that survives only inside a comment cannot
@@ -229,12 +237,93 @@ describe('provider-panel-shows-registry-precedence', () => {
     expect(unreadable.modelOverridable).toBe(true);
   });
 
-  // NOTE: the surface-rendering guard that used to sit here asserted the /utilities panel disabled
-  // its control from providerOverridable and printed the API's reason verbatim. That panel moved to
-  // /config, and config-admin's provider picker does NOT yet consult providerOverridable — it offers
-  // a <select> for bots whose registry harness makes the choice a no-op. That is a PRE-EXISTING gap
-  // in config-admin, not something this removal introduced, and re-pointing the guard at a surface
-  // that cannot satisfy it would have shipped a red gate or a fake-green one. Tracked in
-  // docs/BACKLOG.md as "config-admin provider picker is precedence-blind"; the RULE itself stays
-  // fully guarded by the resolver tests above, which are the ones that matter for correctness.
+  it('Config Admin disables its provider from the API policy and renders the API reason', () => {
+    const panel = { innerHTML: '' };
+    const note = 'The registry harness wins; this provider choice would have no effect.';
+    const app = {
+      state: {
+        selectedAgentId: 'bot-1', selectedAgentTools: [], selectedAgentRuntimeConfig: null,
+        agents: [{ agentId: 'bot-1', name: 'Pinned Bot', providerOverridable: false,
+          modelOverridable: true, effectiveProvider: 'openai-codex', providerSource: 'registry-harness', precedenceNote: note }],
+        selectedAgentProfile: { agentId: 'bot-1', name: 'Pinned Bot', providerId: 'anthropic', modelId: 'gpt-5' },
+        providers: [{ id: 'anthropic', displayName: 'Anthropic', models: [] },
+          { id: 'openai-codex', displayName: 'Codex', models: [{ id: 'gpt-5', name: 'GPT-5' }] }],
+      },
+      elements: { agentConfigHeading: { textContent: '' }, selectedAgentPanel: panel },
+    } as any;
+
+    renderSelectedAgentPanelMarkup(app);
+
+    expect(panel.innerHTML).toMatch(/id="agentProviderInput"[^>]* disabled/);
+    expect(panel.innerHTML).toContain(note);
+    expect(panel.innerHTML).toMatch(/value="openai-codex" selected/);
+    const source = stripComments(readFileSync(CONFIG_ADMIN_PANEL, 'utf8'));
+    expect(source).toMatch(/agent\.providerOverridable\s*===\s*false/);
+    expect(source).toMatch(/escapeHtml\(precedenceNote\)/);
+  });
+
+  it('a bot-side refusal records no profile and never trusts a disabled provider value', async () => {
+    const fields: Record<string, any> = {
+      '#agentNameInput': { value: 'Pinned Bot' }, '#agentStatusInput': { value: 'active' },
+      '#agentProviderInput': { value: 'anthropic', disabled: true },
+      '#agentModelInput': { value: 'gpt-5.1', disabled: false },
+      '#agentProjectUrlInput': { value: '' }, '#agentSelectorSkillsInput': { value: '' },
+      '#agentThemeInput': { value: 'midnight' }, '#agentExcludeFromBulkInput': { checked: false },
+    };
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ error: 'worker unreachable' }),
+      { status: 502, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const statuses: string[] = [];
+    const app = {
+      state: {
+        selectedAgentId: 'bot-1',
+        selectedAgentProfile: { agentId: 'bot-1', name: 'Pinned Bot', providerId: 'anthropic', modelId: 'gpt-5' },
+        agents: [{ agentId: 'bot-1', providerOverridable: false, effectiveProvider: 'openai-codex' }],
+      },
+      elements: { selectedAgentPanel: { querySelector: (selector: string) => fields[selector] || null } },
+      setStatus: (message: string) => statuses.push(message),
+    } as any;
+
+    await saveSelectedAgentProfile(app);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/agents\/bot-1\/runtime$/);
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toEqual({ providerId: 'openai-codex', modelId: 'gpt-5.1' });
+    expect(statuses.at(-1)).toMatch(/Not applied.*Nothing was recorded/i);
+  });
+
+  it('metadata-only saves do not push unchanged displayed runtime defaults', async () => {
+    const fields: Record<string, any> = {
+      '#agentNameInput': { value: 'Renamed Bot' }, '#agentStatusInput': { value: 'active' },
+      '#agentProviderInput': { value: 'openai-codex', disabled: true, dataset: { originalValue: 'openai-codex' } },
+      '#agentModelInput': { value: 'gpt-5', disabled: false, dataset: { originalValue: 'gpt-5' } },
+      '#agentProjectUrlInput': { value: '' }, '#agentSelectorSkillsInput': { value: '' },
+      '#agentThemeInput': { value: 'midnight' }, '#agentExcludeFromBulkInput': { checked: false },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/profile')) {
+        return new Response(JSON.stringify({ profile: { agentId: 'bot-1', name: 'Renamed Bot', providerId: 'anthropic', modelId: 'gpt-5' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ authenticated: false }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const app = {
+      state: { selectedAgentId: 'bot-1', selectedAgentAuth: {},
+        selectedAgentProfile: { agentId: 'bot-1', name: 'Pinned Bot', providerId: 'anthropic', modelId: 'gpt-5' },
+        agents: [{ agentId: 'bot-1', providerOverridable: false, effectiveProvider: 'openai-codex' }] },
+      elements: { selectedAgentPanel: { querySelector: (selector: string) => fields[selector] || null } },
+      setStatus: vi.fn(), render: vi.fn(),
+    } as any;
+
+    await saveSelectedAgentProfile(app);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/agents\/bot-1\/profile$/);
+    expect(fetchMock.mock.calls.map((call) => String(call[0])).some((url) => url.endsWith('/runtime'))).toBe(false);
+  });
 });

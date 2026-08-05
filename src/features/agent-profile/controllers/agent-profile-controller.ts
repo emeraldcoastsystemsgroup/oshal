@@ -17,6 +17,7 @@
  *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | K2/K3 identity canon (BACKLOG kernel audit): a0…0018 is 'system-architect' in every map (was 'architect-bot' here while dispatch resolved by the other name); the LEGACY unported a0…0034 row is relabeled 'legacy-system-architect' so exactly ONE identity carries the canonical name; self-healing-bot moves a0…030 → a0…056 (030 belongs to codex-packer — the three-way collision made 030's attribution ambiguous). Mirrors registries + compose + migration 100.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | enrichProfileWithHarness now also returns the EFFECTIVE provider + which tier won (effectiveProvider / effectiveModel / providerSource / providerOverridable / modelOverridable / precedenceNote) via the shared resolveEffectiveBotProvider. Reading /api/agents used to give harnessType and providerId side by side with no indication that the first silently outranks the second, so a cockpit panel could only guess - and a per-bot provider picker that guesses is a picker that lies. Computed server-side from ONE rule; a registry-read failure no longer drops the fields (it falls through and answers from the DB record, which is the honest answer in that case).
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Return resolved provider-precedence fields after profile updates so Config Admin never renders stale policy
  */
 
 import { Request, Response, type RequestHandler } from 'express';
@@ -107,7 +108,7 @@ export class AgentProfileController extends BaseController {
 
     return this.success(res, {
       agentId,
-      profile: updated,
+      profile: enrichProfileWithHarness(agentId, updated),
       message: 'Agent profile updated successfully',
     });
   });
