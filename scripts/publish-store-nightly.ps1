@@ -32,6 +32,12 @@
   Scheduled by scripts/register-store-publish-nightly.ps1 (task 'OSHAL-Store-Publish').
   Run manually:  powershell -ExecutionPolicy Bypass -File scripts/publish-store-nightly.ps1
   Dry run:       powershell -ExecutionPolicy Bypass -File scripts/publish-store-nightly.ps1 -DryRun
+
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Replace the copied, unbounded Bash lookup with the shared bounded Git for Windows resolver and abort loudly when no validated shell exists.
 #>
 param(
   # Cut and diff against what is live, but do not push. Safe to run any time.
@@ -50,6 +56,28 @@ $log = Join-Path $logDir ((Get-Date -Format 'yyyy-MM-dd') + '.log')
 function Note($m) { ("[{0}] {1}" -f (Get-Date -Format s), $m) | Out-File $log -Append -Encoding utf8 }
 
 Note "=== store publish starting (launcher repo $repo) ==="
+
+# Never use bare `bash` here: Task Scheduler resolves it to C:\Windows\System32\bash.exe, the WSL
+# launcher that caused the first store run to fail at `set -o pipefail`. WSL also exposes /mnt/c
+# instead of Git Bash's Windows tool view. The shared helper requires BASH_VERSION plus an
+# MSYS/MINGW runtime signature within a finite timeout and returns null rather than guessing.
+$bashResolver = Join-Path $PSScriptRoot 'lib\windows-git-bash.ps1'
+if (-not (Test-Path -LiteralPath $bashResolver -PathType Leaf)) {
+  Note "Git Bash resolver missing at $bashResolver - ABORTING"
+  exit 2
+}
+try { . $bashResolver }
+catch { Note "Git Bash resolver failed to load: $($_.Exception.Message) - ABORTING"; exit 2 }
+if ($null -eq (Get-Command Resolve-OshalGitBash -CommandType Function -ErrorAction SilentlyContinue)) {
+  Note "Git Bash resolver did not define Resolve-OshalGitBash - ABORTING"
+  exit 2
+}
+$bash = Resolve-OshalGitBash
+if (-not $bash) {
+  Note "no validated Git Bash found - ABORTING rather than falling back to System32/WSL bash"
+  exit 2
+}
+Note "bash: $bash (validated with bounded MSYS/MINGW identity probe)"
 
 # Resolve the store checkout the same way scripts/app-store-drift-check.sh does: env override,
 # sibling of this repo, then the known dev-host path.
@@ -70,30 +98,6 @@ if (-not (Test-Path $publisher)) {
 }
 Note "store checkout: $storeDir"
 
-# Resolve GIT BASH by absolute path. Do NOT rely on `bash` from PATH: under a scheduled task it
-# resolves to C:\Windows\System32\bash.exe, the WSL launcher, which on this box answers with an
-# empty $BASH_VERSION and fails the script's own `set -o pipefail` with
-# "set: pipefail: invalid option name". The first run of this wrapper died exactly there. WSL also
-# has a different filesystem view (/mnt/c), so even a healthy WSL bash is the wrong interpreter
-# for a script that shells out to docker and git on the Windows side.
-$bash = $null
-$gitExe = (Get-Command git -ErrorAction SilentlyContinue).Source
-$candidates = @()
-if ($gitExe) { $candidates += (Join-Path (Split-Path -Parent (Split-Path -Parent $gitExe)) 'bin\bash.exe') }
-$candidates += 'C:\Program Files\Git\bin\bash.exe'
-$candidates += 'C:\Program Files (x86)\Git\bin\bash.exe'
-foreach ($c in $candidates) {
-  if ((Test-Path $c) -and -not $bash) {
-    # Prove it is a real bash before trusting it, rather than trusting the path.
-    $v = & $c -c 'echo $BASH_VERSION' 2>$null
-    if ($v) { $bash = $c; Note "bash: $c ($v)" }
-  }
-}
-if (-not $bash) {
-  Note "no working Git Bash found (tried: $($candidates -join '; ')) - ABORTING rather than falling back to WSL bash"
-  exit 2
-}
-
 # Preflight: the gitleaks gate runs in a container, and this box's Docker Desktop engine has been
 # seen hung (vmmemWSL CPU flat, /info returning 500) while the CLI still answers. Note it either
 # way and proceed: publish-store.sh is fail-closed and will refuse rather than ship an unscanned
@@ -102,7 +106,7 @@ $dockerOk = $false
 try {
   $null = & docker version --format '{{.Server.Version}}' 2>$null
   if ($LASTEXITCODE -eq 0) { $dockerOk = $true }
-} catch { }
+} catch { Note "preflight: docker probe raised an error: $($_.Exception.Message)" }
 if ($dockerOk) { Note "preflight: docker engine responding" }
 else { Note "preflight: docker engine NOT responding - the gitleaks gate will refuse and this run will fail honestly (recover with scripts/oshal-up.sh)" }
 
@@ -121,6 +125,10 @@ else { Note "=== store publish FAILED (exit $exit) - THE PUBLIC STORE IS NOW STA
 
 # Keep the last 14 logs, same retention as the evidence nightly.
 Get-ChildItem $logDir -Filter '*.log' | Sort-Object Name -Descending | Select-Object -Skip 14 |
-  ForEach-Object { try { Remove-Item $_.FullName -Force -Confirm:$false } catch {} }
+  ForEach-Object {
+    $oldLog = $_.FullName
+    try { Remove-Item $oldLog -Force -Confirm:$false -ErrorAction Stop }
+    catch { Note ("retention: could not remove {0}: {1}" -f $oldLog, $_.Exception.Message) }
+  }
 
 exit $exit

@@ -53,6 +53,7 @@
   SEQ | AUTHOR                                     | DESCRIPTION
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com   | Bound native execution and alerting, drain redirected output, verify full process-tree termination, make recovery locking atomic and live-owner-aware, retain the lock through final health verification, confirm heartbeat failures before recovery, and expose the final watchdog result to Task Scheduler.
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Git Bash through the shared bounded validator, reject System32/WSL launchers, and fail closed when no validated Bash can perform routing checks or recovery.
 
   Register (every 5 min, windowless - launch through oshal-stack-watchdog-hidden.vbs so a bare
   powershell action doesn't flash a console every run):
@@ -83,6 +84,26 @@ function Format-ErrorText($errorRecord) {
 }
 
 if (Test-Path $pauseFile) { Log "paused (stack-watchdog.pause present) - skipping"; exit 0 }
+
+# A missing or unvalidated shell makes both the routability probe and recovery impossible. Resolve
+# it once per watchdog run so a PATH-order change can never turn System32's WSL launcher into a
+# false routability pass or a broken recovery command.
+$bashResolver = Join-Path $PSScriptRoot 'lib\windows-git-bash.ps1'
+if (-not (Test-Path -LiteralPath $bashResolver -PathType Leaf)) {
+  Log "Git Bash resolver missing at $bashResolver - watchdog cannot verify or recover routing"
+  exit 2
+}
+try { . $bashResolver }
+catch { Log "Git Bash resolver failed to load: $(Format-ErrorText $_)"; exit 2 }
+if ($null -eq (Get-Command Resolve-OshalGitBash -CommandType Function -ErrorAction SilentlyContinue)) {
+  Log "Git Bash resolver did not define Resolve-OshalGitBash - watchdog cannot continue"
+  exit 2
+}
+$script:gitBash = Resolve-OshalGitBash
+if (-not $script:gitBash) {
+  Log "no validated Git Bash found - refusing to treat routing as healthy or attempt recovery"
+  exit 2
+}
 
 # ---- state (last recovery time + consecutive-failure count) ----
 $state = @{ lastRecovery = ''; consecutiveFailures = 0 }
@@ -232,11 +253,13 @@ function ConvertTo-BashSingleQuoted([string]$value) {
 # The routing-critical heartbeats, via the guard's own script (single source of truth). Returns
 # $true when all critical bots are live. Best-effort: any docker/redis error -> treat as NOT ok.
 function Test-Routable {
-  $bash = Get-BashExe
-  if (-not $bash) { return $true }   # can't check without bash; don't trigger recovery on that alone
+  if (-not $script:gitBash) {
+    Log 'validated Git Bash is unavailable - routing is NOT considered healthy'
+    return $false
+  }
   $repoFwd = $Repo.Replace('\', '/')
   $repoArg = ConvertTo-BashSingleQuoted $repoFwd
-  $r = Invoke-Timed $bash "-lc `"cd $repoArg && bash scripts/swarm-routability-check.sh`"" 60000
+  $r = Invoke-Timed $script:gitBash "-lc `"cd $repoArg && bash scripts/swarm-routability-check.sh`"" 60000
   return ($r.Exited -and $r.ExitCode -eq 0)
 }
 
@@ -250,13 +273,6 @@ function Test-RoutableStable {
     if (Test-Routable) { Log "routing heartbeat recovered on confirmation probe $probe/3"; return $true }
   }
   return $false
-}
-
-function Get-BashExe {
-  foreach ($c in @('C:\Program Files\Git\bin\bash.exe', 'C:\Program Files (x86)\Git\bin\bash.exe')) { if (Test-Path $c) { return $c } }
-  $g = Get-Command bash.exe -ErrorAction SilentlyContinue
-  if ($g) { return $g.Source }
-  return $null
 }
 
 # Judge the TRUE end state after a recovery attempt: engine healthy AND api up AND all routing-
@@ -338,12 +354,11 @@ function Restart-DockerEngine([bool]$killFirst) {
   return $false
 }
 function Invoke-OshalUp {
-  $bash = Get-BashExe
-  if (-not $bash) { Log "no bash.exe found - cannot run oshal-up.sh"; return $false }
+  if (-not $script:gitBash) { Log "validated Git Bash unavailable - cannot run oshal-up.sh"; return $false }
   $repoFwd = $Repo.Replace('\', '/')
   $repoArg = ConvertTo-BashSingleQuoted $repoFwd
   Log "running scripts/oshal-up.sh"
-  $r = Invoke-Timed $bash "-lc `"cd $repoArg && bash scripts/oshal-up.sh`"" 900000
+  $r = Invoke-Timed $script:gitBash "-lc `"cd $repoArg && bash scripts/oshal-up.sh`"" 900000
   if (-not $r.Exited) { Log "oshal-up.sh timed out (>15m): $($r.Err)"; return $false }
   Log "oshal-up.sh exit=$($r.ExitCode)"
   return ($r.ExitCode -eq 0)
