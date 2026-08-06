@@ -127,12 +127,16 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** no controller-resident bot can read platform credentials or another user's tokens, and all required work runs through a dedicated least-privilege runtime.
 
 ### Bot-endpoint delegated identity
-- **Remaining:** carry the initiating signed identity and entitlement through bot-to-bot calls; service-secret re-entry must not upgrade user work.
-- **Done when:** a deployed restricted-user Jarvis call is denied before ticket/model/tool execution while an authorized operator path succeeds with an attributable audit trail.
+- **Remaining:** make the initiating principal authoritative across every bot/tool hop. Persist owner/tenant authority for agent-tool grants and dynamic ribbon definitions, then issue a short-lived signed delegation bound to `user_sub`, `agent_id`, task/request ID, exact tool and version, normalized input digest, audience/scopes, and expiry. A fleet/service secret may authenticate the transport but must never assert or upgrade that principal. ASK approvals need a durable one-time compare-and-set consume/recheck path; legacy unowned grants and ribbon definitions remain operator-only.
+- **Done when:** a two-owner real-boundary route/database proof shows the exact owner can approve and consume one matching request once, while fleet-secret-only, cross-owner, wrong-agent/tool/task/version/digest, replayed, expired, and revoked attempts fail before ticket/model/tool execution or ribbon mutation. The audit record contains the full delegation tuple, and the deployed restricted-user Jarvis path remains denied while an entitled path succeeds without inheriting operator authority.
 
-### Connector tenant-isolation documentation sync
-- **Remaining:** update [connector tenant isolation](architecture/connectors-tenant-isolation.md) to describe the current caller identity, broker routing, and cross-user guards rather than the retired pre-implementation state.
-- **Done when:** documentation matches executable behavior and links the current isolation tests without claiming runtime work remains.
+### Reviewed non-NONE tool provisioning and attestation
+- **Remaining:** add an immutable code-owned installer/verifier or signed out-of-band attestation rail for tools whose `executionMethod` is not `none`. Catalog and runtime-registration payloads may select a reviewed recipe/artifact but must never persist or supply a shell command; record artifact version, cryptographic digest, provenance, verifier identity, and revocation state, and require that current attestation at invocation.
+- **Done when:** a clean deployment provisions and enables one representative binary/package tool without a persisted shell, forged catalog commands/paths/digests never execute, the audit names the installed version/hash/provenance, revocation blocks the next invocation, and mutation guards fail if any execution-time attestation check is removed.
+
+### Versioned platform-credential distribution if redistribution returns
+- **Remaining:** keep the retired unordered credential pub/sub rail disabled. If platform credentials must again cross node-local storage boundaries, replace it with signed, audience-bound, monotonically versioned promotion/refresh events plus durable revocation tombstones and compare-and-set replay; a later operator allowlist change must not promote an earlier private-user credential.
+- **Done when:** a two-node restart/offline proof covers promote, refresh, revoke, duplicate, delayed, and out-of-order delivery; no pre-revocation event can resurrect a credential, a returning node converges to the tombstone, private credentials remain private across allowlist transitions, and neither payloads nor logs expose reusable secret material.
 
 ### Biometric privileged-access module
 - **Remaining:** if commissioned, define pluggable face/voice enrollment and challenge providers whose signed result can satisfy a high-privilege endpoint condition, with a non-biometric fallback.
@@ -207,10 +211,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ### Embedded LLM tools as a formal tier
 - **Remaining:** model provider-native embedded tools beside framework-registry and harness-native tools with per-agent policy and audit semantics.
 - **Done when:** an agent can enable/disable a named embedded tool, denied use fails at execution, and the run trace identifies the tier and provider operation.
-
-### LLM access precedence decision
-- **Remaining:** choose registry-pinned harness/provider precedence or a guarded per-bot runtime override and document its threat/operational model.
-- **Done when:** an ADR and [building-a-bot](building-a-bot.md) state one rule, UI/API report the same effective source, and unauthorized mutation fails closed.
 
 ### Bot-registry cross-variant consistency
 - **Remaining:** reconcile the local-only promoted concierge registrations with the canonical registry, or document and guard an intentional authoritative split.
@@ -521,6 +521,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** connector/RCA traces are caller-attributed, findings are encrypted and owner-isolated, security review passes, and a live enclave scan files auditable results without fetching an unapproved database. See [ADR-069](adr/069-operations-and-secops-connectors.md).
 
 ## Application-package follow-ups
+
+### SEC-06 application-store route, ownership, and CI closure
+- **Remaining:** in [`oshal-applications`](https://github.com/emeraldcoastsystemsgroup/oshal-applications), make `src-routes` authoritative and regenerate LoRA/Vids routes only after porting the Vids generated-only theme/mobile behavior so the rebuild cannot regress it; retain LoRA's sanitized rejection handling and Vids' rejection-state/non-overlapping polling. Replace the indentation/order-sensitive YAML route inventory with fail-closed document parsing that maps each actual endpoint to its auth middleware, owner predicate, and migration policy. Enforce LoRA `owner_sub` and Vids `user_sub` in queries and RLS, and lock security-tool dependencies, fixture-specific secret allowlists, and CI actions to reviewed immutable references.
+- **Done when:** the canonical rebuild leaves zero source/generated drift and a mobile browser guard preserves the Vids UI; factory-before-module, alternate-indentation, missing-auth, missing-owner-predicate, and missing-policy mutations all fail inventory; two owners using the real Postgres schema and enforcing application role cannot list/read/update/delete each other's LoRA or Vids jobs; and deliberate dependency-unlock, secret-allowlist widening, or mutable-action-ref changes fail blocking CI while documented immutable annotated-tag objects retain their verified peeled commit.
 
 ### Kid Lens Takeout package registration
 - **Remaining:** let an installed package contribute a Takeout slice without app literals in the kernel; move/confirm real-data, Dropbox, harvest privacy, YouTube scope, additional-lens, and multi-kid product work in the [`youtube-kids` README](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/youtube-kids/README.md).

@@ -19,10 +19,10 @@
  *    decrypted; an unprefixed legacy (pre-migration, single-KEK) blob is KEK-decrypted with the
  *    SAME SESSION_SECRET it was written under. So turning the flag on does NOT strand any
  *    already-connected user's tokens — they keep reading, and re-encrypt to v2 on next write.
- *  - KEY ABSENCE IS FAIL-LOUD: with crypto ON and `SESSION_SECRET` unset, `kek()` THROWS rather
- *    than derive an at-rest key from a hardcoded dev constant (which would wrap every user's DEK
- *    under a known key — worthless). It never silently downgrades to plaintext. The legacy dev
- *    fallback is preserved ONLY when crypto is explicitly OFF.
+ *  - KEY ABSENCE IS FAIL-LOUD IN EVERY MODE: with `SESSION_SECRET` unset, `kek()` THROWS rather
+ *    than derive an at-rest key from a hardcoded dev constant. This also applies to the explicit
+ *    envelope-off rollback because legacy blobs still require a real secret-derived KEK. It never
+ *    silently downgrades to plaintext or a repository-known key.
  *  - Self-contained: re-derives the KEK from SESSION_SECRET; does NOT touch the PKCE/state
  *    crypto in connectors-routes.ts (those stay on the KEK by design — they're not per-user).
  *

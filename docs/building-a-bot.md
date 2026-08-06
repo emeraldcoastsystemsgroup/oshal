@@ -28,12 +28,21 @@ host OAuth sessions mounted read-only into the runtime:
 
 - `~/.claude` → Claude Code CLI  •  `~/.codex` → Codex CLI  •  `~/.gemini` → Gemini CLI
 
-The default harness/model come from the compose `x-bot-env` anchor
-(`FORCE_LLM_PROVIDER` / `FORCE_LLM_MODEL`); a bot overrides them in its own compose service. A
-**per-request** key (a user's own endpoint) can ride in as `byoLlmConnection` and takes precedence
-for that one call (see [ADR-058 / byo-llm](../src/app/routes/byo-llm-routes.ts)) — but the *default* a
-bot runs on is the swarm login above. Do **not** add a vendor key to a bot's env to "make it work";
-that's a credential leak and bypasses the model.
+Default provider precedence is one server-owned rule, documented in
+[ADR-034](adr/034-bidirectional-config-ownership-sync.md#1a-provider-and-model-precedence):
+
+1. A registry `harnessType` other than the generic `cline` wrapper pins the provider. A per-bot
+   provider write is rejected because it would have no effect; a compatible model remains writable.
+2. For `cline` or a bot without a pinned harness, the per-agent Postgres record wins.
+3. The registry `apiType` is the next fallback.
+4. `FORCE_LLM_PROVIDER` / global config is the deployment default and first-boot seed.
+
+The Config Admin UI renders the API's `effectiveProvider`, `providerSource`, and precedence reason;
+it does not re-derive the rule in browser code. A registry-read failure disables provider mutation
+instead of assuming the highest tier is absent. An explicitly authorized **per-request**
+`byoLlmConnection` is a separate ephemeral rail for runtimes that support it: it never rewrites the
+bot default (see [ADR-058 / byo-llm](../src/app/routes/byo-llm-routes.ts)). Do **not** add a vendor key
+to a bot's env to "make it work"; that leaks credentials and bypasses the ownership model.
 
 ## agentId rules
 

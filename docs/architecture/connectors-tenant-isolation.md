@@ -1,111 +1,123 @@
-# Connectors hub & per-user isolation (as-built)
+# Connectors hub and caller isolation (as built)
 
-How OSHAL keeps two concurrent users from seeing each other's data — across both
-**identity** (whose external accounts/tokens) and **context** (whose conversation
-and workspace). This is the single-tenant baseline that the SaaS tenant layer
-([ADR-035](../adr/035-multi-tenant-saas-foundation.md)) builds on top of.
+OSHAL keeps concurrent callers from selecting or decrypting each other's external
+accounts across two independent boundaries:
 
-> Validated end-to-end 2026-06-14 with two live connectors (Google + Facebook) for
-> a single operator. The two isolation axes below are independent — both must hold
-> for safe multi-user operation.
+- **Connector identity** answers which external account an operation may use.
+- **Task context** answers which conversation and workspace an operation may use.
 
-## Two independent isolation axes
+A bot is normally a shared process, so process separation is not the control. The
+caller subject, tenant membership, selected connection, task owner, database role,
+and bounded credential consumer are the controls. The SaaS tenant layer in
+[ADR-035](../adr/035-multi-tenant-saas-foundation.md) builds on this model.
 
-| Axis | Boundary key | What it protects |
+Documentation status: reconciled with executable behavior on 2026-08-05 by
+`maintainer@emeraldcoastsystemsgroup.com`.
+
+## Independent isolation keys
+
+| Boundary | Authoritative keys | Protects |
 |---|---|---|
-| **Identity** (which external account acts) | `user_sub` (OIDC subject) | whose Gmail/Calendar/Facebook a bot reads/writes |
-| **Context** (which conversation/files) | `taskId` (per-conversation UUID) | whose chat history + workspace a request sees |
+| Connector identity | exact OIDC `user_sub`, tenant membership, `connection_id` | whose Google, Microsoft, social, home, finance, or other account acts |
+| Task context | exact task owner plus `taskId` | whose messages, task state, and workspace a request sees |
 
-A bot is a **single shared process** (one container per bot type — not one per user).
-Isolation comes entirely from these two keys, not from process separation.
+Both boundaries must hold. Possessing a task ID does not authorize a connector,
+and possessing a connector grant does not authorize another caller's task.
 
-## Identity: the connectors hub
+## Connector identity and account selection
 
-[src/app/routes/connectors-routes.ts](../../src/app/routes/connectors-routes.ts) — per-user
-incremental OAuth, separate from sign-in.
+[connectors-routes.ts](../../src/app/routes/connectors-routes.ts) implements signed-in
+incremental connector authorization separately from login.
 
-- **Caller identity** comes from the OIDC session (`req.oidc.user.sub`), not from
-  anything the client can supply — see `caller(req)`.
-- **Storage** is keyed per user: `oshal_connections` has `UNIQUE (user_sub, provider)`,
-  and connects are `INSERT ... ON CONFLICT (user_sub, provider) DO UPDATE`. Each user's
-  token is a **separate row** under their own sub.
-- **Every read is sub-scoped**: list / token / refresh / delete all filter
-  `WHERE user_sub = $1 AND provider = $2` with the session sub. There is no code path
-  where one user's request reads another user's row.
-- **Tokens are encrypted at rest** — AES-256-GCM, key derived from `SESSION_SECRET`.
-- **The per-user token accessor** is `getValidAccessToken(pool, userSub, provider)`
-  (refresh-capable). **This is the only correct way for a bot to fetch a user's token.**
+- Caller identity comes from the validated session subject. A client-supplied
+  `user_sub` is not an ownership source.
+- A personal connection has `tenant_id IS NULL` and is owned by `user_sub`. A
+  shared connection has a tenant ID, records the grantor in `connected_by_sub`,
+  and is usable only by a current tenant member.
+- A caller may connect several accounts for one provider. Migration
+  [101-connections-multi-account.sql](../../scripts/migrations/101-connections-multi-account.sql)
+  uses per-account partial unique indexes rather than the retired
+  `UNIQUE (user_sub, provider)` constraint.
+- Resolution first applies an explicit connection, label, email, or ownership-scope
+  selector. A named selector that misses returns no credential. Without a selector,
+  the marked default wins; the final fallback is stable and never depends on token
+  refresh recency.
+- Personal disconnects are constrained by both connection ID and the session
+  subject. Shared-connection administration separately checks tenant membership
+  and role.
 
-**Scope policy.** Provider scopes are env-overridable so access can expand without a
-code change: `FACEBOOK_SCOPES` and `GOOGLE_CONNECT_SCOPES` (space/comma-separated).
-Defaults are least-privilege (Google: Gmail+Calendar **read-only**; Facebook:
-`public_profile`). Expanding to act (`gmail.send`, `calendar.events`) works for the
-app owner immediately but needs provider verification before other users can grant it.
+The lookup path is `getValidAccessToken` -> `resolveConnectionRow` ->
+`accessibleConnections`. Its personal arm binds the exact caller subject, and its
+shared arm is limited to tenant IDs read from that caller's memberships. The same
+selected row supplies the DEK owner used for decryption.
 
-### Honest limits of the identity layer
+### Encryption and database enforcement
 
-- Isolation is enforced at the **application/session layer** (sub-scoped queries) **and,
-  as of 2026-06-27 (ADR-076), at the database layer**: `oshal_connections` (and all other
-  owner/tenant-bearing tables) now have `FORCE ROW LEVEL SECURITY` policies, and the runtime
-  connects as the non-superuser `oshal_app` role. A query bug can no longer cross users at the
-  database layer for any enforced table — the app-layer scoping is now a defense-in-depth
-  duplicate of the DB guarantee rather than the sole boundary.
-- The encryption key is a **single shared `SESSION_SECRET`**, not a per-user key.
-  Strong against a normal user reaching another's data; **not** a per-user vault —
-  anyone holding both DB access and `SESSION_SECRET` could decrypt all rows.
-  A per-user DEK envelope (`src/app/routes/connector-token-crypto.ts`) is **built and
-  tested but OFF by default** (`OSHAL_ENVELOPE_CRYPTO`); when enabled it closes this
-  exact gap. See the Envelope-crypto row in [SECURITY-POSTURE.md](../security/SECURITY-POSTURE.md).
+Connector tokens use AES-256-GCM. Per-user envelope encryption is **on by default**;
+`OSHAL_ENVELOPE_CRYPTO=false` is an explicit rollback. Each owner has a wrapped DEK,
+legacy blobs remain format-readable during migration, and every encryption mode
+without `SESSION_SECRET` fails loudly instead of deriving a repository-known key.
 
-## Context: the `taskId` boundary
+Envelope encryption limits key compromise, but it does not repair a bad ownership
+query: the selected row determines whose DEK is unwrapped. The SQL predicate and
+database policy are therefore both load-bearing. Migration
+[060-platform-rls-tenancy.sql](../../scripts/migrations/060-platform-rls-tenancy.sql)
+enables and forces RLS for `oshal_connections`; deployments must run the application
+with the least-privilege `oshal_app` role so a query regression cannot bypass the
+policy through owner or superuser privilege.
 
-Everything a conversation touches is keyed by `taskId`:
+## Bounded credential broker
 
-- **Conversation history** — SQLite, `SELECT/INSERT ... WHERE task_id = ?`
-  ([any-bot/server/stores/MessageStore.js](../../any-bot/server/stores/MessageStore.js)).
-- **Workspace** — one directory per task: `/app/swarm-workspace/{taskId}/`
-  ([any-bot/server/controllers/TaskController.js](../../any-bot/server/controllers/TaskController.js)).
-- **In-memory task object** — `activeTasks` Map keyed by `taskId`.
+[connector-token-broker.ts](../../src/app/routes/connector-token-broker.ts) may
+resolve a credential only for an authenticated owner's selected account and an
+explicit fixed server operation or validated provider intent. The consumer must use
+the value at that deterministic operation boundary.
 
-The live chat UI mints a **`crypto.randomUUID()`** taskId per conversation
-([src/pages/chat/ui/chat.html](../../src/pages/chat/ui/chat.html),
-[chat-config-modal.mjs](../../src/pages/chat/ui/chat-config-modal.mjs)), reused only when
-a saved conversation is reopened via `?taskId=`. So two different users in two browsers
-get **different taskIds** → different history rows, different workspace dirs, different
-Map entries. Node's single-threaded async model interleaves their requests safely
-because neither shares mutable state with the other.
+Raw connector values must never enter a model prompt, generic CLI environment,
+generic bot request, or task workspace. There is no supported bot-side database
+decryption fallback. A disabled, missing, expired, selector-mismatched, or
+unrefreshable connection produces an unavailable/not-connected result rather than
+silently selecting another user's account. Multi-account calls should supply an
+explicit selector; an omitted selector uses the marked default and emits an
+ambiguity warning when several accounts exist.
 
-### When context IS shared — by design
+The controller carries the initiating task owner into dispatch. On the reviewed
+provider-intent lane, the target validates the schema-bounded intent and consumes
+the matching credential before any persona, memory, task, or model input is built.
+Generic prompts cannot ask the broker for arbitrary providers.
 
-The **multi-agent ticket workflow** runs several *agents* in one ticket's shared
-workspace so they can collaborate. Each agent still gets its own `{agentId}-context.md`
-persona file. This is cooperation between agents on one ticket — **not** two human users
-crossing. It does not apply to separate users in separate chats.
+## Task and workspace context
 
-### Footguns (two fixed 2026-06-14, one open)
+Conversation and task stores scope reads and writes by task ID plus the persisted
+owner. The bot-node execution boundary verifies that an existing task's owner matches
+the delegated caller before reuse; a new task is stamped with that caller. Workspaces
+are task-scoped, but directory naming alone is not treated as authorization.
 
-- **Fixed** — `chatService.ts` minted `task-${Date.now()}` (collides if two users send
-  in the same millisecond). Now uses `crypto.randomUUID()`. (Legacy helper; the live
-  path already used a UUID.)
-- **Fixed** — `scripts/oshal-gmail.js` previously read the *newest* Google connection
-  when `GMAIL_ACCOUNT` was unset. It now **fails closed** (exit 2) when more than one
-  Google connection exists, forcing the caller to name the account. See open item below.
-- **Open** — the `activeTasks` task object is not defensively copied on read; safe today
-  because different users hold different taskIds, but a *deliberately shared* taskId
-  (e.g. a future shared-conversation feature) would bleed. Add per-taskId mutex /
-  copy-on-read before introducing shared conversations.
+Multi-agent ticket work intentionally shares one ticket workspace among collaborating
+agents. That is not permission for another human subject to reuse the task. Any future
+human shared-conversation feature must introduce an explicit membership model and
+serialized shared-state behavior before relaxing owner equality.
 
-## The rule for bots that act on a user's behalf
+## Executable guards
 
-Context isolation (`taskId`) and identity isolation (`user_sub`) are **separate**. A bot
-must satisfy both:
+The current regression evidence includes:
 
-1. It runs inside the requesting conversation's `taskId` (handled by the dispatch path).
-2. It must fetch tokens for the **requesting user's `user_sub`** via
-   `getValidAccessToken(userSub)` — never "newest connection".
+- [connector-token-lookup-scope.spec.ts](../../tests/unit/connector-token-lookup-scope.spec.ts)
+  pins the caller-bound personal/shared SQL inputs and real legacy/v2 decrypt paths.
+- [connector-multi-account.spec.ts](../../tests/unit/connector-multi-account.spec.ts)
+  proves account coexistence, deterministic selection, exact selector misses, and
+  owner-scoped disconnect behavior.
+- [connector-token-crypto.spec.ts](../../tests/connector-token-crypto.spec.ts)
+  proves default-on envelopes, per-user DEKs, legacy compatibility, and fail-loud
+  master-key handling.
+- [task-message-isolation-routes.spec.ts](../../tests/unit/task-message-isolation-routes.spec.ts)
+  guards task-owner routing and the bounded manifest-worker connector scope.
+- [prompt-memory-containment.spec.ts](../../tests/unit/prompt-memory-containment.spec.ts)
+  guards the provider-intent-before-prompt boundary and exact owner propagation.
+- [rls-two-role-isolation-live.spec.ts](../../tests/rls-two-role-isolation-live.spec.ts)
+  and [rls-core-table-coverage-live.spec.ts](../../tests/rls-core-table-coverage-live.spec.ts)
+  are the real-role release gates for enforced RLS posture.
 
-The deeper wiring (propagating the requesting user's `sub` all the way into bot
-execution so the email-bot can pass the right `GMAIL_ACCOUNT`) is **not yet built** —
-tracked in [BACKLOG.md](../BACKLOG.md). Until then, multi-user email automation must
-pass the account explicitly; the fail-closed guard above prevents a silent wrong-mailbox
-read in the meantime.
+Unit tests that use a fake pool establish query and routing behavior; they do not
+replace the real Postgres-role proof. A release claiming database isolation must run
+the live RLS gates against the deployment role.

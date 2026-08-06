@@ -11,6 +11,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — unit tests for connector-token-crypto envelope encryption (flag on/off, per-user isolation, legacy compatibility).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto default ON flip: default (no env) now round-trips a v2 envelope; a pre-existing legacy single-key blob STILL decrypts under the default (no already-connected user stranded); OSHAL_ENVELOPE_CRYPTO=false is the explicit rollback to the legacy path; and key absence (SESSION_SECRET unset while crypto ON) FAILS LOUD at both encrypt and decrypt (never a silent plaintext/weak-key downgrade). afterEach clears the env so tests don't leak the flag under the new ON default.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile the stale crypto-off expectation with SECURITY-HARDENING 3.1/9: SESSION_SECRET absence fails closed in every mode, including the legacy-format rollback, so the suite cannot bless encryption under a repository-known development key.
  */
 import { test, expect } from '@playwright/test';
 import { encryptToken, decryptToken, ensureDekSchema, envelopeEnabled } from '@/app/routes/connector-token-crypto';
@@ -110,12 +111,11 @@ test('key absent: crypto ON + SESSION_SECRET unset FAILS LOUD (never silent down
   await expect(decryptToken(pool, 'user-a', 'v2:aaa:bbb:ccc')).rejects.toThrow(/SESSION_SECRET/);
 });
 
-test('key absent tolerated when crypto is OFF (legacy dev fallback preserved)', async () => {
+test('key absent: crypto OFF still fails loud rather than using a public legacy key', async () => {
   process.env.OSHAL_ENVELOPE_CRYPTO = 'false';
   delete process.env.SESSION_SECRET;
   const pool = fakePool();
-  // Legacy/dev break-glass: with crypto OFF, the historical dev-constant KEK still round-trips.
-  const blob = await encryptToken(pool, 'user-a', 'legacy-dev-token');
-  expect(blob.startsWith('v2:')).toBe(false);
-  expect(await decryptToken(pool, 'user-a', blob)).toBe('legacy-dev-token');
+  // The envelope-off rollback changes the blob format, not the master-key requirement.
+  // A repository-known fallback key would provide no at-rest protection.
+  await expect(encryptToken(pool, 'user-a', 'legacy-dev-token')).rejects.toThrow(/SESSION_SECRET/);
 });

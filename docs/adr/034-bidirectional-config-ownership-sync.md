@@ -25,6 +25,28 @@ ADR-006 already prescribed the correct model (controller holds golden config, ag
 
 OSHAL is the **single source of truth** for every any-bot's runtime parameter *record* (which provider/model/mode/timeout/flags an agent should run with), stored in Postgres (`agent_config`, the already-Postgres-backed `AgentConfigService`). The any-bot owns the **mechanics** of applying them — credential field mapping, `~/.cline` file writes, CLI spawning — via its existing `PUT /api/llm-provider` (`LLMProviderRegistry.buildClineConfig/buildGlobalState`). OSHAL never writes the bot's internal files directly (this retires the behind-the-bot `WorkspaceConfigSyncService` rewrite). All other stores (the bot's Redis key, SQLite SettingsStore, `~/.cline` files) are **derived caches**, never authorities.
 
+### 1a. Provider and model precedence
+
+OSHAL uses one shared resolver for API reporting, Config Admin rendering, and runtime-mutation
+validation. The order is:
+
+1. A registry `harnessType` other than `cline` pins the provider because that distinct CLI or
+   transport owns execution. A per-agent provider value remains visible for diagnosis but cannot
+   override the harness. The harness-compatible model remains overridable because bot bootstrap
+   maps the authoritative `modelId` to its model setting.
+2. For the generic `cline` wrapper, or when no harness is pinned, the per-agent Postgres provider
+   record wins.
+3. Registry `apiType` is the next provider fallback.
+4. Global config / `FORCE_LLM_PROVIDER` is the deployment default and first-boot seed.
+
+`auto` is a no-opinion sentinel, never a provider. A registry-read failure fails closed: the API
+reports `registry-unreadable`, preserves saved values for diagnosis, and rejects provider mutation
+rather than pretending the higher-precedence tier is absent. Exact operators may mutate only fields
+the resolver reports as overridable; machine credentials and ordinary users cannot use the browser
+write surface. The UI displays the API's effective source/reason verbatim and omits disabled values
+from write payloads. An authorized per-request BYO connection is ephemeral and never rewrites this
+default precedence record.
+
 ### 2. Push down (OSHAL → any-bot): API-driven, two edges
 
 - **On config change:** an OSHAL-side config update (cockpit/profile/agent-config save) calls the bot's `PUT /api/llm-provider` via `BotNodeClient.switchProvider` (previously dead code, now wired). The bot applies and persists to its derived caches.
@@ -55,6 +77,8 @@ The authoritative record carries an integer `config_version` (stored on the `age
 - Locally-originated bot changes flow back to OSHAL (the previously-missing trigger); OSHAL stays system-of-record without reaching into bot internals.
 - Standalone operation preserved; reconnect reconciles.
 - Auditable, versioned config with drift detection.
+- Provider selection is explainable and consistent across API, UI, and execution; inert writes fail
+  before push or persistence.
 
 ### Negative / risks
 - The legacy localhost `/api/send-message` fallback does not carry params yet — partial coverage until updated; OSHAL intent can still be dropped on that fallback route.
