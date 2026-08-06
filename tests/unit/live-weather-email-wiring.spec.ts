@@ -92,14 +92,15 @@ describe('live weather and email data-path wiring', () => {
     });
   });
 
-  it('threads caller identity, brokered credentials, and per-request LLM config through the bot HTTP path', () => {
+  it('threads caller identity and per-request LLM config while rejecting generic credentials', () => {
     const appSource = fs.readFileSync('any-bot/server/app.js', 'utf8');
     const agenticSource = fs.readFileSync('any-bot/server/controllers/AgenticController.js', 'utf8');
     const codexProviderSource = fs.readFileSync('any-bot/server/services/llm/CodexProvider.js', 'utf8');
     expect(appSource).toContain('{ forceTaskId: effectiveTaskId, userSub: scopedUserSub }');
     expect(appSource).toContain('byoLlmConnection: requestedByo');
     expect(appSource).toContain('extraEnv,');
-    expect(appSource).toContain('sanitizeBrokeredCreds(creds)');
+    expect(appSource).toContain("Object.prototype.hasOwnProperty.call(req.body, 'creds')");
+    expect(appSource).not.toContain('sanitizeBrokeredCreds');
     expect(codexProviderSource).toContain("providerRecordCapture: 'codex-command-events-v1'");
     expect(agenticSource).toContain("response.providerRecordCapture === 'codex-command-events-v1'");
     expect(appSource).toContain('providerRecords: Array.isArray(result.providerRecords) ? result.providerRecords : []');

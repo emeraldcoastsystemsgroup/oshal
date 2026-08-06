@@ -19,9 +19,10 @@
  * The public symbols those siblings own are RE-EXPORTED from here so existing importers and the unit
  * tests keep resolving them from `jarvis-routes` unchanged.
  *
- * Every route is auth-gated at mount (auth is opt-in per route, CLAUDE.md): an OIDC session
- * (browser surface) OR the trusted-service secret + x-oshal-user-sub (headless swarm CLI /
- * internal bots) — the same serviceSecretOr pattern as the message routes and /api/graph.
+ * Every route is auth-gated at mount (auth is opt-in per route, CLAUDE.md). Browser OIDC and PAT
+ * sessions remain authoritative. During SEC-01 containment, owner-scoped reads refuse machine-only
+ * fleet-secret identity; the compatibility secret remains only on Jarvis actions until scoped
+ * delegation replaces it.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -33,6 +34,10 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: split this 2.5×-over-cap file into cohesive jarvis-* siblings (orchestrator/directives/provider-intent-detect/visuals/tool-catalog/overview/task-store). This file is now the router + request glue; the moved public symbols are re-exported so importers + tests are unchanged. No behaviour change.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted the three jarvis-ambient decomposition siblings (core/ui/recognition) in JARVIS_CLIENT_ASSETS so the load-ordered classic scripts serve from /assets like the existing jarvis-speakers siblings. jarvis-ambient.js itself was over the 1000-code-line cap; behavior is unchanged.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Multi-app planner residuals: the dispatch ack now SHOWS the compiled plan (describePlan — which apps, in what order, which step pauses for approval) instead of only "I've lined up N steps", and a work item whose ticket ended escalated/cancelled reports an honest failure line instead of status 'error' with a null message. Both are honesty properties of the planner, not cosmetics.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Narrow valid service-secret calls to their trusted user sub before any Jarvis owner-scoped read/write; a machine credential without X-OSHAL-User-Sub now fails closed instead of retaining the global cross-tenant operator database stamp.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-01 containment: preflight every owner-scoped Jarvis read before legacy subject resolution, return the stable 403 refusal for fleet-secret callers, and preserve independently authenticated OIDC/PAT access under mixed headers.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Resolve delegated Jarvis identity exclusively from verified, durable, exact-route SEC-01 claims before the legacy shadow-only subject carrier.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | CORE-05: return the canonical 503 ai_disabled state before Jarvis starts an inference job.
  *
  * @module jarvis-routes
  */
@@ -42,6 +47,12 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
+import { requireAiEnabled } from '@/shared/middleware/ai-availability';
+import {
+  getVerifiedWorkloadDelegation,
+  rejectLegacyServiceIdentityForUserRead,
+} from '@/features/security';
 import type { AppContext } from '@/app/composition/app-context';
 import type { InternalTicket } from '@/entities/ticket';
 import {
@@ -132,6 +143,22 @@ export { maskPendingComplexSummaries, JARVIS_AGENT_ID } from './jarvis-orchestra
 
 const logger = createChildLogger({ module: 'jarvis-routes' });
 
+const USER_SCOPED_JARVIS_READS = [
+  ['/history', '/api/jarvis/history'],
+  ['/tasks', '/api/jarvis/tasks'],
+  ['/overview', '/api/jarvis/overview'],
+  ['/ask/result', '/api/jarvis/ask/result'],
+  ['/ask/jobs', '/api/jarvis/ask/jobs'],
+  ['/visuals/:artifactId', '/api/jarvis/visuals/:artifactId'],
+] as const;
+
+/** Install read refusals before the compatibility middleware can resolve a forwarded subject. */
+function registerLegacyReadContainment(router: Router): void {
+  for (const [pathTemplate, routeTemplate] of USER_SCOPED_JARVIS_READS) {
+    router.get(pathTemplate, rejectLegacyServiceIdentityForUserRead(routeTemplate));
+  }
+}
+
 /** The ticketType for a hand-off (ADR-083): platform-dev work is EXPLICIT — Jarvis marks
  *  the directive `"platform": true` and it rides the superadmin-gated 'oshal-dev' queue
  *  (whose workflow declares the oshal-developer worker). Everything else is 'task', whose
@@ -140,13 +167,14 @@ function ticketTypeForHandoff(h: Pick<HandoffDirective, 'platform'>): string {
   return h.platform ? 'oshal-dev' : 'task';
 }
 
-/** Caller's sub: the OIDC session (browser surface) first, else the trusted-service identity
- *  (X-Service-Secret + x-oshal-user-sub — headless swarm CLI / internal bots). Same resolution
- *  order as message-routes; the header is honored ONLY with a valid service secret. */
+/** Caller's sub: independently authenticated user first, verified SEC-01 delegation second, then
+ * the temporary fleet-secret subject retained only until workload enforcement is enabled. */
 function callerSub(req: Request): string | null {
   const u = (req as { oidc?: { user?: { sub?: string; oid?: string } } }).oidc?.user;
   const sub = u?.sub || u?.oid;
   if (sub) return String(sub);
+  const delegated = getVerifiedWorkloadDelegation(req);
+  if (delegated) return delegated.sub;
   return getTrustedServiceUserSub(req);
 }
 
@@ -395,13 +423,17 @@ function storedJarvisSourceId(value: unknown): string | undefined {
 }
 
 /**
- * @description Builds the Jarvis router (mount at /api/jarvis behind requiresAuth).
+ * @description Builds the Jarvis router behind ordinary user auth or durable SEC-01 delegation.
  * @param ctx - App context (Postgres pool).
  * @param apiDir - Directory holding the HTML surface.
  * @returns Express router.
  */
 export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
   const router = Router();
+  registerLegacyReadContainment(router);
+  // Legacy mode can still arrive with the fleet secret. Narrow only that compatibility path to its
+  // asserted owner; OIDC/PAT and verified delegation already carry authoritative user identity.
+  router.use(requireTrustedServiceUserIdentity);
   const visualResponseService = new VisualResponseService(ctx.pool);
   void ensureJarvisSchema(ctx.pool);   // durable Tasks list table
 
@@ -577,7 +609,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
   /** POST /ask — { message } → { jobId }. Forwards to the Jarvis BOT-NODE (which runs in the any-bot
    *  wrapper with real tools); the surface polls GET /ask/result?jobId. Async because a tool-using
    *  agentic turn exceeds Cloudflare's ~100s edge timeout if the connection is held. */
-  router.post('/ask', async (req: Request, res: Response) => {
+  router.post('/ask', requireAiEnabled, async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const body = (req.body || {}) as { message?: string; sessionId?: string; attachments?: unknown };

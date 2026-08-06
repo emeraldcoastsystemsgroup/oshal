@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Localhost-dispatch tests now capture via a real loopback /api/send-message stub — dispatch rides node:http.request (fa042a24, undici 5-min headersTimeout), so the old globalThis.fetch mock intercepted nothing; fetch is now poisoned to prove the localhost leg never regresses onto it
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep legacy-local boundary doubles complete after delegation enforcement became a required BotNodeClient capability, explicitly selecting unsigned compatibility mode without weakening the production fail-closed contract.
  */
 
 import * as http from 'node:http';
@@ -16,7 +17,13 @@ import type { TicketService } from '../../src/features/ticketing';
 import type { WorkflowDefinition } from '../../src/features/swarm-orchestration/services/dispatch-routing';
 import { dispatchManifestWorkerTicket } from '../../src/features/swarm-orchestration/services/dispatch-manifest-worker';
 
-const ENV_KEYS = ['RUNNING_IN_DOCKER', 'AGENT_ID', 'BOT_NAME', 'SWARM_REGISTRY', 'SWARM_SERVICE_SECRET'] as const;
+const ENV_KEYS = [
+  'RUNNING_IN_DOCKER',
+  'AGENT_ID',
+  'BOT_NAME',
+  'SWARM_REGISTRY',
+  'SWARM_SERVICE_SECRET',
+] as const;
 const originalEnv = new Map<string, string | undefined>();
 const originalFetch = globalThis.fetch;
 const EATS_AGENT_ID = 'b0080000-0000-0000-0000-000000000001';
@@ -252,6 +259,7 @@ describe('dispatchManifestWorkerTicket bot-node boundary', () => {
     const stores = buildConversationStores();
     const botNodeClient = {
       hasEndpoint: vi.fn(() => false),
+      isDelegationEnforced: vi.fn(() => false),
       execute: vi.fn(async () => {
         throw new Error('should not execute remotely');
       }),
@@ -337,9 +345,9 @@ describe('dispatchManifestWorkerTicket bot-node boundary', () => {
       agentId: 'rides-agent',
       agenticMode: true,
       userSub: 'owner-123',
-      creds: { OSHAL_CRED_GOOGLE: 'owner-google-token' },
     }));
-    expect(resolveBotCreds).toHaveBeenCalledWith('owner-123', 'rides-agent');
+    expect((botNodeClient.execute as ReturnType<typeof vi.fn>).mock.calls[0][1]).not.toHaveProperty('creds');
+    expect(resolveBotCreds).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(ticketService.updateStatus).toHaveBeenCalledWith(
       '11111111-1111-4111-8111-111111111111',
@@ -402,15 +410,12 @@ describe('dispatchManifestWorkerTicket bot-node boundary', () => {
     );
 
     expect(resolveAgentIdByName).not.toHaveBeenCalled();
-    expect(resolveBotCreds).toHaveBeenCalledTimes(2);
-    expect(resolveBotCreds).toHaveBeenCalledWith('owner-123', EATS_AGENT_ID);
-    expect(resolveBotCreds).toHaveBeenCalledWith('owner-123', SHOPPING_AGENT_ID);
+    expect(resolveBotCreds).not.toHaveBeenCalled();
     expect(botNodeClient.execute).toHaveBeenCalledTimes(2);
     expect(botNodeClient.execute).toHaveBeenCalledWith(
       EATS_AGENT_ID,
       expect.objectContaining({
         agentId: EATS_AGENT_ID,
-        creds: { OSHAL_CRED_UBER: 'eats-owner-token' },
         text: expect.stringMatching(/\*\*Your assigned domain:\*\* eats-concierge[\s\S]*Handle only the portion/),
       }),
     );
@@ -418,7 +423,6 @@ describe('dispatchManifestWorkerTicket bot-node boundary', () => {
       SHOPPING_AGENT_ID,
       expect.objectContaining({
         agentId: SHOPPING_AGENT_ID,
-        creds: { OSHAL_CRED_WALMART: 'shopping-owner-token' },
         text: expect.stringMatching(/\*\*Your assigned domain:\*\* shopping-concierge[\s\S]*Handle only the portion/),
       }),
     );
@@ -429,6 +433,7 @@ describe('dispatchManifestWorkerTicket bot-node boundary', () => {
     });
     expect(workerRequests).toHaveLength(2);
     for (const request of workerRequests) {
+      expect(request).not.toHaveProperty('creds');
       expect(request.taskId).toBe(request.workspaceFolderId);
       expect(request.taskId).toContain(request.agentId);
       expect(request.taskId).not.toBe('11111111-1111-4111-8111-111111111111');
@@ -876,6 +881,7 @@ describe('dispatchManifestWorkerTicket bot-node boundary', () => {
     const ticketService = buildTicketService();
     const botNodeClient = {
       hasEndpoint: vi.fn(() => false),
+      isDelegationEnforced: vi.fn(() => false),
       execute: vi.fn(async () => {
         throw new Error('should not execute remotely');
       }),

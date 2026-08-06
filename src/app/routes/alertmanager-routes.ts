@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 Stage B + E): the claim REGISTRY replaces the inline ALERT_APPROVED_NAMES set as the noise gate — rules {match, incidentKey?, intake?, bundleHints?} from ALERT_CLAIMS_FILE, with ALERT_APPROVED_NAMES surviving as a pure-claim shorthand (identical behavior) and no registry at all keeping the accept-all dev default. A claim's key template re-keys the canonical alert (Stage A hand-off), its intake slots between the per-alert label (SRE wins) and the env defaults, and its rootFilter rides to genesis. ALERT_UNCLAIMED_POLICY=backlog parks unclaimed alerts instead of dropping them. Resolved events now DO something (FR-E4): consolidation.intakeResolved marks members / opt-in self-closes. The route accepts an optional RcaSpendReader so the app layer can wire the FR-E2 budget gate's cost-ledger actuals
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | LIVE FIX (container-kill drill, 2026-08-01): the intake could not create a ticket AT ALL — "new row violates row-level security policy for table tickets". Alertmanager is a machine caller with no user identity, so the global request-identity middleware stamped anonymous non-operator and the owner-RLS WITH CHECK refused every INSERT; every P1–P4 guard passed because they all stub the ticket gateway. The authenticated intake now runs under runWithRequestIdentity({ sub: ALERT_INTAKE_OWNER_SUB, isOperator: false }) — the A2A gateway's synthetic-machine-sub rail (ownerSubForA2aAgent), NOT the operator sentinel — and the consolidation service stamps the same sub as owner_sub. Least-privilege on purpose: a non-operator intake scopes Stage D's bundle scan to alert-born tickets instead of every tenant's. Applied AFTER the bearer + HMAC guards so an unauthenticated caller never reaches the machine identity
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Durable landing (Operations Stream): with a Pool wired, an authenticated delivery is written verbatim to oshal_alert_envelope and expanded into oshal_alert_event BEFORE anything canonicalizes, claims, or cuts a ticket, and the receiver answers 202 with the envelope id and the expanded event count. The response now states only what is DURABLE: a landing failure answers 503 so Alertmanager redelivers, and a body that is not an envelope is parked as an ingest deadletter and answered 400. Consolidation runs off the landed rows — the request drains them in-process so alert-to-ticket latency is the request itself, and a 5-second sweep claims any straggler through EnvelopeStore.withPendingEvents (SKIP LOCKED, so a sweep and a request never take the same row), stamping every event's durable claim decision. Pool-less runs keep the in-memory intake shape end to end
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Close the Alertmanager HMAC raw-body gap: the receiver now owns a bounded JSON parser whose verify hook captures the exact bytes before signature verification, while the global parser reserves only /api/alerts/alertmanager. Whitespace/key-order differences no longer depend on JSON reserialization, and a configured HMAC secret remains fail-closed.
  */
 
 /**
@@ -47,7 +48,7 @@
  * keeping the whole family self-guarded keeps the route-auth inventory truthful).
  */
 
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction, json, type RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { hmacWebhookGuard } from '@/features/security';
@@ -88,6 +89,29 @@ import {
 import { TicketTypeSchema } from '@/entities/ticket';
 
 const logger = createChildLogger({ module: 'alertmanager-routes' });
+
+/** Default receiver bound; alert batches larger than this require an explicit operator override. */
+export const DEFAULT_ALERTMANAGER_BODY_LIMIT = '100kb';
+
+/** Request shape populated by the body-parser verify hook for exact-byte HMAC verification. */
+type RawBodyRequest = Request & { rawBody?: Buffer };
+
+/**
+ * @description Builds the receiver-local JSON parser. The global parser deliberately skips only
+ * `/api/alerts/alertmanager`; this parser restores the same bounded JSON behavior and captures a
+ * defensive copy of the original bytes before parsing so HMAC verification never reserializes.
+ * @param env - Environment map used to resolve the optional ALERT_WEBHOOK_BODY_LIMIT override.
+ * @returns Express JSON middleware with exact-byte capture.
+ */
+export function createAlertmanagerJsonParser(env: NodeJS.ProcessEnv = process.env): RequestHandler {
+  const configured = String(env.ALERT_WEBHOOK_BODY_LIMIT ?? '').trim();
+  return json({
+    limit: configured || DEFAULT_ALERTMANAGER_BODY_LIMIT,
+    verify: (req, _res, body) => {
+      (req as RawBodyRequest).rawBody = Buffer.from(body);
+    },
+  });
+}
 
 /** The lane every delivery on this receiver arrives by; scopes the per-lane pipeline counters. */
 const ALERT_SOURCE = 'alertmanager';
@@ -465,11 +489,8 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
    * members + rootCandidate), or opens a new ticket.
    */
   // Defense-in-depth body integrity on top of the bearer `guard`. No-op until
-  // ALERT_WEBHOOK_HMAC_SECRET is set, so default behavior is unchanged. NOTE before
-  // enabling: this needs the RAW request bytes — global express.json() has already
-  // parsed the body here, so the module's fallback re-serializes req.body, which only
-  // byte-matches if Alertmanager's signer used identical JSON. Wire a raw-body capture
-  // (express.json({ verify }) ahead of this route) before turning the secret on.
+  // ALERT_WEBHOOK_HMAC_SECRET is set, so default behavior is unchanged. The receiver-local
+  // parser below captures the exact bytes before parsing; never verify a JSON reserialization.
   const hmacGuard = hmacWebhookGuard({
     secretEnv: 'ALERT_WEBHOOK_HMAC_SECRET',
     header: 'x-alert-signature-256',
@@ -827,7 +848,8 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
     });
   };
 
-  router.post('/alertmanager', guard, hmacGuard, asMachineIdentity, async (req: Request, res: Response) => {
+  const alertmanagerJson = createAlertmanagerJsonParser();
+  router.post('/alertmanager', guard, alertmanagerJson, hmacGuard, asMachineIdentity, async (req: Request, res: Response) => {
     if (envelopes) {
       await answerFromLanding(envelopes, req, res);
       return;

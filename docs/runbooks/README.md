@@ -90,8 +90,8 @@ OSHAL pipelines and surfaces. One file per procedure.
 - [remote-swarm-node-enrollment.md](./remote-swarm-node-enrollment.md) — enroll a newly stood-up
   remote computer as an OSHAL swarm remote node: join code, daemon install, systemd, capability
   registration, health checks, and smoke test.
-- [headscale-acl-hardening.md](./headscale-acl-hardening.md) — apply the staged deny-by-default
-  Headscale ACL (`policy.hardened.hujson`) without bricking the edge agent: tag-first ordering,
+- [headscale-acl-hardening.md](./headscale-acl-hardening.md) — apply the active deny-by-default
+  Headscale ACL (`policy.hujson`) without bricking the edge agent: tag-first ordering,
   the exact worker-reachable ports, ephemeral worker keys via
   `scripts/headscale-enroll-worker.sh`, and burned-key revocation.
 - [trivy-airgap-security-scanner.md](./trivy-airgap-security-scanner.md) — the Security Center

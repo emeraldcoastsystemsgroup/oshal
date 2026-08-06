@@ -7,9 +7,11 @@
  *                     |               | task and message API object guards.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Fail (not skip) when CI runs without MOCK_OIDC_ALLOW_HEADER — this proof sat in the e2e-green set passing-by-skipping every night (the guard-that-isn't). Local runs still skip politely.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BASE_URL host pinned to 127.0.0.1 — "localhost" resolves to ::1 where a stale wslrelay squats the port (ECONNREFUSED ::1:3456, 2026-07-23 ci-local --head run); same change as playwright.config.ts BASE_URL. Port resolution unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | In nightly evidence mode, require both route-created tasks to exist in Postgres and prove each app-role/GUC identity sees only its own row.
  */
 
 import { expect, request as apiRequest, test, type APIRequestContext } from '@playwright/test';
+import { readOwnDataDatabaseEvidence } from '../helpers/own-data-database-evidence';
 
 const HEADER_GATE_ENABLED = ['true', '1', 'yes'].includes(
   (process.env.MOCK_OIDC_ALLOW_HEADER ?? '').toLowerCase().trim(),
@@ -57,6 +59,20 @@ test('MOCK_OIDC live: user A and user B cannot read each other task or message s
     createdTaskIds.push({ api: userA, taskId: taskA.taskId });
     createdTaskIds.push({ api: userB, taskId: taskB.taskId });
 
+    const databaseA = await readOwnDataDatabaseEvidence(USER_A.sub, {
+      taskIds: [taskA.taskId, taskB.taskId],
+    });
+    const databaseB = await readOwnDataDatabaseEvidence(USER_B.sub, {
+      taskIds: [taskA.taskId, taskB.taskId],
+    });
+    if (databaseA && databaseB) {
+      expect(databaseA.role).toBe('oshal_app');
+      expect(databaseA.superuser).toBe(false);
+      expect(databaseA.bypassRls).toBe(false);
+      expect(databaseA.tasks.map((row) => row.taskId)).toEqual([taskA.taskId]);
+      expect(databaseB.tasks.map((row) => row.taskId)).toEqual([taskB.taskId]);
+    }
+
     const userAList = await listTasks(userA, USER_B.sub);
     const userBList = await listTasks(userB, USER_A.sub);
 
@@ -98,6 +114,7 @@ test('MOCK_OIDC live: user A and user B cannot read each other task or message s
         proofId: PROOF_ID,
         userA: { sub: USER_A.sub, taskId: taskA.taskId },
         userB: { sub: USER_B.sub, taskId: taskB.taskId },
+        databaseEvidence: databaseA && databaseB ? { userA: databaseA, userB: databaseB } : null,
         result: 'user A and user B cannot read each other task or message API surfaces',
       }, null, 2),
       contentType: 'application/json',

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added schedule domain schemas and types for Redis-backed self-scheduling
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added ownerSub (per-user scoping) + ListSchedulesFilter so calendar surfaces filter on their app queue and the caller's own schedules
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add the internal manifest-service-route task-data shape while retaining legacy prompt payloads. Exactly one mode is valid, so deterministic package jobs no longer need a fake prompt merely to enter the scheduler.
  */
 
 import { z } from 'zod';
@@ -23,10 +24,32 @@ export type ScheduleStatus = z.infer<typeof ScheduleStatusSchema>;
  * @description Payload attached to a schedule. Matches legacy schedule payload
  * contract where `prompt` and `targetAgent` are supplied under `taskData`.
  */
+export const MANIFEST_SERVICE_ROUTE_TASK_KIND = 'manifest-service-route' as const;
+
 export const ScheduleTaskDataSchema = z.object({
-  prompt: z.string().min(1),
+  prompt: z.string().min(1).optional(),
   targetAgent: z.string().optional(),
-}).catchall(z.unknown());
+  kind: z.string().optional(),
+  /** Stable manifest schedule key only; the privileged route/body remain in the active registry. */
+  scheduleKey: z.string().min(1).optional(),
+}).catchall(z.unknown()).superRefine((value, ctx) => {
+  const isServiceRoute = value.kind === MANIFEST_SERVICE_ROUTE_TASK_KIND;
+  if (isServiceRoute) {
+    if (!value.scheduleKey) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['scheduleKey'], message: 'service-route task data requires scheduleKey' });
+    }
+    if (value.prompt !== undefined || value.targetAgent !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'service-route task data cannot contain prompt or targetAgent' });
+    }
+    return;
+  }
+  if (!value.prompt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['prompt'], message: 'prompt task data requires prompt' });
+  }
+  if (value.scheduleKey !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['scheduleKey'], message: 'prompt task data cannot contain scheduleKey' });
+  }
+});
 
 /**
  * @description Payload attached to a schedule.
@@ -49,7 +72,7 @@ export const ScheduleRecordSchema = z.object({
   executionCount: z.number().int().nonnegative(),
   // OIDC `sub` of the user who created the schedule. Null for system/legacy
   // schedules with no session context — those remain visible to every caller.
-  ownerSub: z.string().nullable().optional(),
+  ownerSub: z.string().min(1).nullable().optional(),
   // Queue (application id) this schedule belongs to, so the cockpit calendar/queue
   // can filter schedules to the loaded apps. Derived from the ticket queue the
   // schedule's taskType maps to; null for legacy/system schedules.

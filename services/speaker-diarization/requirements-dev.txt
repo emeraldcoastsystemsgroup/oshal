@@ -3,7 +3,8 @@
 # SEQ                 | AUTHOR                                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Pinned deterministic API and unit-test tooling.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Upgraded pytest to the first audited fixed release so the development test environment does not retain PYSEC-2026-1845.
 
 -r requirements.txt
 httpx==0.28.1
-pytest==8.4.1
+pytest==9.0.3

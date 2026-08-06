@@ -1,16 +1,27 @@
 /**
- * Enrich generated OpenAPI connector specs with marketplace-ready icons.
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Enrich imported connector icons and share the reviewed favicon exception registry with the curation audit so generation and enforcement cannot disagree.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Stop treating the spec's existing icon slug as proof of its own provider match; revalidation now derives candidates independently from provider identity and declared hosts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Ignore empty normalized aliases/candidates so generic or non-Latin terms cannot collapse into one map key and assign an unrelated provider's icon.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | For imported specs, match publisher identity rather than generic API titles, documentation sites, or third-party execution hosts; use the execution host only for fallback provenance.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Reject placeholder/internal/non-DNS favicon hosts and use the explicit initials fallback when no public reviewed domain exists.
  *
- * The bulk importer intentionally creates safe, disabled connector drafts. This
- * second pass makes the catalog feel real without hand-maintaining hundreds of
- * logos: verified Simple Icons slugs when available, provider favicons when not,
- * and an initials fallback when neither can be resolved.
+ * The bulk importer intentionally creates safe, disabled connector drafts. This second pass makes
+ * them marketplace-ready with verified Simple Icons slugs, reviewed favicon fallbacks, or an
+ * initials fallback when neither can be resolved. reviewed-favicon-fallbacks.json is the shared,
+ * audited exception source for providers whose canonical public domain is not in their API spec.
+ *
+ * @module scripts/connectors/enrich-openapi-icons
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import type { ConnectorSpec } from '../../src/app/connectors/runtime/spec';
+import reviewedFaviconFallbacks from './reviewed-favicon-fallbacks.json';
 
 const SIMPLE_ICONS_CATALOG_URL = 'https://cdn.jsdelivr.net/npm/simple-icons@latest/_data/simple-icons.json';
 
@@ -94,9 +105,9 @@ const CURATED_ICON_BY_TERM: Record<string, string> = {
   '1password': '1password',
   activemq: 'apacheactivemq',
   adobesign: 'adobeacrobatreader',
-  amazonaws: 'amazonaws',
+  amazonaws: 'amazon',
   apollo: 'apollographql',
-  aws: 'amazonaws',
+  aws: 'amazon',
   azure: 'microsoftazure',
   bitbucket: 'bitbucket',
   box: 'box',
@@ -106,7 +117,9 @@ const CURATED_ICON_BY_TERM: Record<string, string> = {
   facebook: 'facebook',
   github: 'github',
   gitlab: 'gitlab',
+  google: 'google',
   googleapis: 'google',
+  hubapi: 'hubspot',
   kubernetes: 'kubernetes',
   linkedin: 'linkedin',
   microsoftgraph: 'microsoft',
@@ -130,25 +143,22 @@ const CURATED_ICON_BY_TERM: Record<string, string> = {
   youtube: 'youtube',
 };
 
-const CURATED_FAVICON_DOMAIN_BY_TERM: Record<string, string> = {
-  activecampaign: 'activecampaign.com',
-  chargebee: 'chargebee.com',
-  docusign: 'docusign.com',
-  freshdesk: 'freshdesk.com',
-  gorgias: 'gorgias.com',
-  healthchecks: 'healthchecks.io',
-  liveagent: 'liveagent.com',
-  loggly: 'loggly.com',
-  logzio: 'logz.io',
-  nocodb: 'nocodb.com',
-  pipedrive: 'pipedrive.com',
-  plivo: 'plivo.com',
-  qdrant: 'qdrant.tech',
-  reamaze: 'reamaze.com',
-  servicenow: 'servicenow.com',
-  teamwork: 'teamwork.com',
-  workable: 'workable.com',
-};
+const REVIEWED_FAVICON_DOMAIN_BY_PROVIDER = reviewedFaviconDomainMap();
+
+function reviewedFaviconDomainMap(): Record<string, string> {
+  if (reviewedFaviconFallbacks.reviewedBy !== 'maintainer@emeraldcoastsystemsgroup.com') {
+    throw new Error('reviewed favicon registry must identify the project maintainer');
+  }
+  const result: Record<string, string> = {};
+  for (const entry of reviewedFaviconFallbacks.entries) {
+    const validDomain = isPublicHostname(entry.domain);
+    if (!entry.provider || !validDomain || !entry.reason || result[entry.provider]) {
+      throw new Error(`invalid or duplicate reviewed favicon entry for '${entry.provider || '(missing)'}'`);
+    }
+    result[entry.provider] = entry.domain;
+  }
+  return result;
+}
 
 void main().catch((error) => {
   console.error(`ERROR enrich-openapi-icons crashed: ${(error as Error).message}`);
@@ -260,8 +270,10 @@ async function loadSimpleIcons(catalogUrl: string): Promise<SimpleIconIndex> {
   for (const record of records) {
     bySlug.set(record.slug, record);
     for (const term of record.terms) {
-      byTerm.set(simpleIconSlug(term), record);
-      byTerm.set(normalizeProviderTerm(term), record);
+      const slug = simpleIconSlug(term);
+      const normalized = normalizeProviderTerm(term);
+      if (slug) byTerm.set(slug, record);
+      if (normalized) byTerm.set(normalized, record);
     }
   }
   return { bySlug, byTerm };
@@ -271,25 +283,29 @@ function resolveSimpleIcon(spec: ConnectorSpec, index: SimpleIconIndex): SimpleI
   const candidates = iconCandidates(spec);
   for (const candidate of candidates) {
     const normalized = normalizeProviderTerm(candidate);
-    const curated = CURATED_ICON_BY_TERM[normalized];
-    if (curated && index.bySlug.has(curated)) return index.bySlug.get(curated) ?? null;
     const slug = simpleIconSlug(candidate);
+    const curated = CURATED_ICON_BY_TERM[slug] ?? CURATED_ICON_BY_TERM[normalized];
+    if (curated && index.bySlug.has(curated)) return index.bySlug.get(curated) ?? null;
     if (index.bySlug.has(slug)) return index.bySlug.get(slug) ?? null;
     if (index.byTerm.has(slug)) return index.byTerm.get(slug) ?? null;
-    if (index.byTerm.has(normalized)) return index.byTerm.get(normalized) ?? null;
+    if (normalized && index.byTerm.has(normalized)) return index.byTerm.get(normalized) ?? null;
   }
   return null;
 }
 
 function iconCandidates(spec: ConnectorSpec): string[] {
   const values: string[] = [];
-  push(values, spec.metadata?.icon);
-  push(values, spec.displayName);
   push(values, spec.provider);
-  push(values, domainBrand(spec.metadata?.website));
-  push(values, domainBrand(spec.baseUrl));
   push(values, apiGuruProvider(spec.metadata?.sourceUrl));
-  for (const term of providerTerms(spec.provider)) push(values, term);
+  const terms = providerTerms(spec.provider);
+  if (spec.metadata?.sourceCatalog) {
+    for (const term of terms.slice(0, 2)) push(values, term);
+  } else {
+    for (const term of terms) push(values, term);
+    push(values, spec.displayName);
+    push(values, domainBrand(spec.metadata?.website));
+    push(values, domainBrand(spec.baseUrl));
+  }
   return uniqueStrings(values);
 }
 
@@ -309,18 +325,20 @@ function providerTerms(provider: string): string[] {
 }
 
 function domainForFavicon(spec: ConnectorSpec): string | null {
+  const reviewed = reviewedFaviconDomain(spec);
+  if (reviewed) return reviewed;
+  if (spec.metadata?.sourceCatalog) {
+    return normalizedHost(spec.baseUrl)
+      || normalizedHost(spec.metadata?.website)
+      || normalizedHost(spec.metadata?.sourceUrl);
+  }
   return normalizedHost(spec.metadata?.website)
     || normalizedHost(spec.baseUrl)
-    || normalizedHost(spec.metadata?.sourceUrl)
-    || curatedFaviconDomain(spec);
+    || normalizedHost(spec.metadata?.sourceUrl);
 }
 
-function curatedFaviconDomain(spec: ConnectorSpec): string | null {
-  for (const candidate of iconCandidates(spec)) {
-    const domain = CURATED_FAVICON_DOMAIN_BY_TERM[normalizeProviderTerm(candidate)];
-    if (domain) return domain;
-  }
-  return null;
+function reviewedFaviconDomain(spec: ConnectorSpec): string | null {
+  return REVIEWED_FAVICON_DOMAIN_BY_PROVIDER[spec.provider] ?? null;
 }
 
 function domainBrand(source: string | undefined): string | null {
@@ -342,10 +360,22 @@ function normalizedHost(source: string | undefined): string | null {
     const stripped = host
       .replace(/^(www\d?|api|apis|developer|developers|docs|support|portal|gateway|app|apps|cloud)\./, '')
       .replace(/^api-/, '');
-    return stripped || host;
+    if (isPublicHostname(stripped)) return stripped;
+    return isPublicHostname(host) ? host : null;
   } catch {
     return null;
   }
+}
+
+function isPublicHostname(value: string): boolean {
+  const host = String(value || '').toLowerCase();
+  const labels = host.split('.');
+  if (labels.length < 2 || ['example', 'invalid', 'local', 'localhost', 'test'].includes(labels.at(-1) ?? '')) {
+    return false;
+  }
+  return labels.every((label) => (
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)
+  ));
 }
 
 function apiGuruProvider(source: string | undefined): string | null {

@@ -4,8 +4,10 @@
  * Replaces the retired external Memgraph graph endpoint. Every endpoint resolves to the
  * CALLER'S OWN person graph via the connector — isolation is enforced by `callerSub`, so a request
  * can only ever read/write the requester's graph. This is what the incident/capture personas
- * (rca-specialist, capture-coordinator) call in place of that retired external graph API. Mount
- * under `requiresAuth`.
+ * (rca-specialist, capture-coordinator) call in place of that retired external graph API. The
+ * outer mount accepts user auth, a durable signed workload delegation, or (during migration) the
+ * legacy fleet credential. SEC-01 rejects the latter on every read before any forwarded subject is
+ * resolved; enforce mode removes it from writes as well.
  *
  * THE TENANT TIER IS DELIBERATELY NOT REACHABLE FROM HTTP. `getTenantGraph` exists on the
  * connector and is used IN-PROCESS only (the swarm operational graph, the world tier). No route
@@ -23,12 +25,18 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081: bots can act for their ticket's user — callerSub honors the trusted-service headers (X-Service-Secret + X-OSHAL-User-Sub, same pattern as /api/trading and /api/vids) so a bot-node curl reaches the RIGHT person graph under real OIDC, not just under MOCK_OIDC. Mount switched to serviceSecretOr(requiresAuth) in server.ts.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Graceful-degradation sweep: RUNTIME engine failure now degrades. callerGraph awaits getPersonGraph inside a try/catch — when ARANGO_URL is SET but the engine is unreachable (connection refused / provisioning listDatabases rejects), the rejection was previously unhandled inside the async route (→ 500 / hung request). It now logs at ERROR and returns a clear 503 graph_engine_unreachable, matching the ARANGO_URL-unset 503 shape. Query-time failures after the handle resolves keep their per-route 502.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: POST /query now goes through GraphHandle.readQuery, which asks the ENGINE to plan the query and refuses a data-modifying one (400 graph_read_only). The endpoint documented itself as "run a raw AQL read" while calling rawQuery, so a REMOVE/INSERT went straight through — caller-scoped, so never a cross-tenant hole, but a contract the code contradicted, and a bot that mis-writes its own topology poisons the next investigation. Also documented WHY no route may take a tenant parameter (the tenant tier is in-process only and there is no upstream membership check), pinned by graph-route-tenant-boundary.spec.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-01 containment: refuse fleet-wide service-secret identity on every graph read operation, keep OIDC/PAT authoritative under mixed headers, and retain legacy machine access only for the existing write operations pending durable delegation tokens.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Derive delegated graph identity only from a verified, durable, route-bound SEC-01 claim; never from the legacy forwarded subject header.
  *
  * @module graph-routes
  */
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import {
+  getVerifiedWorkloadDelegation,
+  rejectLegacyServiceIdentityForUserRead,
+} from '@/features/security';
 import {
   createGraphConnector,
   GRAPH_READ_ONLY_CODE,
@@ -39,19 +47,20 @@ import {
 
 const logger = createChildLogger({ module: 'graph-routes' });
 
-/** Acting user: a service-secret caller's forwarded sub first (bot-node acting for its
- *  ticket's owner), else the signed-in OIDC sub. */
+/** Acting user: independently authenticated browser/PAT first, then verified durable delegation,
+ * else the temporarily retained service-secret subject used only by graph writes before enforce. */
 function callerSub(req: Request): string | null {
-  const trusted = getTrustedServiceUserSub(req);
-  if (trusted) return trusted;
   const u = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user;
-  return u?.sub ? String(u.sub) : null;
+  if (u?.sub) return String(u.sub);
+  const delegated = getVerifiedWorkloadDelegation(req);
+  if (delegated) return delegated.sub;
+  return getTrustedServiceUserSub(req);
 }
 
 /**
- * @description Builds the caller-scoped graph router (mount at /api/graph, requiresAuth). The graph
- * connector is created once from the environment; when the engine isn't configured every route
- * returns 503 rather than crashing.
+ * @description Builds the caller-scoped graph router. OIDC/PAT reads are authoritative; legacy
+ * machine reads are refused while graph writes retain temporary compatibility. The graph connector
+ * is created once; when the engine is not configured every admitted route returns 503.
  * @returns an Express Router for the graph API
  */
 export function createGraphRoutes(): Router {
@@ -80,7 +89,7 @@ export function createGraphRoutes(): Router {
    * Reads only: `readQuery` has the engine plan the query first and refuses a data-modifying one
    * with 400 graph_read_only. Writes go through POST /nodes and POST /edges.
    */
-  router.post('/query', async (req: Request, res: Response) => {
+  router.post('/query', rejectLegacyServiceIdentityForUserRead('/api/graph/query'), async (req: Request, res: Response) => {
     const g = await callerGraph(req, res); if (!g) return;
     const { aql, bindVars } = req.body as { aql?: string; bindVars?: Record<string, unknown> };
     if (!aql) { res.status(400).json({ error: 'aql required' }); return; }
@@ -98,7 +107,7 @@ export function createGraphRoutes(): Router {
   });
 
   /** GET /neighbors?id=&depth= — nodes within `depth` hops of a node (blast radius). */
-  router.get('/neighbors', async (req: Request, res: Response) => {
+  router.get('/neighbors', rejectLegacyServiceIdentityForUserRead('/api/graph/neighbors'), async (req: Request, res: Response) => {
     const g = await callerGraph(req, res); if (!g) return;
     const id = String(req.query.id || '');
     if (!id) { res.status(400).json({ error: 'id required' }); return; }
@@ -108,7 +117,7 @@ export function createGraphRoutes(): Router {
   });
 
   /** GET /path?from=&to= — shortest path of nodes between two ids. */
-  router.get('/path', async (req: Request, res: Response) => {
+  router.get('/path', rejectLegacyServiceIdentityForUserRead('/api/graph/path'), async (req: Request, res: Response) => {
     const g = await callerGraph(req, res); if (!g) return;
     const from = String(req.query.from || ''); const to = String(req.query.to || '');
     if (!from || !to) { res.status(400).json({ error: 'from and to required' }); return; }

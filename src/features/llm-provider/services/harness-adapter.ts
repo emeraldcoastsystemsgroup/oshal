@@ -7,9 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: HarnessTask.creds carries the caller's short-lived per-user access tokens (OSHAL_CRED_*) written into the workspace as .oshal-cred-<provider> files, so shelled tools use a provided token instead of decrypting oshal_connections with SESSION_SECRET.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | HarnessFactoryConfig gains container + allowedTools + scrubEnvKeys so resolveHarnessForAgent can hand a CONTROLLER-INLINE bot a least-privilege harness (BACKLOG "Harden inline controller bots"): no shell tool, and the platform-plane credentials the api container holds deleted from the child env. All three are optional and absent for bot-node bots, so their harnesses are built byte-identically.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added 'a2a' to the HarnessType union (outbound A2A gateway, BACKLOG Plan F item 3) — an external A2A agent as a dispatch target; the typed HARNESS_FACTORIES record forces its factory entry. HarnessFactoryConfig gains botName + a2aEndpointEnv so the a2a factory can derive the per-bot credential env (A2A_OUTBOUND_TOKEN_<BOTKEY>) and the registry-declared endpoint env without hardcoding either.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credentials from HarnessTask and fail closed before unattended Cline, Codex, Claude Code, or Gemini CLI execution until an audited OSHAL brokered sandbox exists.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Move unattended-provider denial into a dependency-free policy module, preserving this compatibility export without pulling the harness runtime into controller preflight callers.
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { assertAuditedAutonomousHarness } from './unattended-provider-policy';
+export { assertAuditedAutonomousHarness } from './unattended-provider-policy';
 import {
   LLMService,
   type SendRequestOptions,
@@ -55,12 +59,6 @@ export interface HarnessTask {
   /** Authenticated caller's OIDC sub. Written into the task workspace as
    *  `.oshal-user-sub` so shelled-out tools (oshal-gmail.js) act ONLY for this user. */
   userSub?: string;
-
-  /** Token broker: the caller's short-lived per-user access tokens as an env-key map
-   *  (e.g. { OSHAL_CRED_GOOGLE, OSHAL_CRED_TWITTER }). Written into the task workspace as
-   *  `.oshal-cred-<provider>` files so shelled tools use a provided token instead of
-   *  decrypting oshal_connections with SESSION_SECRET. See connector-token-broker.ts. */
-  creds?: Record<string, string>;
 
   /**
    * Provider / model hint forwarded verbatim to the harness.
@@ -166,6 +164,7 @@ export class HarnessLLMBridge extends LLMService {
    * delegates to the wrapped adapter, and maps the result back to LLMResponse.
    */
   async sendRequest(options: SendRequestOptions): Promise<LLMResponse> {
+    assertAuditedAutonomousHarness(this.adapter.harnessType);
     this.requestCount++;
 
     // Extract the prompt from the last user message
@@ -190,7 +189,6 @@ export class HarnessLLMBridge extends LLMService {
       taskId: options.taskId,
       agentId: options.agentId,
       userSub: options.userSub,
-      creds: options.creds,
       model: options.model,
       interactionMode: options.interactionMode,
       executionScopeId: options.executionScopeId,

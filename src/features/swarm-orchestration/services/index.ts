@@ -25,6 +25,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Exported DeadLetterService (+ types, readQmMaxAttempts) — persisted queue DLQ / poison-ticket policy (migration 081)
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Exported provider ticket materialization through the feature boundary
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
  */
 
 export {
@@ -120,8 +121,21 @@ export {
   buildHandoverLayers,
   buildSwarmAwarenessLayer,
   buildSwarmMemoryLayer,
+  buildSwarmMemoryLayers,
   buildFallbackProfile,
 } from './llm-execution-handler';
+export {
+  assembleContainedPrompt,
+  buildAuthorityRebind,
+  containPersonaLayers,
+  resolvePromptAuthorityBinding,
+  wrapUntrustedPromptContent,
+  type PromptAuthorityBinding,
+  type PromptAuthorityInput,
+  type PromptAuthorizationResolver,
+  type PromptAuthorizationSnapshot,
+  type TrustedPromptConfiguration,
+} from './prompt-containment';
 export {
   SubtaskLifecycleService,
   type TrackedSubtask,

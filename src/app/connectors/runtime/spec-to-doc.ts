@@ -5,6 +5,13 @@
  * action safety, pagination, and webhook events are derived straight from its
  * connector.yaml, so docs can't drift from the spec.
  *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Document source-catalog category evidence separately from operation tags.
+ * -----------------------------------------------------------------------------
+ *
  * @module connectors/runtime/spec-to-doc
  */
 
@@ -50,6 +57,7 @@ export function specToMarkdown(spec: ConnectorSpec): string {
   if (spec.metadata?.tags?.length) lines.push(`| **Tags** | ${spec.metadata.tags.map((tag) => `\`${tag}\``).join(', ')} |`);
   if (spec.metadata?.icon) lines.push(`| **Icon** | ${tableCell(spec.metadata.iconTitle || spec.metadata.icon)}${spec.metadata.iconVerified ? ' (verified)' : ''} |`);
   if (spec.metadata?.sourceCatalog) lines.push(`| **Source catalog** | ${tableCell(spec.metadata.sourceCatalog)}${spec.metadata.sourceUrl ? ` (${spec.metadata.sourceUrl})` : ''} |`);
+  if (spec.metadata?.sourceCategories?.length) lines.push(`| **Source categories** | ${spec.metadata.sourceCategories.map((category) => `\`${category}\``).join(', ')} |`);
   if (spec.rateLimit) lines.push(`| **Rate limit** | burst ${spec.rateLimit.burst ?? 0}, ${spec.rateLimit.perSecond ?? 0}/s |`);
   if (spec.retry) lines.push(`| **Retry** | up to ${spec.retry.maxRetries ?? 3}, ${spec.retry.honorRetryAfter === false ? 'ignores' : 'honors'} Retry-After |`);
   if (spec.pagination) lines.push(`| **Pagination** | ${spec.pagination.strategy}${spec.pagination.param ? ` (\`${spec.pagination.param}\`)` : ''} |`);

@@ -28,8 +28,14 @@ description: >-
   file caps), commits small, pushes to main, and reports with verification
   evidence. Also runs the nightly docs-quality check and maintains a codebase
   index graph. Recovery/redeploy stays with the ADR-077 host sidecar.
-version: 1.0.0
+version: 1.0.1
 status: active
+
+# ADR-118: privileged platform development is an explicit deny/admin collapse. The existing
+# superadmin dispatch check remains the inner authority and cannot be widened by this default.
+access:
+  supported: [deny, admin]
+  defaultTier: admin
 
 ticketType: oshal-dev
 

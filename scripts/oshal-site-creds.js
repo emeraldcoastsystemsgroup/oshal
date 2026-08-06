@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Per-site ATS account credentials for the apply-operator. Workday/Lever/iCIMS need an ACCOUNT per employer tenant — the reason WORKER_BRIEF parks them — and with `oshal-gmail.js verify` able to read the activation link, the only remaining gate was somewhere safe to keep the password. Stores an AES-256-GCM envelope (never plaintext) in the FORCE-RLS'd ats_site_credentials table (086), scoped to OSHAL_USER_SUB exactly like oshal-gmail.js resolves its mailbox. `gen` mints a strong password that satisfies the usual ATS rules so the operator never reuses one.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *
  * The apply runner shells out to this the same way it shells out to getcode.sh:
  *
@@ -18,16 +19,13 @@
  */
 'use strict';
 const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 /** The codex sandbox may not forward OSHAL_USER_SUB to shelled commands, so the wrapper also
  *  drops it as a cwd-relative file. Read whichever is present (same contract as oshal-gmail.js). */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }

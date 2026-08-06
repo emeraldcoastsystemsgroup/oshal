@@ -45,18 +45,22 @@
  *   node scripts/oshal-uber-rides.js geocode "<address>"              # address  -> {lat,lon,label}
  *   node scripts/oshal-uber-rides.js reverse <lat> <lon>              # a dropped pin -> an address
  *   node scripts/oshal-uber-rides.js accounts                         # is a Rides config connected?
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Add an import-safe request-scoped operation helper so
+ *   controller routes pass credentials as function arguments. Ambient file/env/DB resolution is
+ *   retained only for the guarded standalone CLI entrypoint.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Read Uber Rides connector configuration through the shared v2/k2/legacy connector-token codec.
  */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken } = require('./lib/connector-token-crypto');
 
 // ── Identity ────────────────────────────────────────────────────────────────
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 // ── Credential resolution: brokered first, then DB ──────────────────────────
@@ -67,28 +71,19 @@ function resolveBrokeredCred() {
   } catch { /* no file — try env */ }
   return process.env.OSHAL_CRED_UBER_RIDES || undefined;
 }
-function secretKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
-}
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
 async function credFromDb(userSub) {
   if (!process.env.DATABASE_URL && !process.env.PGHOST) return undefined;
   const pool = new Pool(process.env.DATABASE_URL ? { connectionString: process.env.DATABASE_URL } : undefined);
   try {
     const r = await pool.query(
-      `SELECT access_token FROM oshal_connections
+      `SELECT user_sub, access_token FROM oshal_connections
        WHERE provider = 'uber-rides' AND COALESCE(status,'') <> 'revoked'
          AND (user_sub = $1 OR tenant_id IS NOT NULL)
        ORDER BY is_default DESC, updated_at DESC LIMIT 1`,
       [userSub || ''],
     );
     if (!r.rows[0]) return undefined;
-    return decrypt(r.rows[0].access_token);
+    return decryptToken(pool, r.rows[0].user_sub, r.rows[0].access_token);
   } finally {
     await pool.end().catch(() => {});
   }
@@ -97,15 +92,49 @@ async function loadCred() {
   let raw = resolveBrokeredCred();
   if (!raw) raw = await credFromDb(resolveUserSub());
   if (!raw) return null;
-  let parsed;
-  try {
-    const s = String(raw).trim();
-    parsed = s.startsWith('{') ? JSON.parse(s) : { clientId: s.slice(0, 64) };
-  } catch { parsed = { clientId: String(raw).slice(0, 64) }; }
-  return {
-    clientId: String(parsed.clientId || parsed.client_id || '').trim(),
-    baseUrl: String(parsed.baseUrl || 'https://m.uber.com').replace(/\/$/, ''),
-  };
+  return parseLegacyCredential(raw);
+}
+
+/** Parse only the explicit credential argument supplied by a library caller. */
+function parseCredentialArgument(raw) { return parseCredential(raw, false); }
+
+/** Preserve valid custom HTTP(S) targets for standalone CLI development and compatibility. */
+function parseLegacyCredential(raw) { return parseCredential(raw, true); }
+
+function parseCredential(raw, allowCustomBaseUrl) {
+  let candidate = raw;
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (!text || text.length > 4096) return null;
+    if (text.startsWith('{')) {
+      try { candidate = JSON.parse(text); } catch { return null; }
+    } else {
+      candidate = { clientId: text };
+    }
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  const clientId = String(candidate.clientId || candidate.client_id || '').trim();
+  if (clientId.length > 512 || /[\u0000-\u001f\u007f]/u.test(clientId)) return null;
+  const rawBaseUrl = String(candidate.baseUrl || 'https://m.uber.com').trim().replace(/\/$/, '');
+  let parsedBase;
+  try { parsedBase = new URL(rawBaseUrl); } catch { return null; }
+  const officialBase = rawBaseUrl === 'https://m.uber.com'
+    && parsedBase.protocol === 'https:'
+    && parsedBase.hostname.toLowerCase() === 'm.uber.com'
+    && !parsedBase.port
+    && !parsedBase.username
+    && !parsedBase.password
+    && (parsedBase.pathname === '/' || parsedBase.pathname === '')
+    && !parsedBase.search
+    && !parsedBase.hash;
+  const validLegacyBase = allowCustomBaseUrl
+    && (parsedBase.protocol === 'https:' || parsedBase.protocol === 'http:')
+    && !parsedBase.username
+    && !parsedBase.password
+    && !parsedBase.search
+    && !parsedBase.hash;
+  if (!officialBase && !validLegacyBase) return null;
+  return { clientId, baseUrl: rawBaseUrl };
 }
 function baseUrlOf(cred) { return (cred && cred.baseUrl) || 'https://m.uber.com'; }
 
@@ -355,28 +384,45 @@ async function buildRideLinks(cred, pickup, dropoff) {
 function out(obj) { process.stdout.write(JSON.stringify(obj)); }
 function die(msg, code = 2) { process.stdout.write(JSON.stringify({ error: msg })); process.exit(code); }
 
-async function main() {
-  const [cmd, ...args] = process.argv.slice(2);
-  let cred = null;
-  try { cred = await loadCred(); } catch { cred = null; }
+function operationUsage(message) {
+  const error = new Error(message);
+  error.operationUsageError = true;
+  return error;
+}
 
+/** Bound route-controlled values before geocoding or constructing third-party links. */
+function operationArguments(rawArgs) {
+  if (!Array.isArray(rawArgs) || rawArgs.length > 8) throw operationUsage('Uber Rides operation arguments are invalid');
+  return rawArgs.map((value) => {
+    if (typeof value !== 'string' || value.length > 1024 || /[\u0000-\u001f\u007f]/u.test(value)) {
+      throw operationUsage('Uber Rides operation arguments are invalid');
+    }
+    return value;
+  });
+}
+
+/** Execute a deterministic operation with an already-parsed, request-local credential. */
+async function executeUberRidesCommand(cred, rawArgs, options = {}) {
+  const [cmd, ...args] = operationArguments(rawArgs);
+  const estimateImpl = options.estimateRides || estimateRides;
+  const geocodeImpl = options.geocode || geocode;
+  const reverseImpl = options.reverseGeocode || reverseGeocode;
+  const linksImpl = options.buildRideLinks || buildRideLinks;
   switch (cmd) {
     case 'accounts':
-      out({ connected: !!cred, provider: 'uber-rides', client: !!(cred && cred.clientId) });
-      return;
+      return { connected: !!cred, provider: 'uber-rides', client: !!(cred && cred.clientId) };
     case undefined:
     case 'status':
-      out({
+      return {
         configured: !!cred, service: 'uber-rides', baseUrl: baseUrlOf(cred),
         ordering: 'deep-link-handoff', pricing: 'estimate',
         note: 'Requesting a ride on someone else\'s behalf needs Uber for Business; this path is a universal deep link the rider confirms + pays in their own Uber app.',
-      });
-      return;
+      };
     case 'estimate': {
       const [pickup, dropoff] = args;
-      if (!dropoff) return die('usage: estimate "<pickup>" "<dropoff>"');
-      const e = await estimateRides(pickup || 'my location', dropoff);
-      out({
+      if (!dropoff) throw operationUsage('usage: estimate "<pickup>" "<dropoff>"');
+      const e = await estimateImpl(pickup || 'my location', dropoff);
+      return {
         source: 'estimate', pickup: pickup || 'my location', dropoff,
         options: e.options,
         // The map surface draws its pins from these — no second geocode round-trip from the browser.
@@ -385,29 +431,34 @@ async function main() {
         note: e.basis === 'geocoded'
           ? `Fares are modelled from a measured ${e.straightLineKm} km straight line × ${e.roadFactor} road factor. Uber quotes the real price at confirm time.`
           : 'One of these addresses did not resolve to a location, so no fare is shown. Add a city or a street number and try again.',
-      });
-      return;
+      };
     }
     case 'geocode': {
       const [address] = args;
-      if (!address) return die('usage: geocode "<address>"');
-      const hit = await geocode(address);
-      out(hit ? { source: 'nominatim', ...hit } : { source: 'nominatim', error: 'address did not resolve' });
-      return;
+      if (!address) throw operationUsage('usage: geocode "<address>"');
+      const hit = await geocodeImpl(address);
+      return hit ? { source: 'nominatim', ...hit } : { source: 'nominatim', error: 'address did not resolve' };
     }
     case 'reverse': {
       const [lat, lon] = args;
-      if (lat === undefined || lon === undefined) return die('usage: reverse <lat> <lon>');
-      const hit = await reverseGeocode(Number(lat), Number(lon));
-      out(hit ? { source: 'nominatim', ...hit } : { source: 'nominatim', error: 'no address at that point' });
-      return;
+      const latitude = Number(lat);
+      const longitude = Number(lon);
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+        || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        throw operationUsage('usage: reverse <lat> <lon>');
+      }
+      const hit = await reverseImpl(latitude, longitude);
+      return hit ? { source: 'nominatim', ...hit } : { source: 'nominatim', error: 'no address at that point' };
     }
     case 'ride':
     case 'request': {
       const [pickup, dropoff, rideType] = args;
-      if (!dropoff) return die('usage: ride "<pickup>" "<dropoff>" [rideType]');
-      const links = await buildRideLinks(cred, pickup || 'my location', dropoff);
-      out({
+      if (!dropoff) throw operationUsage('usage: ride "<pickup>" "<dropoff>" [rideType]');
+      if (rideType && !RIDE_TYPES.some((candidate) => candidate.key === rideType)) {
+        throw operationUsage('rideType is invalid');
+      }
+      const links = await linksImpl(cred, pickup || 'my location', dropoff);
+      return {
         source: 'uber',
         // rideUrl = the WEB rider (opens in any browser + shows real prices) — the right default on a
         // PC. webUrl/appUrl are also returned explicitly so the surface can choose by device.
@@ -417,17 +468,49 @@ async function main() {
         rideType: rideType || null,
         geocoded: links.geocoded,
         note: 'On a computer use the web link (opens in your browser and shows live prices). On a phone the app link jumps into the Uber app. You confirm pickup + pay in your own Uber account — this is a handoff, not a charge.',
-      });
-      return;
+      };
     }
     default:
-      die(`unknown command: ${cmd}`);
+      throw operationUsage(`unknown command: ${cmd}`);
+  }
+}
+
+/**
+ * Request-scoped Uber Rides entrypoint. A missing credential keeps the supported untracked
+ * deep-link/estimate behavior; an invalid supplied credential fails closed with no ambient lookup.
+ */
+async function executeUberRidesOperation(rawCredential, rawArgs, options = {}) {
+  let cred = null;
+  if (rawCredential !== undefined && rawCredential !== null && rawCredential !== '') {
+    cred = parseCredentialArgument(rawCredential);
+    if (!cred) throw new Error('Uber Rides operation requires a valid request-scoped credential');
+  }
+  return executeUberRidesCommand(cred, rawArgs, options);
+}
+
+async function main() {
+  let cred = null;
+  try { cred = await loadCred(); } catch { cred = null; }
+  try {
+    out(await executeUberRidesCommand(cred, process.argv.slice(2)));
+  } catch (error) {
+    if (error && error.operationUsageError === true) return die(error.message);
+    throw error;
   }
 }
 
 // Exported for the guard (tests/unit/uber-rides-estimate.spec.ts). The pure pieces — distance,
 // the fare curve, the address ladder — are testable without touching Nominatim or the DB.
-module.exports = { haversineKm, buildRideOptions, geoCandidates, ROAD_FACTOR, AVG_SPEED_KMH, RIDE_TYPES };
+module.exports = {
+  executeUberRidesOperation,
+  parseCredentialArgument,
+  haversineKm,
+  buildRideOptions,
+  geoCandidates,
+  ROAD_FACTOR,
+  AVG_SPEED_KMH,
+  RIDE_TYPES,
+};
 
 if (require.main === module) {
   main().catch((e) => { out({ source: 'estimate', options: [], error: e && e.message ? e.message : 'uber-rides CLI error' }); });

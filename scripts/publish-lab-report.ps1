@@ -17,11 +17,16 @@
   1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - generate via site-lab-report.js, deploy via deploy-oswarm-site.sh, log to %LOCALAPPDATA%\oshal\lab-report-publish.log, email ONLY on failure.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Self-locating (ADR-115 trunk cutover): $repo derives from the script's own location instead of the hardcoded archive path - pointed at the archive, the nightly deploy would have overwritten the live site with the STALE pre-launch page every weekday. Cloudflare auth stays where it always was: wrangler's own profile config, never in the repo.
   3 | maintainer@emeraldcoastsystemsgroup.com   | Wait for the api before generating, and stop emailing on a blip. This job fires at 17:20 while the 17:00 daily-recap leg is still mid-flight; on a saturated box node took 32s just to load dotenv and the first api call died on connect, so a healthy lab emailed a failure (2026-07-27, 2026-07-30). Now: a bounded health wait on 127.0.0.1 up front (the ::1 detour is the very thing that times out), and the generator itself retries transient calls. Only a failure that survives all of that is worth a human's attention.
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Resolve deploy Bash through the shared bounded Git for Windows validator, fail through the existing alert path instead of trusting a hardcoded install path or System32/WSL, and single-quote the self-located checkout safely for Bash.
 #>
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent $PSScriptRoot
 $logFile = Join-Path $env:LOCALAPPDATA 'oshal\lab-report-publish.log'
 function Log($m) { ("[{0}] {1}" -f (Get-Date -Format s), $m) | Add-Content $logFile }
+function ConvertTo-BashSingleQuoted([string]$value) {
+  # Close the single-quoted word, emit a literal apostrophe in double quotes, then reopen it.
+  return "'" + $value.Replace("'", "'`"'`"'") + "'"
+}
 function FailMail($why) {
   Log ("FAILED: " + $why)
   docker exec oshal-local-api node /app/scripts/oshal-send-alert.js "OSHAL lab report publish FAILED" ("Tonight's strategy-lab report did not publish: " + $why + " - last night's page is still live at oswarm.ai/lab/. Re-run: powershell -File scripts/publish-lab-report.ps1") 2>&1 | Out-String | ForEach-Object { Log ("email: " + $_.Trim()) }
@@ -31,12 +36,30 @@ function FailMail($why) {
 Log '--- nightly lab report publish starting ---'
 Set-Location $repo
 
+# A scheduled task's bare `bash` resolves to System32's WSL launcher on this host, while one
+# hardcoded Program Files path is brittle across Git upgrades and per-user installations. The
+# shared resolver accepts only a candidate that reports BASH_VERSION plus an MSYS/MINGW runtime
+# identity before timeout, so a renamed or redirected WSL launcher remains invalid.
+$bashResolver = Join-Path $PSScriptRoot 'lib\windows-git-bash.ps1'
+if (-not (Test-Path -LiteralPath $bashResolver -PathType Leaf)) {
+  FailMail "Git Bash resolver is missing at $bashResolver"
+}
+try { . $bashResolver }
+catch { FailMail "Git Bash resolver failed to load: $($_.Exception.Message)" }
+if ($null -eq (Get-Command Resolve-OshalGitBash -CommandType Function -ErrorAction SilentlyContinue)) {
+  FailMail 'Git Bash resolver did not define Resolve-OshalGitBash'
+}
+$bash = Resolve-OshalGitBash
+if (-not $bash) { FailMail 'no validated Git Bash was found; refusing System32/WSL fallback' }
+Log "using validated Git Bash: $bash"
+
 # 0) Wait for the api. It is normally already up - this covers the case where the box is still
 #    saturated by the 17:00 recap leg. 127.0.0.1, never localhost: a stale wslrelay squats ::1
 #    here and the happy-eyeballs detour is what fails first under load.
 $apiOk = $false
 for ($i = 0; $i -lt 12; $i++) {
-  try { if ((Invoke-WebRequest 'http://127.0.0.1:35457/api/health' -TimeoutSec 15 -UseBasicParsing).StatusCode -eq 200) { $apiOk = $true; break } } catch {}
+  try { if ((Invoke-WebRequest 'http://127.0.0.1:35457/api/health' -TimeoutSec 15 -UseBasicParsing).StatusCode -eq 200) { $apiOk = $true; break } }
+  catch { Log ("api health probe {0}/12 failed: {1}" -f ($i + 1), $_.Exception.Message) }
   Start-Sleep -Seconds 15
 }
 if (-not $apiOk) { FailMail 'the api never answered /api/health on 127.0.0.1:35457 after 3 minutes - the stack is down or wedged (bash scripts/api-bounce.sh)' }
@@ -49,9 +72,11 @@ if ($LASTEXITCODE -ne 0) { FailMail 'report generation failed (see lab-report-pu
 
 # 2) Deploy + prod-verify via the site's own gate. Repo path derived, never hardcoded.
 $repoFwd = '/' + ($repo -replace ':', '' -replace '\\', '/').ToLower().Substring(0, 1) + ($repo -replace ':', '' -replace '\\', '/').Substring(1)
-$dep = & "C:\Program Files\Git\bin\bash.exe" -lc "cd '$repoFwd' && bash scripts/deploy-oswarm-site.sh" 2>&1 | Out-String
+$repoArg = ConvertTo-BashSingleQuoted $repoFwd
+$dep = & $bash -lc "cd $repoArg && bash scripts/deploy-oswarm-site.sh" 2>&1 | Out-String
+$deployExit = $LASTEXITCODE
 $dep -split "`n" | Select-Object -Last 12 | Where-Object { $_.Trim() } | ForEach-Object { Log $_.Trim() }
-if ($LASTEXITCODE -ne 0) { FailMail 'site deploy/verify failed (see lab-report-publish.log)' }
+if ($deployExit -ne 0) { FailMail 'site deploy/verify failed (see lab-report-publish.log)' }
 
 Log '--- published + verified ---'
 exit 0

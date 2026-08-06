@@ -6,8 +6,8 @@
  * topic (default: email when the user has a Gmail-send connection, else none), holds sends
  * inside the user's quiet hours (America/Chicago), and dispatches through a registry of
  * per-user channel senders. The senders themselves are INJECTED from the app layer because
- * they wrap app-owned machinery (sendGmail + the connector token broker, the oshal-twilio
- * CLI spawn, Telegram) — the router stays FSD-clean and unit-testable with fakes.
+ * they wrap app-owned machinery (sendGmail, fixed connector operations, and Telegram)
+ * — the router stays FSD-clean and unit-testable with fakes.
  *
  * Contract mirrors notification-service.ts: every send/skip is logged, an unavailable
  * channel is a `skipped` outcome (never an error), and notify() NEVER throws into the
@@ -19,6 +19,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — NotificationRouter (pref resolution with Gmail-else-none default, America/Chicago quiet hours, injected per-user sender registry, never-throw outcomes) + the UserChannelSender/UserNotifyMessage/NotifyOutcome contracts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolveRouting now falls back to the user's DEFAULT_TOPIC ('default') row before the injected default channel: the welcome wizard writes ONE opt-in row that should govern every topic the user hasn't customized — without this, a wizard "text me" answer only ever covered the literal topic 'default' and every real producer topic silently kept the Gmail-else-none default. Topic-specific rows still win, and the fallback row's quiet hours apply when it is the one that resolved.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Document the SEC-05 fixed-operation boundary after retirement of the generic Twilio CLI carrier; routing behavior is unchanged.
  *
  * @module features/notifications/services/notification-router
  */

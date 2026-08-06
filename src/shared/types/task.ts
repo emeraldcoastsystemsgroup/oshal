@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Added optional ticketContext note so orchestrated ticket-linked chats can tell the active agent about the canonical internal ticket record
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Added paused task status so cockpit fallback task-backed tickets can honor pause lifecycle controls consistently
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Permit trusted in-process reason-only callers to supply an explicit system prompt without filesystem persona discovery.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove the generic connector-credential carrier from ProcessMessageOptions; model requests keep owner identity only.
  */
 
 import { z } from 'zod';
@@ -175,10 +176,6 @@ export const ProcessMessageOptionsSchema = z.object({
   /** Authenticated caller's OIDC sub — scopes the bot's per-user data access
    *  (e.g. which connected Gmail it may read). Threaded to the harness workspace. */
   userSub: z.string().optional(),
-  /** Token broker: caller's short-lived per-user access tokens (OSHAL_CRED_*),
-   *  written to the harness workspace as .oshal-cred-<provider> so the bot never
-   *  needs SESSION_SECRET. Resolved at dispatch by resolveBotCreds(). */
-  creds: z.record(z.string()).optional(),
   /** Trusted in-process direct-mode prompt. Route handlers must never copy this from an HTTP body. */
   systemPromptOverride: z.string().min(1).max(50000).optional(),
 });

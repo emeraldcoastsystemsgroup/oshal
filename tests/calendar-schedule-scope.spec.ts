@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Verifies calendar schedule listing filters by app queue (taskType) + caller (ownerSub) so each surface shows only its own view
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove create-or-replace ids are tenant- and exact-task-scoped while retaining stable unowned system ids.
  */
 
 import { expect, test } from '@playwright/test';
@@ -44,6 +45,73 @@ test.describe('Calendar schedule scoping', () => {
       ownerSub: 'user-A',
     });
     expect(created.ownerSub).toBe('user-A');
+  });
+
+  test('isolates create-or-replace records when tenants choose the same taskType', async () => {
+    const { service } = makeService();
+    const firstA = await service.createSchedule({
+      taskType: 'shared-report', schedule: '0 8 * * *',
+      taskData: { prompt: 'A version one' }, ownerSub: 'user-A',
+    });
+    const firstB = await service.createSchedule({
+      taskType: 'shared-report', schedule: '0 9 * * *',
+      taskData: { prompt: 'B version' }, ownerSub: 'user-B',
+    });
+    const secondA = await service.createSchedule({
+      taskType: 'shared-report', schedule: '0 10 * * *',
+      taskData: { prompt: 'A version two' }, ownerSub: 'user-A',
+    });
+
+    expect(firstA.id).not.toBe(firstB.id);
+    expect(secondA.id).toBe(firstA.id);
+    const all = await service.listSchedules({ scope: 'all' });
+    expect(all).toHaveLength(2);
+    expect(all.find((entry) => entry.ownerSub === 'user-A')?.taskData.prompt).toBe('A version two');
+    expect(all.find((entry) => entry.ownerSub === 'user-B')?.taskData.prompt).toBe('B version');
+  });
+
+  test('does not alias lossy-normalized taskTypes and preserves stable system ids', async () => {
+    const { service } = makeService();
+    const colon = await service.createSchedule({
+      taskType: 'report:daily', schedule: '0 8 * * *',
+      taskData: { prompt: 'Colon task' }, ownerSub: 'user-A',
+    });
+    const underscore = await service.createSchedule({
+      taskType: 'report_daily', schedule: '0 9 * * *',
+      taskData: { prompt: 'Underscore task' }, ownerSub: 'user-A',
+    });
+    const system = await service.createSchedule({
+      taskType: 'system-refresh', schedule: '0 * * * *',
+      taskData: { prompt: 'System task' }, ownerSub: null,
+    });
+
+    expect(colon.id).not.toBe(underscore.id);
+    expect(system.id).toBe('system-refresh');
+  });
+
+  test('replaces an exact-owner legacy record in place without permitting a takeover', async () => {
+    const { service, store } = makeService();
+    await store.saveSchedule({
+      id: 'legacy-report', taskType: 'legacy-report', cron: '0 6 * * *',
+      taskData: { prompt: 'Legacy version' }, status: 'active',
+      createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+      nextRunAt: null, lastRunAt: null, executionCount: 0, ownerSub: 'user-A',
+    });
+
+    const sameOwner = await service.createSchedule({
+      taskType: 'legacy-report', schedule: '0 7 * * *',
+      taskData: { prompt: 'Owner update' }, ownerSub: 'user-A',
+    });
+    const otherOwner = await service.createSchedule({
+      taskType: 'legacy-report', schedule: '0 8 * * *',
+      taskData: { prompt: 'Other tenant' }, ownerSub: 'user-B',
+    });
+
+    expect(sameOwner.id).toBe('legacy-report');
+    expect(otherOwner.id).not.toBe('legacy-report');
+    const all = await service.listSchedules({ scope: 'all' });
+    expect(all).toHaveLength(2);
+    expect(all.find((entry) => entry.id === 'legacy-report')?.taskData.prompt).toBe('Owner update');
   });
 
   test('filters by app queue (taskType) for the respective view', async () => {

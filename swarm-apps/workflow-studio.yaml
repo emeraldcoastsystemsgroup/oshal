@@ -28,8 +28,14 @@ description: >-
   automate — a single worker, approval gates, parallel branches, conditional logic — and it
   draws the graph live as you talk. Refine by talking; publish as a deterministic ticket-type
   queue with its own ribbon icon. Works on web and mobile.
-version: 1.0.0
+version: 1.0.1
 status: active
+
+# ADR-118: preserve the existing signed-in authoring behavior by default; operators may
+# explicitly narrow a user to viewer or deny. Workflow capabilities still authorize inside.
+access:
+  supported: [deny, viewer, editor, admin]
+  defaultTier: editor
 
 # Neutral slate/indigo skin so it reads distinct from the connector apps.
 theme: midnight

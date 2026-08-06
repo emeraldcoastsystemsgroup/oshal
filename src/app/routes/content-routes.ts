@@ -24,6 +24,9 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: runOnBot takes the pg pool and resolves the caller's google+twitter access tokens via the controller (resolveBotCreds), threading them to the comms bot (creds) so it uses provided short-lived tokens instead of needing SESSION_SECRET to decrypt oshal_connections. Pool threaded through buildSignalCards/enrichTopicCards/deepQueries/deepDraft; the cron path passes its own pool.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Ran the scheduled topic-prewarm sweep under runWithSystemIdentity — a cross-owner background sweep; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the BOOT setTimeout prewarm in runWithSystemIdentity too — the 15:30 change wrapped only the interval tick, so the +60s boot prewarm still ran identity-less (surfaced by the hardened guc warn-audit).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove Google/Twitter credential forwarding from comms-bot reasoning requests; provider operations resolve credentials only inside audited server-side handlers.
+ *
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Isolate the public-feed research child from controller/database/connector secrets with an explicit runtime environment.
  *
  * @module content-routes
  */
@@ -37,7 +40,6 @@ import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { getValidAccessToken } from './connectors-routes';
-import { resolveBotCreds } from './connector-token-broker';
 import { executeBotOrInline } from './inline-bot-execution';
 
 const logger = createChildLogger({ module: 'content-routes' });
@@ -45,6 +47,27 @@ const logger = createChildLogger({ module: 'content-routes' });
 const COMMS_BOT_AGENT_ID = 'b0000000-0000-0000-0000-000000000001';
 const botClient = new BotNodeClient(createRegistryEndpointResolver());
 const TOPICS_TTL_MS = 3 * 60 * 60 * 1000; // cache topic cards 3h
+const RESEARCH_PROCESS_ENV_KEYS = [
+  'PATH', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+] as const;
+
+/** Build the public-feed child environment without inheriting platform credentials. */
+export function buildResearchProcessEnv(
+  focus: string | null,
+  limit: number,
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of RESEARCH_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.CONTENT_LIMIT = String(limit);
+  if (focus) env.CONTENT_FOCUS = focus;
+  return env;
+}
 
 function callerSub(req: Request): string | null {
   const u = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user;
@@ -61,10 +84,8 @@ function servePage(apiDir: string, file: string): RequestHandler {
 /** Run the research CLI (public feeds) and return parsed candidates. */
 function runResearch(focus: string | null, limit = 25): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, CONTENT_LIMIT: String(limit) } as Record<string, string>;
-    if (focus) env.CONTENT_FOCUS = focus;
     const script = path.resolve(process.cwd(), 'scripts/oshal-research.js');
-    const child = spawn('node', [script], { env });
+    const child = spawn('node', [script], { env: buildResearchProcessEnv(focus, limit) });
     let out = '', err = '';
     child.stdout.on('data', (d) => (out += d.toString()));
     child.stderr.on('data', (d) => (err += d.toString()));
@@ -77,14 +98,12 @@ function runResearch(focus: string | null, limit = 25): Promise<unknown> {
   });
 }
 
-/** Dispatch a reasoning prompt to the comms bot (codex). The `pool` lets the controller
- *  resolve the caller's short-lived tokens (token broker) so the bot reads via a provided
- *  token rather than needing SESSION_SECRET; omit it (system/cron paths) to skip cred provision. */
-async function runOnBot(kind: string, sub: string, prompt: string, pool?: AppContext['pool'], ctx?: AppContext): Promise<string> {
-  const creds = pool ? await resolveBotCreds(pool, sub, ['google', 'twitter']) : undefined;
+/** Dispatch a reasoning prompt to the comms bot. The request carries exact owner identity,
+ * never connector credentials; audited provider operations resolve their own secrets. */
+async function runOnBot(kind: string, sub: string, prompt: string, ctx?: AppContext): Promise<string> {
   const request = {
     text: prompt, taskId: `content-${kind}-${sub}`, workspaceFolderId: `content-${sub}`,
-    agentId: COMMS_BOT_AGENT_ID, agenticMode: true, direct: true, userSub: sub, creds,
+    agentId: COMMS_BOT_AGENT_ID, agenticMode: true, direct: true, userSub: sub,
   };
   const result = ctx
     ? await executeBotOrInline(ctx, botClient, COMMS_BOT_AGENT_ID, request)
@@ -219,7 +238,7 @@ async function buildSignalCards(pool: AppContext['pool'], sub: string, emails: A
     '',
     JSON.stringify(emails).slice(0, 8000),
   ].join('\n');
-  const cards = extractJson(await runOnBot('signals', sub, prompt, pool));
+  const cards = extractJson(await runOnBot('signals', sub, prompt));
   return Array.isArray(cards) ? cards : [];
 }
 
@@ -257,7 +276,7 @@ async function enrichTopicCards(pool: AppContext['pool'], sub: string, research:
     JSON.stringify((research as { candidates?: unknown })?.candidates ?? research).slice(0, 12000),
   ].join('\n');
   try {
-    const cards = extractJson(await runOnBot('topics', sub, prompt, pool));
+    const cards = extractJson(await runOnBot('topics', sub, prompt));
     if (!Array.isArray(cards) || !cards.length) return null;
     return cards.map((c) => ({ ...(c as Record<string, unknown>), enriched: true }));
   } catch (err) {
@@ -377,7 +396,7 @@ async function deepQueries(pool: AppContext['pool'], sub: string, topic: string,
     `Article: ${topic}${source ? ` (${source})` : ''}`,
     `My goal/take: ${take || '(general analysis)'}`,
   ].join('\n');
-  const q = extractJson(await runOnBot('deep-queries', sub, prompt, pool));
+  const q = extractJson(await runOnBot('deep-queries', sub, prompt));
   const list = Array.isArray(q) ? q.filter((x) => typeof x === 'string' && x.trim()).slice(0, 4) : [];
   return list.length ? list : [topic];
 }
@@ -413,7 +432,7 @@ async function deepDraft(pool: AppContext['pool'], sub: string, topic: string, t
     POST_BEST_PRACTICES,
     'If the findings reveal a clear trend, state the direction and WHY. Output ONLY the post text.',
   ].filter(Boolean).join('\n');
-  return runOnBot('deep-draft', sub, prompt, pool);
+  return runOnBot('deep-draft', sub, prompt);
 }
 
 /** Build the refine prompt — revise THIS draft per one instruction, keep the voice. */
@@ -504,7 +523,7 @@ export function createContentRoutes(ctx: AppContext, apiDir: string): Router {
         '1-2 sentences, first-person, specific to the person and occasion. No hashtags, no preamble.',
         'Output ONLY the note text.',
       ].filter(Boolean).join('\n');
-      res.json({ note: await runOnBot('note', sub, prompt, ctx.pool, ctx) });
+      res.json({ note: await runOnBot('note', sub, prompt, ctx) });
     } catch (err) {
       logger.error({ err }, 'note failed');
       res.status(502).json({ error: (err as Error).message });
@@ -611,7 +630,7 @@ export function createContentRoutes(ctx: AppContext, apiDir: string): Router {
         url ? 'Place the link where it earns the click — after the hook or near the end.' : '',
         'Output ONLY the post text — no preamble, no surrounding quotes, no "Here is".',
       ].filter(Boolean).join('\n');
-      res.json({ draft: await runOnBot('draft', sub, prompt, ctx.pool, ctx) });
+      res.json({ draft: await runOnBot('draft', sub, prompt, ctx) });
     } catch (err) {
       logger.error({ err }, 'draft failed');
       res.status(502).json({ error: (err as Error).message });
@@ -649,7 +668,7 @@ export function createContentRoutes(ctx: AppContext, apiDir: string): Router {
     if (!draft || !instruction) { res.status(400).json({ error: 'draft and instruction required' }); return; }
     try {
       const prompt = buildRefinePrompt(draft, instruction, b.topic, b.take);
-      res.json({ draft: await runOnBot('refine', sub, prompt, ctx.pool, ctx) });
+      res.json({ draft: await runOnBot('refine', sub, prompt, ctx) });
     } catch (err) {
       logger.error({ err }, 'refine failed');
       res.status(502).json({ error: (err as Error).message });

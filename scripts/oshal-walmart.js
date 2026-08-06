@@ -24,14 +24,21 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Distinguish demo fallback caused by no credential from a signed
  *   provider failure, while returning only bounded credential-safe diagnostics.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export a request-scoped, credential-argument live-search helper for
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  *   deterministic provider intents; importing this module no longer runs the CLI.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Replace credential-bearing child environments with an
+ *   import-safe request-scoped operation helper. Library callers must supply the credential value
+ *   explicitly; only the guarded standalone CLI may consult the legacy file/env/DB resolution path.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Read Walmart credentials through the shared v2/k2/legacy connector-token codec while retaining crypto only for provider request signing.
  */
 'use strict';
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken } = require('./lib/connector-token-crypto');
 
 const PRODUCT = '/api-proxy/service/affil/product/v2';
 const PROVIDER_JSON_MAX_BYTES = 4 * 1024 * 1024;
@@ -45,9 +52,7 @@ const DEAL_FEEDS = {
 
 // ── Identity (mirrors oshal-smartthings.js — codex sandbox may not forward env) ──
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 // ── Credential resolution: brokered first, then DB ──────────────────────────
@@ -60,16 +65,6 @@ function resolveBrokeredCred() {
   return process.env.OSHAL_CRED_WALMART || undefined;
 }
 
-function secretKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
-}
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
-
 /** Decrypt the operator's Walmart connection from the DB (personal ∪ shared/operator). */
 async function credFromDb(userSub) {
   if (!process.env.DATABASE_URL && !process.env.PGHOST) return undefined;
@@ -78,14 +73,14 @@ async function credFromDb(userSub) {
     // Walmart is an operator/business account — resolve the caller's personal connection
     // or any shared one (is_default first). Single business connection is the norm.
     const r = await pool.query(
-      `SELECT access_token FROM oshal_connections
+      `SELECT user_sub, access_token FROM oshal_connections
        WHERE provider = 'walmart' AND COALESCE(status,'') <> 'revoked'
          AND (user_sub = $1 OR tenant_id IS NOT NULL)
        ORDER BY is_default DESC, updated_at DESC LIMIT 1`,
       [userSub || ''],
     );
     if (!r.rows[0]) return undefined;
-    return decrypt(r.rows[0].access_token);
+    return decryptToken(pool, r.rows[0].user_sub, r.rows[0].access_token);
   } finally {
     await pool.end().catch(() => {});
   }
@@ -427,55 +422,102 @@ function demoDeals() { return DEMO.filter((m) => m.msrp && m.salePrice < m.msrp)
 function out(obj) { process.stdout.write(JSON.stringify(obj)); }
 function die(msg, code = 1) { process.stdout.write(JSON.stringify({ error: msg })); process.exit(code); }
 
-async function main() {
-  const [cmd, ...args] = process.argv.slice(2);
-  let cred = null;
-  try { cred = await loadCred(); } catch { cred = null; } // DB fallback may not be reachable — demo handles it
+function operationUsage(message) {
+  const error = new Error(message);
+  error.operationUsageError = true;
+  return error;
+}
 
+/** Bound untrusted route arguments before any provider or deep-link operation consumes them. */
+function operationArguments(rawArgs) {
+  if (!Array.isArray(rawArgs) || rawArgs.length > 8) throw operationUsage('Walmart operation arguments are invalid');
+  return rawArgs.map((value) => {
+    if (typeof value !== 'string' || value.length > 4096 || /[\u0000-\u001f\u007f]/u.test(value)) {
+      throw operationUsage('Walmart operation arguments are invalid');
+    }
+    return value;
+  });
+}
+
+/**
+ * Execute one deterministic Walmart operation with an already-parsed credential.
+ * No ambient credential lookup occurs here; CLI-only resolution happens in main().
+ */
+async function executeWalmartCommand(cred, rawArgs, options = {}) {
+  const [cmd, ...args] = operationArguments(rawArgs);
   switch (cmd) {
     case 'accounts':
-      out({ connected: !!cred, provider: 'walmart' });
-      return;
+      return { connected: !!cred, provider: 'walmart' };
     case undefined:
     case 'status':
-      out({ configured: !!cred, retailer: 'walmart', baseUrl: cred ? cred.baseUrl : null, mode: cred ? 'live' : 'demo' });
-      return;
+      return { configured: !!cred, retailer: 'walmart', baseUrl: cred ? cred.baseUrl : null, mode: cred ? 'live' : 'demo' };
     case 'search': {
-      const query = args[0];
-      const limit = Number(args[1]) || 8;
-      if (!query) return die('usage: search "<query>" [limit]');
+      const query = String(args[0] || '').trim();
+      const requestedLimit = Number(args[1]) || 8;
+      const limit = Math.max(1, Math.min(12, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 8));
+      if (!SAFE_PRODUCT_QUERY.test(query)) throw operationUsage('usage: search "<query>" [limit]');
       let providerFailure;
       if (cred) {
         try {
           // Standalone CLI compatibility: retain its historical default of eight and operator test
           // base URLs. Deterministic provider intents use the stricter exported helper above.
-          out(await executeLiveSearch(cred, query, limit));
-          return;
+          return await executeLiveSearch(cred, query, limit, options);
         } catch (error) { providerFailure = error; /* preserve demo items, but diagnose honestly */ }
       }
-      out({ source: 'demo', ...demoFallback(cred, providerFailure), items: demoSearch(query, limit) });
-      return;
+      return { source: 'demo', ...demoFallback(cred, providerFailure), items: demoSearch(query, limit) };
     }
     case 'deals': {
       const feed = args[0] && DEAL_FEEDS[args[0]] ? args[0] : 'rollback';
       let providerFailure;
       if (cred) {
         try {
-          const data = await signedGet(cred, DEAL_FEEDS[feed], { soldByWmt: true });
-          out({ source: 'walmart', feed, items: (data.items || data || []).slice(0, 12).map(normalize) });
-          return;
+          const data = await signedGet(
+            cred,
+            DEAL_FEEDS[feed],
+            { soldByWmt: true },
+            options.fetchImpl || fetch,
+            options.timeoutMs,
+          );
+          return { source: 'walmart', feed, items: (data.items || data || []).slice(0, 12).map(normalize) };
         } catch (error) { providerFailure = error; }
       }
-      out({ source: 'demo', ...demoFallback(cred, providerFailure), feed, items: demoDeals() });
-      return;
+      return { source: 'demo', ...demoFallback(cred, providerFailure), feed, items: demoDeals() };
     }
     case 'cart': {
-      if (!args[0]) return die('usage: cart "ITEMID_QTY,ITEMID_QTY"');
-      out({ source: cred ? 'walmart' : 'demo', ...(cred ? {} : demoFallback(null)), checkoutUrl: cartDeepLink(cred, args[0]), note: 'Open in a browser; sign in to Walmart and check out.' });
-      return;
+      if (!args[0] || !/^[A-Za-z0-9._-]+_[1-9]\d{0,3}(?:,[A-Za-z0-9._-]+_[1-9]\d{0,3}){0,99}$/u.test(args[0])) {
+        throw operationUsage('usage: cart "ITEMID_QTY,ITEMID_QTY"');
+      }
+      return { source: cred ? 'walmart' : 'demo', ...(cred ? {} : demoFallback(null)), checkoutUrl: cartDeepLink(cred, args[0]), note: 'Open in a browser; sign in to Walmart and check out.' };
     }
     default:
-      die(`unknown command: ${cmd}`);
+      throw operationUsage(`unknown command: ${cmd}`);
+  }
+}
+
+/**
+ * Request-scoped Walmart provider entrypoint used by controller routes.
+ *
+ * The credential argument is the only credential source. An absent value intentionally selects
+ * the clearly-labelled demo path; a present-but-invalid value fails closed instead of falling back
+ * to process.env, a credential drop-file, or a database connection.
+ */
+async function executeWalmartOperation(rawCredential, rawArgs, options = {}) {
+  let cred = null;
+  if (rawCredential !== undefined && rawCredential !== null && rawCredential !== '') {
+    cred = parseCredentialArgument(rawCredential);
+    if (!cred) throw new Error('Walmart operation requires a valid request-scoped credential');
+  }
+  return executeWalmartCommand(cred, rawArgs, options);
+}
+
+async function main() {
+  let cred = null;
+  try { cred = await loadCred(); } catch { cred = null; } // DB fallback may not be reachable — demo handles it
+  try {
+    out(await executeWalmartCommand(cred, process.argv.slice(2)));
+  } catch (error) {
+    if (error && error.operationUsageError === true) return die(error.message);
+    throw error;
   }
 }
 
@@ -487,6 +529,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  executeWalmartOperation,
   parseCredentialArgument,
   searchLiveCatalog,
 };

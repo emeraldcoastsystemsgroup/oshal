@@ -21,11 +21,14 @@
 # 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045/ADR-090 closure: pass the store checkout to the kernel-skills gate so its new PHASE 3 (every store package DECLARES the kernel skills its compiled js imports) can actually run. The script autodetects the conventional sibling, but --head mode runs from a temp git-archive export with no sibling, so the path comes from the REAL repo (OSHAL_STORE_DIR overrides). Absent store = the script's loud PHASE 3 SKIPPED line, never a silent pass.
 # 15 | maintainer@emeraldcoastsystemsgroup.com   | gate_lint scans `src tests scripts`, not `src` alone. The 1000-code-line cap covers source, tests, and logic-bearing config, but eslint's max-lines rule was scoped to src/**/*.ts{,x} — so the three files actually over the cap (an 1850-code-line chat modal .mjs, a 1044-line RAG popup .mjs, a 1006-line Playwright spec) exited 0 under the old command. The rule now also covers src JS, tests/, and scripts/, and this gate looks there; timeout raised 600->900 for the wider tree.
 # 16 | maintainer@emeraldcoastsystemsgroup.com   | New `unpushed-commits` gate: scripts/check-unpushed-commits.sh fails when a local ref carries commits that exist nowhere but this disk. The worktree-strays gate (entry 10) covers linked worktrees only and skips the PRIMARY checkout by design, so the shapes that actually strand work here were invisible — a commit on the shared checkout's branch, a local branch left ahead of origin, and a detached HEAD carrying a commit (the push-by-SHA recipe's failure mode, where a stale branch pointer pushes "successfully" while the real commit stays local). Runs unconditionally next to secret-scan rather than inside the NODE_GATES_OK block: ref state is repo plumbing and stays judgeable even when the HEAD export fails, which is exactly when work is most likely to be sitting uncommitted-or-unpushed.
+# 17 | maintainer@emeraldcoastsystemsgroup.com   | Scheduled-source truth: fetch origin/main once, pin its immutable commit SHA across the node export, secret scan, image build, logs, and alerts, and label the fail-loud HEAD fallback when fetch is unavailable. Interactive --head continues to judge HEAD. The windowless VBS launcher now waits and propagates the gate's real exit code to Task Scheduler.
+# 18 | maintainer@emeraldcoastsystemsgroup.com   | Refuse ignored plaintext credential backups before source-only scanning and direct operators to the redacted key-schema exporter.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
 #   --scheduled   quiet mode for the Windows task: full output to the run log,
-#                 email alert on failure only (never on success). Implies --head.
+#                 email alert on failure only (never on success). Fetches + pins
+#                 origin/main; a fetch failure is an explicitly degraded HEAD fallback.
 #   --head        run the node gates (typecheck/unit/lint/connectors/manifests/e2e) from a clean
 #                 git-archive HEAD export instead of the working tree. In this
 #                 multi-agent repo the working tree is routinely mid-edit by
@@ -37,17 +40,17 @@
 #                 the HEAD export always npm-ci's its own node_modules)
 #
 # Contract:
-#   - typecheck/unit/lint/connectors/manifests/e2e test the WORKING TREE; secret-scan and the image
-#     gates test committed HEAD (git archive) - commit first for those to see it.
+#   - working-tree mode runs node gates from disk and committed-artifact gates from pinned HEAD;
+#     --head pins HEAD for every committed-source gate; --scheduled fetches and pins origin/main.
 #   - e2e needs port 3456 free (green-set specs hardcode it) and blanks every
 #     broker/trading credential so the mock-auth test server can never touch a
 #     live account even though src/app/server.ts loads the repo .env.
 #   - Exit: 0 = all gates green, 1 = gate failure, 2 = another run holds the lock.
 #   - Logs: %LOCALAPPDATA%\oshal\ci-local.log (summary) + ci-local-last-run.log (full).
 #
-# Register the daily task (10:00 local, windowless):
-#   schtasks /create /tn "OSHAL Local CI" /sc daily /st 10:00 /f ^
-#     /tr "wscript.exe //B //Nologo C:\Projects\open-shal-swarm-harness-agent-llm\scripts\ci-local-hidden.vbs"
+# Register the daily task (23:30 local, windowless):
+#   schtasks /create /tn "OSHAL Local CI" /sc daily /st 23:30 /f ^
+#     /tr "wscript.exe //B //Nologo C:\Projects\oshal\scripts\ci-local-hidden.vbs"
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -146,14 +149,52 @@ run_gate() {
   else log "GATE $name: FAIL ($((SECONDS - t0))s)"; FAILED_GATES+=("$name"); fi
 }
 
+# Select ONE immutable commit before any committed-source gate runs. Scheduled mode updates the
+# remote-tracking ref explicitly (a bare `git fetch origin main` may update only FETCH_HEAD), then
+# pins the resulting object ID so a later fetch cannot mix generations inside the same run.
+SOURCE_REF=HEAD
+SOURCE_SHA=''
+SOURCE_SHORT_SHA=''
+SOURCE_POSTURE='unresolved'
+resolve_source_commit() {
+  local head_sha fetched_sha
+  head_sha=$(cd "$REPO_DIR" && git rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || return 1
+  SOURCE_REF='HEAD'
+  SOURCE_SHA="$head_sha"
+  SOURCE_POSTURE='interactive-head'
+  if [ "$SCHEDULED" = "1" ]; then
+    # Unattended means no credential UI; suppress Git's diagnostic because a remote URL can carry
+    # embedded credentials. The explicit degraded posture below is the safe actionable log.
+    if (cd "$REPO_DIR" && GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=Never timeout 180 \
+      git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' >/dev/null 2>&1); then
+      fetched_sha=$(cd "$REPO_DIR" && git rev-parse --verify 'refs/remotes/origin/main^{commit}' 2>/dev/null) || true
+      if [ -n "$fetched_sha" ]; then
+        SOURCE_REF='origin/main'
+        SOURCE_SHA="$fetched_sha"
+        SOURCE_POSTURE='scheduled-origin-main'
+      else
+        SOURCE_POSTURE='DEGRADED_FETCHED_REF_UNREADABLE_HEAD_FALLBACK'
+      fi
+    else
+      SOURCE_POSTURE='DEGRADED_FETCH_FAILED_HEAD_FALLBACK'
+    fi
+    if [ "$SOURCE_REF" = 'HEAD' ]; then
+      log "source-ref: WARNING $SOURCE_POSTURE; judging local HEAD instead of origin/main"
+    fi
+  elif [ "$HEAD_MODE" != "1" ]; then
+    SOURCE_POSTURE='working-tree-with-head-artifacts'
+  fi
+  SOURCE_SHORT_SHA="${SOURCE_SHA:0:12}"
+}
+
 # GATE_SRC is where the node gates run: the working tree by default, or a clean
-# HEAD export in --head/--scheduled mode (multi-agent trees are routinely
-# mid-edit; an unattended gate judges committed code).
+# pinned commit export in --head/--scheduled mode (multi-agent trees are routinely
+# mid-edit; an unattended gate judges one immutable committed generation).
 GATE_SRC="$REPO_DIR"
 prepare_head_src() {
   GATE_SRC="$STATE_DIR/ci-src"
   rm -rf "$GATE_SRC"; mkdir -p "$GATE_SRC"
-  (cd "$REPO_DIR" && git archive HEAD | tar -x -C "$GATE_SRC") || return 1
+  (cd "$REPO_DIR" && git archive "$SOURCE_SHA" | tar -x -C "$GATE_SRC") || return 1
   (cd "$GATE_SRC" && timeout 1800 npm ci --legacy-peer-deps) || return 1
   # Pre-seed the @xenova/transformers model cache from the working repo. The memory/RAG
   # e2e specs embed via the chromadb client's DefaultEmbeddingFunction (local ONNX
@@ -226,6 +267,15 @@ gate_workflow_triggers() {
   (cd "$GATE_SRC" && timeout 60 node scripts/check-workflow-triggers.js --quiet);
 }
 
+# SECURITY POLICY GATES (2026-08-06): the exact spec set that security.yml's `policy-inventories`
+# job runs. That workflow is manual-only again — automatic hosted-runner triggers have zeroed this
+# account twice — so without this gate the runner existed but nothing ever executed it. Local, $0,
+# and blocking: run-policy-gates.mjs fails closed if a required policy spec is missing from disk,
+# which is also what catches a policy spec committed without its companions.
+gate_security_policy() {
+  (cd "$GATE_SRC" && timeout 900 node scripts/security/run-policy-gates.mjs);
+}
+
 # STRUCTURAL GUARD (ADR-115): application code must never mix into the swarm/kernel repo. ADR-085
 # carved 21 app surfaces OUT of core and nothing stopped one walking back in; the public core trunk
 # is app-free BY CONSTRUCTION, so a re-mixed app is a release-blocking defect discovered at publish
@@ -271,20 +321,26 @@ gate_lint() {
   return 0
 }
 
-# Scan committed HEAD (git-archive export), exactly like the retired checkout-based
+# Scan the run's pinned commit (git-archive export), exactly like the retired checkout-based
 # job - NOT the working tree, which holds the operator's live gitignored .env and
 # credential files. --network none: gitleaks needs no egress; a compromised
 # scanner image gets nothing to exfiltrate and nowhere to send it.
 gate_secrets() {
   local exp="$STATE_DIR/ci-scan-src" rc=0
   rm -rf "$exp"; mkdir -p "$exp"
-  (cd "$REPO_DIR" && git archive HEAD | tar -x -C "$exp") || { rm -rf "$exp"; return 1; }
+  (cd "$REPO_DIR" && git archive "$SOURCE_SHA" | tar -x -C "$exp") || { rm -rf "$exp"; return 1; }
   MSYS_NO_PATHCONV=1 timeout 900 docker run --rm --network none \
     -v "$(cygpath -m "$exp"):/scan:ro" \
     zricethezav/gitleaks:latest detect --source=/scan --no-git \
     --config=/scan/.gitleaks.toml --redact || rc=1
   rm -rf "$exp"
   return $rc
+}
+
+# The pinned source export deliberately excludes ignored runtime configuration. Check the actual
+# checkout separately so a copied live .env cannot persist forever outside the normal secret scan.
+gate_local_secret_hygiene() {
+  node "$REPO_DIR/scripts/security/check-local-secret-hygiene.mjs" "$REPO_DIR"
 }
 
 gate_e2e() {
@@ -320,10 +376,10 @@ gate_e2e() {
   return $rc
 }
 
-# Build from committed HEAD via git archive - Docker Desktop's cached-COPY-layer
+# Build from the run's pinned commit via git archive - Docker Desktop's cached-COPY-layer
 # trap ships stale code when building from the working directory. Scratch tag only.
 gate_image() {
-  (cd "$REPO_DIR" && git archive HEAD | timeout 2400 docker build -f Dockerfile.oshal -t oshal-ci:latest -)
+  (cd "$REPO_DIR" && git archive "$SOURCE_SHA" | timeout 2400 docker build -f Dockerfile.oshal -t oshal-ci:latest -)
 }
 
 # Kernel-skill contract, IMAGE half (ADR-090 D8 done-when): probe the image that would actually
@@ -418,7 +474,13 @@ prune_scoped() {
   timeout 300 docker builder prune -f --keep-storage 20GB >/dev/null 2>&1 || true
 }
 
-log "=== LOCAL CI start (scheduled=$SCHEDULED head=$HEAD_MODE skip-e2e=$SKIP_E2E skip-image=$SKIP_IMAGE) commit=$(cd "$REPO_DIR" && git rev-parse --short HEAD) ==="
+if ! resolve_source_commit; then
+  log "source-ref: FATAL unable to resolve local HEAD; no committed-source gate can run"
+  exit 1
+fi
+NODE_SOURCE='working-tree'
+[ "$HEAD_MODE" = "1" ] && NODE_SOURCE="$SOURCE_REF"
+log "=== LOCAL CI start (scheduled=$SCHEDULED head=$HEAD_MODE skip-e2e=$SKIP_E2E skip-image=$SKIP_IMAGE) node-source=$NODE_SOURCE archive-ref=$SOURCE_REF sha=$SOURCE_SHORT_SHA posture=$SOURCE_POSTURE ==="
 
 NODE_GATES_OK=1
 if [ "$HEAD_MODE" = "1" ]; then
@@ -435,14 +497,16 @@ if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate manifests gate_manifests
   run_gate kernel-skills gate_kernel_skills
   run_gate workflow-triggers gate_workflow_triggers
+  run_gate security-policy gate_security_policy
   run_gate repo-separation gate_repo_separation
   run_gate worktree-strays gate_worktree_strays
 else
-  log "GATES typecheck/unit/lint/connectors/manifests/kernel-skills/e2e: SKIPPED (HEAD export failed)"
+  log "GATES typecheck/unit/lint/connectors/manifests/kernel-skills/e2e: SKIPPED (pinned source export failed)"
   FAILED_GATES+=(node-gates-skipped)
   SKIP_E2E=1
 fi
 run_gate secret-scan gate_secrets
+run_gate local-secret-hygiene gate_local_secret_hygiene
 run_gate unpushed-commits gate_unpushed_commits
 if [ "$SKIP_E2E" != "1" ]; then run_gate e2e-green gate_e2e; fi
 if [ "$SKIP_IMAGE" != "1" ]; then
@@ -472,7 +536,7 @@ if [ "$SCHEDULED" = "1" ]; then
   if docker exec oshal-local-api true >/dev/null 2>&1; then
     MSYS_NO_PATHCONV=1 timeout 120 docker exec oshal-local-api node /app/scripts/oshal-send-alert.js \
       "OSHAL LOCAL CI FAILED" \
-      "Failed gates: ${FAILED_GATES[*]} (commit $(cd "$REPO_DIR" && git rev-parse --short HEAD)). Full log: $RUN_LOG on ${COMPUTERNAME:-this machine}." \
+      "Failed gates: ${FAILED_GATES[*]} (source $SOURCE_REF $SOURCE_SHORT_SHA; posture=$SOURCE_POSTURE). Full log: $RUN_LOG on ${COMPUTERNAME:-this machine}." \
       || log "alert: send failed"
   else
     log "alert: api container down - failure recorded in log only"

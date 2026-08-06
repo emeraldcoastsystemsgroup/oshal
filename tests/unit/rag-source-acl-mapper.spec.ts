@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Tests for the source-ACL sync mapper: native Drive/Slack/GitHub permissions -> RAG ACL metadata, and the end-to-end grant/deny decision through the real permission filter (a Drive file shared to A is readable by A, denied to B). Pure — no live credentials.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard that layering native source grants cannot normalize or replace the exact connector owner ACL.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -107,9 +108,12 @@ describe('githubRepoToSourceAcl', () => {
 
 describe('sourceAclToRagAcl — owner folding + unknown provider', () => {
   it('folds the connection owner sub so a personal-connection doc is always owner-readable', () => {
-    const md = sourceAclToRagAcl('google-drive', { permissions: [{ type: 'user', emailAddress: 'x@x.com' }] }, 'oidc|owner');
-    expect(md.owner_sub).toBe('oidc|owner');
-    expect(permissionBasisForRagMetadata(md, { userSub: 'oidc|owner' })).toBe('owner');
+    const exactOwner = ' OIDC|Owner ';
+    const md = sourceAclToRagAcl('google-drive', { permissions: [{ type: 'user', emailAddress: 'x@x.com' }] }, exactOwner);
+    expect(md.owner_sub).toBe(exactOwner);
+    expect(permissionBasisForRagMetadata(md, { userSub: exactOwner })).toBe('owner');
+    expect(permissionBasisForRagMetadata(md, { userSub: 'OIDC|Owner' })).toBeNull();
+    expect(() => sourceAclToRagAcl('google-drive', {}, '   ')).toThrow('owner subject must be nonblank');
   });
 
   it('accepts a pre-normalized ACL for an unknown provider and stays fail-closed on garbage', () => {
@@ -131,6 +135,17 @@ describe('ragAclFromConnection — native source ACL layered over the connection
     expect(permissionBasisForRagMetadata(md, { userSub: 'oidc|owner' })).toBe('owner');
     expect(permissionBasisForRagMetadata(md, caller('oidc|alice', 'alice@corp.com'))).toBe('explicit-user');
     expect(permissionBasisForRagMetadata(md, caller('oidc|eve', 'eve@evil.com'))).toBeNull();
+  });
+
+  it('keeps the byte-exact connection owner while layering native source grants', () => {
+    const exactOwner = ' Auth0|Exact-Owner ';
+    const md = ragAclFromConnection(
+      { connected_by_sub: exactOwner },
+      { provider: 'google-drive', nativePermissions: { permissions: [{ type: 'user', emailAddress: 'alice@corp.com' }] } },
+    );
+    expect(md.owner_sub).toBe(exactOwner);
+    expect(permissionBasisForRagMetadata(md, { userSub: exactOwner })).toBe('owner');
+    expect(permissionBasisForRagMetadata(md, { userSub: 'Auth0|Exact-Owner' })).toBeNull();
   });
 
   it('keeps the tenant group for a tenant-shared connection and unions the source ACL', () => {

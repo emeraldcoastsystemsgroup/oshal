@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | WS4: Added recordRegressionHandoff() — durable JSONL record written to workspace .oshal/regression-trace.jsonl when testing or review regression is triggered. Added workspaceTaskId to executeTestingWithRegression args.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | P2: Phase 5 (testing) and Phase 7 (delivery) handover writes — RALFHandoverManager now writes handover files after testing verdict and delivery completion so all 7 phases produce artifacts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Feedback-carrying build retry: dispatchExecution callback now threads the policy runner's optional retryFeedback into the mesh envelope payload so the executing bot's prompt names the previous attempt's verification miss (blind re-roll fix, docs/backlog/test-lab.md #2)
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: carry the durable TicketService authority into lifecycle memory ownership resolution.
  */
 
 import fs from 'node:fs';
@@ -45,6 +46,7 @@ import {
 import type { SwarmWritebackHandler } from './swarm-writeback-handler';
 import type { RALFHandoverManager } from './ralf-handover-manager';
 import type { DecomposedWorkUnit } from './ticket-decomposition-service';
+import type { TicketService } from '@/features/ticketing';
 
 const logger = createChildLogger({ module: 'swarm-execution-lifecycle-service' });
 
@@ -120,7 +122,14 @@ export interface SwarmExecutionLifecycleServiceDeps {
  * @description Encapsulates execution-phase retries, review/testing regressions, and final delivery bookkeeping.
  */
 export class SwarmExecutionLifecycleService {
+  private ticketService?: TicketService;
+
   constructor(private readonly deps: SwarmExecutionLifecycleServiceDeps) {}
+
+  /** @description Wires the durable ticket authority used by memory ownership resolution. */
+  setTicketService(service: TicketService): void {
+    this.ticketService = service;
+  }
 
   /**
    * @description Updates governance phase tracking when governance is enabled.
@@ -399,6 +408,7 @@ export class SwarmExecutionLifecycleService {
     await storeSwarmLearningsHelper(item, executionOutcome, {
       swarmMemoryService: this.deps.swarmMemoryService,
       workItemRepository: this.deps.workItemRepository,
+      ticketService: this.ticketService,
     });
     recordDeliveryMetricsHelper(runId, item, executionOutcome, this.deps.recordDeliveryMetrics);
 

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Track B S4: Wire BotContainerSpawnerService into status toggle route
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Track B S7: Add /config-status endpoint for operator visibility into missing required config
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | POST /:agentId/launch — spawn container for already-created agent via DynamicComposeService
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Restricted global agent inventory, validation, status, and container lifecycle operations to exact operators
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -20,6 +21,7 @@ import {
 import { AgentProfileRepository } from '@/entities/agent';
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'agent-status-routes' });
 
@@ -40,6 +42,10 @@ export function createAgentStatusRoutes(pool: Pool): Router {
   const controller = new AgentStatusController(repo, spawner);
   const agentConfigService = new AgentConfigService(pool);
   const configValidator = new StartupConfigValidator(agentConfigService);
+
+  // Agent records and containers are global platform resources. Keep the gate ahead of every
+  // repository, compose-file, and Docker operation so denied callers cannot create side effects.
+  router.use(requiresOperator);
 
   /**
    * @openapi

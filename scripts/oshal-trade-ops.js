@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 /*
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Preserve the exact acting OIDC subject in internal trading requests.
+ *
  * OSHAL Trading OPERATOR CLI — backs the registered trading_* tools (ADR-052/053).
  *
  * Lets the trading-analyst bot / Jarvis TURN THE KNOBS on the signal-justified trader
@@ -24,11 +30,12 @@
  *   trade     {symbol}                  -> deterministic decision -> place PAPER order
  */
 'use strict';
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 const PORT = process.env.PORT || '5000';
 const BASE = `http://localhost:${PORT}/api/trading`;
 const SECRET = (process.env.SWARM_SERVICE_SECRET || '').trim();
-const USER_SUB = (process.env.OSHAL_USER_SUB || '').trim();
+const USER_SUB = resolveExactUserSubject({ env: process.env, cwd: process.cwd() }) || '';
 
 function headers() {
   const h = { 'Content-Type': 'application/json' };

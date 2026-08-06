@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-115 guard: prove the repo-separation check both PASSES on this tree and goes RED on each way application code can walk back into the kernel. ADR-085 carved 21 app surfaces out of core and nothing has stopped one returning since; the public core trunk is app-free by construction, so a re-mixed app is a release defect found at publish time. Fixture checkouts (not this tree) exercise the failure paths, so the shared index is never touched.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export-shape guard: run the check from inside a .git-LESS fixture with NO --core flag — the exact ci-local --head GATE_SRC shape where the unconditional `git rev-parse --show-toplevel` (the second git dependence, missed by the 07-23 trackedFiles fix) crashed the gate on a healthy tree. Goes red if either git dependence returns.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give each disk/subprocess-heavy separation case a local 30-second ceiling. Concurrent full-suite load can exhaust Vitest's 5-second default on Windows even when the guard is healthy; a suite-local helper keeps every mutation case active without weakening unrelated unit-test budgets.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | CORE-06 timeout containment: retain a 20-second exception only for the real-repository tree walk; tiny fixture mutations return to the global unit-test budget.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -15,6 +17,7 @@ import { join, resolve } from 'path';
 
 const REPO_ROOT = resolve(__dirname, '../..');
 const GUARD = join(REPO_ROOT, 'scripts/check-repo-separation.js');
+const TREE_WALK_TIMEOUT_MS = 20_000;
 
 /** The ten kernel-resident manifests a valid fixture must contain (ADR-085 completion). */
 const KERNEL_MANIFESTS = [
@@ -104,7 +107,7 @@ describe('repo separation (ADR-115): application code never mixes into the swarm
     const { code, output } = runGuard();
     expect(output).toContain('Repo separation holds');
     expect(code).toBe(0);
-  });
+  }, TREE_WALK_TIMEOUT_MS);
 
   it('passes on a compliant kernel fixture', () => {
     withFixture(undefined, ({ code }) => expect(code).toBe(0));

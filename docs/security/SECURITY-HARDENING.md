@@ -1,16 +1,17 @@
 # Security Hardening — open-shal swarm
 
-Status as of 2026-08-01. This document tracks the security posture of the multi-user
+Status reconciled 2026-08-05. This document tracks the security posture of the multi-user
 platform: what has been hardened, the configuration required to activate it, the FIPS
 crypto posture, and the remaining backlog. It is the operator-facing companion to the
 full audit findings.
 
-**Deployment status:** the app-layer hardening below (RCE close, IDOR/object-level
+**Deployment status:** the 2026-06-22 app-layer baseline below (RCE close, IDOR/object-level
 authz, vault at-rest encryption, SSRF guard, schema-race advisory lock, fail-closed
 webhooks, helmet + rate-limit, 127.0.0.1 port binding, TLS verification) is **live on
 the running swarm as of 2026-06-22** — built into `oshal-bot:latest` and rolled across
 the api + all bots; verified by an end-to-end ticket completion with the regression
-signature (`no workspace deliverables`) at zero. The remaining open items are the
+signature (`no workspace deliverables`) at zero. Later entries explicitly marked local code still
+require promotion and live proof; they are not covered by that historical deployment claim. The remaining open items include the
 network-overlay hardening (see [hardening-backlog.md](../backlog/hardening.md) §Network
 overlay) and the operator credential rotation (see root `HUMANTODO.md` §1).
 
@@ -40,8 +41,10 @@ still hands throwaway LAB bots a lab-DB superuser — tracked in BACKLOG K5.)
 ## 1. What has been hardened (this pass)
 
 ### 1.1 Remote code execution (closed)
-`codex` CLI spawns flipped from `shell: true` to `shell: false` so an attacker-influenced
-prompt (LLM output / ticket title/body) can no longer break out into the host shell.
+Before autonomous CLI execution was disabled, `codex` CLI spawns flipped from `shell: true` to
+`shell: false` so an attacker-influenced prompt could not break out through an intermediate host
+shell. The current stronger boundary rejects unattended Cline/Claude Code/Codex/Gemini execution
+before task/workspace setup; the historical spawn hardening remains defense in depth.
 - `src/features/llm-provider/services/codex-cli-provider.ts`
 - `src/shared/services/codex-quick-call.ts`
 
@@ -121,10 +124,12 @@ Applied to:
     `assertExistingTaskOwner` (before any task creation or execution) and `assertTaskOwnerBinding`
     (ticket-workspace reuse) throw `TASK_OWNER_MISMATCH`, failing closed across the owned /
     ownerless / anonymous boundaries.
-  - **Brokered credentials cannot linger for the next occupant.** `.oshal-cred-*` /
-    `.oshal-user-sub` are written at mode `0600` under a per-workspace exclusive lease and unlinked
-    (stat-identity verified) in a `finally` — "issue → use → wipe" (ADR-040). This closes the
-    cross-user credential-exposure path that motivated ADR-060, independently of the layout.
+  - **Generic credentials never enter the workspace.** `.oshal-cred-*` files and `OSHAL_CRED_*`
+    child-environment carriers are rejected. The scoped writer permits only the non-secret
+    `.oshal-user-sub` / `.oshal-user-key` identity markers at mode `0600`, under a per-workspace
+    exclusive lease, and unlinks them with stat-identity verification in `finally`. Connector
+    credentials remain inside exact server-side operations, so there is no model/CLI credential file
+    for a later workspace occupant to recover.
 
   Isolation therefore holds at the API and database layers, and on disk by owner binding rather
   than by path partitioning. Guards: `tests/unit/bot-node-workspace-owner-binding.spec.ts`,
@@ -170,15 +175,17 @@ enforcement a documented deployment step.
 - **TLS:** outbound verification is now enforced (1.3). Require TLS 1.2+; do not disable
   certificate validation in any environment (the incident-lab override should not be promoted
   to production).
-- **Gap to fix (tracked, §4):** the at-rest key is derived as `SHA256(SESSION_SECRET)`. A raw
-  hash is not an approved key-derivation function. Move to **HKDF-SHA256** (approved) or
-  **PBKDF2-HMAC-SHA256** when the connector-token crypto is revised. ~~and remove the
-  dev-secret fallback~~ **Done 2026-07-31:** the hardcoded dev-key fallback is removed
+- **Connector KDF closed in local code:** new shared connector blobs (`k2:`) and DEK wrappers
+  (`hkdf1:`) use domain-separated **HKDF-SHA256**. Unprefixed `SHA256(SESSION_SECRET)` blobs and
+  wrappers are read-only migration compatibility; legacy wrappers compare-and-set rewrap on read.
+  **Done 2026-07-31:** the hardcoded dev-key fallback is removed
   everywhere (src + every `scripts/oshal-*.js` CLI) — a missing `SESSION_SECRET` now fails
   loud in every mode, including the envelope-crypto-OFF break-glass. Guard:
   `tests/unit/no-dev-secret-fallback.spec.ts` (behavioral + tree scan). The per-user envelope
-  encryption (`OSHAL_ENVELOPE_CRYPTO`) already uses per-user DEKs wrapped by a KEK — it is on
-  by default; source the KEK from a KMS.
+  encryption (`OSHAL_ENVELOPE_CRYPTO`) uses per-user DEKs wrapped by the versioned HKDF KEK and is
+  on by default. DEK-store errors deny by default; only the explicit logged
+  `OSHAL_ENVELOPE_DEK_FAILURE=shared-hkdf` incident break-glass writes k2. Production still needs
+  KMS/HSM-backed master-key custody plus rotation and recovery evidence.
 - **Forbidden:** do not use MD5, SHA-1, RC4, DES/3DES, or non-approved curves for any security
   purpose. Audit with a grep before each release.
 
@@ -223,15 +230,20 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
      backstop to these app-layer checks (ADR-076); only the listed no-owner-column tables
      (`agent_memories`, `chat_messages`, `knowledge_memory_documents`, `personal_graph_*`,
      `lm_*`) remain app-layer-only.
-2. **Schedules** — **CLOSED**. `schedule-controller.ts` now runs `requireOwnedSchedule()` on
-   get/update/pause/resume/delete/**trigger** (owner-or-operator, unowned/system schedules pass;
-   404 on mismatch), and `?scope=all` is operator-only. Closes read/edit-cron/delete/run-on-demand
-   of another user's job by guessing its (predictable) id.
+2. **Schedules** — **CLOSED**. `schedule-controller.ts` runs `requireOwnedSchedule()` on
+   get/update/pause/resume/delete/**trigger** (owner-or-operator; unowned records deny by default;
+   404 on mismatch), and `?scope=all` is operator-only. The legacy execute-by-id callback now uses
+   the same ownership boundary. New user-owned records use an exact-owner/exact-task digest in the
+   Redis id, so create-or-replace cannot collide across tenants or through lossy task-type
+   normalization; an existing legacy id is reused only for the same exact owner and task type.
+   Manifest-derived `app:` / `app-route:` jobs cannot be created, mutated, or synthesized through
+   the public API, while `workflow:` ticket producers require operator authority. Request logs keep
+   task metadata but no longer record prompt-bearing bodies.
 3. **SSRF** in BYO-LLM `baseUrl` — **CLOSED**. `src/shared/security/ssrf-guard.ts`
    (`assertPublicHttpUrl`) is called before the `chatComplete` and `/models` fetches in
    `byo-llm-routes.ts`; it rejects internal hostnames and any host resolving to a
    private/loopback/link-local/CGNAT/metadata address (incl. `169.254.169.254`).
-4. **Web hardening** — **CLOSED 2026-08-01.** `helmet` + the public-origin-only
+4. **Web hardening** — **LOCAL IMPLEMENTATION CLOSED; ENFORCEMENT ROLLOUT PARTIAL.** `helmet` + the public-origin-only
    `express-rate-limit` (1000/min per external IP; internal/no-XFF traffic skipped so the swarm is
    never throttled) were already wired in `server.ts`. The three named residuals:
    - **A tested CSP.** `cspFromEnv()` no longer returns `false`. The strict policy now ships by
@@ -250,9 +262,10 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
    - **`express.json({ limit })`.** The global parser is now `createGlobalJsonParser()`
      (`features/security/hardening/body-limits.ts`): an explicit, env-tunable limit
      (`OSHAL_JSON_BODY_LIMIT`, default `100kb` — the same bound express applied implicitly, now
-     stated and tested) plus the three reserved prefixes that own their own parsers
+     stated and tested) plus the four reserved prefixes that own their own parsers
      (`/api/remote-clients` screenshots, `/api/vision` base64 images, `/api/hooks` — which must keep
-     the EXACT bytes for its HMAC verifier).
+     the EXACT bytes for its HMAC verifier — and `/api/alerts/alertmanager`, whose route-local
+     bounded parser captures exact bytes for its own HMAC guard).
    - **Per-route throttles.** `expensiveOpLimiter` now mounts on `/api/jarvis` as well as
      `/api/intake` — every Jarvis turn is an LLM call and the route is reachable by any signed-in
      user. `/login` needed nothing: the credential-checking endpoint is
@@ -260,26 +273,30 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
    Guard: `tests/unit/web-hardening-csp-body.spec.ts` — asserts the PARSED directive map and which
    header carries it (not a header string), and that an oversized body 413s while a reserved prefix
    passes through unparsed.
-5. **Webhooks** — **CLOSED (fail-closed)**: `alertmanager-routes.ts` and `world-routes.ts`
+5. **Webhooks** — **PARTIAL (bearer fail-closed; HMAC rollout remains)**: `alertmanager-routes.ts` and `world-routes.ts`
    now reject all requests when `ALERT_WEBHOOK_TOKEN` / `WORLD_INGEST_TOKEN` is unset (was
    fail-open). `ALERT_DEFAULT_INTAKE=backlog`. To re-enable the receivers, set the token and
-   configure the feeder (Alertmanager / world cron) to send it. Signature verification is a
-   future nicety.
+   configure the feeder (Alertmanager / world cron) to send it. Alertmanager now has an exact-byte,
+   fail-closed HMAC guard wired after its bearer guard; set `ALERT_WEBHOOK_HMAC_SECRET` and configure
+   the sender's `x-alert-signature-256` before claiming body-integrity enforcement. World ingestion
+   remains bearer/header authenticated; query-string credentials are rejected.
 6. **At-rest** — vault encryption **CLOSED**: `vault-crypto.ts` + `sqlite-vault-store.ts` now
    AES-256-GCM-encrypt the PII content fields (entity/edge `label` + `attrs`) and store the
    natural-key resolver index as a keyed HMAC (lookup-preserving, irreversible). Key is per-user
    HKDF-SHA256(`SESSION_SECRET`, salt=ownerSub) — derived, never written to the file. Existing
    plaintext rows migrate on first open (`user_version` guard). A leaked vault DB/volume/backup is
-   now opaque without `SESSION_SECRET`. Still open: connector-token envelope crypto
-   (`OSHAL_ENVELOPE_CRYPTO`) + the connector-token FIPS KDF (token loss = reconnect, so low-risk
-   when wanted); `facts.value` numbers are left cleartext (metrics, lower PII than label/attrs).
+   now opaque without `SESSION_SECRET`. Connector-token per-user envelope crypto is ON by default;
+   versioned HKDF (`hkdf1:`/`k2:`), legacy-read migration, default-deny DEK-store handling, and the
+   explicit logged shared-HKDF break-glass are closed in local code. Still open are KMS/HSM master
+   custody, operator rotation/recovery tooling, and mixed-format live database/provider proof.
+   `facts.value` numbers are left cleartext (metrics, lower PII than label/attrs).
 7. **Secrets** — rotate the historically-committed AWS / GitLab / vendor credentials and remove
    `.env.gitlab` / `.env.bak` from disk; rotation is the only real fix for git-history exposure.
-8. **Bot safety** — flip tool approval to fail-closed for unregistered tools, remove the
-   blanket `use_mcp_tool` auto-approve on swarm dispatch, and fence external/tool-result content
-   as untrusted to blunt prompt injection.
-   **Partly addressed 2026-07-31** by the injection blast-radius audit. Corrections and status:
-   - The blanket auto-approve on swarm dispatch is **already inert, by accident**.
+8. **Bot safety** — fail closed on unregistered/unauthorized tools, keep external/tool-result
+   content untrusted, and prevent model-visible runtimes from receiving connector or platform
+   credentials. Current controls and history:
+   - **Historical control, superseded by the CLI preflight below:** the blanket auto-approve on
+     swarm dispatch was inert because
      `AgenticController` read `autoApprove.commandExecution`; every caller
      (`AgentDispatchEngine`, `ClineCLIWrapper`, the front door) sends per-tool keys such as
      `execute_command`. Nothing is auto-approved on the unattended path. That is the right
@@ -287,40 +304,50 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
      silently enable shell + file writes + MCP for prompt-injectable bots.** The decision now
      lives in `any-bot/server/controllers/tool-approval-policy.js` with that history recorded,
      pinned by `tests/unit/tool-approval-policy.spec.ts` (behaviour unchanged).
-   - **Still open:** unregistered *non-exec* tools graceful-allow unless
-     `OSHAL_TOOL_AUTH_STRICT=true`, which no compose file sets; and `ToolAuthInterceptor` is
-     wired only when `switchFrameworkService` is supplied — otherwise `task-orchestrator`
-     returns the raw executor with no auth at all.
-   - **Still open, and the largest one:** no fencing of untrusted content anywhere on the
-     ticket-dispatch path. `assemblePromptForAnyBot` joins persona, org memory, handovers and
-     the raw ticket body into a single string at one trust level. The pattern to lift is
-     already in-tree at `jarvis-orchestrator.ts` (untrusted-data preamble + `<untrusted-…>`
-     fencing + length cap + deterministic server-side re-binding); `a2a-rpc-service.ts` and
-     `coder-bot/src/assistant.js` are smaller working examples. Note also that swarm memory is
-     **wormable** — `SwarmMemoryService` re-injects stored agent output into later prompts as
-     authoritative guidance, so one injected run seeds future tickets.
-   - There are still **no adversarial-prompt tests** of any kind, and the three real defenses
-     above have no regression tests, so a refactor can delete them silently.
-   - **Inline (controller-resident) bots hardened 2026-08-01.** A bot whose registry `container` is
-     the api runs inside the process that holds the platform's own credentials, so a prompt
-     injection there reaches the CONTROL plane rather than one worker. Two controls now apply,
-     resolved per bot in `resolveHarnessForAgent` from
-     `features/llm-provider/services/controller-inline-scope.ts`:
-     (a) **no shell** — the deployment-wide `CLAUDE_ALLOWED_TOOLS` (which grants `Bash` to every
-     bot) is filtered for inline bots, keeping Read/Write/Edit/Glob/Grep/WebFetch so `codex-packer`
-     can still emit a persona + manifest; and (b) **no platform-plane credentials in the child
-     env** — `REMOTE_CLIENT_SHARED_SECRET` / `REMOTE_CLIENT_CONTROL_PLANE_TOKEN` /
-     `ALERT_WEBHOOK_TOKEN` / `WORLD_INGEST_TOKEN` / `TV_PAIRING_SECRET` are deleted alongside the
-     already-scrubbed `SESSION_SECRET`. The worker-plane secret is the sharp one: it is MACHINE
-     TRUST that skips per-device ownership, so an injected inline bot holding it could enqueue a
-     shell-exec task on ANY user's desktop — a worse outcome than reading the master key.
-     Bot-node bots are untouched (their containers never carry these vars, and the incident "SWAT
-     team" tool set is deliberate). **Honest residual:** a codex-harness inline bot still has a
-     shell by construction (the vendor CLI owns its own permission model and compose sets
-     `CODEX_SANDBOX_MODE: danger-full-access`), so for those the env scrub is the load-bearing
-     control. The complete answer is the BACKLOG done-when's other option — dedicated
-     non-controller containers — which is a topology change. Guard:
-     `tests/unit/inline-bot-no-shell.spec.ts`.
+   - **Fail-closed tool/MCP behavior is closed in local code (2026-08-06):** every unregistered
+     tool is denied and a missing `ToolAuthInterceptor` makes `task-orchestrator` return a denial
+     executor. Both legacy HTTP/stdio transports are private behind the immutable `ToolRegistry`
+     snapshot and its module-private execution attestation; execution additionally requires exact
+     user, agent, task, tool-allowlist, and operation-scope context plus server-owned approval.
+     The internal tool bridge permits only exact AUTO grants bound to a stable non-system executor.
+     Remote stdio calls bind to the claimed task and discovered-tool snapshot, while both edge-agent
+     launch surfaces reject unbrokered mesh execution. The fixed-name private Chroma memory adapter
+     remains an internal backend operation, not an arbitrary tool dispatcher. Inventory and mutation
+     guards live in `tests/unit/mcp-tool-authorization-boundary.spec.ts` and the blocking policy gate.
+   - **SEC-05 closed in code 2026-08-05:** the ticket-dispatch path now uses
+     `prompt-containment.ts` to separate policy and server configuration from ticket, handover,
+     tool/page, prior-agent, and unreviewed-memory data. Untrusted values are JSON escaped inside
+     explicit `UNTRUSTED_CONTENT` records, capped at 24k characters, and followed by a final
+     hashed server binding for the exact user, ticket, workload, allowed tools, and scopes.
+     Both local and bot-node handlers use the same builder. Any-bot filters the advertised tool
+     list and refuses a model-selected tool that is not in the server-resolved dispatch allowlist;
+     tool/error output and persisted prior messages are fenced before later model turns.
+   - **Swarm-memory poisoning closed in code:** migration
+     `117-swarm-memory-provenance.sql` adds durable trust/source/creator/approver/validation
+     evidence with forced RLS. Raw/API writes and task-manager-agent review remain `untrusted`;
+     only deterministic structural verification or explicit authenticated operator approval can
+     promote a record. Prompt assembly injects validated/approved and untrusted records as
+     separate trust classes. Deployments must apply migration 117 before using the durable ledger.
+   - Adversarial regression coverage now pins user/ticket rebinding, secret requests,
+     delimiter breakout, length caps, unauthorized tools, tool-result injection, exact operator
+     approval, and later-memory poisoning in `tests/unit/prompt-memory-containment.spec.ts`,
+     `tests/unit/any-bot-runtime-containment.spec.ts`,
+     `tests/unit/swarm-memory-lifecycle-promotion.spec.ts`, and
+     `tests/unit/swarm-memory-approval-route.spec.ts`.
+   - **Autonomous CLI containment (2026-08-06):** unattended Cline, Claude Code, Codex, and Gemini
+     CLI execution is operationally disabled. Public adapters, controller-direct providers,
+     quick-call/intake helpers, and the bot-node preflight reject before task lookup, persona/memory
+     assembly, or workspace creation. An OAuth file or successful auth status is credential presence,
+     not authorization for autonomous work. Generic `creds`, `credentials`, `.oshal-cred-*`, and
+     `OSHAL_CRED_*` carriers are refused rather than copied into a model process or workspace.
+   - A schema-bounded deterministic provider intent consumes the minimum caller-owned credential in
+     its exact server operation and completes before model/task side effects. Reasoning uses a
+     hosted/BYO inference rail. Re-enable a local CLI only after an audited oshal-brokered sandbox
+     enforces immutable request-start handler generations and exact operation scopes while keeping
+     authentication and connector credentials outside the model-visible process/workspace. Guards:
+     `tests/unit/any-bot-cli-security-boundary.spec.ts`,
+     `tests/unit/bot-node-provider-intent.spec.ts`, and
+     `tests/unit/brokered-cli-tool-context.spec.ts`.
 10. ~~**Bootstrap PAT minting was a cross-user takeover path** — `POST /api/cli-tokens` honored
     the `x-oshal-user-sub` assertion for any sub behind the fleet-wide `SWARM_SERVICE_SECRET`
     and minted a **non-expiring** token. Every bot container carries that secret, and a PAT

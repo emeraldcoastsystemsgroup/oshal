@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The social bot's db tool — reads the user's OWN social signals from the email DB (oshal_inbox_messages) + connected accounts, scoped to OSHAL_USER_SUB.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Rewrite to match Content Studio's "People to Engage": scan the user's Gmail LIVE by SOCIAL SENDERS (linkedin/facebook/instagram/x newer_than:21d) instead of the narrow Gmail CATEGORY_SOCIAL label (which caught only 3). Uses the broker-provided access token (.oshal-cred-google / OSHAL_CRED_GOOGLE) — NO SESSION_SECRET, no DB decryption — so it runs safely in the communications-bot's no-master-key container. The bot reasons over the result to surface congratulate/follow/engage opportunities.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *
  *   node scripts/oshal-signals.js            # JSON of accounts + recent social-sender emails for OSHAL_USER_SUB
  *   node scripts/oshal-signals.js --limit 30 # cap (default 25)
@@ -14,12 +15,11 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 /** Per-user scoping: env first, then the cwd file the harness wrappers drop. */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 /** Token broker: the controller-decrypted Google access token for THIS user (no SESSION_SECRET). */

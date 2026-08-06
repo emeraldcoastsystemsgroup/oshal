@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added workflowRun lock key for the workflow run-history schema bootstrap (workflow_runs / workflow_run_steps).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added batchJobTelemetry lock key so concurrent one-shot Job pods serialize the oshal_batch_job_runs schema bootstrap.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added spatialScans lock key (ADR-111) so the Spaces scan store's lazy schema bootstrap serializes across concurrent api starts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Reserve a distinct advisory-lock key for the durable remote-task journal so concurrent controller starts cannot interleave table, trigger, index, and RLS creation.
  */
 
 import type { Pool } from 'pg';
@@ -19,6 +20,7 @@ export const SCHEMA_LOCK_KEYS = {
   workflowRun: 47110004,
   batchJobTelemetry: 47110005,
   spatialScans: 47110006,
+  remoteTaskJournal: 47110007,
 } as const;
 
 /**

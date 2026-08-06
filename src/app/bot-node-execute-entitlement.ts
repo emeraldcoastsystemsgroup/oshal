@@ -4,8 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — execute-time per-caller entitlement gate for the bot-node's POST /api/swarm-execute (BACKLOG "Bot-endpoint privilege model"). Reuses the EXISTING models, invents no store: ADR-087 accessRoles (isBotAccessibleTo, most-restrictive-wins) + the operator allowlist (isOperatorIdentity, OSHAL_OPERATOR_SUBS/EMAILS). Caller classes: no userSub → internal dispatch (trusted, unchanged); userSub without direct → queue/swarm dispatch threading the ticket owner's sub for credential brokering (trusted — queue-manager dispatch must not break); userSub + direct:true → interactive per-user delegation, entitlement-checked. Front-door exemption: a bot whose registry role is assistant/* is the user's own entry point — its operator+swarm scoping is discovery-hiding only (registry comment on oshal-assistant), so identity callers stay entitled to it. Mode env OSHAL_EXECUTE_ENTITLEMENT: off (default — enforcement requires OSHAL_OPERATOR_SUBS on bot containers) | warn (log would-be denials) | enforce (403 + denial log).
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | K6 close-out (BACKLOG kernel audit): default mode flipped 'warn' -> ENFORCE — the gate is now fail-closed by default. The warn soak ran box-wide since the seq-2 flip and logged ZERO would-be denials (api + bot containers, 7-day grep 2026-07-31), so enforcement is behavior-safe here; a deployment that needs the soak back sets OSHAL_EXECUTE_ENTITLEMENT=warn EXPLICITLY, and 'off' stays the explicit kill switch. Unknown values now fall back to ENFORCE (fail closed — a typo must not relax enforcement; seq 2 had typos fall to warn for auditing, which a fail-closed default supersedes). Posture logs updated to match. Guard: tests/unit/bot-node-execute-entitlement.spec.ts default-mode case now proves a denial actually DENIES (403) with the operator path still green.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Privilege-model rollout (BACKLOG item, diagnosis bot-endpoint-priv): (1) default mode flipped 'off' → 'warn' — the gate was built but OSHAL_EXECUTE_ENTITLEMENT was wired NOWHERE (no compose/.env entry), so every deployment silently ran no check at all; warn is behavior-safe (log-only) and starts the denial soak everywhere without an env change. Unknown values now also fall back to 'warn' (a typo must not silently disable auditing); 'off' remains an explicit opt-out. The warn→enforce flip stays an explicit operator env act. (2) New exports for the CONTROLLER chokepoint (executeBotOrInline — inline bots resolve to a null endpoint and never reach this HTTP gate): assertExecuteEntitlement (mode-aware helper that reuses the SAME pure decision + denial-log shape, throws in enforce) and CallerNotEntitledError (statusCode 403). Denial logging refactored to a transport-neutral field logger so bot-node HTTP + controller denials grep as one line shape.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | K6 close-out (BACKLOG kernel audit): default mode flipped 'warn' -> ENFORCE — the gate is now fail-closed by default. The warn soak ran box-wide since the seq-2 flip and logged ZERO would-be denials (api + bot containers, 7-day grep 2026-07-31), so enforcement is behavior-safe here; a deployment that needs the soak back sets OSHAL_EXECUTE_ENTITLEMENT=warn EXPLICITLY, and 'off' stays the explicit kill switch. Unknown values now fall back to ENFORCE (fail closed — a typo must not relax enforcement; seq 2 had typos fall to warn for auditing, which a fail-closed default supersedes). Posture logs updated to match. Guard: tests/unit/bot-node-execute-entitlement.spec.ts default-mode case now proves a denial actually DENIES (403) with the operator path still green.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve userSub exactly during execute-time entitlement. Whitespace-only and padded/case-variant subjects remain identities and can no longer collapse into privileged internal dispatch or alias an operator.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Reject invalid supplied subjects at the entitlement boundary so empty/control/oversized assertions cannot be reclassified as internal work before the execution handler validates them.
  */
 
 /**
@@ -33,6 +35,7 @@
 import type { Request, RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { isOperatorIdentity } from '@/shared/middleware/authz';
+import { InvalidUserSubjectError, optionalExactUserSubject } from '@/shared/security/exact-user-subject';
 import { getActiveRegistry, isBotAccessibleTo } from '@/app/extensions/swarm/swarm-bot-registry';
 
 const logger = createChildLogger({ module: 'bot-node-execute-entitlement' });
@@ -45,7 +48,7 @@ export type ExecuteEntitlementMode = 'off' | 'warn' | 'enforce';
 
 /** @description The request facts the entitlement decision runs on. */
 export interface ExecuteEntitlementInput {
-  /** End caller the request acts for (normalized); absent on anonymous internal dispatch. */
+  /** Exact end caller the request acts for; absent/empty only on anonymous internal dispatch. */
   userSub: string | null | undefined;
   /** Interactive per-user delegation marker (BotNodeRequest.direct). */
   direct: boolean;
@@ -98,8 +101,8 @@ export function decideExecuteEntitlement(
   input: ExecuteEntitlementInput,
   deps: ExecuteEntitlementDeps = {},
 ): ExecuteEntitlementDecision {
-  const sub = String(input.userSub ?? '').trim();
-  if (!sub) return { allowed: true, caller: 'internal-dispatch' };
+  const sub = optionalExactUserSubject(input.userSub, 'execute entitlement userSub');
+  if (sub === undefined) return { allowed: true, caller: 'internal-dispatch' };
   if (!input.direct) return { allowed: true, caller: 'swarm-dispatch' };
 
   const isOperator = deps.isOperator ?? ((candidate: string) => isOperatorIdentity(candidate, null));
@@ -152,13 +155,21 @@ export function createExecuteEntitlementGate(options: {
     if (mode === 'off') { next(); return; }
 
     const body = (req.body ?? {}) as { agentId?: unknown; userSub?: unknown; direct?: unknown };
-    const decision = decideExecuteEntitlement({
-      userSub: typeof body.userSub === 'string' ? body.userSub : null,
-      direct: body.direct === true,
-      targetAgentId: typeof body.agentId === 'string' && body.agentId.trim().length > 0
-        ? body.agentId
-        : options.defaultAgentId,
-    }, options.deps);
+    let decision: ExecuteEntitlementDecision;
+    try {
+      decision = decideExecuteEntitlement({
+        userSub: body.userSub === undefined ? null : body.userSub as string,
+        direct: body.direct === true,
+        targetAgentId: typeof body.agentId === 'string' && body.agentId.trim().length > 0
+          ? body.agentId
+          : options.defaultAgentId,
+      }, options.deps);
+    } catch (error) {
+      if (!(error instanceof InvalidUserSubjectError)) throw error;
+      logger.warn({ err: error }, 'Rejected invalid execute-time user subject');
+      res.status(400).json({ success: false, error: 'invalid_user_sub' });
+      return;
+    }
 
     if (decision.allowed) { next(); return; }
 

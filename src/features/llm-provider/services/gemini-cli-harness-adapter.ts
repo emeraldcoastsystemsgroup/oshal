@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — GeminiCliHarnessAdapter wraps Google Gemini CLI subprocess (`@google/gemini-cli`)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: pass task.creds to applyUserScoping so the caller's provided short-lived tokens land as .oshal-cred-<provider> files in the workspace.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove connector-credential propagation into the model-visible CLI environment/workspace; preserve exact caller identity scoping only.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Default timeout 600000→3600000 (60-min ceiling, operator idle-timeout directive 2026-07-24): gemini output is batch (silent until final JSON) so idle semantics can't apply, but the duration bound must not kill long actively-working runs. GEMINI_TIMEOUT_MS overrides; adopt idleReset when a streaming output mode is verified.
  */
 
 import fs from 'fs';
 import path from 'path';
-import { buildConversationAwarePrompt, type HarnessTask, type HarnessResult } from './harness-adapter';
+import { assertAuditedAutonomousHarness, buildConversationAwarePrompt, type HarnessTask, type HarnessResult } from './harness-adapter';
 import { BaseCliHarnessAdapter } from './base-cli-harness-adapter';
 import type { TokenUsage } from './llm-service';
 
@@ -134,6 +135,7 @@ export class GeminiCliHarnessAdapter extends BaseCliHarnessAdapter {
   }
 
   async run(task: HarnessTask): Promise<HarnessResult> {
+    assertAuditedAutonomousHarness(this.harnessType);
     const workspacePath = this.resolveWorkspacePath(task.taskId);
     fs.mkdirSync(workspacePath, { recursive: true });
 
@@ -141,7 +143,7 @@ export class GeminiCliHarnessAdapter extends BaseCliHarnessAdapter {
     const args = this.buildArgs(task, workspacePath, model);
     const env = this.buildEnv(workspacePath);
     const releaseUserScoping = await this.acquireUserScopingLease(
-      env, workspacePath, task.userSub, task.creds,
+      env, workspacePath, task.userSub,
     );
 
     this.logger.info({

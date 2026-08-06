@@ -14,6 +14,12 @@
  *
  * No DB writes, no logging side effects, no throws on the decision path.
  *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact, case-sensitive OIDC subjects in privileged admin/operator allowlist checks; configuration delimiters are still trimmed and email matching remains case-insensitive.
+ *
  * @module features/governance/rbac/policy
  */
 
@@ -47,7 +53,18 @@ export function isEnforcementEnabled(): boolean {
   return (process.env.OSHAL_RBAC_ENFORCE ?? 'false').toLowerCase().trim() === 'true';
 }
 
-function parseAllowlist(value: string | undefined): Set<string> {
+/** Parse case-sensitive subject identifiers, trimming only configuration delimiters. */
+function parseSubjectAllowlist(value: string | undefined): Set<string> {
+  return new Set(
+    (value ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  );
+}
+
+/** Parse email allowlists case-insensitively; email is not the OIDC subject namespace. */
+function parseEmailAllowlist(value: string | undefined): Set<string> {
   return new Set(
     (value ?? '')
       .split(',')
@@ -57,9 +74,9 @@ function parseAllowlist(value: string | undefined): Set<string> {
 }
 
 function onAllowlist(caller: RbacCaller, subsEnv: string | undefined, emailsEnv: string | undefined): boolean {
-  const subs = parseAllowlist(subsEnv);
-  const emails = parseAllowlist(emailsEnv);
-  if (caller.sub && subs.has(caller.sub.toLowerCase())) return true;
+  const subs = parseSubjectAllowlist(subsEnv);
+  const emails = parseEmailAllowlist(emailsEnv);
+  if (caller.sub && subs.has(caller.sub)) return true;
   if (caller.email && emails.has(caller.email.toLowerCase())) return true;
   return false;
 }

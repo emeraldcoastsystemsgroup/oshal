@@ -1,4 +1,14 @@
 /**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact caller/AUTO authorization on the internal MCP bridge.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: add system-tool, missing-descriptor, and replacement adversarial denials.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove an authorized request reaches the stable descriptor dispatch rather than failing first on an incomplete stream fixture.
+ */
+
+/**
  * INTERNAL TOOL BRIDGE — IDENTITY + AUTHORIZATION GUARDS.
  *
  * `/api/tools` is mounted behind `serviceSecretOr(requiresAuth)`, which means an ORDINARY OIDC
@@ -10,8 +20,9 @@
  *
  *   1. IDENTITY — a session caller can only ever act as its own validated sub. `req.body.userSub`
  *      is inert. (It used to be the fallback, so a plain signed-in tab could name any victim.)
- *   2. AUTHORIZATION — the tool must be ENABLED for the named agent, checked BEFORE execution, and
- *      an unreadable grant list refuses rather than proceeds.
+ *   2. AUTHORIZATION — the tool must have an exact AUTO grant for the named agent, checked BEFORE
+ *      execution. ASK remains pending even if a client sends `approved:true`, and an unreadable
+ *      grant list refuses rather than proceeds.
  *
  * Asserted as CALLS against the real router (built by the real factory) driven over real HTTP —
  * never a source substring.
@@ -23,18 +34,39 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createInternalToolBridgeRoutes, resolveActingSub } from '../../src/app/routes/internal-tool-bridge-routes';
 import type { AppContext } from '../../src/app/composition/app-context';
 
-interface GrantRow { name: string }
+interface GrantRow {
+  name: string;
+  authMode?: 'auto' | 'ask' | 'off';
+  enabled?: boolean;
+  installed?: boolean;
+  registeredBy?: string;
+}
 
 /** A pool double whose only interesting answer is the agent's enabled-tool grant list. */
 function grantPool(grants: GrantRow[] | Error) {
   const calls: string[] = [];
   return {
     calls,
-    async query(sql: string) {
+    async query(sql: string, params: unknown[] = []) {
       calls.push(sql);
       if (/FROM tools t/i.test(sql)) {
         if (grants instanceof Error) throw grants;
-        return { rows: grants.map((g) => ({ tool_id: `id-${g.name}`, name: g.name, type: 'api', registered_by: 'swarm-app' })) };
+        const requestedModes = Array.isArray(params[1]) ? params[1] as string[] : [];
+        const filtersGlobalDisable = /t\.enabled\s*=\s*TRUE/i.test(sql);
+        const filtersUninstalled = /at\.installed\s*=\s*TRUE/i.test(sql);
+        return {
+          rows: grants
+            .filter((grant) => requestedModes.includes(grant.authMode ?? 'auto'))
+            .filter((grant) => !filtersGlobalDisable || grant.enabled !== false)
+            .filter((grant) => !filtersUninstalled || grant.installed !== false)
+            .map((grant) => ({
+              tool_id: `id-${grant.name}`,
+              name: grant.name,
+              type: 'api',
+              enabled: grant.enabled ?? true,
+              registered_by: grant.registeredBy ?? 'swarm-app',
+            })),
+        };
       }
       return { rows: [] };
     },
@@ -46,21 +78,40 @@ function grantPool(grants: GrantRow[] | Error) {
  * is re-implemented here — a refusal has to come out of the shipped code path or the guard proves
  * nothing.
  */
-async function boot(grants: GrantRow[] | Error, session?: { sub: string; email?: string }) {
+async function boot(
+  grants: GrantRow[] | Error,
+  session?: { sub: string; email?: string },
+  descriptorMode: 'stable' | 'missing' | 'replaced' | 'registry-missing' = 'stable',
+) {
   const pool = grantPool(grants);
+  const initialDescriptor = Object.freeze({
+    toolName: 'pumpkin-speak',
+    executorType: 'api' as const,
+    apiEndpoint: 'POST /api/never/reached',
+    runtimeRegistered: true,
+    registeredAt: new Date().toISOString(),
+  });
+  const replacementDescriptor = Object.freeze({
+    ...initialDescriptor,
+    apiEndpoint: 'POST /api/replaced',
+  });
+  let resolveCount = 0;
+  const descriptorRegistry = descriptorMode === 'registry-missing'
+    ? undefined
+    : {
+        resolve: () => {
+          resolveCount += 1;
+          if (descriptorMode === 'missing') return undefined;
+          return descriptorMode === 'replaced' && resolveCount > 1
+            ? replacementDescriptor
+            : initialDescriptor;
+        },
+      };
   const ctx = {
     pool,
-    streamManager: undefined,
+    streamManager: { broadcastToolExecution: () => undefined },
     workspaceService: undefined,
-    dynamicToolExecutorRegistry: {
-      resolve: (toolName: string) => ({
-        toolName,
-        executorType: 'api' as const,
-        apiEndpoint: 'POST /api/never/reached',
-        runtimeRegistered: true,
-        registeredAt: new Date().toISOString(),
-      }),
-    },
+    dynamicToolExecutorRegistry: descriptorRegistry,
     connectorSpecToolService: undefined,
   } as unknown as AppContext;
 
@@ -82,6 +133,7 @@ async function boot(grants: GrantRow[] | Error, session?: { sub: string; email?:
   return {
     pool,
     port,
+    descriptorResolutionCount: () => resolveCount,
     close: () => new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
     post: async (body: unknown) => {
       const r = await fetch(`http://127.0.0.1:${port}/api/tools/execute`, {
@@ -128,6 +180,104 @@ describe('POST /api/tools/execute — authorization', () => {
     // proof that authorization ALLOWED it through. What must never happen is a 403.
     expect(res.status).not.toBe(403);
     expect(res.status).not.toBe(503);
+    expect(h.descriptorResolutionCount()).toBe(3);
+  });
+
+  it('refuses an AUTO grant for a system tool that the bridge must never shadow', async () => {
+    const h = await boot(
+      [{ name: 'pumpkin-speak', authMode: 'auto', registeredBy: 'system' }],
+      { sub: 'google-oauth2|operator-1' },
+    );
+    close = h.close;
+
+    const res = await h.post({ agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {} });
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses missing authorization/executor wiring before a raw executor can run', async () => {
+    const missingDescriptor = await boot(
+      [{ name: 'pumpkin-speak' }],
+      { sub: 'google-oauth2|operator-1' },
+      'missing',
+    );
+    close = missingDescriptor.close;
+    expect((await missingDescriptor.post({
+      agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {},
+    })).status).toBe(403);
+    await missingDescriptor.close();
+    close = null;
+
+    const missingRegistry = await boot(
+      [{ name: 'pumpkin-speak' }],
+      { sub: 'google-oauth2|operator-1' },
+      'registry-missing',
+    );
+    close = missingRegistry.close;
+    expect((await missingRegistry.post({
+      agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {},
+    })).status).toBe(503);
+  });
+
+  it('refuses a descriptor replaced while the persisted grant is being read', async () => {
+    const h = await boot(
+      [{ name: 'pumpkin-speak' }],
+      { sub: 'google-oauth2|operator-1' },
+      'replaced',
+    );
+    close = h.close;
+
+    const res = await h.post({ agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {} });
+    expect(res.status).toBe(403);
+    expect(String(res.body.error)).toContain('changed during authorization');
+  });
+
+  it('refuses execution when no exact caller identity reaches the bridge', async () => {
+    const h = await boot([{ name: 'pumpkin-speak' }]);
+    close = h.close;
+
+    const res = await h.post({ agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {} });
+    expect(res.status).toBe(403);
+    expect(String(res.body.error)).toContain('caller identity');
+  });
+
+  it('refuses an ASK grant until a server-owned approval workflow resolves it', async () => {
+    const h = await boot(
+      [{ name: 'pumpkin-speak', authMode: 'ask' }],
+      { sub: 'google-oauth2|operator-1' },
+    );
+    close = h.close;
+
+    const res = await h.post({
+      agentId: 'agent-abc',
+      toolName: 'pumpkin-speak',
+      input: {},
+      approved: true,
+    });
+
+    expect(res.status).toBe(403);
+    expect(String(res.body.error)).toContain('requires approval');
+  });
+
+  it('treats global disable and uninstall as immediate revocation of an AUTO grant', async () => {
+    const globallyDisabled = await boot(
+      [{ name: 'pumpkin-speak', authMode: 'auto', enabled: false, installed: true }],
+      { sub: 'google-oauth2|operator-1' },
+    );
+    close = globallyDisabled.close;
+    expect((await globallyDisabled.post({
+      agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {},
+    })).status).toBe(403);
+    await globallyDisabled.close();
+    close = null;
+
+    const uninstalled = await boot(
+      [{ name: 'pumpkin-speak', authMode: 'auto', enabled: true, installed: false }],
+      { sub: 'google-oauth2|operator-1' },
+    );
+    close = uninstalled.close;
+    expect((await uninstalled.post({
+      agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {},
+    })).status).toBe(403);
   });
 
   it('still rejects a request missing agentId/toolName before touching the grant list', async () => {

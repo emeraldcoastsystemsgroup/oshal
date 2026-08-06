@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local CLI executors: run codex / claude on THIS machine with the user's real ~/. creds. Parse logic adapted from any-bot CodexCLIWrapper.js + ClaudeCodeCLIWrapper.js, but no temp-home copy — on a desktop the user's home is writable, so we run against it directly (the browser-popup login already dropped creds in ~/.).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: signed-in model CLIs receive only runtime and owner config paths, never the desktop node's unrelated environment credentials.
  */
 
 import { spawn } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { buildLocalNodeProcessEnv } from './process-environment';
 
 /** Normalized result of a local CLI run. */
 export interface ExecResult {
@@ -44,7 +46,11 @@ function spawnCollect(
     let stderr = '';
     // On Windows the agent CLIs (claude/codex/gemini) are .cmd shims; Node's spawn cannot
     // resolve/run a .cmd with shell:false (→ ENOENT), so use the shell there. POSIX keeps shell:false.
-    const child = spawn(command, args, { cwd, env: process.env, shell: process.platform === 'win32' });
+    const child = spawn(command, args, {
+      cwd,
+      env: buildLocalNodeProcessEnv(),
+      shell: process.platform === 'win32',
+    });
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
     try { child.stdin.write(prompt); child.stdin.end(); } catch { /* stdin may be closed */ }

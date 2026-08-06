@@ -1,7 +1,8 @@
 # ADR-118: Swarm-wide app access tiers — deny / viewer / editor / admin
 
 Date: 2026-07-28
-Status: Accepted (the contract). Platform enforcement is Phase 2 — see Consequences.
+Status: Accepted. Phase 2 is implemented locally; protected-branch promotion, migration 121,
+and a deployed enforcement canary remain operational gates.
 
 ## Context
 
@@ -14,7 +15,7 @@ That vocabulary already IS the industry standard. Azure RBAC (Reader / Contribut
 Google IAM (Viewer / Editor / Admin), Kubernetes (view / edit / admin) all converge on the same
 ladder, and AWS contributes the fifth rule everyone copies: **an explicit deny beats any allow**.
 
-What exists in this codebase today:
+What existed when this contract was chosen:
 
 - The **guest capability matrix** is this exact ladder for anonymous users, per app:
   `blocked` / `readonly` / `full` — but it is global per app, not assignable per user.
@@ -52,26 +53,37 @@ Rules of the contract:
 4. **A missing declaration means the app's current behavior**, unchanged — this is opt-in per
    app, rolling out with each app's next release, not a flag-day break.
 
-Conformance of what already shipped (by construction, no code change):
+Baseline mappings considered by the decision:
 
-- **intelligent-sales**: `deny` = no rep row or `active=false` (an uninvited login sees
+- **intelligent-sales design**: `deny` = no rep row or `active=false` (an uninvited login sees
   nothing); `editor` = `rep`/`team_lead`/`manager` templates; `admin` = `app_admin`. It does
-  not offer a `viewer` bundle in v1 — a read-only role is an allowed refinement gap, declared
-  as unsupported rather than faked.
+  not offer a `viewer` bundle in v1 — a read-only role is an allowed refinement gap. The
+  package itself is not present in either current repository, so this is a historical mapping,
+  not a claim that its manifest declaration has shipped.
 - **Guest matrix**: `blocked`→`deny`, `readonly`→`viewer`, `full`→ the app default — the
   anonymous-user projection of the same ladder.
 
 ## Consequences
 
-- Phase 1 (this ADR): the vocabulary and the conformance mapping are binding on every future
-  app and every manifest review. A new app that invents a fifth access word fails review.
-- **Phase 2 (BACKLOG, with done-when): the platform primitive** — an `oshal_app_access` store
-  (user_sub × app × tier, explicit-deny-wins), an operator/admin API + cockpit surface to set
-  tiers, and an enforcement middleware at the app-route boundary (deny → 403 everywhere;
-  viewer → read-only enforcement in the shape the guest Tier-B lockdown already proves out).
-  Until Phase 2 lands, tier changes are made in each app's own admin (the CRM's Users screen),
-  which is why nothing here blocks the client-box install.
-- Phase 3: kernel apps' manifests grow their `access:` declarations at their next touch.
+- The vocabulary is executable schema. Manifest loading and `oshal-app validate` reject unknown
+  fields, unknown tier names, duplicate tiers, missing `deny`, unsupported defaults and mappings
+  to unsupported tiers. A missing declaration still preserves the app's legacy behavior.
+- Migration 121 provides the FORCE-RLS `oshal_app_access` store keyed by exact
+  `(user_sub, app_name)`. Explicit assignments win over manifest defaults; an explicit `deny`
+  always wins, and an assignment made stale by a later manifest fails closed to `deny`.
+- The framework-owned operator API and Applications cockpit matrix list, assign and clear tiers.
+  Apps cannot administer the platform doorway or self-promote.
+- Both route shapes enforce the same decision after authentication and before app code: dynamic
+  package routes in `ManifestRouteMounter`, and hard-mounted kernel routes in the global app gate.
+  `deny` returns `app_access_denied`; viewer mutations return `app_readonly`; database or wiring
+  failure returns 503. Verified delegated-user identities are evaluated as that user. Truly
+  anonymous requests remain the guest capability matrix's responsibility.
+- Ten kernel manifests now declare their behavior-preserving defaults. Store packages adopt the
+  declaration as they are audited; the missing intelligent-sales source remains a catalog-recovery
+  item rather than being fabricated in the kernel.
+- Rollout order is migration 121 → `OSHAL_APP_ACCESS_MODE=shadow` observation → seed explicit
+  assignments → `enforce` app by app. Enforcement is the default and the fail-closed fallback for
+  an unknown mode. Merge, deployment and exact-SHA canary evidence are not implied by this ADR.
 - The trade: a coarse ladder can never express "may edit leads but not export" — deliberately.
   That granularity lives (and stays) in the app's capability model; the ladder is what a
-  platform admin can reason about across twenty apps at once.
+  platform admin can reason about across many apps at once.

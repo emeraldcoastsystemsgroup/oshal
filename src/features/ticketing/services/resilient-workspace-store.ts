@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added resilient workspace store wrapper that falls back to in-memory persistence during MOCK_OIDC localhost runs when Postgres is unavailable
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserved ownerSub list filters through the resilient store so fallback mode cannot broaden an authenticated workspace listing.
  */
 
 import type { Pool } from 'pg';
@@ -84,6 +85,7 @@ export class ResilientWorkspaceStore implements IWorkspaceStore {
    */
   async list(options?: {
     projectName?: string;
+    ownerSub?: string;
     limit?: number;
     offset?: number;
   }): Promise<InternalWorkspace[]> {

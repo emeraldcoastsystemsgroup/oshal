@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact valid OIDC subjects when scoping escalation summaries; a blank authenticated subject fails closed instead of turning into the unscoped system view.
+ */
+
 import type { Request, Response } from 'express';
 import type { AppContext } from '../composition-root';
 import type { InternalTicket, TicketStatusHistoryRecord } from '@/entities/ticket';
@@ -214,7 +222,9 @@ export function handleGetCockpitEscalationSummary(ctx: AppContext) {
 
 function callerSub(req: Request): string | undefined {
   const sub = (req as { oidc?: { user?: { sub?: unknown } } }).oidc?.user?.sub;
-  return typeof sub === 'string' && sub.trim() ? sub : undefined;
+  if (typeof sub !== 'string' || sub.length === 0) return undefined;
+  if (!sub.trim()) throw new Error('Cockpit escalation caller subject must be nonblank');
+  return sub;
 }
 
 function clampInt(value: number | undefined, fallback: number, max: number): number {

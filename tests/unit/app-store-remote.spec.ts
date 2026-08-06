@@ -11,6 +11,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7 guards: catalog parse/degrade, catalog-pinned install fail-closed shapes, and the operator gate on install-remote.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the shipped store default. The route defaulted to the PRIVATE trunk while the shell installer downloaded the PUBLIC snapshot, so the cockpit asked for a repo it could not read and Discover degraded to empty everywhere but the operator's box. Asserted on the URL the code actually requests, plus a check that the installer CLI's default has not drifted away from it again.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: include canonical audit bindings in registry fixtures and prove malformed pointers remain browse-only.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express, { Router, type NextFunction, type Request, type Response } from 'express';
@@ -46,6 +47,7 @@ const realFetch = globalThis.fetch;
 
 const OPERATOR = { sub: 'store-rails-operator-sub', email: 'store-ops@example.test' };
 const PLAIN = { sub: 'plain-user-sub', email: 'plain@example.test' };
+const UNAUDITED_SHA = '0'.repeat(40);
 
 /** A minimal but realistic marketplace.json body (the store's machine-derived shape). */
 function marketplaceBody(): string {
@@ -56,14 +58,20 @@ function marketplaceBody(): string {
         name: 'hello-oshal', suite: 'ai-engineering', displayName: 'Hello OSHAL',
         description: 'The minimal working example.', version: '1.1.0', status: 'ready',
         source: { type: 'git-subdir', url: 'https://github.com/emeraldcoastsystemsgroup/oshal-applications', path: 'hello-oshal', ref: 'main' },
+        audit: { record: 'audits/hello-oshal.json', sourceSha: UNAUDITED_SHA },
       },
       {
         name: 'little-monsters', suite: 'ai-home', displayName: 'Little Monsters',
         description: 'Study companion.', version: '1.0.7', status: 'packaging',
         source: { type: 'git-subdir', url: 'https://github.com/emeraldcoastsystemsgroup/oshal-applications', path: 'little-monsters', ref: 'main' },
+        audit: { record: 'audits/little-monsters.json', sourceSha: UNAUDITED_SHA },
       },
       { name: 'INVALID NAME WITH SPACES', displayName: 'Broken row' }, // fail-soft: skipped, never fatal
-      { name: 'sourceless-app', suite: 'ai-creative', displayName: 'No Source', description: 'x', version: '1.0.0', status: 'ready' },
+      {
+        name: 'sourceless-app', suite: 'ai-creative', displayName: 'No Source',
+        description: 'x', version: '1.0.0', status: 'ready',
+        audit: { record: 'audits/sourceless-app.json', sourceSha: UNAUDITED_SHA },
+      },
     ],
   });
 }
@@ -138,7 +146,14 @@ describe('parseCatalog — fail-soft per row, fail-closed per document', () => {
     expect(apps.map((a) => a.name)).toEqual(['hello-oshal', 'little-monsters', 'sourceless-app']);
     expect(apps[0]).toMatchObject({ suite: 'ai-engineering', version: '1.1.0', status: 'ready' });
     expect(apps[0].source).toMatchObject({ path: 'hello-oshal', ref: 'main' });
+    expect(apps[0].audit).toEqual({ record: 'audits/hello-oshal.json', sourceSha: UNAUDITED_SHA });
     expect(apps[2].source).toBeNull();
+  });
+
+  it('keeps malformed audit metadata visible but marks the row non-installable', () => {
+    const body = JSON.parse(marketplaceBody()) as { apps: Array<Record<string, unknown>> };
+    body.apps[0].audit = { record: '../escape.json', sourceSha: UNAUDITED_SHA };
+    expect(parseCatalog(JSON.stringify(body))[0].audit).toBeNull();
   });
 
   it('throws on a document with no apps[] (a broken store is not a partial one)', () => {
@@ -209,6 +224,16 @@ describe('installRemoteApp — catalog-pinned, fail-closed at every step', () =>
     stubCatalogFetch(200, marketplaceBody());
     await primeCatalog();
     const r = await installRemoteApp('sourceless-app', OPERATOR.sub, { loadApp });
+    expect(r).toMatchObject({ ok: false, status: 409 });
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it('409s a ready entry whose APP-02 pointer is missing or malformed', async () => {
+    const body = JSON.parse(marketplaceBody()) as { apps: Array<Record<string, unknown>> };
+    body.apps[0].audit = { record: '../escape.json', sourceSha: UNAUDITED_SHA };
+    stubCatalogFetch(200, JSON.stringify(body));
+    await primeCatalog();
+    const r = await installRemoteApp('hello-oshal', OPERATOR.sub, { loadApp });
     expect(r).toMatchObject({ ok: false, status: 409 });
     expect(execFileMock).not.toHaveBeenCalled();
   });

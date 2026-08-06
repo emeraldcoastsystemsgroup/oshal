@@ -6,9 +6,9 @@
  *
  * Tests:
  *   1. Provider catalog completeness and correctness
- *   2. Per-provider Cline config builder (all 26 providers)
- *   3. Per-provider globalState builder with credential field names
- *   5. OpenAI Codex → openai-native mapping
+ *   2. Per-provider non-secret Cline compatibility metadata
+ *   3. Legacy credential-carrier refusal and autonomous-approval shutdown
+ *   5. OpenAI Codex → openai-native non-secret mapping
  *   6. Agent constraint validation (claude-code locked, cline open)
  *   7. ClineRuntimeConfigSyncService E2E provider switch
  *   8. Node pool state lifecycle (idle → assigning → active → releasing → idle)
@@ -66,57 +66,57 @@ const { buildClineConfig, buildClineGlobalState } = require('../src/features/llm
 
 // Test every provider produces valid config or null
 for (const p of providers) {
-  const config = buildClineConfig(p.id, 'test-model', {});
+  const config = buildClineConfig(p.id, 'test-model');
   if (p.clineProvider === null) {
     assert(config === null, `${p.id} returns null (non-Cline provider)`);
   } else {
     assert(config !== null, `${p.id} returns config`);
-    assert(config.autoApprove === true, `${p.id} config.autoApprove`);
+    assert(config.autoApprove === false, `${p.id} config.autoApprove disabled`);
     assert(!!config.model, `${p.id} config.model set`);
+    assert(!/apiKey|accessKey|secret|token/i.test(JSON.stringify(config)), `${p.id} config is non-secret`);
   }
 }
 
-// ── 3. Provider-specific credential field names ─────────────────────────────
+// ── 3. Credential carrier refusal + approval shutdown ───────────────────────
 
-console.log('\n=== 3. Credential Field Names ===');
+console.log('\n=== 3. Credential Carrier Refusal ===');
+const legacyCarriers = [
+  ['anthropic', { ANTHROPIC_API_KEY: 'sentinel-secret' }],
+  ['bedrock', { AWS_ACCESS_KEY_ID: 'AKIA-SENTINEL' }],
+  ['gemini', { GEMINI_API_KEY: 'sentinel-secret' }],
+] as const;
 
-const credTests: Array<{ provider: string; creds: Record<string, string>; expectKey: string; expectValue: string }> = [
-  { provider: 'bedrock', creds: { AWS_ACCESS_KEY_ID: 'AK' }, expectKey: 'accessKeyId', expectValue: 'AK' },
-  { provider: 'anthropic', creds: { ANTHROPIC_API_KEY: 'sk' }, expectKey: 'apiKey', expectValue: 'sk' },
-  { provider: 'gemini', creds: { GEMINI_API_KEY: 'gk' }, expectKey: 'apiKey', expectValue: 'gk' },
-  { provider: 'azure', creds: { AZURE_API_KEY: 'az' }, expectKey: 'apiKey', expectValue: 'az' },
-  { provider: 'groq', creds: { GROQ_API_KEY: 'gq' }, expectKey: 'apiKey', expectValue: 'gq' },
-  { provider: 'ollama', creds: { OLLAMA_HOST: 'http://gpu:11434' }, expectKey: 'baseUrl', expectValue: 'http://gpu:11434' },
-];
-
-for (const t of credTests) {
-  const cfg = buildClineConfig(t.provider, 'test', t.creds);
-  assert(cfg[t.expectKey] === t.expectValue, `${t.provider} config.${t.expectKey} = ${t.expectValue}`);
+for (const [provider, carrier] of legacyCarriers) {
+  let configRejected = false;
+  let stateRejected = false;
+  try { buildClineConfig(provider, 'test', carrier); } catch { configRejected = true; }
+  try { buildClineGlobalState(provider, 'test', carrier); } catch { stateRejected = true; }
+  assert(configRejected, `${provider} config rejects legacy credentials`);
+  assert(stateRejected, `${provider} global state rejects legacy credentials`);
 }
 
-// GlobalState credential field names (these differ from config.json!)
-const gsCredTests: Array<{ provider: string; creds: Record<string, string>; expectKey: string; expectValue: string }> = [
-  { provider: 'bedrock', creds: { AWS_ACCESS_KEY_ID: 'AK' }, expectKey: 'awsAccessKey', expectValue: 'AK' },
-  { provider: 'openrouter', creds: { OPENROUTER_API_KEY: 'ork' }, expectKey: 'openRouterApiKey', expectValue: 'ork' },
-  { provider: 'openai-native', creds: { OPENAI_API_KEY: 'oai' }, expectKey: 'openAiNativeApiKey', expectValue: 'oai' },
-  { provider: 'gemini', creds: { GEMINI_API_KEY: 'gk' }, expectKey: 'geminiApiKey', expectValue: 'gk' },
-  { provider: 'groq', creds: { GROQ_API_KEY: 'gq' }, expectKey: 'groqApiKey', expectValue: 'gq' },
-  { provider: 'vertex', creds: { VERTEX_PROJECT_ID: 'proj' }, expectKey: 'vertexProjectId', expectValue: 'proj' },
-];
-
-for (const t of gsCredTests) {
-  const gs = buildClineGlobalState(t.provider, 'test', t.creds);
-  assert(gs[t.expectKey] === t.expectValue, `${t.provider} gs.${t.expectKey} = ${t.expectValue}`);
-}
+const safeState = buildClineGlobalState('anthropic', 'test-model');
+const safeApproval = safeState.autoApprovalSettings as {
+  enabled: boolean;
+  actions: Record<string, boolean>;
+};
+assert(safeState.mode === 'plan', 'global state defaults to plan mode');
+assert(safeApproval.enabled === false, 'global state auto approval disabled');
+assert(
+  Object.values(safeApproval.actions).every((value) => value === false),
+  'every autonomous action is disabled',
+);
+assert(!/apiKey|accessKey|secret|token/i.test(JSON.stringify(safeState)), 'global state is non-secret');
 
 // ── 5. OpenAI Codex mapping ─────────────────────────────────────────────────
 
 console.log('\n=== 5. OpenAI Codex Mapping ===');
 assert(getClineProviderMapping('openai-codex') === 'openai-native', 'openai-codex maps to openai-native');
-const codexCfg = buildClineConfig('openai-codex', 'gpt-5.3-codex', { OPENAI_API_KEY: 'k' });
+const codexCfg = buildClineConfig('openai-codex', 'gpt-5.3-codex');
 assert(codexCfg.provider === 'openai-native', 'openai-codex config uses openai-native');
-const codexGs = buildClineGlobalState('openai-codex', 'gpt-5.3-codex', { OPENAI_API_KEY: 'k' });
-assert(codexGs.openAiNativeApiKey === 'k', 'openai-codex gs uses openAiNativeApiKey');
+const codexGs = buildClineGlobalState('openai-codex', 'gpt-5.3-codex');
+assert(codexGs.actModeApiProvider === 'openai-native', 'openai-codex global state uses openai-native');
+assert(!/apiKey|secret|token/i.test(JSON.stringify(codexGs)), 'openai-codex global state is non-secret');
 
 // ── 6. Agent constraints ────────────────────────────────────────────────────
 
@@ -132,9 +132,9 @@ console.log('\n=== 7. Runtime Sync E2E ===');
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'regression-'));
 const clineDir = path.join(tmpDir, '.cline');
 fs.mkdirSync(path.join(clineDir, 'data'), { recursive: true });
-fs.writeFileSync(path.join(clineDir, 'config.json'), '{}');
-fs.writeFileSync(path.join(clineDir, 'data', 'globalState.json'), '{}');
-fs.writeFileSync(path.join(clineDir, 'data', 'secrets.json'), '{}');
+fs.writeFileSync(path.join(clineDir, 'config.json'), JSON.stringify({ apiKey: 'legacy-config-secret' }));
+fs.writeFileSync(path.join(clineDir, 'data', 'globalState.json'), JSON.stringify({ geminiApiKey: 'legacy-state-secret' }));
+fs.writeFileSync(path.join(clineDir, 'data', 'secrets.json'), JSON.stringify({ geminiApiKey: 'legacy-file-secret' }));
 
 process.env.CONFIG_OUTPUT_DIR = tmpDir;
 process.env.CLINE_CONFIG_DIR = clineDir;
@@ -154,9 +154,13 @@ const syncedConfig = JSON.parse(fs.readFileSync(path.join(clineDir, 'config.json
 const syncedGs = JSON.parse(fs.readFileSync(path.join(clineDir, 'data', 'globalState.json'), 'utf8'));
 
 assert(syncedConfig.provider === 'gemini', 'synced config provider = gemini');
-assert(syncedConfig.apiKey === 'test-gemini-key', 'synced config has gemini API key');
-assert(syncedGs.geminiApiKey === 'test-gemini-key', 'synced gs has geminiApiKey');
+assert(syncedConfig.autoApprove === false, 'synced config auto approval disabled');
+assert(!('apiKey' in syncedConfig), 'synced config tombstones legacy API keys');
+assert(!('geminiApiKey' in syncedGs), 'synced global state tombstones legacy API keys');
 assert(syncedGs.actModeApiProvider === 'gemini', 'synced gs actModeApiProvider');
+assert(syncedGs.mode === 'plan', 'synced global state is plan mode');
+const syncedSecrets = JSON.parse(fs.readFileSync(path.join(clineDir, 'data', 'secrets.json'), 'utf8'));
+assert(Object.keys(syncedSecrets).length === 0, 'legacy Cline secrets file is emptied');
 
 delete process.env.GEMINI_API_KEY;
 fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact durable task owners and reject invalid owner assertions on save/load/list instead of collapsing empty or malformed database values into anonymous ownership.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: add owner-filtered pagination at the durable query boundary so object lists cannot fetch another owner's rows before filtering.
  */
 
 /**
@@ -17,6 +19,12 @@ const logger = require('../utils/logger');
 const config = require('../utils/config');
 const path = require('path');
 const fs = require('fs');
+const { optionalExactUserSubject } = require('../services/codebase/exact-user-subject');
+
+/** Validate a durable owner while preserving genuine nullish anonymous ownership. */
+function durableTaskOwner(value) {
+  return optionalExactUserSubject(value, 'durable task owner') ?? null;
+}
 
 /**
  * @description Encapsulates durable storage of task records so the swarm can
@@ -158,7 +166,7 @@ class TaskStore {
       task.text,
       task.status,
       task.mode || 'act',
-      task.userSub || null,
+      durableTaskOwner(task.userSub),
       task.workspace_dir || null,
       task.gitlab_url || null,
       task.ts || Date.now(),
@@ -203,7 +211,7 @@ class TaskStore {
         text: row.text,
         status: row.status,
         mode: row.mode,
-        userSub: row.owner_sub || null,
+        userSub: durableTaskOwner(row.owner_sub),
         workspace_dir: row.workspace_dir,
         gitlab_url: row.gitlab_url,
         ts: row.created_at,
@@ -240,7 +248,7 @@ class TaskStore {
         text: row.text,
         status: row.status,
         mode: row.mode,
-        userSub: row.owner_sub || null,
+        userSub: durableTaskOwner(row.owner_sub),
         workspace_dir: row.workspace_dir,
         ts: row.created_at,
         updatedAt: row.updated_at,
@@ -251,6 +259,34 @@ class TaskStore {
       logger.error(`Failed to list tasks: ${err.message}`);
       throw err;
     }
+  }
+
+  /**
+   * List only tasks bound to one exact owner. Filtering in SQL keeps pagination and
+   * row visibility aligned; callers never load another owner's records into memory.
+   */
+  listTasksForOwner(ownerSub, limit = 50, offset = 0) {
+    if (!this.initialized) throw new Error('TaskStore not initialized');
+    const owner = durableTaskOwner(ownerSub);
+    if (!owner) throw new TypeError('Task owner is required');
+    const rows = this.db.prepare(`
+      SELECT * FROM tasks
+      WHERE owner_sub = ?
+      ORDER BY updated_at DESC
+      LIMIT ? OFFSET ?
+    `).all(owner, limit, offset);
+    return rows.map((row) => ({
+      id: row.id,
+      text: row.text,
+      status: row.status,
+      mode: row.mode,
+      userSub: durableTaskOwner(row.owner_sub),
+      workspace_dir: row.workspace_dir,
+      ts: row.created_at,
+      updatedAt: row.updated_at,
+      apiMetrics: row.api_metrics ? JSON.parse(row.api_metrics) : null,
+      progress: row.progress ? JSON.parse(row.progress) : null,
+    }));
   }
 
   /**

@@ -4,6 +4,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | TMDB (movies bundle) CLI.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Read TMDB credentials through the shared v2/k2/legacy connector-token codec.
  *   The bot-facing tool runtime for the movies-concierge. Mirrors scripts/oshal-uber.js
  *   credential resolution: prefer a controller-brokered key (.oshal-cred-tmdb /
  *   OSHAL_CRED_TMDB), else decrypt the operator's connection from the DB
@@ -28,10 +30,11 @@
  * Exit 2 = no command match.
  */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken } = require('./lib/connector-token-crypto');
 
 const BASE = 'https://api.themoviedb.org/3';
 const IMG = 'https://image.tmdb.org/t/p';
@@ -39,9 +42,7 @@ const REGION = process.env.MOVIES_REGION || 'US';
 
 // ── Identity + brokered credential (mirrors oshal-uber.js) ──────────────────--
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 function resolveBrokeredCred() {
   try {
@@ -50,28 +51,19 @@ function resolveBrokeredCred() {
   } catch { /* no file — try env */ }
   return process.env.OSHAL_CRED_TMDB || undefined;
 }
-function secretKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
-}
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
 async function keyFromDb(userSub) {
   if (!process.env.DATABASE_URL && !process.env.PGHOST) return undefined;
   const pool = new Pool(process.env.DATABASE_URL ? { connectionString: process.env.DATABASE_URL } : undefined);
   try {
     const r = await pool.query(
-      `SELECT access_token FROM oshal_connections
+      `SELECT user_sub, access_token FROM oshal_connections
        WHERE provider = 'tmdb' AND COALESCE(status,'') <> 'revoked'
          AND (user_sub = $1 OR tenant_id IS NOT NULL)
        ORDER BY is_default DESC, updated_at DESC LIMIT 1`,
       [userSub || ''],
     );
     if (!r.rows[0]) return undefined;
-    return decrypt(r.rows[0].access_token);
+    return decryptToken(pool, r.rows[0].user_sub, r.rows[0].access_token);
   } finally { await pool.end().catch(() => {}); }
 }
 async function loadKey() {

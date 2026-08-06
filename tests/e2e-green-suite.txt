@@ -104,3 +104,5 @@ tests/alert-intake-rls-live.spec.ts
 tests/rls-two-role-isolation-live.spec.ts
 tests/rls-core-table-coverage-live.spec.ts
 tests/connector-webhook-rls-live.spec.ts
+tests/workload-delegation-rls-live.spec.ts
+tests/app-access-rls-live.spec.ts

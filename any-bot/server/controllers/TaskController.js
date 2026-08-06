@@ -11,6 +11,13 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Explicit agentic-mode marker (BACKLOG "BYO / free-tier connections bypass the agentic loop"): processMessage routing now honors options.toolLess (with env OSHAL_TOOL_LESS as the process-level default) via resolveToolLessMarker instead of silently inferring tool-less mode from BYO status alone; when the marker is absent the legacy derivation (BYO connection => tool-less) still applies, and direct-path responses now carry toolLess: true so callers can surface the degraded mode.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Change-log accuracy: entry 4 above claims createTask places NEW workspaces under <base>/users/<sub>/<taskId> via resolveUserTaskDir, but that layout was REVERTED (see the per-branch notes in createTask) — all three branches join the flat root, and the orphaned resolveUserTaskDir helper has been deleted. What options.userSub still does is STAMP the owner on the task record, which is what assertTaskOwnerBinding (and the bot-node handler's pre-createTask check) compare on reuse. Entry 4 stands as history; this entry is the correction. No behavior change.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G12: on the direct (non-agentic) path, an agentic-only node passed the old `activeLlm || agenticController` truthiness check and then threw "activeLlm.generateResponse is not a function" mid-request. processMessage now rejects direct:true + agenticMode:false up front with an actionable error ({ success:false, error:'direct_mode_unsupported' }, task status 'error') when no provider implements generateResponse; the legacy "LLM service not configured" stub path for nodes with NO engine at all is unchanged. Guard: tests/unit/task-controller-direct-mode.spec.ts.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact task owners and route force, ticket, parent, and generated workspaces through canonical IDs plus resolved link-free containment before reuse or creation.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Reject empty, malformed, orphaned-parent, or conflicting workspace directives by property presence so unsafe forceTaskId/ticketId input cannot fall through to a generated workspace.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05: fence persisted prior user/agent messages as data while leaving the current contained request and final authority binding intact.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 audit: remove the one-backtick shell shortcut and constrain direct-path schemas by exact operation scopes while flagging unbrokered CLI execution.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 audit: capture and revalidate direct hosted-provider capabilities at request and provider boundaries.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: expose owner-filtered task pagination for authenticated object routes.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com  | Bind the explicit tool-less path to an empty tool allowlist so bypassing the agentic loop cannot advertise or invoke registry tools.
  */
 
 /**
@@ -27,11 +34,26 @@ const CheckpointValidator = require('../stores/CheckpointValidator');
 const AgenticController = require('./AgenticController');
 const GitLabService = require('../services/GitLabService');
 const ClineCLIWrapper = require('../services/codebase/ClineCLIWrapper');
+const { optionalExactUserSubject } = require('../services/codebase/exact-user-subject');
+const {
+  containPriorMessages,
+  normalizeAllowedTools,
+} = require('../utils/untrusted-content');
+const {
+  assertDispatchCapabilitiesCurrent,
+  captureDispatchCapabilities,
+  normalizeAuthorizedScopes,
+} = require('../utils/dispatch-capabilities');
+const {
+  UnsafeWorkspacePathError,
+  ensureTaskWorkspace,
+  ensureTrustedWorkspaceRoot,
+  resolveExistingTaskWorkspace,
+  resolveTrustedWorkspaceRoot,
+} = require('../services/codebase/task-workspace-scope');
 
 function normalizeTaskOwner(value) {
-  return typeof value === 'string' && value.trim().length > 0
-    ? value.trim().slice(0, 512)
-    : null;
+  return optionalExactUserSubject(value, 'task owner') ?? null;
 }
 
 function normalizeRuntimeIdentity(value, maxLength) {
@@ -103,71 +125,76 @@ class TaskController {
   }
 
   async createTask(text, mode = 'act', options = {}) {
-    // Use ticket-based workspace naming for stable directories
-    // If ticketId provided, use short hash of ticket UUID for deterministic naming
-    // If parentWorkspaceDir provided (subtask), nest under parent
-    const { ticketId, parentWorkspaceDir, forceTaskId, userSub } = options;
+    // Every caller-provided logical ID is canonicalized into one portable segment before
+    // filesystem use. Child workspaces additionally require a resolved, allowlisted parent.
+    const { ticketId, parentWorkspaceDir, forceTaskId } = options;
+    const hasForceTaskId = Object.prototype.hasOwnProperty.call(options, 'forceTaskId');
+    const hasTicketId = Object.prototype.hasOwnProperty.call(options, 'ticketId');
+    const hasParentWorkspace = Object.prototype.hasOwnProperty.call(options, 'parentWorkspaceDir');
+    if (hasForceTaskId && (hasTicketId || hasParentWorkspace)) {
+      throw new UnsafeWorkspacePathError('conflicting workspace directives');
+    }
+    if (hasParentWorkspace && !hasTicketId) {
+      throw new UnsafeWorkspacePathError('parent workspace requires ticket id');
+    }
+    const userSub = normalizeTaskOwner(options.userSub);
     let taskId;
     let workspaceDir;
+    let workspaceCreated = false;
 
     // ⭐ PHASE_44B: Force a specific taskId (shared workspace from project-manager)
-    if (forceTaskId) {
-      taskId = forceTaskId;
+    if (hasForceTaskId) {
+      const resolved = ensureTaskWorkspace(config.filesystem.workspaceDir, forceTaskId);
+      taskId = resolved.taskId;
       // ADR-060 reverted to flat: the swarm's deliverable/handover readers assume <base>/<taskId>.
-      workspaceDir = path.join(config.filesystem.workspaceDir, taskId);
+      workspaceDir = resolved.workspaceDir;
+      workspaceCreated = resolved.created;
       logger.info(`📂 PHASE_44B: Forced taskId=${taskId} for shared workspace reuse`);
       // Don't return early if workspace exists — we need a new task object in the local store
-    } else if (ticketId && parentWorkspaceDir) {
-      // Child subtask: nest under parent workspace
-      // ⭐ PHASE_67: Use full ticket UUID as folder name for direct ticket→workspace binding
-      taskId = ticketId;
-      workspaceDir = path.join(parentWorkspaceDir, `subtask_${ticketId.substring(0, 8)}`);
-    } else if (ticketId) {
-      // ⭐ PHASE_67: Use ticket UUID directly as task ID and folder name
-      // This eliminates the fragile qm:ticket_task Redis mapping (24h TTL)
-      // and makes workspace folders directly discoverable by ticket ID
-      taskId = ticketId;
-      // ADR-060 reverted to flat (readers assume <base>/<ticketId>).
-      workspaceDir = path.join(config.filesystem.workspaceDir, ticketId);
-
-      // Backward compat: check if old-style task_XXXXXXXX folder exists and reuse it
-      const legacyTaskId = `task_${ticketId.substring(0, 8)}`;
-      const legacyDir = path.join(config.filesystem.workspaceDir, legacyTaskId);
-      if (fs.existsSync(legacyDir) && !fs.existsSync(workspaceDir)) {
-        taskId = legacyTaskId;
-        workspaceDir = legacyDir;
-        logger.info(`♻️ PHASE_67: Using legacy workspace ${legacyTaskId} for ticket ${ticketId}`);
-      }
+    } else if (hasTicketId && hasParentWorkspace) {
+      // Child subtask: nest under a resolved link-free parent workspace.
+      const baseRoot = resolveTrustedWorkspaceRoot(config.filesystem.workspaceDir);
+      const swarmRoot = path.join(path.dirname(baseRoot), 'swarm-workspace');
+      const parent = resolveExistingTaskWorkspace(parentWorkspaceDir, [baseRoot, swarmRoot]);
+      const resolved = ensureTaskWorkspace(parent, ticketId);
+      taskId = resolved.taskId;
+      workspaceDir = resolved.workspaceDir;
+      workspaceCreated = resolved.created;
+    } else if (hasTicketId) {
+      // Portable ticket IDs remain readable; unsafe/case-ambiguous IDs are encoded.
+      const resolved = ensureTaskWorkspace(config.filesystem.workspaceDir, ticketId);
+      taskId = resolved.taskId;
+      // ADR-060 reverted to flat (readers assume <base>/<canonical-ticket-id>).
+      workspaceDir = resolved.workspaceDir;
+      workspaceCreated = resolved.created;
       
-      // Check if workspace already exists (phase reuse)
-      if (fs.existsSync(workspaceDir)) {
-        // Reuse existing workspace - check if task already in store
-        const existingTask = this.taskStore ? await this.taskStore.loadTask(taskId) : null;
-        if (existingTask) {
-          assertTaskOwnerBinding(existingTask, userSub);
-          logger.info(`♻️ Reusing existing workspace ${taskId} for ticket ${ticketId}`);
-          return existingTask;
-        }
-        logger.info(`♻️ Reusing existing workspace directory ${workspaceDir} for ticket ${ticketId}`);
-      }
     } else {
       // ⭐ PHASE_00_SESSION_06: Use UUID for SOP-compliant workspace structure
       // Generate UUID for non-ticket tasks (dashboard chat)
       taskId = crypto.randomUUID();
       // SOP-compliant path: /app/swarm-workspace/UUID/
-      const swarmWorkspaceRoot = path.join(path.dirname(config.filesystem.workspaceDir), 'swarm-workspace');
+      const baseRoot = resolveTrustedWorkspaceRoot(config.filesystem.workspaceDir);
+      const swarmWorkspaceRoot = ensureTrustedWorkspaceRoot(path.join(path.dirname(baseRoot), 'swarm-workspace'));
       // ADR-060 reverted to flat.
-      workspaceDir = path.join(swarmWorkspaceRoot, taskId);
+      const resolved = ensureTaskWorkspace(swarmWorkspaceRoot, taskId);
+      taskId = resolved.taskId;
+      workspaceDir = resolved.workspaceDir;
+      workspaceCreated = resolved.created;
       logger.info(`📂 PHASE_00_SESSION_06: Created UUID-based workspace: ${taskId}`);
     }
 
-    if (!fs.existsSync(workspaceDir)) {
-      fs.mkdirSync(workspaceDir, { recursive: true });
+    if (!workspaceCreated && this.taskStore) {
+      const existingTask = await this.taskStore.loadTask(taskId);
+      if (existingTask) {
+        assertTaskOwnerBinding(existingTask, userSub);
+        logger.info(`Reusing owner-bound task workspace ${taskId}`);
+        return existingTask;
+      }
+    }
+
+    if (workspaceCreated) {
       // ⭐ PHASE_00_SESSION_06: Create SOP-compliant folder structure
       // Standard folders: notes/, deliverables/, developer-handovers/
-      fs.mkdirSync(path.join(workspaceDir, 'notes'), { recursive: true });
-      fs.mkdirSync(path.join(workspaceDir, 'deliverables'), { recursive: true });
-      fs.mkdirSync(path.join(workspaceDir, 'developer-handovers'), { recursive: true });
       
       // ⭐ PHASE_00_SESSION_06: Generate _meta.json with task metadata
       const metaData = {
@@ -181,7 +208,8 @@ class TaskController {
       };
       fs.writeFileSync(
         path.join(workspaceDir, '_meta.json'),
-        JSON.stringify(metaData, null, 2)
+        JSON.stringify(metaData, null, 2),
+        { encoding: 'utf8', flag: 'wx', mode: 0o600 },
       );
       
       logger.info(`Created SOP-compliant workspace for task: ${workspaceDir} (with notes/, deliverables/, developer-handovers/, _meta.json)`);
@@ -190,7 +218,7 @@ class TaskController {
     const task = {
       id: taskId,
       text,
-      userSub: normalizeTaskOwner(userSub),
+      userSub,
       status: 'created',
       mode,
       workspace_dir: workspaceDir,
@@ -278,14 +306,6 @@ class TaskController {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    const commandRegex = /^`([^`]+)`$/;
-    const match = userMessage.text.match(commandRegex);
-
-    if (match) {
-      const command = match[1];
-      return this.executeTool(taskId, 'execute_command', { command }, options.autoApprove);
-    }
-
     // Bring-Your-Own-LLM: when the caller threaded a per-user OpenAI-compatible
     // connection, this request runs inference on THEIR endpoint+key+model instead of
     // the bot's configured provider. BYO is a reasoning path (no vendor CLI harness
@@ -367,12 +387,20 @@ class TaskController {
         });
       }
 
-      const availableTools = this.getAvailableTools();
+      // Tool-less is an execution authority boundary, not only a routing hint. An absent
+      // allowedTools option means unrestricted on the legacy interactive path, so force an
+      // exact empty list here before any registry capability can be captured or advertised.
+      const allowedTools = normalizeAllowedTools(toolLess ? [] : options.allowedTools);
+      const authorizedScopes = normalizeAuthorizedScopes(options.authorizedScopes);
+      const dispatchCapabilities = captureDispatchCapabilities(
+        this.toolRegistry, allowedTools, authorizedScopes,
+      );
+      const availableTools = dispatchCapabilities.definitions;
 
-      const formattedMessages = task.messages.map(msg => ({
-        role: msg.type === 'say' && msg.text.includes('Task:') ? 'user' : 'user',
-        content: msg.text || msg.say || ''
-      }));
+      const formattedMessages = [
+        ...containPriorMessages(task.messages.slice(0, -1)),
+        { role: 'user', content: userMessage.text },
+      ];
 
       let systemPrompt = `You are an OSHAL agent, a helpful AI coding assistant with full Cline capabilities. You have access to ${availableTools.length} tools including file operations and DevOps CLI tools. The current task is: ${task.text}`;
 
@@ -380,12 +408,15 @@ class TaskController {
         systemPrompt += global.PLANE_CONTEXT;
       }
 
+      assertDispatchCapabilitiesCurrent(this.toolRegistry, dispatchCapabilities);
       const response = await activeLlm.generateResponse(formattedMessages, {
         systemPrompt: systemPrompt,
         maxTokens: 4096,
         temperature: 0.7,
         tools: availableTools,
-        extraEnv: options.extraEnv // per-request scoping (e.g. OSHAL_USER_SUB) → provider spawn
+        extraEnv: options.extraEnv,
+        enforceToolBoundary: true,
+        authorizedScopes: options.authorizedScopes,
       });
       const finalText = typeof (response.content || response.text) === 'string'
         ? String(response.content || response.text).trim() : '';
@@ -611,6 +642,10 @@ class TaskController {
     return await this.taskStore.listTasks(limit, offset);
   }
 
+  async listTasksForOwner(ownerSub, limit = 50, offset = 0) {
+    return await this.taskStore.listTasksForOwner(ownerSub, limit, offset);
+  }
+
   async deleteTask(taskId) {
     this.activeTasks.delete(taskId);
     const deleted = await this.taskStore.deleteTask(taskId);
@@ -719,13 +754,7 @@ class TaskController {
 
       const recentMessages = (providerName === 'cline-cli')
         ? []  // Cline CLI is stateless — persona+task go in workspace README
-        : task.messages
-            .filter(msg => msg.type === 'say' && msg.text)
-            .slice(-10)
-            .map(msg => ({
-              role: 'user',
-              content: msg.text,
-            }));
+        : containPriorMessages(task.messages.slice(0, -1));
 
       logger.info(`[TaskController] Provider: ${providerName}, conversation history: ${recentMessages.length} messages`);
 

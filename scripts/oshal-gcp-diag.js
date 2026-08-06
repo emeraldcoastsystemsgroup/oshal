@@ -4,6 +4,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | PRIVATE GCP cost + health diagnostics CLI for cloud-ops-bot. 20 read-only check verbs over the Cloud REST APIs (no gcloud), authed by the per-user GCP connector token (brokered .oshal-cred-gcp / OSHAL_CRED_GCP, DB-decrypt fallback) — identical token plumbing to scripts/oshal-gcp.js. This is a PRIVATE tool (bot-internal, invoked via bash, NOT registered in gcpToolKit.js / cloud.yaml — by design). Each check returns structured JSON {check, findings[], ...}; `summary` aggregates a curated set into health (0-100) + monthly $ savings scores. Every API call is defensive (apiSafe) so a disabled API / missing permission on one check degrades to a finding instead of crashing the diagnostic.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Keep diagnostic DB fallback in parity with the runtime connector codec and persist refreshed access tokens as caller-owned v2 envelopes.
  *
  *   node scripts/oshal-gcp-diag.js summary [projectId]      # health score + cost savings rollup
  *   node scripts/oshal-gcp-diag.js list                     # all 20 checks
@@ -15,10 +17,11 @@
  * require the Recommender API enabled on the project (a disabled API surfaces as a finding).
  */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken, encryptToken } = require('./lib/connector-token-crypto');
 
 const CRM = 'https://cloudresourcemanager.googleapis.com/v1';
 const SU = 'https://serviceusage.googleapis.com/v1';
@@ -31,8 +34,7 @@ const SQL = 'https://sqladmin.googleapis.com/v1';
 
 // ── identity + token plumbing (mirrors scripts/oshal-gcp.js) ──────────────────
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); } catch { return undefined; }
+  return resolveExactUserSubject();
 }
 function resolveSelector() {
   return { label: process.env.OSHAL_CONNECTION_LABEL || undefined, email: process.env.OSHAL_CONNECTION_EMAIL || undefined, connectionId: process.env.OSHAL_CONNECTION_ID || undefined };
@@ -40,19 +42,6 @@ function resolveSelector() {
 function resolveProvidedToken() {
   try { const t = fs.readFileSync(path.join(process.cwd(), '.oshal-cred-gcp'), 'utf8').trim(); if (t) return t; } catch { /* env next */ }
   return process.env.OSHAL_CRED_GCP || undefined;
-}
-function hkey() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', hkey(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
-function encrypt(plain) {
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', hkey(), iv);
-  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
-  return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
 }
 function accessibleWhere() {
   return `provider='gcp' AND ((user_sub=$1 AND tenant_id IS NULL)
@@ -69,20 +58,20 @@ async function tokenFromDb(pool, sel) {
     if (sel.connectionId) { params.push(sel.connectionId); sql += ` AND connection_id=$${params.length}`; }
     else if (sel.label) { params.push(sel.label); sql += ` AND lower(label)=lower($${params.length})`; }
     else if (sel.email) { params.push(sel.email); sql += ` AND lower(account_email)=lower($${params.length})`; }
-    rows = (await pool.query(`SELECT connection_id, access_token, refresh_token, expiry FROM oshal_connections WHERE ${sql} ORDER BY is_default DESC, updated_at DESC`, params)).rows;
+    rows = (await pool.query(`SELECT connection_id, user_sub, access_token, refresh_token, expiry FROM oshal_connections WHERE ${sql} ORDER BY is_default DESC, updated_at DESC`, params)).rows;
   } else {
-    rows = (await pool.query(`SELECT connection_id, access_token, refresh_token, expiry FROM oshal_connections WHERE provider='gcp' ORDER BY updated_at DESC`)).rows;
+    rows = (await pool.query(`SELECT connection_id, user_sub, access_token, refresh_token, expiry FROM oshal_connections WHERE provider='gcp' ORDER BY updated_at DESC`)).rows;
     if (rows.length > 1 && !named) { console.error(`Refusing to guess: ${rows.length} GCP connections. Set OSHAL_USER_SUB or a label.`); process.exit(2); }
   }
   if (!rows || !rows.length) { console.error(named ? 'No GCP connection matches that account.' : 'No GCP connection. Connect Google Cloud at /utilities first.'); process.exit(2); }
   const row = rows[0];
-  if (row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60_000) return decrypt(row.access_token);
-  if (!row.refresh_token) return row.access_token ? decrypt(row.access_token) : (console.error('GCP token expired and no refresh token; reconnect at /utilities.'), process.exit(2));
-  const body = new URLSearchParams({ client_id: process.env.GCP_CLIENT_ID || '', client_secret: process.env.GCP_CLIENT_SECRET || '', refresh_token: decrypt(row.refresh_token), grant_type: 'refresh_token' });
+  if (row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60_000) return decryptToken(pool, row.user_sub, row.access_token);
+  if (!row.refresh_token) return row.access_token ? decryptToken(pool, row.user_sub, row.access_token) : (console.error('GCP token expired and no refresh token; reconnect at /utilities.'), process.exit(2));
+  const body = new URLSearchParams({ client_id: process.env.GCP_CLIENT_ID || '', client_secret: process.env.GCP_CLIENT_SECRET || '', refresh_token: await decryptToken(pool, row.user_sub, row.refresh_token), grant_type: 'refresh_token' });
   const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
   if (!r.ok) { console.error('GCP token refresh failed: ' + r.status + ' ' + (await r.text()).slice(0, 160)); process.exit(3); }
   const tok = await r.json();
-  await pool.query('UPDATE oshal_connections SET access_token=$2, expiry=$3, updated_at=NOW() WHERE connection_id=$1', [row.connection_id, encrypt(tok.access_token), tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null]);
+  await pool.query('UPDATE oshal_connections SET access_token=$2, expiry=$3, updated_at=NOW() WHERE connection_id=$1', [row.connection_id, await encryptToken(pool, row.user_sub, tok.access_token), tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null]);
   return tok.access_token;
 }
 

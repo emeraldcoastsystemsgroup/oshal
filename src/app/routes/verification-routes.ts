@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of verification routes
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require an authenticated operator for verification history, execution, and scheduler control.
  */
 
 import { Router } from 'express';
 import { VerificationController } from '@/features/tool-verification';
 import { createChildLogger } from '@/shared/logger';
+import { requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'verification-routes' });
 
@@ -21,6 +23,10 @@ const logger = createChildLogger({ module: 'verification-routes' });
  */
 export function createVerificationRoutes(controller: VerificationController): Router {
   const router = Router();
+
+  // Verification reads disclose host/runtime diagnostics and every mutation can start work.
+  // Keep the gate inside the router so a future mount cannot accidentally weaken it.
+  router.use(requiresOperator);
 
   // Scheduler management routes (must come before parameterized routes)
   router.get('/scheduler/status', controller.getSchedulerStatus);

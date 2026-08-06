@@ -24,8 +24,14 @@ description: >-
   and the dispatch trail for anomalies. The security-analyst triages each finding into a
   real/false-positive verdict with an attack scenario and a fix, and one click escalates it to
   a tracked ticket.
-version: 1.0.0
+version: 1.0.1
 status: active
+
+# ADR-118: this platform-security surface intentionally collapses to deny/admin. The existing
+# operator route guard remains authoritative inside; the coarse doorway never invents a viewer.
+access:
+  supported: [deny, admin]
+  defaultTier: admin
 
 # OPERATOR-ONLY (operator decision 2026-07-07): findings map the platform's own weak
 # points — secret locations/previews, ungated routes — so basic users must never see

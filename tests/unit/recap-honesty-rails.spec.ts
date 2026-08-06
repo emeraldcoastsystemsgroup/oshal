@@ -5,10 +5,23 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — file-content guards for the 2026-07-28 recap outage fixes. Each assertion goes red if its fix regresses: doomed 30s pulls, existence-only piece checks (the stale-mix hazard), silent MessageBox failures, the missing OSHAL_USER_SUB on data steps, the localhost/::1 watchdog false-FAIL, piece-name drift across runner/assembler/goal, and the auto-journaled knob turns feeding the deck's "changes" section.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the 2026-07-30 silent-transfer fix, plus a re-point. NodePull is no longer a one-liner, so the existing 600000-timeout assertion (which required the value on the SAME line as `function NodePull`) is re-pointed at the function BODY — same claim, new shape; it would otherwise have gone green-by-vacuity the moment the body moved. New assertions: both transfer helpers inspect RN's result instead of discarding it to Out-Null, and NodePull fails on a local file that did not change (the exact shape of the 26-minute silent no-op).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add behavioral build and delivery manifest guards. The production PowerShell contract is executed against stale-date, mismatched-input, partial, corrupt-piece, final-output tampering, and overwrite attempts so ResumePull, SkipBuild, and publishers cannot regress to trusting filenames or the node's current bytes.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pin the async CLI failure boundary and finally-based remote scratch cleanup; require delivery outputs to retain the deck/PDF/video minimum-size rails.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Require explicit build-manifest identity and reject impossible delivery calendar dates.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Reject root-array and traversal-shaped delivery identities before any artifact path is derived.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Split manifest and delivery scenarios into small named fixtures and focused suites so every test callback stays within the repository's function-size limit.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Re-point remote-pull rails at the extracted option, staging, range-read, and cleanup helpers so the function-size refactor preserves non-vacuous linear-transfer and failure-cleanup guards.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Give the delivery-verifier behavior guard an explicit process-startup budget. It launches five real Windows PowerShell processes and can exceed Vitest's five-second default only when the full suite contends for process startup; the production verifier and its fail-closed assertions remain unchanged.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Apply the same bounded process-startup budget to artifact-reuse guards that launch two or three real PowerShell probes. Full-suite contention must not turn successful fail-closed verification into a five-second harness timeout.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Prove the completed-build contract rejects omitted timestamps, divergent top-level input digests, reversed time bounds, and pieces lacking successful ffprobe evidence.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | Give each real PowerShell manifest/delivery boundary a call-count-sized startup budget under the parallel suite; production verification rules remain unchanged.
  */
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { afterAll, describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const root = join(__dirname, '..', '..');
 const read = (p: string) => readFileSync(join(root, p), 'utf8');
@@ -45,6 +58,137 @@ const deckGen = read('scripts/oshal-deck-data.js');
 const overrides = read('src/app/trading-config-overrides.ts');
 const template = read('packages/oshal-vids-operator/make-deck-detailed.py');
 
+const manifestProbeDir = mkdtempSync(join(tmpdir(), 'oshal-recap-manifest-'));
+const runnerPath = join(root, 'scripts', 'run-daily-recap.ps1');
+const powershell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+let manifestProbeSeq = 0;
+
+type ManifestProbeResult = { status: number | null; body: Record<string, unknown>; stderr: string };
+
+/**
+ * Executes the production manifest contract without entering the recap workflow.
+ * @description The runner's probe exits before Docker, node calls, or recap paths are touched;
+ *   exercising PowerShell itself prevents a TypeScript reimplementation from drifting green.
+ * @param payload operation and values consumed by the production contract
+ * @returns process status, parsed JSON result, and stderr for actionable assertion failures
+ */
+const runManifestProbe = (payload: Record<string, unknown>): ManifestProbeResult => {
+  const probePath = join(manifestProbeDir, `probe-${manifestProbeSeq += 1}.json`);
+  writeFileSync(probePath, JSON.stringify(payload), 'utf8');
+  const child = spawnSync(powershell, ['-NoProfile', '-File', runnerPath, '-ManifestContractProbe', probePath], {
+    encoding: 'utf8',
+  });
+  if (child.error) throw new Error(`PowerShell manifest probe could not start: ${child.error.message}`);
+  const output = child.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+  if (!output) throw new Error(`PowerShell manifest probe returned no JSON (stderr: ${child.stderr})`);
+  return { status: child.status, body: JSON.parse(output) as Record<string, unknown>, stderr: child.stderr };
+};
+
+/** @description Executes the same fail-closed delivery verifier exposed to recap publishers. */
+const runDeliveryVerifier = (manifestPath: string, artifactRoot: string): ManifestProbeResult => {
+  const child = spawnSync(powershell, [
+    '-NoProfile', '-File', runnerPath,
+    '-VerifyDeliveryManifest', manifestPath,
+    '-DeliveryArtifactRoot', artifactRoot,
+  ], { encoding: 'utf8' });
+  if (child.error) throw new Error(`PowerShell delivery verifier could not start: ${child.error.message}`);
+  const output = child.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+  if (!output) throw new Error(`PowerShell delivery verifier returned no JSON (stderr: ${child.stderr})`);
+  return { status: child.status, body: JSON.parse(output) as Record<string, unknown>, stderr: child.stderr };
+};
+
+afterAll(() => rmSync(manifestProbeDir, { recursive: true, force: true }));
+
+const requiredPieces = ['presenter-intro.mp4', 'presenter-overview.mp4', 'presenter-close.mp4', 'deck-narrated.mp4'];
+const expectedInputs = [
+  { name: 'deck-data.json', bytes: 1200, sha256: '1'.repeat(64) },
+  { name: 'deck.pptx', bytes: 6400, sha256: '2'.repeat(64) },
+  { name: 'presenter-head.png', bytes: 3200, sha256: '3'.repeat(64) },
+  { name: 'RECAP-BUILD-GOAL.md', bytes: 1800, sha256: '4'.repeat(64) },
+];
+
+/** @description Returns a new valid manifest so each adversarial case mutates isolated data. */
+const validManifest = (): Record<string, unknown> => ({
+  schemaVersion: 1,
+  manifestKind: 'recap-build',
+  runId: 'a'.repeat(32),
+  date: '2026-08-05',
+  requestedDate: '2026-08-05',
+  status: 'complete',
+  startedAt: '2026-08-05T22:50:00.0000000+00:00',
+  completedAt: '2026-08-05T23:20:00.0000000+00:00',
+  deckDataSha256: expectedInputs[0].sha256,
+  deckPptxSha256: expectedInputs[1].sha256,
+  inputs: expectedInputs.map((item) => ({ ...item })),
+  pieces: requiredPieces.map((name, index) => ({
+    name, bytes: 400_000 + index, sha256: String(index + 5).repeat(64), mediaVerified: true,
+  })),
+});
+
+/** @description Executes manifest validation using the canonical requested date and inputs. */
+const validateManifest = (manifest: unknown): ManifestProbeResult => runManifestProbe({
+  operation: 'validate', manifest, date: '2026-08-05', inputs: expectedInputs, requiredPieces,
+});
+
+const fileArtifact = (name: string, path: string) => {
+  const bytes = readFileSync(path);
+  return { name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+};
+
+const createDeliveryFixture = () => {
+  const artifactRoot = join(manifestProbeDir, 'delivery-verifier');
+  mkdirSync(artifactRoot);
+  const build = validManifest();
+  const runId = String(build.runId);
+  const buildName = `build-artifacts-${runId}.json`;
+  const buildPath = join(artifactRoot, buildName);
+  const outputNames = ['deck.pptx', '2026-08-05.pdf', 'trade-recap.mp4'];
+  const outputSizes = [20_000, 20_001, 1_100_000];
+  for (const [index, name] of outputNames.entries()) {
+    writeFileSync(join(artifactRoot, name), Buffer.alloc(outputSizes[index], index + 1));
+  }
+  const buildInputs = build.inputs as Array<{ name: string; bytes: number; sha256: string }>;
+  Object.assign(buildInputs.find((item) => item.name === 'deck.pptx')!, fileArtifact('deck.pptx', join(artifactRoot, 'deck.pptx')));
+  build.deckPptxSha256 = buildInputs.find((item) => item.name === 'deck.pptx')!.sha256;
+  writeFileSync(buildPath, JSON.stringify(build), 'utf8');
+  const delivery = {
+    schemaVersion: 1, manifestKind: 'recap-delivery', runId, deliveryId: 'b'.repeat(32),
+    requestedDate: '2026-08-05', status: 'complete', completedAt: '2026-08-05T23:30:00.0000000+00:00',
+    buildManifest: fileArtifact(buildName, buildPath), inputs: build.inputs, pieces: build.pieces,
+    outputs: outputNames.map((name) => fileArtifact(name, join(artifactRoot, name))),
+  };
+  const deliveryPath = join(artifactRoot, 'RECAP.manifest.json');
+  writeFileSync(deliveryPath, JSON.stringify(delivery), 'utf8');
+  return {
+    artifactRoot, deliveryPath, delivery, runId, videoSize: outputSizes[2],
+  };
+};
+
+const assertDeliveryMutationsFailClosed = (fixture: ReturnType<typeof createDeliveryFixture>) => {
+  const { artifactRoot, deliveryPath, delivery } = fixture;
+  writeFileSync(join(artifactRoot, 'trade-recap.mp4'), Buffer.alloc(fixture.videoSize, 9));
+  const tampered = runDeliveryVerifier(deliveryPath, artifactRoot);
+  expect(tampered.status).toBe(1);
+  expect(tampered.body.errors as string[]).toContain("output 'trade-recap.mp4' SHA-256 mismatch");
+
+  delivery.requestedDate = '2026-02-30';
+  writeFileSync(deliveryPath, JSON.stringify(delivery), 'utf8');
+  const impossibleDate = runDeliveryVerifier(deliveryPath, artifactRoot);
+  expect(impossibleDate.status).toBe(1);
+  expect(impossibleDate.body.errors as string[]).toContain('delivery requestedDate is invalid');
+
+  delivery.requestedDate = '..\\..\\outside-root';
+  writeFileSync(deliveryPath, JSON.stringify(delivery), 'utf8');
+  const traversal = runDeliveryVerifier(deliveryPath, artifactRoot);
+  expect(traversal.status).toBe(1);
+  expect(traversal.body.errors).toEqual(['delivery requestedDate is invalid']);
+
+  writeFileSync(deliveryPath, JSON.stringify([delivery]), 'utf8');
+  const rootArray = runDeliveryVerifier(deliveryPath, artifactRoot);
+  expect(rootArray.status).toBe(2);
+  expect(String((rootArray.body.errors as string[])[0])).toMatch(/root must be an object/i);
+};
+
 describe('recap runner honesty rails (2026-07-28 outage fixes)', () => {
   it('pulls wait for chunked transfers instead of the doomed 30s default', () => {
     expect(bodyOf(runner, 'NodePull')).toMatch(/--timeoutMs=600000/);
@@ -64,6 +208,124 @@ describe('recap runner honesty rails (2026-07-28 outage fixes)', () => {
   });
   it('runner writes ops-notes.json for the report\'s operations section', () => {
     expect(runner).toMatch(/ops-notes\.json/);
+  });
+  it('runs ffprobe before recording media verification in the immutable manifest inventory', () => {
+    expect(runner).toMatch(/Get-Command `\$ffprobeName -ErrorAction Stop/);
+    expect(runner).toMatch(/-show_entries 'stream=codec_type:format=duration'/);
+    expect(runner).toMatch(/`\$record\.mediaVerified = `\$true/);
+    expect(runner.indexOf('`$record.mediaVerified = `$true')).toBeLessThan(runner.indexOf('$manifest = [ordered]@{'));
+  });
+});
+
+describe('completed-build manifest identity contract (behavioral)', () => {
+  it('accepts one complete run binding date, input hashes, and all piece hashes', { timeout: 15_000 }, () => {
+    const result = validateManifest(validManifest());
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.body).toMatchObject({ valid: true, errors: [] });
+  });
+
+  it('makes SkipBuild fail closed when the manifest is missing or belongs to another date', { timeout: 30_000 }, () => {
+    const missing = validateManifest(null);
+    expect(missing.body).toMatchObject({ valid: false, errors: ['manifest is missing'] });
+
+    const stale = validManifest();
+    stale.requestedDate = '2026-08-04';
+    const result = validateManifest(stale);
+    expect(result.body.valid).toBe(false);
+    expect(result.body.errors as string[]).toContain("requestedDate '2026-08-04' does not match '2026-08-05'");
+  });
+
+  it('rejects a build with the wrong manifest kind', { timeout: 15_000 }, () => {
+    const manifest = validManifest();
+    manifest.manifestKind = 'recap-delivery';
+    const result = validateManifest(manifest);
+    expect(result.body.valid).toBe(false);
+    expect(result.body.errors as string[]).toContain('build manifest schema is invalid');
+  });
+
+  it('makes SkipBuild fail on changed inputs, an incomplete status, and partial piece inventory', { timeout: 15_000 }, () => {
+    const manifest = validManifest();
+    (manifest.inputs as Array<{ sha256: string }>)[0].sha256 = 'f'.repeat(64);
+    (manifest.pieces as Array<{ name: string; bytes: number }>).pop();
+    manifest.status = 'building';
+    const result = validateManifest(manifest);
+    const errors = result.body.errors as string[];
+    expect(result.body.valid).toBe(false);
+    expect(errors).toEqual(expect.arrayContaining([
+      "status 'building' is not complete",
+      "input 'deck-data.json' SHA-256 mismatch",
+      'piece count is 3, expected 4',
+      "piece 'deck-narrated.mp4' must appear exactly once",
+    ]));
+  });
+
+  it('rejects manifests missing explicit input digests, start provenance, or media proof', { timeout: 15_000 }, () => {
+    const manifest = validManifest();
+    delete manifest.startedAt;
+    manifest.deckDataSha256 = 'f'.repeat(64);
+    delete (manifest.pieces as Array<Record<string, unknown>>)[0].mediaVerified;
+    const result = validateManifest(manifest);
+    expect(result.body.valid).toBe(false);
+    expect(result.body.errors as string[]).toEqual(expect.arrayContaining([
+      'startedAt is missing or invalid',
+      'deckDataSha256 does not match the deck-data.json input',
+      "piece 'presenter-intro.mp4' has no successful media verification",
+    ]));
+  });
+
+  it('rejects a manifest whose completion precedes its declared start', { timeout: 15_000 }, () => {
+    const manifest = validManifest();
+    manifest.startedAt = '2026-08-05T23:21:00.000Z';
+    const result = validateManifest(manifest);
+    expect(result.body.valid).toBe(false);
+    expect(result.body.errors as string[]).toContain('completedAt precedes startedAt');
+  });
+});
+
+describe('completed-build artifact reuse contract (behavioral)', () => {
+  // These guards intentionally execute the production PowerShell contract multiple times. Their
+  // explicit budget covers process startup under full-suite load; it does not relax verification.
+  it('allows ResumePull reuse only for the exact manifest byte length and SHA-256', { timeout: 15_000 }, () => {
+    const piecePath = join(manifestProbeDir, 'presenter-intro.mp4');
+    const bytes = Buffer.alloc(400_000, 7);
+    writeFileSync(piecePath, bytes);
+    const artifact = { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+
+    const exact = runManifestProbe({ operation: 'pieceMatches', path: piecePath, artifact });
+    expect(exact.status, exact.stderr).toBe(0);
+    expect(exact.body).toEqual({ matches: true });
+
+    bytes[0] = 8;
+    writeFileSync(piecePath, bytes);
+    const changed = runManifestProbe({ operation: 'pieceMatches', path: piecePath, artifact });
+    expect(changed.body).toEqual({ matches: false });
+
+    const wrongLength = runManifestProbe({ operation: 'pieceMatches', path: piecePath, artifact: { ...artifact, bytes: bytes.length - 1 } });
+    expect(wrongLength.body).toEqual({ matches: false });
+  });
+
+  it('never overwrites a run-id-named immutable manifest', { timeout: 15_000 }, () => {
+    const immutablePath = join(manifestProbeDir, 'build-artifacts-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json');
+    const first = runManifestProbe({ operation: 'writeImmutable', path: immutablePath, value: { runId: 'first' } });
+    expect(first.status, first.stderr).toBe(0);
+
+    const overwrite = runManifestProbe({ operation: 'writeImmutable', path: immutablePath, value: { runId: 'second' } });
+    expect(overwrite.status).toBe(2);
+    expect(String(overwrite.body.error)).toMatch(/exist/i);
+    expect(JSON.parse(readFileSync(immutablePath, 'utf8'))).toEqual({ runId: 'first' });
+  });
+});
+
+describe('delivery verifier contract (behavioral)', () => {
+  // Five production PowerShell invocations are intentional: one valid delivery plus four distinct
+  // tamper shapes. Full-suite process contention can make their startup alone exceed Vitest's
+  // five-second default, so this test owns a bounded harness budget without relaxing any verifier.
+  it('publisher verifier binds deck, dated PDF, and final video to the same build run', { timeout: 45_000 }, () => {
+    const fixture = createDeliveryFixture();
+    const valid = runDeliveryVerifier(fixture.deliveryPath, fixture.artifactRoot);
+    expect(valid.status, valid.stderr).toBe(0);
+    expect(valid.body).toMatchObject({ valid: true, runId: fixture.runId });
+    assertDeliveryMutationsFailClosed(fixture);
   });
 });
 
@@ -122,16 +384,21 @@ describe('remote pull chunk window', () => {
 // while the pull grinds for 26 minutes and then fails.
 describe('pull is linear, not quadratic (2026-07-30)', () => {
   const pull = bodyOf(remoteNode, 'pullFile');
+  const options = bodyOf(remoteNode, 'resolvePullOptions');
+  const stage = bodyOf(remoteNode, 'stageRemotePull');
+  const ranges = bodyOf(remoteNode, 'readRemotePullChunks');
+  const chunk = bodyOf(remoteNode, 'fetchRemotePullChunk');
+  const cleanup = bodyOf(remoteNode, 'finalizeRemotePull');
 
   it('encodes the source exactly once, not once per chunk', () => {
     // Comment prose describes the old quadratic loop, so count code only.
-    const code = pull.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    const code = [stage, ranges, chunk].join('\n').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
     const encodes = code.match(/ToBase64String/g) || [];
     expect(encodes, 'a second ToBase64String in code means the per-chunk re-encode is back').toHaveLength(1);
   });
 
   it('the per-chunk command reads the scratch file, never the source', () => {
-    const chunkCmd = /const cmd = \[([\s\S]*?)\]\.join/.exec(pull);
+    const chunkCmd = /const cmd = \[([\s\S]*?)\]\.join/.exec(chunk);
     expect(chunkCmd, 'per-chunk command not found').toBeTruthy();
     expect(chunkCmd![1], 'the chunk read must not touch remotePath — that is the quadratic bug')
       .not.toMatch(/remotePath/);
@@ -139,24 +406,25 @@ describe('pull is linear, not quadratic (2026-07-30)', () => {
   });
 
   it('serves chunks as byte-range reads of a staged scratch file', () => {
-    expect(pull).toMatch(/OpenRead/);
-    expect(pull).toMatch(/Seek\(\$\{offset\}/);
+    expect(chunk).toMatch(/OpenRead/);
+    expect(chunk).toMatch(/Seek\(\$\{offset\}/);
   });
 
   it('deletes the scratch file even when the transfer fails midway', () => {
-    expect(pull).toMatch(/cleanup/);
-    expect(pull).toMatch(/Remove-Item/);
-    // one cleanup on the failure path, one on the success path
-    expect((pull.match(/await cleanup\(\)/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(cleanup).toMatch(/Remove-Item/);
+    expect(cleanup).toMatch(/-ErrorAction Stop/);
+    expect(pull).toMatch(/finally\s*{\s*await finalizeRemotePull\(marker, transferError\)/);
+    expect(remoteNode).toMatch(/function die\(message\)\s*{\s*throw new Error/);
+    expect(remoteNode).not.toMatch(/function die\(message\)[\s\S]{0,100}process\.exit/);
   });
 
   it('refuses a short chunk instead of splicing it into the file', () => {
-    expect(pull).toMatch(/got\.length !== take/);
-    expect(pull).toMatch(/throw new Error/);
+    expect(chunk).toMatch(/got\.length !== take/);
+    expect(chunk).toMatch(/throw new Error/);
   });
 
   it('keeps the chunk under the node\'s measured 20000-char stdout truncation', () => {
-    const clamp = /Math\.min\(num\(args\.chunkSize,\s*(\d+)\),\s*(\d+)\)/.exec(pull);
+    const clamp = /Math\.min\(num\(args\.chunkSize,\s*(\d+)\),\s*(\d+)\)/.exec(options);
     expect(clamp, 'chunkSize clamp not found — the truncation guard is unverified').toBeTruthy();
     expect(Number(clamp![1]), 'default chunk must sit under the 20000 cap').toBeLessThan(20000);
     expect(Number(clamp![2]), 'max chunk must sit under the 20000 cap').toBeLessThan(20000);

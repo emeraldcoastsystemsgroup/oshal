@@ -1,9 +1,9 @@
 # ADR-046 — Token Chase: git-versioned checkpoint/replay for counterfactual workflow optimization
 
-- **Status:** Partially implemented — a narrower subset than this ADR's full git-substrate design
-  is built and live (see "Implementation status" below). The git-checkpoint/splice/tail-replay
-  core remains Proposed.
-- **Date:** 2026-06-17 (proposed); build status updated 2026-07-11
+- **Status:** Partially implemented — capture, accountable replay, judging, savings, and reversible
+  re-baselining are implemented locally (see "Implementation status" below). The complete
+  commit/store checkpoint, interactive splice debugger, and learned selector remain Proposed.
+- **Date:** 2026-06-17 (proposed); build status updated 2026-08-06
 - **Related:** [ADR-027 (swarm cost rollup / chat_tasks linking)](027-swarm-cost-rollup-task-linking.md),
   [ADR-032 (Process Lab non-invasive trace runs)](032-process-lab-non-invasive-trace-runs.md),
   [ADR-033 (multi-harness execution framework)](033-multi-harness-execution-framework.md),
@@ -309,28 +309,41 @@ A concrete implementation sketch for steps 1–2 (capture + replay + debugger), 
 execution-path hooks, is in
 [docs/architecture/token-chase-capture-and-debugger-spec.md](../architecture/token-chase-capture-and-debugger-spec.md).
 
-## Implementation status (2026-07-11)
+## Implementation status (2026-08-06)
 
-A **narrower subset** of this ADR is built and live — per-LLM-call capture and single-call prompt
-replay, *not* the git-checkpoint/splice/tail-replay substrate the ADR proposes. What exists:
+The following repository behavior is implemented and regression-tested. This status does not claim
+that a provider-backed production acceptance run has occurred:
 
-- **Step 1 — capture: built.** `TokenChaseCapture` writes redacted per-call frames to
-  `<workspace>/.tokenchase/`; on by default (`TOKEN_CHASE_CAPTURE`), real runs accumulate from live
-  traffic. Read/debugger API at `/api/token-chase`.
-- **Step 2 — determinism gate: built (single-call slice only).** One frame's exact prompt re-fires
-  on the owning bot node; graded by `assessDeterminism` (byte-exact → deterministic; token-set
-  Jaccard ≥ 0.85 → equivalent; else divergent). **This is a lexical proxy — the step-4 LLM judge
-  is not built** (code comments call the judge "the eventual upgrade").
-- **Step 3 — variant: built as per-frame model-swap** (not checkpoint splice). Baseline-vs-variant
-  cost/latency/accuracy diff over BYO / framework OpenAI-compatible lanes.
-- **Step 5 — savings loop: built.** Replays every frame of a run on one lane, writes the
-  `token_chase_optimizer_corpus`, rolls only zero-risk `equivalent-cheaper` swaps into realizable $.
-- **First REAL (non-demo) grade: 2026-07-11.** Real captured frames graded against a `:free` lane at
-  $0 — docs/evidence/token-chase-real-baseline-2026-07-11.md.
-  (Prior `token-chase-demo-*.md` artifacts are the synthetic `/demo/comparison` route, not real grades.)
+- **Step 1 — capture/read: implemented.** `TokenChaseCapture` writes redacted, owner-scoped frames
+  under `<workspace>/.tokenchase/`; authenticated read routes expose runs and frame details.
+- **Step 2 — replay substrate: partially implemented.** Single-call replay re-fires the captured
+  prompt on an accountable bot node. A tail-replay service can hash-verify and restage recorded
+  workspace-tree objects into isolation, walk frames forward, stop at first divergence, and report
+  pinned/unpinned reads. Capture does not yet bind every frame to the complete workspace commit,
+  encrypted owner-store version, pinned external reads, and tool schema required by this ADR.
+- **Step 3 — variants and savings: implemented for per-frame model lanes.** BYO/framework
+  OpenAI-compatible variants produce cost, latency, and determinism diffs; the run loop persists
+  corpus observations and reports realizable `equivalent-cheaper` savings. The `free:auto`
+  aggregate selector is offered only while an owner-visible free lane is outside cooldown or the
+  process has a cached-live platform `:free` lane. Selection itself is authoritative at replay time:
+  the existing probe/LRU resolver chooses the lane, classified provider/quota walls cool it and
+  retry the same frame on another free lane, and exhaustion stops without invoking the bot's
+  configured provider. Variant/corpus evidence records the server-resolved provider and model.
+  `POST .../variant` returns the secret-free `selection` trace (attempts, rotations, fail-closed
+  status, provider, model); `POST .../savings` returns the corresponding aggregate `laneSelection`.
+- **Step 4 — judge and keep-winner: implemented.** The quality-judge lane grades observations;
+  lexical fallback grades are structurally ineligible for promotion. Manual promotion is
+  authenticated, owner-scoped, thresholded, transactional, and audited. Automatic promotion is
+  default-off (`TOKEN_CHASE_AUTO_PROMOTE=true` is the explicit opt-in). Active winners become the
+  next savings run's per-frame cost/provider/model baseline; an authenticated audited revert removes
+  that active baseline so a detected regression returns subsequent runs to the captured baseline.
+  Promotion and audit tables use owner-or-operator RLS in both migration 095 and the lazy bootstrap.
+- **Spend controls: implemented.** `TOKEN_CHASE_BUDGET_USD` caps replay spend and
+  `TOKEN_CHASE_JUDGE_BUDGET_USD` separately caps quality-judge calls. Both have finite defaults,
+  check before the next paid call, and report partial completion rather than implying a full grade.
 
-**Still Proposed (the ADR's actual novelty):** git frame-commits binding the whole workspace tree +
-bot-store version; worktree-isolated **tail** replay (reproduce all downstream artifacts, not one
-response); real pinned-read detection (capture hardcodes `replayable: true`); the assessor/judge
-(step 4); and the trained selection policy (step 5's cost-floor routing). Scope + done-when for
-these live in [BACKLOG.md](../BACKLOG.md) "Plan B" and the Token Chase section.
+**Still Proposed or awaiting external proof:** the complete commit + encrypted-store checkpoint,
+tool/read pin capture, artifact-producing downstream replay, interactive rewind/edit/forward debugger,
+learned selection policy beyond the shipped health/LRU free-lane selector, and current provider-backed
+acceptance evidence. Their exact
+acceptance boundaries remain in the Token Chase section of [BACKLOG.md](../BACKLOG.md).

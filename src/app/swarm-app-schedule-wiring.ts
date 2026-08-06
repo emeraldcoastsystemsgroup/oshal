@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (1000-line cap decomposition): swarm-app manifest schedule registrar/deregistrar factories, the per-user schedule reconciler, and the nightly oshal-dev docs-quality schedule (ADR-081). Verbatim moves — server.ts calls these at the exact same points in createApp, so wiring order and env handling are unchanged.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register deterministic service-route targets separately from prompt jobs and retract their active registry entries before persisted schedule teardown.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fail activation closed when a deterministic service-route schedule cannot reach the scheduler; prompt schedules retain their historical best-effort boot behavior.
  */
 
 import type { Pool } from 'pg';
@@ -12,6 +14,10 @@ import type { SwarmAppService, ManifestScheduleRegistrar, ManifestScheduleDeregi
 import { getHomeScheduleService } from './home-schedule-dispatch';
 import { setPerUserScheduleReconciler } from './per-user-schedule-reconcile';
 import { accessibleConnections } from './routes/connector-tenancy';
+import {
+  type ManifestServiceRouteScheduleRegistry,
+  manifestServiceRouteTaskType,
+} from './manifest-service-route-schedule';
 
 const logger = createChildLogger({ module: 'swarm-app-schedule-wiring' });
 
@@ -19,23 +25,57 @@ const logger = createChildLogger({ module: 'swarm-app-schedule-wiring' });
  * @description Builds the bridge that registers a manifest's framework-scope schedules onto the
  * shared scheduling service. Lazy lookup: the scheduler is wired earlier in boot
  * (createScheduleController) than the app autoload, so the handle resolves by registration time;
- * if absent, it's a safe no-op. taskType is namespaced `app:` so it bypasses the per-agent
- * user-scheduling tool gate (these are operator/system-declared defaults). ownerSub null =
- * system-wide. Schedules only EXECUTE when ENABLE_AGENT_SCHEDULER=true.
+ * if absent, it's a safe no-op. Prompt jobs use `app:`; deterministic named handlers use
+ * `app-route:`. Both bypass the per-agent user-scheduling tool gate because they are
+ * operator/system-declared defaults. ownerSub null = system-wide. Schedules only EXECUTE when
+ * ENABLE_AGENT_SCHEDULER=true.
  *
  * @returns Registrar passed into SwarmAppService at construction.
  */
-export function createManifestScheduleRegistrar(): ManifestScheduleRegistrar {
+export function createManifestScheduleRegistrar(
+  serviceRouteRegistry: ManifestServiceRouteScheduleRegistry,
+): ManifestScheduleRegistrar {
   return async (input) => {
     const svc = getHomeScheduleService();
-    if (!svc) return;
-    await svc.createSchedule({
-      taskType: `app:${input.scheduleId}`,
-      schedule: input.cron,
-      taskData: { prompt: input.prompt, targetAgent: input.targetAgent },
-      ownerSub: null,
-      queue: input.queue,
+    if (!svc) {
+      if (input.target.kind === 'service-route') {
+        throw new Error(`Scheduler unavailable for deterministic app schedule: ${input.scheduleId}`);
+      }
+      return;
+    }
+    if (input.target.kind === 'prompt') {
+      await svc.createSchedule({
+        taskType: `app:${input.scheduleId}`,
+        schedule: input.cron,
+        taskData: { prompt: input.target.prompt, targetAgent: input.target.targetAgent },
+        ownerSub: null,
+        queue: input.queue,
+      });
+      return;
+    }
+
+    serviceRouteRegistry.register({
+      appName: input.target.appName,
+      scheduleId: input.scheduleId,
+      packageDir: input.target.packageDir,
+      module: input.target.module,
+      handler: input.target.handler,
+      route: input.target.path,
+      body: input.target.body,
     });
+    try {
+      await svc.createSchedule({
+        taskType: manifestServiceRouteTaskType(input.scheduleId),
+        schedule: input.cron,
+        taskData: { kind: 'manifest-service-route', scheduleKey: input.scheduleId },
+        ownerSub: null,
+        queue: input.queue,
+      });
+    } catch (error) {
+      const localId = input.scheduleId.slice(input.target.appName.length + 1);
+      serviceRouteRegistry.unregister(input.target.appName, [localId]);
+      throw error;
+    }
   };
 }
 
@@ -48,15 +88,22 @@ export function createManifestScheduleRegistrar(): ManifestScheduleRegistrar {
  *
  * @returns Deregistrar passed into SwarmAppService at construction.
  */
-export function createManifestScheduleDeregistrar(): ManifestScheduleDeregistrar {
+export function createManifestScheduleDeregistrar(
+  serviceRouteRegistry: ManifestServiceRouteScheduleRegistry,
+): ManifestScheduleDeregistrar {
   return async ({ appName, scheduleIds }) => {
+    serviceRouteRegistry.unregister(appName, scheduleIds);
     const svc = getHomeScheduleService();
     if (!svc) return;
     const all = await svc.listSchedules({ scope: 'all' } as never);
     let removed = 0;
     for (const rec of all) {
       const t = String(rec.taskType || '');
-      const owned = scheduleIds.some((sid) => t === `app:${appName}-${sid}` || t.startsWith(`app:${appName}-${sid}:`));
+      const owned = scheduleIds.some((sid) =>
+        t === `app:${appName}-${sid}` ||
+        t.startsWith(`app:${appName}-${sid}:`) ||
+        t === manifestServiceRouteTaskType(`${appName}-${sid}`),
+      );
       if (!owned) continue;
       try {
         if (await svc.deleteSchedule(rec.id)) removed++;

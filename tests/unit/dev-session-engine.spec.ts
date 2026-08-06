@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Isolation + governance tests for the ADR-077 Phase 2 Dev Session Engine (never touches main / the live tree).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added post-red-team tests: verify-gated commit, symlink escape, protected-path + poisoned-session rejection.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove verify/Git subprocesses cannot inherit controller credentials or reintroduce them through unreviewed extra environment values.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,6 +14,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DevSessionEngine, type DevSession } from '@/features/dev-console';
+import { buildDevSessionProcessEnv } from '@/features/dev-console/services/dev-session-engine';
 
 const PASS = ['node', '-e', 'process.exit(0)'];
 const FAIL = ['node', '-e', 'process.exit(1)'];
@@ -61,6 +63,22 @@ function open(label?: string): DevSession {
 }
 
 describe('DevSessionEngine — isolation + governance (ADR-077 Phase 2)', () => {
+  it('builds a runtime-only child environment', () => {
+    expect(buildDevSessionProcessEnv(
+      { ALLOW_NONMAIN_COMMIT: '1', DATABASE_URL: 'caller-injected-database' },
+      {
+        Path: 'C:\\runtime',
+        GIT_AUTHOR_EMAIL: 'maintainer@emeraldcoastsystemsgroup.com',
+        DATABASE_URL: 'controller-database',
+        SESSION_SECRET: 'controller-session',
+      },
+    )).toEqual({
+      Path: 'C:\\runtime',
+      GIT_AUTHOR_EMAIL: 'maintainer@emeraldcoastsystemsgroup.com',
+      ALLOW_NONMAIN_COMMIT: '1',
+    });
+  });
+
   it('creates an isolated worktree on a dev-session branch without moving main', () => {
     const mainHead = git(repoRoot, ['rev-parse', 'HEAD']).trim();
     const session = open('fix-bug');

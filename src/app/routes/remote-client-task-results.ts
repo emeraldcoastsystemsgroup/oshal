@@ -8,9 +8,10 @@
  *   - buildRemoteTaskResultEnvelopes: the SENDER contract — the targeted reply
  *     (kept for back-compat with bot-node requesters) PLUS a landing event on the
  *     well-known MESH_CHANNELS.remoteTaskResult channel, correlation id guaranteed.
- *   - createRemoteTaskResultHandler / subscribeRemoteTaskResults: the api-side
- *     consumer (same XREADGROUP poll subscription every mesh consumer uses) that
- *     lands the result on the originating work item, mirroring the canonical
+ *   - landRemoteTaskResultEnvelope: the strict persistence operation awaited by
+ *     the durable journal outbox publisher before an outbox row can be acknowledged.
+ *   - createRemoteTaskResultHandler / subscribeRemoteTaskResults: a compatibility
+ *     mesh consumer that invokes the same idempotent landing operation, mirroring the canonical
  *     work-item update path (setExecutionOutput + updateStatus) the swarm uses for
  *     bot-node execution results. Correlation contract: the remote task envelope's
  *     correlationId IS the originating ticket's external id (apply-dispatch et al.
@@ -23,6 +24,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — close the unconsumed remote-client.task-result loop: sender envelope builder (targeted reply + landing event, correlation id added when absent) and the controller-side subscriber that lands results on work_items via the canonical setExecutionOutput + updateStatus path.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Wrap the mesh landing handler in runWithSystemIdentity: mesh poll callbacks run with NO AsyncLocalStorage identity, so under OSHAL_DB_GUC_STRICT=deny the work_items landing queries were the last DENIED identity-less site in the live audit ("DB access with NO request identity DENIED" @ WorkItemRepository.findByExternalIdAnyProvider). Same machine-trust boundary recordRemoteTaskCost already crosses under the sentinel (remote-client-routes.ts:498) — without it, remote task results silently vanish the day work_items gains an RLS policy.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the durable outboxId through both mesh envelopes and the landed work-item payload so settlement replay is observable and downstream consumers can deduplicate precisely.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Expose a strict outbox-awaited work-item landing path and make outboxId an idempotency receipt, so transient persistence failures leave the journal row pending instead of being lost behind an unconditional mesh ACK.
  */
 
 import { randomUUID } from 'crypto';
@@ -57,7 +60,11 @@ const MAX_LANDED_OUTPUT_CHARS = 200_000;
  * swarm execution results attach. WorkItemRepository satisfies it structurally.
  */
 export interface RemoteTaskResultLandingRepository {
-  findByExternalIdAnyProvider(externalId: string): Promise<Array<{ workItemId: string; status: string }>>;
+  findByExternalIdAnyProvider(externalId: string): Promise<Array<{
+    workItemId: string;
+    status: string;
+    executionOutput?: unknown;
+  }>>;
   setExecutionOutput(workItemId: string, output: unknown): Promise<void>;
   updateStatus(
     workItemId: string,
@@ -84,10 +91,12 @@ export interface RemoteTaskResultHandlerDeps {
 export function buildRemoteTaskResultEnvelopes(
   sourceTask: A2ATaskEnvelope,
   result: A2ATaskResult,
+  outboxId: string,
 ): MeshEnvelope[] {
   const correlationId = sourceTask.correlationId?.trim() || sourceTask.taskId?.trim() || randomUUID();
   const payload: Record<string, unknown> = {
     type: 'remote-client.task-result',
+    outboxId,
     taskId: sourceTask.taskId,
     intent: sourceTask.intent,
     correlationId,
@@ -132,7 +141,8 @@ export function boundRemoteResultLanding(landing: Record<string, unknown>): Reco
   const serializedOutput = ((): string => {
     try {
       return JSON.stringify(landing.output) ?? '';
-    } catch {
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to serialize oversized remote task output head');
       return '';
     }
   })();
@@ -146,73 +156,127 @@ export function boundRemoteResultLanding(landing: Record<string, unknown>): Reco
   };
 }
 
+/** @description Validated fields required to persist one remote-task result. */
+interface RemoteTaskLandingInput {
+  correlationId: string;
+  taskId?: string;
+  intent?: string;
+  outboxId?: string;
+  result: Record<string, unknown> | null;
+}
+
 /**
- * @description Creates the mesh handler that lands one remote-client.task-result
- * envelope on its originating work item: finds the first still-active work item
- * whose external_id equals the envelope's correlation id, stores the result via
- * setExecutionOutput, and moves the item to completed/failed (subtask-aware) —
- * the same update path bot-node execution results take. Envelopes of any other
- * payload type, or with no matching active work item, are ignored safely.
- * @param deps - The work-item landing repository.
- * @returns An async mesh envelope handler.
+ * @description Strictly lands one result. Unlike the mesh compatibility handler, this
+ * function deliberately propagates repository failures so the journal retains its outbox row.
  */
+export async function landRemoteTaskResultEnvelope(
+  envelope: MeshEnvelope,
+  deps: RemoteTaskResultHandlerDeps,
+): Promise<void> {
+  const input = parseLandingInput(envelope);
+  if (!input) return;
+  await persistRemoteTaskLanding(input, deps.workItemRepository);
+}
+
+/** @description Parses the typed mesh payload without treating unrelated events as failures. */
+function parseLandingInput(envelope: MeshEnvelope): RemoteTaskLandingInput | null {
+  const payload = toRecord(envelope.payload) ?? {};
+  if (payload.type !== 'remote-client.task-result') return null;
+  const correlationId = readString(payload.correlationId) ?? readString(envelope.correlationId);
+  const taskId = readString(payload.taskId);
+  if (!correlationId) {
+    logger.warn({ taskId, fromAgentId: envelope.fromAgentId }, 'Remote task result has no correlation id — cannot land it');
+    return null;
+  }
+  return {
+    correlationId,
+    taskId,
+    intent: readString(payload.intent),
+    outboxId: readString(payload.outboxId),
+    result: toRecord(payload.result),
+  };
+}
+
+/** @description Persists output then terminal status, resuming the same item after a partial retry. */
+async function persistRemoteTaskLanding(
+  input: RemoteTaskLandingInput,
+  repository: RemoteTaskResultLandingRepository,
+): Promise<void> {
+  const startedAt = Date.now();
+  const items = await repository.findByExternalIdAnyProvider(input.correlationId);
+  const prior = input.outboxId
+    ? items.find((item) => readLandingOutboxId(item.executionOutput) === input.outboxId)
+    : undefined;
+  if (prior && !LANDABLE_STATUSES.has(prior.status)) {
+    logger.info({ ...landingLog(input), workItemId: prior.workItemId }, 'Remote task result was already landed');
+    return;
+  }
+  const target = prior ?? items.find((item) => LANDABLE_STATUSES.has(item.status));
+  if (!target) {
+    logger.info(
+      { ...landingLog(input), candidates: items.length },
+      'No active work item for remote task result — direct enqueuers poll the durable journal',
+    );
+    return;
+  }
+  const succeeded = input.result?.status === 'completed';
+  await repository.setExecutionOutput(target.workItemId, buildLandingOutput(input, succeeded));
+  const nextStatus = landingStatus(target.status, succeeded);
+  await repository.updateStatus(target.workItemId, nextStatus);
+  logger.info(
+    { ...landingLog(input), workItemId: target.workItemId, nextStatus, durationMs: Date.now() - startedAt },
+    'Remote task result landed on originating work item',
+  );
+}
+
+/** @description Builds the bounded execution output, including its durable idempotency receipt. */
+function buildLandingOutput(input: RemoteTaskLandingInput, succeeded: boolean): Record<string, unknown> {
+  return boundRemoteResultLanding({
+    source: 'remote-client',
+    outboxId: input.outboxId,
+    taskId: input.taskId,
+    intent: input.intent,
+    correlationId: input.correlationId,
+    clientId: input.result ? readString(input.result.clientId) : undefined,
+    status: succeeded ? 'completed' : 'failed',
+    output: input.result?.output,
+    error: input.result ? readString(input.result.error) : undefined,
+    completedAt: input.result ? readString(input.result.completedAt) : undefined,
+  });
+}
+
+/** @description Maps task/subtask result state onto the canonical work-item terminal state. */
+function landingStatus(
+  currentStatus: string,
+  succeeded: boolean,
+): 'completed' | 'failed' | 'subtask-completed' | 'subtask-failed' {
+  const subtask = currentStatus.startsWith('subtask-');
+  if (succeeded) return subtask ? 'subtask-completed' : 'completed';
+  return subtask ? 'subtask-failed' : 'failed';
+}
+
+/** @description Reads a previously stored outbox receipt from an execution output. */
+function readLandingOutboxId(output: unknown): string | undefined {
+  return readString(toRecord(output)?.outboxId);
+}
+
+/** @description Shared structured-log fields for strict and compatibility landing paths. */
+function landingLog(input: RemoteTaskLandingInput): Record<string, unknown> {
+  return { correlationId: input.correlationId, taskId: input.taskId, outboxId: input.outboxId };
+}
+
+/** @description Creates the best-effort mesh compatibility handler over the strict landing operation. */
 export function createRemoteTaskResultHandler(
   deps: RemoteTaskResultHandlerDeps,
 ): (envelope: MeshEnvelope) => Promise<void> {
   return async (envelope: MeshEnvelope): Promise<void> => {
-    const payload = (envelope.payload ?? {}) as Record<string, unknown>;
-    if (payload.type !== 'remote-client.task-result') {
-      return;
-    }
-    const correlationId = readString(payload.correlationId) ?? readString(envelope.correlationId);
-    const taskId = readString(payload.taskId);
-    if (!correlationId) {
-      logger.warn({ taskId, fromAgentId: envelope.fromAgentId }, 'Remote task result has no correlation id — cannot land it');
-      return;
-    }
-
-    const result = toRecord(payload.result);
-    const succeeded = result?.status === 'completed';
     const startedAt = Date.now();
     try {
-      const items = await deps.workItemRepository.findByExternalIdAnyProvider(correlationId);
-      const target = items.find((item) => LANDABLE_STATUSES.has(item.status));
-      if (!target) {
-        logger.info(
-          { correlationId, taskId, candidates: items.length },
-          'No active work item for remote task result — nothing to land (direct enqueuers poll the registry instead)',
-        );
-        return;
-      }
-
-      await deps.workItemRepository.setExecutionOutput(
-        target.workItemId,
-        boundRemoteResultLanding({
-          source: 'remote-client',
-          taskId,
-          intent: readString(payload.intent),
-          correlationId,
-          clientId: result ? readString(result.clientId) : undefined,
-          status: succeeded ? 'completed' : 'failed',
-          output: result?.output,
-          error: result ? readString(result.error) : undefined,
-          completedAt: result ? readString(result.completedAt) : undefined,
-        }),
-      );
-
-      const isSubtask = target.status.startsWith('subtask-');
-      const nextStatus = succeeded
-        ? (isSubtask ? 'subtask-completed' : 'completed')
-        : (isSubtask ? 'subtask-failed' : 'failed');
-      await deps.workItemRepository.updateStatus(target.workItemId, nextStatus);
-      logger.info(
-        { correlationId, taskId, workItemId: target.workItemId, nextStatus, durationMs: Date.now() - startedAt },
-        'Remote task result landed on originating work item',
-      );
+      await landRemoteTaskResultEnvelope(envelope, deps);
     } catch (error) {
       logger.error(
-        { err: error, correlationId, taskId, durationMs: Date.now() - startedAt },
-        'Failed to land remote task result on work item',
+        { err: error, correlationId: envelope.correlationId, durationMs: Date.now() - startedAt },
+        'Failed to land remote task result from compatibility mesh subscription',
       );
     }
   };

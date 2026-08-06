@@ -1,3 +1,12 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1   | maintainer@emeraldcoastsystemsgroup.com     | Guard gated mock identity overrides and the stable mock issuer namespace delegated to issuer-bound applications
+ * -----------------------------------------------------------------------------
+ */
+
 import express, { type Request, type Response } from 'express';
 import type { Server } from 'http';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -42,12 +51,13 @@ describe('MOCK_OIDC header identity override', () => {
           'x-mock-oidc-email': 'a@example.test',
         },
       });
-      const user = await res.json() as { sub: string; email: string };
+      const user = await res.json() as { iss: string; sub: string; email: string };
 
       expect(isMockOidcHeaderOverrideEnabled()).toBe(false);
       expect(res.status).toBe(200);
       expect(user.sub).toBe('default-mock-user');
       expect(user.email).toBe('default@example.test');
+      expect(user.iss).toBe('urn:oshal:mock-oidc');
     } finally {
       await server.close();
     }
@@ -68,13 +78,14 @@ describe('MOCK_OIDC header identity override', () => {
           'x-mock-oidc-name': 'User B',
         },
       });
-      const user = await res.json() as { sub: string; email: string; name: string };
+      const user = await res.json() as { iss: string; sub: string; email: string; name: string };
 
       expect(isMockOidcHeaderOverrideEnabled()).toBe(true);
       expect(res.status).toBe(200);
       expect(user.sub).toBe('auth0|user-b');
       expect(user.email).toBe('b@example.test');
       expect(user.name).toBe('User B');
+      expect(user.iss).toBe('urn:oshal:mock-oidc');
     } finally {
       await server.close();
     }

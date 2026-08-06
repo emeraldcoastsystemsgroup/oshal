@@ -5,6 +5,7 @@ SEQ                 | AUTHOR                                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Added fail-closed configuration for the isolated speaker service.
 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the pinned local ASR model paths and a SEPARATE offline duration/byte budget. The ambient path keeps its deliberate 58-second bound; offline file transcription is a different job with a different risk profile, so it gets its own explicit limit rather than widening the live one.
+3 | maintainer@emeraldcoastsystemsgroup.com   | Add an explicit trusted-host allowlist for the isolated HTTP service and reject wildcard, URL-shaped, whitespace, or empty deployment entries.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ CPU_THREADS = 1
 CLUSTER_THRESHOLD = 0.5
 MIN_DURATION_ON = 0.3
 MIN_DURATION_OFF = 0.5
+DEFAULT_ALLOWED_HOSTS = ("127.0.0.1", "localhost", "speaker-diarization", "testserver")
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class ServiceSettings:
     max_offline_bytes: int = 512 * 1024 * 1024
     offline_ffmpeg_timeout_seconds: float = 900.0
     asr_threads: int = 4
+    allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS
 
     @classmethod
     def from_environment(cls) -> "ServiceSettings":
@@ -57,6 +60,7 @@ class ServiceSettings:
             max_offline_bytes=_positive_int("SPEAKER_MAX_OFFLINE_BYTES", 512 * 1024 * 1024),
             offline_ffmpeg_timeout_seconds=_positive_float("SPEAKER_OFFLINE_FFMPEG_TIMEOUT_SECONDS", 900.0),
             asr_threads=_positive_int("SPEAKER_ASR_THREADS", 4),
+            allowed_hosts=_allowed_hosts(),
         )
 
     @property
@@ -129,3 +133,15 @@ def _positive_float(name: str, fallback: float) -> float:
     if value <= 0:
         raise RuntimeError(f"{name} must be positive")
     return value
+
+
+def _allowed_hosts() -> tuple[str, ...]:
+    raw = os.getenv("SPEAKER_ALLOWED_HOSTS", ",".join(DEFAULT_ALLOWED_HOSTS))
+    hosts = tuple(value.strip().lower() for value in raw.split(",") if value.strip())
+    invalid = not hosts or any(
+        "*" in host or len(host) > 253 or "://" in host or "/" in host or any(char.isspace() for char in host)
+        for host in hosts
+    )
+    if invalid:
+        raise RuntimeError("SPEAKER_ALLOWED_HOSTS must contain explicit comma-separated hostnames without URLs")
+    return hosts

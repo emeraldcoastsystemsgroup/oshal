@@ -20,11 +20,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the controller-inline least-privilege scope: pure policy matrix, the resolveHarnessForAgent -> factory wiring proven by capturing the real factory config, and the base-adapter env scrub proven through the real prepareScopedFiles.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard base CLI scoping against identity normalization/truncation: exact case and whitespace reach env/file/hash, while oversized subjects fail.
  */
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CONTROLLER_INLINE_SCRUB_ENV_KEYS,
@@ -185,12 +187,37 @@ describe('the adapter honours scrubEnvKeys (the child env never sees the worker-
   });
 
   /** Runs the REAL per-spawn scoping path every CLI harness calls, and returns the mutated env. */
-  function scopedEnv(adapter: unknown, env: Record<string, string>): Record<string, string> {
+  function scopedEnv(adapter: unknown, env: Record<string, string>, userSub?: string): Record<string, string> {
     (adapter as {
       applyUserScoping: (e: Record<string, string>, w: string, sub?: string) => unknown;
-    }).applyUserScoping(env, workspace);
+    }).applyUserScoping(env, workspace, userSub);
     return env;
   }
+
+  it('preserves the exact user subject in env, file, and hash (including whitespace)', async () => {
+    const { CodexCliHarnessAdapter } = await import(
+      '../../src/features/llm-provider/services/codex-cli-harness-adapter'
+    );
+    const adapter = new CodexCliHarnessAdapter({});
+    const exactSub = ' Auth0|Case-Sensitive ';
+    const env = scopedEnv(adapter, { PATH: '/usr/bin' }, exactSub);
+    expect(env.OSHAL_USER_SUB).toBe(exactSub);
+    expect(fs.readFileSync(path.join(workspace, '.oshal-user-sub'), 'utf8')).toBe(exactSub);
+    expect(env.OSHAL_USER_KEY).toBe(createHash('sha256').update(exactSub).digest('hex').slice(0, 32));
+
+    const whitespaceOnly = scopedEnv(adapter, { PATH: '/usr/bin' }, '   ');
+    expect(whitespaceOnly.OSHAL_USER_SUB).toBe('   ');
+    expect(fs.readFileSync(path.join(workspace, '.oshal-user-sub'), 'utf8')).toBe('   ');
+  });
+
+  it('rejects an oversized user subject instead of truncating it into another identity', async () => {
+    const { CodexCliHarnessAdapter } = await import(
+      '../../src/features/llm-provider/services/codex-cli-harness-adapter'
+    );
+    const adapter = new CodexCliHarnessAdapter({});
+    expect(() => scopedEnv(adapter, { PATH: '/usr/bin' }, 'a'.repeat(513))).toThrow(/512 bytes/);
+    expect(fs.existsSync(path.join(workspace, '.oshal-user-sub'))).toBe(false);
+  });
 
   it('deletes the inline scrub keys — and still deletes the always-scrubbed master secret', async () => {
     const { ClaudeCodeCliHarnessAdapter } = await import(

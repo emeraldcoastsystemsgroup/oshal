@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Marked LocalHostAgent sends as interactionMode=task so swarm/task execution keeps the strict workspace-oriented launch contract
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Implemented LocalHostAgent — concrete default host runtime extending BaseAgent
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | IMP-2: Added optional executionScopeId parameter to processMessage for child/review context isolation
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: Keep persisted agent names and roles out of the trusted host prompt prefix; persona data is contained by BaseAgent.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -94,7 +95,10 @@ export class LocalHostAgent extends BaseAgent {
    */
   override getSystemPrompt(): string {
     const base = super.getSystemPrompt();
-    const hostContext = `[Host: localhost | Agent: ${this.identity.name} | Role: ${this.identity.role}]`;
+    // Identity names and roles may originate in persisted operator-managed records. BaseAgent
+    // already renders that persona through the prompt-containment pipeline; repeating either value
+    // here would move attacker-controlled newlines back outside the containment boundary.
+    const hostContext = '[Host Runtime: localhost]';
     return `${hostContext}\n\n${base}`;
   }
 

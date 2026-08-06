@@ -1,3 +1,12 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard trusted provider schemas, least-privilege credentials, deterministic execution, and structured evidence.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact authenticated-owner validation and fail-closed empty, control, malformed, non-string, and oversized identity handling before provider access.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import {
@@ -208,13 +217,22 @@ describe('trusted provider intent schema and direct execution', () => {
     )).rejects.toThrow('Walmart catalog provider lookup failed');
   });
 
-  it('fails before provider access without an authenticated owner or on provider failure', async () => {
+  it('fails before provider access without an exact authenticated owner or on provider failure', async () => {
     const executionDeps = deps({ formatWeather: vi.fn(async () => ({ error: 'offline' })) });
     await expect(executeTrustedProviderIntent(
       WEATHER_INTENT,
       { creds: {} },
       executionDeps,
-    )).rejects.toThrow('authenticated owner');
+    )).rejects.toThrow('trusted provider owner must be exact UTF-8');
+    expect(executionDeps.formatWeather).not.toHaveBeenCalled();
+
+    for (const userSub of ['', 'bad\u0000owner', 'bad\u0085owner', 'x'.repeat(513), '\ud800']) {
+      await expect(executeTrustedProviderIntent(
+        WEATHER_INTENT,
+        { userSub, creds: {} },
+        executionDeps,
+      )).rejects.toThrow('trusted provider owner must be exact UTF-8');
+    }
     expect(executionDeps.formatWeather).not.toHaveBeenCalled();
 
     await expect(executeTrustedProviderIntent(
@@ -249,6 +267,8 @@ describe('bot-node provider-independent completion path', () => {
   }
 
   it('returns the trusted record without invoking the worker LLM', async () => {
+    const getTask = vi.fn(async () => null);
+    const createTask = vi.fn(async () => ({ id: 'provider-ticket-1' }));
     const processMessage = vi.fn(async () => { throw new Error('quota exhausted'); });
     const executeProviderIntent = vi.fn(async () => ({
       completion: 'Live weather provider lookup completed for Destin, FL.',
@@ -256,8 +276,8 @@ describe('bot-node provider-independent completion path', () => {
     }));
     const handler = createBotNodeExecutionHandler({
       anyBotTaskController: {
-        getTask: vi.fn(async () => null),
-        createTask: vi.fn(async () => ({ id: 'provider-ticket-1' })),
+        getTask,
+        createTask,
         processMessage,
       },
       providerName: 'openai-codex',
@@ -269,6 +289,8 @@ describe('bot-node provider-independent completion path', () => {
     expect(executeProviderIntent).toHaveBeenCalledWith(WEATHER_INTENT, {
       userSub: 'owner-1', creds: { OSHAL_CRED_GOOGLE: 'owner-token' },
     });
+    expect(getTask).not.toHaveBeenCalled();
+    expect(createTask).not.toHaveBeenCalled();
     expect(processMessage).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       success: true,
@@ -282,6 +304,8 @@ describe('bot-node provider-independent completion path', () => {
   });
 
   it('returns a deterministic Walmart record without invoking Shopping Codex or web search', async () => {
+    const getTask = vi.fn(async () => null);
+    const createTask = vi.fn(async () => ({ id: 'provider-ticket-1' }));
     const processMessage = vi.fn(async () => { throw new Error('Shopping Codex must not run'); });
     const executeProviderIntent = vi.fn(async () => ({
       completion: 'Live Walmart catalog lookup completed for 1 product.',
@@ -293,8 +317,8 @@ describe('bot-node provider-independent completion path', () => {
     }));
     const handler = createBotNodeExecutionHandler({
       anyBotTaskController: {
-        getTask: vi.fn(async () => null),
-        createTask: vi.fn(async () => ({ id: 'provider-ticket-1' })),
+        getTask,
+        createTask,
         processMessage,
       },
       providerName: 'openai-codex',
@@ -311,6 +335,8 @@ describe('bot-node provider-independent completion path', () => {
       userSub: 'owner-shopping',
       creds: { OSHAL_CRED_WALMART: 'owner-shopping-walmart-credential' },
     });
+    expect(getTask).not.toHaveBeenCalled();
+    expect(createTask).not.toHaveBeenCalled();
     expect(processMessage).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       success: true,
@@ -324,14 +350,16 @@ describe('bot-node provider-independent completion path', () => {
   });
 
   it('fails closed on an invalid or failed intent and never falls through to model text', async () => {
+    const getTask = vi.fn(async () => null);
+    const createTask = vi.fn(async () => ({ id: 'provider-ticket-1' }));
     const processMessage = vi.fn(async () => ({
       messages: [{ say: 'completion_result', text: 'Model-authored fake weather.' }],
     }));
     const executeProviderIntent = vi.fn(async () => { throw new Error('Weather provider lookup failed'); });
     const handler = createBotNodeExecutionHandler({
       anyBotTaskController: {
-        getTask: vi.fn(async () => null),
-        createTask: vi.fn(async () => ({ id: 'provider-ticket-1' })),
+        getTask,
+        createTask,
         processMessage,
       },
       providerName: 'test-provider',
@@ -345,6 +373,8 @@ describe('bot-node provider-independent completion path', () => {
     await expect(handler(envelope(WEATHER_INTENT))).resolves.toMatchObject({
       success: false, error: 'Weather provider lookup failed',
     });
+    expect(getTask).not.toHaveBeenCalled();
+    expect(createTask).not.toHaveBeenCalled();
     expect(processMessage).not.toHaveBeenCalled();
   });
 });

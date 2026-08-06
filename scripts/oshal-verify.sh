@@ -5,29 +5,43 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G1 — the postflight capability verifier. Governing rule: a deployment must not report success while a capability it advertises has no credential behind it. The G-Squared box passed every check it had (container counts, /api/health) while the engine, STT, TTS and a routing-critical bot were all dead. This script fails LOUDLY, naming the broken leg: kernel containers healthy -> GET /api/readiness (server-side, ACTIVE-registry-scoped legs: llm / bots / credentials / voice / db) -> when the bots leg fails and the repo's swarm-routability-check.sh is present, runs it as the host-side drill-down (that script stays THE heartbeat prober — this one consumes the same signal server-side via /api/readiness rather than duplicating it). Two postures: strict (default — any fail leg fails the run) and --pre-onboarding (install-time: llm/credentials/voice legs the browser wizard is about to satisfy report PENDING instead of failing). --no-ai (or OSHAL_NO_AI=true in --env-file) asserts the DECLARED model-less posture: llm must be 'off', and 'fail' means the declaration did not reach the container.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the `catalogs` leg check. This script's governing rule is "a deployment must not report success while a capability it advertises has no credential behind it" — and on 2026-08-01 it passed a box that had registered ZERO connector tools after an ENOMEM scandir, because no leg could see a catalog that loaded nothing. Never PENDING even in --pre-onboarding: an empty catalog is not something the browser wizard goes on to satisfy. An empty leg value is reported as off, so this script stays usable against an api image that predates the leg.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: --apps executes manifest-owned package smokes through the canonical verifier API; explicit --live requires OSHAL_VERIFY_PAT and proves exactly one real generation plus persisted cost attribution. --skip-containers lets the native PowerShell installer invoke this exact verifier inside the shipped image.
 #
 # Usage:
 #   bash scripts/oshal-verify.sh                          # strict operational check
 #   bash scripts/oshal-verify.sh --pre-onboarding         # install-time (wizard still pending)
 #   bash scripts/oshal-verify.sh --no-ai --env-file .env  # declared model-less box
+#   bash scripts/oshal-verify.sh --apps career-hunter,job-apply
+#   OSHAL_VERIFY_PAT=oshal_pat_... bash scripts/oshal-verify.sh --live
 #   bash scripts/oshal-verify.sh --api http://127.0.0.1:35457 --wait 120
 set -uo pipefail
 
 # 127.0.0.1, NOT localhost: a stale wslrelay squatting [::1] makes localhost probes
 # hang while the api is healthy (see docs/runbooks/localhost-wedge-wslrelay.md).
 API="${API_URL:-http://127.0.0.1:35457}"
-PRE=0; NO_AI=0; ENV_FILE=""; WAIT=90
+PRE=0; NO_AI=0; ENV_FILE=""; WAIT=90; APPS=""; LIVE=0; SKIP_CONTAINERS=0
 while [ $# -gt 0 ]; do case "$1" in
   --pre-onboarding) PRE=1; shift ;;
   --no-ai) NO_AI=1; shift ;;
-  --env-file) ENV_FILE="$2"; shift 2 ;;
-  --api) API="$2"; shift 2 ;;
-  --wait) WAIT="$2"; shift 2 ;;
+  --env-file) [ $# -ge 2 ] || { echo "--env-file requires a path" >&2; exit 2; }; ENV_FILE="$2"; shift 2 ;;
+  --api) [ $# -ge 2 ] || { echo "--api requires a URL" >&2; exit 2; }; API="$2"; shift 2 ;;
+  --wait) [ $# -ge 2 ] || { echo "--wait requires seconds" >&2; exit 2; }; WAIT="$2"; shift 2 ;;
+  --apps) [ $# -ge 2 ] || { echo "--apps requires a comma-separated list" >&2; exit 2; }; APPS="$2"; shift 2 ;;
+  --live) LIVE=1; shift ;;
+  --skip-containers) SKIP_CONTAINERS=1; shift ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
 esac; done
 
 # The .env declaration counts even without the flag — verify against what the box RUNS.
-if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] && grep -q '^OSHAL_NO_AI=true' "$ENV_FILE"; then NO_AI=1; fi
+if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] && grep -qi '^OSHAL_NO_AI=true\r\{0,1\}$' "$ENV_FILE"; then NO_AI=1; fi
+
+# Read generated scalar values as DATA, never `source` an installer .env (which would execute it).
+env_value() {
+  [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] || return 0
+  awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit }' "$ENV_FILE"
+}
+SERVICE_SECRET="${SWARM_SERVICE_SECRET:-}"
+[ -n "$SERVICE_SECRET" ] || SERVICE_SECRET="$(env_value SWARM_SERVICE_SECRET)"
 
 FAILS=0; PENDING=0
 ok()   { printf '  [ok]      %s\n' "$*"; }
@@ -35,13 +49,17 @@ off()  { printf '  [off]     %s\n' "$*"; }
 pend() { printf '  [PENDING] %s\n' "$*"; PENDING=$((PENDING + 1)); }
 bad()  { printf '  [FAIL]    %s\n' "$*"; FAILS=$((FAILS + 1)); }
 
-echo "=== oshal postflight verification (INSTALLER-GAPS G1) ==="
+echo "=== oshal postflight verification (INSTALLER-GAPS G1 / CORE-05) ==="
 
 # ── [1] kernel containers healthy ────────────────────────────────────────────
-for c in oshal-local-db oshal-local-redis oshal-local-chromadb oshal-local-api; do
-  state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$c" 2>/dev/null || echo missing)"
-  if [ "$state" = "healthy" ]; then ok "$c healthy"; else bad "$c is '$state' — kernel service not healthy (recover: bash scripts/oshal-up.sh)"; fi
-done
+if [ "$SKIP_CONTAINERS" -eq 1 ]; then
+  off "container inspection skipped by caller (the installer already completed its native health checks)"
+else
+  for c in oshal-local-db oshal-local-redis oshal-local-chromadb oshal-local-api; do
+    state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$c" 2>/dev/null || echo missing)"
+    if [ "$state" = "healthy" ]; then ok "$c healthy"; else bad "$c is '$state' — kernel service not healthy (recover: bash scripts/oshal-up.sh)"; fi
+  done
+fi
 
 # ── [2] /api/readiness — per-capability, active-registry-scoped ──────────────
 BODY=""
@@ -122,6 +140,77 @@ else
   # db — never waivable.
   DB="$(leg db)"
   [ "$DB" = "ok" ] && ok "db: postgres reachable" || bad "db: $(problem_for db)"
+fi
+
+# ── [3] package-owned smokes ─────────────────────────────────────────────────
+# App names are restricted slugs, so this small JSON encoder has no quoting surface. Authentication
+# rides curl config over stdin rather than argv; the service secret never appears in a process list.
+if [ -n "$APPS" ]; then
+  APPS_JSON='{"apps":['; FIRST_APP=1; APP_ARGS_VALID=1
+  OLD_IFS="$IFS"; IFS=','
+  for raw_app in $APPS; do
+    app="$(printf '%s' "$raw_app" | tr -d '[:space:]')"
+    if ! printf '%s' "$app" | grep -Eq '^[a-z0-9][a-z0-9-]{0,63}$'; then
+      bad "apps: invalid package name '$app'"
+      APP_ARGS_VALID=0
+      continue
+    fi
+    [ "$FIRST_APP" -eq 1 ] || APPS_JSON="$APPS_JSON,"
+    APPS_JSON="$APPS_JSON\"$app\""; FIRST_APP=0
+  done
+  IFS="$OLD_IFS"
+  [ "$PRE" -eq 1 ] && PRE_JSON=true || PRE_JSON=false
+  APPS_JSON="$APPS_JSON],\"preOnboarding\":$PRE_JSON}"
+
+  if [ "$FIRST_APP" -eq 1 ]; then
+    bad "apps: --apps did not contain a package name"
+  elif [ "$APP_ARGS_VALID" -eq 1 ] && [ -z "$SERVICE_SECRET" ]; then
+    bad "apps: SWARM_SERVICE_SECRET is required (set it in the environment or --env-file)"
+  elif [ "$APP_ARGS_VALID" -eq 1 ]; then
+    APP_BODY="$(curl -sS -m 120 --request POST \
+      --url "$API/api/install-verification/apps" \
+      --header 'content-type: application/json' \
+      --data "$APPS_JSON" --config - <<EOF
+header = "X-Service-Secret: $SERVICE_SECRET"
+EOF
+    )" || APP_BODY=""
+    if [ -z "$APP_BODY" ]; then
+      bad "apps: canonical verifier endpoint is unreachable"
+    elif printf '%s' "$APP_BODY" | grep -q '"success":true'; then
+      ok "apps: every named package executed its declared smoke(s)"
+      if ! printf '%s' "$APP_BODY" | grep -q '"pendingApps":\[\]'; then
+        pend "apps: AI-backed package smoke(s) await model setup: $APP_BODY"
+      fi
+    else
+      bad "apps: package smoke verification failed (failing app is named in response): $APP_BODY"
+    fi
+  fi
+fi
+
+# ── [4] explicit bounded live generation ─────────────────────────────────────
+# PAT comes from an environment variable only — never a command-line value. The server performs
+# one direct-mode /api/send-message call, refuses noop/stub output, and proves chat_tasks captured
+# exactly one provider request with real token attribution.
+if [ "$LIVE" -eq 1 ]; then
+  LIVE_PAT="${OSHAL_VERIFY_PAT:-}"
+  if ! printf '%s' "$LIVE_PAT" | grep -Eq '^oshal_pat_[a-f0-9]{48}$'; then
+    bad "live: --live requires OSHAL_VERIFY_PAT containing a valid oshal_pat_ token"
+  else
+    LIVE_BODY="$(curl -sS -m 100 --request POST \
+      --url "$API/api/install-verification/live" \
+      --header 'content-type: application/json' \
+      --data '{}' --config - <<EOF
+header = "Authorization: Bearer $LIVE_PAT"
+EOF
+    )" || LIVE_BODY=""
+    if [ -z "$LIVE_BODY" ]; then
+      bad "live: canonical verifier endpoint is unreachable"
+    elif printf '%s' "$LIVE_BODY" | grep -q '"success":true'; then
+      ok "live: one real generation completed with normal chat_tasks cost attribution"
+    else
+      bad "live: generation/cost proof failed: $LIVE_BODY"
+    fi
+  fi
 fi
 
 echo

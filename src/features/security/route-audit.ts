@@ -23,6 +23,11 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Three fixes from the route-audit diagnosis: (1) PARSER — the old MOUNT_RE captured middlewares with [^)]* which stopped at the FIRST close-paren, so `app.use('/api/vision', express.json({ limit: '12mb' }), serviceSecretOr(requiresAuth), …)` truncated before requiresAuth was seen → standing false positive; replaced with the string-aware comment-strip + balanced-paren argument walk proven in tests/unit/server-route-auth-inventory.spec.ts. (2) MANIFEST WALK — auditRoutes() now accepts the active manifests' routes[] and flags any declaration resolving to `public` (via the shared resolveRouteAuthMode, fail-closed on omission) that is not public-by-design — the mounter mounts `public` with an empty guard chain, and carved apps are invisible to the server.ts scan. (3) PUBLIC_BY_DESIGN reconciled against the actual current routes: added '/api/profile-studio' (server.ts:1003, service-secret self-guarded — was the second standing false positive) and the five reviewed anonymous package mounts (world / trading-charts / lora/ingest / vids-public / hello-oshal — the complete auth:public-or-requiresAuth:false set across the live stack's ACTIVE manifests, verified against swarm_applications 2026-07-24); matching tightened from bare startsWith to exact-or-slash-boundary so '/api/apply' can never silently whitelist '/api/apply-operator'.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Allow-listed '/api/sms' — the inbound Twilio SMS webhook mounts anonymous by design (machine-to-machine) and self-guards with the X-Twilio-Signature verification (verifyTwilioSignature) against TWILIO_AUTH_TOKEN inside the router: 503 when the token is unset, 403 on a bad signature, never open by omission (mirrors the /api/alerts entry). The CI-side sibling (tests/unit/server-route-auth-inventory.spec.ts) carries the matching reviewed entry.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | CLOSED THE METHOD BLIND SPOT. This scanner matched only `app.use(` — its own docblock declared `app.get`/`app.post` "out of scope" — so four unguarded /api mounts registered as INLINE HANDLERS were structurally invisible to it, and the Security Center reported "0 route_auth findings" while unable to see a whole class of mount. Two of those four ('/api/security/csp-report' and '/api/branding') were not covered by PUBLIC_BY_DESIGN at all; the CI-side spec's UNGUARDED_ALLOWLIST was the only place they had ever been reviewed, which is exactly the divergence the two lists were supposed to prevent. extractServerMounts now walks app.use/get/post/put/patch/delete/all (the parser the CI-side sibling already used) and accepts an array-of-paths first argument, and the two inline mounts are allow-listed here citing their reviewed guards. Inventory went 81 -> 87 /api mounts. Pinned by the new programmatic sync check in tests/unit/route-audit.spec.ts, which imports BOTH lists and asserts the containment relationship so they can no longer drift silently.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Closed the remaining module/mixed/non-/api blind spot with executable route-surface contracts. Security Center now verifies the internal fail-closed guards for /api/hooks, /auth/facebook/data-deletion, /api/channels/telegram/webhook, and /node/* instead of silently omitting or over-classifying them.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed auditRoutes into focused literal-mount and manifest collectors so the expanded scanner remains below the repository's fifty-line function limit.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Exported one limiter-only classification rule for both the runtime scanner and CI inventory, eliminating manual allowlist entries that went stale/red on every new rate-limiter mount.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Profile Studio's public mount around its short-lived one-use dispatch capability after removing the reusable fleet service secret.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the SEC-01 delegated-user middleware as an explicit authenticated mount guard for Graph and Jarvis route scans.
  *
  * @module features/security/route-audit
  */
@@ -32,6 +37,7 @@ import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
 import { resolveRouteAuthMode } from '@/shared/route-auth';
 import type { RawFinding, ScannerReport } from './types';
+import { auditRouteSurfaceContracts, ROUTE_SURFACE_CONTRACTS } from './route-surface-contracts';
 
 const logger = createChildLogger({ module: 'security:route-audit' });
 
@@ -54,9 +60,8 @@ export const PUBLIC_BY_DESIGN: readonly string[] = [
                          // token is unset, 403 on a bad/missing signature — never open by omission
   '/api/remote-clients', // router-level authorizeRemoteClient (OIDC session OR shared-secret header)
   '/api/apply',          // box callback ingest — every route requires the service secret (serviceSecretOk)
-  '/api/profile-studio', // LinkedIn profile-plan box callback — POST /ingest 401s without the service
-                         // secret (serviceSecretOk at profile-studio-ingest-routes.ts:43, fail-closed
-                         // when SWARM_SERVICE_SECRET is unset; mirrors /api/apply)
+  '/api/profile-studio', // desktop result callback — one-use capability bound to exact owner,
+                         // dispatch generation, task, client, operation, and expiry; atomic consume
   // Self-guarded PACKAGE mounts (ADR-085 D2 `auth: public` declarations, reviewed 2026-07-24):
   // the store package's router self-guards, so the anonymous mount is deliberate. Only NEW
   // public package routes should fire.
@@ -243,6 +248,89 @@ function extractServerMounts(source: string): ServerMount[] {
   return mounts;
 }
 
+function auditServerMounts(mounts: readonly ServerMount[]): RawFinding[] {
+  return mounts
+    .filter((mount) => !isReviewedOrGuardedMount(mount))
+    .map(serverMountFinding);
+}
+
+function isReviewedOrGuardedMount(mount: ServerMount): boolean {
+  if (isPublicByDesign(mount.mountPath)) return true;
+  const hasAuth = /requiresAuth|requireAuth|ensureAuth|authMiddleware|requiresContext|delegatedUserRouteAuth/.test(
+    mount.middlewares,
+  );
+  if (hasAuth) return true;
+  // A mount whose ONLY middleware is a rate limiter registers no handlers. The real
+  // routes for that path mount separately and carry their own authorization.
+  return isLimiterOnlyMiddleware(mount.middlewares);
+}
+
+/**
+ * @description True only when a mount's complete post-path argument text is one
+ * limiter identifier and therefore registers no route handler. Shared with the CI
+ * inventory so adding a limiter-only mount cannot require a second allowlist entry.
+ * @param middlewares - Text after the Express mount's path argument.
+ * @returns Whether this registration contains a limiter and no handler/router.
+ */
+export function isLimiterOnlyMiddleware(middlewares: string): boolean {
+  return /^\s*[A-Za-z_$][\w$]*Limiter\s*$/.test(middlewares);
+}
+
+function serverMountFinding(mount: ServerMount): RawFinding {
+  return {
+    category: 'route_auth',
+    severity: 'high',
+    title: `Route ${mount.mountPath} mounted without requiresAuth`,
+    detail: `${mount.mountPath} is mounted in server.ts (app.${mount.method} at line ${mount.line}) without the requiresAuth middleware. `
+      + `Auth is opt-in per route in this codebase, so unless this endpoint is meant to be public, its data/actions are reachable unauthenticated. `
+      + `Add requiresAuth to the mount, or add the path to the public-by-design allow-list if it is intentional.`,
+    source: `src/app/server.ts:${mount.line}`,
+    evidence: {
+      mountPath: mount.mountPath,
+      method: mount.method,
+      line: mount.line,
+      middlewares: mount.middlewares.trim().slice(0, 200),
+    },
+    fingerprint: `route_auth:${mount.mountPath}`,
+  };
+}
+
+function auditManifestRoutes(entries: readonly ManifestRouteAuditEntry[]): RawFinding[] {
+  const findings: RawFinding[] = [];
+  const seen = new Set<string>();
+  for (const declaration of entries) {
+    const mode = resolveRouteAuthMode({ auth: declaration.auth, requiresAuth: declaration.requiresAuth });
+    if (mode !== 'public' || isPublicByDesign(declaration.mountPath)) continue;
+    const fingerprint = `route_auth:manifest:${declaration.mountPath}`;
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    findings.push(manifestRouteFinding(declaration, fingerprint));
+  }
+  return findings;
+}
+
+function manifestRouteFinding(
+  declaration: ManifestRouteAuditEntry,
+  fingerprint: string,
+): RawFinding {
+  return {
+    category: 'route_auth',
+    severity: 'high',
+    title: `Package route ${declaration.mountPath} declared auth: public`,
+    detail: `App '${declaration.appName}' declares ${declaration.mountPath} with auth mode 'public' in its manifest routes[], `
+      + `so the framework mounts it with NO guard chain — it is anonymous-callable unless the router self-guards. `
+      + `Verify the package router carries its own fail-closed guard (token/secret/HMAC) and add the path to the `
+      + `public-by-design allow-list citing that guard, or change the manifest declaration to a guarded auth mode.`,
+    source: `manifest:${declaration.appName}`,
+    evidence: {
+      mountPath: declaration.mountPath,
+      appName: declaration.appName,
+      declaredAuth: declaration.auth ?? null,
+    },
+    fingerprint,
+  };
+}
+
 /**
  * @description Audit route-auth posture: the Express mount table in server.ts (any `/api/*`
  * mount without `requiresAuth`) PLUS the active app manifests' `routes[]` (any declaration
@@ -263,54 +351,16 @@ export function auditRoutes(serverFile?: string, manifestRoutes?: ManifestRouteA
     return { kind: 'posture', available: false, findings: [], categories: ['route_auth'], note: `server.ts not found at ${file}` };
   }
 
-  const findings: RawFinding[] = [];
   const mounts = extractServerMounts(text);
-  for (const mount of mounts) {
-    if (isPublicByDesign(mount.mountPath)) continue;
-    const hasAuth = /requiresAuth|requireAuth|ensureAuth|authMiddleware|requiresContext/.test(mount.middlewares);
-    if (hasAuth) continue;
-    // A mount whose ONLY middleware is a rate limiter registers no handlers — nothing is
-    // exposed here; the real routes for the path mount separately (with their own auth).
-    if (/^\s*[A-Za-z_$][\w$]*Limiter\s*$/.test(mount.middlewares)) continue;
-    findings.push({
-      category: 'route_auth',
-      severity: 'high',
-      title: `Route ${mount.mountPath} mounted without requiresAuth`,
-      detail: `${mount.mountPath} is mounted in server.ts (app.${mount.method} at line ${mount.line}) without the requiresAuth middleware. `
-        + `Auth is opt-in per route in this codebase, so unless this endpoint is meant to be public, its data/actions are reachable unauthenticated. `
-        + `Add requiresAuth to the mount, or add the path to the public-by-design allow-list if it is intentional.`,
-      source: `src/app/server.ts:${mount.line}`,
-      evidence: { mountPath: mount.mountPath, method: mount.method, line: mount.line, middlewares: mount.middlewares.trim().slice(0, 200) },
-      fingerprint: `route_auth:${mount.mountPath}`,
-    });
-  }
-
-  // ADR-085 D2: carved apps mount their routes dynamically — server.ts never sees them. Any
-  // declaration resolving to `public` mounts ANONYMOUS (empty guard chain in the mounter), so
-  // it must either be public-by-design (reviewed self-guard) or it is a finding. Non-public
-  // modes are guarded by the mounter itself and need no flagging here.
   const manifestCount = manifestRoutes?.length ?? 0;
-  const seen = new Set<string>();
-  for (const decl of manifestRoutes ?? []) {
-    const mode = resolveRouteAuthMode({ auth: decl.auth, requiresAuth: decl.requiresAuth });
-    if (mode !== 'public') continue;
-    if (isPublicByDesign(decl.mountPath)) continue;
-    const fingerprint = `route_auth:manifest:${decl.mountPath}`;
-    if (seen.has(fingerprint)) continue;
-    seen.add(fingerprint);
-    findings.push({
-      category: 'route_auth',
-      severity: 'high',
-      title: `Package route ${decl.mountPath} declared auth: public`,
-      detail: `App '${decl.appName}' declares ${decl.mountPath} with auth mode 'public' in its manifest routes[], `
-        + `so the framework mounts it with NO guard chain — it is anonymous-callable unless the router self-guards. `
-        + `Verify the package router carries its own fail-closed guard (token/secret/HMAC) and add the path to the `
-        + `public-by-design allow-list citing that guard, or change the manifest declaration to a guarded auth mode.`,
-      source: `manifest:${decl.appName}`,
-      evidence: { mountPath: decl.mountPath, appName: decl.appName, declaredAuth: decl.auth ?? null },
-      fingerprint,
-    });
-  }
+  const findings = [
+    ...auditServerMounts(mounts),
+    // These are structurally outside the literal /api classifier. Their contracts turn
+    // guard drift into HIGH findings instead of accepting a vacuous "not observed" result.
+    ...auditRouteSurfaceContracts(text, root),
+    // ADR-085 packages mount dynamically, so server.ts never contains their route literals.
+    ...auditManifestRoutes(manifestRoutes ?? []),
+  ];
 
   return {
     kind: 'posture',
@@ -318,6 +368,7 @@ export function auditRoutes(serverFile?: string, manifestRoutes?: ManifestRouteA
     findings,
     categories: ['route_auth'],
     note: `inspected ${mounts.length} /api mounts in ${path.relative(root, file).replace(/\\/g, '/')}`
+      + ` + ${ROUTE_SURFACE_CONTRACTS.filter((contract) => text.includes(contract.registrationMarker)).length} active non-standard route contracts`
       + (manifestRoutes ? ` + ${manifestCount} active manifest route declarations` : ' (no manifest route inventory supplied)'),
   };
 }

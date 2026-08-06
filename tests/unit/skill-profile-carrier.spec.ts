@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 skill-profile GENERAL carrier guard (BACKLOG general-carrier item). Proves the carrier end-to-end at its three seams: (1) INLINE path — executeBotOrInline weaves the app's resolved profile into the text handed to processMessage; (2) REMOTE path — executeBotOrInline sets request.pattern (rides to the bot node) and leaves request.text untouched; (3) bot-node-execution-handler appends payload.pattern to the assembled prompt in BOTH the LAYERED branch (after persona assembly — which never reads payload.text, the whole reason the carrier exists) AND the direct/verbatim branch. Also asserts the no-app no-op. This spec cannot compile/pass against pre-change code: BotNodeRequest had no app/capability/pattern and neither injection site existed.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Renamed the task-controller bridge parameter to anyBotTaskController: the identifier still carried the retired pre-OSHAL product name, contradicting the rename rollout the docs describe. Pure rename, no behavior change.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Assert the resolved skill profile remains trusted configuration before all persona/user data and that the immutable server authority rebind remains final.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -150,7 +151,7 @@ describe('skill-profile general carrier — bot-node-execution-handler appends p
     return { run, text: () => capturedHandlerText };
   }
 
-  it('appends the pattern in the LAYERED branch — after persona/user-message assembly (which never reads payload.text)', async () => {
+  it('places the pattern in trusted configuration before layered persona/user data', async () => {
     const h = handlerCapturing();
     const envelope: MeshEnvelope = {
       correlationId: 'corr-1',
@@ -171,9 +172,16 @@ describe('skill-profile general carrier — bot-node-execution-handler appends p
     // Layered-only framing proves we did NOT take the verbatim branch:
     expect(text).toContain('WORKSPACE RULES');
     expect(text).toContain('ZEBRA-MARKER'); // envelope's user message was assembled
-    // The carrier's block was appended to that assembly, AFTER it:
+    // The resolved carrier is server-authored configuration. It must precede every
+    // untrusted persona/user fragment, while the server authority binding stays final.
     expect(text).toContain('class-notes');
-    expect(text.indexOf('class-notes')).toBeGreaterThan(text.indexOf('WORKSPACE RULES'));
+    expect(text).toContain('## TRUSTED CONFIGURATION');
+    expect(text).toContain('## UNTRUSTED CONTENT');
+    expect(text).toContain('## SERVER AUTHORITY REBIND');
+    expect(text.indexOf('class-notes')).toBeGreaterThan(text.indexOf('## TRUSTED CONFIGURATION'));
+    expect(text.indexOf('class-notes')).toBeLessThan(text.indexOf('## UNTRUSTED CONTENT'));
+    expect(text.indexOf('WORKSPACE RULES')).toBeGreaterThan(text.indexOf('## UNTRUSTED CONTENT'));
+    expect(text.indexOf('## SERVER AUTHORITY REBIND')).toBeGreaterThan(text.indexOf('WORKSPACE RULES'));
   });
 
   it('appends the pattern in the direct/verbatim branch too', async () => {
@@ -195,7 +203,9 @@ describe('skill-profile general carrier — bot-node-execution-handler appends p
     const text = h.text();
 
     expect(text).toContain('DIRECT-MARKER');   // verbatim text
-    expect(text).toContain('class-notes');     // pattern appended
+    expect(text).toContain('class-notes');     // trusted configuration carried
     expect(text).not.toContain('WORKSPACE RULES'); // verbatim branch adds no layered framing
+    expect(text.indexOf('class-notes')).toBeLessThan(text.indexOf('## UNTRUSTED CONTENT'));
+    expect(text.indexOf('## SERVER AUTHORITY REBIND')).toBeGreaterThan(text.indexOf('DIRECT-MARKER'));
   });
 });

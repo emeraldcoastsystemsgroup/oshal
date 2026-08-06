@@ -61,8 +61,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — 36-row rank/topN/corePct grid over the armed base, idempotent create + baselined backtest seed, leaderboard on the new avgDaily/bestDay metrics.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | --grid flag + the 12-row IRA measurement grid (posture x cadenceDays 5/10 x corePct 40/60/80, gravity/12 pinned) for the 401k->rollover-IRA slow-cadence question; --rebacktest for refreshing metrics after a deploy; leaderboard follows the chosen grid's prefix.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | --grid egate (8 rows): earnings-gate A/B twins — existing bases duplicated with ONLY earningsGateDays set (dial sweep 1/3/5 on the armed control; g3 twins on the leaders + slow-cadence IRA shapes). Guarded by assertApiKnowsEarningsGate: seeding against a pre-knob api would create gate-off duplicates masquerading as twins.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve an explicit acting OIDC subject exactly while validating the trimmed operator-list fallback.
  */
 import 'dotenv/config';
+import { requireExactUserSubject } from '../src/shared/security/exact-user-subject';
 
 /** The dial values the grid walks. Every other knob is pinned to ARMED_BASE below. */
 const RANKS = ['gravity', 'momentum', 'ensemble', 'blend'] as const;
@@ -105,7 +107,9 @@ function authHeaders(): Record<string, string> {
   const pat = (process.env.OSHAL_CLI_TOKEN || '').trim();
   if (pat) return { Authorization: `Bearer ${pat}` };
   const secret = (process.env.OSHAL_SERVICE_SECRET || process.env.SWARM_SERVICE_SECRET || '').trim();
-  const sub = (process.env.OSHAL_USER_SUB || (process.env.OSHAL_OPERATOR_SUBS || '').split(',')[0] || '').trim();
+  const fallbackSub = (process.env.OSHAL_OPERATOR_SUBS || '').split(',')[0].trim();
+  const candidateSub = process.env.OSHAL_USER_SUB || fallbackSub;
+  const sub = candidateSub ? requireExactUserSubject(candidateSub) : '';
   if (secret && sub) return { 'X-Service-Secret': secret, 'X-OSHAL-User-Sub': sub };
   throw new Error('no auth: set OSHAL_CLI_TOKEN (swarm-cli login) or SWARM_SERVICE_SECRET + OSHAL_USER_SUB/OSHAL_OPERATOR_SUBS');
 }

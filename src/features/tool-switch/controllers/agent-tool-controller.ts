@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:10:00 | Added
  *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
  *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Replace tool-config key-pattern redaction with a fixed configured-state response so opaque metadata and credential-bearing URLs or headers remain write-only.
  */
 
 import { Request, Response, type RequestHandler } from 'express';
@@ -21,7 +22,7 @@ import {
   SetAgentToolConfigSchema,
   SetGroupAuthModeSchema,
 } from '@/entities/tool';
-import type { AgentTool, Tool } from '@/shared/types/tool';
+import { ToolAuthType, type AgentTool, type Tool } from '@/shared/types/tool';
 
 /**
  * @description Controller for agent-tool relationship and authorization mode HTTP endpoints.
@@ -244,10 +245,84 @@ function mapAgentToolForResponse(agentTool: AgentTool | Tool): Record<string, un
 
   return {
     ...agentTool,
+    ...('toolConfig' in agentTool ? { toolConfig: redactToolConfig(agentTool.toolConfig) } : {}),
     id: toolId,
     name,
     displayName,
   };
+}
+
+interface ToolConfigResponseState {
+  auth: {
+    type: ToolAuthType;
+    enabled: boolean;
+  };
+  configured: {
+    auth: boolean;
+    env: boolean;
+    endpoint: boolean;
+    metadata: boolean;
+  };
+}
+
+const TOOL_AUTH_CONTROL_FIELDS = new Set(['type', 'enabled']);
+const TOOL_AUTH_TYPES = new Set<string>(Object.values(ToolAuthType));
+
+/**
+ * @description Produces a response-safe, fixed-shape view of persisted tool configuration.
+ * Runtime values and caller-controlled object keys are write-only; the response retains only the
+ * validated auth control flags and whether each known section contains a configured value. This
+ * fixed allowlist prevents novel metadata, headers, or credential-bearing URLs from bypassing a
+ * key-name blacklist.
+ *
+ * @param value - Persisted tool configuration value.
+ * @returns A configured-state summary safe for an HTTP response.
+ */
+export function redactToolConfig(value: unknown): ToolConfigResponseState {
+  const config = readRecord(value);
+  const auth = readRecord(config.auth);
+  return {
+    auth: {
+      type: readToolAuthType(auth.type),
+      enabled: auth.enabled === true,
+    },
+    configured: {
+      auth: Object.entries(auth).some(([key, entry]) => (
+        !TOOL_AUTH_CONTROL_FIELDS.has(key) && hasConfiguredValue(entry)
+      )),
+      env: hasConfiguredValue(config.env),
+      endpoint: hasConfiguredValue(config.endpoint),
+      metadata: hasConfiguredValue(config.metadata),
+    },
+  };
+}
+
+/**
+ * @description Resolves a persisted auth type through the fixed runtime enum.
+ *
+ * @param value - Persisted auth type candidate
+ * @returns The recognized type, or the non-credentialed default for malformed legacy data
+ */
+function readToolAuthType(value: unknown): ToolAuthType {
+  return typeof value === 'string' && TOOL_AUTH_TYPES.has(value)
+    ? value as ToolAuthType
+    : ToolAuthType.NONE;
+}
+
+/**
+ * @description Determines whether a write-only section contains meaningful configured state
+ * without copying its keys or values into a response.
+ *
+ * @param value - Arbitrary persisted section value
+ * @returns True when at least one non-empty scalar is present
+ */
+function hasConfiguredValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((entry) => hasConfiguredValue(entry));
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some((entry) => hasConfiguredValue(entry));
+  }
+  if (typeof value === 'string') return value.trim().length > 0;
+  return value !== null && value !== undefined;
 }
 
 /**

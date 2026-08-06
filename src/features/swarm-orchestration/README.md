@@ -7,6 +7,7 @@ Provides the surrounding application workflow for swarm ticket processing in OSH
 - `docs/architecture/swarm-processing-design-contract.md`
 - `docs/architecture/swarm-orchestration-process-flow.md`
 - `docs/adr/018-swarm-processing-runtime-contract.md`
+- `docs/adr/034-bidirectional-config-ownership-sync.md`
 
 ## Public API
 - `SwarmOrchestrationController`
@@ -18,6 +19,14 @@ Provides the surrounding application workflow for swarm ticket processing in OSH
 - `TicketWritebackAdapter`
 - `PlaneTicketWritebackAdapter`
 - `InMemorySwarmRunStore`
+
+## Remote Provider Authority
+
+Manifest-worker and incident bot-node dispatches use ADR-034's default-on provider/model stamp.
+`providerConfigRequired` distinguishes a missing authoritative record from an intentional legacy
+request. The bot reconciles before task creation, refuses an unavailable seam/provider or concurrent
+mismatch, verifies the reported execution identity, and returns the config source/action/version.
+Only explicit `OSHAL_PUSH_ON_DISPATCH=off` permits the unstamped compatibility fallback.
 
 ## Canonical Ticket Model
 - OSHAL canonical states:

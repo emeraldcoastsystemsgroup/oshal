@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pre-OSS: rebranded legacy "Kevin" agent identity/namespace to neutral OSHAL
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: stdio MCP children receive an explicit runtime environment plus only their reviewed server-specific settings, never the controller's database, session, connector, or provider credentials.
  */
 
 /**
@@ -16,6 +17,27 @@ const { spawn } = require('child_process');
 const EventEmitter = require('events');
 const logger = require('../utils/logger');
 const readline = require('readline');
+
+const MCP_RUNTIME_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'LANG', 'LC_ALL', 'TZ', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+];
+
+/**
+ * Build a stdio MCP environment without carrying the controller process's credentials.
+ * A server receives only OS/runtime values and the exact settings declared on its own config.
+ */
+function buildMcpServerProcessEnv(serverEnv = {}, parent = process.env) {
+  const childEnv = {};
+  for (const key of MCP_RUNTIME_ENV_KEYS) {
+    if (parent[key] !== undefined) childEnv[key] = String(parent[key]);
+  }
+  for (const [key, value] of Object.entries(serverEnv || {})) {
+    if (value !== undefined && value !== null) childEnv[key] = String(value);
+  }
+  return childEnv;
+}
 
 /**
  * @description Central coordinator for the lifecycle of stdio-based Model Context
@@ -52,7 +74,7 @@ class MCPServerManager extends EventEmitter {
 
       // Spawn the MCP server process
       const serverProcess = spawn(command, args, {
-        env: { ...process.env, ...env },
+        env: buildMcpServerProcessEnv(env),
         cwd: cwd || process.cwd(),
         stdio: ['pipe', 'pipe', 'pipe']
       });
@@ -505,3 +527,4 @@ class MCPServerManager extends EventEmitter {
 }
 
 module.exports = MCPServerManager;
+module.exports.buildMcpServerProcessEnv = buildMcpServerProcessEnv;

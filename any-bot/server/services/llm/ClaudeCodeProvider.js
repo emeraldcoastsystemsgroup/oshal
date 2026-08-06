@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Idle-based timeouts (operator directive 2026-07-24, extends ADR-081): overall timeout default 300s→3600s (runaway ceiling, not the working bound), inactivity 180s→600s, killOnInactivity default false→true — sound now that the wrapper streams stream-json so silence genuinely means stalled. Env knobs unchanged (CLAUDE_CODE_TIMEOUT_*, CLAUDE_CODE_INACTIVITY_TIMEOUT_*, CLAUDE_CODE_KILL_ON_INACTIVITY).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny constrained execution before autonomous Claude Code can bypass server tool authorization.
  */
 
 /**
@@ -28,6 +29,7 @@
 const ClaudeCodeCLIWrapper = require('../codebase/ClaudeCodeCLIWrapper');
 const logger = require('../../utils/logger');
 const { formatProviderFailure, isProviderRecoverableRuntimeFailure, isProviderRuntimeBanner } = require('./providerFailureClassifier');
+const { assertCliToolBoundary } = require('./assert-cli-tool-boundary');
 
 /**
  * @description LLM provider that backs the agent's chat/generation interface with
@@ -114,6 +116,7 @@ class ClaudeCodeProvider {
    * @returns {Promise<Object>} Response matching BedrockProvider format
    */
   async generateResponse(messages, options = {}) {
+    assertCliToolBoundary(options, 'claude-code');
     const startTime = Date.now();
 
     // Apply rate limiting if enabled

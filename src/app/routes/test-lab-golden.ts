@@ -17,6 +17,7 @@
  * ---------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — golden scenarios + the
  *            | submit/poll/grade/retry/propose loop + persistence + the headless run endpoint.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bound headless golden runs to the trusted service user on both the database connection and every ticket/evaluation call; missing machine attribution now fails closed, OIDC runs retain their session owner, and batch polling is owner-scoped.
  * ---------------------------------------------------------------------------
  * @module test-lab-golden
  */
@@ -26,6 +27,8 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { createChildLogger } from '@/shared/logger';
+import { getCaller, getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import type { AppContext } from '@/app/composition/app-context';
 import type { Pool } from 'pg';
@@ -34,7 +37,6 @@ import { recordEvalRun, type EvalRun, CostTrackingService } from '@/features/ope
 const logger = createChildLogger({ module: 'test-lab-golden' });
 
 const TERMINAL = new Set(['complete', 'cancelled', 'escalated', 'customer_action']);
-const OWNER_SUB = process.env.TEST_LAB_OWNER_SUB || null;
 const MAX_ATTEMPTS = Math.max(1, parseInt(process.env.TEST_LAB_MAX_ATTEMPTS || '2', 10));
 
 /** A golden scenario: a real request + the EXPECTED output it must produce. Exported for unit tests. */
@@ -171,7 +173,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Recursively collect deliverable files under a dir (handles tests/, docs/, agent-id subdirs). */
 async function walkDeliverables(dir: string, acc: { text: string; count: number }): Promise<void> {
   let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>;
-  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    logger.debug({ err, dir }, 'golden deliverable directory unavailable');
+    return;
+  }
   for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) { await walkDeliverables(full, acc); continue; }
@@ -179,7 +186,9 @@ async function walkDeliverables(dir: string, acc: { text: string; count: number 
     try {
       const stat = await fs.stat(full);
       if (stat.size > 0) { acc.count++; acc.text += `\n\n=== ${e.name} ===\n` + (await fs.readFile(full, 'utf8')).slice(0, 8000); }
-    } catch { /* skip */ }
+    } catch (err) {
+      logger.debug({ err, path: full }, 'golden deliverable could not be read');
+    }
   }
 }
 
@@ -192,7 +201,9 @@ async function readResult(ctx: AppContext, ticketId: string): Promise<{ text: st
   try {
     const kids = await ctx.pool.query(`SELECT ticket_id FROM tickets WHERE parent_ticket_id = $1`, [ticketId]);
     for (const r of kids.rows) if (r.ticket_id) folders.push(String(r.ticket_id));
-  } catch { /* best effort — root folder still walked */ }
+  } catch (err) {
+    logger.debug({ err, ticketId }, 'golden child-ticket lookup unavailable; walking root only');
+  }
   for (const f of folders) {
     await walkDeliverables(path.resolve(process.cwd(), 'workspace-shared', f, 'deliverables'), acc);
   }
@@ -200,7 +211,9 @@ async function readResult(ctx: AppContext, ticketId: string): Promise<{ text: st
     const hist = await ctx.ticketService.getStatusHistory(ticketId, 50);
     const notes = (hist || []).map((h: any) => h.note || h.reason || '').filter(Boolean).join(' | ');
     if (notes) acc.text += `\n\n=== status notes ===\n${notes.slice(0, 2000)}`;
-  } catch { /* best effort */ }
+  } catch (err) {
+    logger.debug({ err, ticketId }, 'golden ticket status history unavailable');
+  }
   return { text: acc.text.trim(), artifactCount: acc.count };
 }
 
@@ -285,8 +298,14 @@ async function captureTicketCost(
   try {
     const svc = new CostTrackingService(ctx.pool);
     const [tree, direct] = await Promise.all([
-      svc.queryCostByTicketTree(ticketId).catch(() => null),
-      svc.queryCostByTicket(ticketId).catch(() => null),
+      svc.queryCostByTicketTree(ticketId).catch((err) => {
+        logger.debug({ err, ticketId }, 'golden ticket-tree cost unavailable');
+        return null;
+      }),
+      svc.queryCostByTicket(ticketId).catch((err) => {
+        logger.debug({ err, ticketId }, 'golden direct-ticket cost unavailable');
+        return null;
+      }),
     ]);
     const costUsd = tree?.totalCost ?? direct?.totalCost ?? 0;
     const inputTokens = direct?.totalInputTokens ?? 0;
@@ -299,13 +318,14 @@ async function captureTicketCost(
       outputTokens: outputTokens || null,
       costUsd: costUsd || null,
     };
-  } catch {
+  } catch (err) {
+    logger.warn({ err, ticketId }, 'golden cost capture failed');
     return none;
   }
 }
 
-/** Optional LLM judge (best-effort): scores the result against the rubric. Falls back silently. */
-async function judge(ctx: AppContext, g: Golden, result: string): Promise<number | null> {
+/** Optional LLM judge: scores against the rubric and logs before falling back to heuristics. */
+async function judge(ctx: AppContext, g: Golden, result: string, ownerSub: string): Promise<number | null> {
   try {
     const orchestrator = (ctx as any).orchestrator;
     if (!orchestrator?.processMessage) return null;
@@ -315,16 +335,21 @@ async function judge(ctx: AppContext, g: Golden, result: string): Promise<number
       '', 'RESULT:', result.slice(0, 6000), '',
       'Reply with ONLY a JSON object: {"score": <0-100>}',
     ].join('\n');
-    const r = await orchestrator.processMessage(`golden-judge-${randomUUID()}`, prompt, { agenticMode: false, autoApprove: false, source: 'test-lab', userSub: OWNER_SUB || 'test-lab' });
+    const r = await orchestrator.processMessage(`golden-judge-${randomUUID()}`, prompt, {
+      agenticMode: false, autoApprove: false, source: 'test-lab', userSub: ownerSub,
+    });
     const m = String(r?.response || '').match(/\{[^}]*"score"[^}]*\}/);
     if (!m) return null;
     const n = Number(JSON.parse(m[0]).score);
     return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
-  } catch (e) { logger.warn({ e }, 'judge failed — heuristic only'); return null; }
+  } catch (err) {
+    logger.warn({ err, scenarioId: g.id }, 'golden judge failed; using heuristic only');
+    return null;
+  }
 }
 
 /** Draft a concrete suggested fix for a persistently-failing scenario (proposal only, never applied). */
-async function draftFix(ctx: AppContext, g: Golden, detail: string): Promise<string> {
+async function draftFix(ctx: AppContext, g: Golden, detail: string, ownerSub: string): Promise<string> {
   try {
     const orchestrator = (ctx as any).orchestrator;
     if (!orchestrator?.processMessage) return '';
@@ -335,13 +360,40 @@ async function draftFix(ctx: AppContext, g: Golden, detail: string): Promise<str
       `WHY IT FAILED: ${detail}`,
       'Reply with 1-3 sentences. Do NOT write code.',
     ].join('\n');
-    const r = await orchestrator.processMessage(`golden-fix-${randomUUID()}`, prompt, { agenticMode: false, autoApprove: false, source: 'test-lab', userSub: OWNER_SUB || 'test-lab' });
+    const r = await orchestrator.processMessage(`golden-fix-${randomUUID()}`, prompt, {
+      agenticMode: false, autoApprove: false, source: 'test-lab', userSub: ownerSub,
+    });
     return String(r?.response || '').trim().slice(0, 600);
-  } catch { return ''; }
+  } catch (err) {
+    logger.warn({ err, scenarioId: g.id }, 'golden suggested-fix drafting failed');
+    return '';
+  }
+}
+
+/** Poll one ticket, approving the build gate while preserving the last observable status. */
+async function waitForGoldenTerminal(
+  ctx: AppContext,
+  ticketId: string,
+  initialStatus: string,
+  deadline: number,
+): Promise<string> {
+  let status = initialStatus;
+  while (Date.now() < deadline && !TERMINAL.has(status)) {
+    await sleep(5_000);
+    const ticket = await ctx.ticketService.getTicket(ticketId);
+    if (!ticket) break;
+    status = ticket.status;
+    if (status === 'approval_required') {
+      await ctx.ticketService.updateStatusAs(
+        ticketId, 'in_process_build', 'test-lab', 'Test Lab',
+      ).catch((err) => logger.warn({ err, ticketId }, 'golden build-gate approval failed'));
+    }
+  }
+  return status;
 }
 
 /** Run one golden scenario once: submit a ticket, poll to terminal, read + grade vs expected. */
-async function runOnce(ctx: AppContext, g: Golden): Promise<{ score: number; state: 'pass' | 'fail'; ticketId: string; ticketStatus: string; detail: string; latencyMs: number; artifactCount: number; heuristicScore: number; judgeScore: number | null; costUsd: number | null; inputTokens: number | null; outputTokens: number | null }> {
+async function runOnce(ctx: AppContext, g: Golden, ownerSub: string): Promise<{ score: number; state: 'pass' | 'fail'; ticketId: string; ticketStatus: string; detail: string; latencyMs: number; artifactCount: number; heuristicScore: number; judgeScore: number | null; costUsd: number | null; inputTokens: number | null; outputTokens: number | null }> {
   const planningWaitMs = g.complexity === 'high' ? 8 * 60_000 : g.complexity === 'medium' ? 7 * 60_000 : 6 * 60_000;
   const completionWaitMs = g.complexity === 'high' ? 15 * 60_000 : g.complexity === 'medium' ? 12 * 60_000 : 10 * 60_000;
 
@@ -352,30 +404,18 @@ async function runOnce(ctx: AppContext, g: Golden): Promise<{ score: number; sta
     labels: ['test-lab', 'golden', g.id], priority: 'medium' as any,
     assignedAgentId: null, parentTicketId: null, workspaceId: null,
     externalId: null, externalProvider: null, externalUrl: null,
-    ownerSub: OWNER_SUB,
+    ownerSub,
     metadata: { source: 'test-lab-golden', goldenScenarioId: g.id },
   } as any);
   const ticketId = ticket.ticketId;
 
-  // Poll: auto-approve a build gate if it appears, then wait for a terminal status.
   const deadline = Date.now() + planningWaitMs + completionWaitMs;
-  let status = ticket.status;
-  while (Date.now() < deadline) {
-    await sleep(5_000);
-    const t = await ctx.ticketService.getTicket(ticketId);
-    if (!t) break;
-    status = t.status;
-    if (status === 'approval_required') {
-      await ctx.ticketService.updateStatusAs(ticketId, 'in_process_build', 'test-lab', 'Test Lab').catch(() => {});
-      continue;
-    }
-    if (TERMINAL.has(status)) break;
-  }
+  const status = await waitForGoldenTerminal(ctx, ticketId, ticket.status, deadline);
 
   const latencyMs = Date.now() - startedAt;
   const result = await readResult(ctx, ticketId);
   const h = heuristicGrade(g, status, result);
-  const j = await judge(ctx, g, result.text);
+  const j = await judge(ctx, g, result.text, ownerSub);
   // Blend: if the judge ran, average it with the heuristic; else heuristic only.
   const score = j == null ? h.score : Math.round((h.score + j) * 0.5);
   // Pass semantics (ADR-063, corrected 2026-06-21 after diagnosing the golden tickets): escalation
@@ -396,64 +436,135 @@ async function runOnce(ctx: AppContext, g: Golden): Promise<{ score: number; sta
   return { score, state: passed ? 'pass' : 'fail', ticketId, ticketStatus: status, detail, latencyMs, artifactCount: result.artifactCount, heuristicScore: h.score, judgeScore: j, costUsd: cost.costUsd, inputTokens: cost.inputTokens, outputTokens: cost.outputTokens };
 }
 
+type GoldenRunResult = Awaited<ReturnType<typeof runOnce>>;
+
+/** Convert an unexpected scenario exception into the same honest scored-result shape. */
+function failedGoldenRun(err: unknown): GoldenRunResult {
+  return {
+    score: 0,
+    state: 'fail',
+    ticketId: '',
+    ticketStatus: 'error',
+    detail: `run threw: ${err instanceof Error ? err.message : String(err)}`,
+    latencyMs: 0,
+    artifactCount: 0,
+    heuristicScore: 0,
+    judgeScore: null,
+    costUsd: null,
+    inputTokens: null,
+    outputTokens: null,
+  };
+}
+
+/** Persist the scenario report row and its normalized evaluation-wall projection. */
+async function persistGoldenOutcome(
+  ctx: AppContext,
+  batchId: string,
+  g: Golden,
+  attempts: number,
+  best: GoldenRunResult,
+  suggestedFix: string,
+): Promise<void> {
+  await ctx.pool.query(
+    `INSERT INTO test_lab_golden_runs (batch_id, scenario_id, scenario_name, attempts, best_score, state, ticket_id, ticket_status, detail, suggested_fix)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [batchId, g.id, g.name, attempts, best.score, best.state, best.ticketId || null, best.ticketStatus, best.detail, suggestedFix || null],
+  ).catch((err) => logger.warn({ err }, 'persist golden run failed'));
+
+  // The green wall uses this normalized projection; costs come from the central chat-task ledger.
+  const evalState: EvalRun['state'] = best.state === 'pass'
+    ? 'pass'
+    : best.artifactCount === 0 ? 'gap' : best.score > 0 ? 'degraded' : 'fail';
+  const evalRun: EvalRun = {
+    scenario: g.name,
+    state: evalState,
+    heuristicScore: best.heuristicScore,
+    judgeScore: best.judgeScore,
+    finalScore: best.score,
+    passed: best.state === 'pass',
+    latencyMs: best.latencyMs > 0 ? best.latencyMs : null,
+    retries: Math.max(0, attempts - 1),
+    inputTokens: best.inputTokens,
+    outputTokens: best.outputTokens,
+    costUsd: best.costUsd,
+    securityFindings: null,
+    notes: `${best.ticketStatus}: ${best.detail}`.slice(0, 1000),
+  };
+  await recordEvalRun(ctx.pool, evalRun)
+    .catch((err) => logger.warn({ err }, 'recordEvalRun (eval-wall) failed'));
+}
+
 /** Run a golden scenario with retries (keep best); draft a fix if it never passes. */
-async function runGolden(ctx: AppContext, batchId: string, g: Golden): Promise<any> {
-  let best: Awaited<ReturnType<typeof runOnce>> | null = null;
+async function runGolden(ctx: AppContext, batchId: string, g: Golden, ownerSub: string): Promise<any> {
+  let best: GoldenRunResult | null = null;
   let attempts = 0;
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     attempts++;
     let r: Awaited<ReturnType<typeof runOnce>>;
-    try { r = await runOnce(ctx, g); }
-    catch (e: any) { r = { score: 0, state: 'fail', ticketId: '', ticketStatus: 'error', detail: `run threw: ${e?.message || e}`, latencyMs: 0, artifactCount: 0, heuristicScore: 0, judgeScore: null, costUsd: null, inputTokens: null, outputTokens: null }; }
+    try {
+      r = await runOnce(ctx, g, ownerSub);
+    } catch (err) {
+      logger.error({ err, scenarioId: g.id, attempt: attempts }, 'golden scenario attempt failed');
+      r = failedGoldenRun(err);
+    }
     if (!best || r.score > best.score) best = r;
     if (r.state === 'pass') break;
   }
   const b = best!;
-  const suggestedFix = b.state === 'fail' ? await draftFix(ctx, g, b.detail) : '';
-  await ctx.pool.query(
-    `INSERT INTO test_lab_golden_runs (batch_id, scenario_id, scenario_name, attempts, best_score, state, ticket_id, ticket_status, detail, suggested_fix)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [batchId, g.id, g.name, attempts, b.score, b.state, b.ticketId || null, b.ticketStatus, b.detail, suggestedFix || null],
-  ).catch((err) => logger.warn({ err }, 'persist golden run failed'));
-
-  // Feed the green wall (ADR-063 §eval-wall): persist this run to eval_runs so the dashboard's
-  // success-rate / latency / retries / quality / cost history is self-populating from the live nightly
-  // loop (not just a manual backfill). Token/cost are READ from the central chat_tasks ledger via
-  // captureTicketCost (the framework's single source of truth for every LLM call) — honest-null when
-  // nothing was recorded, never a fabricated 0. Security posture rolls in from the Security Center
-  // feeder (Phase 4) — stored NULL here until then.
-  // state: pass when it cleared threshold AND completed; gap when no deliverable was produced;
-  // degraded when a deliverable exists but the run didn't pass (scored below threshold OR escalated
-  // instead of completing — the dominant case, surfaced honestly not hidden); fail on a zero/errored run.
-  const evalState: EvalRun['state'] =
-    b.state === 'pass' ? 'pass' : b.artifactCount === 0 ? 'gap' : b.score > 0 ? 'degraded' : 'fail';
-  const evalRun: EvalRun = {
-    scenario: g.name,
-    state: evalState,
-    heuristicScore: b.heuristicScore,
-    judgeScore: b.judgeScore,
-    finalScore: b.score,
-    passed: b.state === 'pass',
-    latencyMs: b.latencyMs > 0 ? b.latencyMs : null,
-    retries: Math.max(0, attempts - 1),
-    inputTokens: b.inputTokens,
-    outputTokens: b.outputTokens,
-    costUsd: b.costUsd,
-    securityFindings: null,
-    notes: `${b.ticketStatus}: ${b.detail}`.slice(0, 1000),
-  };
-  await recordEvalRun(ctx.pool, evalRun).catch((err) => logger.warn({ err }, 'recordEvalRun (eval-wall) failed'));
+  const suggestedFix = b.state === 'fail' ? await draftFix(ctx, g, b.detail, ownerSub) : '';
+  await persistGoldenOutcome(ctx, batchId, g, attempts, b, suggestedFix);
 
   return { id: g.id, name: g.name, complexity: g.complexity, attempts, score: b.score, state: b.state, ticketId: b.ticketId, ticketStatus: b.ticketStatus, detail: b.detail, passScore: g.passScore, suggestedFix };
 }
 
+/** Resolve the accountable owner from a validated session or trusted service assertion. */
+function goldenOwnerSub(req: Request): string | null {
+  return getCaller(req).sub ?? getTrustedServiceUserSub(req);
+}
+
 // ── Async batch store (kick + poll; the loop can run for many minutes) ─────────
-interface Batch { batchId: string; status: 'running' | 'done' | 'error'; startedAt: string; finishedAt?: string; total: number; passed?: number; failed?: number; results: any[]; error?: string; }
+interface Batch {
+  batchId: string;
+  ownerSub: string;
+  status: 'running' | 'done' | 'error';
+  startedAt: string;
+  finishedAt?: string;
+  total: number;
+  passed?: number;
+  failed?: number;
+  results: any[];
+  error?: string;
+}
 const BATCHES = new Map<string, Batch>();
+
+/** Run the detached scenarios while retaining the request identity captured at batch creation. */
+async function executeGoldenBatch(
+  ctx: AppContext,
+  batch: Batch,
+  scenarios: Golden[],
+): Promise<void> {
+  try {
+    for (const scenario of scenarios) {
+      batch.results.push(await runGolden(ctx, batch.batchId, scenario, batch.ownerSub));
+    }
+    batch.passed = batch.results.filter((result) => result.state === 'pass').length;
+    batch.failed = batch.results.length - batch.passed;
+    batch.status = 'done';
+  } catch (err) {
+    logger.error({ err, batchId: batch.batchId }, 'golden batch failed');
+    batch.status = 'error';
+    batch.error = err instanceof Error ? err.message : String(err);
+  }
+  batch.finishedAt = new Date().toISOString();
+  logger.info({ batchId: batch.batchId, status: batch.status, passed: batch.passed }, 'golden batch finished');
+}
 
 // ── Router (mounted under serviceSecretOr — headless-capable) ───────────────────
 export function createTestLabGoldenRoutes(ctx: AppContext): Router {
   const router = Router();
+  // The nightly process is a user-bound machine caller, not a cross-tenant system scheduler.
+  // Replace serviceSecretOr's compatibility operator stamp before its detached batch is created.
+  router.use(requireTrustedServiceUserIdentity);
   ensureGoldenSchema(ctx.pool).catch((err) => logger.warn({ err }, 'golden schema bootstrap deferred'));
 
   /** List the golden catalog (what the nightly loop runs). */
@@ -463,31 +574,31 @@ export function createTestLabGoldenRoutes(ctx: AppContext): Router {
 
   /** Kick the loop (async — returns a batchId immediately; poll GET /run/:batchId). Body: { scenarioId?: 'all' }. */
   router.post('/run', async (req: Request, res: Response) => {
+    const ownerSub = goldenOwnerSub(req);
+    if (!ownerSub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const id = String(req.body?.scenarioId || 'all');
     const toRun = id === 'all' ? GOLDEN : GOLDEN.filter((g) => g.id === id);
     if (!toRun.length) { res.status(404).json({ error: `unknown golden scenario: ${id}` }); return; }
     const batchId = randomUUID();
-    const batch: Batch = { batchId, status: 'running', startedAt: new Date().toISOString(), total: toRun.length, results: [] };
+    const batch: Batch = {
+      batchId, ownerSub, status: 'running', startedAt: new Date().toISOString(), total: toRun.length, results: [],
+    };
     BATCHES.set(batchId, batch);
     logger.info({ batchId, count: toRun.length }, 'golden batch started');
-    // Fire-and-forget; the host runner polls /run/:batchId.
-    (async () => {
-      try {
-        for (const g of toRun) { batch.results.push(await runGolden(ctx, batchId, g)); }
-        batch.passed = batch.results.filter((r) => r.state === 'pass').length;
-        batch.failed = batch.results.length - batch.passed;
-        batch.status = 'done';
-      } catch (e: any) { batch.status = 'error'; batch.error = e?.message || String(e); }
-      batch.finishedAt = new Date().toISOString();
-      logger.info({ batchId, status: batch.status, passed: batch.passed }, 'golden batch finished');
-    })();
+    // Promise creation happens inside the narrowed service-user context, so every detached await
+    // preserves the same non-operator identity until this batch reaches a terminal state.
+    void executeGoldenBatch(ctx, batch, toRun);
     res.status(202).json({ batchId, status: 'running', total: toRun.length });
   });
 
   /** Poll a batch. Returns the full report once status is 'done'. */
   router.get('/run/:batchId', (req: Request, res: Response) => {
     const b = BATCHES.get(String(req.params.batchId));
-    if (!b) { res.status(404).json({ error: 'unknown batch' }); return; }
+    const ownerSub = goldenOwnerSub(req);
+    if (!b || !ownerSub || b.ownerSub !== ownerSub) {
+      res.status(404).json({ error: 'unknown batch' });
+      return;
+    }
     res.json(b);
   });
 

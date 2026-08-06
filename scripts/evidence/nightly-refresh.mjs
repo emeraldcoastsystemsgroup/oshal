@@ -10,8 +10,9 @@
  *
  * Steps (in order; a failed step is reported but does not abort the rest, so a flaky live
  * spec never blocks the score regeneration):
- *   1. npm run evidence:refresh-local — run every headless prove-*-live.ts generator to
- *      regenerate dated Proof-Tier: live evidence (no browser / no operator interaction).
+ *   1. npm run evidence:refresh-local — run every unattended prove-*-live.ts generator to
+ *      regenerate dated Proof-Tier: live evidence. Most are process-only; the own-data proof
+ *      launches isolated headless Playwright against app-role Postgres. None needs operator input.
  *      NOTE: this replaced `npm run test:live` as the default because test:live attaches
  *      over CDP to the operator's foreground signed-in Chrome and cannot run unattended,
  *      so a cron/CI run left the whole board decaying to the 75-floor. Pass --cdp to ALSO
@@ -49,7 +50,7 @@ const skipLive = args.has('--skip-live');
 const withCdp = args.has('--cdp');
 
 const steps = [
-  { name: 'headless live proofs', cmd: 'npm', args: ['run', 'evidence:refresh-local', '--', '--no-score'], skip: skipLive },
+  { name: 'unattended live proofs', cmd: 'npm', args: ['run', 'evidence:refresh-local', '--', '--no-score'], skip: skipLive },
   { name: 'cdp browser proofs', cmd: 'npm', args: ['run', 'test:live'], skip: skipLive || !withCdp },
   { name: 'competitive score', cmd: 'npm', args: ['run', 'evidence:competitive'], skip: false },
   { name: 'procurement/saas readiness', cmd: 'npm', args: ['run', 'evidence:procurement-saas'], skip: false },
@@ -95,8 +96,8 @@ const alarms = [];
 
 if (statusOf('competitive score') === 'failed') alarms.push('competitive score step failed — board not regenerated');
 if (statusOf('procurement/saas readiness') === 'failed') alarms.push('procurement/saas readiness step failed');
-if (statusOf('headless live proofs') === 'failed') {
-  alarms.push('headless live proofs FAILED — categories will decay to the 75 floor (check Postgres/Chroma)');
+if (statusOf('unattended live proofs') === 'failed') {
+  alarms.push('unattended live proofs FAILED — categories will decay to the 75 floor (check Postgres/Chroma/Playwright)');
 }
 
 if (!dryRun) {

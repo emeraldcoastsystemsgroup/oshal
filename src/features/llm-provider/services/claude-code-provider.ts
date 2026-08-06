@@ -17,6 +17,8 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | IMP-2: Context file name now scope-aware — uses executionScopeId to prevent sibling child/review context bleed in shared workspaces
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Raised DEFAULT_TIMEOUT_MS from 600000 to 900000 (15 min) — K8s memory pressure RCA finished all deliverables but timed out 14s before signalling completion
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject unattended Cline before runtime selection, workspace/session creation, manifest writes, credential access, or process spawn pending an audited broker.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Consume the dependency-free unattended-provider policy without importing the harness runtime contract.
  */
 
 import fs from 'fs';
@@ -34,6 +36,7 @@ import { ClineRuntimeConfigSyncService } from './cline-runtime-config-sync-servi
 import type { AgentStartupManifestService } from './agent-startup-manifest-service';
 import { ClineSessionRuntimeService, type ClineSessionRuntime } from './cline-session-runtime-service';
 import type { AgentCapabilityResolver, AgentSelectorResolution, ToolCapabilityScope } from './tool-capability-scope';
+import { assertAuditedAutonomousHarness } from './unattended-provider-policy';
 
 const logger = createChildLogger({ module: 'claude-code-provider' });
 const DEFAULT_MODEL = 'gpt-5.3-codex';
@@ -125,6 +128,7 @@ export class ClineHarnessProvider extends LLMService {
    * @throws Error if Cline invocation fails or response cannot be parsed
    */
   async sendRequest(options: SendRequestOptions): Promise<LLMResponse> {
+    assertAuditedAutonomousHarness('cline');
     this.requestCount += 1;
     const runtimeSelection = await this.resolveRuntimeSelection(options);
     const prompt = this.buildPrompt(options);
@@ -604,6 +608,7 @@ export class ClineHarnessProvider extends LLMService {
     taskId?: string,
     env?: NodeJS.ProcessEnv,
   ): Promise<{ stdout: string; stderr: string; code: number }> {
+    assertAuditedAutonomousHarness('cline');
     return new Promise((resolve, reject) => {
       logger.info({ taskId, binaryPath: this.binaryPath, argCount: args.length, timeoutMs: this.timeoutMs }, 'Spawning Cline CLI process');
       const child = spawn(this.binaryPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env });

@@ -8,6 +8,10 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Leak fix: /api/redis-visibility and /api/qm/activity disconnect their per-request ioredis clients in finally — error paths previously abandoned clients that reconnected forever (2026-07-05 leak audit)
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed for the 1000-code-line cap: startup sequences + route registrations extracted to app-modules/* with identical behavior and registration order; /api/swarm-execute kept inline (tests/unit/live-weather-email-wiring.spec.ts asserts on this file's source)
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): registered routes-self-heal (POST /api/self-heal/apply — the deterministic, fail-closed remediation endpoint the controller's auto-apply engine calls; role-gated to the self-healing node, appended after the existing registrations so the order contract is untouched)
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact bot owners and canonicalize untrusted HTTP workspace IDs before owner lookup or TaskController creation; invalid identity/path assertions now fail closed.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: require service authentication before every non-health HTTP/static request and Socket.IO upgrade, fail startup closed when unconfigured, and require exact dispatch tool/scope grants.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 credential containment: reject generic credential carriers on the legacy execute route and propagate only the exact caller identity. Deterministic provider intents remain exclusive to the canonical bot-node runtime.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: carry the controller-authenticated agent identity into request-scoped MCP capability enforcement.
  */
 
 /**
@@ -24,12 +28,21 @@
 require('dotenv').config();
 
 const express = require('express');
+const crypto = require('crypto');
 const { createServer } = require('http');
 const { Server: SocketIOServer } = require('socket.io');
 const path = require('path');
 const selfHealTestEndpoint = require('./services/SelfHealTestEndpoint');
-const { authorizeSwarmExecute } = require('./services/codebase/swarm-execute-auth');
-const { sanitizeBrokeredCreds } = require('./services/codebase/user-scoping');
+const {
+  assertServiceSecretConfigured,
+  authorizeAnyBotRequest,
+  authorizeSwarmExecute,
+  validServiceSecret,
+} = require('./services/codebase/swarm-execute-auth');
+const { optionalExactUserSubject } = require('./services/codebase/exact-user-subject');
+const { canonicalWorkspaceId } = require('./services/codebase/task-workspace-scope');
+const { requireDispatchAuthorityList } = require('./utils/dispatch-capabilities');
+const { assertUnattendedProviderSelection } = require('./services/llm/assert-cli-tool-boundary');
 
 // Utils
 const logger = require('./utils/logger');
@@ -37,6 +50,27 @@ const config = require('./utils/config');
 
 // Services constructed directly by the Application shell
 const ToolRegistry = require('./services/ToolRegistry');
+
+/** True for identity, ownership, or containment errors that must never trigger fallback work. */
+function isTaskBoundaryError(error) {
+  return Boolean(error && ['TASK_OWNER_MISMATCH', 'UNSAFE_TASK_WORKSPACE', 'INVALID_USER_SUBJECT',
+    'INVALID_DISPATCH_AUTHORITY']
+    .includes(String(error.code || '')));
+}
+
+/** Build a stable containment error when TaskController violates the canonical ID contract. */
+function unsafeTaskBoundaryError() {
+  const error = new Error('TaskController returned a non-canonical workspace id');
+  error.code = 'UNSAFE_TASK_WORKSPACE';
+  return error;
+}
+
+/** Map boundary errors without exposing stack or subject/path content. */
+function taskBoundaryResponse(error) {
+  if (!isTaskBoundaryError(error)) return null;
+  if (error.code === 'TASK_OWNER_MISMATCH') return { status: 403, code: 'task_owner_mismatch' };
+  return { status: 400, code: 'invalid_execution_scope' };
+}
 
 // Startup-sequence modules (extracted from initialize(); call order preserved)
 const {
@@ -68,12 +102,13 @@ const { registerSelfHealApplyRoutes } = require('./app-modules/routes-self-heal'
 class Application {
   constructor() {
     this.app = express();
+    // Register the blanket gate before any route or static middleware can be mounted.
+    this.app.use(authorizeAnyBotRequest);
     this.server = createServer(this.app);
     this.io = new SocketIOServer(this.server, {
-      cors: {
-        origin: '*',
-        methods: ['GET', 'POST'],
-      },
+      // Socket.IO upgrades bypass Express middleware. Require the same service credential
+      // at the transport boundary and do not advertise wildcard cross-origin access.
+      allowRequest: (req, callback) => callback(null, validServiceSecret(req)),
     });
 
     // Initialize stores
@@ -99,6 +134,7 @@ class Application {
    * Initialize database and all components
    */
   async initialize() {
+    assertServiceSecretConfigured();
     logger.info('========================================');
     logger.info('  Initializing Application');
     logger.info('========================================');
@@ -189,9 +225,10 @@ class Application {
           providerId,         // Optional: override provider for this execution
           model,              // Optional: override model for this execution
           userSub,            // Authenticated caller identity for workspace/tool scoping
-          creds,              // Short-lived brokered connector tokens
           byoLlmConnection,   // Per-request OpenAI-compatible endpoint/key/model
           providerIntent,     // TS bot-node only: legacy runtime must fail closed
+          allowedTools,       // Controller-issued exact runtime tool names
+          authorizedScopes,   // Controller-issued exact operation scopes
         } = req.body;
 
         if (!text) {
@@ -203,15 +240,23 @@ class Application {
             error: 'trusted provider intents require the canonical bot-node runtime',
           });
         }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'creds')) {
+          return res.status(400).json({
+            success: false,
+            error: 'connector credentials require a canonical deterministic provider intent',
+          });
+        }
+        const dispatchAllowedTools = requireDispatchAuthorityList(allowedTools, 'allowedTools', 256);
+        const dispatchAuthorizedScopes = requireDispatchAuthorityList(
+          authorizedScopes, 'authorizedScopes', 512,
+        );
 
         const taskController = this.taskController;
         if (!taskController) {
           return res.status(503).json({ success: false, error: 'TaskController not initialized' });
         }
 
-        const scopedUserSub = typeof userSub === 'string' && userSub.trim()
-          ? userSub.trim().slice(0, 512) : undefined;
-        const brokeredCreds = sanitizeBrokeredCreds(creds);
+        const scopedUserSub = optionalExactUserSubject(userSub, 'swarm-execute userSub');
         const hasByoRequest = byoLlmConnection !== undefined && byoLlmConnection !== null;
         const requestedByo = byoLlmConnection && typeof byoLlmConnection === 'object'
           && typeof byoLlmConnection.baseUrl === 'string'
@@ -229,11 +274,15 @@ class Application {
         if (hasByoRequest && !requestedByo) {
           return res.status(400).json({ success: false, error: 'invalid byoLlmConnection' });
         }
-        const extraEnv = scopedUserSub || Object.keys(brokeredCreds).length
-          ? { ...(scopedUserSub ? { OSHAL_USER_SUB: scopedUserSub } : {}), ...brokeredCreds }
-          : undefined;
+        // The model/tool runtime receives identity only. Connector material belongs to a
+        // schema-bounded server-side provider handler, which this legacy runtime does not host.
+        const extraEnv = scopedUserSub === undefined ? undefined : { OSHAL_USER_SUB: scopedUserSub };
 
-        logger.info(`[swarm-execute] Received task from swarm — taskId=${taskId}, agentId=${agentId}, textLen=${text.length}, workspace=${workspaceFolderId}`);
+        const logicalWorkspaceId = workspaceFolderId !== undefined
+          ? workspaceFolderId
+          : taskId !== undefined ? taskId : `swarm-${crypto.randomUUID()}`;
+        const effectiveTaskId = canonicalWorkspaceId(logicalWorkspaceId);
+        logger.info(`[swarm-execute] Received task from swarm — taskId=${effectiveTaskId}, agentId=${agentId}, textLen=${text.length}`);
 
         // If provider/model override requested, switch before executing
         if (providerId) {
@@ -251,9 +300,13 @@ class Application {
           }
         }
 
+        assertUnattendedProviderSelection(
+          this.currentLLMProvider || process.env.LLM_PROVIDER,
+          { byoHostedInference: Boolean(requestedByo) },
+        );
+
         // Resolve or create task for workspace isolation
         let task;
-        const effectiveTaskId = workspaceFolderId || taskId || `swarm-${Date.now()}`;
         try {
           task = await taskController.getTask(effectiveTaskId);
           if (task) {
@@ -263,13 +316,10 @@ class Application {
               `Swarm execution for ${agentId}`, 'act',
               { forceTaskId: effectiveTaskId, userSub: scopedUserSub }
             );
-            // Ensure workspace folder matches
-            if (task.id !== effectiveTaskId) {
-              task.id = effectiveTaskId;
-            }
+            if (task.id !== effectiveTaskId) throw unsafeTaskBoundaryError();
           }
         } catch (taskErr) {
-          if (taskErr && taskErr.code === 'TASK_OWNER_MISMATCH') throw taskErr;
+          if (isTaskBoundaryError(taskErr)) throw taskErr;
           task = await taskController.createTask(
             `Swarm execution for ${agentId}`, 'act', { userSub: scopedUserSub }
           );
@@ -282,8 +332,11 @@ class Application {
           text,
         }, {
           agenticMode,
-          autoApprove: { 'use_mcp_tool': true },
+          autoApprove: {},
           source: 'swarm-dispatch',
+          agentId,
+          allowedTools: dispatchAllowedTools,
+          authorizedScopes: dispatchAuthorizedScopes,
           byoLlmConnection: requestedByo,
           extraEnv,
         });
@@ -347,9 +400,10 @@ class Application {
       } catch (error) {
         const durationMs = Date.now() - execStart;
         logger.error(`[swarm-execute] Failed — ${error.message} (${durationMs}ms)`);
-        res.status(500).json({
+        const boundary = taskBoundaryResponse(error);
+        res.status(boundary?.status || 500).json({
           success: false,
-          error: error.message,
+          error: boundary?.code || error.message,
           durationMs,
         });
       }

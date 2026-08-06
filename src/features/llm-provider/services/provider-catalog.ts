@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Phase 0: Ported 22-provider catalog from any-bot LLMProviderRegistry.js — canonical provider definitions with model groups, required keys, and Cline provider mapping
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: clarify that runtime builders consume provider/model metadata only; required-key labels are readiness/UI metadata, never a credential-materialization contract.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -50,8 +51,8 @@ export interface ProviderDefinition {
  *
  * This catalog serves three purposes:
  *   1. Cockpit UI populates provider/model dropdowns from this data
- *   2. buildClineConfig() uses it to write ~/.cline/config.json with correct credential fields
- *   3. buildClineGlobalState() uses it to write ~/.cline/data/globalState.json with correct state keys
+ *   2. buildClineConfig() maps provider/model ids into non-secret compatibility metadata
+ *   3. buildClineGlobalState() emits non-secret plan state with autonomous approvals disabled
  */
 export const PROVIDER_CATALOG: Record<string, ProviderDefinition> = {
   bedrock: {

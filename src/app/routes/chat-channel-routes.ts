@@ -20,6 +20,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — Telegram inbound channel: public webhook (secret-verified) → link resolution / one-time-code linking → dispatch to the Jarvis bot → reply in-channel; plus auth-gated link/list/unlink/register-webhook endpoints for the cockpit Channels card.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: stop forwarding connector credentials into the Jarvis/model request; retain exact linked-owner identity and BYO inference selection only.
  *
  * @module chat-channel-routes
  */
@@ -42,16 +43,12 @@ import {
   getTelegramBotIdentity,
 } from '@/features/chat-channels';
 import { executeBotOrInline } from './inline-bot-execution';
-import { resolveBotCreds } from './connector-token-broker';
 import { resolveUserLlmConnection } from './free-tier-rotation';
 
 const logger = createChildLogger({ module: 'chat-channel-routes' });
 
 /** The unified assistant bot — the accountable brain every channel message runs on (ADR-050). */
 const JARVIS_AGENT_ID = 'a0000000-0000-0000-0000-000000000050';
-
-/** Connector providers brokered to the bot so it can act per-user (mirrors the Jarvis route). */
-const BROKERED_PROVIDERS = ['google', 'twitter', 'smartthings', 'gcp'];
 
 const botClient = new BotNodeClient(createRegistryEndpointResolver());
 
@@ -64,12 +61,12 @@ function callerSub(req: Request): string | null {
 
 /**
  * @description Runs one channel message on the accountable Jarvis bot, threading the linked user's
- * sub + brokered creds + their own LLM endpoint so per-user data access and cost capture apply.
+ * sub + their own LLM endpoint so owner scoping and cost capture apply. Connector credentials
+ * remain inside audited server-side operations and never enter this model-visible request.
  *
  * IDENTITY (double-check 2026-07-08): the webhook request is unauthenticated, so the ambient
  * AsyncLocalStorage identity is ANONYMOUS (sub='') — under FORCE RLS, oshal_connections returns
- * zero rows and the best-effort resolvers silently hand the bot creds={} and no BYO endpoint,
- * breaking the surface's core promise ("your connectors") with nothing logged. Re-enter the
+ * zero rows and the BYO resolver silently returns no endpoint. Re-enter the
  * LINKED user's identity for the whole dispatch — scoped to exactly that user, never operator.
  *
  * TASK CONTINUITY: the taskId is stable PER CHAT (not per message) so follow-up questions land
@@ -78,7 +75,6 @@ function callerSub(req: Request): string | null {
  */
 async function dispatchToSwarm(ctx: AppContext, sub: string, chatId: string, text: string): Promise<string> {
   return runWithRequestIdentity({ sub, isOperator: false }, async () => {
-    const creds = await resolveBotCreds(ctx.pool, sub, BROKERED_PROVIDERS);
     const byoLlmConnection = await resolveUserLlmConnection(ctx.pool, sub);
     const taskId = `telegram-${sub}-${chatId}`;
     const result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, {
@@ -89,7 +85,6 @@ async function dispatchToSwarm(ctx: AppContext, sub: string, chatId: string, tex
       agenticMode: true,
       direct: true,
       userSub: sub,
-      creds,
       byoLlmConnection,
     });
     return String(result.response || '').trim() || '(no reply)';

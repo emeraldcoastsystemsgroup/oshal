@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from app.js (1000-line cap decomposition): ADR-034 config-change broadcast, PHASE_42/61/62 LLM provider API, settings, SSE streams, MCP server/tool status
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject credential fields before provider mutation, stop writing secrets to Cline files, and persist provider/model/timeout metadata only.
  */
 
 const logger = require('../utils/logger');
@@ -110,7 +111,15 @@ function registerLlmSettingsAndStreamRoutes(application) {
     });
 
     application.app.put('/api/llm-provider', async (req, res) => {
-      const { provider, model, timeout, credentials } = req.body;
+      if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+        return res.status(400).json({ error: 'Request body must be an object' });
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'credentials')) {
+        return res.status(400).json({
+          error: 'credential fields are not accepted on runtime configuration mutations',
+        });
+      }
+      const { provider, model, timeout } = req.body;
       
       // ⭐ PHASE_62: Accept all 22 providers from the registry
       const validProviders = [
@@ -177,8 +186,8 @@ function registerLlmSettingsAndStreamRoutes(application) {
       // This makes Cline CLI use the selected provider for all subsequent invocations
       try {
         const registry = require('../services/llm/LLMProviderRegistry');
-        const clineConfig = registry.buildClineConfig(provider, model, credentials || {});
-        const globalState = registry.buildGlobalState(provider, model, credentials || {});
+        const clineConfig = registry.buildClineConfig(provider, model);
+        const globalState = registry.buildGlobalState(provider, model);
         
         if (clineConfig) {
           const fs = require('fs');
@@ -202,7 +211,6 @@ function registerLlmSettingsAndStreamRoutes(application) {
             provider,
             model: model || application.clineProvider?.config?.model || process.env.LLM_MODEL,
             timeout: timeout ? parseInt(timeout) : (application.clineProvider?.config?.timeout || 300),
-            credentials: credentials || {},
             updatedAt: new Date().toISOString(),
           };
           await application.redisClient.set(`config:llm-provider:${agentId}`, JSON.stringify(configToSave));

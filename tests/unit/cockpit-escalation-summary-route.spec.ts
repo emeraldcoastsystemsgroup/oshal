@@ -1,6 +1,18 @@
-import { describe, expect, it } from 'vitest';
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard escalation summary aggregation plus exact caller scoping so whitespace-bearing subjects cannot become an unscoped system read.
+ */
+
+import type { Request, Response } from 'express';
+import { describe, expect, it, vi } from 'vitest';
 import { InMemoryTicketStore, TicketService } from '../../src/features/ticketing';
-import { buildEscalationSummary } from '../../src/app/routes/cockpit-escalation-summary-route';
+import {
+  buildEscalationSummary,
+  handleGetCockpitEscalationSummary,
+} from '../../src/app/routes/cockpit-escalation-summary-route';
 
 describe('cockpit escalation summary route helpers', () => {
   it('summarizes escalation metadata quality and respects owner scoping', async () => {
@@ -64,5 +76,38 @@ describe('cockpit escalation summary route helpers', () => {
     expect(summary.topReasons).toContainEqual({ reason: 'unspecified', count: 1 });
     expect(summary.recent.map((entry) => entry.title)).not.toContain('Other user escalation');
     expect(summary.actions.join(' ')).toContain('Backfill legacy escalation rows');
+  });
+
+  it('scopes authenticated case/whitespace subjects exactly instead of using the system view', async () => {
+    const listTickets = vi.fn(async () => []);
+    const handler = handleGetCockpitEscalationSummary({
+      ticketService: { listTickets, getStatusHistory: vi.fn(async () => []) },
+    } as never);
+
+    for (const ownerSub of [' Auth0|Case-Owner ']) {
+      let body: unknown;
+      const req = { oidc: { user: { sub: ownerSub } }, query: {} } as unknown as Request;
+      const res = {
+        json: vi.fn((value: unknown) => { body = value; return res; }),
+        status: vi.fn(() => res),
+      } as unknown as Response;
+
+      await handler(req, res);
+
+      expect(listTickets).toHaveBeenLastCalledWith({ limit: 1000, ownerSub });
+      expect(body).toEqual(expect.objectContaining({
+        success: true,
+        data: expect.objectContaining({ scope: 'mine', ownerSub }),
+      }));
+    }
+
+    const blankReq = { oidc: { user: { sub: '   ' } }, query: {} } as unknown as Request;
+    const blankRes = {
+      json: vi.fn(() => blankRes),
+      status: vi.fn(() => blankRes),
+    } as unknown as Response;
+    await handler(blankReq, blankRes);
+    expect(blankRes.status).toHaveBeenCalledWith(500);
+    expect(listTickets).toHaveBeenCalledTimes(1);
   });
 });

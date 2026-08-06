@@ -6,32 +6,44 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | apply-operator per-user tools: the four
  *   CLIs the apply-operator bot calls (career_profile / apply_queue / email_code / apply_trace).
- *   Strictly scoped to OSHAL_USER_SUB — every path resolves under {STORE}/{tenant}/{user_sub}/,
- *   identical to scripts/oshal-jobhunter.js, so one user's run can never read another's resume,
+ *   Strictly scoped to OSHAL_USER_SUB — every path resolves through the installed Career package's
+ *   reversible store mapper, so one user's run can never read another's resume,
  *   profile, queue, or trace. Exit 2 = no user identity (set OSHAL_USER_SUB).
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | queue next: optional --posting <id>
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | queue next: optional --posting <id>
  *   targeting so the mobile review card can auto-apply the SPECIFIC packet the operator reviewed
  *   (still packet- and US-gated) instead of only "newest generated first". Threshold gate is skipped
  *   for a deliberate per-job choice; default (no --posting) behaviour is unchanged.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | queue list [--threshold N] [--limit N]
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | queue list [--threshold N] [--limit N]
  *   -> the same packet-ready, US-eligible set as `queue next` but as an ARRAY (up to --limit), so the
  *   durable enqueuer can mint ONE job-apply ticket per posting (queue works them one-at-a-time). Does
  *   NOT claim (dispatch claims each at apply time).
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | queue requeue <postingId> — undo a
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | queue requeue <postingId> — undo a
  *   claim (apply_active=1) + a 'deferred' status for a dispatch that never reached the desktop. Without
  *   it a durable job-apply ticket poisoned its OWN posting: gatherAndDispatch claims before dispatching,
  *   so a transient node-offline left the posting unfindable and the retry escalated "no submittable job
  *   ready" (8 tickets lost that way 2026-07-21). HARD-REFUSES when applied_at is set — a genuinely
  *   submitted application is never resurrected into a duplicate.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact authenticated subjects through the packaged Career store mapper and record task-bound, evidence-checked application provenance.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Require explicit applied provenance, parse flag-only records without inventing a note, and preserve stronger confirmation evidence across repeated outcomes.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Reuse the shared exact-subject reader so invalid scope files fail before Career path resolution.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Make claims atomic and timestamped, clear leases on every outcome, and add bounded orphan reaping for legacy and expired claims while protecting exact live postings.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Bind every Career queue claim/release/outcome to the PostgreSQL Apply V2 run id and exact random claim token; another controller run can no longer release or settle the claim.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Read Google connector credentials through the shared version-aware token codec and fail closed on decryption errors; encrypted database text can never be sent as a bearer token.
  *
  * Verbs:
  *   profile                                   -> canonical per-user form values (career_db.json + apply_profile.json overlay)
  *   queue next [--threshold N] [--posting ID] -> next approved, packet-ready, US-eligible item (newest generated first, or the given posting)
  *   queue list [--threshold N] [--limit N]    -> up to N packet-ready, US-eligible postings (for the durable ticket enqueuer)
- *   queue claim <postingId>                   -> claim the item (apply_active=0) so no other worker double-submits
- *   queue requeue <postingId>                 -> undo a claim/deferred that never reached the desktop (refuses if applied_at set)
- *   queue record <postingId> <status> [note]  -> record outcome (applied|deferred|dismissed); --confirmation <path>
+ *   queue claim <postingId> --run-id <uuid> --claim-token <uuid>
+ *                                             -> bind the item to one durable Apply run
+ *   queue requeue <postingId> --run-id <uuid> --claim-token <uuid>
+ *                                             -> release only the matching durable claim
+ *   queue reap [--older-ms N] [--live a,b]    -> release legacy/expired claims not owned by a named live run
+ *   queue record <postingId> <status> [note]  -> record outcome (applied|deferred|dismissed);
+ *                                                --source worker-reported|verified-submission
+ *                                                --task <apply UUID> --confirmation <path>
+ *                                                --run-id <uuid> --claim-token <uuid>
  *   email-code                                -> newest ATS security code from the user's Gmail (OSHAL OAuth helper)
  *   trace                                     -> append one learning line to applications/_auto_apply_trace.jsonl
  *
@@ -41,48 +53,55 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken } = require('./lib/connector-token-crypto');
 
-// ── Identity + per-user path resolution (mirrors scripts/oshal-jobhunter.js) ───────────────
+// ── Identity + per-user path resolution (shared with the installed Career package) ───────
 const STORE_ROOT = process.env.JOBHUNTER_STORE_ROOT
   || path.resolve(__dirname, '..', 'output', 'career-hunter-data');
 
 /** OSHAL_USER_SUB env, or the cwd-relative file the codex wrapper drops (sandbox may not forward env). */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB.trim();
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
+/** Load the canonical identity/path mapper from the installed Career package. */
+function loadUserStorePath() {
+  const packageRoots = [
+    process.env.JOBHUNTER_APP_DIR,
+    process.env.CLINE_WORKSPACE_ROOT
+      ? path.resolve(process.env.CLINE_WORKSPACE_ROOT, 'deployed-apps', 'career-hunter') : null,
+    process.env.OSHAL_STORE_DIR
+      ? path.resolve(process.env.OSHAL_STORE_DIR, 'career-hunter') : null,
+    path.resolve(process.cwd(), 'deployed-apps', 'career-hunter'),
+    path.resolve(__dirname, '..', 'deployed-apps', 'career-hunter'),
+  ].filter(Boolean);
+  for (const packageRoot of new Set(packageRoots)) {
+    const modulePath = path.resolve(packageRoot, 'lib', 'user-store-path.js');
+    if (fs.existsSync(modulePath)) return require(modulePath);
+  }
+  throw new Error('Career user-store mapper is unavailable; install career-hunter or set JOBHUNTER_APP_DIR');
+}
+
+/** Resolve one exact authenticated identity to its collision-resistant Career store layout. */
 function userContext() {
   const userSub = resolveUserSub();
   if (!userSub) { console.error('No user identity. Set OSHAL_USER_SUB (the signed-in user).'); process.exit(2); }
   const tenant = (process.env.OSHAL_TENANT || 'default').trim();
-  const tenantDir = path.join(STORE_ROOT, tenant);
-  const userDir = path.join(tenantDir, userSub);
+  const storePath = loadUserStorePath();
+  const layout = storePath.resolveUserStoreLayout(STORE_ROOT, tenant, userSub);
   return {
-    userSub, tenant, tenantDir, userDir,
-    corpusDb: process.env.JOBHUNTER_CORPUS_DB || path.join(tenantDir, 'corpus.db'),
-    userDb: path.join(userDir, `user-${userSub}.db`),
-    careerDb: path.join(userDir, 'career_db.json'),
-    applyProfile: path.join(userDir, 'apply_profile.json'),
-    appsDir: path.join(userDir, 'applications'),
+    userSub, tenant, tenantDir: layout.tenantDir, userDir: layout.userDir,
+    corpusDb: process.env.JOBHUNTER_CORPUS_DB || storePath.resolveContainedPath(layout.tenantDir, 'corpus.db'),
+    userDb: layout.userDb,
+    careerDb: storePath.resolveContainedPath(layout.userDir, 'career_db.json'),
+    applyProfile: storePath.resolveContainedPath(layout.userDir, 'apply_profile.json'),
+    appsDir: storePath.resolveContainedPath(layout.userDir, 'applications'),
   };
 }
 
 const out = (obj) => { process.stdout.write(JSON.stringify(obj) + '\n'); };
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
-
-// ── Token broker (Google), copied from oshal-jobhunter.js / oshal-gmail.js ─────────────────
-function sessionKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
-}
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', sessionKey(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
 
 // ── career_profile ─────────────────────────────────────────────────────────────────────────
 // The canonical, per-user source of form values. career_db.json holds experience/skills/education
@@ -102,9 +121,20 @@ function cmdProfile(ctx) {
 /** ALTER-in the post-v1 apply columns if this DB predates them (the Node tool may touch the
  *  user DB before the Python engine's own _ensure_user_columns runs). Idempotent. */
 function ensureUserColumns(db) {
-  const have = new Set(db.prepare('PRAGMA table_info(user_signals)').all().map((r) => r.name));
-  if (!have.has('apply_active')) { try { db.exec('ALTER TABLE user_signals ADD COLUMN apply_active INTEGER DEFAULT 1'); } catch { /* */ } }
-  if (!have.has('confirmation_path')) { try { db.exec('ALTER TABLE user_signals ADD COLUMN confirmation_path TEXT'); } catch { /* */ } }
+  const declarations = {
+    apply_active: 'INTEGER DEFAULT 1', confirmation_path: 'TEXT',
+    application_source: 'TEXT', application_task_id: 'TEXT', apply_claimed_at: 'INTEGER',
+    apply_claim_token: 'TEXT', apply_run_id: 'TEXT',
+  };
+  let have = new Set(db.prepare('PRAGMA table_info(user_signals)').all().map((r) => r.name));
+  for (const [name, declaration] of Object.entries(declarations)) {
+    if (have.has(name)) continue;
+    try { db.exec(`ALTER TABLE user_signals ADD COLUMN ${name} ${declaration}`); }
+    catch (error) {
+      have = new Set(db.prepare('PRAGMA table_info(user_signals)').all().map((r) => r.name));
+      if (!have.has(name)) throw error;
+    }
+  }
 }
 
 function openUserDb(ctx) {
@@ -233,53 +263,216 @@ function cmdQueueList(ctx, threshold, limit) {
   } finally { db.close(); }
 }
 
-function cmdQueueClaim(ctx, postingId) {
+const APPLY_RUN_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Fail before mutation unless the controller supplied one exact durable run binding. */
+function requireRunBinding(runId, claimToken) {
+  if (!APPLY_RUN_UUID.test(String(runId || ''))) fail('run-id must be a canonical UUID', 2);
+  if (!APPLY_RUN_UUID.test(String(claimToken || ''))) fail('claim-token must be a canonical UUID', 2);
+  return { runId: String(runId), claimToken: String(claimToken) };
+}
+
+function cmdQueueClaim(ctx, postingId, runIdValue, claimTokenValue) {
+  if (!Number.isSafeInteger(postingId) || postingId <= 0) fail('postingId must be a positive safe integer', 2);
+  const { runId, claimToken } = requireRunBinding(runIdValue, claimTokenValue);
   const db = openUserDb(ctx);
   try {
-    db.prepare(`INSERT INTO user_signals (posting_id, apply_active) VALUES (?, 0)
-                ON CONFLICT(posting_id) DO UPDATE SET apply_active = 0`).run(postingId);
-    out({ ok: true, posting_id: postingId, claimed: true });
+    const changed = db.prepare(`UPDATE user_signals
+                                   SET apply_active = 0, apply_claimed_at = ?,
+                                       apply_run_id = ?, apply_claim_token = ?
+                                 WHERE posting_id = ? AND applied_at IS NULL
+                                   AND status = 'generated' AND COALESCE(apply_active, 1) = 1`)
+      .run(Date.now(), runId, claimToken, postingId);
+    const claimed = changed.changes === 1;
+    out({ ok: claimed, posting_id: postingId, claimed, apply_run_id: claimed ? runId : null,
+      ...(claimed ? {} : { note: 'posting is missing, ineligible, applied, or already claimed' }) });
   } finally { db.close(); }
 }
 
-function cmdQueueRequeue(ctx, postingId) {
+function cmdQueueRequeue(ctx, postingId, runIdValue, claimTokenValue) {
   // Roll a posting BACK to eligible after a dispatch that never reached the desktop. gatherAndDispatch
   // claims (apply_active=0) before dispatching, and the old failure path also recorded 'deferred' —
   // both make `queue next --posting <id>` return nothing, so a durable job-apply ticket that retries
   // would escalate with "no submittable job ready" (it poisoned its own posting). This undoes exactly
   // that. HARD REFUSAL when applied_at is set: a genuinely-submitted application must NEVER be
   // resurrected into a duplicate submission.
+  const { runId, claimToken } = requireRunBinding(runIdValue, claimTokenValue);
   const db = openUserDb(ctx);
   try {
-    const row = db.prepare('SELECT posting_id, status, applied_at, apply_active FROM user_signals WHERE posting_id = ?').get(postingId);
+    const row = db.prepare(`SELECT posting_id, status, applied_at, apply_active, apply_claimed_at,
+                                  apply_run_id, apply_claim_token
+                             FROM user_signals WHERE posting_id = ?`).get(postingId);
     if (!row) { out({ ok: false, posting_id: postingId, note: 'no user_signals row' }); return; }
     if (row.applied_at) { out({ ok: false, posting_id: postingId, applied_at: row.applied_at, note: 'already applied — refusing to requeue (would duplicate the application)' }); return; }
+    if (row.apply_run_id !== runId || row.apply_claim_token !== claimToken) {
+      out({ ok: false, posting_id: postingId, note: 'durable Apply claim binding mismatch' });
+      return;
+    }
     db.prepare(`UPDATE user_signals
                    SET apply_active = 1,
+                       apply_claimed_at = NULL,
+                       apply_claim_token = NULL,
+                       apply_run_id = NULL,
                        status = CASE WHEN status = 'deferred' THEN 'generated' ELSE status END
-                 WHERE posting_id = ? AND applied_at IS NULL`).run(postingId);
+                 WHERE posting_id = ? AND applied_at IS NULL
+                   AND apply_run_id = ? AND apply_claim_token = ?`).run(postingId, runId, claimToken);
     const after = db.prepare('SELECT status, apply_active FROM user_signals WHERE posting_id = ?').get(postingId);
     out({ ok: true, posting_id: postingId, from: { status: row.status, apply_active: row.apply_active }, to: after });
   } finally { db.close(); }
 }
 
-function cmdQueueRecord(ctx, postingId, status, note, confirmation) {
-  const ALLOWED = new Set(['applied', 'deferred', 'dismissed']);
-  if (!ALLOWED.has(status)) fail(`status must be one of ${[...ALLOWED].join('|')}`, 2);
-  const appliedAt = status === 'applied' ? new Date().toISOString() : null;
+/** Parse the exact live-posting allowlist supplied by the controller. */
+function livePostingIds(raw) {
+  if (!raw) return new Set();
+  const values = String(raw).split(',').filter(Boolean);
+  if (values.length > 5000) fail('live posting allowlist exceeds 5000 entries', 2);
+  const ids = new Set();
+  for (const value of values) {
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) fail('live posting ids must be positive safe integers', 2);
+    ids.add(id);
+  }
+  return ids;
+}
+
+/** Release legacy or expired claims except exact postings the controller says are still live. */
+function cmdQueueReap(ctx, olderMs, liveRaw) {
+  const age = Number.isFinite(olderMs) ? Math.min(24 * 60 * 60 * 1000, Math.max(0, olderMs)) : 35 * 60 * 1000;
+  const cutoff = Date.now() - age;
+  const live = livePostingIds(liveRaw);
   const db = openUserDb(ctx);
   try {
+    const result = db.transaction(() => {
+      const count = () => db.prepare(`SELECT COUNT(*) AS n FROM user_signals
+        WHERE COALESCE(apply_active,1)=0 AND applied_at IS NULL`).get().n;
+      const before = count();
+      const candidates = db.prepare(`SELECT posting_id FROM user_signals
+        WHERE COALESCE(apply_active,1)=0 AND applied_at IS NULL
+          AND (apply_claimed_at IS NULL OR apply_claimed_at <= ?)` ).all(cutoff);
+      const release = db.prepare(`UPDATE user_signals SET apply_active=1, apply_claimed_at=NULL,
+        apply_claim_token=NULL, apply_run_id=NULL,
+        status=CASE WHEN status='deferred' THEN 'generated' ELSE status END
+        WHERE posting_id=? AND COALESCE(apply_active,1)=0 AND applied_at IS NULL`);
+      let released = 0;
+      for (const row of candidates) if (!live.has(Number(row.posting_id))) released += release.run(row.posting_id).changes;
+      return { ok: true, before, released, after: count(), protected_live: live.size, older_ms: age };
+    })();
+    out(result);
+  } finally { db.close(); }
+}
+
+const APPLY_TASK_ID = /^apply-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** True only when candidate is a strict child of root. */
+function isContained(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return !!relative && relative !== '..' && !relative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relative);
+}
+
+/** Resolve only a link-free regular confirmation file inside the exact user store. */
+function containedConfirmation(userDir, candidate) {
+  if (typeof candidate !== 'string' || !candidate) return null;
+  try {
+    const lexicalRoot = path.resolve(userDir);
+    const lexicalCandidate = path.resolve(lexicalRoot, candidate);
+    if (!isContained(lexicalRoot, lexicalCandidate)) return null;
+    let current = lexicalRoot;
+    for (const segment of path.relative(lexicalRoot, lexicalCandidate).split(path.sep)) {
+      current = path.join(current, segment);
+      if (fs.lstatSync(current).isSymbolicLink()) return null;
+    }
+    const realRoot = fs.realpathSync.native(lexicalRoot);
+    const realCandidate = fs.realpathSync.native(lexicalCandidate);
+    return isContained(realRoot, realCandidate) && fs.statSync(realCandidate).isFile()
+      ? realCandidate : null;
+  } catch { return null; }
+}
+
+/** Validate and derive the provenance fields written for one queue outcome. */
+function applicationProvenance(ctx, status, requestedSource, confirmation, taskId) {
+  if (status !== 'applied') return { source: null, taskId: null, confirmation: null, rank: 0 };
+  if (!requestedSource) fail('applied status requires an explicit source', 2);
+  const source = requestedSource;
+  if (!new Set(['worker-reported', 'verified-submission']).has(source)) {
+    fail('source must be worker-reported|verified-submission', 2);
+  }
+  if (!taskId || !APPLY_TASK_ID.test(taskId)) fail('task must be a canonical Apply UUID', 2);
+  const safeConfirmation = containedConfirmation(ctx.userDir, confirmation);
+  if (source === 'verified-submission' && !safeConfirmation) {
+    fail('verified-submission requires a contained, link-free confirmation file', 2);
+  }
+  return { source, taskId, confirmation: safeConfirmation,
+    rank: source === 'verified-submission' ? 4 : 3 };
+}
+
+function cmdQueueRecord(ctx, postingId, status, note, confirmation, requestedSource, taskId, runIdValue, claimTokenValue) {
+  const ALLOWED = new Set(['applied', 'deferred', 'dismissed']);
+  if (!ALLOWED.has(status)) fail(`status must be one of ${[...ALLOWED].join('|')}`, 2);
+  if (!Number.isSafeInteger(postingId) || postingId <= 0) fail('postingId must be a positive safe integer', 2);
+  const noteValue = note == null ? null : String(note);
+  if (noteValue && noteValue.length > 2000) fail('note must not exceed 2000 characters', 2);
+  const { runId, claimToken } = requireRunBinding(runIdValue, claimTokenValue);
+  const appliedAt = status === 'applied' ? new Date().toISOString() : null;
+  const provenance = applicationProvenance(ctx, status, requestedSource, confirmation, taskId);
+  const db = openUserDb(ctx);
+  try {
+    const current = db.prepare(`SELECT status, application_source, application_task_id,
+                                       apply_run_id, apply_claim_token
+                                  FROM user_signals WHERE posting_id=?`).get(postingId);
+    const alreadySettled = current && current.apply_run_id === runId
+      && current.apply_claim_token == null && current.status === status
+      && (status !== 'applied' || current.application_task_id === taskId);
+    if (alreadySettled) {
+      out({ ok: true, posting_id: postingId, status: current.status,
+        application_source: status === 'applied' ? current.application_source || null : null,
+        application_task_id: status === 'applied' ? current.application_task_id || null : null,
+        confirmation_verified: status === 'applied' && current.application_source === 'verified-submission' });
+      return;
+    }
+    if (!current || current.apply_run_id !== runId || current.apply_claim_token !== claimToken) {
+      out({ ok: false, posting_id: postingId, status: current?.status || null,
+        note: 'durable Apply claim binding mismatch' });
+      return;
+    }
     db.prepare(`
-      INSERT INTO user_signals (posting_id, status, applied_at, apply_active, notes, confirmation_path)
-      VALUES (@id, @status, @appliedAt, 1, @note, @conf)
+      INSERT INTO user_signals (posting_id, status, applied_at, apply_active, apply_claimed_at, notes,
+                                confirmation_path, application_source, application_task_id,
+                                apply_run_id, apply_claim_token)
+      VALUES (@id, @status, @appliedAt, 1, NULL, @note, @conf, @source, @taskId, @runId, NULL)
       ON CONFLICT(posting_id) DO UPDATE SET
-        status = @status,
-        applied_at = COALESCE(@appliedAt, user_signals.applied_at),
+        status = CASE WHEN user_signals.applied_at IS NOT NULL AND @appliedAt IS NULL
+                      THEN user_signals.status ELSE @status END,
+        applied_at = COALESCE(user_signals.applied_at, @appliedAt),
         apply_active = 1,
-        notes = @note,
-        confirmation_path = COALESCE(@conf, user_signals.confirmation_path)`)
-      .run({ id: postingId, status, appliedAt, note: note || null, conf: confirmation || null });
-    out({ ok: true, posting_id: postingId, status });
+        apply_claimed_at = NULL,
+        apply_claim_token = NULL,
+        apply_run_id = @runId,
+        notes = CASE WHEN user_signals.applied_at IS NOT NULL AND @appliedAt IS NULL
+                     THEN user_signals.notes ELSE @note END,
+        confirmation_path = CASE
+          WHEN @appliedAt IS NULL OR (CASE user_signals.application_source
+            WHEN 'verified-submission' THEN 4 WHEN 'worker-reported' THEN 3
+            WHEN 'manual-mark' THEN 2 WHEN 'unverified' THEN 1 ELSE 0 END) > @rank
+          THEN user_signals.confirmation_path ELSE @conf END,
+        application_source = CASE
+          WHEN @appliedAt IS NULL OR (CASE user_signals.application_source
+            WHEN 'verified-submission' THEN 4 WHEN 'worker-reported' THEN 3
+            WHEN 'manual-mark' THEN 2 WHEN 'unverified' THEN 1 ELSE 0 END) > @rank
+          THEN user_signals.application_source ELSE @source END,
+        application_task_id = CASE
+          WHEN @appliedAt IS NULL OR (CASE user_signals.application_source
+            WHEN 'verified-submission' THEN 4 WHEN 'worker-reported' THEN 3
+            WHEN 'manual-mark' THEN 2 WHEN 'unverified' THEN 1 ELSE 0 END) > @rank
+          THEN user_signals.application_task_id ELSE @taskId END`)
+      .run({ id: postingId, status, appliedAt, note: noteValue, conf: provenance.confirmation,
+        source: provenance.source, taskId: provenance.taskId, rank: provenance.rank, runId });
+    const row = db.prepare('SELECT status, application_source, application_task_id, confirmation_path FROM user_signals WHERE posting_id=?').get(postingId);
+    const accepted = row && row.status === status;
+    out({ ok: !!accepted, posting_id: postingId, status: row?.status || null,
+      application_source: status === 'applied' ? row?.application_source || null : null,
+      application_task_id: status === 'applied' ? row?.application_task_id || null : null,
+      confirmation_verified: status === 'applied' && row?.application_source === 'verified-submission' });
   } finally { db.close(); }
 }
 
@@ -296,17 +489,17 @@ async function googleToken(ctx) {
   const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : new Pool();
   try {
     const row = (await pool.query(
-      `SELECT access_token, refresh_token, expiry, account_email FROM oshal_connections
+      `SELECT user_sub, access_token, refresh_token, expiry, account_email FROM oshal_connections
         WHERE provider='google' AND user_sub=$1 ORDER BY updated_at DESC LIMIT 1`, [ctx.userSub])).rows[0];
     if (!row) fail(`No Google connection for this user. Connect a Google account at /utilities first.`, 2);
     if (row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60000) {
-      try { return decrypt(row.access_token); } catch { return row.access_token; }
+      return await decryptToken(pool, row.user_sub, row.access_token);
     }
     if (!row.refresh_token) fail('Google connection has no refresh token; reconnect at /utilities.', 2);
     const clientId = process.env.GOOGLE_CONNECT_CLIENT_ID || process.env.OIDC_CLIENT_ID || '';
     const clientSecret = process.env.GOOGLE_CONNECT_CLIENT_SECRET || process.env.OIDC_CLIENT_SECRET || '';
     const body = new URLSearchParams({ client_id: clientId, client_secret: clientSecret,
-      refresh_token: decrypt(row.refresh_token), grant_type: 'refresh_token' });
+      refresh_token: await decryptToken(pool, row.user_sub, row.refresh_token), grant_type: 'refresh_token' });
     const r = await fetch('https://oauth2.googleapis.com/token',
       { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
     if (!r.ok) fail('Google token refresh failed: ' + r.status, 3);
@@ -376,7 +569,19 @@ function cmdTrace(ctx) {
 module.exports = { extractCode };
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────────────────────
-function argVal(flag, def) { const i = process.argv.indexOf(flag); return i >= 0 ? process.argv[i + 1] : def; }
+function argVal(flag, def) {
+  const index = process.argv.indexOf(flag);
+  if (index < 0) return def;
+  const value = process.argv[index + 1];
+  if (value === undefined || value.startsWith('--')) fail(`${flag} requires a value`, 2);
+  return value;
+}
+
+/** Preserve the pre-flag positional note accepted by older controller releases. */
+function legacyRecordNote() {
+  const value = process.argv[6];
+  return value && !value.startsWith('--') ? value : undefined;
+}
 
 if (require.main === module) {
   (async () => {
@@ -390,10 +595,19 @@ if (require.main === module) {
         case 'queue': {
           if (sub === 'next') cmdQueueNext(ctx, Number(argVal('--threshold', '55')), Number(argVal('--posting')));
           else if (sub === 'list') cmdQueueList(ctx, Number(argVal('--threshold', '55')), Number(argVal('--limit', '200')));
-          else if (sub === 'claim') cmdQueueClaim(ctx, Number(process.argv[4]));
-          else if (sub === 'requeue') cmdQueueRequeue(ctx, Number(process.argv[4]));
-          else if (sub === 'record') cmdQueueRecord(ctx, Number(process.argv[4]), process.argv[5], argVal('--note', process.argv[6]), argVal('--confirmation'));
-          else fail('usage: oshal-apply queue <next|list|claim|requeue|record> [...]', 2);
+          else if (sub === 'claim') cmdQueueClaim(
+            ctx, Number(process.argv[4]), argVal('--run-id'), argVal('--claim-token'),
+          );
+          else if (sub === 'requeue') cmdQueueRequeue(
+            ctx, Number(process.argv[4]), argVal('--run-id'), argVal('--claim-token'),
+          );
+          else if (sub === 'reap') cmdQueueReap(ctx, Number(argVal('--older-ms')), argVal('--live'));
+          else if (sub === 'record') cmdQueueRecord(
+            ctx, Number(process.argv[4]), process.argv[5], argVal('--note', legacyRecordNote()),
+            argVal('--confirmation'), argVal('--source'), argVal('--task'),
+            argVal('--run-id'), argVal('--claim-token'),
+          );
+          else fail('usage: oshal-apply queue <next|list|claim|requeue|reap|record> [...]', 2);
           break;
         }
         default:

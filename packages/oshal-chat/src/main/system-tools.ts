@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | System-control tools for the worker: screenshot (Electron desktopCapturer), shell (PowerShell), and mouse/keyboard/app control. Input uses nut.js when it loads, else falls back to zero-dep PowerShell P/Invoke so a flaky native build never blocks control. Gated by config.allowSystemControl (off by default).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Click-coordinate scaling fix: captureScreen captured PHYSICAL pixels but returned DOWNSCALED width/height with no scale info, while controlInput sent raw action x/y to nut-js — so swarm clicks derived from the screenshot landed short of their target on any scaled/downscaled display. captureScreen now also returns physicalWidth/physicalHeight/scaleFactor and caches the capture metrics; InputAction gains coordinateSpace ('screenshot' default — what swarm callers send — or 'physical'), and controlInput rescales screenshot-space coordinates to physical pixels (resolveInputAction, pure/unit-tested) before any setPosition/SetCursorPos.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed the vulnerable native nut.js dependency and made the existing zero-dependency PowerShell P/Invoke implementation the single input path, eliminating its unpatched image-parser chain and Electron ABI variability while retaining coordinate scaling and desktop control behavior.
  */
 
 import { spawn } from 'child_process';
@@ -147,18 +148,6 @@ export function runShell(command: string, timeoutMs = 120_000, cwd?: string): Pr
 
 /* ───────────────────────── Input control ───────────────────────── */
 
-// nut.js is preferred but optional: undefined = untried, null = unavailable.
-let nutMod: unknown = undefined;
-function loadNut(): Record<string, unknown> | null {
-  if (nutMod !== undefined) return nutMod as Record<string, unknown> | null;
-  try {
-    nutMod = requireFn('@nut-tree-fork/nut-js') as Record<string, unknown>;
-  } catch {
-    nutMod = null;
-  }
-  return nutMod as Record<string, unknown> | null;
-}
-
 /**
  * @description Maps an action's x/y into PHYSICAL device pixels. coordinateSpace
  * 'screenshot' (the default — swarm callers read click targets off the possibly-
@@ -188,64 +177,25 @@ export function resolveInputAction(action: InputAction, metrics: CaptureMetrics 
 /**
  * @description Performs one input action. Screenshot-space coordinates (the
  * default) are first rescaled to physical pixels via the last capture's metrics.
- * Tries nut.js first; on ANY failure (module won't load under this Electron ABI,
- * or a call throws) falls back to a zero-dep PowerShell implementation so control
- * keeps working without a native build.
+ * Uses the zero-dependency PowerShell implementation directly. Keeping one OS
+ * input path avoids native Electron ABI drift and removes the unpatched image-
+ * parser dependency chain previously pulled in by nut.js.
+ * @param action - Input operation in screenshot or physical coordinate space.
+ * @returns Structured success/failure without exposing the generated shell command.
  */
-export async function controlInput(action: InputAction): Promise<{ success: boolean; via: 'nut' | 'powershell'; error?: string }> {
+export async function controlInput(action: InputAction): Promise<{ success: boolean; via: 'powershell'; error?: string }> {
   const resolved = resolveInputAction(action, lastCaptureMetrics);
   try {
-    await nutControl(resolved);
-    return { success: true, via: 'nut' };
-  } catch (nutErr) {
-    try {
-      await psControl(resolved);
-      return { success: true, via: 'powershell' };
-    } catch (psErr) {
-      return { success: false, via: 'powershell', error: `nut: ${msg(nutErr)} | powershell: ${msg(psErr)}` };
-    }
+    await psControl(resolved);
+    return { success: true, via: 'powershell' };
+  } catch (error) {
+    return { success: false, via: 'powershell', error: msg(error) };
   }
 }
 
 function msg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
 
-/** nut.js path (throws if nut is unavailable so the caller falls back). */
-async function nutControl(action: InputAction): Promise<void> {
-  const nut = loadNut();
-  if (!nut) throw new Error('nut.js unavailable');
-  const mouse = nut.mouse as { setPosition: (p: unknown) => Promise<unknown>; click: (b: unknown) => Promise<unknown>; doubleClick: (b: unknown) => Promise<unknown>; config: Record<string, unknown> };
-  const keyboard = nut.keyboard as { type: (s: string) => Promise<unknown>; config: Record<string, unknown> };
-  const Point = nut.Point as new (x: number, y: number) => unknown;
-  const Button = nut.Button as { LEFT: unknown; RIGHT: unknown };
-
-  switch (action.kind) {
-    case 'move':
-      await mouse.setPosition(new Point(action.x ?? 0, action.y ?? 0));
-      break;
-    case 'click':
-      if (action.x != null) await mouse.setPosition(new Point(action.x, action.y ?? 0));
-      await mouse.click(Button.LEFT);
-      break;
-    case 'doubleclick':
-      if (action.x != null) await mouse.setPosition(new Point(action.x, action.y ?? 0));
-      await mouse.doubleClick(Button.LEFT);
-      break;
-    case 'rightclick':
-      if (action.x != null) await mouse.setPosition(new Point(action.x, action.y ?? 0));
-      await mouse.click(Button.RIGHT);
-      break;
-    case 'type':
-      await keyboard.type(action.text ?? '');
-      break;
-    case 'launch':
-      // App launch is the same on both paths — defer to PowerShell.
-      throw new Error('launch handled by powershell');
-    default:
-      throw new Error(`unknown action "${action.kind}"`);
-  }
-}
-
-/** Zero-dep PowerShell fallback (Windows): user32 P/Invoke + SendKeys + Start-Process. */
+/** Zero-dependency Windows input path: user32 P/Invoke + SendKeys + Start-Process. */
 async function psControl(action: InputAction): Promise<void> {
   const user32 = `Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y); [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint x,uint y,uint d,int e);' -Name U -Namespace W -ErrorAction SilentlyContinue;`;
   const L_DOWN = '0x0002', L_UP = '0x0004', R_DOWN = '0x0008', R_UP = '0x0010';

@@ -7,11 +7,15 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the /api/world allowlist entry per the spec's own stale-entry instruction — World Intelligence carved to the app store (ADR-085 Wave 3), server.ts no longer mounts the path. The packaged route keeps the identical self-guarded posture (WORLD_INGEST_TOKEN fail-closed writes / open reads / ENABLE_WORLD_INTELLIGENCE 503).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the /api/trading-charts allowlist entry per the spec's own stale-entry instruction — the trading surface carved to the app store (ADR-085 Wave 3), server.ts no longer mounts any trading path. The packaged route keeps the identical split posture (public MIT chart lib / callerSub-gated /bars), declared auth: public in the package manifest. Anti-bitrot floors lowered with the four unmounts (90→85 inventory, 80→75 guarded — 87/78 remain; floors, not censuses).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Moved UNGUARDED_ALLOWLIST (content unchanged, reasons verbatim) to tests/helpers/unguarded-route-allowlist.ts so tests/unit/route-audit.spec.ts can import it and cross-check it against the runtime scanner's PUBLIC_BY_DESIGN. The two lists previously referenced each other only in prose and HAD diverged: '/api/security/csp-report' and '/api/branding' were reviewed here and absent from the scanner's list entirely, which the scanner's app.use-only parser hid. Importing a spec from a spec would re-register its suites, hence a plain helper module. Every assertion in this file is unchanged.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Classify handler-less limiter mounts with the runtime scanner's shared rule instead of the anonymous-route allowlist; synthetic limiter/open mounts pin both sides of the distinction.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Split parser-liveness assertions from allowlist integrity so governance-counted describe callbacks remain below fifty physical lines.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the SEC-01 delegated-user route middleware as an authenticated mount posture so Graph and Jarvis cannot be misclassified as anonymous.
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { UNGUARDED_ALLOWLIST } from '../helpers/unguarded-route-allowlist';
+import { isLimiterOnlyMiddleware } from '@/features/security';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // server.ts source-scanning helpers. The existing single-line idiom
@@ -110,7 +114,7 @@ interface Mount {
   paths: string[];
   args: string;
   line: number;
-  mode: 'service-or-oidc' | 'operator' | 'oidc' | 'unguarded';
+  mode: 'delegated-or-oidc' | 'service-or-oidc' | 'operator' | 'oidc' | 'limiter-only' | 'unguarded';
 }
 
 /**
@@ -122,10 +126,23 @@ interface Mount {
  * @returns The posture.
  */
 function classifyMount(args: string): Mount['mode'] {
+  if (isLimiterOnlyMiddleware(middlewareArgs(args))) return 'limiter-only';
+  if (args.includes('delegatedUserRouteAuth')) return 'delegated-or-oidc';
   if (args.includes('serviceSecretOr')) return 'service-or-oidc';
   if (args.includes('requiresOperator')) return 'operator';
   if (args.includes('requiresAuth')) return 'oidc';
   return 'unguarded';
+}
+
+/** @description Return the registration text after its string/array path argument. */
+function middlewareArgs(args: string): string {
+  const lead = args.trimStart();
+  const single = lead.match(/^(['"`])([^'"`]*)\1/);
+  if (single) return lead.slice(single[0].length).replace(/^\s*,/, '');
+  if (!lead.startsWith('[')) return '';
+  const close = lead.indexOf(']');
+  if (close === -1) return '';
+  return lead.slice(close + 1).replace(/^\s*,/, '');
 }
 
 /**
@@ -152,11 +169,21 @@ function extractApiMounts(source: string): Mount[] {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('server.ts /api route-auth inventory (the anonymous-by-omission guard)', () => {
-  const source = readFileSync('src/app/server.ts', 'utf8');
-  const mounts = extractApiMounts(source);
-  const unguarded = mounts.filter((mt) => mt.mode === 'unguarded');
+describe('server route classifier shared limiter rule', () => {
+  it('derives a handler-less limiter without an allowlist entry', () => {
+    expect(classifyMount("'/api/new-limit', brandNewLimiter")).toBe('limiter-only');
+  });
 
+  it('still classifies a genuinely open router as unguarded', () => {
+    expect(classifyMount("'/api/new-open', createOpenRoutes()")).toBe('unguarded');
+  });
+});
+
+const source = readFileSync('src/app/server.ts', 'utf8');
+const mounts = extractApiMounts(source);
+const unguarded = mounts.filter((mount) => mount.mode === 'unguarded');
+
+describe('server.ts /api route-auth parser liveness', () => {
   // Vacuous-pass tripwire: if the parser bitrots (server.ts refactor, idiom change) the
   // inventory shrinks toward zero and every assertion below would pass while checking nothing.
   // (Floor 90→85 on 2026-07-20: the trading carve — the last Wave-G carve — unmounted its four
@@ -173,11 +200,14 @@ describe('server.ts /api route-auth inventory (the anonymous-by-omission guard)'
     // (Floor 80→75 on 2026-07-20: the trading carve removed three serviceSecretOr mounts —
     //  78 guarded remain; same anti-bitrot rationale as the inventory floor above.)
     expect(modes.has('oidc')).toBe(true);
+    expect(modes.has('delegated-or-oidc')).toBe(true);
     expect(modes.has('service-or-oidc')).toBe(true);
     expect(modes.has('operator')).toBe(true);
     expect(mounts.filter((mt) => mt.mode !== 'unguarded').length).toBeGreaterThanOrEqual(75);
   });
+});
 
+describe('server.ts /api anonymous-by-omission guard', () => {
   // THE guard. authRequired:false means an unwrapped mount is anonymous-callable — every
   // unguarded /api mount must be individually reviewed and carry a written reason here.
   it('every unguarded /api mount is on the reviewed allowlist', () => {

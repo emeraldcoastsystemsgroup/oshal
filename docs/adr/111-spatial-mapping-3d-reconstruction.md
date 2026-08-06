@@ -92,8 +92,9 @@ architecture.
      `GET /scans/:id/poses` — the foundation the RF overlay stands on.
    - **Phase 2 — capture assist, then GoPro media ingest.** *First increment shipped — Guided
      Capture:* deterministic capture plans per room / object / facade (`generateCapturePlan`,
-     `GET /capture-plan`) plus a live phone-HUD capture surface (`spaces-capture.html`,
-     `GET /capture`, `POST /capture-telemetry`) that turns compass + motion into WALK-vs-PAN
+     `GET /capture-plan`) plus the installed package's live phone-HUD capture surface
+     (`spaces/tools/spaces-capture.html`, served at `/api/spaces/capture`,
+     `POST /capture-telemetry`) that turns compass + motion into WALK-vs-PAN
      guidance arrows, with owner-scoped telemetry. Still deferred: GoPro media ingest — the camera
      node pulling captured files off the SD via Open GoPro media list/download so `CameraCapture`
      gains real bytes landing in the media store (the known bytes gap, benefiting Camera Ops

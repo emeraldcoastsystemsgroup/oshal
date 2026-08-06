@@ -16,6 +16,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: JARVIS_AGENT_ID, APP_ROUTES/loadEffectiveRoutes, runJarvisBot + the classify/delegate/synthesize helpers, summarizeComplexTask, maskPendingComplexSummaries, repairCompletedTaskTableVisuals (route decomposition, no behaviour change).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credential forwarding from Jarvis/model delegation; credentials stay inside audited server-side provider operations.
  *
  * @module jarvis-orchestrator
  */
@@ -39,7 +40,6 @@ import {
   newPlanTicketType,
   type MultiAppPlan,
 } from '@/features/swarm-orchestration';
-import { resolveBotCreds } from './connector-token-broker';
 import { reportResolvedLlmFailure, resolveUserLlmConnection } from './free-tier-rotation';
 import { executeBotOrInline } from './inline-bot-execution';
 import { createOptionalJarvisVisual } from './jarvis-visual-response';
@@ -61,9 +61,6 @@ const logger = createChildLogger({ module: 'jarvis-orchestrator' });
 export const JARVIS_AGENT_ID = 'a0000000-0000-0000-0000-000000000050';
 
 const botClient = new BotNodeClient(createRegistryEndpointResolver());
-
-/** Connector providers brokered to delegated bots so the codex bots can shell out per-user. */
-const BROKERED_PROVIDERS = ['google', 'twitter', 'smartthings', 'gcp'];
 
 /** Max wait for the decision turn before we assume the model is grinding (building inline instead of
  *  handing off) and auto-file the request with the swarm. The persona usually decides in <20s. */
@@ -264,21 +261,21 @@ function freshTaskId(tag: string, sub: string): string {
 
 /**
  * @description Execute an INLINE bot (one that lives on this controller) in-process via the
- * orchestrator — the same path the cockpit PM chat uses. Threads the caller's userSub + creds
- * so per-user data access + cost capture apply. Returns the bot's final text.
+ * orchestrator — the same path the cockpit PM chat uses. Threads the exact caller identity
+ * so owner-scoped server operations and cost capture apply. Returns the bot's final text.
  */
 async function runInline(
-  ctx: AppContext, agentId: string, prompt: string, sub: string, creds: Record<string, string>, tag: string,
+  ctx: AppContext, agentId: string, prompt: string, sub: string, tag: string,
 ): Promise<string> {
   const result = await ctx.orchestrator.processMessage(freshTaskId(tag, sub), prompt, {
-    agenticMode: true, autoApprove: false, source: 'jarvis', agentId, userSub: sub, creds,
+    agenticMode: true, autoApprove: false, source: 'jarvis', agentId, userSub: sub,
   } as never);
   return String(result.response || '').trim();
 }
 
 /** Run the oshal-assistant brain for a classify/synthesize step (inline, in-process). */
 async function runJarvis(ctx: AppContext, sub: string, prompt: string, step: string): Promise<string> {
-  return runInline(ctx, JARVIS_AGENT_ID, prompt, sub, {}, step);
+  return runInline(ctx, JARVIS_AGENT_ID, prompt, sub, step);
 }
 
 /**
@@ -291,7 +288,6 @@ async function runJarvis(ctx: AppContext, sub: string, prompt: string, step: str
 export async function runJarvisBot(
   ctx: AppContext, sub: string, message: string, taskId: string, agentic = true,
 ): Promise<{ answer: string; routed: AppRoute[]; handoffs: AppRoute[] }> {
-  const creds = await resolveBotCreds(ctx.pool, sub, BROKERED_PROVIDERS);
   // Free-tier (ADR-064): run this turn on the caller's own endpoint — their explicit BYO-LLM, else
   // a probed-live free-tier rotation pick — falling back to Jarvis's configured provider when they
   // have none connected. Same seam the email/finance/security/trading routes use.
@@ -314,7 +310,6 @@ export async function runJarvisBot(
     agenticMode: agentic,
     direct: true,
     userSub: sub,
-    creds,
     byoLlmConnection,
   };
   let result: Awaited<ReturnType<typeof executeBotOrInline>>;
@@ -346,14 +341,14 @@ export async function runJarvisBot(
  * Dedicated-container bots go over HTTP (BotNodeClient); inline bots run in-process (orchestrator).
  */
 async function delegateOne(
-  ctx: AppContext, route: AppRoute, prompt: string, sub: string, creds: Record<string, string>,
+  ctx: AppContext, route: AppRoute, prompt: string, sub: string,
 ): Promise<{ key: string; name: string; response: string }> {
   try {
     // executeBotOrInline resolves the transport itself: a dedicated bot-node goes over
     // HTTP (hasEndpoint), anything still inline runs through the local orchestrator.
     const result = await executeBotOrInline(ctx, botClient, route.agentId, {
       text: prompt, taskId: freshTaskId(route.key, sub), workspaceFolderId: `jarvis-${route.key}-${sub}`,
-      agentId: route.agentId, agenticMode: true, direct: true, userSub: sub, creds,
+      agentId: route.agentId, agenticMode: true, direct: true, userSub: sub,
     });
     const response = String(result.response || '').trim();
     return { key: route.key, name: route.name, response };
@@ -574,8 +569,7 @@ async function orchestrate(
     return { answer, routed: [], handoffs };
   }
 
-  const creds = await resolveBotCreds(ctx.pool, sub, BROKERED_PROVIDERS);
-  const results = await Promise.all(delegateRoutes.map(({ route, prompt }) => delegateOne(ctx, route, prompt, sub, creds)));
+  const results = await Promise.all(delegateRoutes.map(({ route, prompt }) => delegateOne(ctx, route, prompt, sub)));
   const answer = await runJarvis(
     ctx, sub,
     buildSynthesisPrompt(contextual, results.map((r) => ({ name: r.name, response: r.response })), handoffs),

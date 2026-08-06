@@ -6,9 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted lifecycle helper functions from SwarmTicketProcessingService to bring it under the 1000-line governance cap. Includes swarm learnings storage, delivery metrics recording, output text extraction, and workspace task ID resolution.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extracted buildProcessingResult() from processing service to maintain 1000-line cap after metrics wiring
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Session 19: Added enforceHandoverGate() — rejects ticket advancement when handovers missing, logs structured enforcement event
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: promote only deterministic structural verification output into trusted swarm memory; agent-reviewed output remains fenced and untrusted pending operator approval.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: keep structural-check output and user/model-derived titles untrusted until exact-digest operator approval.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: derive memory ownership from the durable ticket record, ignore provider payload identity claims, and isolate ownerless external-machine work behind deterministic synthetic principals.
  */
 
+import { createHash } from 'node:crypto';
 import { createChildLogger } from '@/shared/logger';
+import { optionalExactUserSubject } from '@/shared/security/exact-user-subject';
 import type { ExternalWorkItem } from '@/entities/ticket';
 import type { WorkItemRepository } from '@/entities/work-item';
 import type { SwarmMemoryService, CompletedWorkContext } from '@/features/agent-management';
@@ -43,6 +48,8 @@ function toError(err: unknown): Error {
 export interface SwarmLearningsDeps {
   swarmMemoryService?: SwarmMemoryService;
   workItemRepository?: WorkItemRepository;
+  /** Durable ticket authority; raw provider payloads are never an identity source. */
+  ticketService?: Pick<TicketService, 'getTicket' | 'getTicketByExternalId'>;
 }
 
 /**
@@ -62,6 +69,7 @@ export async function storeSwarmLearnings(
   try {
     const executionOutput = extractOutputText(outcome, deps.workItemRepository);
     if (!executionOutput) return;
+    const ownership = await memoryOwnershipFromAuthority(item, deps.ticketService);
     const context: CompletedWorkContext = {
       workItemId: item.externalId,
       title: item.title,
@@ -71,13 +79,70 @@ export async function storeSwarmLearnings(
       hadVerificationFailures: outcome.executionAttempts > 1,
       hadEscalations: Boolean(outcome.escalation),
       categories: item.labels,
+      source: hasStructuralVerification(outcome)
+        ? 'structurally-verified-agent-output'
+        : 'agent-reviewed-swarm-lifecycle',
+      ...ownership,
     };
-    await deps.swarmMemoryService.extractAndStore(context);
-    logger.info({ externalId: item.externalId }, 'Swarm learnings stored');
+    const stored = await deps.swarmMemoryService.extractAndStore(context);
+    logger.info({
+      externalId: item.externalId,
+      stored,
+      structuralVerification: hasStructuralVerification(outcome),
+      trustLevel: 'untrusted',
+    }, 'Swarm learnings stored pending content-bound operator approval');
   } catch (error) {
     logger.warn({ err: toError(error), externalId: item.externalId }, 'Failed to store swarm learnings — continuing');
   }
 }
+
+function hasStructuralVerification(outcome: SwarmExecutionPolicyOutcome): boolean {
+  return outcome.verification.status === 'passed'
+    && outcome.verification.findings.includes('structural-checks-passed')
+    && !outcome.verification.findings.some((finding) => finding.startsWith('task-manager-'));
+}
+
+async function memoryOwnershipFromAuthority(
+  item: ExternalWorkItem,
+  ticketService?: Pick<TicketService, 'getTicket' | 'getTicketByExternalId'>,
+): Promise<Pick<CompletedWorkContext, 'ownerSub' | 'workspaceId'>> {
+  const ticket = ticketService ? await loadAuthoritativeTicket(item, ticketService) : null;
+  const ownerSub = optionalExactUserSubject(ticket?.ownerSub, 'durable ticket ownerSub');
+  if (ownerSub !== undefined) {
+    return {
+      ownerSub,
+      ...(ticket?.workspaceId ? { workspaceId: ticket.workspaceId } : {}),
+    };
+  }
+
+  // Plane and GitHub work can legitimately arrive without a human OIDC owner. It remains
+  // private to a stable, non-operator machine principal until an operator explicitly publishes it.
+  if (item.provider === 'plane' || item.provider === 'github') {
+    return { ownerSub: externalMachineMemoryOwner(item.provider, item.externalId) };
+  }
+
+  // Direct/internal work must have a durable owner. Silently collapsing it into a system or
+  // public namespace would turn an identity persistence bug into cross-user memory exposure.
+  throw new Error('SEC-05: direct swarm memory has no authoritative durable owner');
+}
+
+async function loadAuthoritativeTicket(
+  item: ExternalWorkItem,
+  ticketService: Pick<TicketService, 'getTicket' | 'getTicketByExternalId'>,
+) {
+  const byId = UUID_PATTERN.test(item.externalId)
+    ? await ticketService.getTicket(item.externalId)
+    : null;
+  return byId ?? await ticketService.getTicketByExternalId(item.provider, item.externalId);
+}
+
+function externalMachineMemoryOwner(provider: string, externalId: string): string {
+  const digest = createHash('sha256')
+    .update(provider, 'utf8').update('\0').update(externalId, 'utf8').digest('hex');
+  return `system:external-work:${digest}`;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ---------------------------------------------------------------------------
 // Delivery Metrics

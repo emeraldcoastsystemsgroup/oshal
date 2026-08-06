@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Added subtle workspace-focus emphasis for the width-toggle control
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added a draggable workspace-focus resize edge so heavy tools can be fine-tuned inside cockpit
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Deleted the .chat-expand-btn tab/FAB styles — the Jarvis orb is the sole standing assistant affordance on both desktop and mobile
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Make the collapsed mobile chat sheet non-interactive during its slide-out transition so its iframe cannot cover primary surface controls
  */
 
 /* ===== Chat Panel · Apple Liquid Glass ===== */
@@ -141,6 +142,7 @@ body.resizing .workspace-focus-resize-handle {
     min-width: 0 !important;
     opacity: 1;
     border: none;
+    pointer-events: none;
     transform: translateY(100%);
   }
   /* Don't let desktop workspace-focus pin a fixed sheet width on mobile. */

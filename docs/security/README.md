@@ -9,6 +9,10 @@ Security posture, hardening guidance, and control evidence for OSHAL.
   control evidence.
 - [local-auth.md](./local-auth.md) — the LOCAL_AUTH invited-user login (ADR-117): setup,
   invite/reset/disable flows, and what it deliberately does not do yet.
+- [http-delegation.md](./http-delegation.md) — Ed25519 controller-to-bot task delegation,
+  shared replay protection, role-separated key rollout, and rotation/recovery operations.
+- [workload-delegation.md](./workload-delegation.md) — SEC-01 workload-to-API user delegation,
+  durable authorization, exact route scopes, migration stages, rotation, and rollback.
 
 Related:
 

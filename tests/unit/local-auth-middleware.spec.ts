@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the LOCAL_AUTH middleware set (ADR-117): fail-closed construction (MOCK_OIDC conflict / missing secret both throw at boot instead of degrading to open auth), the cookie injector resolving a live session into the standard req.oidc shape, revocation via token_version, and requiresAuth's API-401 vs browser-redirect split.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove a verified local session carries the stable local-auth issuer required by derived credentials and issuer-bound applications.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -35,8 +36,14 @@ function startApp(pool: unknown): Promise<void> {
   app.use(cookieParser());
   app.use(set.authMiddleware);
   app.get('/whoami', (req, res) => {
-    const oidc = (req as { oidc?: { isAuthenticated?: () => boolean; user?: { sub: string } } }).oidc;
-    res.json({ authenticated: !!oidc?.isAuthenticated?.(), sub: oidc?.user?.sub ?? null });
+    const oidc = (req as {
+      oidc?: { isAuthenticated?: () => boolean; user?: { iss?: string; sub: string } };
+    }).oidc;
+    res.json({
+      authenticated: !!oidc?.isAuthenticated?.(),
+      issuer: oidc?.user?.iss ?? null,
+      sub: oidc?.user?.sub ?? null,
+    });
   });
   app.get('/api/private', set.requiresAuth, (_req, res) => res.json({ ok: true }));
   app.get('/private-page', set.requiresAuth, (_req, res) => res.type('html').send('<b>secret</b>'));
@@ -93,10 +100,14 @@ describe('local-auth session injector', () => {
   it('authenticates a live cookie into the standard req.oidc shape', async () => {
     await startApp(snapshotPool(USER));
     const anonymous = await (await fetch(`${base}/whoami`)).json();
-    expect(anonymous).toEqual({ authenticated: false, sub: null });
+    expect(anonymous).toEqual({ authenticated: false, issuer: null, sub: null });
 
     const authed = await (await fetch(`${base}/whoami`, { headers: { Cookie: sessionCookieFor(1) } })).json();
-    expect(authed).toEqual({ authenticated: true, sub: USER.user_sub });
+    expect(authed).toEqual({
+      authenticated: true,
+      issuer: 'urn:oshal:local-auth',
+      sub: USER.user_sub,
+    });
   });
 
   it('ends the session when token_version moves (password change / disable revocation)', async () => {

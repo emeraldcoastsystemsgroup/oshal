@@ -11,7 +11,10 @@
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-065 Phase 3. Additive.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve validated x-apisguru-categories as source-category evidence distinct from operation tags.
  * -----------------------------------------------------------------------------
  * @module connectors/runtime/openapi-import
  */
@@ -22,7 +25,14 @@ import type { ConnectorSpec, SpecAuth, SpecResource } from './spec';
 interface OpenApiParam { name?: string; in?: string; required?: boolean }
 interface OpenApiOperation { operationId?: string; summary?: string; description?: string; tags?: string[]; parameters?: OpenApiParam[]; requestBody?: unknown }
 interface OpenApiDoc {
-  info?: { title?: string; description?: string; version?: string; contact?: { url?: string }; termsOfService?: string };
+  info?: {
+    title?: string;
+    description?: string;
+    version?: string;
+    contact?: { url?: string };
+    termsOfService?: string;
+    'x-apisguru-categories'?: unknown;
+  };
   servers?: Array<{ url?: string }>;
   components?: { securitySchemes?: Record<string, { type?: string; scheme?: string; in?: string; name?: string }> };
   paths?: Record<string, Record<string, OpenApiOperation>>;
@@ -50,6 +60,25 @@ function slugify(value: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
     .toLowerCase();
+}
+
+/** Preserve only bounded source-category tokens; malformed extensions remain visible as warnings. */
+function sourceCategoriesFromInfo(info: OpenApiDoc['info'], warnings: string[]): string[] | undefined {
+  const raw = info?.['x-apisguru-categories'];
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    warnings.push('x-apisguru-categories is not an array — source categories omitted');
+    return undefined;
+  }
+  const categories = raw
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim().toLowerCase().replace(/[\s-]+/g, '_'))
+    .filter((value) => /^[a-z0-9_]+$/.test(value));
+  if (categories.length !== raw.length) {
+    warnings.push('x-apisguru-categories contains invalid values — invalid source categories omitted');
+  }
+  const unique = Array.from(new Set(categories)).sort();
+  return unique.length ? unique : undefined;
 }
 
 /** Map the first declared OpenAPI security scheme to our auth shape. */
@@ -122,6 +151,7 @@ export function specFromOpenApi(provider: string, doc: OpenApiDoc, opts?: { disp
       website: doc.externalDocs?.url || doc.info?.contact?.url,
       sourceCatalog: opts?.sourceCatalog,
       sourceUrl: opts?.sourceUrl,
+      sourceCategories: sourceCategoriesFromInfo(doc.info, warnings),
     },
     baseUrl,
     auth: authFromSchemes(doc.components, warnings),

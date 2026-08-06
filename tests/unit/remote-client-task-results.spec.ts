@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the remote task-result landing loop: the sender must emit BOTH the targeted reply and the remoteTaskResult landing event with a guaranteed correlation id, and the controller-side handler must land completed/failed results on the first still-active work item (external_id = correlationId) via the canonical setExecutionOutput + updateStatus path — subtask-aware, ignoring foreign payload types, and no-oping safely with no match. Would go red if the result forward went back to being produced-but-never-consumed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require the durable settlement outboxId on both mesh envelopes and on the landed work-item output so retries can be deduplicated downstream.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -37,6 +38,7 @@ function resultEnvelope(overrides: Partial<MeshEnvelope> = {}, payloadOverrides:
     messageType: 'event',
     payload: {
       type: 'remote-client.task-result',
+      outboxId: '11111111-1111-4111-8111-111111111111',
       taskId: 'task-9',
       intent: 'mcp.call-tool',
       correlationId: 'ticket-123',
@@ -78,7 +80,11 @@ const taskResult: A2ATaskResult = {
 
 describe('buildRemoteTaskResultEnvelopes (the sender contract)', () => {
   it('emits the targeted requester reply AND the controller landing event', () => {
-    const envelopes = buildRemoteTaskResultEnvelopes(sourceTask, taskResult);
+    const envelopes = buildRemoteTaskResultEnvelopes(
+      sourceTask,
+      taskResult,
+      '11111111-1111-4111-8111-111111111111',
+    );
     expect(envelopes).toHaveLength(2);
 
     const [reply, landing] = envelopes;
@@ -93,6 +99,7 @@ describe('buildRemoteTaskResultEnvelopes (the sender contract)', () => {
       expect(envelope.correlationId).toBe('ticket-123');
       expect(envelope.fromAgentId).toBe('edge-node-1');
       expect(envelope.payload.type).toBe('remote-client.task-result');
+      expect(envelope.payload.outboxId).toBe('11111111-1111-4111-8111-111111111111');
       expect(envelope.payload.taskId).toBe('task-9');
       expect(envelope.payload.result).toEqual(taskResult);
     }
@@ -100,12 +107,20 @@ describe('buildRemoteTaskResultEnvelopes (the sender contract)', () => {
 
   it('adds a correlation id at the sender when the source task lacks one', () => {
     const noCorrelation = { ...sourceTask, correlationId: '   ' } as A2ATaskEnvelope;
-    const envelopes = buildRemoteTaskResultEnvelopes(noCorrelation, taskResult);
+    const envelopes = buildRemoteTaskResultEnvelopes(
+      noCorrelation,
+      taskResult,
+      '22222222-2222-4222-8222-222222222222',
+    );
     expect(envelopes[0].correlationId).toBe('task-9'); // falls back to the taskId
     expect(envelopes[1].payload.correlationId).toBe('task-9');
 
     const blankEverything = { ...sourceTask, correlationId: '', taskId: '' } as A2ATaskEnvelope;
-    const minted = buildRemoteTaskResultEnvelopes(blankEverything, taskResult);
+    const minted = buildRemoteTaskResultEnvelopes(
+      blankEverything,
+      taskResult,
+      '33333333-3333-4333-8333-333333333333',
+    );
     expect(minted[0].correlationId.length).toBeGreaterThan(0); // fresh UUID
     expect(minted[1].correlationId).toBe(minted[0].correlationId);
   });
@@ -125,6 +140,7 @@ describe('createRemoteTaskResultHandler (the controller-side landing)', () => {
     expect(workItemId).toBe('wi-live');
     expect(landed.source).toBe('remote-client');
     expect(landed.taskId).toBe('task-9');
+    expect(landed.outboxId).toBe('11111111-1111-4111-8111-111111111111');
     expect(landed.status).toBe('completed');
     expect(landed.output).toEqual({ response: 'done' });
     expect(repo.updateStatus).toHaveBeenCalledWith('wi-live', 'completed');

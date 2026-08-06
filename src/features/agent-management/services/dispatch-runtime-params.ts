@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 push-on-dispatch (controller half): RuntimeParamsResolver reads the authoritative agent_config record (providerId/modelId/configVersion — the same keys GET /api/agents/:id/runtime serves) so every BotNodeClient.execute dispatch can carry the expected provider/model; resolveDispatchConfigFields is the fail-open call-site helper — no resolver, no record, or a resolver error all yield {} so the dispatched request stays byte-identical to the legacy shape (the dual dispatch path is load-bearing).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extend the spreadable request slice with providerConfigRequired so dispatch chokepoints can distinguish an unavailable authority record from an intentional compatibility-mode request.
  */
 
 /**
@@ -56,7 +57,10 @@ export interface DispatchRuntimeParams {
 export type RuntimeParamsResolver = (agentId: string) => Promise<DispatchRuntimeParams | null>;
 
 /** The spreadable BotNodeRequest slice a resolved record populates. */
-export type DispatchConfigFields = Partial<Pick<BotNodeRequest, 'providerId' | 'model' | 'configVersion'>>;
+export type DispatchConfigFields = Partial<Pick<
+  BotNodeRequest,
+  'providerId' | 'model' | 'configVersion' | 'providerConfigRequired'
+>>;
 
 /**
  * @description Builds a RuntimeParamsResolver over the authoritative agent_config store —

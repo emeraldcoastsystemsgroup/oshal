@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from app.js (1000-line cap decomposition): MCP discover/execute/resources, voice + presentations, GitLab save, Bull Board + queue monitor + agent schedules, health-dashboard registry, agent metrics
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: require exact service-bound user, agent, task, tool allowlist, and operation scope at the unified MCP proxy; retire unauthorizable raw resource reads.
  */
 
 const multer = require('multer');
 const VoiceController = require('../controllers/VoiceController');
 const logger = require('../utils/logger');
+const { trustedServiceUserSub } = require('../services/codebase/swarm-execute-auth');
 
 /**
  * @description MCP tool discovery/execution/resource routes, voice transcribe/synthesize + presentation routes, manual GitLab save, Bull Board mount, PHASE_22 dynamic node registry, PHASE_21 agent metrics, queue monitor job APIs, and agent schedule CRUD/trigger routes. The Bull Board / QueueMonitorService / ScheduleController requires stay function-level (they open Redis connections at require time).
@@ -76,20 +78,32 @@ function registerMcpVoiceAndQueueRoutes(application) {
     application.app.post('/api/mcp/servers/:serverName/tools/:toolName', async (req, res) => {
       try {
         const { serverName, toolName } = req.params;
-        const { arguments: toolArgs } = req.body;
+        const {
+          arguments: toolArgs,
+          agentId,
+          taskId,
+          allowedTools,
+          authorizedScopes,
+          taskWorkspace,
+        } = req.body || {};
+        const userSub = trustedServiceUserSub(req);
+        if (!userSub) return res.status(403).json({ error: 'MCP caller identity is required' });
+        if (!application.mcpProxy) {
+          return res.status(503).json({ error: 'MCP authorization proxy not available' });
+        }
+        if (!toolArgs || typeof toolArgs !== 'object' || Array.isArray(toolArgs)) {
+          return res.status(400).json({ error: 'arguments must be an object' });
+        }
 
         // ⭐ PHASE_70: Route to correct MCP service (stdio or HTTP) based on serverName
-        let result;
-        if (application.mcpService && application.mcpService.servers && application.mcpService.servers.has(serverName)) {
-          logger.info(`[MCP] Executing tool via stdio MCPService: ${serverName}/${toolName}`);
-          result = await application.mcpService.executeTool(serverName, toolName, toolArgs || {});
-        } else if (application.mcpServiceHTTP && application.mcpServiceHTTP.servers && application.mcpServiceHTTP.servers.has(serverName)) {
-          logger.info(`[MCP] Executing tool via HTTP MCPService: ${serverName}/${toolName}`);
-          result = await application.mcpServiceHTTP.executeTool(serverName, toolName, toolArgs || {});
-        } else {
-          logger.warn(`[MCP] Server not found: ${serverName} (tool: ${toolName})`);
-          return res.status(404).json({ error: 'MCP server not found', serverName, toolName });
-        }
+        const result = await application.mcpProxy.executeTool(serverName, toolName, toolArgs, {
+          userSub,
+          agentId,
+          taskId,
+          allowedTools,
+          authorizedScopes,
+          taskWorkspace,
+        });
 
         res.json({
           success: true,
@@ -99,8 +113,10 @@ function registerMcpVoiceAndQueueRoutes(application) {
         });
       } catch (err) {
         logger.error(`Execute MCP tool failed: ${err.message}`);
-        res.status(500).json({
-          error: err.message,
+        const authorizationDenied = err.code === 'MCP_TOOL_AUTHORIZATION_DENIED'
+          || /requires approval/i.test(String(err.message));
+        res.status(authorizationDenied ? 403 : 500).json({
+          error: authorizationDenied ? 'MCP tool execution denied' : err.message,
           serverName: req.params.serverName,
           toolName: req.params.toolName,
         });
@@ -136,32 +152,10 @@ function registerMcpVoiceAndQueueRoutes(application) {
     });
 
     // Access specific resource on MCP server
-    application.app.get('/api/mcp/servers/:serverName/resources/:uri', async (req, res) => {
-      try {
-        if (!application.mcpService) {
-          return res.status(503).json({ error: 'MCP service not available' });
-        }
-
-        const { serverName, uri } = req.params;
-
-        logger.info(`Accessing MCP resource: ${serverName}/${uri}`);
-
-        const result = await application.mcpService.accessResource(serverName, uri);
-
-        res.json({
-          success: true,
-          serverName,
-          uri,
-          result,
-        });
-      } catch (err) {
-        logger.error(`Access MCP resource failed: ${err.message}`);
-        res.status(500).json({
-          error: err.message,
-          serverName: req.params.serverName,
-          uri: req.params.uri,
-        });
-      }
+    application.app.get('/api/mcp/servers/:serverName/resources/:uri', (_req, res) => {
+      res.status(410).json({
+        error: 'direct MCP resource access is retired; use a scoped ToolRegistry operation',
+      });
     });
 
     // Configure multer for audio uploads

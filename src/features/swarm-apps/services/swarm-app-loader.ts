@@ -11,11 +11,16 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 addendum: validate manifest.skillProfiles — fail-closed on the map shape, unknown capability keys (isSkillCapabilityId), and stub profiles (pattern + instructions must be non-empty). Sits next to the uses: block — the two kernel-capability validations read together.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Validate manifest.surface.ops fail-closed against the shared surface-bridge vocabulary (@/shared/surface-bridge-ops) — a typo'd op must fail at load, not silently never relay; absence stays legal (= no ops relayed, the fail-closed default).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Validate packaged-bot harness and API declarations as complete compatible pairs before activation.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: fail manifest load on malformed access blocks, unknown/duplicate tiers, missing deny, unsupported defaults, and invalid capability mappings.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | INSTALLER-GAPS CORE-05: validate package-owned smoke probes, confined JSON fixtures, route ownership, and explicit AI-route metadata.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Validate manifest-contributed Takeout slices fail-closed: literal canonical suffixes only, confined compiled modules, bounded uncompressed bytes, unique stable ids/paths, and named handler exports.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | Validate both manifest schedule modes fail-closed. Deterministic service-route jobs must be framework-scoped static POSTs beneath an exactly service-authenticated package route; malformed cron, mixed prompt/route fields, dynamic interpolation, and oversized bodies are rejected at load.
  */
 
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
+import { CronExpressionParser } from 'cron-parser';
 import { createChildLogger } from '@/shared/logger';
 import { KERNEL_SKILL_IDS, isKernelSkillId } from '@/shared/kernel-skills';
 import { SKILL_CAPABILITY_IDS, isSkillCapabilityId } from '@/shared/skill-profiles';
@@ -34,6 +39,8 @@ import {
   SWARM_APP_BOT_HARNESS_TYPES,
   SWARM_APP_BOT_SPECIAL_API_TYPES,
   SWARM_APP_SUITES,
+  APP_ACCESS_TIERS,
+  isAppAccessTier,
   isSwarmAppSuite,
   type SwarmAppBotDeclaration,
   type SwarmAppBotHarnessType,
@@ -55,6 +62,72 @@ const FIXED_BOT_API_TYPES: Partial<Record<SwarmAppBotHarnessType, readonly strin
   a2a: ['a2a'],
   noop: ['noop'],
 };
+
+const SMOKE_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
+const SMOKE_AUTH_MODES = ['service', 'pat', 'public'] as const;
+const MAX_SMOKE_FIXTURE_BYTES = 64 * 1024;
+const DEFAULT_TAKEOUT_SLICE_BYTES = 64 * 1024 * 1024;
+const MAX_TAKEOUT_SLICE_BYTES = 128 * 1024 * 1024;
+const MAX_SERVICE_SCHEDULE_BODY_BYTES = 16 * 1024;
+const MAX_SERVICE_SCHEDULE_JSON_DEPTH = 8;
+const MAX_SERVICE_SCHEDULE_JSON_ENTRIES = 256;
+
+/** @description Validate the complete ADR-118 access declaration at the trust boundary. */
+function validateAppAccess(manifest: SwarmAppManifest, absPath: string): void {
+  if (manifest.access === undefined) return; // opt-in rollout: absence preserves current behavior
+  const access = manifest.access as unknown;
+  if (!access || typeof access !== 'object' || Array.isArray(access)) {
+    throw new Error(`Manifest ${absPath}: access must be an object`);
+  }
+  const record = access as Record<string, unknown>;
+  const unknownFields = Object.keys(record).filter(
+    (key) => !['supported', 'defaultTier', 'mappings'].includes(key),
+  );
+  if (unknownFields.length > 0) {
+    throw new Error(`Manifest ${absPath}: access has unknown field(s): ${unknownFields.join(', ')}`);
+  }
+  if (!Array.isArray(record.supported) || record.supported.length === 0) {
+    throw new Error(`Manifest ${absPath}: access.supported must be a non-empty tier array`);
+  }
+  const supported = record.supported;
+  const unknownTiers = supported.filter((tier) => !isAppAccessTier(tier));
+  if (unknownTiers.length > 0) {
+    throw new Error(
+      `Manifest ${absPath}: access.supported contains unknown tier(s): ${unknownTiers.join(', ')}. ` +
+        `Known tiers: ${APP_ACCESS_TIERS.join(', ')}`,
+    );
+  }
+  if (new Set(supported).size !== supported.length) {
+    throw new Error(`Manifest ${absPath}: access.supported must not contain duplicate tiers`);
+  }
+  if (!supported.includes('deny')) {
+    throw new Error(`Manifest ${absPath}: access.supported must include deny (explicit deny is universal)`);
+  }
+  if (!isAppAccessTier(record.defaultTier)) {
+    throw new Error(
+      `Manifest ${absPath}: access.defaultTier is unknown. Known tiers: ${APP_ACCESS_TIERS.join(', ')}`,
+    );
+  }
+  if (!supported.includes(record.defaultTier)) {
+    throw new Error(`Manifest ${absPath}: access.defaultTier must also appear in access.supported`);
+  }
+  if (record.mappings !== undefined) {
+    if (!record.mappings || typeof record.mappings !== 'object' || Array.isArray(record.mappings)) {
+      throw new Error(`Manifest ${absPath}: access.mappings must be an object when present`);
+    }
+    for (const [tier, bundle] of Object.entries(record.mappings as Record<string, unknown>)) {
+      if (!isAppAccessTier(tier)) {
+        throw new Error(`Manifest ${absPath}: access.mappings contains unknown tier: ${tier}`);
+      }
+      if (!supported.includes(tier)) {
+        throw new Error(`Manifest ${absPath}: access.mappings.${tier} maps a tier the app does not support`);
+      }
+      if (typeof bundle !== 'string' || !bundle.trim()) {
+        throw new Error(`Manifest ${absPath}: access.mappings.${tier} must be a non-empty bundle id`);
+      }
+    }
+  }
+}
 
 /** @description Whether a provider id is accepted at the packaged-bot boundary. */
 function isKnownBotApiType(value: string): boolean {
@@ -82,6 +155,106 @@ function validateBotRuntime(bot: SwarmAppBotDeclaration, index: number, absPath:
   }
   if (harness === 'cline' && !ApiProviderSchema.safeParse(api).success) {
     throw new Error(`Manifest ${absPath}: ${at} runtime is incompatible: cline/${api}; expected a core API provider.`);
+  }
+}
+
+/** @description Whether a Takeout entry suffix is a canonical relative archive path. */
+function isCanonicalTakeoutSuffix(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length < 3 || value.length > 512) return false;
+  if (value.startsWith('/') || value.includes('\\') || /[\0?#]/.test(value) || value.includes('//')) return false;
+  const segments = value.split('/');
+  return segments.length >= 2 && segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+/**
+ * @description Validate package-owned Google Takeout slice declarations at manifest load.
+ * Literal suffixes replace package-provided regular expressions so an installed package cannot
+ * inject a catastrophic matcher into the shared archive walk.
+ */
+function validateTakeoutDeclarations(manifest: SwarmAppManifest, absPath: string): void {
+  if (manifest.takeout === undefined) return;
+  if (!Array.isArray(manifest.takeout) || manifest.takeout.length === 0) {
+    throw new Error(`Manifest ${absPath}: takeout, when present, must be a non-empty array`);
+  }
+  if (manifest.takeout.length > 16) {
+    throw new Error(`Manifest ${absPath}: takeout may declare at most 16 slices`);
+  }
+  const kinds = new Set<string>();
+  const suffixes = new Set<string>();
+  for (const [index, value] of manifest.takeout.entries()) {
+    const at = `takeout[${index}]`;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Manifest ${absPath}: ${at} must be an object`);
+    }
+    const declaration = value as unknown as Record<string, unknown>;
+    const unknown = Object.keys(declaration).filter(
+      (key) => !['kind', 'label', 'pathSuffix', 'htmlPathSuffix', 'maxBytes', 'module', 'handler'].includes(key),
+    );
+    if (unknown.length > 0) {
+      throw new Error(`Manifest ${absPath}: ${at} has unknown field(s): ${unknown.join(', ')}`);
+    }
+    const kind = typeof declaration.kind === 'string' ? declaration.kind.trim() : '';
+    if (kind !== declaration.kind || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(kind)) {
+      throw new Error(`Manifest ${absPath}: ${at}.kind must be a lowercase slug`);
+    }
+    if (kinds.has(kind)) throw new Error(`Manifest ${absPath}: duplicate Takeout kind "${kind}"`);
+    kinds.add(kind);
+    if (
+      typeof declaration.label !== 'string'
+      || declaration.label !== declaration.label.trim()
+      || !declaration.label
+      || declaration.label.length > 128
+      || /[\0-\x1f\x7f]/.test(declaration.label)
+    ) {
+      throw new Error(`Manifest ${absPath}: ${at}.label must be 1..128 characters`);
+    }
+    if (!isCanonicalTakeoutSuffix(declaration.pathSuffix)) {
+      throw new Error(`Manifest ${absPath}: ${at}.pathSuffix must be a canonical relative archive suffix`);
+    }
+    if (
+      !declaration.pathSuffix.toLowerCase().startsWith('takeout/')
+      || !declaration.pathSuffix.toLowerCase().endsWith('.json')
+    ) {
+      throw new Error(`Manifest ${absPath}: ${at}.pathSuffix must identify a Takeout/... JSON file`);
+    }
+    const suffix = declaration.pathSuffix.toLowerCase();
+    if (suffixes.has(suffix)) throw new Error(`Manifest ${absPath}: duplicate Takeout pathSuffix "${declaration.pathSuffix}"`);
+    suffixes.add(suffix);
+    if (
+      declaration.htmlPathSuffix !== undefined
+      && !isCanonicalTakeoutSuffix(declaration.htmlPathSuffix)
+    ) {
+      throw new Error(`Manifest ${absPath}: ${at}.htmlPathSuffix must be a canonical relative archive suffix`);
+    }
+    if (typeof declaration.htmlPathSuffix === 'string') {
+      if (
+        !declaration.htmlPathSuffix.toLowerCase().startsWith('takeout/')
+        || !declaration.htmlPathSuffix.toLowerCase().endsWith('.html')
+      ) {
+        throw new Error(`Manifest ${absPath}: ${at}.htmlPathSuffix must identify a Takeout/... HTML file`);
+      }
+      const htmlSuffix = declaration.htmlPathSuffix.toLowerCase();
+      if (suffixes.has(htmlSuffix)) {
+        throw new Error(`Manifest ${absPath}: duplicate Takeout archive path "${declaration.htmlPathSuffix}"`);
+      }
+      suffixes.add(htmlSuffix);
+    }
+    const maxBytes = declaration.maxBytes ?? DEFAULT_TAKEOUT_SLICE_BYTES;
+    if (!Number.isInteger(maxBytes) || Number(maxBytes) < 1 || Number(maxBytes) > MAX_TAKEOUT_SLICE_BYTES) {
+      throw new Error(`Manifest ${absPath}: ${at}.maxBytes must be an integer from 1 through ${MAX_TAKEOUT_SLICE_BYTES}`);
+    }
+    if (
+      typeof declaration.module !== 'string'
+      || !declaration.module.endsWith('.js')
+      || path.isAbsolute(declaration.module)
+      || declaration.module.includes('\\')
+      || declaration.module.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+    ) {
+      throw new Error(`Manifest ${absPath}: ${at}.module must be a package-relative compiled .js path`);
+    }
+    if (typeof declaration.handler !== 'string' || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(declaration.handler)) {
+      throw new Error(`Manifest ${absPath}: ${at}.handler must be a JavaScript export name`);
+    }
   }
 }
 
@@ -133,6 +306,9 @@ function validateRouteDeclarations(manifest: SwarmAppManifest, absPath: string):
     if (decl.requiresAuth !== undefined && typeof decl.requiresAuth !== 'boolean') {
       throw new Error(`Manifest ${absPath}: ${at}.requiresAuth, when present, must be a boolean`);
     }
+    if (decl.requiresAi !== undefined && typeof decl.requiresAi !== 'boolean') {
+      throw new Error(`Manifest ${absPath}: ${at}.requiresAi, when present, must be a boolean`);
+    }
     if (decl.auth !== undefined && !isRouteAuthMode(decl.auth)) {
       throw new Error(
         `Manifest ${absPath}: ${at}.auth is not a known mode: "${decl.auth}". ` +
@@ -175,6 +351,315 @@ function validateRouteDeclarations(manifest: SwarmAppManifest, absPath: string):
       );
     }
     if (!seen) modeByMount.set(decl.mountPath, { mode, module: decl.module });
+  }
+}
+
+/** @description Whether a concrete probe path falls on a route's segment boundary. */
+function probeBelongsToRoute(probePath: string, mountPath: string): boolean {
+  const mount = mountPath.length > 1 ? mountPath.replace(/\/+$/, '') : mountPath;
+  return probePath === mount || probePath.startsWith(`${mount}/`);
+}
+
+/** @description Whether a deterministic service target is one concrete canonical local path. */
+function isCanonicalServiceSchedulePath(value: string): boolean {
+  return (
+    value.length <= 512 &&
+    /^\/api\/[^/]+/.test(value) &&
+    !/[?#\\\s]/.test(value) &&
+    !value.includes('//') &&
+    !/%(?:2e|2f|5c)/i.test(value) &&
+    !value.split('/').some((segment) => segment === '.' || segment === '..')
+  );
+}
+
+/** @description Reject non-JSON values, dangerous keys, and excessive static-body complexity. */
+function validateStaticScheduleJson(value: unknown, at: string, depth = 0, budget = { entries: 0 }): void {
+  if (depth > MAX_SERVICE_SCHEDULE_JSON_DEPTH) {
+    throw new Error(`${at} exceeds the ${MAX_SERVICE_SCHEDULE_JSON_DEPTH}-level JSON depth limit`);
+  }
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error(`${at} contains a non-finite number`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const [index, entry] of value.entries()) {
+      budget.entries += 1;
+      if (budget.entries > MAX_SERVICE_SCHEDULE_JSON_ENTRIES) throw new Error(`${at} has too many JSON entries`);
+      validateStaticScheduleJson(entry, `${at}[${index}]`, depth + 1, budget);
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new Error(`${at} must contain only plain JSON values`);
+  }
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    budget.entries += 1;
+    if (budget.entries > MAX_SERVICE_SCHEDULE_JSON_ENTRIES) throw new Error(`${at} has too many JSON entries`);
+    if (!key || key.length > 128 || /[\u0000-\u001f\u007f]/.test(key) || ['__proto__', 'prototype', 'constructor'].includes(key)) {
+      throw new Error(`${at} contains an unsafe JSON key`);
+    }
+    validateStaticScheduleJson(entry, `${at}.${key}`, depth + 1, budget);
+  }
+}
+
+/**
+ * @description Validate recurring manifest jobs at the package trust boundary. Prompt schedules
+ * retain the established contract. A service-route schedule is deliberately narrower: framework
+ * scope only, a named compiled export, static JSON only, and an exact path owned by an
+ * auth:`service` route.
+ */
+function validateScheduleDeclarations(manifest: SwarmAppManifest, absPath: string): void {
+  if (manifest.schedules === undefined) return;
+  if (!Array.isArray(manifest.schedules) || manifest.schedules.length === 0) {
+    throw new Error(`Manifest ${absPath}: schedules, when present, must be a non-empty array`);
+  }
+  const ids = new Set<string>();
+  for (const [index, value] of manifest.schedules.entries()) {
+    const at = `schedules[${index}]`;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Manifest ${absPath}: ${at} must be an object`);
+    }
+    const schedule = value as unknown as Record<string, unknown>;
+    const id = typeof schedule.id === 'string' ? schedule.id.trim() : '';
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
+      throw new Error(`Manifest ${absPath}: ${at}.id must be a lowercase slug`);
+    }
+    if (ids.has(id)) throw new Error(`Manifest ${absPath}: duplicate schedule id "${id}"`);
+    ids.add(id);
+
+    const cron = typeof schedule.cron === 'string' ? schedule.cron.trim() : '';
+    if (cron.split(/\s+/).length !== 5) {
+      throw new Error(`Manifest ${absPath}: ${at}.cron must be a standard five-field cron expression`);
+    }
+    try {
+      CronExpressionParser.parse(cron, { currentDate: new Date('2026-01-01T00:00:00.000Z') }).next();
+    } catch {
+      throw new Error(`Manifest ${absPath}: ${at}.cron is invalid`);
+    }
+    if (schedule.enabled !== undefined && typeof schedule.enabled !== 'boolean') {
+      throw new Error(`Manifest ${absPath}: ${at}.enabled, when present, must be a boolean`);
+    }
+    if (schedule.description !== undefined && (typeof schedule.description !== 'string' || !schedule.description.trim())) {
+      throw new Error(`Manifest ${absPath}: ${at}.description, when present, must be a non-empty string`);
+    }
+
+    const target = schedule.target === undefined ? 'prompt' : schedule.target;
+    if (target !== 'prompt' && target !== 'service-route') {
+      throw new Error(`Manifest ${absPath}: ${at}.target must be prompt or service-route`);
+    }
+    if (target === 'prompt') {
+      const unknown = Object.keys(schedule).filter(
+        (key) => !['id', 'cron', 'target', 'prompt', 'targetAgent', 'scope', 'requiresConnection', 'description', 'enabled'].includes(key),
+      );
+      if (unknown.length > 0) throw new Error(`Manifest ${absPath}: ${at} has unknown field(s): ${unknown.join(', ')}`);
+      if (typeof schedule.prompt !== 'string' || !schedule.prompt.trim()) {
+        throw new Error(`Manifest ${absPath}: ${at}.prompt must be a non-empty string`);
+      }
+      if (schedule.targetAgent !== undefined && (typeof schedule.targetAgent !== 'string' || !schedule.targetAgent.trim())) {
+        throw new Error(`Manifest ${absPath}: ${at}.targetAgent, when present, must be a non-empty string`);
+      }
+      if (schedule.scope !== undefined && schedule.scope !== 'framework' && schedule.scope !== 'per-user') {
+        throw new Error(`Manifest ${absPath}: ${at}.scope must be framework or per-user`);
+      }
+      if (schedule.requiresConnection !== undefined && (typeof schedule.requiresConnection !== 'string' || !schedule.requiresConnection.trim())) {
+        throw new Error(`Manifest ${absPath}: ${at}.requiresConnection, when present, must be a non-empty string`);
+      }
+      continue;
+    }
+
+    const unknown = Object.keys(schedule).filter(
+      (key) => !['id', 'cron', 'target', 'route', 'handler', 'body', 'scope', 'description', 'enabled'].includes(key),
+    );
+    if (unknown.length > 0) throw new Error(`Manifest ${absPath}: ${at} has unknown field(s): ${unknown.join(', ')}`);
+    if (schedule.scope !== undefined && schedule.scope !== 'framework') {
+      throw new Error(`Manifest ${absPath}: ${at}.scope must be framework for service-route targets`);
+    }
+    const routePath = typeof schedule.route === 'string' ? schedule.route : '';
+    if (!isCanonicalServiceSchedulePath(routePath)) {
+      throw new Error(`Manifest ${absPath}: ${at}.route must be a concrete canonical /api/... path`);
+    }
+    const owner = (manifest.routes ?? [])
+      .filter((route) => probeBelongsToRoute(routePath, route.mountPath))
+      .sort((a, b) => b.mountPath.length - a.mountPath.length)[0];
+    if (!owner) {
+      throw new Error(`Manifest ${absPath}: ${at}.route "${routePath}" is not owned by routes[].mountPath`);
+    }
+    if (resolveRouteAuthMode(owner) !== 'service') {
+      throw new Error(`Manifest ${absPath}: ${at}.route must belong to a route whose auth mode is exactly service`);
+    }
+    if (typeof schedule.handler !== 'string' || !/^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/.test(schedule.handler)) {
+      throw new Error(`Manifest ${absPath}: ${at}.handler must be a named JavaScript export`);
+    }
+    const body = schedule.body === undefined ? {} : schedule.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new Error(`Manifest ${absPath}: ${at}.body, when present, must be a static JSON object`);
+    }
+    validateStaticScheduleJson(body, `Manifest ${absPath}: ${at}.body`);
+    if (containsFixtureInterpolation(body)) {
+      throw new Error(`Manifest ${absPath}: ${at}.body contains interpolation syntax; scheduled bodies are static and cannot reference secrets`);
+    }
+    if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_SERVICE_SCHEDULE_BODY_BYTES) {
+      throw new Error(`Manifest ${absPath}: ${at}.body exceeds ${MAX_SERVICE_SCHEDULE_BODY_BYTES} bytes`);
+    }
+  }
+}
+
+/** @description Reject templating syntax anywhere in a parsed JSON fixture. */
+function containsFixtureInterpolation(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return /\$\{[^}]+\}|\{\{[^}]+\}\}|<%[\s\S]*?%>|%[A-Za-z_][A-Za-z0-9_]*%/.test(value);
+  }
+  if (Array.isArray(value)) return value.some(containsFixtureInterpolation);
+  if (value && typeof value === 'object') {
+    return Object.entries(value).some(
+      ([key, entry]) => containsFixtureInterpolation(key) || containsFixtureInterpolation(entry),
+    );
+  }
+  return false;
+}
+
+/** @description Resolve and validate a package-local JSON fixture without following a symlink out. */
+function validateSmokeFixture(absPath: string, at: string, fixturePath: string): void {
+  if (path.isAbsolute(fixturePath) || !fixturePath.trim() || path.extname(fixturePath).toLowerCase() !== '.json') {
+    throw new Error(`Manifest ${absPath}: ${at}.bodyFixture must be a relative package-local .json path`);
+  }
+  const packageDir = fs.realpathSync(path.dirname(absPath));
+  const candidate = path.resolve(packageDir, fixturePath);
+  if (!fs.existsSync(candidate)) {
+    throw new Error(`Manifest ${absPath}: ${at}.bodyFixture not found: ${fixturePath}`);
+  }
+  const fixture = fs.realpathSync(candidate);
+  const relative = path.relative(packageDir, fixture);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Manifest ${absPath}: ${at}.bodyFixture escapes the package directory`);
+  }
+  const stat = fs.statSync(fixture);
+  if (!stat.isFile() || stat.size > MAX_SMOKE_FIXTURE_BYTES) {
+    throw new Error(
+      `Manifest ${absPath}: ${at}.bodyFixture must be a regular JSON file no larger than ${MAX_SMOKE_FIXTURE_BYTES} bytes`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(fixture, 'utf8'));
+  } catch (error) {
+    throw new Error(`Manifest ${absPath}: ${at}.bodyFixture is not valid JSON: ${(error as Error).message}`);
+  }
+  if (containsFixtureInterpolation(parsed)) {
+    throw new Error(
+      `Manifest ${absPath}: ${at}.bodyFixture contains interpolation syntax; smoke fixtures are static and may not reference secrets`,
+    );
+  }
+}
+
+/**
+ * @description Validate executable app smoke declarations at the manifest trust boundary. Every
+ * probe must be concrete, package-owned, deterministic in shape, and safe to run unattended.
+ */
+function validateSmokeDeclarations(manifest: SwarmAppManifest, absPath: string): void {
+  if (manifest.smoke === undefined) return;
+  if (!Array.isArray(manifest.smoke) || manifest.smoke.length === 0) {
+    throw new Error(`Manifest ${absPath}: smoke, when present, must be a non-empty array`);
+  }
+  const routes = manifest.routes ?? [];
+  const names = new Set<string>();
+  for (const [index, value] of manifest.smoke.entries()) {
+    const at = `smoke[${index}]`;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Manifest ${absPath}: ${at} must be an object`);
+    }
+    const smoke = value as unknown as Record<string, unknown>;
+    const unknownFields = Object.keys(smoke).filter(
+      (key) => !['name', 'method', 'path', 'auth', 'bodyFixture', 'expect', 'requiresAi'].includes(key),
+    );
+    if (unknownFields.length > 0) {
+      throw new Error(`Manifest ${absPath}: ${at} has unknown field(s): ${unknownFields.join(', ')}`);
+    }
+    const name = typeof smoke.name === 'string' ? smoke.name.trim() : '';
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
+      throw new Error(`Manifest ${absPath}: ${at}.name must be a lowercase slug`);
+    }
+    if (names.has(name)) throw new Error(`Manifest ${absPath}: duplicate smoke name "${name}"`);
+    names.add(name);
+
+    if (typeof smoke.method !== 'string' || !(SMOKE_METHODS as readonly string[]).includes(smoke.method)) {
+      throw new Error(`Manifest ${absPath}: ${at}.method must be one of ${SMOKE_METHODS.join(', ')}`);
+    }
+    if (typeof smoke.auth !== 'string' || !(SMOKE_AUTH_MODES as readonly string[]).includes(smoke.auth)) {
+      throw new Error(`Manifest ${absPath}: ${at}.auth must be one of ${SMOKE_AUTH_MODES.join(', ')}`);
+    }
+    const probePath = typeof smoke.path === 'string' ? smoke.path : '';
+    if (
+      !/^\/(?!\/)/.test(probePath) ||
+      /[?#\\\s]/.test(probePath) ||
+      probePath.includes('//') ||
+      probePath.split('/').some((segment) => segment === '.' || segment === '..') ||
+      /%(?:2e|2f|5c)/i.test(probePath)
+    ) {
+      throw new Error(`Manifest ${absPath}: ${at}.path must be a concrete canonical root-relative path`);
+    }
+    const owningRoutes = routes
+      .filter((route) => probeBelongsToRoute(probePath, route.mountPath))
+      .sort((a, b) => b.mountPath.length - a.mountPath.length);
+    if (owningRoutes.length === 0) {
+      throw new Error(`Manifest ${absPath}: ${at}.path "${probePath}" is not owned by a declared routes[].mountPath`);
+    }
+    if (smoke.requiresAi !== undefined && typeof smoke.requiresAi !== 'boolean') {
+      throw new Error(`Manifest ${absPath}: ${at}.requiresAi, when present, must be a boolean`);
+    }
+    if (smoke.requiresAi === true && owningRoutes[0].requiresAi !== true) {
+      throw new Error(
+        `Manifest ${absPath}: ${at} requires AI but its owning route ${owningRoutes[0].mountPath} does not declare requiresAi: true`,
+      );
+    }
+
+    if (smoke.bodyFixture !== undefined) {
+      if (typeof smoke.bodyFixture !== 'string') {
+        throw new Error(`Manifest ${absPath}: ${at}.bodyFixture, when present, must be a string`);
+      }
+      if (smoke.method === 'GET' || smoke.method === 'HEAD') {
+        throw new Error(`Manifest ${absPath}: ${at}.bodyFixture is not allowed for ${smoke.method}`);
+      }
+      validateSmokeFixture(absPath, at, smoke.bodyFixture);
+    }
+
+    const expect = smoke.expect;
+    if (!expect || typeof expect !== 'object' || Array.isArray(expect)) {
+      throw new Error(`Manifest ${absPath}: ${at}.expect must be an object`);
+    }
+    const expectation = expect as Record<string, unknown>;
+    const unknownExpect = Object.keys(expectation).filter(
+      (key) => !['status', 'jsonPointer', 'rejectValues'].includes(key),
+    );
+    if (unknownExpect.length > 0) {
+      throw new Error(`Manifest ${absPath}: ${at}.expect has unknown field(s): ${unknownExpect.join(', ')}`);
+    }
+    if (!Number.isInteger(expectation.status) || Number(expectation.status) < 100 || Number(expectation.status) > 599) {
+      throw new Error(`Manifest ${absPath}: ${at}.expect.status must be an HTTP status integer`);
+    }
+    if (
+      expectation.jsonPointer !== undefined &&
+      (typeof expectation.jsonPointer !== 'string' ||
+        (expectation.jsonPointer !== '' && !expectation.jsonPointer.startsWith('/')) ||
+        /~(?![01])/.test(expectation.jsonPointer))
+    ) {
+      throw new Error(`Manifest ${absPath}: ${at}.expect.jsonPointer must be a valid RFC 6901 pointer`);
+    }
+    if (expectation.rejectValues !== undefined) {
+      if (
+        !Array.isArray(expectation.rejectValues) ||
+        expectation.rejectValues.length === 0 ||
+        expectation.rejectValues.some(
+          (item) => item !== null && !['string', 'number', 'boolean'].includes(typeof item),
+        )
+      ) {
+        throw new Error(`Manifest ${absPath}: ${at}.expect.rejectValues must be a non-empty scalar array`);
+      }
+      if (expectation.jsonPointer === undefined) {
+        throw new Error(`Manifest ${absPath}: ${at}.expect.rejectValues requires expect.jsonPointer`);
+      }
+    }
   }
 }
 
@@ -294,6 +779,10 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
     }
   }
 
+  // ADR-118: access is an authorization contract, so its entire shape and closed vocabulary
+  // fail at load. Omission is deliberate rollout compatibility and keeps current behavior.
+  validateAppAccess(manifest, absPath);
+
   // ADR-085 D4: guestTier is a REQUEST, not a grant — it does nothing until an operator approves it.
   // Still fail closed on the VALUE: an unrecognised tier must not sit in a manifest looking approved,
   // and a typo should surface at load, not at the operator's review screen.
@@ -378,6 +867,9 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // ADR-085 D2: routes[] auth. Fail closed — auth is opt-in per route in this codebase, so a
   // package route must never become anonymous-callable through a typo or an omission.
   validateRouteDeclarations(manifest, absPath);
+  validateScheduleDeclarations(manifest, absPath);
+  validateTakeoutDeclarations(manifest, absPath);
+  validateSmokeDeclarations(manifest, absPath);
 
   // ADR-085 D9: the assistant bubble is rendered BY THE FRAMEWORK, inside the cockpit's
   // authenticated origin. Its iframeUrl must therefore be same-origin and root-relative — an

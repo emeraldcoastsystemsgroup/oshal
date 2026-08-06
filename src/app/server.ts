@@ -130,7 +130,7 @@
  * 125 | maintainer@emeraldcoastsystemsgroup.com   | Served immutable /dist browser bundles as public static assets before OIDC, matching shared UI CSS/JS, so guest surfaces can load response-renderer.js without requiresAuth running before req.oidc exists.
  * 126 | maintainer@emeraldcoastsystemsgroup.com   | Remounted /api/camera with serviceSecretOr(requiresAuth) because the carved Camera Ops package route was absent, hiding real camera-node integration behind the embedded mock camera.
  * 127 | maintainer@emeraldcoastsystemsgroup.com   | Re-carved Camera Ops to the oshal-applications store: unmounted /api/camera + dropped the createCameraRoutes import. The packaged surface now carries the browser-webcam device path, so core no longer needs the route/surface; the camera ENGINE (src/features/camera) stays core per ADR-093 and the package imports it.
- * 128 | maintainer@emeraldcoastsystemsgroup.com   | Unmounted /api/spaces + dropped the createSpacesRoutes import: the Spaces SURFACE carved to the oshal-applications store (ADR-085, "skill with a surface"). The packaged route mounts the same /api/spaces (auth: oidc) from deployed-apps/spaces, incl. the /pair phone-pairing endpoint. Stays core per ADR-093: the reconstruction ENGINE + owner-scoped scan store (src/features/spatial-mapping — the pinned 'spatial-mapping' kernel skill), the spaces-operator inline concierge + BOTH registry entries, the GPU recon box (RECON_URL), and insertCliToken (@/app/routes/cli-token-routes, which the package imports). The 3 now-dead src/api/spaces*.html + their compose binds are a follow-up cleanup.
+ * 128 | maintainer@emeraldcoastsystemsgroup.com   | Unmounted /api/spaces + dropped the createSpacesRoutes import: the Spaces SURFACE carved to the oshal-applications store (ADR-085, "skill with a surface"). The packaged route mounts the same /api/spaces (auth: oidc) from deployed-apps/spaces, incl. the /pair phone-pairing endpoint. Stays core per ADR-093: the reconstruction ENGINE + owner-scoped scan store (src/features/spatial-mapping — the pinned 'spatial-mapping' kernel skill), the spaces-operator inline concierge + BOTH registry entries, the GPU recon box (RECON_URL), and insertCliToken (@/app/routes/cli-token-routes, which the package imports). The historical core surface copies and binds were removed in SEQ 156.
  * 129 | maintainer@emeraldcoastsystemsgroup.com   | Carry validated packaged-bot harness/API selections into dynamic inline registry entries instead of forcing Claude Code.
  * 130 | maintainer@emeraldcoastsystemsgroup.com   | JSON 404 catch-all for unknown /api/* paths: unmatched API routes previously fell through to Express's default HTML "<!DOCTYPE" 404 page, which cockpit fetch handlers surfaced to the operator as `SyntaxError: Unexpected token '<'` (seen on the super-admin dev-console pane whenever a conditionally-mounted route was absent). Registered as the last /api middleware so all static mounts and the dynamic app-package dispatcher keep precedence. Guard: tests/api-json-404.spec.ts.
  * 131 | maintainer@emeraldcoastsystemsgroup.com   | Boot-window 503 for the /api fallback: the server listens BEFORE swarmAppService.autoLoadAllWithRetry() mounts store-package routes, so a cockpit surface loading mid-boot (live repro: /api/sat/app requested at 06:31:43Z, sat-ops route mounted 06:31:48Z) got a hard JSON 404 and sat on it until a manual reload. The final /api middleware is now createApiFallbackHandler(routes/api-fallback): 503 + Retry-After until auto-load settles (self-refreshing HTML splash for iframe navigations, JSON for fetch), then the exact prior JSON 404. Guards: tests/unit/api-fallback.spec.ts + tests/api-json-404.spec.ts.
@@ -139,16 +139,16 @@
  * 134 | maintainer@emeraldcoastsystemsgroup.com   | Update-check completion: registerUpdateRoutes now receives swarmAppService.loadApp so the operator-gated POST /api/updates/apps/:name/apply can hot-reload a re-installed package (installer runs with repo/ref from the INSTALLED manifest, never the caller); new-update transitions notify the operator via the notification center.
  * 135 | maintainer@emeraldcoastsystemsgroup.com   | Registered app.get('/login', loginHandler) after the global authMiddleware: the stock express-openid-connect login route is disabled (routes.login=false in @/shared/middleware/oidc) because it hardcoded returnTo=baseURL — every login-restart path (callback retry, state-mismatch recovery, cockpit 401 guard) forgot the original URL, so /cockpit/?app=<name> deep links landed on the bare cockpit after recovery. Guards: tests/login-returnto.spec.ts + tests/unit/login-returnto.spec.ts.
  * 136 | maintainer@emeraldcoastsystemsgroup.com   | Root landing resolves HOST_APP_MAP (new host-app-map.ts) before falling back to LANDING_PATH, so a themed app subdomain (dnd.oshal.ai, trading.oshal.ai, littlemonsters.oshal.ai, ...) lands straight on its app instead of the generic ribbon. Unset = unchanged prior behavior. Guard: tests/unit/host-app-map.spec.ts.
- * 139 | maintainer@emeraldcoastsystemsgroup.com   | WEB HARDENING CLOSE-OUT (docs/security/SECURITY-HARDENING.md §4 - a tested CSP, an explicit express.json limit, per-route throttles). (1) CSP: cspFromEnv now DEFAULTS to the strict policy in non-blocking report-only mode instead of no header at all, so every response carries a policy and the collector below learns the real allowlist; enforcement stays OSHAL_STRICT_CSP=on, OSHAL_CSP=off is the kill switch. (2) The violation collector dedupes by directive|blockedUri|documentUri (shouldLogCspReport) - report-only on a cockpit full of inline scripts would otherwise log the same finding on every page load from every browser. (3) The global JSON parser moves to createGlobalJsonParser: the same 100kb bound and the same three reserved prefixes, now explicit, env-tunable (OSHAL_JSON_BODY_LIMIT) and unit-testable. (4) expensiveOpLimiter also mounts on /api/jarvis (the LLM cost surface named in the backlog) alongside /api/intake. Guard: tests/unit/web-hardening-csp-body.spec.ts.
- * 138 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: retired the stale '/api/remote-clients hardening TODO = per-caller rate limiting' note - the limiter SHIPPED router-local in remote-client-routes.ts (seq 11: flag-gated OSHAL_RATE_LIMIT_REMOTE_CLIENTS, keyed per /:clientId, guard tests/unit/remote-client-auth.spec.ts), so the TODO was sending the next security wave to re-do finished work. No logic change.
  * 137 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G3 + G9: needsOnboarding now delegates to the pure onboardingRequired predicate (new onboarding-gate.ts) — DISABLE_ONBOARDING_GATE only suppresses the per-user wizard and can no longer waive the "a model must be connected" requirement; a deliberately model-less box declares OSHAL_NO_AI=true instead (a warn log names the exact fix when the gate fires despite the flag). Registered registerReadinessRoutes (new routes/readiness-routes.ts): GET /api/readiness reports per-capability ok|off|fail because /api/health is liveness-only and was being read as readiness. Guards: tests/unit/onboarding-gate.spec.ts + tests/unit/readiness-report.spec.ts.
- * 139 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E2): the /api/alerts mount now wires the pool-backed RcaSpendReader (routes/alertmanager-rca-spend.ts) into the intake's analyst budget gate — cost-ledger actuals meter auto-flow RCA dispatch; a pool-less run passes null and the gate is an explicit pass-through.
- * 140 | maintainer@emeraldcoastsystemsgroup.com   | Jarvis UX trio wiring: /api/voice now receives ctx (JVV-012 per-user TTS prefs endpoints + prefs-honoring synthesize), and /api/connect gains the liveness router (INSTALLER-GAPS G14 — the Connections badge live token check) on the same auth-gated mount.
- * 141 | maintainer@emeraldcoastsystemsgroup.com   | Global search grew the app/bot/connector result kinds: createGlobalSearchRoutes now receives swarmAppService.listApps as an injected, deliberately UNFILTERED lister (the features slice cannot reach the service, and AppsSearchSource owns the tested caller-visibility rule - pre-filtering here would make two filters where only one can be audited).
- * 142 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /metrics (Prometheus text exposition, @/shared/observability), mounted with /health above the OIDC middleware. The oshal-api-health scrape target pointed at /api/health, which returns JSON — Prometheus cannot parse it, so the scrape FAILED every cycle, `up` was pinned to 0 and SwarmApiUnreachable fired forever on a healthy box (found in the 2026-08-01 live drill). A real exposition makes that target's `up` mean what the rule claims it means, and gives the container-health rules series the swarm itself guarantees.
- * 143 | maintainer@emeraldcoastsystemsgroup.com   | Operations Stream wiring: the Alertmanager webhook now receives the pool, so a delivery is LANDED durably before anything reads it and the route answers 202 after the commit (503 when landing fails, so the sender retries rather than losing the alert); a pool-less run keeps the previous in-memory path byte-for-byte. Mounted /api/ops/alert-pipeline (reads authenticated, every mutating route carrying requiresOperator on the route itself so a re-mount cannot widen it) and the two authenticated surfaces the intelligent-processing manifest registers as ribbon tools: /system-health (read-only) and /alert-pipeline-admin (operator-gated by its backing routes, rendering an honest operator-only panel on 403).
- * 144 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/harvest (routes/harvest-routes.ts) — the harvest console's catalogue + closed-loop simulate call over the marine and ground slices. requiresAuth is passed into the factory (the budget-routes/trace-routes idiom) so the guard rides each route and a re-mount cannot widen it. Auth here is a CPU control, not a privacy one: simulateEnergyBudget integrates ceil(durationHours*3600/stepSeconds) steps SYNCHRONOUSLY on this process, so an anonymous unbounded run would wedge the controller's only thread — the route additionally caps integration steps and retained samples, not just the individual fields. Guard: tests/unit/harvest-routes.spec.ts.
- * 145 | maintainer@emeraldcoastsystemsgroup.com   | Carved /api/harvest and the marine + ground energy
+ * 138 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: retired the stale '/api/remote-clients hardening TODO = per-caller rate limiting' note - the limiter SHIPPED router-local in remote-client-routes.ts (seq 11: flag-gated OSHAL_RATE_LIMIT_REMOTE_CLIENTS, keyed per /:clientId, guard tests/unit/remote-client-auth.spec.ts), so the TODO was sending the next security wave to re-do finished work. No logic change.
+ * 139 | maintainer@emeraldcoastsystemsgroup.com   | WEB HARDENING CLOSE-OUT (docs/security/SECURITY-HARDENING.md §4 - a tested CSP, an explicit express.json limit, per-route throttles). (1) CSP: cspFromEnv now DEFAULTS to the strict policy in non-blocking report-only mode instead of no header at all, so every response carries a policy and the collector below learns the real allowlist; enforcement stays OSHAL_STRICT_CSP=on, OSHAL_CSP=off is the kill switch. (2) The violation collector dedupes by directive|blockedUri|documentUri (shouldLogCspReport) - report-only on a cockpit full of inline scripts would otherwise log the same finding on every page load from every browser. (3) The global JSON parser moves to createGlobalJsonParser: the same 100kb bound and the same three reserved prefixes, now explicit, env-tunable (OSHAL_JSON_BODY_LIMIT) and unit-testable. (4) expensiveOpLimiter also mounts on /api/jarvis (the LLM cost surface named in the backlog) alongside /api/intake. Guard: tests/unit/web-hardening-csp-body.spec.ts.
+ * 140 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E2): the /api/alerts mount now wires the pool-backed RcaSpendReader (routes/alertmanager-rca-spend.ts) into the intake's analyst budget gate — cost-ledger actuals meter auto-flow RCA dispatch; a pool-less run passes null and the gate is an explicit pass-through.
+ * 141 | maintainer@emeraldcoastsystemsgroup.com   | Jarvis UX trio wiring: /api/voice now receives ctx (JVV-012 per-user TTS prefs endpoints + prefs-honoring synthesize), and /api/connect gains the liveness router (INSTALLER-GAPS G14 — the Connections badge live token check) on the same auth-gated mount.
+ * 142 | maintainer@emeraldcoastsystemsgroup.com   | Global search grew the app/bot/connector result kinds: createGlobalSearchRoutes now receives swarmAppService.listApps as an injected, deliberately UNFILTERED lister (the features slice cannot reach the service, and AppsSearchSource owns the tested caller-visibility rule - pre-filtering here would make two filters where only one can be audited).
+ * 143 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /metrics (Prometheus text exposition, @/shared/observability), mounted with /health above the OIDC middleware. The oshal-api-health scrape target pointed at /api/health, which returns JSON — Prometheus cannot parse it, so the scrape FAILED every cycle, `up` was pinned to 0 and SwarmApiUnreachable fired forever on a healthy box (found in the 2026-08-01 live drill). A real exposition makes that target's `up` mean what the rule claims it means, and gives the container-health rules series the swarm itself guarantees.
+ * 144 | maintainer@emeraldcoastsystemsgroup.com   | Operations Stream wiring: the Alertmanager webhook now receives the pool, so a delivery is LANDED durably before anything reads it and the route answers 202 after the commit (503 when landing fails, so the sender retries rather than losing the alert); a pool-less run keeps the previous in-memory path byte-for-byte. Mounted /api/ops/alert-pipeline (reads authenticated, every mutating route carrying requiresOperator on the route itself so a re-mount cannot widen it) and the two authenticated surfaces the intelligent-processing manifest registers as ribbon tools: /system-health (read-only) and /alert-pipeline-admin (operator-gated by its backing routes, rendering an honest operator-only panel on 403).
+ * 145 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/harvest (routes/harvest-routes.ts) — the harvest console's catalogue + closed-loop simulate call over the marine and ground slices. requiresAuth is passed into the factory (the budget-routes/trace-routes idiom) so the guard rides each route and a re-mount cannot widen it. Auth here is a CPU control, not a privacy one: simulateEnergyBudget integrates ceil(durationHours*3600/stepSeconds) steps SYNCHRONOUSLY on this process, so an anonymous unbounded run would wedge the controller's only thread — the route additionally caps integration steps and retained samples, not just the individual fields. Guard: tests/unit/harvest-routes.spec.ts.
+ * 146 | maintainer@emeraldcoastsystemsgroup.com   | Carved /api/harvest and the marine + ground energy
  *                     |                             | slices OUT to the oshal-applications store repo (ADR-085,
  *                     |                             | Rule 0c). They were domain application code living in the
  *                     |                             | kernel: a tidal-site model and a soil-thermal model serve a
@@ -157,6 +157,19 @@
  *                     |                             | its own barrel, so keeping it would have left an orphaned module
  *                     |                             | on a laptop-hosted control plane. Promote it back if a second
  *                     |                             | real consumer ever appears.
+ * 147 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the verified principal issuer in AsyncLocalStorage so Ed25519 HTTP delegation binds the caller's full identity namespace instead of guessing from a potentially colliding subject string.
+ * 148 | maintainer@emeraldcoastsystemsgroup.com   | Wire remote-client task settlement to atomic outboxId cost receipts so journal replay cannot double bill after a partial downstream failure.
+ * 149 | maintainer@emeraldcoastsystemsgroup.com   | Supply the work-item repository to strict remote-task settlement publication so journal delivery waits for durable landing before compatibility mesh notification.
+ * 150 | maintainer@emeraldcoastsystemsgroup.com   | Document Profile Studio's anonymous mount as one-use capability authenticated; the reusable service-secret callback contract was removed.
+ * 151 | maintainer@emeraldcoastsystemsgroup.com   | Document SEC-01 immediate containment at the graph and Jarvis mounts: browser/PAT reads remain available while machine-only fleet-secret reads fail closed pending scoped delegation.
+ * 152 | maintainer@emeraldcoastsystemsgroup.com   | Mount the durable SEC-01 legacy-shadow-enforce delegation gate on every user-scoped Graph and Jarvis route while retaining ordinary browser/PAT authentication.
+ * 153 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: wire one PostgreSQL app-access service into dynamic package-route enforcement and the framework-owned operator assignment API.
+ * 154 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: mount canonical package-smoke and bounded PAT live verification ahead of package-owned route dispatch.
+ * 155 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile CSP inline documentation with the mounted default report-only policy; enforcement remains OSHAL_STRICT_CSP=on and OSHAL_CSP=off remains the explicit kill switch.
+ * 156 | maintainer@emeraldcoastsystemsgroup.com   | Complete the Spaces carve cleanup by retiring the three unrouted core HTML copies and their local Compose bind mounts; installed package surfaces remain authoritative.
+ * 157 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile ADR-067 connector-route documentation with the lazy marketplace gate: boot mounts two stable parameterized delegates, while deployment and caller enablement are checked on every request before a provider spec is loaded.
+ * 158 | maintainer@emeraldcoastsystemsgroup.com   | Wire one lifecycle-scoped package Takeout registry into app activation and the generic authenticated archive route.
+ * 159 | maintainer@emeraldcoastsystemsgroup.com   | Wire one confined deterministic package-schedule registry into the shared scheduler and manifest activation lifecycle.
  */
 
 require('dotenv').config();
@@ -214,6 +227,7 @@ import {
   createAmbientSpeakerRoutes,
 } from './routes';
 import { createVerificationRoutes } from './routes/verification-routes';
+import { createInstallVerificationRoutes } from './routes/install-verification-routes';
 // Manual auth routes removed — express-openid-connect handles /login, /callback, /logout
 import { createConfigRoutes } from './routes/config-routes';
 import { createProviderRoutes, listConfiguredProviders } from './routes/provider-routes';
@@ -286,7 +300,7 @@ import { createRagRoutes } from './routes/rag-routes';
 import { createGlobalSearchRoutes } from './routes/global-search-routes';
 import { RagService } from '@/features/rag';
 import { UIProfileService } from '@/features/ui-profile';
-import { SwarmAppService, SwarmAppRepository } from '@/features/swarm-apps';
+import { AppAccessService, SwarmAppService, SwarmAppRepository } from '@/features/swarm-apps';
 // Manifest schedule registrar/deregistrar + per-user reconciler + nightly oshal-dev schedule —
 // extracted verbatim to swarm-app-schedule-wiring.ts (1000-line cap decomposition).
 import { createManifestScheduleRegistrar, createManifestScheduleDeregistrar, registerPerUserScheduleReconciler, registerNightlyDevDocsSchedule } from './swarm-app-schedule-wiring';
@@ -301,6 +315,8 @@ import { seedPersonaAuthorizations } from '@/features/tool-switch';
 import { AgentProfileRepository } from '@/entities/agent';
 import { createSwarmAppGateMiddleware } from './middleware/swarm-app-gate-middleware';
 import { ManifestRouteMounterImpl } from './composition/manifest-route-mounter';
+import { TakeoutSliceRegistry } from './takeout-slice-registry';
+import { ManifestServiceRouteScheduleRegistry } from './manifest-service-route-schedule';
 import { waitForBootstrapComplete } from './composition';
 import { seedDemoData, shouldSeedDemoData } from '@/features/demo-mode';
 import { createScheduleController } from './schedule-runtime';
@@ -321,8 +337,8 @@ import { createPrivacyRoutes } from './routes/privacy-routes';
 import { registerLlmGovernanceRoutes } from './routes/llm-governance-routes';
 // Trust hardening (additive): rate-limit presets. No-ops unless their env flags are on.
 // internalMeshLimiter closes the no-XFF gap; expensiveOpLimiter caps intake/LLM per-IP.
-// Strict CSP (staged): cspFromEnv() returns `false` until OSHAL_STRICT_CSP=on; run
-// report-only first (OSHAL_CSP_REPORT_ONLY=on) — reports to /api/security/csp-report.
+// Strict CSP (staged): cspFromEnv() returns the non-blocking report-only policy by default and
+// reports to /api/security/csp-report. OSHAL_STRICT_CSP=on enforces; OSHAL_CSP=off disables.
 import {
   internalMeshLimiter,
   expensiveOpLimiter,
@@ -330,10 +346,12 @@ import {
   cspFromEnv,
   cspMode,
   createGlobalJsonParser,
+  createWorkloadDelegationMiddleware,
   shouldLogCspReport,
 } from '@/features/security';
 // RLS request-identity binding for the GUC-aware pool wrapper (canonical RLS path).
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 // Prometheus exposition for the swarm's own container-health rules (ADR-119).
 import { PROMETHEUS_CONTENT_TYPE, renderRuntimeMetrics } from '@/shared/observability';
 import { gucEnabled } from '@/shared/services/database/guc-pool';
@@ -439,7 +457,8 @@ function createApp(): express.Application {
   app.use(internalMeshLimiter);
 
   const ctx = createAppContext();
-  const scheduleController = createScheduleController(ctx);
+  const manifestServiceScheduleRegistry = new ManifestServiceRouteScheduleRegistry(ctx);
+  const scheduleController = createScheduleController(ctx, manifestServiceScheduleRegistry);
 
   // Onboarding gate predicate, shared by the root redirect and the surface guards below.
   // Decision logic lives in the pure onboardingRequired (onboarding-gate.ts) — the
@@ -561,6 +580,10 @@ function createApp(): express.Application {
   const { authMiddleware, requiresAuth, loginHandler } = isLocalAuthEnabled()
     ? createLocalAuthMiddlewareSet(ctx.pool)
     : createOidcMiddleware();
+  const delegatedUserRouteAuth = createWorkloadDelegationMiddleware({
+    pool: ctx.pool,
+    fallback: serviceSecretOr(requiresAuth),
+  });
 
   // Shared design-system CSS is a public static asset, like a font or favicon.
   // Mount it before OIDC so stylesheet requests never 302 to login and then fail
@@ -742,7 +765,11 @@ function createApp(): express.Application {
   if (gucEnabled()) {
     app.use((req, _res, next) => {
       runWithRequestIdentity(
-        { sub: getCaller(req).sub, isOperator: isOperator(req) || hasValidServiceSecret(req) },
+        {
+          sub: getCaller(req).sub,
+          principalIssuer: getAuthenticatedPrincipalIssuer(req),
+          isOperator: isOperator(req) || hasValidServiceSecret(req),
+        },
         () => next(),
       );
     });
@@ -1000,8 +1027,10 @@ function createApp(): express.Application {
   // REST routes, the UI profile route, and autoloaded on boot.
   // Framework-scope schedule bridge + ADR-085 P0 teardown — extracted verbatim to
   // swarm-app-schedule-wiring.ts (factories return the same closures wired here).
-  const manifestScheduleRegistrar = createManifestScheduleRegistrar();
-  const manifestScheduleDeregistrar = createManifestScheduleDeregistrar();
+  const manifestScheduleRegistrar = createManifestScheduleRegistrar(manifestServiceScheduleRegistry);
+  const manifestScheduleDeregistrar = createManifestScheduleDeregistrar(manifestServiceScheduleRegistry);
+  const appAccessService = new AppAccessService(ctx.pool);
+  const takeoutSliceRegistry = new TakeoutSliceRegistry(ctx);
   const swarmAppService = new SwarmAppService(
     ctx.pool,
     new SwarmAppRepository(ctx.pool),
@@ -1014,7 +1043,7 @@ function createApp(): express.Application {
     manifestScheduleRegistrar,
     // ADR-085 P1: lets an installed app package mount its OWN compiled-JS routes at activation
     // (flag-gated on APP_PACKAGE_DYNAMIC_ROUTES → no-op by default, hardcoded mounts below still apply).
-    new ManifestRouteMounterImpl(app, requiresAuth, ctx),
+    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService),
     manifestScheduleDeregistrar,
     // ADR-085: packaged bots join the ACTIVE bot registry as inline-concierge entries
     // (container oshal-api, port 3010; validated manifest runtime or legacy Claude default)
@@ -1032,6 +1061,7 @@ function createApp(): express.Application {
       list: () => new RagService().listCollections(),
       deleteCollection: (name: string) => new RagService().deleteCollection(name),
     },
+    takeoutSliceRegistry,
   );
   // Per-user "polls" (connector-scoped manifest schedules) + the nightly oshal-dev
   // docs-quality schedule (ADR-081, gated on OSHAL_DEV_OWNER_SUB) — extracted verbatim
@@ -1039,10 +1069,19 @@ function createApp(): express.Application {
   registerPerUserScheduleReconciler(swarmAppService, ctx.pool);
   registerNightlyDevDocsSchedule();
 
+  // CORE-05 installer verifier. Exact kernel route mounted before the package gate/dispatcher so
+  // no installed manifest can shadow the postflight authority. App smokes accept the deployment
+  // service secret; the spend-bearing /live child additionally requires an operator PAT.
+  app.use(
+    '/api/install-verification',
+    serviceSecretOr(requiresAuth),
+    createInstallVerificationRoutes(ctx, swarmAppService),
+  );
+
   // Gate middleware — 503s requests to any path claimed by a swarm-app
   // manifest whose owning app is currently inactive. Framework paths
   // (paths no manifest claims) pass through untouched.
-  app.use(createSwarmAppGateMiddleware(swarmAppService));
+  app.use(createSwarmAppGateMiddleware(swarmAppService, appAccessService));
 
   // Node Pool Mode (phase0) — register /node/* endpoints when running as a pool node.
   // Opt-in via env, so this is inert on the normal controller/bot-node runtime.
@@ -1119,7 +1158,7 @@ function createApp(): express.Application {
   // the per-user in-flight slot (otherwise the very next poll dispatches a second job onto the same
   // Chrome), then start the sweep that recovers whatever the node never reported.
   void rehydrateApplyInFlight(ctx).finally(() => startApplyReaper(ctx));
-  app.use('/api/profile-studio', createProfileStudioIngestRoutes(ctx)); // box callback for LinkedIn profile plans — service-secret authed (no OIDC)
+  app.use('/api/profile-studio', createProfileStudioIngestRoutes(ctx)); // desktop callback: one-use dispatch capability, no OIDC/fleet secret
   // (/api/gov-contracting is no longer hard-mounted: the gov-contracting app carved to the
   //  oshal-applications store, ADR-085 Wave 3 — the package mounts it, auth: oidc in its
   //  manifest. The gov-contracting-cron ENGINE (started below — the daily SAM scan +
@@ -1136,10 +1175,10 @@ function createApp(): express.Application {
   app.use('/api/files', requiresAuth, createFilesRoutes(ctx, apiDir));
   app.use('/api/judge', requiresAuth, createJudgeRoutes(ctx));  // shared LLM-judge/grading service — quality-judge concierge (a0…0053)
   // /api/storage now mounts from the storage app package (ADR-085 carve; auth: oidc in its manifest).
-  // ADR-045 #2 — caller-scoped graph (replaces the retired external Memgraph graph endpoint). serviceSecretOr (ADR-081):
-  // bot-nodes curl it with X-Service-Secret + X-OSHAL-User-Sub to maintain per-user graphs
-  // (e.g. oshal-developer's codebase index) — callerSub inside resolves the trusted sub first.
-  app.use('/api/graph', serviceSecretOr(requiresAuth), createGraphRoutes());
+  // ADR-045 #2 — caller-scoped graph (replaces the retired external graph endpoint). The outer
+  // SEC-01 gate keeps OIDC/PAT authoritative, accepts route-bound durable bearer delegation,
+  // observes legacy machine calls in shadow, and removes fleet-secret user assertion in enforce.
+  app.use('/api/graph', delegatedUserRouteAuth, createGraphRoutes());
   // PAT management (mint/list/revoke/whoami). serviceSecretOr: a browser session manages its
   // own tokens; the trusted-service secret may bootstrap-mint but ONLY for an operator sub and
   // ONLY a time-boxed token (cli-token-routes.ts) — the old "not an escalation, the secret
@@ -1272,14 +1311,12 @@ function createApp(): express.Application {
   startPersonModelMaintenanceRuntime(ctx.pool);
   app.use('/api/jarvis/ambient', requiresAuth, createAmbientSpeakerRoutes(ctx));
   app.use('/api/jarvis/ambient', requiresAuth, createAmbientListeningRoutes(ctx));
-  // Morning brief: claims ONLY GET /brief + /brief.html (each per-route requiresAuth) and
-  // passes every other /api/jarvis path through, so the general router's serviceSecretOr
-  // semantics below are unchanged — same specific-before-general trick as the ambient routes.
+  // Morning brief claims ONLY GET /brief + /brief.html with per-route user auth and passes every
+  // other Jarvis path through to the later SEC-01 gate (the ambient routes use the same ordering).
   app.use('/api/jarvis', createJarvisBriefRoutes(requiresAuth, ctx));
-  // serviceSecretOr: the headless swarm CLI (scripts/swarm-cli.js) + internal bots reach Jarvis
-  // with X-Service-Secret + x-oshal-user-sub — same trusted-service pattern as the message
-  // routes / /api/graph. Browsers still authenticate via the normal OIDC session.
-  app.use('/api/jarvis', serviceSecretOr(requiresAuth), createJarvisRoutes(ctx, apiDir));
+  // Same durable SEC-01 gate as Graph. Legacy reads retain immediate containment in every mode;
+  // enforce also removes the compatibility fleet secret from Jarvis actions.
+  app.use('/api/jarvis', delegatedUserRouteAuth, createJarvisRoutes(ctx, apiDir));
   // Vision describe (the visual analog of /api/voice/transcribe): base64 images exceed the global
   // 100kb JSON cap, so this mount is excluded from the default parser above and carries its own
   // 12MB one. serviceSecretOr(requiresAuth): browser session OR the trusted-service identity.
@@ -1303,8 +1340,8 @@ function createApp(): express.Application {
     app.use('/api/dev-console', requiresAuth, createDevConsoleRoutes(ctx));
   }
   // Takeout ingestion spine — unzip a Google Takeout archive (browser upload or Dropbox
-  // pickup) and route its slices to the owning apps (Kid Lens is the first lens). requiresAuth.
-  app.use('/api/takeout', requiresAuth, createTakeoutRoutes(ctx));
+  // pickup) and route active manifest-contributed slices. requiresAuth.
+  app.use('/api/takeout', requiresAuth, createTakeoutRoutes(ctx, takeoutSliceRegistry));
   // /api/education is no longer hard-mounted: Little Monsters was carved out to the
   // oshal-applications store (ADR-085) — its routes dynamic-mount from the installed
   // package via ManifestRouteMounter when the app is installed + the flag is on.
@@ -1349,9 +1386,10 @@ function createApp(): express.Application {
   // ADR-067 connector marketplace: audited catalog + deployment-level enable/disable.
   // Per-user credentials still resolve through the broker at execution time.
   app.use('/api/connectors', requiresAuth, createConnectorMarketplaceRoutes(ctx));
-  // ADR-065 connector spec-routes: mount every swarm-apps/connectors/*.yaml as /api/connectors/<provider>,
-  // creds resolved per-caller via the broker. OFF by default — set CONNECTOR_SPEC_ROUTES=on to enable.
-  // With ADR-067 marketplace active, only enabled providers are mounted.
+  // ADR-065/067 connector spec routes: mount two stable parameterized delegates (read + action),
+  // not one route per catalog entry. OFF by default — set CONNECTOR_SPEC_ROUTES=on to enable.
+  // Every request checks deployment + caller marketplace enablement before loading the exact
+  // provider spec; caller credentials resolve through the broker only after those gates pass.
   // Additive + parallel to the bespoke routes above (e.g. /api/travel) — they are unaffected.
   if (process.env.CONNECTOR_SPEC_ROUTES === 'on') {
     mountConnectorSpecRoutes(app, ctx, requiresAuth, { providerGate: ctx.connectorMarketplaceService });
@@ -1402,7 +1440,7 @@ function createApp(): express.Application {
   app.use('/api/voice', requiresAuth, createVoiceRoutes(ctx));
   // Swarm application REST + UI profile surfaces (gate middleware + instance
   // already set up before the app-owned route mounts).
-  app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService));
+  app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService, appAccessService));
   app.use('/api/swarm/packs', requiresAuth, createSwarmPackRoutes(swarmAppService));
   // ADR-085 packaged skins: surfaces authored against core skins request
   // /cockpit/css/themes/<id>.css. The cockpit express.static mount (registered earlier)
@@ -1503,13 +1541,13 @@ function createApp(): express.Application {
     meshCommunicationService: ctx.swarm.meshCommunicationService,
     runtimeRegistryService: ctx.swarm.runtimeRegistryService,
     orchestrator: ctx.orchestrator,
-    // Task-result landing: remote task completions/failures attach to their
-    // originating work item via the remoteTaskResult mesh subscriber.
+    // Task-result landing: the journal outbox awaits this repository directly;
+    // remoteTaskResult mesh delivery is a compatibility notification, not the durability boundary.
     workItemRepository: ctx.swarm.workItemRepository,
     // ADR-036 cost capture for leaf-node LLM tasks (apply / linkedin / any dispatchBrowserTask):
     // a completed/failed codex.exec run is metered into chat_tasks attributed to its accountable bot.
-    recordCost: ctx.swarm.costTrackingService
-      ? (event) => ctx.swarm.costTrackingService!.recordCost(event)
+    recordCostOnce: ctx.swarm.costTrackingService
+      ? (outboxId, event) => ctx.swarm.costTrackingService!.recordCostOnce(outboxId, event)
       : undefined,
   }));
   app.use('/api/v1/agent', requiresAuth, createScheduleRoutes(scheduleController));

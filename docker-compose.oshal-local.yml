@@ -11,6 +11,12 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | World classify re-enable rails: forward WORLD_CLASSIFY_BUDGET_PER_HOUR/PER_DAY (the global LLM-call ceiling the 2026-06-29 burn proved missing), and default WORLD_CLASSIFY_PROVIDERS to claude alone — the codex default routed every other chunk to a CLI documented broken in this container (read-only-fs app-server), which silently lexicon-degraded half the classify work.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | K5 (BACKLOG kernel audit): every bot-side DATABASE_URL now defaults to the least-privilege oshal_bot role (migration 099) and reads its OWN interpolation var BOT_DATABASE_URL — bots no longer inherit the operator's DATABASE_URL, which on legacy .envs was the RLS-bypassing superuser. The api keeps oshal_app (runtime) + the superuser BOOTSTRAP_DATABASE_URL (migrations/provisioning) unchanged. Custom-DB deployments must now set BOT_DATABASE_URL beside DATABASE_URL. Guard: tests/unit/bot-db-least-privilege.spec.ts.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | K8: TOOL_AUTH_GOOGLE_SEARCH default auto→off — the one prompt-to-external-vendor tool lane that defaulted open while aws/kubectl/gcloud/docker were off; opt back in per-deployment via .env. K3: the self-healing-bot service gets its OWN AGENT_ID a0…056 — a0…030 was a three-way collision with codex-packer (two manifests + this service), so heartbeats/chat_tasks/tickets under 030 were ambiguous between the Bot Forge and the docker-socket bot. Migration 100 covers existing rows. Guards: compose-tool-auth-defaults.spec.ts + swarm-wiring-collision.spec.ts.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Separate Ed25519 delegation roles: bot-node containers receive only the public verification ring while the swarm controller receives only the active private signing key and key id.
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: identify /root/.codex/auth.json as the one live rotating Codex credential source; static config-seed OAuth copies are no longer runtime fallbacks.
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | Forward the controller-only SEC-01 workload delegation migration mode, API public verification ring, distinct audience, and bounded lifetime.
+# 10 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: forward the package-audit rollout posture to controller-owned registry installs and app updates.
+# 11 | maintainer@emeraldcoastsystemsgroup.com   | Remove dead core Spaces surface binds after the app-store carve; the installed spaces package is the sole surface source.
+# 12 | maintainer@emeraldcoastsystemsgroup.com   | Promote ADR-034 authoritative provider/model stamping on the controller by default while preserving an explicit OSHAL_PUSH_ON_DISPATCH=off rollback.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -181,6 +187,9 @@ x-bot-env: &bot-env
   CLAUDE_ALLOWED_TOOLS: "Bash,Read,Write,Edit,MultiEdit,Glob,Grep,LS,WebFetch,WebSearch"
   # ── OpenAI Codex CLI ──
   CODEX_CLI_PATH: codex
+  # One live rotating credential source. The controller may promote an exact operator login only
+  # to this explicit path; CLI runs rotate the same file through compare-and-swap write-back.
+  CODEX_AUTH_SOURCE_PATH: /root/.codex/auth.json
   # NOTE: gpt-5.3-codex is the API-key model name. A ChatGPT-account login
   # (~/.codex/auth.json) does NOT support it — set CODEX_MODEL in .env to the
   # model your plan exposes (this host's ~/.codex/config.toml uses gpt-5.5).
@@ -267,6 +276,14 @@ x-bot-env: &bot-env
   # if a bot tried to shell out to `aws`, the call would be blocked.
   # ── Infrastructure ──
   REDIS_URL: redis://oshal-redis:6379
+  # Bot-side verification only. The value is a one-line JSON object mapping key ids to public
+  # Ed25519 JWKs. Supplying it makes /api/swarm-execute require a signed, single-use token and
+  # Redis replay consumption; malformed/partial configuration or a blank SWARM_SERVICE_SECRET
+  # fails bot startup. Never place the controller's private JWK in this anchor.
+  OSHAL_DELEGATION_PUBLIC_KEYS: '${OSHAL_DELEGATION_PUBLIC_KEYS:-}'
+  OSHAL_DELEGATION_ISSUER: ${OSHAL_DELEGATION_ISSUER:-urn:oshal:controller}
+  OSHAL_DELEGATION_AUDIENCE: ${OSHAL_DELEGATION_AUDIENCE:-urn:oshal:bot-node}
+  OSHAL_DELEGATION_CLOCK_SKEW_SECONDS: ${OSHAL_DELEGATION_CLOCK_SKEW_SECONDS:-30}
   # SECURITY (K5): bots connect as the least-privilege oshal_bot role — NOSUPERUSER,
   # NOBYPASSRLS, DML-only, provisioned idempotently by migration 099. Postgres exempts
   # superusers from RLS, so the old `oshal` default made every bot node an RLS bypass —
@@ -314,12 +331,12 @@ x-bot-env: &bot-env
   # Default auto preserves local/dev self-healing DDL. Hosted runtime app-role
   # profiles should set validate-only after owner/migrator migrations run.
   OSHAL_SCHEMA_BOOTSTRAP: ${OSHAL_SCHEMA_BOOTSTRAP:-auto}
-  # Internal service auth: the same secret on the controller + every bot, so bots authenticate
-  # to /api/tools/register (and other internal calls) via X-Service-Secret without an OIDC session.
+  # Internal service auth: the same secret on the controller + every bot authenticates reviewed
+  # machine protocols via X-Service-Secret. It is not a bot identity and cannot authorize dynamic
+  # ribbon or other process-global ownership-changing writes.
   SWARM_SERVICE_SECRET: ${SWARM_SERVICE_SECRET:-}
   APPLY_EDGE_CLIENT_ID: ${APPLY_EDGE_CLIENT_ID:-oshal-chat-0ce849b6-8b95-4cf5-9223-ce22d638f1c9}
   APPLY_EDGE_HOSTNAME: ${APPLY_EDGE_HOSTNAME:-render-node-1}
-  APPLY_FINAL_SUBMIT_AUTHORIZED: ${APPLY_FINAL_SUBMIT_AUTHORIZED:-true}
   ENABLE_AGENT_SCHEDULER: "false"
   SCHEDULER_POLL_INTERVAL_MS: "60000"
   # Queue-manager poll cadence (queue-manager-service.ts). Higher = fewer idle DB polls.
@@ -698,6 +715,24 @@ services:
       <<: *bot-env
       # Override: swarm controller, NOT any-bot
       BOT_RUNTIME: swarm
+      # Controller-side signing only. Explicitly clear the public ring inherited from *bot-env so
+      # role separation remains visible in the effective container environment. A key or kid alone
+      # counts as configured and fails startup instead of silently sending unsigned work.
+      OSHAL_DELEGATION_PUBLIC_KEYS: ""
+      OSHAL_DELEGATION_SIGNING_KID: ${OSHAL_DELEGATION_SIGNING_KID:-}
+      OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: '${OSHAL_DELEGATION_SIGNING_PRIVATE_KEY:-}'
+      OSHAL_DELEGATION_ISSUER: ${OSHAL_DELEGATION_ISSUER:-urn:oshal:controller}
+      OSHAL_DELEGATION_AUDIENCE: ${OSHAL_DELEGATION_AUDIENCE:-urn:oshal:bot-node}
+      OSHAL_DELEGATION_TTL_SECONDS: ${OSHAL_DELEGATION_TTL_SECONDS:-4200}
+      # ADR-034: every remote dispatch carries an authoritative provider/model record or an
+      # explicit unavailable-authority marker. Set off only as a temporary compatibility rollback.
+      OSHAL_PUSH_ON_DISPATCH: ${OSHAL_PUSH_ON_DISPATCH:-on}
+      # API workload delegation verifies with a public ring in this controller process. It never
+      # enters *bot-env, and the controller-only private signing key remains separate above.
+      OSHAL_WORKLOAD_DELEGATION_MODE: ${OSHAL_WORKLOAD_DELEGATION_MODE:-legacy}
+      OSHAL_WORKLOAD_DELEGATION_PUBLIC_KEYS: '${OSHAL_WORKLOAD_DELEGATION_PUBLIC_KEYS:-}'
+      OSHAL_WORKLOAD_DELEGATION_AUDIENCE: ${OSHAL_WORKLOAD_DELEGATION_AUDIENCE:-urn:oshal:api}
+      OSHAL_WORKLOAD_DELEGATION_TTL_SECONDS: ${OSHAL_WORKLOAD_DELEGATION_TTL_SECONDS:-900}
       BOT_NAME: project-manager
       AGENT_ID: a0000000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/project-manager.yaml
@@ -707,6 +742,7 @@ services:
       # local controller opts in so store installs work end-to-end.
       APP_PACKAGE_DYNAMIC_ROUTES: "1"
       APP_PACKAGE_MIGRATIONS: "1"
+      OSHAL_PACKAGE_AUDIT_MODE: ${OSHAL_PACKAGE_AUDIT_MODE:-compatible}
       # Maps for the `rides` store package. All three are OPTIONAL and empty by default:
       # the surface's real map is keyless OpenStreetMap over vendored Leaflet, so it works
       # on a fresh clone with no account anywhere. GOOGLE_MAPS_BROWSER_KEY upgrades that
@@ -1266,11 +1302,6 @@ services:
       # (kalshi.html bind mount removed: Kalshi Prediction Markets carved to the app store,
       #  ADR-085 Wave 3 — the package serves its own tools/kalshi.html.)
       - ./src/api/security.html:/app/src/api/security.html:ro
-      # Spaces (ADR-111) — the surface + its self-contained WebGL splat viewer, per-file so we
-      # don't shadow the image's built src/api/dist bundles. Route is baked (spaces-routes.ts).
-      - ./src/api/spaces.html:/app/src/api/spaces.html:ro
-      - ./src/api/spaces-viewer.html:/app/src/api/spaces-viewer.html:ro
-      - ./src/api/spaces-capture.html:/app/src/api/spaces-capture.html:ro
       - ./src/api/swarm-debug.html:/app/src/api/swarm-debug.html:ro
       - ./src/api/technology.html:/app/src/api/technology.html:ro
       - ./src/api/token-chase.html:/app/src/api/token-chase.html:ro

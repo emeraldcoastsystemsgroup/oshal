@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added REST controller for Redis-backed schedule CRUD and trigger operations
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Captured caller ownerSub on create + scoped getAllSchedules by app queue (?taskType) and caller (?scope=all overrides for admin dashboards)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Object-level authorization (IDOR fix): every by-id handler (get/update/pause/resume/delete/trigger) now verifies the caller owns the schedule (or is an operator, or it is unowned/system) via requireOwnedSchedule() and 404s on mismatch. The ?scope=all list override is now operator-only. Previously any authenticated user could read/edit-cron/delete/run-on-demand another user's scheduled job by guessing its (predictable) id, or enumerate all schedules with ?scope=all.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reserve manifest-owned app/app-route schedules from the user API, require operator authority for workflow schedules, apply ownership checks to the legacy execute callback, and stop logging prompt-bearing request bodies.
  */
 
 import { Request, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { ScheduleRunner, ScheduleService } from '../services';
+import { MANIFEST_SERVICE_ROUTE_TASK_KIND, type CreateScheduleInput } from '../types';
 import { canAccessResource, isOperator } from '@/shared/middleware/authz';
 
 type OwnedSchedule = NonNullable<Awaited<ReturnType<ScheduleService['getSchedule']>>>;
@@ -34,9 +36,19 @@ export class ScheduleController {
    */
   createSchedule = async (req: Request, res: Response): Promise<void> => {
     try {
-      logger.info({ body: req.body }, 'POST /api/v1/agent/schedule-task');
+      const body = this.readBody(req);
+      const taskType = this.readOptionalString(body.taskType);
+      logger.info({ taskType }, 'POST /api/v1/agent/schedule-task');
+      if (!this.authorizeExternalSchedulePayload(req, res, body)) return;
       const ownerSub = this.readCallerSub(req);
-      const schedule = await this.scheduleService.createSchedule({ ...(req.body || {}), ownerSub });
+      if (!ownerSub) {
+        res.status(401).json({ success: false, error: 'Authentication required' });
+        return;
+      }
+      // ScheduleService owns schema validation; this cast only restores the old Express `any`
+      // boundary after narrowing the body to an object for the authorization checks above.
+      const input = { ...body, ownerSub } as unknown as CreateScheduleInput;
+      const schedule = await this.scheduleService.createSchedule(input);
       res.json({ success: true, scheduleId: schedule.id, schedule });
     } catch (error) {
       logger.error({ err: error }, 'Failed to create schedule');
@@ -99,8 +111,8 @@ export class ScheduleController {
   updateSchedule = async (req: Request, res: Response): Promise<void> => {
     const scheduleId = this.readRouteId(req);
     try {
-      logger.info({ scheduleId, body: req.body }, 'PUT /api/v1/agent/schedules/:id');
-      if (!(await this.requireOwnedSchedule(req, res, scheduleId))) return;
+      logger.info({ scheduleId }, 'PUT /api/v1/agent/schedules/:id');
+      if (!(await this.requireExternallyMutableSchedule(req, res, scheduleId))) return;
       const schedule = await this.scheduleService.updateSchedule(scheduleId, req.body);
       res.json({ success: true, schedule });
     } catch (error) {
@@ -119,7 +131,7 @@ export class ScheduleController {
     const scheduleId = this.readRouteId(req);
     try {
       logger.info({ scheduleId }, 'POST /api/v1/agent/schedules/:id/pause');
-      if (!(await this.requireOwnedSchedule(req, res, scheduleId))) return;
+      if (!(await this.requireExternallyMutableSchedule(req, res, scheduleId))) return;
       const schedule = await this.scheduleService.pauseSchedule(scheduleId);
       res.json({ success: true, schedule });
     } catch (error) {
@@ -138,7 +150,7 @@ export class ScheduleController {
     const scheduleId = this.readRouteId(req);
     try {
       logger.info({ scheduleId }, 'POST /api/v1/agent/schedules/:id/resume');
-      if (!(await this.requireOwnedSchedule(req, res, scheduleId))) return;
+      if (!(await this.requireExternallyMutableSchedule(req, res, scheduleId))) return;
       const schedule = await this.scheduleService.resumeSchedule(scheduleId);
       res.json({ success: true, schedule });
     } catch (error) {
@@ -157,7 +169,7 @@ export class ScheduleController {
     const scheduleId = this.readRouteId(req);
     try {
       logger.info({ scheduleId }, 'DELETE /api/v1/agent/schedules/:id');
-      if (!(await this.requireOwnedSchedule(req, res, scheduleId))) return;
+      if (!(await this.requireExternallyMutableSchedule(req, res, scheduleId))) return;
       const deleted = await this.scheduleService.deleteSchedule(scheduleId);
       if (!deleted) {
         res.status(404).json({ success: false, error: 'Schedule not found' });
@@ -180,7 +192,7 @@ export class ScheduleController {
     const scheduleId = this.readRouteId(req);
     try {
       logger.info({ scheduleId }, 'POST /api/v1/agent/schedules/:id/trigger');
-      if (!(await this.requireOwnedSchedule(req, res, scheduleId))) return;
+      if (!(await this.requireExternallyMutableSchedule(req, res, scheduleId))) return;
       const result = await this.scheduleService.triggerSchedule(scheduleId);
       res.json(result);
     } catch (error) {
@@ -197,8 +209,16 @@ export class ScheduleController {
    */
   executeScheduledTask = async (req: Request, res: Response): Promise<void> => {
     try {
-      logger.info({ body: req.body }, 'POST /api/v1/agent/execute-scheduled-task');
-      const result = await this.scheduleService.executeScheduledTask(req.body || {});
+      const body = this.readBody(req);
+      const scheduleId = this.readOptionalString(body.scheduleId) || this.readOptionalString(body.id);
+      const taskType = this.readOptionalString(body.taskType);
+      logger.info({ scheduleId, taskType }, 'POST /api/v1/agent/execute-scheduled-task');
+      if (scheduleId) {
+        if (!(await this.requireExternallyMutableSchedule(req, res, scheduleId))) return;
+      } else if (!this.authorizeExternalSchedulePayload(req, res, body)) {
+        return;
+      }
+      const result = await this.scheduleService.executeScheduledTask(body);
       res.json(result);
     } catch (error) {
       logger.error({ err: error }, 'Failed to execute scheduled task payload');
@@ -247,6 +267,89 @@ export class ScheduleController {
       return null;
     }
     return schedule;
+  }
+
+  /**
+   * @description Extends the ordinary ownership check for mutating/execute routes. `app:` and
+   * `app-route:` entries are lifecycle-owned by reviewed package manifests, so even an operator
+   * must change the manifest or app activation state instead of mutating derived Redis state.
+   * `workflow:` schedules are privileged ticket producers and remain operator-only, including
+   * when the temporary legacy-unowned compatibility flag is enabled.
+   */
+  private async requireExternallyMutableSchedule(
+    req: Request,
+    res: Response,
+    scheduleId: string,
+  ): Promise<OwnedSchedule | null> {
+    const schedule = await this.requireOwnedSchedule(req, res, scheduleId);
+    if (!schedule) return null;
+    if (this.isManifestManagedTaskType(schedule.taskType)) {
+      this.sendManagedScheduleDenial(res);
+      return null;
+    }
+    if (this.isWorkflowTaskType(schedule.taskType) && !isOperator(req)) {
+      res.status(403).json({ success: false, error: 'Operator privilege required' });
+      return null;
+    }
+    return schedule;
+  }
+
+  /**
+   * @description Rejects externally supplied payloads that could impersonate a manifest-owned
+   * job. Workflow ticket schedules are accepted only from an explicitly allowlisted operator.
+   * Internal boot/reconciliation code calls ScheduleService directly and is therefore unaffected.
+   */
+  private authorizeExternalSchedulePayload(
+    req: Request,
+    res: Response,
+    payload: Record<string, unknown>,
+  ): boolean {
+    const taskType = this.readOptionalString(payload.taskType);
+    const taskData = this.asRecord(payload.taskData);
+    if (this.isManifestManagedTaskType(taskType)
+      || taskData?.kind === MANIFEST_SERVICE_ROUTE_TASK_KIND) {
+      this.sendManagedScheduleDenial(res);
+      return false;
+    }
+    if (this.isWorkflowTaskType(taskType) && !isOperator(req)) {
+      res.status(403).json({ success: false, error: 'Operator privilege required' });
+      return false;
+    }
+    return true;
+  }
+
+  /** @description True for schedule namespaces derived exclusively from active app manifests. */
+  private isManifestManagedTaskType(taskType: string | undefined): boolean {
+    return taskType?.startsWith('app:') === true || taskType?.startsWith('app-route:') === true;
+  }
+
+  /** @description True for schedules that create workflow tickets without another user action. */
+  private isWorkflowTaskType(taskType: string | undefined): boolean {
+    return taskType?.startsWith('workflow:') === true;
+  }
+
+  /** @description Sends the stable response used when a caller targets manifest-derived state. */
+  private sendManagedScheduleDenial(res: Response): void {
+    res.status(403).json({ success: false, error: 'Schedule is managed by an active app manifest' });
+  }
+
+  /** @description Coerces an Express body to a plain record without trusting its prototype. */
+  private readBody(req: Request): Record<string, unknown> {
+    return this.asRecord(req.body) ?? {};
+  }
+
+  /** @description Narrows an unknown value to a non-array object. */
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  }
+
+  /** @description Reads and trims an optional string from an untyped request payload. */
+  private readOptionalString(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
   }
 
   /**

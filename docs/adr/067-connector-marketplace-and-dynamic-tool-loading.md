@@ -10,15 +10,18 @@
   executable prompt tools and Cline MCP sessions; ADR-065 connector `tool:` resources are registered
   as framework tools with an in-process `connector` executor that resolves per-user broker tokens.
   Phase 3 is now built past the first slice: audited marketplace catalog, browse/enable/disable/remove
-  API, audit-refresh quarantine, marketplace-gated connector spec route/tool loading, and a cockpit
-  Connectors Discover surface.
+  API, audit-refresh quarantine, stable lazy connector route delegation, marketplace-gated tool
+  loading, and a cockpit Connectors Discover surface. The read and declared-action HTTP routes now
+  consult current deployment and per-user enablement on every request before loading a spec;
+  disabled and unknown providers both return the same 404, and enablement changes need no restart.
   Authenticated Cockpit proof now renders the Discover surface and reaches `/api/connectors/marketplace`
   with 46 entries. OpenAPI draft import is available through `npm run connectors:import-openapi`;
   bulk OpenAPI catalog import is available through `npm run connectors:import-openapi-catalog`
   (APIs.guru default index, 1K candidate limit, skip/report logging, generated specs only - no auto-enable).
   Generated catalog icon enrichment is available through `npm run connectors:enrich-icons`; the latest
-  1K run produced 621 verified Simple Icons and 379 favicon fallbacks for generated specs, with curated
-  provider icon coverage bringing the full marketplace to 1,053/1,053 entries with an icon slot.
+  1K run produced 614 verified Simple Icons, 377 reviewed favicon fallbacks, and 9 reviewed initials
+  fallbacks for generated specs. The effective local target is 1,308/1,308 for reviewed icons,
+  categories, and descriptions; this is local catalog evidence, not a deployment claim.
   Connector resources now carry action-safety metadata; mutating connector tools support dry-run previews
   and require explicit `confirm: true` before a provider write is attempted.
   Still pending: 5+ live credentialed connector reads preferably through brokered per-user credentials,
@@ -92,10 +95,18 @@ the **catalog index**, the **installer**, and a **Discover surface**.
 
 - A **catalog** = cheap metadata index of *available* connectors (id, label, category, auth type,
   icon, source) — JSON, nothing mounted, nothing spawned.
-- `mountConnectorSpecRoutes()` today eagerly mounts **all** discovered specs
-  ([connector-spec-routes.ts:77](../../src/app/routes/connector-spec-routes.ts)). The marketplace
-  must mount/load **only enabled** connectors (per-user or per-deployment), on demand.
-- A 1000-connector catalog then costs the footprint of however-many-are-actually-enabled, not 1000.
+- `mountConnectorSpecRoutes()` registers two stable parameterized Express routes, independent of
+  catalog size. It does not enumerate or parse connector specs while mounting.
+- Every request first checks the marketplace's lightweight deployment-enabled set, then its audited
+  provider gate and, when available, the authenticated caller's per-user gate before an exact
+  `<provider>.yaml` / `<provider>.yml` lookup. A disabled request does not enumerate catalog metadata
+  or parse a route spec. Disabled, user-disabled, malformed, and unknown provider routes use the same
+  non-enumerating 404 response.
+- The first allowed request parses and caches only that provider. A later disabled request evicts
+  its cached spec; re-enabling works on the same Express process and reloads on the next request.
+- The declared-action route applies the same ordering before spec, credential, audit, or provider
+  work. A regression guard exercises the real Express/filesystem/marketplace-state boundary with a
+  catalog larger than 200 and verifies zero route-spec parses or cached providers at mount.
 
 ### Principle 2 — Mass-import rides the API/CLI path, never per-bot MCP
 
@@ -148,8 +159,8 @@ to a third-party runtime.
 3. **Marketplace index + installer + Discover surface** (BUILT 2026-06-22).
    The local spec catalog is exposed through `/api/connectors/marketplace`; enable/disable/remove
    persists deployment state, audit-refresh re-reads the spec and de-enables anything that fails the
-   gate, connector spec routes/tools honor the enabled-provider gate, and cockpit has a native
-   Connectors surface. Authenticated live evidence is captured by
+   gate, connector routes consult stable lazy deployment-and-user gates, tools honor the enabled
+   provider set, and cockpit has a native Connectors surface. Authenticated live evidence is captured by
    `tests/live/connector-marketplace.live.spec.ts`. Still pending: 5+ credentialed connector reads
    and operator audit export. Reuse `auditConnectorCatalog` as the install gate.
 4. **Mass-import pipeline.** OpenAPI draft import is built via `npm run connectors:import-openapi`.
@@ -157,13 +168,64 @@ to a third-party runtime.
    APIs.guru or a local manifest, writes generated specs under `output/connectors/imported-openapi`
    by default, supports `--limit 1000`, `--target-imports 1000`, `--concurrency`, `--auth-types`,
    `--provider-filter`, `--max-operations`, and
-   writes a JSON report of imported/skipped/failed providers. The normal marketplace/tool/route scans
-   include that generated import directory when it exists, while `CONNECTOR_SPEC_DIRS` can add explicit
-   generated or private catalog directories. `npm run connectors:enrich-icons` is the post-import polish
+   writes a JSON report of imported/skipped/failed providers. The normal marketplace/tool scans
+   include that generated import directory when it exists; the stable route delegate resolves only
+   the exact allowed provider requested. `CONNECTOR_SPEC_DIRS` can add explicit generated or private
+   catalog directories. `npm run connectors:enrich-icons` is the post-import polish
    step: it validates Simple Icons slugs, applies favicon fallbacks, and writes
    `output/connectors/icon-enrichment-report.json`. Next import lanes are Nango-reference
    and Activepieces-MIT into `connector.yaml`, prioritizing the API-key/PAT bucket. Each output passes
    the audit gate before catalog entry.
+
+### Catalog curation invariants
+
+`npm run connectors:curation-audit` audits the same default target shape as the marketplace: the
+tracked `swarm-apps/connectors` directory, any `CONNECTOR_SPEC_DIRS`, and
+`output/connectors/imported-openapi` when it exists. Repeated `--spec-dir` flags define an explicit
+target set, and `--report <file>` preserves the complete JSON evidence. Shadowed duplicate providers
+are reported; deterministic source-path ordering selects the same effective first entry as the
+marketplace.
+
+Icon review is deterministic:
+
+- A Simple Icons asset is accepted only with a non-empty slug, `iconSource: simple-icons`,
+  `iconVerified: true`, and no competing `iconUrl`. `npm run connectors:enrich-icons -- --dry-run`
+  revalidates those slugs against the configured Simple Icons catalog without rewriting the specs.
+  Imported specs match publisher identity only; generic API titles, documentation/repository sites,
+  and third-party execution hosts cannot certify a brand icon, and an existing slug cannot validate
+  itself.
+- A favicon is never called "verified." It must use `iconSource: favicon-fallback`, explicitly set
+  `iconVerified: false`, omit Simple Icons fields, and use the exact HTTPS DuckDuckGo favicon URL for
+  either a normalized host declared by the spec or a provider/domain pair in
+  [reviewed-favicon-fallbacks.json](../../scripts/connectors/reviewed-favicon-fallbacks.json). The
+  enrichment CLI and curation gate consume the same reviewed exception registry.
+- Placeholder, internal (`*.local`), reserved, malformed, and non-DNS hosts are not favicon domains.
+  When no public declared or reviewed domain exists, the only accepted fallback is
+  `iconSource: initials-fallback` with `iconVerified: false` and no icon slug/title/URL.
+- Missing, contradictory, malformed, or untraceable icon metadata fails the icon/risk curation gate.
+
+Connector-wide marketplace risk is **derived, never declared in connector YAML**. The single rule in
+`deriveConnectorRiskLevel()` is: `high` when any resource is non-GET or explicitly write/destructive,
+or when any declared `actions:` entry exists; otherwise `medium` for read-only OAuth2/basic
+connectors; otherwise `low`. `auditSpec()` exposes the derived result and rejects top-level
+`riskLevel` or `metadata.riskLevel`; the marketplace consumes that same result and bumps its disk
+cache schema when the rule changes. `actions[].riskLevel` remains declared and validated because it
+controls the confirmation requirement for that specific action, not the connector-wide shelf label.
+
+The curation report also shows effective and declared category/description coverage separately. Those
+figures do not weaken the icon/risk gate and do not get a plausible catch-all: an unresolved category
+remains visibly `Uncategorized` and belongs in its own curation queue.
+
+Generated OpenAPI categorization retains provenance instead of guessing from whichever common word
+matches first. `specFromOpenApi()` preserves `info.x-apisguru-categories` as
+`metadata.sourceCategories`, separate from operation `metadata.tags`. Effective category precedence is:
+human `metadata.category`, exact provider identity, the reviewed APIs.guru vocabulary mapping, then
+lower-confidence title/description/tag/host/operation signals. A multi-category source value is used
+only when all tokens map to the same OSHAL shelf or the exact cross-shelf combination is reviewed;
+unknown tokens and novel cross-shelf combinations remain unresolved. APIs.guru specs that declare no
+source category use a small exact-provider review table grounded in their title, description, tags,
+host, and operations. The local 1,000-spec generated target currently resolves 1,000/1,000 categories;
+the audit records each effective category, its evidence lane, and its evidence value.
 
 ## Consequences
 

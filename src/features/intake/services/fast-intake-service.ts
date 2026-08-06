@@ -7,11 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Switched to `codex exec` (non-interactive) instead of `cline`
  *                     |                           | Response time: ~2-5 seconds instead of 35+ seconds
  *                     |                           | Uses OAuth token from Codex login internally
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny unattended Codex intake before binary lookup or spawn; retain the deterministic raw-message fallback.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Import the dependency-free unattended-provider policy so controller intake does not acquire the bot-node harness runtime graph.
  */
 
 import { spawn } from 'child_process';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { assertAuditedAutonomousHarness } from '@/features/llm-provider';
 
 const logger = createChildLogger({ module: 'fast-intake-service' });
 
@@ -51,6 +54,7 @@ User message:`;
  * Response time: ~2-5 seconds for simple extraction prompts.
  */
 function runCodexExec(prompt: string): Promise<string> {
+  assertAuditedAutonomousHarness('codex-cli');
   return new Promise((resolve, reject) => {
     const binary = process.env.CODEX_CLI_PATH || 'codex';
     const args = [

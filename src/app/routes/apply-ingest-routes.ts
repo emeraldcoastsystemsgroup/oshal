@@ -1,101 +1,165 @@
 /**
- * Apply Ingest Route — the desktop worker's callback surface for the job-apply workflow.
- *
- *   POST /ingest  -> the box (edge-node-1) reports the submission outcome. Service-secret authed
- *                    (the box is not OIDC), so this lives in its OWN router mounted WITHOUT
- *                    requiresAuth (like /api/lora/ingest). It clears the watchdog, records the
- *                    per-user outcome (apply_record + apply_trace), and resolves the ticket.
+ * Apply control and trusted completion routes.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                                     | DESCRIPTION
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Event-loop hardening (the 07-15
- *   spawnSync wedge class): /ingest ran the record + trace CLI verbs via spawnSync — 30s + 20s
- *   blocking the whole api event loop; now awaits the shared ASYNC runApplyCli with the same
- *   timeouts + best-effort semantics, and /dispatch awaits the now-async gatherAndDispatch.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixed a boot crash-loop: the
- *   top-level require of the site-cred helper used ../../scripts (correct for a src/app/ file like
- *   bot-node-provider-intent.ts, but WRONG here in src/app/routes/ — one level deeper). From the
- *   compiled dist/app/routes/*.js that resolves to dist/scripts/ (absent) instead of /app/scripts/,
- *   so the unguarded require threw MODULE_NOT_FOUND and crash-looped the api at boot, blocking every
- *   deploy of HEAD. Corrected to ../../../scripts (matches the sibling's intent for the deeper path).
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added POST /shot — the worker's
- *   mid-run progress beat (caption + optional screenshot) so a submission is watchable while it
- *   happens instead of only at /ingest. Best-effort by design: telemetry never fails an application.
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | /dispatch + /enqueue + /enqueue-queue
- *   accept targetRemoteClientId so a ticket/cron can pin the leaf node that drives the browser.
- * 5 | maintainer@emeraldcoastsystemsgroup.com   | Machine-write identity (BACKLOG "Machine-write
- *   identity: audit every un-migrated identity-less WRITE"): POST /ingest was the one handler in
- *   this file that resolved a ticket WITHOUT re-entering the owner's identity, so its
- *   updateStatus ran on the operator connection a valid X-Service-Secret inherits — an UPDATE of
- *   a caller-supplied ticketId with no owner check. It now runs under
- *   runWithRequestIdentity({ sub: userSub, isOperator: false }) when the callback carries a
- *   userSub (it always does — the queue-record step above needs it), so RLS refuses a ticket that
- *   user does not own. A userSub-less callback keeps the legacy path and logs a WARN.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added service-triggered Apply dispatch.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Corrected the packaged CLI path.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added narrated progress beats.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added explicit remote-client selection.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Scoped ticket writes to the asserted owner.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Replace model-visible fleet-secret callbacks
+ *   and body-asserted identity with a hashed, expiring, one-use task capability. The controller
+ *   derives exact owner/ticket/posting/client/generation from PostgreSQL, rejects stale tasks, proves
+ *   the queue write succeeded before ticket settlement, consumes before watchdog cleanup, and
+ *   retires interactive email/vault/screenshot callbacks that exposed cross-user body identifiers.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Persist callback outcomes as task-bound
+ *   worker reports and require the Career CLI to acknowledge the exact provenance before settlement.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Internal dispatch derives owner, posting,
+ *   target, and final-submit authority from the durable ticket when present. Body-only service calls
+ *   default to assist mode and bulk calls cannot manufacture a request identity from userSub.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Promote a worker report to verified-submission only after a named PNG/JPEG is link-free, bounded, and retained inside the exact Career user store.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Settle the exact Apply V2 ledger run by CAS, require retained path+SHA for submitted_verified, and classify evidence-free applied reports as unknown_outcome for human review.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Make a capability retry idempotent after the ledger committed but ticket/capability settlement was interrupted.
  *
- * @module apply-ingest-routes
+ * @module app/routes/apply-ingest-routes
  */
-import { Router, type Request, type Response } from 'express';
+
+import { Router, type Request, type RequestHandler, type Response } from 'express';
+import { z } from 'zod';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
-import { findByTicket, clearInFlight } from '@/app/apply-inflight';
+import { applyInFlight, clearInFlight, findByTicket } from '@/app/apply-inflight';
+import { removeApplyWorkspace } from '@/app/apply-dispatch';
 import { gatherAndDispatch, runApplyCli } from '@/app/apply-submit';
 import { enqueueApplyTicket, enqueueApplyQueue } from '@/app/apply-enqueue';
-import { resolveBotCreds } from './connector-token-broker';
-import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
+import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { stopApplyBatch, getApplyBatchStatus } from '@/app/apply-batch-runner';
-import { recordApplyBeat } from '@/app/apply-story';
-// Reuse the site-credential AES envelope + password generator (require-safe: its CLI is gated on
-// require.main). The store is the FORCE-RLS ats_site_credentials table (migration 086).
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const siteCreds = require('../../../scripts/oshal-site-creds.js') as {
-  encrypt: (p: string) => string; decrypt: (b: string) => string; generatePassword: (len?: number) => string;
-};
+import {
+  consumeApplyCapability,
+  readApplyCapabilityHeader,
+  releaseApplyCapability,
+  reserveApplyCapability,
+  type ApplyCapabilityClaim,
+} from '@/app/apply-task-capability';
+import { timingSafeSecretEquals } from '@/features/remote-client';
+import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
+import { persistApplyConfirmationArtifact } from '@/app/apply-confirmation-artifact';
+import {
+  getApplyRunByTask,
+  transitionApplyRun,
+  type ApplyRunRecord,
+} from '@/app/apply-run-ledger';
+import {
+  applySubmitAuthorizationFromMetadata,
+  FINAL_SUBMIT_DENIED,
+} from '@/app/apply-submit-authorization';
 
 const logger = createChildLogger({ module: 'apply-ingest-routes' });
-const ALLOWED = new Set(['applied', 'deferred', 'dismissed']);
-/** Normalize a site to its bare host (the vault key) — codex may pass a full URL. */
-function siteHost(value: string): string {
-  const v = String(value || '').trim();
-  try { return new URL(v.includes('://') ? v : `https://${v}`).hostname.toLowerCase().replace(/^www\./, ''); }
-  catch { return v.toLowerCase().replace(/^www\./, ''); }
+const CompletionSchema = z.object({
+  taskId: z.string().regex(/^apply-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+  context: z.object({ workflow: z.literal('apply'), generation: z.number().int().positive() }).strict(),
+  result: z.object({
+    result: z.enum(['applied', 'deferred', 'dismissed', 'failed']),
+    note: z.string().max(4000),
+    confirmationFile: z.string().max(132)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(?:png|jpe?g)$/i).optional(),
+  }).strict(),
+}).strict();
+type CompletionBody = z.infer<typeof CompletionSchema>;
+interface RouteResult { status: number; body: Record<string, unknown>; }
+
+/** Injectable completion side effects used by focused tests; production uses the exact defaults. */
+export interface ApplyCompletionRuntime {
+  reserve: typeof reserveApplyCapability;
+  consume: typeof consumeApplyCapability;
+  release: typeof releaseApplyCapability;
+  runCli: typeof runApplyCli;
+  removeWorkspace: typeof removeApplyWorkspace;
+  persistConfirmation: typeof persistApplyConfirmationArtifact;
+  getRun: typeof getApplyRunByTask;
+  transitionRun: typeof transitionApplyRun;
 }
 
+const DEFAULT_COMPLETION_RUNTIME: ApplyCompletionRuntime = {
+  reserve: reserveApplyCapability,
+  consume: consumeApplyCapability,
+  release: releaseApplyCapability,
+  runCli: runApplyCli,
+  removeWorkspace: removeApplyWorkspace,
+  persistConfirmation: persistApplyConfirmationArtifact,
+  getRun: getApplyRunByTask,
+  transitionRun: transitionApplyRun,
+};
+
+/** @description Constant-time authentication for internal dispatch and queue-control callers. */
 function serviceSecretOk(req: Request): boolean {
-  const secret = (process.env.SWARM_SERVICE_SECRET || '').trim();
-  return secret.length > 0 && String(req.header('x-service-secret') || '').trim() === secret;
+  const secret = String(process.env.SWARM_SERVICE_SECRET || '').trim();
+  return secret.length > 0 && timingSafeSecretEquals(req.header('x-service-secret'), secret);
 }
 
-export function createApplyIngestRoutes(ctx: AppContext): Router {
-  const router = Router();
+/** @description Reject an internal route before parsing its asserted operational subject. */
+function requireService(req: Request, res: Response): boolean {
+  if (serviceSecretOk(req)) return true;
+  res.status(401).json({ error: 'unauthorized' });
+  return false;
+}
 
-  // ── POST /dispatch — bot/ticket trigger (service-secret): gather the ready job + dispatch to the
-  //    desktop worker. Body: { userSub, ticketId?, postingId? }. Mirrors /api/apply-operator/submit
-  //    for callers that authenticate with the shared secret instead of an OIDC session. When postingId
-  //    is present (a durable per-résumé job-apply ticket) THAT specific packet is applied; omitted →
-  //    the legacy "newest generated first" behaviour. ─────────────────────────────────────────────
-  router.post('/dispatch', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
+/** @description Read a nonblank exact subject while preserving every identity byte. */
+function exactSubject(value: unknown): string | null {
+  try { return requireExactUserSubject(value); }
+  catch { return null; }
+}
+
+/** @description Internal service-triggered single-job dispatch handler. */
+function dispatchHandler(ctx: AppContext): RequestHandler {
+  return (req, res) => void (async () => {
+    if (!requireService(req, res)) return;
+    const assertedUserSub = exactSubject(req.body?.userSub);
     const ticketId = req.body?.ticketId ? String(req.body.ticketId) : undefined;
+    if (ticketId) {
+      const ticket = await runWithSystemIdentity(() => ctx.ticketService.getTicket(ticketId));
+      if (!ticket) { res.status(404).json({ error: 'Apply ticket not found' }); return; }
+      const userSub = exactSubject(ticket.ownerSub);
+      if (!userSub || (assertedUserSub !== null && assertedUserSub !== userSub)) {
+        res.status(409).json({ error: 'Apply ticket owner binding mismatch' });
+        return;
+      }
+      const metadata = (ticket.metadata ?? {}) as Record<string, unknown>;
+      const postingId = Number(metadata.postingId) || undefined;
+      const assertedPostingId = Number(req.body?.postingId) || undefined;
+      if (postingId && assertedPostingId && postingId !== assertedPostingId) {
+        res.status(409).json({ error: 'Apply ticket posting binding mismatch' });
+        return;
+      }
+      const clientId = typeof metadata.targetRemoteClientId === 'string'
+        ? metadata.targetRemoteClientId : undefined;
+      const authorization = postingId
+        ? applySubmitAuthorizationFromMetadata(metadata, { ticketId, userSub, postingId })
+        : FINAL_SUBMIT_DENIED;
+      const result = await gatherAndDispatch(ctx, userSub, ticketId, postingId, clientId, authorization);
+      res.status(result.status).json(result.body);
+      return;
+    }
+    if (!assertedUserSub) { res.status(400).json({ error: 'userSub required' }); return; }
     const postingId = Number(req.body?.postingId) || undefined;
-    // The ticket's chosen leaf node (from metadata.targetRemoteClientId), forwarded by the dispatcher.
-    const targetRemoteClientId = req.body?.targetRemoteClientId ? String(req.body.targetRemoteClientId) : undefined;
-    if (!userSub) { res.status(400).json({ error: 'userSub required' }); return; }
-    const r = await gatherAndDispatch(ctx, userSub, ticketId, postingId, targetRemoteClientId);
-    res.status(r.status).json(r.body);
-  });
+    const clientId = req.body?.targetRemoteClientId ? String(req.body.targetRemoteClientId) : undefined;
+    const result = await gatherAndDispatch(
+      ctx, assertedUserSub, undefined, postingId, clientId, FINAL_SUBMIT_DENIED,
+    );
+    res.status(result.status).json(result.body);
+  })();
+}
 
-  // ── POST /enqueue — file ONE durable job-apply ticket for a specific packet-ready posting
-  //    (service-secret). This is the durable, restart-surviving "auto submit this résumé" action:
-  //    the queue manager dispatches the ticket to the desktop node, which applies + reports to
-  //    /ingest. Body: { userSub, postingId, company?, title?, url?, location? }. ──────────────────
-  router.post('/enqueue', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
+/** @description Internal durable single-ticket enqueue handler. */
+function enqueueHandler(ctx: AppContext): RequestHandler {
+  return (req, res) => void (async () => {
+    if (!requireService(req, res)) return;
+    const userSub = exactSubject(req.body?.userSub);
     if (!userSub) { res.status(400).json({ error: 'userSub required' }); return; }
-    const r = await enqueueApplyTicket(ctx, userSub, {
+    const result = await enqueueApplyTicket(ctx, userSub, {
       postingId: Number(req.body?.postingId),
       company: req.body?.company ? String(req.body.company) : undefined,
       title: req.body?.title ? String(req.body.title) : undefined,
@@ -103,190 +167,282 @@ export function createApplyIngestRoutes(ctx: AppContext): Router {
       location: req.body?.location ? String(req.body.location) : undefined,
       targetRemoteClientId: req.body?.targetRemoteClientId ? String(req.body.targetRemoteClientId) : undefined,
     });
-    res.status(r.ok ? (r.deduped ? 200 : 201) : 400).json(r);
-  });
+    res.status(result.ok ? (result.deduped ? 200 : 201) : 400).json(result);
+  })();
+}
 
-  // ── POST /enqueue-queue — bulk mint one durable ticket per packet-ready posting (service-secret).
-  //    The durable replacement for the in-memory apply-batch-runner: the whole backlog becomes
-  //    persisted tickets worked one-at-a-time. Body: { userSub, limit? }. ────────────────────────
-  router.post('/enqueue-queue', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
+/** @description Internal durable queue expansion handler. */
+function enqueueQueueHandler(ctx: AppContext): RequestHandler {
+  return (req, res) => void (async () => {
+    if (!requireService(req, res)) return;
+    const userSub = exactSubject(req.body?.userSub);
     if (!userSub) { res.status(400).json({ error: 'userSub required' }); return; }
     const limit = Number(req.body?.limit) || 200;
-    const targetRemoteClientId = req.body?.targetRemoteClientId ? String(req.body.targetRemoteClientId) : undefined;
-    const r = await enqueueApplyQueue(ctx, userSub, limit, targetRemoteClientId);
-    logger.info({ userSub, created: r.created, deduped: r.deduped }, 'apply enqueue-queue requested');
-    res.status(r.ok ? 202 : 400).json(r);
-  });
+    const clientId = req.body?.targetRemoteClientId ? String(req.body.targetRemoteClientId) : undefined;
+    const result = await enqueueApplyQueue(ctx, userSub, limit, clientId);
+    logger.info({ userSub, created: result.created, deduped: result.deduped }, 'apply enqueue-queue requested');
+    res.status(result.ok ? 202 : (result.denialReason ? 403 : 400)).json(result);
+  })();
+}
 
-  // ── POST /email-code — the desktop worker asks the CONTROLLER to read the newest ATS
-  //    verification code from the applicant's connected Gmail (Greenhouse/ATS human-check gate).
-  //    The box has no DB/SESSION_SECRET, and oshal_connections is force-RLS, so the controller
-  //    resolves the caller's OWN google access token here (RLS-safe: runWithRequestIdentity sets
-  //    oshal.current_sub, ctx.pool is the GUC-wrapped pool → the token broker sees the row) and
-  //    runs the email-code fetcher with it. Service-secret authed (the box is not OIDC). ─────────
-  router.post('/email-code', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
-    if (!userSub) { res.status(400).json({ error: 'userSub required' }); return; }
-    try {
-      const result = await runWithRequestIdentity({ sub: userSub, isOperator: false }, async () => {
-        const creds = await resolveBotCreds(ctx.pool, userSub, ['google']);
-        const token = creds.OSHAL_CRED_GOOGLE;
-        if (!token) return { code: null, note: 'no google connection for this user' };
-        // The CLI reads OSHAL_CRED_GOOGLE directly (resolveProvidedToken) — no DB, RLS-safe.
-        return await runApplyCli(userSub, ['email-code'], { timeoutMs: 25000, extraEnv: { OSHAL_CRED_GOOGLE: token } });
-      });
-      const body = (result && typeof result === 'object') ? result as Record<string, unknown> : { code: null };
-      logger.info({ userSub, found: Boolean(body.code) }, 'apply email-code fetch');
-      res.json(body);
-    } catch (err) {
-      logger.error({ err, userSub }, 'apply email-code fetch failed');
-      res.status(500).json({ code: null, error: err instanceof Error ? err.message : 'email-code failed' });
-    }
-  });
+/** @description Register service-authenticated dispatch and durable enqueue operations. */
+function registerDispatchRoutes(router: Router, ctx: AppContext): void {
+  router.post('/dispatch', dispatchHandler(ctx));
+  router.post('/enqueue', enqueueHandler(ctx));
+  router.post('/enqueue-queue', enqueueQueueHandler(ctx));
+}
 
-  // ── Autonomous batch (service-secret): start/stop/status the hands-off apply loop that works the
-  //    user's whole queue sequentially with no external script or human supervision. ───────────────
-  // SUPERSEDED (2026-07-21 cutover): this used to spin the in-memory apply-batch-runner, a second
-  // apply rail that died on every api restart and drove the same desktop as the durable ticket queue.
-  // It now mints durable job-apply tickets instead, so there is exactly ONE rail and an old caller
-  // gets the restart-surviving behaviour automatically.
-  router.post('/batch/start', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
+/** @description Register compatibility batch controls backed by durable ticket enqueue. */
+function registerBatchRoutes(router: Router, ctx: AppContext): void {
+  router.post('/batch/start', (req, res) => void (async () => {
+    if (!requireService(req, res)) return;
+    const userSub = exactSubject(req.body?.userSub);
     if (!userSub) { res.status(400).json({ error: 'userSub required' }); return; }
-    const limit = Number(req.body?.limit) || 200;
-    const r = await enqueueApplyQueue(ctx, userSub, limit);
-    logger.info({ userSub, limit, created: r.created, deduped: r.deduped }, 'apply batch start -> durable ticket mint (in-memory runner superseded)');
-    res.status(202).json({ ...r, superseded: 'the in-memory batch runner was replaced by durable job-apply tickets' });
-  });
-  router.post('/batch/stop', (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
+    const result = await enqueueApplyQueue(ctx, userSub, Number(req.body?.limit) || 200);
+    res.status(result.ok ? 202 : 403).json({ ...result, superseded: 'durable job-apply tickets' });
+  })());
+  router.post('/batch/stop', (req, res) => {
+    if (!requireService(req, res)) return;
+    const userSub = exactSubject(req.body?.userSub);
     if (!userSub) { res.status(400).json({ error: 'userSub required' }); return; }
     res.json({ ok: true, stopped: stopApplyBatch(userSub) });
   });
-  router.get('/batch/status', (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.query?.userSub ? String(req.query.userSub) : '';
+  router.get('/batch/status', (req, res) => {
+    if (!requireService(req, res)) return;
+    const userSub = exactSubject(req.query?.userSub);
     if (!userSub) { res.status(400).json({ error: 'userSub required' }); return; }
     res.json({ state: getApplyBatchStatus(userSub) });
   });
+}
 
-  // ── Site-credentials vault (service-secret): store + retrieve the user's per-employer ATS account
-  //    (Workday/Lever/iCIMS/BrassRing need an account per tenant). AES-256-GCM at rest, FORCE-RLS
-  //    ats_site_credentials, RLS-satisfied via runWithRequestIdentity (oshal.current_sub) + ctx.pool.
-  //    codex calls /site-cred/get on a login wall; /site-cred stores (or generates) one. ───────────
-  router.post('/site-cred', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
-    const site = req.body?.site ? siteHost(String(req.body.site)) : '';
-    const username = req.body?.username ? String(req.body.username) : '';
-    const family = req.body?.family ? String(req.body.family).slice(0, 24) : null;
-    const generate = req.body?.generate === true || req.body?.generate === 'true';
-    const password = generate || !req.body?.password ? siteCreds.generatePassword(20) : String(req.body.password);
-    if (!userSub || !site || !username) { res.status(400).json({ error: 'userSub, site, username required' }); return; }
-    try {
-      await runWithRequestIdentity({ sub: userSub, isOperator: false }, () => ctx.pool.query(
-        `INSERT INTO ats_site_credentials (user_sub, site, ats_family, username, password_enc)
-           VALUES ($1,$2,$3,$4,$5)
-         ON CONFLICT (user_sub, site) DO UPDATE SET
-           username=EXCLUDED.username, password_enc=EXCLUDED.password_enc,
-           ats_family=COALESCE(EXCLUDED.ats_family, ats_site_credentials.ats_family), updated_at=NOW()`,
-        [userSub, site, family, username, siteCreds.encrypt(password)]));
-      logger.info({ userSub, site, generated: generate }, 'site-cred stored');
-      // Return the password ONLY when we just generated it (codex needs it to register the account).
-      res.json({ ok: true, site, username, ...(generate ? { password } : {}) });
-    } catch (err) {
-      logger.error({ err, userSub, site }, 'site-cred store failed');
-      res.status(500).json({ error: err instanceof Error ? err.message : 'store failed' });
-    }
-  });
-  router.post('/site-cred/get', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
-    const site = req.body?.site ? siteHost(String(req.body.site)) : '';
-    if (!userSub || !site) { res.status(400).json({ error: 'userSub, site required' }); return; }
-    try {
-      const row = await runWithRequestIdentity({ sub: userSub, isOperator: false }, () => ctx.pool.query(
-        `SELECT username, password_enc FROM ats_site_credentials WHERE user_sub=$1 AND site=$2 AND status='active' LIMIT 1`,
-        [userSub, site]));
-      if (!row.rows[0]) { res.json({ found: false, site }); return; }
-      res.json({ found: true, site, username: row.rows[0].username, password: siteCreds.decrypt(row.rows[0].password_enc) });
-    } catch (err) {
-      logger.error({ err, userSub, site }, 'site-cred get failed');
-      res.status(500).json({ found: false, error: err instanceof Error ? err.message : 'get failed' });
-    }
-  });
+/** @description Retire model-driven endpoints that formerly exposed global-secret user selection. */
+function registerRetiredInteractiveRoutes(router: Router): void {
+  const retired: RequestHandler = (_req, res) => {
+    res.status(410).json({ error: 'retired: interactive Apply callbacks cannot access email, credentials, or progress storage' });
+  };
+  router.post('/email-code', retired);
+  router.post('/site-cred', retired);
+  router.post('/site-cred/get', retired);
+  router.post('/shot', retired);
+}
 
-  // ── POST /shot — a PROGRESS BEAT from the desktop worker mid-submission (service-secret): a short
-  //    caption and, optionally, the screenshot it just looked at. Append-only per ticket. This is the
-  //    only channel the operator has into a run: /ingest fires once at the very end, so without this
-  //    an eight-minute submission is eight minutes of nothing. Deliberately best-effort — a failed
-  //    beat returns 200 with recorded:false so the worker NEVER aborts a real application over
-  //    telemetry. Body: { ticketId, label, note?, imageBase64? }. ──────────────────────────────────
-  router.post('/shot', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const ticketId = req.body?.ticketId ? String(req.body.ticketId) : '';
-    const label = req.body?.label ? String(req.body.label) : '';
-    if (!ticketId) { res.status(400).json({ error: 'ticketId required' }); return; }
-    const beat = await recordApplyBeat({
-      ticketId,
-      label,
-      note: req.body?.note ? String(req.body.note) : undefined,
-      imageBase64: req.body?.imageBase64 ? String(req.body.imageBase64) : undefined,
+/** @description Ensure an in-memory watchdog, when present, names the exact durable capability. */
+function currentRunMatches(claim: ApplyCapabilityClaim): boolean {
+  const exact = applyInFlight.get(claim.taskId);
+  if (exact && (exact.ticketId !== claim.ticketId || exact.userSub !== claim.userSub || exact.postingId !== claim.postingId)) return false;
+  const ticketRun = findByTicket(claim.ticketId);
+  return !ticketRun || ticketRun.taskId === claim.taskId;
+}
+
+interface QueueRecordResult {
+  accepted: boolean;
+  applicationSource: string | null;
+  confirmationPath: string | null;
+  confirmationSha256: string | null;
+}
+
+/** @description Persist one outcome and accept verified provenance only for a retained artifact. */
+async function recordQueueOutcome(
+  runtime: ApplyCompletionRuntime,
+  claim: ApplyCapabilityClaim,
+  run: ApplyRunRecord,
+  result: string,
+  note: string,
+  confirmationFile?: string,
+): Promise<QueueRecordResult> {
+  const retained = result === 'applied'
+    ? runtime.persistConfirmation(claim.userSub, claim.taskId, confirmationFile) : null;
+  const source = result === 'applied'
+    ? (retained ? 'verified-submission' : 'worker-reported') : null;
+  const args = ['queue', 'record', String(claim.postingId), result, '--note', note];
+  if (source) args.push('--source', source, '--task', claim.taskId);
+  if (retained) args.push('--confirmation', retained.path);
+  args.push('--run-id', run.runId, '--claim-token', run.claimToken);
+  const output = await runtime.runCli(claim.userSub, args, { timeoutMs: 30000 });
+  if (!output || typeof output !== 'object') return {
+    accepted: false,
+    applicationSource: source,
+    confirmationPath: retained?.path ?? null,
+    confirmationSha256: retained?.sha256 ?? null,
+  };
+  const row = output as Record<string, unknown>;
+  const accepted = row.ok === true && Number(row.posting_id) === claim.postingId
+    && row.status === result && row.application_source === source
+    && row.application_task_id === (source ? claim.taskId : null)
+    && (source !== 'verified-submission' || row.confirmation_verified === true);
+  return {
+    accepted,
+    applicationSource: source,
+    confirmationPath: retained?.path ?? null,
+    confirmationSha256: retained?.sha256 ?? null,
+  };
+}
+
+/** @description Resolve the exact owner ticket only after the queue outcome is durable. */
+async function resolveApplyTicket(
+  ctx: AppContext,
+  claim: ApplyCapabilityClaim,
+  result: string,
+  applicationSource: string | null,
+  ledgerState: ApplyRunRecord['state'],
+): Promise<void> {
+  if (!claim.settleTicket) return;
+  const status = ledgerState === 'submitted_verified'
+    ? 'complete' : result === 'dismissed' ? 'cancelled' : 'customer_action';
+  await runWithRequestIdentity({ sub: claim.userSub, isOperator: false }, () =>
+    ctx.ticketService.updateStatus(claim.ticketId, status, {
+      source: 'apply-trusted-completion', taskId: claim.taskId,
+      postingId: claim.postingId, generation: claim.generation, result, applicationSource,
+      applyRunState: ledgerState,
+    }),
+  );
+}
+
+/** @description Best-effort post-commit trace plus immediate deletion of staged applicant PII. */
+function finishApplyRun(runtime: ApplyCompletionRuntime, claim: ApplyCapabilityClaim, result: string, note: string): void {
+  clearInFlight(claim.taskId);
+  void runtime.removeWorkspace(claim.taskId);
+  void runtime.runCli(claim.userSub, ['trace'], {
+    timeoutMs: 20000,
+    extraEnv: {
+      APPLY_POSTING_ID: String(claim.postingId), APPLY_RESULT: result,
+      APPLY_HOW: 'desktop', APPLY_BLOCKER: result === 'applied' ? '' : note,
+    },
+  });
+}
+
+/** @description Release a retryable claim without hiding the original processing failure. */
+async function releaseClaim(ctx: AppContext, runtime: ApplyCompletionRuntime, claim: ApplyCapabilityClaim): Promise<void> {
+  try { await runtime.release(ctx.pool, claim); }
+  catch (error) { logger.error({ err: error, taskId: claim.taskId }, 'apply completion claim release failed'); }
+}
+
+/** @description Require the capability and ledger to name the same immutable task/owner/work. */
+function runMatchesClaim(run: ApplyRunRecord | null, claim: ApplyCapabilityClaim): run is ApplyRunRecord {
+  return Boolean(run && run.taskId === claim.taskId && run.ownerSub === claim.userSub
+    && run.ticketId === claim.ticketId && run.postingId === claim.postingId
+    && run.workerClientId === claim.clientId);
+}
+
+/** @description CAS the active run to its evidence-derived terminal state. */
+async function settleApplyRun(
+  ctx: AppContext,
+  runtime: ApplyCompletionRuntime,
+  run: ApplyRunRecord,
+  result: string,
+  recorded: QueueRecordResult,
+  note: string,
+): Promise<ApplyRunRecord | null> {
+  let current = run;
+  const expectedTerminal = result === 'applied'
+    ? recorded.confirmationPath && recorded.confirmationSha256
+      ? 'submitted_verified'
+      : 'unknown_outcome'
+    : 'failed';
+  // The queue recorder is idempotent for this exact run/task. If a prior callback committed the
+  // ledger and then lost the ticket/capability acknowledgement, let the retry finish those remaining
+  // projections without replaying an illegal terminal transition.
+  if (current.state === expectedTerminal) return current;
+  if (current.state === 'queued_to_worker' || current.state === 'acknowledged') {
+    const running = await runtime.transitionRun(ctx.pool, {
+      runId: current.runId,
+      from: [current.state],
+      to: 'running',
     });
-    res.json({ ok: true, recorded: Boolean(beat), seq: beat?.seq ?? null });
+    if (!running) return null;
+    current = running;
+  }
+  if (current.state !== 'running') return null;
+  if (result === 'applied' && recorded.confirmationPath && recorded.confirmationSha256) {
+    return runtime.transitionRun(ctx.pool, {
+      runId: current.runId,
+      from: ['running'],
+      to: 'submitted_verified',
+      result: { result, applicationSource: recorded.applicationSource },
+      confirmationPath: recorded.confirmationPath,
+      confirmationSha256: recorded.confirmationSha256,
+    });
+  }
+  if (result === 'applied') {
+    return runtime.transitionRun(ctx.pool, {
+      runId: current.runId,
+      from: ['running'],
+      to: 'unknown_outcome',
+      result: { result, applicationSource: recorded.applicationSource },
+      failureCode: 'confirmation_evidence_missing',
+      failureDetail: 'The worker reported an application side effect without retained confirmation evidence.',
+    });
+  }
+  return runtime.transitionRun(ctx.pool, {
+    runId: current.runId,
+    from: ['running'],
+    to: 'failed',
+    result: { result },
+    failureCode: `worker_${result}`,
+    failureDetail: note,
   });
+}
 
-  router.post('/ingest', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-
-    const ticketId = req.body?.ticketId ? String(req.body.ticketId) : undefined;
-    const postingId = Number(req.body?.postingId);
-    const userSub = req.body?.userSub ? String(req.body.userSub) : undefined;
-    const result = ALLOWED.has(String(req.body?.result)) ? String(req.body.result) : 'deferred';
-    const note = req.body?.note ? String(req.body.note) : '';
-
-    // 1) clear the 30-min watchdog for this ticket (so it doesn't later escalate a done submission)
-    if (ticketId) { const e = findByTicket(ticketId); if (e) clearInFlight(e.taskId); }
-
-    // 2) record the per-user outcome (queue status + learning trace), OSHAL_USER_SUB-scoped.
-    //    Async + awaited IN ORDER (record before trace, both before ticket resolve) — never
-    //    spawnSync: these two calls blocked the api event loop up to 50s per ingest.
-    if (userSub && Number.isFinite(postingId)) {
-      await runApplyCli(userSub, ['queue', 'record', String(postingId), result, '--note', note], { timeoutMs: 30000 });
-      await runApplyCli(userSub, ['trace'], {
-        timeoutMs: 20000,
-        extraEnv: { APPLY_POSTING_ID: String(postingId), APPLY_RESULT: result, APPLY_HOW: 'desktop', APPLY_BLOCKER: result === 'applied' ? '' : note },
-      });
+/** @description Validate bindings and commit one capability-authenticated terminal outcome. */
+async function processCompletion(ctx: AppContext, runtime: ApplyCompletionRuntime, token: string, body: CompletionBody): Promise<RouteResult> {
+  const claim = await runtime.reserve(ctx.pool, token);
+  if (!claim) return { status: 401, body: { error: 'invalid, expired, busy, or consumed capability' } };
+  const matches = body.taskId === claim.taskId && body.context.generation === claim.generation && currentRunMatches(claim);
+  if (!matches) {
+    await releaseClaim(ctx, runtime, claim);
+    return { status: 409, body: { error: 'stale or mismatched Apply completion' } };
+  }
+  const run = await runtime.getRun(ctx.pool, claim.taskId);
+  if (!runMatchesClaim(run, claim)) {
+    await releaseClaim(ctx, runtime, claim);
+    return { status: 409, body: { error: 'Apply completion does not match the durable run ledger' } };
+  }
+  const result = body.result.result === 'failed' ? 'deferred' : body.result.result;
+  try {
+    const recorded = await recordQueueOutcome(
+      runtime, claim, run, result, body.result.note, body.result.confirmationFile,
+    );
+    if (!recorded.accepted) {
+      await releaseClaim(ctx, runtime, claim);
+      return { status: 503, body: { error: 'queue outcome was not durably recorded', retryable: true } };
     }
+    const terminalRun = await settleApplyRun(ctx, runtime, run, result, recorded, body.result.note);
+    if (!terminalRun) throw new Error('Apply run ledger settlement lost its compare-and-set');
+    await resolveApplyTicket(ctx, claim, result, recorded.applicationSource, terminalRun.state);
+    if (!(await runtime.consume(ctx.pool, claim))) throw new Error('capability settlement lost its reservation');
+    finishApplyRun(runtime, claim, result, body.result.note);
+    logger.info({ taskId: claim.taskId, ticketId: claim.ticketId, postingId: claim.postingId, result }, 'trusted Apply outcome committed');
+    return { status: 200, body: { ok: true, result } };
+  } catch (error) {
+    await releaseClaim(ctx, runtime, claim);
+    logger.error({ err: error, taskId: claim.taskId }, 'trusted Apply outcome failed before settlement');
+    return { status: 503, body: { error: 'Apply completion was not settled', retryable: true } };
+  }
+}
 
-    // 3) resolve the ticket — under the OWNER's identity, not the operator stamp a valid
-    //    X-Service-Secret otherwise inherits (server.ts stamps isOperator for it). Every sibling
-    //    handler in this file already re-enters runWithRequestIdentity; this one did not, which
-    //    made a caller-supplied ticketId an operator-privileged UPDATE of ANY user's ticket.
-    //    Scoping it to the asserted userSub makes RLS refuse a ticket that user does not own.
-    if (ticketId) {
-      const status = result === 'applied' ? 'complete' : (result === 'dismissed' ? 'cancelled' : 'customer_action');
-      if (!userSub) {
-        // The desktop worker always sends userSub (step 2 above cannot run without it). A callback
-        // that omits it has no owner to scope to, so it keeps the legacy ambient context — logged
-        // loudly rather than silently, see the BACKLOG "Machine-write identity" residual.
-        logger.warn({ ticketId, result }, 'ingest: ticket resolve without userSub — running unscoped');
-      }
-      try {
-        await (userSub
-          ? runWithRequestIdentity({ sub: userSub, isOperator: false }, () => ctx.ticketService.updateStatus(ticketId, status))
-          : ctx.ticketService.updateStatus(ticketId, status));
-      } catch (err) { logger.warn({ err, ticketId, result }, 'ingest: ticket update failed'); }
+/** @description Model-hidden trusted completion endpoint; all identity comes from the capability. */
+function completionHandler(ctx: AppContext, runtime: ApplyCompletionRuntime): RequestHandler {
+  return (req, res) => void (async () => {
+    const parsed = CompletionSchema.safeParse(req.body);
+    const capability = readApplyCapabilityHeader(req.header('x-oshal-callback-capability'));
+    if (!parsed.success || !capability) {
+      res.status(400).json({ error: 'invalid trusted completion request' });
+      return;
     }
+    const result = await processCompletion(ctx, runtime, capability, parsed.data);
+    res.status(result.status).json(result.body);
+  })();
+}
 
-    logger.info({ ticketId, postingId, result }, 'apply outcome ingested from desktop worker');
-    res.json({ ok: true, result });
-  });
-
+/**
+ * @description Mount internal Apply controls and the separate task-capability completion endpoint.
+ * Model-driven callbacks cannot use the fleet service secret or assert another user's identifiers.
+ */
+export function createApplyIngestRoutes(ctx: AppContext, runtime: ApplyCompletionRuntime = DEFAULT_COMPLETION_RUNTIME): Router {
+  const router = Router();
+  registerDispatchRoutes(router, ctx);
+  registerBatchRoutes(router, ctx);
+  registerRetiredInteractiveRoutes(router);
+  router.post('/ingest', completionHandler(ctx, runtime));
   return router;
 }

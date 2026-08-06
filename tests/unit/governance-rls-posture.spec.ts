@@ -1,5 +1,13 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pin runtime security-control posture to the flags actually consumed by CSP, connector crypto, rate limiting, and Alertmanager HMAC while retaining the tenant-isolation release-gate coverage.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin default-deny and explicit shared-hkdf connector DEK-failure posture in the governance contract.
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildRlsPostureSnapshot } from '../../src/app/routes/audit-export-routes';
+import { buildRlsPostureSnapshot, buildRuntimeSecurityControls } from '../../src/app/routes/audit-export-routes';
 
 const TABLES = ['tickets', 'workspaces', 'access_audit_log', 'chat_tasks'];
 
@@ -26,6 +34,45 @@ afterEach(() => {
     if (savedEnv[key] === undefined) delete process.env[key];
     else process.env[key] = savedEnv[key];
   }
+});
+
+describe('buildRuntimeSecurityControls', () => {
+  it('reports the real safe defaults without treating report-only or external-only as full enforcement', () => {
+    expect(buildRuntimeSecurityControls({ SESSION_SECRET: 'configured-test-secret' } as NodeJS.ProcessEnv)).toMatchObject({
+      cspEnabled: true,
+      cspMode: 'report-only',
+      cryptoAtRest: true,
+      envelopeCrypto: true,
+      envelopeDekFailure: 'deny',
+      rateLimitEnabled: true,
+      externalRateLimit: true,
+      internalRateLimit: false,
+      expensiveRateLimit: false,
+      alertWebhookHmac: false,
+    });
+  });
+
+  it('uses the current kill switches and opt-in enforcement flags rather than retired aliases', () => {
+    expect(buildRuntimeSecurityControls({
+      OSHAL_CSP: 'off',
+      OSHAL_ENVELOPE_CRYPTO: 'off',
+      OSHAL_ENVELOPE_DEK_FAILURE: 'shared-hkdf',
+      OSHAL_RATE_LIMIT_INTERNAL: 'on',
+      OSHAL_RATE_LIMIT_EXPENSIVE: 'true',
+      ALERT_WEBHOOK_HMAC_SECRET: 'configured',
+      NODE_TLS_REJECT_UNAUTHORIZED: '0',
+    } as NodeJS.ProcessEnv)).toMatchObject({
+      cspEnabled: false,
+      cspMode: 'disabled',
+      cryptoAtRest: false,
+      envelopeCrypto: false,
+      envelopeDekFailure: 'shared-hkdf',
+      internalRateLimit: true,
+      expensiveRateLimit: true,
+      alertWebhookHmac: true,
+      tlsRejectUnauthorized: false,
+    });
+  });
 });
 
 describe('buildRlsPostureSnapshot', () => {

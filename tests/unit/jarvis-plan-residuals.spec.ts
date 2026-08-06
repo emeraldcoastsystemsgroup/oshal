@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the multi-app planner's honesty residuals: plan-decomposes-and-orders (the compiled node order matches the plan, and the user is SHOWN that order including which step pauses for approval), step-failure-does-not-fabricate-synthesis (an escalated plan reports a failure and is never handed to the completed-task summarizer), and chain-cost-lands-on-the-bot (each step is dispatched to the accountable bot node as a full task run, never answered in the controller).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard persisted owner/issuer propagation, trusted-service localhost headers, and the prohibition on unsigned fallback while bot delegation is enforced.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact owner propagation through the canonical base64url trusted-service identity header on workflow localhost fallback.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   compilePlanToProcessDefinition,
   describePlan,
@@ -24,6 +26,7 @@ import type { AppContext } from '@/app/composition/app-context';
 import type { TicketService } from '@/features/ticketing';
 import type { BotNodeClient } from '@/features/agent-management';
 import type { EngineTicketContext } from '@/features/workflow-studio';
+import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 
 /** Inbox → draft → send: ordered, data-dependent, with one outward step. */
 const plan: MultiAppPlan = {
@@ -34,6 +37,11 @@ const plan: MultiAppPlan = {
     { id: 'step3', app: 'social', agentId: 'agent-social', prompt: 'Publish: ${step2}', outward: true },
   ],
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe('plan-decomposes-and-orders', () => {
   it('compiles to the plan\'s own order, with the approval gate immediately before the outward step', () => {
@@ -122,7 +130,12 @@ describe('chain-cost-lands-on-the-bot', () => {
     labels: [],
     provider: 'direct',
     depth: 0,
-    raw: { ticketId: 'ticket-plan-1', title: 'Inbox → post' },
+    raw: {
+      ticketId: 'ticket-plan-1',
+      title: 'Inbox → post',
+      ownerSub: 'auth0|owner-1',
+      metadata: { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: 'https://identity.example.test/' },
+    },
   };
   const ticketService = { updateStatus: async () => undefined } as unknown as TicketService;
 
@@ -149,6 +162,8 @@ describe('chain-cost-lands-on-the-bot', () => {
     expect(calls[0].payload.agentId).toBe('agent-social');
     expect(calls[0].payload.text).toContain('Draft a LinkedIn post');
     expect(calls[0].payload.taskId).toBe('ticket-plan-1');
+    expect(calls[0].payload.userSub).toBe('auth0|owner-1');
+    expect(calls[0].payload.principalIssuer).toBe('https://identity.example.test/');
     expect(result).toEqual({ dispatched: true, response: 'REPLY[agent-social]', agentId: 'agent-social' });
   });
 
@@ -181,5 +196,41 @@ describe('chain-cost-lands-on-the-bot', () => {
     expect(result.dispatched).toBe(false);
     expect(result.response).toBeUndefined();
     expect(result.reason).toBe('no bot resolved');
+  });
+
+  it('never falls back to unsigned localhost execution when delegation is enforced', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const botNodeClient = {
+      async execute() { throw new Error('signed bot unavailable'); },
+      isDelegationEnforced() { return true; },
+    } as unknown as BotNodeClient;
+    const adapter = new EngineServicesAdapter({ botNodeClient, ticketService });
+    const result = await adapter.dispatchAgentPrompt(ticket, {
+      agentId: 'agent-social',
+      prompt: 'Do signed work.',
+    });
+    expect(result).toMatchObject({ dispatched: false, reason: 'signed bot unavailable' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('binds a compatibility localhost fallback to the persisted ticket owner', async () => {
+    vi.stubEnv('SWARM_SERVICE_SECRET', 'plan-residual-service-placeholder');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      JSON.stringify({ success: true, response: 'legacy response' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    const botNodeClient = {
+      async execute() { throw new Error('legacy bot unavailable'); },
+      isDelegationEnforced() { return false; },
+    } as unknown as BotNodeClient;
+    const adapter = new EngineServicesAdapter({ botNodeClient, ticketService });
+    const result = await adapter.dispatchAgentPrompt(ticket, {
+      agentId: 'agent-social',
+      prompt: 'Do compatibility work.',
+    });
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(result.response).toBe('legacy response');
+    expect(headers['x-oshal-user-sub']).toBeUndefined();
+    expect(Buffer.from(headers['X-Oshal-User-Sub-B64'], 'base64url').toString('utf8')).toBe('auth0|owner-1');
   });
 });

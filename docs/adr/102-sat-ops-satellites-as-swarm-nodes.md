@@ -75,3 +75,14 @@ spacecraft simulator instead of ArduPilot SITL).
   exercise gets exercised here — still entirely in sim.
 - A future real-vehicle path (ground-station integration, CCSDS uplink) would be its own ADR
   with its own safety doctrine; nothing in this campaign pre-commits to it.
+
+## Post-acceptance covariance verification (2026-08-05)
+
+NASA 42's calibrated `direct` and `conjugate` quaternion interpretations now share explicit,
+pure adapter boundaries: first compose the table-provided tracker mount out of the complete
+noisy `stQn` sample, then interpret that complete sample. Conjugation is never applied only to
+the nominal attitude. A deterministic 240-fix replay in
+`tests/unit/sat-ops-nasa42-convention.spec.ts` proves that both encodings place the tracker
+2/2/20-arcsec covariance on the same body axes (including off-diagonal terms) and produce the
+same MEKF accept/reject/reinitialize decisions. This is local synthetic evidence; a captured or
+live NASA 42 run forced onto the conjugate branch remains an external referee gate.

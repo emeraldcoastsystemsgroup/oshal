@@ -11,9 +11,9 @@ Through early July 2026 this repo ran CI on GitHub Actions: per-push, then hourl
 The free-minutes pool was exhausted without anyone noticing; runs kept queuing against a billed
 overage and burned real money (~$15) while ALSO failing for weeks — paying for red. On 2026-07-09
 The operator retired automatic cloud CI. After the billing hold was paid the same evening, `ci.yml`
-was restored **manual-only** (`workflow_dispatch` + `pull_request` — never `push:`, never
-`schedule:`); `deploy.yml` and `firetv-android.yml` stayed archived in
-docs/archive/github-actions-retired/.
+was restored **manual-only** and now declares only `workflow_dispatch` — never `push:` or
+`schedule:`. No separate deployment workflow or retired-workflow archive exists in this clean
+trunk. Its Compose smoke is runner-local image/build validation and is always torn down.
 
 The replacement had to preserve the gates, not just cancel the bill. And it had to fit this machine:
 a **shared multi-agent workstation** where the working tree is routinely mid-edit by another agent,
@@ -65,8 +65,8 @@ Actions configuration" — is **[scripts/gha-local.ts](../../scripts/gha-local.t
   Unmapped actions are reported (and fail under `--strict`), never silently dropped.
 - **Secrets come ONLY from the caller** (`--secrets-file` / local env). Nothing is ever fetched.
 - Acceptance-locked against the repo's real workflows: every action in the live `ci.yml` maps
-  (unit test asserts zero `unknown` steps); the archived `deploy.yml` (needs/outputs/if/inputs)
-  plans clean.
+  (unit test asserts zero `unknown` steps). No nonexistent archived workflow is used as acceptance
+  evidence.
 
 ### 3. Non-goals
 

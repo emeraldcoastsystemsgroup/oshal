@@ -36,6 +36,8 @@
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | Feedback-carrying build retry: buildExecutionUserMessage renders a "== RETRY" section when payload.retryFeedback is present, naming the previous attempt's verification findings (e.g. deliverables-directory-empty) with a corrective imperative — converts the blind re-roll into a self-heal (docs/backlog/test-lab.md #2). Non-retry prompts are byte-identical.
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | Docs-only: completed JSDoc on exported members that were missing tags — assemblePromptForAnyBot gained @param/@returns and buildHandoverLayers gained the @param scopeId that had drifted from its signature. No logic change (additive comments only).
+ * 34 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: separate trusted policy/configuration from escaped untrusted ticket, handover, tool, and memory data; append the server-owned user/ticket/tool/scope binding after prompt construction.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: preserve exact envelope subjects and bind memory retrieval to non-operator owner/tenant/workspace context.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -44,6 +46,7 @@ import {
   type MeshEnvelope,
   type PersonaLayer,
   type PersonaLayerStore,
+  type SwarmMemoryAccessContext,
   type SwarmMemoryService,
 } from '@/features/agent-management';
 import { LLMService, resolveUsageCost, type TokenUsage, type CostResult, type SendRequestOptions, type LLMResponse } from '@/features/llm-provider';
@@ -56,6 +59,14 @@ import { buildSwarmAwarenessPrompt, buildMinimalSwarmAwareness } from './swarm-a
 import { buildPhasePersonaOverride } from './phase-override-layer-builder';
 import type { TicketService } from '@/features/ticketing';
 import { deriveExecutionScopeId } from './execution-artifact-scope-service';
+import {
+  assembleContainedPrompt,
+  resolvePromptAuthorityBinding,
+  type PromptAuthorityBinding,
+  type PromptAuthorizationResolver,
+  type TrustedPromptConfiguration,
+} from './prompt-containment';
+import { optionalExactUserSubject } from '@/shared/security/exact-user-subject';
 
 /**
  * @description Proxy wrapper around LLMService that captures token usage from provider responses.
@@ -134,6 +145,8 @@ export interface LLMExecutionHandlerDeps {
   recordCost?: CostRecordFn;
   recordMetrics?: MetricsRecordFn;
   ticketService?: TicketService;
+  /** Server-side resolver for the workload's currently enabled tool names and scopes. */
+  resolvePromptAuthorization?: PromptAuthorizationResolver;
   /**
    * @description Optional per-agent harness override resolver.
    * When provided, the handler calls this before `resolveProvider()`.
@@ -158,7 +171,7 @@ export function createLLMExecutionHandler(
   deps: LLMExecutionHandlerDeps,
 ): (envelope: MeshEnvelope) => Promise<EnvelopeExecutionResult> {
   return async (envelope: MeshEnvelope): Promise<EnvelopeExecutionResult> => {
-    const { resolveProvider, agentProfileRepository, personaLayerStore, swarmMemoryService, handoverManager, personaDir, recordCost, recordMetrics, ticketService, resolveAgentHarness } = deps;
+    const { resolveProvider, agentProfileRepository, personaLayerStore, swarmMemoryService, handoverManager, personaDir, recordCost, recordMetrics, ticketService, resolveAgentHarness, resolvePromptAuthorization } = deps;
     const agentId = envelope.toAgentId;
     const payload = envelope.payload as Record<string, unknown> | undefined;
     const workspaceTaskId = payload?.workspaceTaskId ? String(payload.workspaceTaskId) : undefined;
@@ -168,10 +181,8 @@ export function createLLMExecutionHandler(
     const ticketExternalId = payload?.externalId ? String(payload.externalId) : undefined;
     const originalExternalId = typeof originalTicket?.externalId === 'string' ? originalTicket.externalId : undefined;
     const parentExternalId = typeof originalTicket?.parentExternalId === 'string' ? originalTicket.parentExternalId : undefined;
-    const ownerSub = readOptionalString(payload?.userSub)
-      ?? readOptionalString(payload?.ownerSub)
-      ?? readOptionalString(originalTicket?.ownerSub)
-      ?? readOptionalString(originalTicket?.owner_sub);
+    const ownerSub = resolveEnvelopeOwnerSub(payload, originalTicket);
+    const tenantId = resolveEnvelopeTenantId(payload, originalTicket);
     const baseTaskId = workspaceTaskId || originalExternalId || ticketExternalId || `swarm-${envelope.correlationId}`;
     // Filesystem operations use baseTaskId (root workspace folder).
     // Cost/metrics tracking uses taskId with agent suffix for per-agent attribution.
@@ -202,8 +213,10 @@ export function createLLMExecutionHandler(
       if (filePersonaLayer) personaLayers.unshift(filePersonaLayer);
 
       // Swarm memory injection — cross-ticket learnings
-      const swarmMemoryLayer = await buildSwarmMemoryLayer(envelope, swarmMemoryService);
-      if (swarmMemoryLayer) personaLayers.push(swarmMemoryLayer);
+      personaLayers.push(...await buildSwarmMemoryLayers(envelope, swarmMemoryService, {
+        userSub: ownerSub ?? '', tenantId, workspaceId: workspaceFolderId,
+        isOperator: false, allowPublic: true,
+      }));
 
       // RALF handover injection — wet-edge context from previous rounds (scope-aware for IMP-2)
       const handoverLayers = buildHandoverLayers(envelope, agentId, handoverManager, executionScopeId);
@@ -216,6 +229,15 @@ export function createLLMExecutionHandler(
       const userMessage = buildUserMessage(envelope);
       const providerId = profile?.providerId || 'unknown';
       const modelId = (profile?.metadata as Record<string, unknown>)?.modelId as string || 'unknown';
+      const promptAuthority = await resolvePromptAuthorityBinding({
+        userSub: ownerSub ?? null,
+        ticketId: ticketExternalId ?? workspaceFolderId,
+        workloadId: agentId,
+        executionScope: executionScopeId,
+        layers: personaLayers,
+        resolver: resolvePromptAuthorization,
+      });
+      const containedPrompt = assemblePromptForAnyBot(personaLayers, userMessage, promptAuthority);
 
       // Local execution via agent.processMessage() — used by the PM bot
       // on the swarm controller. Worker bots consume their own envelopes
@@ -232,7 +254,7 @@ export function createLLMExecutionHandler(
       const agent = await createAgent({
         profile: profile || buildFallbackProfile(agentId, envelope),
         getProvider: () => capturingProvider,
-        personaLayers,
+        personaLayers: [{ layerType: 'platform', priority: 0, promptFragment: containedPrompt }],
         topology: 'localhost',
         role: 'worker',
       });
@@ -242,7 +264,11 @@ export function createLLMExecutionHandler(
         'Invoking agent for envelope execution (legacy local path)',
       );
 
-      const rawContent = await agent.processMessage(userMessage, workspaceFolderId, executionScopeId);
+      const rawContent = await agent.processMessage(
+        'Execute the contained ticket data under the final server authority binding.',
+        workspaceFolderId,
+        executionScopeId,
+      );
       const content = rawContent;
       const durationMs = Date.now() - execStart;
 
@@ -346,7 +372,12 @@ export function buildTaskLayer(envelope: MeshEnvelope): PersonaLayer {
   }
   appendWorkspaceExecutionNotes(parts, workUnits);
 
-  return { layerType: 'task', priority: 40, promptFragment: parts.join('\n') };
+  return {
+    layerType: 'task',
+    priority: 40,
+    promptFragment: parts.join('\n'),
+    metadata: { promptTrust: 'untrusted-content', contentSource: 'ticket-task-context' },
+  };
 }
 
 /**
@@ -451,21 +482,19 @@ export function buildFallbackProfile(agentId: string, envelope: MeshEnvelope): A
  *
  * Layer composition order (highest priority first):
  *   platform (identity) → session (handovers, memory) → task (work units, criteria)
- * @param personaLayers - Composed persona layers (identity, session, task); sorted by ascending priority so the highest-priority identity leads the block.
- * @param userMessage - The concrete work request, appended after the layers behind a `---` divider so the bot can tell context from ask.
- * @returns The single flattened prompt string, or the bare user message when no layer carries any non-empty text.
+ * @param personaLayers - Composed persona layers classified by server-owned layer type/metadata.
+ * @param userMessage - Raw ticket/user request, always encoded as bounded untrusted data.
+ * @param authority - Final server-derived user, ticket, tool, and scope binding.
+ * @param trustedConfiguration - Optional server-resolved configuration added before untrusted data.
+ * @returns The trust-separated prompt with the immutable authority record last.
  */
-export function assemblePromptForAnyBot(personaLayers: PersonaLayer[], userMessage: string): string {
-  const sorted = [...personaLayers].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
-  const layerTexts = sorted
-    .map((layer) => layer.promptFragment)
-    .filter((text) => text && text.trim().length > 0);
-
-  if (layerTexts.length === 0) {
-    return userMessage;
-  }
-
-  return [...layerTexts, '---', userMessage].join('\n\n');
+export function assemblePromptForAnyBot(
+  personaLayers: PersonaLayer[],
+  userMessage: string,
+  authority?: PromptAuthorityBinding,
+  trustedConfiguration: TrustedPromptConfiguration[] = [],
+): string {
+  return assembleContainedPrompt(personaLayers, userMessage, authority, trustedConfiguration);
 }
 
 /**
@@ -518,6 +547,35 @@ async function recordCostEvent(
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function resolveEnvelopeOwnerSub(
+  payload: Record<string, unknown> | undefined,
+  originalTicket: Record<string, unknown> | undefined,
+): string | undefined {
+  const candidates = [
+    payload?.userSub, payload?.ownerSub, originalTicket?.ownerSub, originalTicket?.owner_sub,
+  ];
+  for (const candidate of candidates) {
+    if (candidate !== undefined && candidate !== null) {
+      return optionalExactUserSubject(candidate, 'swarm envelope ownerSub');
+    }
+  }
+  return undefined;
+}
+
+function resolveEnvelopeTenantId(
+  payload: Record<string, unknown> | undefined,
+  originalTicket: Record<string, unknown> | undefined,
+): string | undefined {
+  const candidate = payload?.tenantId ?? payload?.tenant_id
+    ?? originalTicket?.tenantId ?? originalTicket?.tenant_id;
+  if (candidate === undefined || candidate === null) return undefined;
+  if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 512
+    || /[\u0000-\u001f\u007f-\u009f]/.test(candidate)) {
+    throw new TypeError('swarm envelope tenantId must be exact and control-free');
+  }
+  return candidate;
 }
 
 /**
@@ -616,6 +674,12 @@ export function buildFilePersonaLayer(
           `This file contains your complete identity, role description, perspective, and behavioral guidelines.`,
           `Read it first, internalize it, then respond to the user's message in character.`,
         ].join('\n'),
+        metadata: {
+          serverAuthored: true,
+          contentSource: 'persona-policy',
+          allowedTools: persona.allowedTools,
+          authorizedScopes: [persona.scope, ...Object.keys(persona.authorizations)],
+        },
       };
     }
 
@@ -629,6 +693,12 @@ export function buildFilePersonaLayer(
       layerType: 'platform',
       priority: 5,
       promptFragment: promptSections.join('\n'),
+      metadata: {
+        serverAuthored: true,
+        contentSource: 'persona-policy',
+        allowedTools: persona.allowedTools,
+        authorizedScopes: [persona.scope, ...Object.keys(persona.authorizations)],
+      },
     };
   } catch (err) {
     logger.debug({ err, agentName }, 'No filesystem persona found — using DB persona only');
@@ -684,11 +754,17 @@ export function buildHandoverLayers(
       const ticketTitle = payload?.externalId ? String(payload.externalId) : 'unknown';
       if (handovers.length > 0) {
         const summary = handoverManager.generateSummary(handovers, ticketTitle, phase, round);
-        layers.push({ layerType: 'session', priority: 30, promptFragment: summary });
+        layers.push({
+          layerType: 'session', priority: 30, promptFragment: summary,
+          metadata: { promptTrust: 'untrusted-content', contentSource: 'other-agent-handover' },
+        });
         const previousHandover = handoverManager.readAgentHandover(agentId, workspaceTaskId);
         if (previousHandover) {
           const recall = handoverManager.generateContextRecall(previousHandover, agentId);
-          layers.push({ layerType: 'session', priority: 31, promptFragment: recall });
+          layers.push({
+            layerType: 'session', priority: 31, promptFragment: recall,
+            metadata: { promptTrust: 'untrusted-content', contentSource: 'prior-agent-output' },
+          });
         }
       }
     } catch (err) {
@@ -698,7 +774,14 @@ export function buildHandoverLayers(
 
   if (!isVerification) {
     const instructions = handoverManager.getHandoverInstructions(agentId, phase, round, scopedHandoverFilename);
-    layers.push({ layerType: 'task', priority: 45, promptFragment: instructions });
+    layers.push({
+      layerType: 'task', priority: 45, promptFragment: instructions,
+      metadata: {
+        serverAuthored: true,
+        promptTrust: 'trusted-configuration',
+        contentSource: 'handover-write-policy',
+      },
+    });
   }
   return layers;
 }
@@ -729,7 +812,14 @@ export function buildSwarmAwarenessLayer(
   // Subtasks get minimal awareness to save context budget
   if (isSubtask || phase === 0) {
     const minimal = buildMinimalSwarmAwareness(agentId, ticketTitle);
-    return { layerType: 'platform', priority: 8, promptFragment: minimal };
+    return {
+      layerType: 'platform', priority: 8, promptFragment: minimal,
+      metadata: {
+        serverAuthored: true,
+        promptTrust: 'untrusted-content',
+        contentSource: 'envelope-derived-swarm-awareness',
+      },
+    };
   }
 
   const prompt = buildSwarmAwarenessPrompt({
@@ -743,35 +833,91 @@ export function buildSwarmAwarenessLayer(
     complexity,
   });
 
-  return { layerType: 'platform', priority: 8, promptFragment: prompt };
+  return {
+    layerType: 'platform', priority: 8, promptFragment: prompt,
+    metadata: {
+      serverAuthored: true,
+      promptTrust: 'untrusted-content',
+      contentSource: 'envelope-derived-swarm-awareness',
+    },
+  };
 }
 
 /**
- * @description Queries swarm memory for relevant past experiences and builds a persona layer.
- * Returns null if no relevant context is found or swarm memory is unavailable.
- * @param envelope - Mesh envelope with ticket context
- * @param swarmMemoryService - Optional swarm memory service
- * @returns Persona layer with organizational memory, or null
+ * @description Queries swarm memory and preserves its durable trust classification as
+ * separate persona layers before prompt containment.
+ * @param envelope - Mesh envelope with ticket context.
+ * @param swarmMemoryService - Optional swarm memory service.
+ * @param access - Exact server-derived caller/workspace retrieval boundary.
+ * @returns Zero or more trust-separated memory layers.
  */
-export async function buildSwarmMemoryLayer(
+export async function buildSwarmMemoryLayers(
   envelope: MeshEnvelope,
   swarmMemoryService: SwarmMemoryService | undefined,
-): Promise<PersonaLayer | null> {
-  if (!swarmMemoryService) return null;
+  access?: SwarmMemoryAccessContext,
+): Promise<PersonaLayer[]> {
+  if (!swarmMemoryService) return [];
   try {
     const payload = envelope.payload as Record<string, unknown> | undefined;
     const externalId = payload?.externalId ? String(payload.externalId) : '';
     const workUnits = payload?.workUnits as Array<Record<string, unknown>> | undefined;
     const title = workUnits?.[0]?.title ? String(workUnits[0].title) : externalId;
     const description = workUnits?.map((u) => String(u.description || '')).join(' ') || '';
-    const context = await swarmMemoryService.queryRelevantContext(title, description);
-    if (!context.hasContent) return null;
-    logger.info({ correlationId: envelope.correlationId, memoryCount: context.memoryCount }, 'Injecting swarm memory context');
-    return { layerType: 'session', priority: 35, promptFragment: context.promptBlock };
+    const context = await swarmMemoryService.queryRelevantContext(title, description, 3, access);
+    if (!context.hasContent) return [];
+    logger.info({
+      correlationId: envelope.correlationId,
+      memoryCount: context.memoryCount,
+      trustedCount: context.trustedCount,
+      untrustedCount: context.untrustedCount,
+    }, 'Injecting trust-separated swarm memory context');
+    return memoryContextLayers(context);
   } catch (error) {
     logger.warn({ err: error, correlationId: envelope.correlationId }, 'Swarm memory query failed — continuing without context');
-    return null;
+    return [];
   }
+}
+
+/**
+ * @description Compatibility adapter for callers that still expect one memory layer. Mixed
+ * trust content is deliberately downgraded to untrusted data at this legacy boundary.
+ * @param envelope - Mesh envelope with ticket context.
+ * @param swarmMemoryService - Optional swarm memory service.
+ * @returns One conservative memory layer, or null when memory is unavailable.
+ */
+export async function buildSwarmMemoryLayer(
+  envelope: MeshEnvelope,
+  swarmMemoryService: SwarmMemoryService | undefined,
+): Promise<PersonaLayer | null> {
+  const layers = await buildSwarmMemoryLayers(envelope, swarmMemoryService);
+  if (layers.length === 0) return null;
+  if (layers.length === 1) return layers[0];
+  return memoryLayer(layers.map((layer) => layer.promptFragment).join('\n\n'), 35, false);
+}
+
+function memoryContextLayers(context: {
+  trustedPromptBlock: string;
+  untrustedPromptBlock: string;
+}): PersonaLayer[] {
+  const layers: PersonaLayer[] = [];
+  if (context.trustedPromptBlock) layers.push(memoryLayer(context.trustedPromptBlock, 34, true));
+  if (context.untrustedPromptBlock) layers.push(memoryLayer(context.untrustedPromptBlock, 35, false));
+  return layers;
+}
+
+function memoryLayer(promptFragment: string, priority: number, trusted: boolean): PersonaLayer {
+  return {
+    layerType: 'session',
+    priority,
+    promptFragment,
+    metadata: trusted
+      ? {
+        serverAuthored: true,
+        promptTrust: 'trusted-configuration',
+        contentSource: 'validated-operational-memory',
+      }
+      : { promptTrust: 'untrusted-data', contentSource: 'prior-agent-memory' },
+  };
 }
 
 /**

@@ -6,6 +6,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added end-to-end callback route regression coverage to prove OpenAI Codex OAuth completes on the initiating origin and syncs runtime credentials during repo-root test execution
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Switched callback regression to static route imports so Playwright transpilation resolves TypeScript route modules without raw ESM runtime errors
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The APP_URL fixture follows PLAYWRIGHT_PORT via the shared baseOrigin() helper instead of a hardcoded localhost:3456 (byte-identical under the default env)
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Marked the runtime-sync callback fixture as an exact operator promotion after tenant OAuth isolation
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: prove callback completion writes only non-secret plan/no-approval Cline metadata and empties legacy raw runtime credentials.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Restore absent environment variables by deletion so the callback fixture cannot leak literal "undefined" values into later tests.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: prove exact-operator callback promotion atomically creates the native owner-only live Codex auth source instead of a static shared-seed credential copy.
  */
 
 import fs from 'fs';
@@ -66,19 +70,22 @@ function seedPersistedConfig(outputDir: string): void {
 }
 
 test.describe('OpenAI Codex OAuth callback route', () => {
-  test('completes callback on the initiating origin and syncs runtime credentials', async () => {
+  test('completes callback on the initiating origin without materializing Cline credentials', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-oauth-callback-'));
     const outputDir = path.join(tempRoot, 'output');
     const clineDir = path.join(tempRoot, 'cline');
-    const sharedSeedPath = path.join(tempRoot, 'config-seed', 'secrets.json');
+    const liveAuthPath = path.join(tempRoot, 'codex-live', 'auth.json');
+    const retiredSharedSeedPath = path.join(tempRoot, 'config-seed', 'secrets.json');
     const originalFetch = global.fetch;
     const originalEnv = {
       MOCK_OIDC: process.env.MOCK_OIDC,
       CONFIG_OUTPUT_DIR: process.env.CONFIG_OUTPUT_DIR,
       CLINE_CONFIG_DIR: process.env.CLINE_CONFIG_DIR,
       APP_URL: process.env.APP_URL,
-      OPENAI_CODEX_SHARED_SEED_PATH: process.env.OPENAI_CODEX_SHARED_SEED_PATH,
+      CODEX_AUTH_SOURCE_PATH: process.env.CODEX_AUTH_SOURCE_PATH,
       LLM_MODEL: process.env.LLM_MODEL,
+      OSHAL_OPERATOR_SUBS: process.env.OSHAL_OPERATOR_SUBS,
+      ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
     };
 
     let server: import('http').Server | null = null;
@@ -92,10 +99,18 @@ test.describe('OpenAI Codex OAuth callback route', () => {
       process.env.CONFIG_OUTPUT_DIR = outputDir;
       process.env.CLINE_CONFIG_DIR = clineDir;
       process.env.APP_URL = appUrl;
-      process.env.OPENAI_CODEX_SHARED_SEED_PATH = sharedSeedPath;
+      process.env.CODEX_AUTH_SOURCE_PATH = liveAuthPath;
       process.env.LLM_MODEL = 'gpt-5.3-codex';
+      process.env.OSHAL_OPERATOR_SUBS = 'mock-user-001';
+      process.env.ENCRYPTION_KEY = 'codex-callback-test-encryption-key';
 
       seedPersistedConfig(outputDir);
+      fs.mkdirSync(path.join(clineDir, 'data'), { recursive: true });
+      fs.writeFileSync(
+        path.join(clineDir, 'data', 'secrets.json'),
+        JSON.stringify({ 'openai-codex-oauth-credentials': 'legacy-runtime-token' }),
+        'utf8',
+      );
 
       global.fetch = async (input: URL | RequestInfo, init?: RequestInit) => {
         if (String(input).includes('https://auth.openai.com/oauth/token')) {
@@ -137,7 +152,9 @@ test.describe('OpenAI Codex OAuth callback route', () => {
       const authorizationUrl = new URL(startPayload.authUrl);
       const state = authorizationUrl.searchParams.get('state');
       expect(state).toBeTruthy();
-      expect(authorizationUrl.searchParams.get('redirect_uri')).toBe('http://localhost:1455/auth/callback');
+      const expectedRedirect = new URL('/auth/callback', appUrl);
+      expectedRedirect.port = '1455';
+      expect(authorizationUrl.searchParams.get('redirect_uri')).toBe(expectedRedirect.toString());
 
       const callbackResponse = await fetch(
         `${baseUrl}/api/openai-codex/oauth/callback?state=${encodeURIComponent(state || '')}&code=fake-code-123`,
@@ -153,16 +170,37 @@ test.describe('OpenAI Codex OAuth callback route', () => {
       expect(statusPayload.authenticated).toBe(true);
       expect(statusPayload.email).toBe('dev@example.com');
 
+      const liveAuth = JSON.parse(fs.readFileSync(liveAuthPath, 'utf-8')) as Record<string, any>;
+      expect(liveAuth.auth_mode).toBe('chatgpt');
+      expect(liveAuth.OPENAI_API_KEY).toBeNull();
+      expect(liveAuth.tokens.access_token).toBe(FAKE_JWT);
+      expect(liveAuth.tokens.refresh_token).toBe('refresh-token-123');
+      expect(liveAuth.tokens.id_token).toBe(FAKE_JWT);
+      expect(fs.existsSync(retiredSharedSeedPath)).toBe(false);
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(liveAuthPath).mode & 0o777).toBe(0o600);
+      }
+
       const clineSecrets = JSON.parse(
         fs.readFileSync(path.join(clineDir, 'data', 'secrets.json'), 'utf-8'),
       ) as Record<string, string>;
-      expect(Object.keys(clineSecrets)).toContain('openai-codex-oauth-credentials');
+      expect(clineSecrets).toEqual({});
 
       const runtimeConfig = JSON.parse(
         fs.readFileSync(path.join(clineDir, 'config.json'), 'utf-8'),
       ) as Record<string, unknown>;
-      expect(runtimeConfig.provider).toBe('openai-codex');
+      // The OSHAL provider id maps to Cline's native provider id in the generated file.
+      expect(runtimeConfig.provider).toBe('openai-native');
       expect(runtimeConfig.model).toBe('gpt-5.3-codex');
+      expect(runtimeConfig.autoApprove).toBe(false);
+
+      const globalState = JSON.parse(
+        fs.readFileSync(path.join(clineDir, 'data', 'globalState.json'), 'utf-8'),
+      ) as Record<string, any>;
+      expect(globalState.mode).toBe('plan');
+      expect(globalState.yoloModeToggled).toBe(false);
+      expect(globalState.autoApprovalSettings.enabled).toBe(false);
+      expect(Object.values(globalState.autoApprovalSettings.actions).every((value) => value === false)).toBe(true);
     } finally {
       global.fetch = originalFetch;
 
@@ -178,12 +216,10 @@ test.describe('OpenAI Codex OAuth callback route', () => {
         });
       }
 
-      process.env.MOCK_OIDC = originalEnv.MOCK_OIDC;
-      process.env.CONFIG_OUTPUT_DIR = originalEnv.CONFIG_OUTPUT_DIR;
-      process.env.CLINE_CONFIG_DIR = originalEnv.CLINE_CONFIG_DIR;
-      process.env.APP_URL = originalEnv.APP_URL;
-      process.env.OPENAI_CODEX_SHARED_SEED_PATH = originalEnv.OPENAI_CODEX_SHARED_SEED_PATH;
-      process.env.LLM_MODEL = originalEnv.LLM_MODEL;
+      for (const [name, value] of Object.entries(originalEnv)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
 
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

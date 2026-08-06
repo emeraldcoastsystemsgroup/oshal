@@ -21,9 +21,8 @@ describe('risky write guards', () => {
 
   it('wires fail-closed guard labels across risky write routes', () => {
     // (email-routes' HTTP /send 428 gate moved to the store package with the email-summarizer
-    //  carve, ADR-085 Wave 3, its 'no-send' guard intact. Like social's no-post, no-send is
-    //  NOT exclusive to the carved app — the kernel-resident Twilio CLI (the comms bot's
-    //  phone/text leg) keeps its own no-send confirm gate, proven in the CLI arm below.)
+    //  carve, ADR-085 Wave 3, its 'no-send' guard intact. The former generic Twilio CLI is
+    //  now a fail-closed tombstone, proven in the retirement arm below.)
     // (payments-routes AND finance-routes moved to store packages with their no-charge
     //  guards intact, ADR-085 — the kernel owns no charge routes.)
     // (social-routes moved to the store package with its 'no-post' guard intact, ADR-085
@@ -35,10 +34,7 @@ describe('risky write guards', () => {
     //  ADR-085 Wave 2 — the kernel owns no device-write routes.)
   });
 
-  it('blocks Twilio sms/call sends at the CLI before token or DB lookup (kernel no-send owner)', () => {
-    // The email app's /send route carved to the store package (ADR-085 Wave 3); the kernel's
-    // surviving no-send owner is the comms bot's phone/text CLI — confirm-gated exactly like
-    // the SmartThings device-write CLI below.
+  it('retires the generic Twilio CLI before credential, DB, or network access', () => {
     const result = spawnSync(process.execPath, [
       resolve(root, 'scripts/oshal-twilio.js'),
       'sms',
@@ -46,13 +42,16 @@ describe('risky write guards', () => {
       'guard probe — must not send',
     ], {
       cwd: root,
-      env: { ...process.env, OSHAL_MESSAGE_SEND_CONFIRM: '', OSHAL_ALLOW_MESSAGE_SEND: '', OSHAL_CRED_TWILIO: '' },
       encoding: 'utf8',
     });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('no-send');
+    expect(result.status).toBe(73);
+    expect(result.stderr).toContain('retired');
     expect(result.stderr).toContain('Nothing was sent');
+    const retiredSource = source('scripts/oshal-twilio.js');
+    expect(retiredSource).not.toContain('process.env');
+    expect(retiredSource).not.toContain("require('pg')");
+    expect(retiredSource).not.toContain('fetch(');
   });
 
   it('keeps the header-injection fence in the kernel sendGmail MIME builder', () => {

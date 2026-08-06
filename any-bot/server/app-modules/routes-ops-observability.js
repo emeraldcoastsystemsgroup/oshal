@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from app.js (1000-line cap decomposition): docker service map + proxy-health, swarm logs, PHASE_15 redis visibility, QM activity, bot restart, dynamic dashboard nodes, dashboard test runner
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | /api/qm/activity stops lying about three maps it had the data for: agentTicketMappings was a hardcoded {} behind a "TODO: implement if needed", and cooldowns/locks scanned `qm:cooldown:*` / `qm:lock:*` — prefixes NOTHING in this codebase writes (the real keys are `qm:processed:*` and `qm:task_lock:*`), so the endpoint fetched key lists that were always empty and returned empty objects for live state. The dashboards render those maps, so an operator read "no agent owns any ticket / nothing is in cooldown / no task is locked" while the queue manager was holding all three. Now built from the keyspace: agent -> tickets from the ticket_phase/dispatch records, cooldowns with their real remaining window, locks with their holding agent, and the ticket->task mappings that were fetched and discarded.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed the /api/qm/activity handler (87 lines, three near-identical hand-rolled KEYS/GET/TTL loops) onto one readQmKeyspace reader plus named builders, so the handler is back under the function-size cap and every parse rule is unit-testable in isolation instead of only through a live Redis.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: retire the unauthenticated dashboard test runner; its prefix-only path check allowed traversal to arbitrary JavaScript and the child inherited every bot/controller credential.
  */
 
 const path = require('path');
@@ -848,62 +849,13 @@ function registerOpsObservabilityRoutes(application) {
       }
     });
 
-    // Run functional test suites from dashboard
-    application.app.post('/api/run-tests', async (req, res) => {
-      const { testFile } = req.body;
-      if (!testFile) {
-        return res.status(400).json({ error: 'testFile required' });
-      }
-      // Security: only allow test files in known directories
-      const allowedPrefixes = ['server/tests/', 'tests/'];
-      const isAllowed = allowedPrefixes.some(p => testFile.startsWith(p));
-      if (!isAllowed) {
-        return res.status(403).json({ error: 'Only test files in server/tests/ or tests/ allowed' });
-      }
-      const filePath = path.join(SERVER_ROOT, '..', testFile);
-      const fs = require('fs');
-      if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: `Test file not found: ${testFile}` });
-      }
-      try {
-        const { execFile } = require('child_process');
-        const result = await new Promise((resolve, reject) => {
-          const child = execFile('node', [filePath], {
-            timeout: 60000,
-            cwd: path.join(SERVER_ROOT, '..'),
-            env: { ...process.env, FORCE_COLOR: '0' },
-          }, (err, stdout, stderr) => {
-            resolve({
-              exitCode: err ? err.code || 1 : 0,
-              stdout: stdout || '',
-              stderr: stderr || '',
-            });
-          });
-        });
-        res.json({ success: result.exitCode === 0, ...result });
-      } catch (err) {
-        res.json({ success: false, error: err.message });
-      }
+    // Runtime test execution is deliberately unavailable on a deployed bot. Tests run in the
+    // protected CI workflow, where the checkout, environment, and actor are independently gated.
+    application.app.post('/api/run-tests', (_req, res) => {
+      res.status(410).json({ error: 'runtime_test_execution_retired', use: 'protected_ci' });
     });
-
-    // List available test files
-    application.app.get('/api/test-files', (req, res) => {
-      const fs = require('fs');
-      const testDirs = [
-        { dir: path.join(SERVER_ROOT, 'tests'), prefix: 'server/tests/' },
-      ];
-      const testFiles = [];
-      for (const { dir, prefix } of testDirs) {
-        if (fs.existsSync(dir)) {
-          const files = fs.readdirSync(dir).filter(f =>
-            f.endsWith('.test.js') || f.endsWith('.test.mjs')
-          );
-          for (const f of files) {
-            testFiles.push({ name: f, path: prefix + f });
-          }
-        }
-      }
-      res.json({ success: true, testFiles });
+    application.app.get('/api/test-files', (_req, res) => {
+      res.status(410).json({ error: 'runtime_test_execution_retired', use: 'protected_ci' });
     });
 }
 

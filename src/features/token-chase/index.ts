@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the step-2b debugger corpus read (listRunObservations + DebuggerObservation) — the read-only recorded replay/variant/grade history the debugger view renders (ADR-046 §10)
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the keep-winner → re-baseline loop (BACKLOG "auto keep-winner then re-baseline"): selectWinner + thresholds + the TOKEN_CHASE_AUTO_PROMOTE gate (token-chase-keep-winner), the promotion store + audit + revert (token-chase-promotion-service), the per-run JUDGE spend cap TokenChaseJudgeBudget (TOKEN_CHASE_JUDGE_BUDGET_USD — distinct from the replay-spend TokenChaseBudgetGate), and the optimizer's promoted-lane BaselineOverride
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Export the forward TAIL-replay consumer (ADR-046 §1/§8): TokenChaseTailReplayService.replayForward restages frame N's workspace tree from its content-addressed snapshot, replays N..end on the accountable bot, determinism-gates each frame, and STOPS at the first divergence; pinned reads served, unpinned warned; pre-tail frames single-replay unchanged
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the health-qualified variant replay lane, bounded rotation callback, and non-secret selector evidence contracts used by Token Chase's `free:auto` integration.
  */
 
 export {
@@ -45,6 +46,11 @@ export {
   buildTokenChaseDemoComparison,
   type BaselineOverride,
   type VariantLane,
+  type VariantReplayLane,
+  type VariantLaneRotation,
+  type VariantSelectionTrace,
+  type RotatedVariantReplay,
+  type SavingsRotationStatus,
   type VariantReplayResult,
   type LaneMetrics,
   type OptimizerObservationMeta,

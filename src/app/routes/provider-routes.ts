@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — GET /api/providers returns all available LLM providers
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET /api/providers/access — the embedded LLM providers (any-bot connectors, run under the Cline wrapper / provider registry — no harness wrappers) + per-provider auth kind + whether a key is configured. Powers the Utilities "Bot LLM access" roster.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | GET /api/providers/access now returns models, configKeys, the persisted-secret configured status, the active provider, and each provider's saved model — so the Utilities panel can actually enter keys + pick models, not just display status.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: pooled Codex availability derives from the live vendor auth source or an explicit platform API key, never a stale static config-seed OAuth copy.
  */
 
 import { Router, Request, Response } from 'express';
@@ -17,6 +18,7 @@ import {
   getProvider,
   getDefaultModel,
   getProvidersForAgent,
+  hasLiveCodexAuth,
 } from '@/features/llm-provider';
 import { createChildLogger } from '@/shared/logger';
 
@@ -190,8 +192,8 @@ export interface FreeModel {
 
 /**
  * @description Resolves whether a pooled platform LLM is available to offer keyless users as a
- * "free" option. Backed by the operator's shared Codex login (mirrored into the swarm config-seed)
- * or a platform OPENAI_API_KEY. Returns ONLY availability + provider/model — never any secret value,
+ * "free" option. Backed by the live operator Codex auth source or a platform OPENAI_API_KEY.
+ * Returns ONLY availability + provider/model — never any secret value,
  * so the wizard can show the option without exposing keys.
  * @returns Free-model descriptor; `available:false` when nothing is pooled.
  */
@@ -205,10 +207,7 @@ export function resolveFreeModel(): FreeModel {
     return { available: false, provider, model, label };
   }
 
-  const seedPath = process.env.OPENAI_CODEX_SHARED_SEED_PATH || '/app/config-seed/secrets.json';
-  const seed = readJsonSafe(seedPath);
-  const hasPooledCodex = ['openAiCodexOauthCredentials', 'openai-codex-oauth-credentials']
-    .some((k) => typeof seed[k] === 'string' && (seed[k] as string).trim().length > 0);
+  const hasPooledCodex = hasLiveCodexAuth();
   const hasPlatformKey = !!(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0);
 
   return { available: hasPooledCodex || hasPlatformKey, provider, model, label };

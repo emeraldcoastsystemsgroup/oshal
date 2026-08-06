@@ -95,12 +95,13 @@
     "verify:runtime-schema": "ts-node --project tsconfig.json -r tsconfig-paths/register scripts/governance/verify-runtime-schema-validate-only.ts",
     "evidence:competitive": "ts-node -r tsconfig-paths/register --transpile-only scripts/evidence/competitive-score-evidence.ts",
     "evidence:procurement-saas": "ts-node -r tsconfig-paths/register --transpile-only scripts/evidence/procurement-saas-readiness.ts",
+    "evidence:own-data-live": "ts-node -r tsconfig-paths/register --transpile-only scripts/evidence/prove-own-data-live.ts",
     "evidence:refresh-local": "node scripts/evidence/refresh-local.mjs",
     "dev:session": "ts-node -r tsconfig-paths/register --transpile-only scripts/dev-session.ts",
     "dev:node": "ts-node -r tsconfig-paths/register --transpile-only scripts/dev-node.ts",
     "evidence:nightly": "node scripts/evidence/nightly-refresh.mjs",
     "provision:app-role": "node scripts/governance/provision-app-role.mjs",
-    "connectors:curation-audit": "node scripts/connectors/curation-audit.mjs",
+    "connectors:curation-audit": "tsx scripts/connectors/curation-audit.mjs",
     "connectors:curate": "ts-node -r tsconfig-paths/register --transpile-only scripts/connectors/curate-catalog.ts",
     "connectors:audit-gate": "ts-node -r tsconfig-paths/register --transpile-only scripts/connectors/audit-gate.ts",
     "validate:manifests": "ts-node -r tsconfig-paths/register --transpile-only scripts/validate-manifests.ts",
@@ -218,11 +219,20 @@
     "@babel/core": "^7.29.7",
     "esbuild": "^0.28.1",
     "form-data": "^4.0.6",
+    "ip-address": "10.4.0",
     "joi": "17.13.4",
+    "postcss": "8.5.25",
     "protobufjs": "^7.6.3",
     "qs": "^6.15.2",
+    "socket.io-parser": "4.2.7",
     "ws": "^8.21.0",
     "sharp": "^0.35.3",
+    "exceljs": {
+      "uuid": "11.1.1"
+    },
+    "mavlink-mappings-gen": {
+      "xml2js": "0.6.2"
+    },
     "minimatch@>=10": {
       "brace-expansion": "^5.0.8"
     }

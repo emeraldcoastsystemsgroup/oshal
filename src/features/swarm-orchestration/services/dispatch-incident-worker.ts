@@ -8,6 +8,12 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING (controller half): the RCA pipeline's dispatchToBot now stamps each BotNodeClient.execute with the target's authoritative provider/model/configVersion (pushOnDispatchFields, shared with dispatch-manifest-worker) when OSHAL_PUSH_ON_DISPATCH is on. Fail-open + default OFF → byte-identical legacy dispatch; the localhost /api/send-message fallback is untouched (it hits the inline api, not a bot node).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: entry 2 stripped the dead OpenSearch/graph curl BLOCK but left the STEPS still ordering the worker to "query the graph and OpenSearch … (use curl commands below)" against commands that no longer existed — a self-contradicting prompt. Steps 2/3 now reference the real optional tier conditionally, and the tooling section names the ONE surface that exists (caller-scoped /api/graph, AQL not Cypher, 503 = absent) while saying outright that no OpenSearch and no external graph service is reachable.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): finalizeIncidentByMode (now exported for its guards) consults the optional IncidentAutoApplyHook on a Mode-A verdict — the queue manager threads the alert-triage auto-apply engine in exactly like the cost-governance budget hook (structural interface here, implementation injected at the app layer; FSD same-layer rule). The hook decides apply/park/escalate under the ADR-119 bounds and the finalizer writes whatever status the hook resolved (complete ONLY on verified apply); absent hook, disabled kill switch, or a hook crash = the unchanged Mode-A customer_action disposition. Modes B/C and the no-marker fallback never consult the hook — analysis dispositions are never remediated. The worker prompt's Step 2 now documents the REMEDIATION-CLASS line-2 marker (rca-mode.ts readRcaRemediationClass) a restart-only Mode-A proposal may stamp.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bind incident HTTP delegation to the persisted ticket owner and verified principal issuer instead of executing user-owned work as an ownerless system request.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Prohibit unsigned localhost fallback after a bot-node failure whenever signed HTTP delegation is enforced.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Authenticate the legacy localhost message fallback with the incident ticket owner so machine dispatch cannot select identity from request content.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Carry the incident owner over the canonical base64url trusted-service subject header so case and whitespace remain exact on localhost fallback.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Align incident dispatch with promoted ADR-034 enforcement: provider stamping defaults on and missing authority reaches the bot as a fail-closed marker; explicit flag-off remains the compatibility rollback.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Keep authoritative incident dispatch fail-closed across transport errors by prohibiting downgrade to the unstamped localhost fallback unless compatibility mode was explicitly selected.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -15,13 +21,14 @@ import type { TicketService, WorkspaceService } from '@/features/ticketing';
 import type { BotNodeClient, RuntimeParamsResolver } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import { pushOnDispatchFields } from './dispatch-manifest-worker';
-import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middleware/authz';
 import { taskSubdirs } from '@/shared/workspace-task-dirs';
 import type { WorkflowDefinition } from './dispatch-routing';
 import type { TaskFolderService } from './task-folder-service';
 import { createTicketWorkspace, writeTaskBrief } from './queue-manager-workspace-helpers';
 import { INCIDENT_MODE_DISPOSITION, readRcaMode, readRcaRemediationClass } from './rca-mode';
 import { extractErrorMessage } from './queue-manager-dispatch-helpers';
+import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 
 const logger = createChildLogger({ module: 'dispatch-incident-worker' });
 
@@ -62,7 +69,8 @@ export interface IncidentDispatchDeps {
   ticketService: TicketService;
   /** ADR-034 gap-b push-on-dispatch: resolves the target agent's authoritative
    *  provider/model/configVersion so each bot-node dispatch carries it (gated by
-   *  OSHAL_PUSH_ON_DISPATCH). Absent/off → no stamping; fail-open, never blocks. */
+   *  default-on OSHAL_PUSH_ON_DISPATCH). Missing authority is marked for refusal by the bot;
+   *  explicit flag-off restores legacy unstamped dispatch. */
   runtimeParamsResolver?: RuntimeParamsResolver;
   /** ADR-119 P4 (A2): the bounded auto-apply gate consulted on a Mode-A verdict.
    *  Absent → the unchanged Mode-A disposition (customer_action, human gate). */
@@ -178,7 +186,10 @@ export async function dispatchIncidentTicket(
   const sendMessageFallback = async (agentId: string, text: string, dispatchTaskId: string): Promise<{ success: boolean; response?: string }> => {
     const resp = await fetch(`http://localhost:${port}/api/send-message`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...serviceSecretHeaders() },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(ticket.ownerSub ? trustedServiceUserHeaders(ticket.ownerSub) : serviceSecretHeaders()),
+      },
       body: JSON.stringify({
         taskId: dispatchTaskId,
         ticketId,
@@ -195,20 +206,25 @@ export async function dispatchIncidentTicket(
   };
   const dispatchToBot = async (agentId: string, text: string, dispatchTaskId: string): Promise<{ success: boolean; response?: string }> => {
     if (botNodeClient) {
+      let authoritativeDispatch = false;
       try {
         // ADR-034 gap-b: stamp the authoritative config so a drifted RCA bot self-corrects
-        // before executing (no-op unless OSHAL_PUSH_ON_DISPATCH is on; fail-open otherwise).
+        // before executing. Default-on; missing authority is carried as a refusal marker.
         const configFields = await pushOnDispatchFields(deps.runtimeParamsResolver, agentId);
+        authoritativeDispatch = configFields.providerConfigRequired === true;
         const result = await botNodeClient.execute(agentId, {
           text,
           taskId: dispatchTaskId,
           workspaceFolderId: ticketId,
           agentId,
           agenticMode: true,
+          userSub: ticket.ownerSub ?? undefined,
+          principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
           ...configFields,
         });
         return { success: result.success, response: result.response };
       } catch (error) {
+        if (authoritativeDispatch || botNodeClient.isDelegationEnforced()) throw error;
         // BotNodeClient unavailable for this agent (e.g. resolver returned null
         // because the bot's harnessType=codex-cli is not implemented in the
         // bot-node JS layer). Fall through to the legacy localhost path which

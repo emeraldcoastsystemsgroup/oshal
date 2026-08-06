@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added in-memory workspace store fallback so MOCK_OIDC localhost ticket flows can keep workspace links functional without Postgres
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Kept name-conflict creates read-only and honored exact owner filters so localhost fallback preserves the production ownership boundary.
  */
 
 import { randomUUID } from 'crypto';
@@ -26,15 +27,8 @@ export class InMemoryWorkspaceStore implements IWorkspaceStore {
   async create(input: CreateInternalWorkspaceInput): Promise<InternalWorkspace> {
     const existing = await this.getByName(input.name);
     if (existing) {
-      const updated: InternalWorkspace = {
-        ...existing,
-        path: input.path ?? '',
-        projectName: input.projectName ?? existing.projectName,
-        metadata: Object.keys(input.metadata ?? {}).length > 0 ? { ...(input.metadata ?? {}) } : { ...existing.metadata },
-      };
-      this.workspaces.set(updated.workspaceId, updated);
-      logger.info({ workspaceId: updated.workspaceId, name: updated.name }, 'Reused workspace in memory');
-      return cloneWorkspace(updated);
+      logger.info({ workspaceId: existing.workspaceId, name: existing.name }, 'Reused workspace in memory');
+      return cloneWorkspace(existing);
     }
 
     const workspace: InternalWorkspace = {
@@ -107,12 +101,16 @@ export class InMemoryWorkspaceStore implements IWorkspaceStore {
    */
   async list(options?: {
     projectName?: string;
+    ownerSub?: string;
     limit?: number;
     offset?: number;
   }): Promise<InternalWorkspace[]> {
     let results = Array.from(this.workspaces.values());
     if (options?.projectName) {
       results = results.filter((workspace) => workspace.projectName === options.projectName);
+    }
+    if (options?.ownerSub) {
+      results = results.filter((workspace) => workspace.ownerSub === options.ownerSub);
     }
 
     results.sort((left, right) => right.createdAt.localeCompare(left.createdAt));

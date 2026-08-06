@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added optional streaming callback and total-token compatibility fields for provider validation parity
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | IMP-2: Added executionScopeId to SendRequestOptions for child/review ticket context isolation
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: added optional `creds` (caller's short-lived per-user access tokens, OSHAL_CRED_*) to SendRequestOptions so the in-controller harness path can write them to the task workspace as .oshal-cred-<provider> files (parity with the remote any-bot path).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove the generic credential carrier from model-provider requests; connector credentials remain inside audited server-side operation brokers.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -68,11 +69,6 @@ export interface SendRequestOptions {
    *  connected Gmail the bot may read). Threaded to the harness task workspace. */
   userSub?: string;
 
-  /** Token broker: the caller's short-lived per-user access tokens as an env-key map
-   *  (e.g. { OSHAL_CRED_GOOGLE, OSHAL_CRED_TWITTER }). Threaded to the harness task
-   *  workspace as `.oshal-cred-<provider>` files so shelled tools use a provided token
-   *  rather than decrypting oshal_connections with SESSION_SECRET. */
-  creds?: Record<string, string>;
 }
 
 /**

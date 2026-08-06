@@ -9,6 +9,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add the `verify` verb for ATS sign-up/2FA: the digest reads format=metadata (headers + the ~100-char snippet) ONLY, so a verification LINK in the message BODY was invisible — which is exactly what Workday/account-activation mail sends, blocking those ATS families. `verify` fetches format=full, walks the MIME parts, and extracts a code AND/OR an activation link, with a BOUNDED POLL (the apply flow's one-shot lookup missed codes that had not landed yet) and a client-side recency filter so a stale code from earlier is never returned. Emits ONLY the extracted token — never the body — so the digest's privacy posture holds.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto compat: OSHAL_ENVELOPE_CRYPTO flipped ON by default 2026-07-20, so connector tokens now re-encrypt to a `v2:` per-user-DEK blob on refresh — but this CLI's decrypt only knew the legacy single-KEK format, so it broke reading the access_token the moment it refreshed to v2 ("Unsupported state or unable to authenticate data"), silently killing the apply flow's Gmail verification-code retrieval. Made decrypt format-aware (new decryptToken + userDek: v2 -> unwrap the per-user DEK from oshal_user_deks under the KEK, then DEK-decrypt; legacy -> KEK) to mirror connector-token-crypto.ts, and made an access_token decrypt failure fall through to a refresh_token refresh instead of aborting.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Replace the copied raw-SHA256/v2 codec with scripts/lib/connector-token-crypto: reads legacy, k2, and v2 plus hkdf1 DEK wrappers, while refresh writes remain caller-owned v2 envelopes instead of regressing to a shared legacy blob.
  *
  * Prints a JSON digest of today's unread-ish mail + calendar for a connected
  * Google account. The account is connected by a user at /utilities (no CLI auth).
@@ -22,17 +24,16 @@
  * Exit 2 = no Google connection (tells the operator to connect at /utilities).
  */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const connectorTokenCrypto = require('./lib/connector-token-crypto');
 
 /** The codex sandbox may not forward OSHAL_USER_SUB to shelled commands, so the
  *  codex wrapper also drops it as a cwd-relative file. Read whichever is present. */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 /** Token broker: a short-lived access token the controller decrypted for THIS user and
@@ -46,33 +47,20 @@ function resolveProvidedToken() {
   return process.env.OSHAL_CRED_GOOGLE || undefined;
 }
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function gcmDecryptRaw(k, blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', k, Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]);
-}
+const key = connectorTokenCrypto.legacyKey;
+const gcmDecryptRaw = connectorTokenCrypto.gcmDecryptRaw;
 /** Legacy single-KEK decrypt of an unprefixed `iv:tag:enc` blob. */
 function decrypt(blob) { return gcmDecryptRaw(key(), blob).toString('utf8'); }
 
-/** Version tag on per-user-DEK envelope blobs (mirrors src/app/routes/connector-token-crypto.ts). */
-const ENVELOPE_V2 = 'v2:';
-const _dekCache = new Map();
 /**
- * @description Unwrap this user's 32-byte data-encryption-key from oshal_user_deks. The stored
- * wrapped_dek is itself an `iv:tag:enc` blob encrypted under the KEK = SHA256(SESSION_SECRET).
+ * @description Unwrap this user's 32-byte data-encryption-key through the shared version-aware
+ * codec (`hkdf1:` current or unprefixed legacy wrapper).
  * @param {object} pool pg pool
  * @param {string} userSub connection owner's OIDC sub
  * @returns {Promise<Buffer>} the raw 32-byte DEK
  */
 async function userDek(pool, userSub) {
-  if (_dekCache.has(userSub)) return _dekCache.get(userSub);
-  const row = (await pool.query('SELECT wrapped_dek FROM oshal_user_deks WHERE user_sub=$1', [userSub])).rows[0];
-  if (!row) throw new Error(`no DEK row in oshal_user_deks for user ${userSub} (v2 blob but DEK missing)`);
-  const dek = gcmDecryptRaw(key(), String(row.wrapped_dek));
-  _dekCache.set(userSub, dek);
-  return dek;
+  return connectorTokenCrypto.userDek(pool, userSub, { createIfMissing: false });
 }
 /**
  * @description Format-aware connector-token decrypt. Mirrors connector-token-crypto.ts decryptToken:
@@ -86,11 +74,7 @@ async function userDek(pool, userSub) {
  * @returns {Promise<string>} plaintext token
  */
 async function decryptToken(pool, userSub, blob) {
-  if (String(blob).startsWith(ENVELOPE_V2)) {
-    if (!userSub) throw new Error('decryptToken: v2 blob requires a userSub');
-    return gcmDecryptRaw(await userDek(pool, userSub), String(blob).slice(ENVELOPE_V2.length)).toString('utf8');
-  }
-  return decrypt(blob);
+  return connectorTokenCrypto.decryptToken(pool, userSub, blob);
 }
 
 async function getAccessToken(pool) {
@@ -133,14 +117,8 @@ async function getAccessToken(pool) {
   if (!r.ok) { console.error('Token refresh failed: ' + r.status + ' ' + (await r.text()).slice(0, 160)); process.exit(3); }
   const tok = await r.json();
   await pool.query(`UPDATE oshal_connections SET access_token=$3, expiry=$4, updated_at=NOW() WHERE provider='google' AND account_email=$1 AND user_sub=$2`,
-    [row.account_email, row.user_sub, encrypt(tok.access_token), tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null]);
+    [row.account_email, row.user_sub, await connectorTokenCrypto.encryptToken(pool, row.user_sub, tok.access_token), tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null]);
   return { token: tok.access_token, account: row.account_email };
-}
-function encrypt(plain) {
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', key(), iv);
-  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
-  return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
 }
 
 /** Convert Gmail's provider-owned millisecond timestamp to a stable ISO time. */

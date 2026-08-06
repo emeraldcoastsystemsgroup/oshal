@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Exported ticket and workspace schema bootstrap helpers for internal ticketing system
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Exported buildOwnerRlsPolicyStatements so lazy app-store DDL sites outside this directory (finance/payments/youtube/trading/tv-pairing) can apply tier-1 RLS at their chokepoints (A1.2 follow-up)
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported gucEnabled + wrapPoolWithGuc through the barrel so feature slices that mint their OWN pg Pool (pgvector-rag-engine) can identity-stamp it without a deep import - an unwrapped private pool is exactly how rag_chunks rows were written owner-less (RLS inert).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the durable remote-task journal bootstrap through the shared database boundary.
  */
 
 export { createOptionalPostgresPool, hasPostgresConfiguration } from './optional-postgres-pool';
@@ -32,6 +33,7 @@ export { ensureSubtaskLifecycleSchema } from './subtask-lifecycle-schema';
 export { ensurePersonaLayerSchema } from './persona-layer-schema';
 export { ensureTicketSchema } from './ticket-schema';
 export { ensureWorkspaceSchema } from './workspace-schema';
+export { ensureRemoteTaskJournalSchema } from './remote-task-journal-schema';
 export {
   acquireAmbientOwnerLock,
   AmbientOwnerLockBusyError,

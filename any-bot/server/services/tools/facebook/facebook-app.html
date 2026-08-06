@@ -1,4 +1,8 @@
 <!DOCTYPE html>
+<!--
+  CHANGE LOG
+  1 | maintainer@emeraldcoastsystemsgroup.com | Remove browser App-Secret storage; OAuth uses deployment-managed server credentials only.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -26,16 +30,9 @@
   .msg{text-align:center;font-size:13px;color:var(--muted);margin-top:12px;min-height:20px}
   .msg.err{color:var(--error)}
   .hide{display:none}
-  .field{margin-bottom:12px}
-  .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
-  .field input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:13px;outline:none}
-  .field input:focus{border-color:var(--accent)}
-  .setup-toggle{text-align:center;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)}
-  .setup-toggle button{background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline}
   @media (max-width: 640px) {
     body{padding:16px}
     .card{padding:24px 16px;border-radius:12px}
-    .field input{font-size:16px}
   }
 </style>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
@@ -56,12 +53,6 @@
       Login with Facebook
     </button>
     <div class="msg" id="msg"></div>
-    <div class="setup-toggle"><button onclick="document.getElementById('setup').classList.toggle('hide')">Configure App ID</button></div>
-    <div id="setup" class="hide" style="margin-top:12px">
-      <div class="field"><label>App ID</label><input type="text" id="appId" placeholder="From developers.facebook.com"></div>
-      <div class="field"><label>App Secret</label><input type="password" id="appSecret" placeholder="App Secret"></div>
-      <button class="btn btn-fb" style="font-size:13px;padding:10px;margin-top:4px" onclick="saveSetup()">Save</button>
-    </div>
   </div>
 
   <div id="connected" class="hide">
@@ -71,11 +62,7 @@
   </div>
 </div>
 <script>
-// App credentials stored in browser localStorage — survives server restarts
-function getAppId(){return localStorage.getItem('fb_app_id')||''}
-function getAppSecret(){return localStorage.getItem('fb_app_secret')||''}
-function setApp(id,secret){localStorage.setItem('fb_app_id',id);localStorage.setItem('fb_app_secret',secret)}
-
+// App credentials are deployment-managed and never enter browser storage.
 function show(id){['loading','login','connected'].forEach(x=>document.getElementById(x).classList.add('hide'));document.getElementById(id).classList.remove('hide')}
 
 async function check(){
@@ -88,30 +75,13 @@ async function check(){
   show('login');
 }
 
-function saveSetup(){
-  const id=document.getElementById('appId').value.trim();
-  const sec=document.getElementById('appSecret').value.trim();
-  if(!id||!sec){document.getElementById('msg').textContent='Enter both App ID and Secret';document.getElementById('msg').className='msg err';return}
-  setApp(id,sec);
-  // Also save to server
-  fetch('/api/facebook-auth/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({appId:id,appSecret:sec})});
-  document.getElementById('setup').classList.add('hide');
-  document.getElementById('msg').textContent='Saved!';document.getElementById('msg').className='msg';
-}
-
 async function doLogin(){
   const btn=document.getElementById('loginBtn');btn.disabled=true;
   const m=document.getElementById('msg');m.textContent='Opening Facebook...';m.className='msg';
 
-  // Make sure server has credentials
-  const aid=getAppId();const asec=getAppSecret();
-  if(aid&&asec){
-    await fetch('/api/facebook-auth/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({appId:aid,appSecret:asec})}).catch(()=>{});
-  }
-
   try{
     const r=await fetch('/api/facebook-auth/start');const d=await r.json();
-    if(!d.authUrl){m.textContent=d.error||'Failed — configure App ID first';m.className='msg err';btn.disabled=false;if(!aid)document.getElementById('setup').classList.remove('hide');return}
+    if(!d.authUrl){m.textContent=d.error||'Facebook OAuth is unavailable; configure deployment credentials server-side';m.className='msg err';btn.disabled=false;return}
     window.open(d.authUrl,'fb-auth','width=620,height=700');
     m.textContent='Authorize in the popup...';
     const t=Date.now();

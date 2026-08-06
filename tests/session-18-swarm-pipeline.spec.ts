@@ -178,8 +178,8 @@ test.describe('Cost rollup: recursive parent-child view', () => {
 // OAuth Credential Propagation
 // ---------------------------------------------------------------------------
 
-test.describe('OpenAI Codex credential broadcast', () => {
-  test('OpenAiCodexOAuthService has Redis pub/sub broadcast', async () => {
+test.describe('OAuth credential distribution boundary', () => {
+  test('OpenAiCodexOAuthService has no unordered Redis credential broadcast', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const filePath = path.resolve(
@@ -188,13 +188,12 @@ test.describe('OpenAI Codex credential broadcast', () => {
     );
     const content = fs.readFileSync(filePath, 'utf8');
 
-    expect(content).toContain('CODEX_CREDENTIAL_CHANNEL');
-    expect(content).toContain('swarm.codex-credentials.update');
-    expect(content).toContain('broadcastCodexCredentials');
-    expect(content).toContain('subscribeToBroadcast');
+    expect(content).not.toContain('swarm.codex-credentials.update');
+    expect(content).not.toContain('broadcastCodexCredentials');
+    expect(content).not.toContain('subscribeToBroadcast');
   });
 
-  test('swarm index subscribes to both credential channels', async () => {
+  test('swarm index subscribes to neither raw credential channel', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const filePath = path.resolve(
@@ -203,8 +202,8 @@ test.describe('OpenAI Codex credential broadcast', () => {
     );
     const content = fs.readFileSync(filePath, 'utf8');
 
-    expect(content).toContain('ClaudeCodeAuthService.subscribeToBroadcast()');
-    expect(content).toContain('OpenAiCodexOAuthService.subscribeToBroadcast()');
+    expect(content).not.toContain('ClaudeCodeAuthService.subscribeToBroadcast()');
+    expect(content).not.toContain('OpenAiCodexOAuthService.subscribeToBroadcast()');
   });
 });
 

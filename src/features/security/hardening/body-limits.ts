@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the global JSON body parser as ONE testable unit (docs/security/SECURITY-HARDENING.md §4 "express.json({ limit })"). server.ts previously inlined `express.json()` with its implicit 100kb default and a hand-written path-reservation ternary, so the limit was real but unstated and unprovable. createGlobalJsonParser owns both: an explicit, env-tunable limit and the reserved-prefix list, exported so the guard spec drives the exact middleware the server mounts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reserve the Alertmanager receiver from the global parser so its route-local parser can capture the exact request bytes before opt-in HMAC verification; ordinary /api/alerts reads remain on the global parser.
  */
 
 /**
@@ -15,12 +16,14 @@
  * backlog came to list `express.json({ limit })` as open. Stating it here makes the value
  * reviewable, tunable without a code edit (`OSHAL_JSON_BODY_LIMIT`), and testable.
  *
- * WHY SOME PATHS ARE RESERVED. Three mounts legitimately need something other than the tight
+ * WHY SOME PATHS ARE RESERVED. Four mounts legitimately need something other than the tight
  * global limit and install their own parser at their own mount:
  *   - `/api/remote-clients` — a node's task-complete body carries a screen capture (~1-2MB PNG);
  *   - `/api/vision`         — base64 images for the describe/read-doc calls;
  *   - `/api/hooks`          — signed connector webhooks must keep the EXACT request bytes until
  *                             their route-local HMAC verifier has run, so nothing may parse first.
+ *   - `/api/alerts/alertmanager` — the Alertmanager HMAC covers its exact JSON bytes; its
+ *                                    route-local parser captures those bytes with `verify`.
  * Reserving them here (rather than raising the global limit) is what keeps every other route on
  * the tight bound.
  *
@@ -40,6 +43,7 @@ export const RESERVED_BODY_PARSER_PREFIXES: readonly string[] = [
   '/api/remote-clients',
   '/api/vision',
   '/api/hooks',
+  '/api/alerts/alertmanager',
 ];
 
 /**

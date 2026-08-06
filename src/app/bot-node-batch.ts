@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the one-shot bot-node batch entrypoint ADR-078 §1 called for and nothing implemented. Runs a SINGLE phase envelope through the SAME execution handler the long-lived bot-node-server uses (via the extracted createBotNodeRuntime), writes the classified MODE to mode.txt so Argo can lift it as a DAG output parameter, and exits with a status the Workflow can branch on. Invoked by scripts/bot-node-batch.sh with BOT_RUNTIME=bot-node-batch.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Persisted non-fatal batch Job telemetry for runtime, worker/queue identity, CPU/memory observations, provider/model/cost, and backend errors so operators can graph recent Job durations instead of scraping pod logs.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Ran the one-shot batch phase under runWithSystemIdentity — background execution that writes the FORCE-RLS tickets (status transition) + chat_tasks (cost) tables with no request in scope; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Prohibit unsigned one-shot batch execution when HTTP delegation verification keys enable enforcement; batch token carriage is intentionally deferred.
  */
 
 /**
@@ -37,6 +38,7 @@ import { readRcaMode } from '@/features/swarm-orchestration';
 import { BatchJobTelemetryStore } from '@/features/batch-job-telemetry';
 import { createBotNodeRuntime } from './bot-node-runtime';
 import { buildBatchTelemetryRecord, captureBatchTelemetryStart } from './bot-node-batch-telemetry';
+import { assertDelegationBatchRuntimeAllowed } from './bot-node-delegation';
 
 const logger = createChildLogger({ module: 'bot-node-batch' });
 
@@ -200,6 +202,7 @@ export function writeModeFile(args: BatchPhaseArgs, mode: string): string {
  * @returns Process exit code — 0 when the phase completed, 1 when it failed.
  */
 async function runPhase(): Promise<number> {
+  assertDelegationBatchRuntimeAllowed();
   const args = parseBatchArgs(process.argv.slice(2));
   const telemetryStart = captureBatchTelemetryStart(args);
   logger.info({ ...args }, 'bot-node-batch starting one phase');

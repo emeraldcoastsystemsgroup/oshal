@@ -29,6 +29,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — regression guard for the bot-node workspace owner binding left unpinned when ADR-060's per-user path layout was reverted: cross-owner reuse rejection (fail-closed across owned/ownerless/anonymous), no execution or task creation on mismatch, owner stamping on creation, workspace-folder-id derivation precedence and per-ticket distinctness, and TS/JS owner-normalization parity.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact-subject parity and canonical workspace ID propagation: valid padding/whitespace remain distinct while empty, control, malformed, and oversized assertions fail closed.
  */
 import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
@@ -218,7 +219,7 @@ describe('bot-node workspace owner binding (ADR-060 enforcement point)', () => {
     });
   });
 
-  describe('owner normalization parity across the TS handler and the any-bot JS controller', () => {
+  describe('exact owner parity across the TS handler and the any-bot JS controller', () => {
     /**
      * The handler normalizes the dispatch sub (normalizeBotNodeUserSub) and the any-bot
      * controller normalizes the PERSISTED sub (normalizeTaskOwner). The owner comparison
@@ -226,7 +227,7 @@ describe('bot-node workspace owner binding (ADR-060 enforcement point)', () => {
      * different length; one lowercasing — the check either false-matches (cross-user
      * access) or false-mismatches (every resume breaks). Pin that they agree.
      */
-    const INPUTS: unknown[] = [
+    const VALID_INPUTS: unknown[] = [
       OWNER_A,
       OWNER_B,
       ' padded-sub ',
@@ -234,20 +235,25 @@ describe('bot-node workspace owner binding (ADR-060 enforcement point)', () => {
       '/absolute/path/sub',
       '..',
       'unicode-sübé-é',
-      'x'.repeat(600),
-      '',
       '   ',
       null,
       undefined,
-      42,
     ];
 
-    it('produces the same owner string (or no owner) for every input shape', () => {
-      for (const input of INPUTS) {
+    it('produces the same exact owner string (or absent owner) for every valid input', () => {
+      for (const input of VALID_INPUTS) {
         const ts = normalizeBotNodeUserSub(input);
         const js = TaskController.normalizeTaskOwner(input);
         // undefined (TS "absent") and null (JS "absent") are the same state.
         expect(ts ?? null, `input=${String(input)}`).toBe(js);
+      }
+    });
+
+    it('rejects the same invalid supplied assertions in both runtimes', () => {
+      const invalid = ['', 'control\u0000alias', 'control\u0085alias', 'x'.repeat(513), '\ud800', 42, {}];
+      for (const input of invalid) {
+        expect(() => normalizeBotNodeUserSub(input), `TS input=${String(input)}`).toThrow(/exact UTF-8/);
+        expect(() => TaskController.normalizeTaskOwner(input), `JS input=${String(input)}`).toThrow(/exact UTF-8/);
       }
     });
 
@@ -261,10 +267,9 @@ describe('bot-node workspace owner binding (ADR-060 enforcement point)', () => {
       for (const owner of owners) expect(owner).toBeTruthy();
     });
 
-    it('treats empty and whitespace-only subs as NO owner, which cannot match an owned task', async () => {
-      expect(normalizeBotNodeUserSub('')).toBeUndefined();
-      expect(normalizeBotNodeUserSub('   ')).toBeUndefined();
-      // And "no owner" is not a skeleton key: it is still rejected against an owned task.
+    it('keeps whitespace as an exact owner and rejects empty input before task lookup', async () => {
+      expect(normalizeBotNodeUserSub('   ')).toBe('   ');
+      expect(() => normalizeBotNodeUserSub('')).toThrow(/non-empty/);
       const { handler, processMessage } = harness({
         existing: { id: 'owned-folder', userSub: OWNER_A },
       });

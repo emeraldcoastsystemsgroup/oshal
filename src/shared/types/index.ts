@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exported A2A and remote-client shared contracts
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Normalized historical Change Log attribution to the mandated project author identifier
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Exported access-roles caller-role model (ADR-087)
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported the task-bound delegation token wire contract for controller-to-agent authorization.
  */
 
 export * from './agent';
@@ -32,3 +33,4 @@ export * from './a2a';
 export * from './rca-types';
 export * from './presentation-types';
 export * from './access-roles';
+export * from './delegation';

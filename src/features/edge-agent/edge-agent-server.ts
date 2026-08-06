@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Edge agent GUI server — local web UI for one-click swarm connection
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Full cockpit: activity feed, ticket submission, bot messaging, bidirectional swarm control
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: stop advertising or executing MCP tools from unauthenticated mesh payloads; discovery remains diagnostic until an owner-bound task broker is wired.
  */
 
 /* eslint-disable no-console -- standalone process: operator-facing startup banner printed to the console */
@@ -153,7 +154,9 @@ async function connect(opts: {
     pushActivity({ dir: 'in', from: 'mcp', to: state.agentId, type: 'mcp-init', summary: `${mcpTools.length} tools: ${mcpTools.join(', ')}` });
   }
 
-  state.capabilities = [...new Set([...mcpTools, 'edge-agent'])];
+  // Mesh envelopes do not carry a durable owner-bound tool authorization record. Publishing
+  // discovered names as executable capabilities would invite arbitrary payload.mcpTool calls.
+  state.capabilities = ['edge-agent'];
 
   // Seed agent profile into Postgres agents table — same as every Docker bot
   if (state.pool) {
@@ -266,13 +269,11 @@ function buildHandler() {
       summary: payload.mcpTool ? `Tool call: ${payload.mcpTool}` : JSON.stringify(payload).slice(0, 120),
     });
 
-    if (state.mcp && typeof payload.mcpTool === 'string') {
-      try {
-        const output = await state.mcp.callTool(payload.mcpTool, (payload.mcpArgs ?? {}) as Record<string, unknown>);
-        return { success: true, output };
-      } catch (err) {
-        return { success: false, error: (err as Error).message };
-      }
+    if (typeof payload.mcpTool === 'string') {
+      return {
+        success: false,
+        error: 'Edge MCP execution requires an owner-bound remote-task authorization broker.',
+      };
     }
     if (state.mcp && payload.intent === 'mcp.list-tools') {
       try { return { success: true, output: await state.mcp.listTools() }; } catch (err) { return { success: false, error: (err as Error).message }; }

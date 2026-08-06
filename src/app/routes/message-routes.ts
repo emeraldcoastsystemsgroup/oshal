@@ -10,19 +10,26 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read ticketId from request body and pass to processMessage options — activates linkTicketIfRequested so incident pipeline tasks get ticket_task_links rows for cost rollup
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Object-level authorization (IDOR fix): GET /:taskId/messages and the send handlers now check the caller may access the task before reading its history or posting to it. A task's owner is its ticket's owner (resolveTaskOwner); the check fails SAFE — unresolved/unowned tasks (incl. brand-new conversations) are allowed, only a clearly-different owner is denied (404). Previously any authenticated user could read another user's chat history or inject into their thread by supplying its taskId.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Split message read/write guards so history reads fail closed when RLS hides another user's task.
- * 8 | maintainer@emeraldcoastsystemsgroup.com   | Chat-path token broker list += 'twilio' so the communications-bot's phone/text leg (scripts/oshal-twilio.js) receives the caller's own SID:AuthToken secret in conversational threads.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Initially added Twilio to the chat-path token broker; that legacy carrier is superseded by sequence 13.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | EXECUTE-TIME ENTITLEMENT ON THE OTHER BOT ENDPOINT (BACKLOG "Bot-endpoint privilege model - authorize the ACTUAL endpoint call", which names /api/send-message explicitly). This route honoured a caller-supplied body.agentId VERBATIM and called ctx.orchestrator.processMessage directly, never through executeBotOrInline - so the gate K6 flipped to enforce covered /api/swarm-execute and the executeBotOrInline chokepoint but NOT here. A signed-in non-operator could reach exactly the ADR-087 operator+swarm machinery K7 scoped (oshal-developer, devops-bot, vault-bot, security-analyst, code-developer, ...) by naming its agentId on a task they legitimately own; the IDOR guard above checks the THREAD, not the bot. The resolved agentId now runs through assertExecuteEntitlement with `direct` set ONLY for genuine interactive identity callers - a valid service-secret call is swarm dispatch and stays trusted, so the manifest/incident-worker localhost fallback and the headless CLI are byte-identical - and CallerNotEntitledError maps to 403 caller_not_entitled_to_agent. Guard: tests/unit/send-message-entitlement.spec.ts.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guest turns are forced chatOnly, not overridable from the body. Guests reached this route for the first time when the capability matrix granted /api/tasks/:id/messages; without this an anonymous visitor could post chatOnly: false and create a ticket that dispatches real work into the swarm build pipeline.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Narrow service-secret message calls to the trusted user sub before chat-task/ticket writes, fail closed when that binding is absent, and remove the legacy body.userSub fallback so request content can never select the database or connector owner.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector-token resolution and credential forwarding from the conversational model path; connector secrets stay inside audited server-side operations.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: keep Twilio credentials out of conversational threads; authenticated fixed controller operations own any per-user SMS send.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: return the canonical 503 ai_disabled response on chat writes when the operator declares OSHAL_NO_AI=true.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05 identity closure: narrow authenticated PAT message writes to their exact owner so bounded live verification cannot persist chat_tasks under the operator-bypass database stamp.
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { DEFAULT_CHAT_AGENT_ID, resolveProjectManagerTicketExecutionContext } from '@/features/chat-orchestration';
-import { resolveBotCreds } from './connector-token-broker';
-import { canAccessResource, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { canAccessResource, getCaller, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { assertExecuteEntitlement, CallerNotEntitledError } from '@/app/bot-node-execute-entitlement';
-import { connectorProvidersForManifestWorker } from '@/app/manifest-worker-connector-scope';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
+import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
+import { requireAiEnabled } from '@/shared/middleware/ai-availability';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
+import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'message-routes' });
@@ -33,16 +40,22 @@ const logger = createChildLogger({ module: 'message-routes' });
  * are allowed so the orchestrator can create a brand-new chat thread.
  */
 async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
-  if (hasValidServiceSecret(req)) {
-    return true;
-  }
-  const task = await ctx.taskStore.get(taskId).catch(() => null);
+  const task = await ctx.taskStore.get(taskId).catch((err) => {
+    logger.debug({ err, taskId }, 'message ownership lookup could not read chat task');
+    return null;
+  });
   if (task) {
-    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
-    return canAccessResource(req, owner);
+    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
+      logger.debug({ err, taskId }, 'message ownership lookup could not resolve ticket owner');
+      return null;
+    });
+    return callerOwnsResource(req, owner);
   }
-  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
-  return owner ? canAccessResource(req, owner) : true;
+  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
+    logger.debug({ err, taskId }, 'message ownership lookup could not resolve missing-task owner');
+    return null;
+  });
+  return owner ? callerOwnsResource(req, owner) : true;
 }
 
 /**
@@ -51,16 +64,35 @@ async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string
  * visible under RLS and no ticket owner can be resolved.
  */
 async function callerMayReadMessages(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
-  if (hasValidServiceSecret(req)) {
-    return true;
-  }
-  const task = await ctx.taskStore.get(taskId).catch(() => null);
+  const task = await ctx.taskStore.get(taskId).catch((err) => {
+    logger.debug({ err, taskId }, 'message history lookup could not read chat task');
+    return null;
+  });
   if (task) {
-    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
-    return canAccessResource(req, owner);
+    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
+      logger.debug({ err, taskId }, 'message history lookup could not resolve ticket owner');
+      return null;
+    });
+    return callerOwnsResource(req, owner);
   }
-  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch(() => null);
-  return owner ? canAccessResource(req, owner) : false;
+  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
+    logger.debug({ err, taskId }, 'message history lookup could not resolve missing-task owner');
+    return null;
+  });
+  return owner ? callerOwnsResource(req, owner) : false;
+}
+
+/** Compare ownership against the validated session or the secret-gated service assertion. */
+function callerOwnsResource(req: Request, ownerSub: string | null | undefined): boolean {
+  const trustedServiceSub = getTrustedServiceUserSub(req);
+  return trustedServiceSub ? trustedServiceSub === ownerSub : canAccessResource(req, ownerSub);
+}
+
+/** Resolve the owner only from authenticated transport identity, never request content. */
+function messageCallerSub(req: Request): string | undefined {
+  return getCaller(req).sub
+    ?? getTrustedServiceUserSub(req)
+    ?? undefined;
 }
 
 /**
@@ -72,8 +104,8 @@ async function callerMayReadMessages(ctx: AppContext, req: Request, taskId: stri
  *
  * `direct` is what separates the two caller classes the model already distinguishes:
  *   - a valid service-secret call is swarm/queue dispatch threading a ticket owner's sub for the
- *     token broker (dispatch-manifest-worker / dispatch-incident-worker fall back to this route
- *     over localhost) -> NOT direct, trusted, unchanged;
+   *     owner attribution (dispatch-manifest-worker / dispatch-incident-worker fall back to this
+   *     route over localhost) -> NOT direct, trusted, unchanged;
  *   - an OIDC session or PAT caller is interactive per-user delegation -> direct, entitlement-checked.
  *
  * @param req - The inbound request (identity + service-secret facts).
@@ -94,6 +126,33 @@ function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, tas
 }
 
 /**
+ * @description Establish least-privilege database identity for every machine-reachable chat write.
+ * The shared guard narrows fleet-secret calls to their asserted owner. A PAT is already a verified
+ * user principal, but an operator-owned PAT inherits the global operator stamp; narrow that
+ * credential to its exact owner before chat_tasks persistence. Interactive browser sessions retain
+ * their ordinary platform posture.
+ */
+function requireMessageWriteIdentity(req: Request, res: Response, next: NextFunction): void {
+  requireTrustedServiceUserIdentity(req, res, () => {
+    const oidc = (req as { oidc?: { idToken?: unknown; isAuthenticated?: () => boolean } }).oidc;
+    if (oidc?.idToken !== 'cli-token' || oidc.isAuthenticated?.() !== true) {
+      next();
+      return;
+    }
+    const sub = getCaller(req).sub;
+    if (!sub) {
+      res.status(401).json({ error: 'not_authenticated' });
+      return;
+    }
+    runWithRequestIdentity({
+      sub,
+      principalIssuer: getAuthenticatedPrincipalIssuer(req),
+      isOperator: false,
+    }, () => next());
+  });
+}
+
+/**
  * @description Creates Express router for message endpoints.
  *
  * @param ctx - Application context with wired dependencies
@@ -101,10 +160,11 @@ function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, tas
  */
 export function createMessageRoutes(ctx: AppContext): Router {
   const router = Router();
-
-  router.post('/send-message', handleSendMessage(ctx));
-  router.post('/tasks/:taskId/messages', handleSendMessage(ctx));
-  router.get('/:taskId/messages', handleGetMessages(ctx));
+  // The explicit no-AI state is evaluated before user-row attribution so every authenticated chat
+  // write has the same 503 contract. History remains available on model-less deployments.
+  router.post('/send-message', requireAiEnabled, requireMessageWriteIdentity, handleSendMessage(ctx));
+  router.post('/tasks/:taskId/messages', requireAiEnabled, requireMessageWriteIdentity, handleSendMessage(ctx));
+  router.get('/:taskId/messages', requireTrustedServiceUserIdentity, handleGetMessages(ctx));
 
   logger.info('Message routes registered');
   return router;
@@ -135,6 +195,7 @@ function handleSendMessage(ctx: AppContext) {
       res.status(400).json({ error: 'taskId and text are required' });
       return;
     }
+    const callerSub = messageCallerSub(req);
 
     // IDOR guard: don't let a caller post into another user's existing task thread.
     if (!(await callerMayAccessTask(ctx, req, taskId))) {
@@ -169,6 +230,7 @@ function handleSendMessage(ctx: AppContext) {
           resolvedAgentId,
           source: source ?? 'api',
           text,
+          ownerSub: callerSub,
           // Guests are UNAUTHENTICATED, so their turn answers and stops: forcing chatOnly
           // keeps an anonymous visitor from creating a ticket and dispatching real work into
           // the swarm build pipeline. Not overridable from the body — a guest asking for
@@ -185,24 +247,6 @@ function handleSendMessage(ctx: AppContext) {
         ticketTitle: resolvedContext.ticketTitle ?? null,
       };
 
-      // Token broker: scope to the authenticated caller + hand the bot its short-lived
-      // per-user tokens (so the chat path's bot tools never need SESSION_SECRET).
-      // Resolve the acting user from the OIDC session OR a trusted service-secret call
-      // (x-oshal-user-sub) OR an explicit body field. Without this, controller-dispatched
-      // worker tasks (service-secret, no OIDC session) lose user context and every
-      // user-scoped tool the worker calls — trading, career, gmail — returns 401.
-      const callerSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub
-        ?? getTrustedServiceUserSub(req)
-        ?? (typeof (req.body as { userSub?: unknown })?.userSub === 'string' ? String((req.body as { userSub?: string }).userSub) : undefined);
-      // gcp: brokers the caller's Google Cloud token to cloud-ops-bot so scripts/oshal-gcp.js
-      // + the private scripts/oshal-gcp-diag.js diagnostics work without SESSION_SECRET on the bot.
-      const brokerProviders = source === 'dispatch-manifest-worker'
-        ? connectorProvidersForManifestWorker(resolvedAgentId)
-        : ['google', 'twitter', 'smartthings', 'gcp', 'twilio'];
-      const creds = brokerProviders.length > 0
-        ? await resolveBotCreds(ctx.pool, callerSub, [...brokerProviders])
-        : {};
-
       const result = await ctx.orchestrator.processMessage(resolvedContext.taskId, text, {
         agenticMode: agenticMode ?? true,
         autoApprove: false,
@@ -214,9 +258,9 @@ function handleSendMessage(ctx: AppContext) {
         // bot chat → Chat queue). Callers doing task-mode work pass interactionMode:'task' to opt out.
         interactionMode: req.body.interactionMode ?? 'chat',
         ticketId: resolvedContext.ticketId ?? (typeof bodyTicketId === 'string' ? bodyTicketId : undefined),
-        // Scope the bot's per-user data access (e.g. Gmail) to the authenticated caller.
+        // Scope owner-bound server operations to the authenticated caller. Connector
+        // credentials are never forwarded into this model-visible path.
         userSub: callerSub,
-        creds,
       } as any);
 
       const durationMs = Date.now() - startTime;

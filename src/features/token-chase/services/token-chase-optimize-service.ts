@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase step 5: runSavings — replay EVERY replayable frame of a captured run on a cheaper lane and roll the real cost deltas into an estimated-vs-actual SavingsSummary (the end-to-end loop over a real run).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Spend gate (BACKLOG "per-run judge budget cap"): runSavings consults a TokenChaseBudgetGate BEFORE each round — a finite TOKEN_CHASE_BUDGET_USD ceiling on the run's accumulated measured replay spend plus the injected cost-governance probe — and stops cleanly (log + budget status in the return, no throw) when exhausted. A gate is default-constructed when the caller passes none, so the ceiling always exists. Capture/determinism semantics untouched: already-replayed frames keep their grades; the gate only decides whether the NEXT round may spend.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Re-baseline support (ADR-046 keep-winner → re-baseline; BACKLOG "auto keep-winner"): replayVariant/runSavings accept an optional promoted-lane BaselineOverride (per frame seq). When a frame has an ACTIVE promotion, the COST baseline becomes the promoted lane's recorded provider/model/cost — so future optimizer runs and the persisted corpus rows (which the savings report reads) measure savings against the new baseline, not the retired one. The QUALITY reference deliberately stays the captured response text: the promoted lane won by reproducing that deliverable, and it remains the only reference text on disk — the override swaps cost identity, never the judge's anchor.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add injected replay-time lane rotation for Token Chase's health-qualified `free:auto` selector: retry the same frame only after a classified free-provider wall, carry the selected provider/model into evidence, and stop the savings loop when every free lane is exhausted instead of falling through to a paid default.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -34,6 +35,59 @@ export interface VariantLane {
   label: string;
   providerId: string;
   modelId: string;
+}
+
+/** @description Credential-bearing per-call lane used by the optimizer after server-side resolution. */
+export interface VariantReplayLane {
+  label: string;
+  byo?: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    /** Server-derived provider id retained for evidence when the bot reports only generic `byo`. */
+    providerId?: string;
+  };
+}
+
+/** @description Injected free-lane rotation callbacks; no callback may return a paid/default lane. */
+export interface VariantLaneRotation {
+  maxAttempts?: number;
+  next(): Promise<VariantReplayLane | null>;
+  onFailure(lane: VariantReplayLane, reason: string): Promise<boolean>;
+  onSuccess?(lane: VariantReplayLane): Promise<void>;
+}
+
+/** @description Non-secret trace proving how a variant lane was selected or exhausted. */
+export interface VariantSelectionTrace {
+  attempts: number;
+  rotations: number;
+  failedClosed: boolean;
+  selectedProvider: string | null;
+  selectedModel: string | null;
+}
+
+/** @description One replay result plus the selected lane and its non-secret rotation trace. */
+export interface RotatedVariantReplay {
+  result: VariantReplayResult | null;
+  /** Server-only continuation lane; credential-bearing and never serialized by Token Chase routes. */
+  lane: VariantReplayLane | null;
+  selection: VariantSelectionTrace;
+}
+
+/** @description Aggregate free-lane selection evidence for a multi-frame savings run. */
+export interface SavingsRotationStatus {
+  attempts: number;
+  rotations: number;
+  failedClosed: boolean;
+  selectedLanes: Array<{ provider: string | null; model: string | null }>;
+}
+
+/** @description Mutable request-local counter used to build secret-free savings selection evidence. */
+interface SavingsRotationAccumulator {
+  attempts: number;
+  rotations: number;
+  failedClosed: boolean;
+  selected: Map<string, { provider: string | null; model: string | null }>;
 }
 
 /** @description Cost/usage/latency snapshot for one side of a baseline-vs-variant comparison. */
@@ -208,6 +262,52 @@ function priceTokens(
   return { costUsd: resolved.totalCost, estimated: resolved.estimated };
 }
 
+/** @description Builds a secret-free selector trace from the lane and returned provider evidence. */
+function selectionTrace(
+  attempts: number,
+  rotations: number,
+  failedClosed: boolean,
+  lane: VariantReplayLane | null,
+  result: VariantReplayResult | null,
+): VariantSelectionTrace {
+  return {
+    attempts,
+    rotations,
+    failedClosed,
+    selectedProvider: result?.variant?.provider ?? lane?.byo?.providerId ?? null,
+    selectedModel: result?.variant?.model ?? lane?.byo?.model ?? null,
+  };
+}
+
+/** @description Appends a fail-closed selector reason without discarding the provider error. */
+function closedReplayResult(result: VariantReplayResult | null, reason: string): VariantReplayResult | null {
+  if (!result) return null;
+  return { ...result, reason: `${result.reason ?? 'Provider replay failed.'} ${reason}` };
+}
+
+/** @description Adds one per-frame selection trace to a multi-frame, secret-free accumulator. */
+function recordSavingsSelection(
+  state: SavingsRotationAccumulator,
+  selection: VariantSelectionTrace,
+): void {
+  state.attempts += selection.attempts;
+  state.rotations += selection.rotations;
+  state.failedClosed = state.failedClosed || selection.failedClosed;
+  const lane = { provider: selection.selectedProvider, model: selection.selectedModel };
+  if (!lane.provider && !lane.model) return;
+  state.selected.set(`${lane.provider ?? ''}\u0000${lane.model ?? ''}`, lane);
+}
+
+/** @description Freezes accumulated savings selection evidence into the public response shape. */
+function savingsRotationStatus(state: SavingsRotationAccumulator): SavingsRotationStatus {
+  return {
+    attempts: state.attempts,
+    rotations: state.rotations,
+    failedClosed: state.failedClosed,
+    selectedLanes: [...state.selected.values()],
+  };
+}
+
 /**
  * @description Token Chase optimizer (ADR-046 step 3). Replays ONE captured frame's exact sent prompt
  * against a different model — an ephemeral per-call swap routed through the same accountable bot node
@@ -247,7 +347,7 @@ export class TokenChaseOptimizeService {
   async replayVariant(
     runId: string,
     seq: number,
-    lane: { label: string; byo?: { baseUrl: string; apiKey: string; model: string } },
+    lane: VariantReplayLane,
     access: TokenChaseAccess,
     baselineOverride?: BaselineOverride,
   ): Promise<VariantReplayResult | null> {
@@ -335,7 +435,7 @@ export class TokenChaseOptimizeService {
     const variant: LaneMetrics = {
       label: lane.label,
       model: res.model ?? lane.byo?.model ?? null,
-      provider: res.provider ?? null,
+      provider: lane.byo?.providerId ?? res.provider ?? null,
       tokensIn: res.usage.inputTokens,
       tokensOut: res.usage.outputTokens,
       costUsd: variantCost.costUsd,
@@ -366,6 +466,60 @@ export class TokenChaseOptimizeService {
   }
 
   /**
+   * @description Replays one frame and, only after a classified provider wall, asks the injected
+   * selector for another free lane. Exhaustion returns the last error with `failedClosed=true`;
+   * it never retries without BYO credentials and therefore cannot fall into a paid bot default.
+   * @param runId - Captured run id.
+   * @param seq - Captured frame sequence.
+   * @param initialLane - First health-qualified lane.
+   * @param access - Owner-scoped read authority.
+   * @param baselineOverride - Optional promoted cost baseline.
+   * @param rotation - Optional free-lane rotation callbacks.
+   * @returns Result, final lane, and non-secret selection evidence.
+   */
+  async replayVariantRotating(
+    runId: string,
+    seq: number,
+    initialLane: VariantReplayLane,
+    access: TokenChaseAccess,
+    baselineOverride?: BaselineOverride,
+    rotation?: VariantLaneRotation,
+  ): Promise<RotatedVariantReplay> {
+    const requestedAttempts = Math.trunc(rotation?.maxAttempts ?? 1);
+    const maxAttempts = Number.isFinite(requestedAttempts)
+      ? Math.max(1, Math.min(8, requestedAttempts))
+      : 1;
+    let lane: VariantReplayLane | null = initialLane;
+    let attempts = 0;
+    let rotations = 0;
+    let last: VariantReplayResult | null = null;
+    while (lane && attempts < maxAttempts) {
+      attempts += 1;
+      last = await this.replayVariant(runId, seq, lane, access, baselineOverride);
+      if (!last || last.status !== 'replay-error') {
+        if (last?.variant && rotation?.onSuccess) await rotation.onSuccess(lane);
+        return { result: last, lane, selection: selectionTrace(attempts, rotations, false, lane, last) };
+      }
+      if (!rotation) {
+        return { result: last, lane, selection: selectionTrace(attempts, rotations, false, lane, last) };
+      }
+      const retryable = await rotation.onFailure(lane, last.reason ?? 'Provider replay failed.');
+      if (!retryable || attempts >= maxAttempts) {
+        return { result: last, lane, selection: selectionTrace(attempts, rotations, true, lane, last) };
+      }
+      const nextLane = await rotation.next();
+      if (!nextLane) {
+        last = closedReplayResult(last, 'No eligible free-provider lane remains; selection failed closed.');
+        return { result: last, lane, selection: selectionTrace(attempts, rotations, true, lane, last) };
+      }
+      lane = nextLane;
+      rotations += 1;
+    }
+    last = closedReplayResult(last, 'Free-provider rotation exhausted its bounded attempts.');
+    return { result: last, lane, selection: selectionTrace(attempts, rotations, true, lane, last) };
+  }
+
+  /**
    * @description End-to-end savings loop over a REAL captured run: replay every replayable frame on the
    * chosen cheaper lane, grade each (reusing replayVariant), optionally persist each graded observation
    * to the corpus, and roll the real cost deltas into an estimated-vs-actual SavingsSummary. Only the
@@ -383,19 +537,30 @@ export class TokenChaseOptimizeService {
    *   so the finite ceiling ALWAYS exists — the route passes one with governance wired.
    * @param baselineOverrides - optional per-frame promoted lanes (seq → override): frames with an
    *   ACTIVE promotion measure savings against the promoted lane (the ADR-046 re-baseline)
-   * @returns the per-frame results, the aggregate savings summary, and the run's budget status
+   * @param rotation - optional health-qualified free-lane rotation callbacks.
+   * @returns per-frame results, savings, budget, and non-secret lane selection evidence.
    */
   async runSavings(
     runId: string,
-    lane: { label: string; byo?: { baseUrl: string; apiKey: string; model: string } },
+    lane: VariantReplayLane,
     access: TokenChaseAccess,
     onObservation?: (result: VariantReplayResult) => void | Promise<void>,
     budget?: TokenChaseBudgetGate,
     baselineOverrides?: ReadonlyMap<number, BaselineOverride>,
-  ): Promise<{ results: VariantReplayResult[]; summary: SavingsSummary; budget: TokenChaseBudgetStatus }> {
+    rotation?: VariantLaneRotation,
+  ): Promise<{
+    results: VariantReplayResult[];
+    summary: SavingsSummary;
+    budget: TokenChaseBudgetStatus;
+    rotation: SavingsRotationStatus;
+  }> {
     const gate = budget ?? new TokenChaseBudgetGate({ userSub: access.callerSub });
     const frames = await this.reader.getFrames(runId, access);
     const results: VariantReplayResult[] = [];
+    const rotationState: SavingsRotationAccumulator = {
+      attempts: 0, rotations: 0, failedClosed: false, selected: new Map(),
+    };
+    let activeLane = lane;
     for (const frame of frames) {
       const verdict = await gate.check();
       if (verdict.exhausted) {
@@ -405,17 +570,28 @@ export class TokenChaseOptimizeService {
         );
         break;
       }
-      const result = await this.replayVariant(runId, frame.seq, lane, access, baselineOverrides?.get(frame.seq));
+      const replay = await this.replayVariantRotating(
+        runId, frame.seq, activeLane, access, baselineOverrides?.get(frame.seq), rotation,
+      );
+      recordSavingsSelection(rotationState, replay.selection);
+      if (replay.lane) activeLane = replay.lane;
+      const result = replay.result;
       if (!result) continue;
       if (result.variant) gate.record(result.variant.costUsd);
       results.push(result);
       if (onObservation && result.tier) await onObservation(result);
+      if (replay.selection.failedClosed) break;
     }
     const summary = aggregateSavingsRows(resultsToSavingsRows(results), 'run', runId);
     logger.info(
       { runId, lane: lane.label, frames: results.length, realizableSavedUsd: summary.realizableSavedUsd, cheaper: summary.tiers.equivalentCheaper, budget: gate.status() },
       'Token Chase savings loop completed',
     );
-    return { results, summary, budget: gate.status() };
+    return {
+      results,
+      summary,
+      budget: gate.status(),
+      rotation: savingsRotationStatus(rotationState),
+    };
   }
 }

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from app.js (1000-line cap decomposition): database stores, LLM providers, controllers, MCP services, Plane registration, built-in tools, Plane monitor (initialize() core section)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: construct one authorization-enforcing MCP proxy with the canonical ToolRegistry and reuse it across every consumer.
  */
 
 const TaskStore = require('../stores/TaskStore');
@@ -227,13 +228,19 @@ async function initializeCoreServices(application) {
         }
       }
       
-      // Pass BOTH MCP services to task controller (for stdio + HTTP MCP support)
-      application.taskController.mcp = new UnifiedMCPProxy(application.mcpService, application.mcpServiceHTTP);
+      // One proxy owns the authorization seam for both transports. No consumer receives a
+      // transport-level execute method.
+      application.mcpProxy = new UnifiedMCPProxy(
+        application.mcpService,
+        application.mcpServiceHTTP,
+        application.toolRegistry,
+      );
+      application.taskController.mcp = application.mcpProxy;
 
       // Initialize Plane Registration (if enabled)
       if (config.plane?.enabled) {
         logger.info('Initializing Plane Auto-Registration...');
-        application.planeRegistrationService = new PlaneRegistrationService(new UnifiedMCPProxy(application.mcpService, application.mcpServiceHTTP), config);
+        application.planeRegistrationService = new PlaneRegistrationService(application.mcpProxy, config);
         const planeResult = await application.planeRegistrationService.initialize();
         
         if (planeResult.success) {

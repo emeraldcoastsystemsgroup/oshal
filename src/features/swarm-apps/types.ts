@@ -16,6 +16,10 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | SwarmApplicationSummary gained `icon: string | null` (first ribbon-tile/assistant codicon) so listing surfaces render a real icon.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Add the declarative hideAssistant ribbon policy for immersive app surfaces.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Let packaged bots declare a validated harness and API provider instead of inheriting the registrar's Claude-only runtime.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: add the fixed deny/viewer/editor/admin manifest access contract and carry it through the dynamic-route mounter boundary.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS CORE-05: add package smoke declarations and explicit AI-route availability metadata.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Add manifest-contributed Google Takeout slices and the activation registrar port: packages declare bounded path suffixes plus a package-local ingest export, while the kernel owns archive parsing and retracts contributions on deactivate/uninstall.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Add a first-class deterministic service-route schedule target. The manifest contract separates prompt dispatch from a static POST to a package-owned service-auth route so scheduled package workers never masquerade as agent prompts.
  */
 
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
@@ -37,6 +41,28 @@ import type { SurfaceBridgeOpName } from '@/shared/surface-bridge-ops';
  *                  the real gate (requiresOperator); this scope hides the catalog entry.
  */
 export type SwarmAppScope = 'person' | 'tenant' | 'public' | 'operator';
+
+/** ADR-118's closed, platform-wide app doorway vocabulary. */
+export const APP_ACCESS_TIERS = ['deny', 'viewer', 'editor', 'admin'] as const;
+export type AppAccessTier = (typeof APP_ACCESS_TIERS)[number];
+
+/** @description True only for a tier in the fixed ADR-118 vocabulary. */
+export function isAppAccessTier(value: unknown): value is AppAccessTier {
+  return typeof value === 'string' && (APP_ACCESS_TIERS as readonly string[]).includes(value);
+}
+
+/**
+ * Coarse per-app access declaration. The platform gates the doorway; a package's own
+ * capabilities and row policies remain authoritative after editor/admin enters.
+ */
+export interface SwarmAppAccessDeclaration {
+  /** Tiers this app implements. `deny` is mandatory; unsupported tiers fail assignment. */
+  supported: AppAccessTier[];
+  /** Tier used when no explicit user/app assignment exists. */
+  defaultTier: AppAccessTier;
+  /** Optional package capability bundle selected after the coarse platform gate. */
+  mappings?: Partial<Record<AppAccessTier, string>>;
+}
 
 /**
  * ADR-097: the user-facing suites — the ONE primary shelf an app occupies in the catalog,
@@ -216,6 +242,59 @@ export interface SwarmAppRouteDeclaration {
   requiresAuth?: boolean;
   /** @deprecated DEAD FIELD — nothing in the framework consumes it. Do not model new fields on it. */
   requiresContext?: boolean;
+  /** This route necessarily performs an AI inference. Under OSHAL_NO_AI=true the kernel returns
+   * the canonical 503 ai_disabled response before any package code executes. */
+  requiresAi?: boolean;
+}
+
+/**
+ * One package-owned slice within a Google Takeout archive. Matching uses a literal,
+ * case-insensitive path suffix rather than package-supplied regular expressions, keeping
+ * archive scanning deterministic and free of regex denial-of-service behavior.
+ */
+export interface SwarmAppTakeoutSliceDeclaration {
+  /** Globally stable lowercase id, e.g. `product-activity`. */
+  kind: string;
+  /** Human label returned in the aggregate ingest result. */
+  label: string;
+  /** Literal archive-entry suffix, e.g. `Takeout/Product/history.json`. */
+  pathSuffix: string;
+  /** Optional HTML counterpart used only to tell the user to re-export as JSON. */
+  htmlPathSuffix?: string;
+  /** Per-entry uncompressed byte ceiling. Defaults to 64 MiB; never above 128 MiB. */
+  maxBytes?: number;
+  /** Compiled package-local CommonJS module, resolved beneath the installed package directory. */
+  module: string;
+  /** Exported async function receiving (AppContext, { userSub, content, fileName }). */
+  handler: string;
+}
+
+/** Authentication material the verifier is allowed to attach to an app smoke request. */
+export type SwarmAppSmokeAuthMode = 'service' | 'pat' | 'public';
+
+/** Response assertions for one package-owned smoke probe. */
+export interface SwarmAppSmokeExpectation {
+  /** Exact HTTP status the package promises for an operational probe. */
+  status: number;
+  /** Optional RFC 6901 pointer into the JSON response, e.g. `/result/type`. */
+  jsonPointer?: string;
+  /** Values that make the selected response location dishonest (normally noop/stub/empty). */
+  rejectValues?: Array<string | number | boolean | null>;
+}
+
+/**
+ * One executable, package-owned installation smoke. Paths must live below a route declared by
+ * the same manifest; fixture JSON is package-local data and is never secret-interpolated.
+ */
+export interface SwarmAppSmokeDeclaration {
+  name: string;
+  method: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  path: string;
+  auth: SwarmAppSmokeAuthMode;
+  bodyFixture?: string;
+  expect: SwarmAppSmokeExpectation;
+  /** The probe spends an AI inference when AI is enabled. */
+  requiresAi?: boolean;
 }
 
 /** One stage of a `pipeline: 'staged'` workflow — an existing bot pinned to a step,
@@ -324,15 +403,11 @@ export interface SwarmAppRibbonPolicy {
  * (e.g. their Facebook) — declared here but NOT yet auto-wired by the loader.
  * Schedules only EXECUTE when the agent scheduler is enabled (ENABLE_AGENT_SCHEDULER=true).
  */
-export interface SwarmAppScheduleDeclaration {
+interface SwarmAppScheduleDeclarationBase {
   /** Unique within the app; combined with the app name to form the schedule id. */
   id: string;
   /** Cron expression (standard 5-field, e.g. every 6 hours). */
   cron: string;
-  /** The agentic task to run on each tick. */
-  prompt: string;
-  /** Agent id to run on; defaults to the framework's default chat agent when omitted. */
-  targetAgent?: string;
   /** 'framework' (default) = system-wide, on by default. 'per-user' = activates on connect (deferred). */
   scope?: 'framework' | 'per-user';
   /** (per-user only) connector/provider that must be connected first, e.g. 'facebook'. */
@@ -343,6 +418,43 @@ export interface SwarmAppScheduleDeclaration {
   enabled?: boolean;
 }
 
+/** Legacy/default manifest schedule target: dispatch one prompt to an agent. */
+export interface SwarmAppPromptScheduleDeclaration extends SwarmAppScheduleDeclarationBase {
+  /** Omitted means the established prompt target. */
+  target?: 'prompt';
+  /** The agentic task to run on each tick. */
+  prompt: string;
+  /** Agent id to run on; defaults to the framework's default chat agent when omitted. */
+  targetAgent?: string;
+  route?: never;
+  body?: never;
+}
+
+/**
+ * Deterministic package-worker target. The kernel binds a named export from the exact
+ * package-owned service route and invokes it in-process; it never asks an agent to interpret a
+ * prompt and never falls through an internal HTTP path to an unrelated kernel route.
+ */
+export interface SwarmAppServiceRouteScheduleDeclaration extends SwarmAppScheduleDeclarationBase {
+  target: 'service-route';
+  /** Concrete canonical path beneath one routes[] mount whose auth mode is exactly `service`. */
+  route: string;
+  /** Named export in the owning routes[].module invoked by the scheduler. */
+  handler: string;
+  /** Frozen static JSON object supplied to the named handler. Dynamic values and interpolation are forbidden. */
+  body?: Record<string, unknown>;
+  prompt?: never;
+  targetAgent?: never;
+  /** Service workers are framework jobs. Per-user identity must be enforced inside package policy. */
+  scope?: 'framework';
+  requiresConnection?: never;
+}
+
+/** One of the two explicit schedule execution modes. */
+export type SwarmAppScheduleDeclaration =
+  | SwarmAppPromptScheduleDeclaration
+  | SwarmAppServiceRouteScheduleDeclaration;
+
 /**
  * Thin hook the loader calls per framework-scope schedule. The composition root
  * implements it against the scheduling service. Injected (not imported) to keep
@@ -351,9 +463,18 @@ export interface SwarmAppScheduleDeclaration {
 export type ManifestScheduleRegistrar = (input: {
   scheduleId: string;
   cron: string;
-  prompt: string;
-  targetAgent?: string;
   queue: string;
+  target:
+    | { kind: 'prompt'; prompt: string; targetAgent?: string }
+    | {
+        kind: 'service-route';
+        appName: string;
+        packageDir: string;
+        module: string;
+        handler: string;
+        path: string;
+        body: Record<string, unknown>;
+      };
 }) => Promise<void>;
 
 /**
@@ -386,7 +507,12 @@ export interface ManifestRouteMounter {
    * @param packageDir - absolute dir containing the app's compiled route modules
    * @param routes - the manifest's `routes[]` declarations
    */
-  mount(appName: string, packageDir: string, routes: SwarmAppRouteDeclaration[]): Promise<void>;
+  mount(
+    appName: string,
+    packageDir: string,
+    routes: SwarmAppRouteDeclaration[],
+    access?: SwarmAppAccessDeclaration,
+  ): Promise<void>;
   /** Remove every route previously mounted for this app. Idempotent. */
   unmount(appName: string): void;
 }
@@ -403,6 +529,22 @@ export interface ManifestBotRegistrar {
   /** Register the app's bots (replaces any prior registration for the app). */
   register(appName: string, bots: SwarmAppBotDeclaration[]): void;
   /** Retract the app's bots (toggle-off/uninstall). Idempotent. */
+  unregister(appName: string): void;
+}
+
+/**
+ * Activation port for package-contributed Takeout slices. The app-layer implementation owns
+ * package-module loading and the live archive-routing registry; this feature slice only drives
+ * lifecycle registration, preserving the kernel-versus-package boundary.
+ */
+export interface ManifestTakeoutRegistrar {
+  /** Atomically replace one app's active slice contributions. */
+  register(
+    appName: string,
+    packageDir: string,
+    declarations: SwarmAppTakeoutSliceDeclaration[],
+  ): Promise<void>;
+  /** Retract every contribution for an app. Idempotent. */
   unregister(appName: string): void;
 }
 
@@ -449,6 +591,10 @@ export interface SwarmAppManifest {
   /** Surface-bridge op allow-list (fail-closed: absent = the relay carries nothing). */
   surface?: SwarmAppSurfaceDeclaration;
   routes?: SwarmAppRouteDeclaration[];
+  /** Package-owned Google Takeout slices registered only while this app is active. */
+  takeout?: SwarmAppTakeoutSliceDeclaration[];
+  /** Executable installation proofs run by `oshal-verify --apps ...`. */
+  smoke?: SwarmAppSmokeDeclaration[];
   migrations?: string[];
   /** ADR-085 §5 + ADR-091: glob prefixes of the RAG collections this app owns
    *  (e.g. ["lm-class-*", "lm-cls-*"]). Expanded against live collection names in
@@ -497,6 +643,8 @@ export interface SwarmAppManifest {
    *  store migration exists to remove. Core's lists still win for core segments; a package can only
    *  contribute a tier for a segment core does not claim. */
   guestTier?: GuestTier;
+  /** ADR-118: opt-in per-user app doorway policy. Omission preserves current behavior. */
+  access?: SwarmAppAccessDeclaration;
   /** ADR-090 D8: the KERNEL SKILLS this app calls (`@/shared/kernel-skills` ids — e.g.
    *  `deck-generation`, `rag`, `voice`). A skill is a shared capability the kernel always
    *  provides; it is NOT an app, so it never installs, never ref-counts, and can never be

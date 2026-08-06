@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Explicit super-admin role for the Developer Console (ADR-077). Double-gated + fail-closed + debuggable decision trace.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | isSuperAdminSub(sub) for QUEUE-side gating (ADR-081): dispatch has no Request, only ticket.ownerSub. Sub-allowlist-only by design — the console capability flag gates the browser console, not the oshal-dev workflow (the manifest's presence is that capability), and the email allowlist can't be checked without a session.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match super-admin OIDC subjects exactly and case-sensitively; only email allowlists retain case-insensitive normalization. Whitespace/case variants can no longer alias a privileged subject.
  */
 
 import type { Request, Response, NextFunction } from 'express';
@@ -54,7 +55,16 @@ export function superAdminEnabled(): boolean {
   return TRUTHY.has((process.env.OSHAL_DEV_CONSOLE_ENABLED ?? '').trim().toLowerCase());
 }
 
-function parseAllowlist(value: string | undefined): Set<string> {
+function parseSubjectAllowlist(value: string | undefined): Set<string> {
+  return new Set(
+    (value ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  );
+}
+
+function parseEmailAllowlist(value: string | undefined): Set<string> {
   return new Set(
     (value ?? '')
       .split(',')
@@ -73,11 +83,12 @@ function parseAllowlist(value: string | undefined): Set<string> {
 export function evaluateSuperAdmin(req: Request): SuperAdminDecision {
   const capabilityEnabled = superAdminEnabled();
   const { sub, email } = getCaller(req);
-  const authenticated = Boolean(sub);
-  const subs = parseAllowlist(process.env.OSHAL_SUPERADMIN_SUBS);
-  const emails = parseAllowlist(process.env.OSHAL_SUPERADMIN_EMAILS);
+  const authenticated = typeof sub === 'string' && sub.length > 0;
+  const subs = parseSubjectAllowlist(process.env.OSHAL_SUPERADMIN_SUBS);
+  const emails = parseEmailAllowlist(process.env.OSHAL_SUPERADMIN_EMAILS);
   const onAllowlist =
-    (Boolean(sub) && subs.has(String(sub).toLowerCase())) || (Boolean(email) && emails.has(String(email)));
+    (typeof sub === 'string' && sub.length > 0 && subs.has(sub))
+    || (typeof email === 'string' && email.length > 0 && emails.has(email.toLowerCase()));
 
   const checks: SuperAdminChecks = { capabilityEnabled, authenticated, onAllowlist };
   const allowed = capabilityEnabled && authenticated && onAllowlist;
@@ -119,8 +130,8 @@ export function isSuperAdmin(req: Request): boolean {
  * @returns true only when sub is on OSHAL_SUPERADMIN_SUBS.
  */
 export function isSuperAdminSub(sub: string | null | undefined): boolean {
-  if (!sub || !String(sub).trim()) return false;
-  return parseAllowlist(process.env.OSHAL_SUPERADMIN_SUBS).has(String(sub).trim().toLowerCase());
+  if (typeof sub !== 'string' || sub.length === 0) return false;
+  return parseSubjectAllowlist(process.env.OSHAL_SUPERADMIN_SUBS).has(sub);
 }
 
 /** A request that has passed (or been evaluated by) the super-admin gate. */

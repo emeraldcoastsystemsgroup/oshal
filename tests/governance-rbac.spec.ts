@@ -12,6 +12,7 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — unit tests for opt-in RBAC policy.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact, case-sensitive OIDC subject matching on both privileged allowlists while preserving delimiter trimming and case-insensitive email behavior.
  */
 import { test, expect } from '@playwright/test';
 import { can, resolveRole, isEnforcementEnabled, type RbacCaller } from '@/features/governance/rbac/policy';
@@ -58,6 +59,20 @@ test('resolveRole maps operator allowlist (email, case-insensitive) to admin', (
 test('resolveRole maps the optional RBAC operator allowlist to operator', () => {
   process.env.OSHAL_RBAC_OPERATOR_SUBS = 'op-sub-1';
   expect(resolveRole(OPERATOR)).toBe(Role.Operator);
+});
+
+test('subject allowlists are exact: case and caller whitespace cannot inherit privilege', () => {
+  process.env.OSHAL_OPERATOR_SUBS = ' admin-sub-1 ';
+  process.env.OSHAL_RBAC_OPERATOR_SUBS = ' op-sub-1 ';
+
+  expect(resolveRole(ADMIN)).toBe(Role.Admin);
+  expect(resolveRole(OPERATOR)).toBe(Role.Operator);
+  for (const sub of ['ADMIN-SUB-1', ' admin-sub-1', 'admin-sub-1 ']) {
+    expect(resolveRole({ sub, email: null })).toBe(Role.Viewer);
+  }
+  for (const sub of ['OP-SUB-1', ' op-sub-1', 'op-sub-1 ']) {
+    expect(resolveRole({ sub, email: null })).toBe(Role.Viewer);
+  }
 });
 
 test('resolveRole defaults to viewer for anyone not on an allowlist (incl. unauthenticated)', () => {

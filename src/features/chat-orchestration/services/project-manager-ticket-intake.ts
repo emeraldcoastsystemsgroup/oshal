@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added project-manager ticket intake resolution so direct PM chat creates canonical internal tickets and dedicated linked tasks before orchestration
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Switched PM intake onto shared ticket-project metadata helpers so direct PM tickets inherit the platform-wide Default-project contract
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Changed ticket creation default status from backlog to approved so queue manager processes tickets immediately
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Carry the authenticated message owner onto both the canonical ticket and chat task so their row ownership matches the narrowed request identity under RLS.
  */
 
 import { DEFAULT_PROJECT_NAME, DEFAULT_PROJECT_ID, mergeTicketProjectMetadata } from '@/entities/ticket';
@@ -66,6 +67,8 @@ interface ResolveTicketIntakeArgs {
   resolvedAgentId: string;
   source: string;
   text: string;
+  /** Accountable owner resolved from the validated session or trusted service-user header. */
+  ownerSub?: string;
   /** When true, skip ticket auto-creation regardless of message content. Default: false. */
   chatOnly?: boolean;
 }
@@ -91,8 +94,12 @@ export async function resolveProjectManagerTicketExecutionContext(
   }
 
   const title = deriveTicketTitle(args.text);
-  const ticket = await deps.ticketService.createTicket(buildTicketInput(title, args.text, args.resolvedAgentId));
-  const task = await deps.taskStore.create(buildTaskInput(title, ticket.ticketId, args.resolvedAgentId, args.requestedTaskId));
+  const ticket = await deps.ticketService.createTicket(
+    buildTicketInput(title, args.text, args.resolvedAgentId, args.ownerSub),
+  );
+  const task = await deps.taskStore.create(
+    buildTaskInput(title, ticket.ticketId, args.resolvedAgentId, args.requestedTaskId, args.ownerSub),
+  );
   await deps.ticketService.linkTask(ticket.ticketId, task.taskId, 'primary');
 
   logger.info(
@@ -123,7 +130,7 @@ function isProjectManagerAgent(agentId: string): boolean {
   return normalized === PROJECT_MANAGER_AGENT_ID || normalized === PROJECT_MANAGER_NAME;
 }
 
-function buildTicketInput(title: string, description: string, agentId: string) {
+function buildTicketInput(title: string, description: string, agentId: string, ownerSub?: string) {
   return {
     title,
     ticketType: 'build' as const,
@@ -135,6 +142,7 @@ function buildTicketInput(title: string, description: string, agentId: string) {
     labels: [],
     workspaceId: null,
     assignedAgentId: agentId,
+    ownerSub,
     parentTicketId: null,
     externalProvider: null,
     externalId: null,
@@ -145,11 +153,18 @@ function buildTicketInput(title: string, description: string, agentId: string) {
   };
 }
 
-function buildTaskInput(title: string, ticketId: string, agentId: string, requestedTaskId: string) {
+function buildTaskInput(
+  title: string,
+  ticketId: string,
+  agentId: string,
+  requestedTaskId: string,
+  ownerSub?: string,
+) {
   return {
     title,
     processingMode: 'agentic' as const,
     agentId,
+    ownerSub,
     metadata: mergeTicketProjectMetadata({
       source: 'project-manager-ticket-intake',
       ticketId,

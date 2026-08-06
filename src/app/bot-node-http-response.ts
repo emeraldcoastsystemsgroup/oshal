@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve authoritative provider-config source, reconciliation action, and version in the controller-facing bot-node response.
+ */
+
 import type { EnvelopeExecutionResult } from '@/features/swarm-orchestration';
 
 export interface BotNodeHttpResponseOptions {
@@ -17,6 +25,20 @@ export function buildBotNodeHttpResponse(
 ): Record<string, unknown> {
   const output = (result.output ?? {}) as Record<string, unknown>;
   const usage = (output.usage ?? {}) as Record<string, number>;
+  const providerConfigSource = output.providerConfigSource === 'authoritative-dispatch'
+    || output.providerConfigSource === 'runtime-default'
+    || output.providerConfigSource === 'byo-request'
+    || output.providerConfigSource === 'deterministic-intent'
+    ? output.providerConfigSource
+    : undefined;
+  const providerConfigAction = output.providerConfigAction === 'absent'
+    || output.providerConfigAction === 'match'
+    || output.providerConfigAction === 'corrected'
+    ? output.providerConfigAction
+    : undefined;
+  const rawConfigVersion = output.providerConfigVersion;
+  const hasConfigVersion = rawConfigVersion === null
+    || (typeof rawConfigVersion === 'number' && Number.isFinite(rawConfigVersion));
   return {
     success: result.success,
     response: typeof output.response === 'string' ? output.response : '',
@@ -36,6 +58,9 @@ export function buildBotNodeHttpResponse(
     durationMs: options.durationMs,
     taskId: options.taskId,
     error: result.error,
+    ...(providerConfigSource ? { providerConfigSource } : {}),
+    ...(providerConfigAction ? { providerConfigAction } : {}),
+    ...(hasConfigVersion ? { providerConfigVersion: rawConfigVersion } : {}),
   };
 }
 

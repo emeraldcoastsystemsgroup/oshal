@@ -1,3 +1,14 @@
+/**
+ * Plaid Link connector route contract.
+ *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documented the existing Link/list/exchange regression and pinned its storage-only fake pool to legacy connector crypto; default-on DEK behavior is covered by the dedicated crypto suite.
+ * -----------------------------------------------------------------------------
+ */
+
 import express from 'express';
 import { test, expect } from '@playwright/test';
 import { createConnectorsRoutes } from '@/app/routes/connectors-routes';
@@ -91,7 +102,8 @@ test.describe('Plaid Link connector (auth:link)', () => {
   const saved = { CID: process.env.PLAID_CLIENT_ID, SEC: process.env.PLAID_SECRET, SS: process.env.SESSION_SECRET, EC: process.env.OSHAL_ENVELOPE_CRYPTO };
   test.beforeEach(() => {
     process.env.SESSION_SECRET = 'plaid-test-secret';
-    delete process.env.OSHAL_ENVELOPE_CRYPTO;
+    // The fake pool models connector rows, not the separate per-user DEK table.
+    process.env.OSHAL_ENVELOPE_CRYPTO = 'false';
   });
   test.afterEach(() => {
     process.env.PLAID_CLIENT_ID = saved.CID; process.env.PLAID_SECRET = saved.SEC;

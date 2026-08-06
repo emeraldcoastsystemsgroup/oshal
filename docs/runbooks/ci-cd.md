@@ -1,21 +1,20 @@
 # CI/CD Runbook
 
-> **2026-07-09: GitHub Actions is MANUAL-ONLY on this repo.** Automatic runs (per-push,
-> then hourly, then daily cron) burned ~$15 against exhausted free minutes and were
-> retired; after the billing hold was paid, `ci.yml` was restored with
-> `workflow_dispatch` + `pull_request` triggers ONLY — never re-add a `push:` trigger or
-> `schedule:` cron. `deploy.yml` and `firetv-android.yml` remain archived in
-> docs/archive/github-actions-retired/.
+> **Current disposition (verified 2026-08-06): GitHub Actions general CI is MANUAL-ONLY.**
+> Automatic runs burned hosted minutes, so the tracked `ci.yml` declares only
+> `workflow_dispatch`. This trunk contains no separate deployment workflow and no retired workflow
+> archive. Hosted CI validates source, builds/scans the image, may publish that image to the
+> registry, and tears down its runner-local smoke stack; it does not change a durable environment.
 > **The gate that runs automatically every day is local — see [local-ci.md](./local-ci.md).**
 > The migration decision is recorded in [ADR-090](../adr/090-github-actions-to-local-ci.md); to run
 > ANY workflow file locally (this one included), use [gha-local](./gha-local.md).
-> The pipeline description below matches the restored ci.yml; trigger info is superseded.
+> Historical topology below explains the migration; the tracked workflow is executable truth.
 
 How OSHAL's continuous integration and delivery worked on GitHub Actions: the pipelines, what
 each job gated, how to reproduce failures locally, the two-repo publish flow, and the gotchas
 that bit us. As-built as of 2026-07-06; retired 2026-07-09.
 
-## Where it runs
+## Where it ran (historical)
 
 Two GitHub repos, same workflow files (`.github/workflows/`):
 
@@ -26,9 +25,10 @@ Two GitHub repos, same workflow files (`.github/workflows/`):
   there runs on the sync branch/PR. See [the openswarm flow](#openswarm-forward-sync) below and
   `docs/release/public-release-checklist.md` §2b.
 
-## The CI pipeline (`ci.yml`)
+## The historical CI pipeline shape (`ci.yml`)
 
-Triggers: push to `main`, PRs to `main`. `concurrency: cancel-in-progress: true` (see the
+Historical triggers were push to `main` and PRs to `main`; those triggers are retired. The current
+workflow is manual-only. `concurrency: cancel-in-progress: true` remains (see the
 [gotcha](#gotcha-cancel-in-progress-hides-the-e2e-result)).
 
 | Job | What it does | Gate |
@@ -121,20 +121,27 @@ docker rm -f e2e-pg e2e-redis
 Use `--retries=0` — with retries on, connection/assertion failures each retry twice with timeouts
 and the run can balloon to hours.
 
-## The Deploy pipeline (`deploy.yml`)
+## Image build and registry publication (`ci.yml`)
 
-Triggers: `workflow_dispatch` (manual, choose `staging`/`production` + image tag) or a `v*` tag
-push. `resolve-target` picks the environment, then `deploy-staging` / `deploy-production` run under
-a GitHub **environment** gate (production requires the environment's reviewers). It deploys a
-pre-built image tag; it does not build. This pipeline is scaffolding — wire the actual deploy step
-to the target before relying on it.
+The `build-docker` job runs only after typecheck and tests. It builds `Dockerfile.oshal`; a manual
+run on `main` may publish the resulting tags to the configured registry. `security-scan` rebuilds
+the image without publishing it, and `quickstart-smoke` starts a Compose stack only on the hosted
+runner, probes health, routing, ticket creation, and migrations, then tears the stack down with
+`if: always()`.
 
-## The Fire TV Android pipeline (`firetv-android.yml`)
+Those jobs are image/build validation, not deployment. They have no persistent target, target
+credentials, target rollout step, or post-rollout parity check. A durable environment changes only
+through a separately authorized operator or cluster release path, whose own health and image-parity
+checks are the deployment evidence.
 
-A separate, **path-filtered** workflow for the Android app in `packages/oshal-firetv/`. It runs
-**only** when that app (or the workflow file itself) changes — `paths: ["packages/oshal-firetv/**",
-".github/workflows/firetv-android.yml"]` on both push-to-`main` and PRs — so it stays dark for the
-TypeScript/JS work that dominates day-to-day pushes.
+## Historical Fire TV Android pipeline sketch
+
+No Fire TV workflow file or retired copy is tracked in this clean trunk. The notes below preserve
+the earlier private-repository gate shape; they do not describe a runnable current workflow.
+
+The earlier notes described a **path-filtered** workflow for the Android app in
+`packages/oshal-firetv/`. It ran only when that package or its former workflow path changed, so it
+stayed dark for the TypeScript/JS work that dominated day-to-day pushes.
 
 Single job, `android-unit` on `ubuntu-latest`: checkout → Temurin JDK 17 → Android SDK
 (`android-actions/setup-android`) → Gradle (`gradle/actions/setup-gradle`) → **Robolectric unit

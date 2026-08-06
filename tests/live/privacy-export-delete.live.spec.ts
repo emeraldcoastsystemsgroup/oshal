@@ -6,10 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live proof for user-scoped privacy export/delete.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Fail (not skip) when CI runs without MOCK_OIDC_ALLOW_HEADER — passing-by-skipping in the nightly green set is the guard-that-isn't. Local runs still skip politely.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BASE_URL host pinned to 127.0.0.1 — "localhost" resolves to ::1 where a stale wslrelay squats the port (ECONNREFUSED ::1:3456, 2026-07-23 ci-local --head run); same change as playwright.config.ts BASE_URL. Port resolution unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | In nightly evidence mode, prove export/delete fixtures were database-backed and the other owner's Postgres rows survive deletion.
  */
 
 import { expect, request as apiRequest, test, type APIRequestContext } from '@playwright/test';
 import { PRIVACY_DELETE_CONFIRMATION } from '../../src/app/routes/privacy-routes';
+import { readOwnDataDatabaseEvidence } from '../helpers/own-data-database-evidence';
 
 const HEADER_GATE_ENABLED = ['true', '1', 'yes'].includes(
   (process.env.MOCK_OIDC_ALLOW_HEADER ?? '').toLowerCase().trim(),
@@ -52,6 +54,24 @@ test('MOCK_OIDC live: user can export and delete own operational data only', asy
     const ticketA = await createTicket(userA, `user A export/delete ticket ${PROOF_ID}`);
     const ticketB = await createTicket(userB, `user B retained ticket ${PROOF_ID}`);
 
+    const databaseBeforeA = await readOwnDataDatabaseEvidence(USER_A.sub, {
+      taskIds: [taskA.taskId, taskB.taskId],
+      ticketIds: [ticketA.ticketId, ticketB.ticketId],
+    });
+    const databaseBeforeB = await readOwnDataDatabaseEvidence(USER_B.sub, {
+      taskIds: [taskA.taskId, taskB.taskId],
+      ticketIds: [ticketA.ticketId, ticketB.ticketId],
+    });
+    if (databaseBeforeA && databaseBeforeB) {
+      expect(databaseBeforeA.role).toBe('oshal_app');
+      expect(databaseBeforeA.superuser).toBe(false);
+      expect(databaseBeforeA.bypassRls).toBe(false);
+      expect(databaseBeforeA.tasks.map((row) => row.taskId)).toEqual([taskA.taskId]);
+      expect(databaseBeforeA.tickets.map((row) => row.ticketId)).toEqual([ticketA.ticketId]);
+      expect(databaseBeforeB.tasks.map((row) => row.taskId)).toEqual([taskB.taskId]);
+      expect(databaseBeforeB.tickets.map((row) => row.ticketId)).toEqual([ticketB.ticketId]);
+    }
+
     const exportA = await exportPrivacy(userA);
     expect(ids(exportA.tasks, 'task')).toContain(taskA.taskId);
     expect(ids(exportA.tasks, 'task')).not.toContain(taskB.taskId);
@@ -77,11 +97,29 @@ test('MOCK_OIDC live: user can export and delete own operational data only', asy
     expect(ids(exportB.tasks, 'task')).toContain(taskB.taskId);
     expect(ids(exportB.tickets, 'ticket')).toContain(ticketB.ticketId);
 
+    const databaseAfterA = await readOwnDataDatabaseEvidence(USER_A.sub, {
+      taskIds: [taskA.taskId, taskB.taskId],
+      ticketIds: [ticketA.ticketId, ticketB.ticketId],
+    });
+    const databaseAfterB = await readOwnDataDatabaseEvidence(USER_B.sub, {
+      taskIds: [taskA.taskId, taskB.taskId],
+      ticketIds: [ticketA.ticketId, ticketB.ticketId],
+    });
+    if (databaseAfterA && databaseAfterB) {
+      expect(databaseAfterA.tasks).toEqual([]);
+      expect(databaseAfterA.tickets).toEqual([]);
+      expect(databaseAfterB.tasks.map((row) => row.taskId)).toEqual([taskB.taskId]);
+      expect(databaseAfterB.tickets.map((row) => row.ticketId)).toEqual([ticketB.ticketId]);
+    }
+
     await testInfo.attach('privacy-export-delete-proof.json', {
       body: JSON.stringify({
         proofId: PROOF_ID,
         userA: { sub: USER_A.sub, deletedTask: taskA.taskId, deletedTicket: ticketA.ticketId },
         userB: { sub: USER_B.sub, retainedTask: taskB.taskId, retainedTicket: ticketB.ticketId },
+        databaseEvidence: databaseBeforeA && databaseBeforeB && databaseAfterA && databaseAfterB
+          ? { before: { userA: databaseBeforeA, userB: databaseBeforeB }, after: { userA: databaseAfterA, userB: databaseAfterB } }
+          : null,
         result: 'user A export/delete removed only user A operational data; user B data remained exportable',
       }, null, 2),
       contentType: 'application/json',

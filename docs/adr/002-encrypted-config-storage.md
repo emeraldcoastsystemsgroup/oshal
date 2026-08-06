@@ -3,6 +3,10 @@
 ## Status
 **Accepted** — 2026-03-07
 
+**Security amendment** — 2026-08-06: plaintext live-store compatibility is retired. Secret
+operations now require `ENCRYPTION_KEY`; legacy `secrets.json` can only be consumed by a verified,
+one-way migration that removes the plaintext source.
+
 ## Context
 The API Configuration Module (`src/api/`) persists provider credentials (API keys, OAuth tokens, session tokens) to the filesystem. The current implementation writes secrets to plain JSON files (`secrets.json`). While the split write mode separates secrets from settings, the secrets file remains unencrypted on disk.
 
@@ -30,7 +34,10 @@ Use **Node.js built-in `crypto` module with AES-256-GCM** for encrypting configu
 - **Key source**: `ENCRYPTION_KEY` environment variable (loaded from `.env`)
 - **Storage format**: JSON envelope containing `{ salt, iv, authTag, ciphertext }` (all base64-encoded)
 - **File**: `secrets.enc.json` replaces `secrets.json` when encryption is enabled
-- **Backward compatibility**: If no `ENCRYPTION_KEY` is set, falls back to plain JSON (`secrets.json`)
+- **Fail-closed key requirement**: If no `ENCRYPTION_KEY` is set, secret reads, writes, and deletes
+  are refused with `ENCRYPTION_KEY_REQUIRED`; plaintext fallback is not available
+- **Legacy migration**: `secrets.json` blocks normal operations and must be migrated explicitly;
+  retaining the plaintext copy or overwriting a simultaneous encrypted envelope is refused
 
 ### Why AES-256-GCM?
 - **Authenticated**: GCM mode provides both confidentiality and integrity — tampering is detected
@@ -50,13 +57,15 @@ Use **Node.js built-in `crypto` module with AES-256-GCM** for encrypting configu
 - Zero new native dependencies
 - Simple migration path from plain JSON
 - Key rotation supported without data loss
-- Backward compatible — unencrypted mode still works
+- Legacy plaintext stores have a verified one-way migration path
 
 ### Negative
 - File-based storage limits future query patterns (acceptable for config data)
 - PBKDF2 key derivation adds ~100ms on first encrypt/decrypt (acceptable, not in hot path)
 - Master key in environment variable requires secure `.env` file permissions
 - No multi-user key isolation (single master key for all secrets)
+- Deployments without the controller key cannot use credential-backed features (intentional
+  fail-closed availability tradeoff)
 
 ### Risks
 - If `ENCRYPTION_KEY` is lost, encrypted secrets are unrecoverable — must document backup procedures

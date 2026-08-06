@@ -35,7 +35,7 @@ OSHAL is the platform. Little Monsters is a **configuration** of that platform �
 | Capability | Where It Lives |
 |---|---|
 | Dynamic bot creation | `AgentFactoryService.deployPersonaOnly()` / `.deployWithContainer()` |
-| Bot self-registration | `bot-node-server.ts` → `POST /api/tools/register` + heartbeat |
+| Bot UI registration | Operator-managed `POST /api/tools/register`, or reviewed app-manifest in-process registration |
 | Cockpit toolbar injection | `RibbonNav._loadToolViews()` fetches `/api/tools/dynamic` |
 | TTS (browser) | `src/features/voice/services/tts-service.ts` |
 | TTS (AWS Polly) | `any-bot/server/services/aws/PollyService.js` — fully working |
@@ -556,14 +556,16 @@ When a teacher creates a new class, a workflow creates a class-specific tutor bo
 
 ## Sprint 5: Toolbar UI Surfaces (Week 4-5)
 
-### Each bot registers its own UI via the existing self-registration pattern
+### Register each bot UI through an owner-authorized control plane
 
-**How it works (already in `bot-node-server.ts`):**
-- Bot sets `BOT_UI_LABEL` + `BOT_UI_URL` env vars
-- Bot POSTs to `/api/tools/register` with iframe URL
-- `RibbonNav._loadToolViews()` picks it up on next poll
-- Button appears in cockpit toolbar
-- TTL auto-expires when bot stops
+**Current safe path:**
+- An exact operator may POST a reviewed iframe URL to `/api/tools/register`, or a swarm-app manifest
+  may register its owned ribbon through the in-process loader.
+- `RibbonNav._loadToolViews()` picks the entry up on its next poll.
+- A fleet service secret is deliberately insufficient: it authenticates a process but does not bind
+  a caller to one bot/tool name, so it cannot overwrite or delete another bot's global ribbon.
+- Automatic bot heartbeat registration remains disabled until a signed, owner-bound per-bot
+  delegation protocol covers create, replace, delete, expiry, and audit.
 
 ### Toolbar Items for Little Monsters
 

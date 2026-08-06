@@ -4,6 +4,9 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9 guard: the hardcoded dev-key fallback ("oshal-dev" + "-secret") is REMOVED everywhere — a constant in a public repo is a key everyone holds, so it silently voided the at-rest crypto for connector tokens, PKCE/state, digests, and every self-decrypting scripts/oshal-*.js CLI on any box that forgot SESSION_SECRET. Two layers: (1) BEHAVIOR — connector-token-crypto's encryptToken/decryptToken reject on a missing SESSION_SECRET in BOTH envelope modes (the crypto-OFF break-glass used to fall back to the dev key) and still round-trip correctly when the secret exists; (2) EXISTENCE — a tree scan proves the literal is gone from src/, scripts/, and any-bot/ (the correct guard shape for "this constant must not exist" — the behavioral cases above are what make it mutation-proof).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Give the disk-walking existence guard its own bounded 30-second budget. On a 500+ file parallel unit run, Windows/NTFS contention can exceed Vitest's 5-second default even though the same guard completes immediately in isolation; keeping the exception local preserves the strict global budget and keeps this security check mandatory.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | CORE-06 timeout containment: cap the sole source-tree scan at the specified 20 seconds; behavioral crypto cases keep the global budget.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Track the explicit DEK-failure posture and assert that shared fallback writes use the versioned k2 HKDF format, never an unprefixed legacy blob.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -14,8 +17,9 @@ import { decryptToken, encryptToken } from '../../src/app/routes/connector-token
 
 // Built from parts so this spec never trips its own scan.
 const DEV_SECRET_LITERAL = 'oshal-dev' + '-secret';
+const DISK_SCAN_TIMEOUT_MS = 20_000;
 
-const ENV_KEYS = ['SESSION_SECRET', 'AUTH_SESSION_SECRET', 'OSHAL_ENVELOPE_CRYPTO'] as const;
+const ENV_KEYS = ['SESSION_SECRET', 'AUTH_SESSION_SECRET', 'OSHAL_ENVELOPE_CRYPTO', 'OSHAL_ENVELOPE_DEK_FAILURE'] as const;
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
   for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
@@ -66,10 +70,10 @@ describe('connector-token crypto refuses to run without SESSION_SECRET (no dev-k
     const v2 = await encryptToken(pool, 'user-a', 'token-value-123');
     expect(v2.startsWith('v2:')).toBe(true);
     expect(await decryptToken(pool, 'user-a', v2)).toBe('token-value-123');
-    // Legacy single-KEK path (no userSub) still readable.
-    const legacy = await encryptToken(pool, undefined, 'token-value-456');
-    expect(legacy.startsWith('v2:')).toBe(false);
-    expect(await decryptToken(pool, undefined, legacy)).toBe('token-value-456');
+    // Unowned/shared path is versioned k2 HKDF and remains readable.
+    const shared = await encryptToken(pool, undefined, 'token-value-456');
+    expect(shared.startsWith('k2:')).toBe(true);
+    expect(await decryptToken(pool, undefined, shared)).toBe('token-value-456');
   });
 });
 
@@ -102,5 +106,5 @@ describe('the dev-key literal is gone from the tree', () => {
       hits,
       'the hardcoded dev-key fallback resurfaced — it silently voids at-rest crypto on any box without SESSION_SECRET (SECURITY-HARDENING 3.1/9)',
     ).toEqual([]);
-  });
+  }, DISK_SCAN_TIMEOUT_MS);
 });

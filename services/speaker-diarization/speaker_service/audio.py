@@ -4,6 +4,7 @@ CHANGE LOG
 SEQ                 | AUTHOR                                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Added bounded raw-body collection and pipe-only FFmpeg normalization.
+2 | maintainer@emeraldcoastsystemsgroup.com   | Use Starlette's request type directly after removing the incompatible FastAPI wrapper.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 
 import numpy as np
-from fastapi import Request
+from starlette.requests import Request
 
 from .settings import SAMPLE_RATE, ServiceSettings
 

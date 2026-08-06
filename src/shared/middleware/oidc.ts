@@ -16,16 +16,18 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Generic OIDC issuer support: set OIDC_ISSUER_URL (+ OIDC_CLIENT_ID/SECRET) to use ANY OIDC IdP — primarily Microsoft Entra ID for K-12 (https://login.microsoftonline.com/{tenant}/v2.0). Falls back to the Keycloak realm construction when unset. No Docker http-patching for cloud issuers.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Per-host OIDC baseURL (OIDC_BASE_URLS): run one auth() instance per sibling subdomain keyed on req.hostname, so each host logs in against its own /callback. Fixes the cross-host login loop where the mid-login state cookie was set on one host (e.g. oshal) but the callback landed on the APP_URL host (littlemonster). Unset = single-host (APP_URL), prior behavior.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | SESSION_COOKIE_DOMAIN is now resolved PER HOST (resolveCookieDomainForHost, comma-separated list supported): a fixed domain was applied to every per-host auth instance, so on a host outside that domain (dnd.oshal.ai vs .agenticfederal.us) the browser rejected the transient state cookie (express-openid-connect's transientHandler inherits session cookie domain) and every login died at /callback with "checks.state argument is missing". A host that matches no configured domain now gets a host-only cookie.
- * 13 | maintainer@emeraldcoastsystemsgroup.com   | Harden /callback: a failed token exchange (reused single-use auth code from a replayed/stale callback URL, lost transient cookie, or clock skew) used to escape as an unhandled Express 500 ('id_token not present in TokenSet') and show users a broken page. Now caught in authMiddleware → restart a clean interactive login once (cookie-guarded against loops); a second failure falls through to the normal handler.
- * 14 | maintainer@emeraldcoastsystemsgroup.com   | Raise OIDC httpTimeout to 15s (default 5s). A transient slow response from the issuer's discovery endpoint (Issuer.discover) surfaced to satellite users as a raw "Timeout awaiting request for 5000ms" white page on /login. Override via OIDC_HTTP_TIMEOUT_MS.
- * 15 | maintainer@emeraldcoastsystemsgroup.com   | Deep links survive login recovery: the stock /login route hardcodes returnTo=baseURL, so every recovery path that restarts a login (guardedCallback retry, state-mismatch restart, the cockpit 401 guard) forgot the original URL — a /cockpit/?app=<name> shortcut double-logged-in and landed on the bare cockpit. routes.login=false disables the stock route; createOidcMiddleware now returns a loginHandler honoring a sanitized same-origin ?returnTo (mock mode included), guardedCallback re-derives returnTo from the callback state, and the state-decode helpers move here from server-auth-helpers so both layers share one implementation.
- * 16 | maintainer@emeraldcoastsystemsgroup.com   | Export shouldReturnUnauthorizedResponse so the LOCAL_AUTH middleware set (ADR-117, src/app/routes/local-auth-routes.ts) answers API/fetch vs browser-document requests with the SAME 401-JSON/redirect split as this wrapper — one discrimination rule, not two drifting copies.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Harden /callback: a failed token exchange (reused single-use auth code from a replayed/stale callback URL, lost transient cookie, or clock skew) used to escape as an unhandled Express 500 ('id_token not present in TokenSet') and show users a broken page. Now caught in authMiddleware → restart a clean interactive login once (cookie-guarded against loops); a second failure falls through to the normal handler.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Raise OIDC httpTimeout to 15s (default 5s). A transient slow response from the issuer's discovery endpoint (Issuer.discover) surfaced to satellite users as a raw "Timeout awaiting request for 5000ms" white page on /login. Override via OIDC_HTTP_TIMEOUT_MS.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Deep links survive login recovery: the stock /login route hardcodes returnTo=baseURL, so every recovery path that restarts a login (guardedCallback retry, state-mismatch restart, the cockpit 401 guard) forgot the original URL — a /cockpit/?app=<name> shortcut double-logged-in and landed on the bare cockpit. routes.login=false disables the stock route; createOidcMiddleware now returns a loginHandler honoring a sanitized same-origin ?returnTo (mock mode included), guardedCallback re-derives returnTo from the callback state, and the state-decode helpers move here from server-auth-helpers so both layers share one implementation.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Export shouldReturnUnauthorizedResponse so the LOCAL_AUTH middleware set (ADR-117, src/app/routes/local-auth-routes.ts) answers API/fetch vs browser-document requests with the SAME 401-JSON/redirect split as this wrapper — one discrimination rule, not two drifting copies.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Stamp MOCK_OIDC identities with an explicit synthetic issuer so downstream account binding uses the same verified (issuer, subject) namespace as real OIDC instead of app-specific fallback logic.
  */
 
 import { auth, requiresAuth, ConfigParams } from 'express-openid-connect';
 import { type Request, type RequestHandler } from 'express';
 import http from 'http';
 import { createChildLogger } from '@/shared/logger';
+import { MOCK_OIDC_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'oidc-middleware' });
 
@@ -50,6 +52,7 @@ export function isMockOidcHeaderOverrideEnabled(): boolean {
 }
 
 type MockOidcUser = {
+  iss: string;
   sub: string;
   name: string;
   email: string;
@@ -155,6 +158,7 @@ function createMockOidcMiddleware(): OidcMiddlewareSet {
   // keep stable). Override with MOCK_OIDC_EMAIL/NAME/SUB.
   const mockEmail = process.env.MOCK_OIDC_EMAIL || 'alex@demo.local';
   const mockUser: MockOidcUser = {
+    iss: MOCK_OIDC_PRINCIPAL_ISSUER,
     sub: process.env.MOCK_OIDC_SUB || 'mock-user-001',
     name: process.env.MOCK_OIDC_NAME || 'Alex Monster',
     email: mockEmail,
@@ -196,6 +200,7 @@ function resolveMockOidcUser(req: Request, fallback: MockOidcUser): MockOidcUser
   }
   const email = readMockOidcHeader(req, 'x-mock-oidc-email') ?? `${sanitizeMockSubForEmail(sub)}@mock.local`;
   return {
+    iss: fallback.iss,
     sub,
     email,
     name: readMockOidcHeader(req, 'x-mock-oidc-name') ?? email,

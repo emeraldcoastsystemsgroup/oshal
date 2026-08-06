@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | K5 (BACKLOG kernel audit 2026-07-29): least-privilege oshal_bot role for bot-node containers. Bot containers inherited the superuser DSN, and Postgres exempts superuser and RLS-exempt-attribute roles from row-level security — so every bot node was an RLS bypass around the per-user isolation the platform is sold on. oshal_bot is NOSUPERUSER + NOBYPASSRLS + DML-only (no DDL, no ownership), so RLS policies enforce against every bot-path connection. Compose wires bots to it via BOT_DATABASE_URL (docker-compose.oshal-local.yml seq 5); guard: tests/unit/bot-db-least-privilege.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve migration 119's controller-only workload authority exception when this blanket role grant is re-run after the authority tables exist.
  */
 
 -- =============================================================================
@@ -25,7 +26,8 @@
 --   * NOBYPASSRLS, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOINHERIT.
 --   * DML + sequence usage + EXECUTE only, plus default-privilege grants from
 --     BOTH object-creating roles (oshal = migrations, oshal_app = runtime DDL)
---     so future tables stay readable without another migration.
+--     so future tables stay readable without another migration. Controller-only
+--     authorization tables added by migration 119 are explicitly revoked below.
 --
 -- PASSWORD: the dev default below matches the compose default DSN
 -- (postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal) — the same posture
@@ -94,5 +96,17 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege OR undefined_object THEN
     RAISE NOTICE 'default-privilege grants FOR ROLE oshal_app skipped (insufficient privilege or role absent)';
   END;
+
+  -- SEC-01 authority is intentionally not a bot-readable application table. Migration 119
+  -- revokes the default future-table grant at creation time; repeat that exception here so an
+  -- operator re-running this convergent migration cannot silently restore bot ledger access.
+  IF to_regclass('public.oshal_workload_identities') IS NOT NULL
+     AND to_regclass('public.oshal_user_delegations') IS NOT NULL THEN
+    BEGIN
+      EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.oshal_workload_identities, public.oshal_user_delegations FROM oshal_bot';
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE NOTICE 'oshal_bot workload-authority revoke skipped (insufficient privilege)';
+    END;
+  END IF;
 END
 $$;

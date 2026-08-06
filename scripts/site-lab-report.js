@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — nightly Strategy Lab report generator for the public site (operator ask 2026-07-17: "I want the report published nightly on the oshal website"). Reads the lab over the api's auth'd routes (the trading-regression-suite lane), renders a SELF-CONTAINED static page to site/oswarm.ai/lab/index.html: latest-session movers, the full permutation matrix, and the earnings-gate twin-vs-base table. SIMULATED DATA ONLY by design — every walk is the lab's synthetic $100k notional; the operator's real paper/live book equity and positions are deliberately never read here, so nothing private can leak onto the public page.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Brand naming pass (operator directive 2026-07-24): user-facing product name is lowercase "oshal" — never "Open Swarm" alone. Template title/h1/disclaimer/footer updated; footer home link reads oshal.ai.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Stop emailing a bare "fetch failed" for a busy box (2026-07-27 + 2026-07-30 both died this way while the api was up and healthy). Three changes: (a) default BASE is 127.0.0.1, not localhost — a stale wslrelay squats the IPv6 loopback here, and the ::1 detour costs ~300ms per call and can exceed undici's connect timeout under load; (b) every GET retries transient failures (connect error / 5xx / 429) with linear backoff, so one blip mid-run no longer discards 59 strategies' worth of work; (c) errors report undici's full cause chain — the old code logged err.message, which is the literal string "fetch failed" with the real reason (ECONNREFUSED vs timeout) hidden in .cause. Auth/4xx stay fatal: retrying a 401 just delays the same email.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve an explicit acting OIDC subject exactly while still trimming the comma-delimited operator fallback.
  *
  * Usage: node scripts/site-lab-report.js            (writes site/oswarm.ai/lab/index.html)
  *        node scripts/site-lab-report.js --stdout   (print the HTML instead of writing)
@@ -17,6 +18,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const { requireExactUserSubject } = require('./lib/exact-user-subject');
 
 // 127.0.0.1, never `localhost`: this box's IPv6 loopback is intermittently squatted (see the
 // wslrelay runbook), and the happy-eyeballs detour is exactly what times out under nightly load.
@@ -37,7 +39,9 @@ function authHeaders() {
   const pat = (process.env.OSHAL_CLI_TOKEN || '').trim();
   if (pat) return { Authorization: `Bearer ${pat}` };
   const secret = (process.env.OSHAL_SERVICE_SECRET || process.env.SWARM_SERVICE_SECRET || '').trim();
-  const sub = (process.env.OSHAL_USER_SUB || (process.env.OSHAL_OPERATOR_SUBS || '').split(',')[0] || '').trim();
+  const fallbackSub = (process.env.OSHAL_OPERATOR_SUBS || '').split(',')[0].trim();
+  const sub = process.env.OSHAL_USER_SUB
+    ? requireExactUserSubject(process.env.OSHAL_USER_SUB) : fallbackSub;
   if (secret && sub) return { 'X-Service-Secret': secret, 'X-OSHAL-User-Sub': sub };
   throw new Error('no auth: set OSHAL_CLI_TOKEN or SWARM_SERVICE_SECRET + OSHAL_USER_SUB/OSHAL_OPERATOR_SUBS');
 }

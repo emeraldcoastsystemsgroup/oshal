@@ -115,15 +115,17 @@ roadmap.
 ## Where each lane stands
 
 - **Import lane:** built, guarded (`tests/unit/spatial-import.spec.ts`), no external dependency.
-  Live after the next deploy (the route is baked; the viewer + surface are bind-mounted).
+  The active app-store package serves the route, viewer, and surface from its own package root.
 - **Reconstruct lane:** built end-to-end. The GPU-box service now exists in-repo at
   [`scripts/spatial-recon-edge/`](../../scripts/spatial-recon-edge/README.md) (stdlib HTTP server +
   the real `ffmpeg→COLMAP→splatfacto→.splat` pipeline; protocol + converter verified). Deploy it on
   a CUDA box and set `RECON_URL`, and an uploaded video reconstructs your **real** space; unset, the
   **Sim** provider serves a synthetic room. Standing it up on your hardware is the last step.
 - **Guided capture:** built, guarded (`tests/unit/spatial-capture-plan.spec.ts`). Plans are
-  deterministic per target and the route is baked; bot-personalized plans are roadmap.
-- **Live phone HUD:** built (`src/api/spaces-capture.html` + `/api/spaces/capture-telemetry`). v1 is
-  sensor-driven against the plan; live pose feedback (v3) is roadmap.
+  deterministic per target and the installed Spaces package mounts the route; bot-personalized
+  plans are roadmap.
+- **Live phone HUD:** built in `oshal-applications/spaces/tools/spaces-capture.html` and served at
+  `/api/spaces/capture` with `/api/spaces/capture-telemetry`. v1 is sensor-driven against the plan;
+  live pose feedback (v3) is roadmap.
 - **Sim drone scan:** built, guarded (sim flight covered by `tests/unit/spatial-capture-plan.spec.ts`),
   sim-only. Real MAVLink media ingest is deferred.

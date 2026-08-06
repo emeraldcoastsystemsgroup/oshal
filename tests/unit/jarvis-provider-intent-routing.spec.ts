@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Exercise Jarvis provider-intent routing through an authenticated user principal so polling follows the SEC-01 rule that legacy fleet credentials cannot read owner-scoped results.
+ */
+
 import type { AddressInfo } from 'node:net';
 import express, { type RequestHandler } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,8 +40,19 @@ const OWNER = 'auth0|jarvis-provider-intent-owner';
 const OTHER_OWNER = 'auth0|jarvis-provider-intent-other-owner';
 
 function authHeaders(owner = OWNER): Record<string, string> {
-  return { 'X-Service-Secret': SERVICE_SECRET, 'x-oshal-user-sub': owner };
+  return { 'X-Test-Authenticated-Sub': owner };
 }
+
+/** Test-only user-auth rail mirroring the req.oidc shape produced by OIDC and PAT middleware. */
+const testUserAuth: RequestHandler = (req, res, next) => {
+  const sub = req.header('x-test-authenticated-sub');
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  (req as unknown as { oidc: unknown }).oidc = {
+    isAuthenticated: () => true,
+    user: { sub },
+  };
+  next();
+};
 
 async function waitForResult(base: string, jobId: string, owner = OWNER): Promise<Record<string, unknown>> {
   const deadline = Date.now() + 2_000;
@@ -240,8 +259,7 @@ describe('Jarvis /ask provider-bound routing', () => {
 
     const app = express();
     app.use(express.json());
-    const deny: RequestHandler = (_req, res) => { res.status(401).json({ error: 'not_authenticated' }); };
-    app.use('/api/jarvis', serviceSecretOr(deny), createJarvisRoutes(ctx as never, process.cwd()));
+    app.use('/api/jarvis', serviceSecretOr(testUserAuth), createJarvisRoutes(ctx as never, process.cwd()));
     const server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/jarvis`;

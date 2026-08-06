@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Outlook (and Yahoo) mail reader over IMAP XOAUTH2 — the read path for the IMAP-scoped connector (IMAP.AccessAsUser.All), which can't call Microsoft Graph. Refreshes the short-lived MS access token itself (login.microsoftonline.com/{tenant}, IMAP scope), then connects imapflow to outlook.office365.com:993 with XOAUTH2 and emits the SAME digest JSON shape as oshal-gmail.js so the email bot reasons over Gmail OR Outlook identically. MAIL_PROVIDER=yahoo swaps the IMAP host (imap.mail.yahoo.com) — Yahoo token refresh is a follow-up once a Yahoo connector exists.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Use the shared version-aware connector-token codec and persist Microsoft token rotations as caller-owned v2 envelopes.
  *
  *   node scripts/oshal-outlook-imap.js                 # newest Outlook connection
  *   OUTLOOK_ACCOUNT=foo@bar.com node …                 # a specific connected account
@@ -13,9 +14,9 @@
  * Env: DATABASE_URL, SESSION_SECRET, OUTLOOK_TENANT_ID, AZURE_EMAIL_APPLICATION_ID, OUTLOOK_CLIENT_VALUE.
  */
 'use strict';
-const crypto = require('crypto');
 const { Pool } = require('pg');
 const { ImapFlow } = require('imapflow');
+const { decryptToken, encryptToken } = require('./lib/connector-token-crypto');
 
 const PROVIDER = process.env.MAIL_PROVIDER || 'outlook';
 const IMAP_HOSTS = { outlook: 'outlook.office365.com', yahoo: 'imap.mail.yahoo.com' };
@@ -23,20 +24,6 @@ const TENANT = process.env.OUTLOOK_TENANT_ID || process.env.AZURE_EMAIL_TENANT |
 const MS_CLIENT_ID = process.env.AZURE_EMAIL_APPLICATION_ID || process.env.AZURE_EMAIL_APPLICCATION_ID || '';
 const MS_CLIENT_SECRET = process.env.OUTLOOK_CLIENT_VALUE || process.env.AZURE_EMAIL_CLIENT_SECRET || process.env.OUTLOOK_CLIENT_SECRET || '';
 const IMAP_SCOPE = 'openid profile email offline_access https://outlook.office.com/IMAP.AccessAsUser.All';
-
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
-function encrypt(plain) {
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', key(), iv);
-  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
-  return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
-}
 
 /** Microsoft refresh-token exchange, requesting the IMAP delegated scope. */
 async function refreshOutlook(refresh) {
@@ -67,14 +54,14 @@ async function getAccessToken(pool) {
   }
   if (!row || !row.access_token) { console.error(`No ${PROVIDER} connection found. Connect it at /utilities first.`); process.exit(2); }
   if (row.expiry && new Date(row.expiry).getTime() - Date.now() > 60000) {
-    return { token: decrypt(row.access_token), account: row.account_email };
+    return { token: await decryptToken(pool, row.user_sub, row.access_token), account: row.account_email };
   }
-  if (!row.refresh_token) return { token: decrypt(row.access_token), account: row.account_email };
-  const tok = await refreshOutlook(decrypt(row.refresh_token));
+  if (!row.refresh_token) return { token: await decryptToken(pool, row.user_sub, row.access_token), account: row.account_email };
+  const tok = await refreshOutlook(await decryptToken(pool, row.user_sub, row.refresh_token));
   await pool.query(
     `UPDATE oshal_connections SET access_token=$3, refresh_token=COALESCE($4, refresh_token), expiry=$5, updated_at=NOW()
      WHERE provider=$1 AND account_email=$2`,
-    [PROVIDER, row.account_email, encrypt(tok.access_token), tok.refresh_token ? encrypt(tok.refresh_token) : null,
+    [PROVIDER, row.account_email, await encryptToken(pool, row.user_sub, tok.access_token), tok.refresh_token ? await encryptToken(pool, row.user_sub, tok.refresh_token) : null,
       tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null],
   );
   return { token: tok.access_token, account: row.account_email };

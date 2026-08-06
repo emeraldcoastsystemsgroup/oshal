@@ -1,5 +1,14 @@
 # Repeated Login Issue — OpenAI Codex Config Ignored by System and AI Agent
 
+> **Historical incident record — superseded.** This document describes the March 2026 runtime and
+> is not an operating procedure for the current platform. Current releases store each user's Codex
+> credential in an encrypted owner partition; an exact operator may promote the native rotating
+> `auth.json` only through the explicit live-auth path. Plaintext `output/secrets.json`, static
+> `config-seed` OAuth copies, Codex-to-Cline credential materialization, direct controller model
+> calls, and unattended local CLI execution are not supported authority paths. Follow
+> [`CLAUDE.md`](../CLAUDE.md) and the
+> [current feature boundary](../src/features/openai-codex-oauth/README.md).
+
 ## Date
 2026-03-18 19:07:00
 
@@ -125,6 +134,10 @@ A previous AI agent created `openai-codex-provider.ts` — a file that made dire
 Every "fix" that modified `openai-codex-provider.ts` (switching endpoints, adding scopes, etc.) was doomed because the file should never have existed. The answer was always: let Cline CLI handle it.
 
 ## Lessons
+
+The statements below are retained as incident-era reasoning, not current architecture. In the
+current platform, authorized hosted/BYO inference is the reasoning rail and local CLI harnesses
+remain fail closed pending the audited broker described in `CLAUDE.md`.
 
 1. **Cline CLI is the ONLY LLM call path.** No direct HTTP calls to any LLM API from OSHAL code. Ever.
 2. When the user saves a provider configuration, that selection is written to `~/.cline/` config — Cline CLI does the rest.

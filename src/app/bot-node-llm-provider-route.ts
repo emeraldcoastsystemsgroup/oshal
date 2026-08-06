@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 bot-node config surface: PUT /api/llm-provider (the endpoint BotNodeClient.switchProvider has always targeted but which 404'd on every bot-node worker, so ConfigSyncService.pushToBot returned pushed:false for the whole default fleet) + the broadcast-up helper publishing a MeshEnvelope on MESH_CHANNELS.configChange with the X-Config-Source: oshal-push echo-loop guard mirrored from any-bot's routes-llm-settings-stream.js. Applies via the runtime's setActiveProvider seam; unknown provider → 400, no switch, no broadcast.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: explicitly reject credential fields before provider mutation; this route accepts non-secret provider/model metadata only.
  */
 
 /**
@@ -26,9 +27,8 @@
  *    from bouncing straight back as a broadcast-up and re-bumping the config version
  *    forever (mirrors any-bot/server/app-modules/routes-llm-settings-stream.js).
  *
- * Credentials are deliberately NOT applied here: bot-node harness auth is the mounted
- * BYOK OAuth login (~/.claude / ~/.codex), never a pushed vendor API key
- * (docs/building-a-bot.md), and secrets must never land in bot-node state or logs.
+ * Credentials are deliberately NOT accepted here. Unattended CLI providers remain fail-closed;
+ * secrets must never land in bot-node state, logs, model environments, or workspaces.
  *
  * @module bot-node-llm-provider-route
  */
@@ -141,7 +141,11 @@ export async function broadcastBotNodeConfigChange(
  */
 export function registerBotNodeLlmProviderRoute(app: Express, deps: BotNodeLlmProviderRouteDeps): void {
   app.put('/api/llm-provider', deps.authorize, async (req, res) => {
-    const body = req.body as { provider?: unknown; model?: unknown } | undefined;
+    const body = req.body as { provider?: unknown; model?: unknown; credentials?: unknown } | undefined;
+    if (body && Object.prototype.hasOwnProperty.call(body, 'credentials')) {
+      res.status(400).json({ error: 'credential fields are not accepted on runtime configuration mutations' });
+      return;
+    }
     const provider = typeof body?.provider === 'string' ? body.provider.trim() : '';
     if (!provider) {
       res.status(400).json({ error: 'Missing provider' });

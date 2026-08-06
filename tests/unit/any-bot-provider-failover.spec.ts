@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile failover accountability fixtures with request-scoped capability snapshots and the fail-closed autonomous CLI boundary.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fs = require('fs');
@@ -135,6 +143,8 @@ describe('any-bot ProviderFailoverProvider', () => {
     }, {
       getAll: () => [],
       has: () => false,
+      capture: () => null,
+      isSnapshotCurrent: () => true,
     }, {
       broadcast: vi.fn(),
     }, taskController);
@@ -233,7 +243,7 @@ describe('any-bot ProviderFailoverProvider', () => {
     expect(isProviderRecoverableRuntimeFailure('401 Unauthorized')).toBe(true);
   });
 
-  it('returns successful Codex content even when it mentions throttle/auth keywords', async () => {
+  it('denies Codex before a stubbed successful autonomous result can cross the boundary', async () => {
     const provider = new CodexProvider({ model: 'fake-model' });
     provider.wrapper.executeTask = vi.fn(async () => ({
       success: true,
@@ -245,14 +255,13 @@ describe('any-bot ProviderFailoverProvider', () => {
       exitCode: 0,
     }));
 
-    const res = await provider.generateResponse([{ role: 'user', content: 'do work' }], {
+    await expect(provider.generateResponse([{ role: 'user', content: 'do work' }], {
       workspaceDir: os.tmpdir(),
-    });
-
-    expect(res.content).toContain('429 rate-limit');
+    })).rejects.toMatchObject({ code: 'UNENFORCEABLE_CLI_TOOL_BOUNDARY' });
+    expect(provider.wrapper.executeTask).not.toHaveBeenCalled();
   });
 
-  it('throws when Codex CLI returns provider error text instead of successful content', async () => {
+  it('denies Codex before a stubbed provider-error result can cross the boundary', async () => {
     const provider = new CodexProvider({ model: 'fake-model' });
     provider.wrapper.executeTask = vi.fn(async () => ({
       success: false,
@@ -267,7 +276,8 @@ describe('any-bot ProviderFailoverProvider', () => {
 
     await expect(provider.generateResponse([{ role: 'user', content: 'do work' }], {
       workspaceDir: os.tmpdir(),
-    })).rejects.toThrow(/Codex CLI error.*401 Unauthorized/);
+    })).rejects.toMatchObject({ code: 'UNENFORCEABLE_CLI_TOOL_BOUNDARY' });
+    expect(provider.wrapper.executeTask).not.toHaveBeenCalled();
   });
 });
 
@@ -335,96 +345,42 @@ describe('any-bot ClaudeCodeProvider timeout config', () => {
   });
 });
 
-describe('any-bot ClaudeCodeCLIWrapper batch inactivity handling', () => {
-  it('keeps silent batch runs alive past inactivity when killOnInactivity is disabled', async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-claude-fake-'));
-    const fakeCli = path.join(tmpDir, 'silent-success.cjs');
-    fs.writeFileSync(fakeCli, `
-process.stdin.resume();
-process.stdin.on('end', () => {
-  setTimeout(() => {
-    process.stdout.write(JSON.stringify({
-      type: 'result',
-      subtype: 'success',
-      result: 'silent success after inactivity',
-      total_cost_usd: 0,
-      duration_ms: 150,
-      num_turns: 1,
-      usage: { input_tokens: 1, output_tokens: 2 }
-    }));
-  }, 150);
-});
-`);
-
+describe('any-bot ClaudeCodeCLIWrapper autonomous execution boundary', () => {
+  it('denies batch execution before argument construction or workspace allocation', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-claude-denial-'));
+    const workspaceDir = path.join(tmpDir, 'must-not-exist');
     try {
       const wrapper = new ClaudeCodeCLIWrapper({
-        claudeCommand: process.execPath,
-        timeout: 5,
-        inactivityTimeout: 0.05,
-        killOnInactivity: false,
-        inactivityCheckIntervalMs: 25,
+        claudeCommand: 'must-not-spawn-claude',
         model: 'fake-model',
       });
-      wrapper._buildArgs = () => [fakeCli];
+      wrapper._buildArgs = vi.fn();
 
-      const result = await wrapper.executeTask('stay alive while silent', tmpDir, {
-        timeout: 5,
-        inactivityTimeout: 0.05,
-        killOnInactivity: false,
-        inactivityCheckIntervalMs: 25,
+      await expect(wrapper.executeTask('must remain denied', workspaceDir, {
         model: 'fake-model',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.text).toBe('silent success after inactivity');
-      expect(result.inactivityObserved).toBe(true);
+      })).rejects.toMatchObject({ code: 'UNENFORCEABLE_CLI_TOOL_BOUNDARY' });
+      expect(wrapper._buildArgs).not.toHaveBeenCalled();
+      expect(fs.existsSync(workspaceDir)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it('keeps silent streaming runs alive past inactivity when killOnInactivity is disabled', async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-claude-stream-fake-'));
-    const fakeCli = path.join(tmpDir, 'silent-stream-success.cjs');
-    fs.writeFileSync(fakeCli, `
-process.stdin.resume();
-process.stdin.on('end', () => {
-  setTimeout(() => {
-    process.stdout.write(JSON.stringify({
-      type: 'result',
-      subtype: 'success',
-      result: 'silent streaming success after inactivity',
-      total_cost_usd: 0,
-      duration_ms: 150,
-      num_turns: 1,
-      usage: { input_tokens: 1, output_tokens: 2 }
-    }));
-  }, 150);
-});
-`);
-
+  it('denies streaming execution before argument construction or workspace allocation', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-claude-stream-denial-'));
+    const workspaceDir = path.join(tmpDir, 'must-not-exist');
     try {
       const wrapper = new ClaudeCodeCLIWrapper({
-        claudeCommand: process.execPath,
-        timeout: 5,
-        inactivityTimeout: 0.05,
-        killOnInactivity: false,
-        inactivityCheckIntervalMs: 25,
+        claudeCommand: 'must-not-spawn-claude',
         model: 'fake-model',
       });
-      wrapper._buildArgs = () => [fakeCli];
+      wrapper._buildArgs = vi.fn();
 
-      const result = await wrapper.executeTaskStreaming('stay alive while streaming silently', tmpDir, {
-        timeout: 5,
-        inactivityTimeout: 0.05,
-        killOnInactivity: false,
-        inactivityCheckIntervalMs: 25,
+      await expect(wrapper.executeTaskStreaming('must remain denied', workspaceDir, {
         model: 'fake-model',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.finalResult?.result).toBe('silent streaming success after inactivity');
-      expect(result.inactivityObserved).toBe(true);
+      })).rejects.toMatchObject({ code: 'UNENFORCEABLE_CLI_TOOL_BOUNDARY' });
+      expect(wrapper._buildArgs).not.toHaveBeenCalled();
+      expect(fs.existsSync(workspaceDir)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

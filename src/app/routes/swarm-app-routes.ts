@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 §5 data plane: uninstall-impact reports the live RAG collections the manifest's ragCollections globs match; DELETE /:name accepts ?dropData=true (OPERATOR-ONLY — destructive) which deletes them via the injected teardown port and returns droppedRagCollections.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11: uninstall-impact reports toolsProvided + toolDependents (active apps whose dependencies.tools name a tool this app provides) and blocked reflects them; the DELETE 409 body names the stranded tools.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7: wire the app-store remote rail (GET /catalog + operator-only POST /install-remote from app-store-remote.ts) BEFORE the /:name params so the literal segments aren't captured as app names.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: add framework-owned operator APIs for the user-by-app access matrix, assignment updates, and explicit-assignment clearing.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -19,6 +20,9 @@ import path from 'path';
 import { createChildLogger } from '@/shared/logger';
 import {
   SwarmAppService,
+  APP_ACCESS_TIERS,
+  isAppAccessTier,
+  type AppAccessService,
   listManifestFiles,
   readManifest,
   serializeManifest,
@@ -71,6 +75,8 @@ const upload = multer({
  * @description Swarm application management routes.
  *
  *   GET    /api/swarm/apps                      list installed apps
+ *   GET    /api/swarm/apps/access-matrix        operator user-by-app access matrix
+ *   PUT    /api/swarm/apps/:name/access         operator assignment upsert/clear
  *   GET    /api/swarm/apps/:name                get one app (manifest included)
  *   POST   /api/swarm/apps/load                 load a manifest by path {path}
  *   PATCH  /api/swarm/apps/:name/toggle         body {active:bool}
@@ -81,7 +87,7 @@ const upload = multer({
  * @param service - SwarmAppService instance
  * @returns Express Router
  */
-export function createSwarmAppRoutes(service: SwarmAppService): Router {
+export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAccessService): Router {
   const router = Router();
 
   router.get('/', async (req: Request, res: Response) => {
@@ -137,6 +143,102 @@ export function createSwarmAppRoutes(service: SwarmAppService): Router {
   // operator-only). Registered before /:name so the literal segments aren't captured by the
   // name param — same ordering rule as /pending above.
   registerAppStoreRemoteRoutes(router, { loadApp: (p, meta) => service.loadApp(p, meta) });
+
+  /** GET /access-matrix — framework-owned operator view; package code never administers tiers. */
+  router.get('/access-matrix', async (req: Request, res: Response) => {
+    if (!isOperator(req)) {
+      res.status(403).json({ error: 'Operator privilege required' });
+      return;
+    }
+    if (!appAccess) {
+      res.status(503).json({ error: 'App access service unavailable' });
+      return;
+    }
+    try {
+      const { sub } = getCaller(req);
+      const summaries = await service.listApps(undefined, { ownerSub: sub, isOperator: true });
+      const records = await Promise.all(summaries.map((app) => service.getApp(app.name)));
+      const assignments = await appAccess.listAssignments();
+      res.json({
+        tiers: APP_ACCESS_TIERS,
+        apps: records.filter(Boolean).map((app) => ({
+          name: app!.name,
+          displayName: app!.displayName,
+          status: app!.status,
+          access: app!.manifest.access ?? null,
+        })),
+        assignments,
+      });
+    } catch (err: any) {
+      logger.error({ err }, 'Failed to build app access matrix');
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * PUT /:name/access — upsert `{userSub,tier,reason}` or clear with `tier:null`.
+   * Unknown/unsupported tiers fail before the database and an app without a declaration keeps
+   * its legacy behavior (it cannot receive assignments that would only look enforced).
+   */
+  router.put('/:name/access', async (req: Request, res: Response) => {
+    if (!isOperator(req)) {
+      res.status(403).json({ error: 'Operator privilege required' });
+      return;
+    }
+    if (!appAccess) {
+      res.status(503).json({ error: 'App access service unavailable' });
+      return;
+    }
+    const name = String(req.params.name);
+    try {
+      const actorSub = getCaller(req).sub;
+      if (!actorSub) {
+        res.status(403).json({ error: 'An exact operator subject is required' });
+        return;
+      }
+      const app = await service.getApp(name);
+      if (!app) {
+        res.status(404).json({ error: 'App not found' });
+        return;
+      }
+      const declaration = app.manifest.access;
+      if (!declaration) {
+        res.status(409).json({ error: 'App has no access declaration; current behavior remains authoritative' });
+        return;
+      }
+      const userSub = req.body?.userSub;
+      const reason = req.body?.reason;
+      const tier = req.body?.tier;
+      if (typeof userSub !== 'string' || userSub.length === 0 || typeof reason !== 'string') {
+        res.status(400).json({ error: 'userSub and reason are required' });
+        return;
+      }
+      if (tier === null) {
+        const cleared = await appAccess.clear({ userSub, appName: name, assignedBySub: actorSub, reason });
+        res.json({ cleared, appName: name, userSub, effectiveTier: declaration.defaultTier });
+        return;
+      }
+      if (!isAppAccessTier(tier)) {
+        res.status(400).json({ error: `tier must be one of: ${APP_ACCESS_TIERS.join(', ')}, or null to clear` });
+        return;
+      }
+      if (!declaration.supported.includes(tier)) {
+        res.status(400).json({ error: `App ${name} does not support tier ${tier}` });
+        return;
+      }
+      const assignment = await appAccess.assign({
+        userSub,
+        appName: name,
+        tier,
+        assignedBySub: actorSub,
+        reason,
+      });
+      res.json({ assignment });
+    } catch (err: any) {
+      logger.error({ err, name }, 'Failed to update app access assignment');
+      res.status(err instanceof TypeError ? 400 : 500).json({ error: err.message });
+    }
+  });
 
   router.get('/:name', async (req: Request, res: Response) => {
     const name = String(req.params.name);

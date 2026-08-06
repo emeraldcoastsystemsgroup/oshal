@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 completeness-sweep guards: (1) no silent catch handlers anywhere in the spatial-mapping slice or its routes — every .catch/catch must do something (CLAUDE.md: no swallowed exceptions); (2) the ?app=spaces surface states the room-scale/8GB-VRAM scene-size bound the ADR promises is "stated in the surface, not hidden".
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Retire the kernel assertion against the carved Spaces HTML; the app package now owns and tests all surface content while this kernel guard retains engine conventions only.
  */
 
 import fs from 'node:fs';
@@ -35,12 +36,5 @@ describe('spatial-mapping conventions (ADR-111 sweep guards)', () => {
       .filter((f) => SILENT_CATCH.test(fs.readFileSync(f, 'utf8')))
       .map((f) => path.relative(process.cwd(), f).replace(/\\/g, '/'));
     expect(offenders).toEqual([]);
-  });
-
-  it('states the room-scale / 8GB-VRAM scene-size bound on the upload surface', () => {
-    const html = fs.readFileSync(path.resolve(process.cwd(), 'src/api/spaces.html'), 'utf8');
-    expect(html).toMatch(/room-scale/i);
-    expect(html).toMatch(/8\s?GB/i);
-    expect(html).toMatch(/multiple linked scans/i);
   });
 });

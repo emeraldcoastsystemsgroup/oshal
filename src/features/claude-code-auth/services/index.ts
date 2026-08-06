@@ -12,5 +12,4 @@ export {
   type ClaudeCodeAuthStatus,
   type ClaudeCodeAuthStartResult,
   type ClaudeCodeAuthCallbackResult,
-  type ClaudeCodeCredentialPayload,
 } from './claude-code-auth-service';

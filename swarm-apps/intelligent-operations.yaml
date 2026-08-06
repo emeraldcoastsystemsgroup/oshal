@@ -19,8 +19,14 @@ description: >-
   incident, performs root-cause analysis, and writes remediation scripts for
   operator review — never auto-applied to production. Incident investigation
   is grounded in a curated, operator-seeded runbook corpus.
-version: 1.0.1
+version: 1.0.2
 status: active
+
+# ADR-118 coarse doorway. Incident record visibility and remediation authorization remain the
+# app's truth after entry; the platform tier only denies or applies HTTP read-only posture.
+access:
+  supported: [deny, viewer, editor, admin]
+  defaultTier: editor
 # operations.oshal.ai bundle front door (operator decision 2026-07-31) — one of the 11
 # distinct COCKPIT_THEMES, no repeats across the bundle set.
 theme: midnight

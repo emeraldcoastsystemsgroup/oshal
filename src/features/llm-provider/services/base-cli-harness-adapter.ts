@@ -8,13 +8,22 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | applyUserScoping also emits OSHAL_USER_KEY (sha256(sub)[:32]) + a .oshal-user-key workspace file — the FS-safe per-user key for per-user file space. codex-packer writes packs to packs/<OSHAL_USER_KEY>/<slug>/ so they land where the per-user-isolated swarm-pack routes read them.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | BROKERED_CRED_FILES += OSHAL_CRED_OUTLOOK → .oshal-cred-outlook (ADR-037 Outlook provider parity): the caller's Microsoft Graph token reaches shelled tools (scripts/oshal-outlook.js) on the in-controller harness path too; kept in sync with connector-token-broker.ts, bot-node-request-scope.ts, and any-bot user-scoping.js.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Inactivity-based timeout (ADR-081): the one-shot absolute timer killed ACTIVELY-WORKING runs (live incident 2026-07-06: two codex dev runs killed mid-typecheck at 600s while streaming events). Adapters may opt into idleReset — child stdout/stderr refreshes the timer, so timeoutMs means "max silence" and only silent-stuck processes die; a separate maxDurationMs one-shot cap backstops runaways. Absolute semantics remain the default (claude/gemini batch modes are legitimately silent until their final JSON — docs/evidence/claude-inactivity-timeout-honesty-2026-06-22.md). Also added SIGTERM→SIGKILL escalation (10s) on timeout kills.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve userSub exactly across CLI env/file/hash scoping. Invalid UTF-8 or subjects over 512 bytes now fail before spawn instead of silently trimming/truncating into another identity; whitespace remains an explicit isolated subject.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Route every inline `.oshal-user-*` and `.oshal-cred-*` write through the safe scoped-file writer and fail closed on linked parents, linked/nonregular targets, or partial publication; cleanup now removes only invocation-owned entries.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: CLI harnesses no longer receive connector credentials in their environment or workspace. Every ambient OSHAL_CRED_* variable is scrubbed before spawn; only exact caller identity markers are published for ownership scoping.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: run live CLI health probes with a minimal OS/profile environment instead of ambient process credentials.
  */
 
 import { spawn, type ChildProcess } from 'child_process';
 import crypto from 'crypto';
-import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { optionalExactUserSubject } from '@/shared/security/exact-user-subject';
+import {
+  removeOwnedScopedFile,
+  writeScopedFile,
+  type ScopedFileIdentity,
+} from '@/shared/security/scoped-file-writer';
 import type { HarnessAdapter, HarnessTask, HarnessResult, HarnessType } from './harness-adapter';
 import type { TokenUsage } from './llm-service';
 
@@ -28,12 +37,34 @@ export interface CliExecResult {
   exitCode: number | null;
 }
 
-interface ScopedFileIdentity {
-  filePath: string;
-  dev: number;
-  ino: number;
-  mtimeMs: number;
-  size: number;
+const CLI_DIAGNOSTIC_ENV_KEYS = [
+  'APPDATA', 'LOCALAPPDATA',
+  'COMSPEC', 'ComSpec',
+  'HOME', 'USERPROFILE', 'USER', 'USERNAME', 'LOGNAME',
+  'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE',
+  'NO_COLOR', 'TERM', 'COLORTERM',
+  'PATHEXT', 'SHELL',
+  'SystemRoot', 'SYSTEMROOT', 'WINDIR',
+  'TEMP', 'TMP', 'TMPDIR',
+  'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
+] as const;
+
+/**
+ * @description Build the credential-free environment used by local CLI health probes. The
+ * allowlist retains executable discovery, temporary-file, locale, and profile paths while
+ * excluding arbitrary ambient variables, provider API keys, and platform-plane credentials.
+ * @param source - Source process environment; injectable so the boundary can be regression-tested.
+ * @returns Minimal child-process environment suitable for `<binary> --version`.
+ */
+export function buildCliDiagnosticEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of CLI_DIAGNOSTIC_ENV_KEYS) {
+    const value = source[key];
+    if (typeof value === 'string') env[key] = value;
+  }
+  const executablePath = typeof source.PATH === 'string' ? source.PATH : source.Path;
+  if (typeof executablePath === 'string') env.PATH = executablePath;
+  return env;
 }
 
 /**
@@ -60,8 +91,7 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
   /** Set by the concrete subclass via the constructor. */
   abstract readonly harnessType: HarnessType;
 
-  /** Master/connector secrets scrubbed from EVERY bot spawn env (token-broker
-   *  hygiene): the bot uses controller-provided short-lived tokens, never these. */
+  /** Master/connector secrets scrubbed from EVERY bot spawn environment. */
   protected static readonly SECRET_ENV_KEYS: readonly string[] = [
     'SESSION_SECRET', 'OIDC_CLIENT_SECRET', 'AUTH_SESSION_SECRET',
     'GOOGLE_CONNECT_CLIENT_SECRET', 'LINKEDIN_PRIMARY_CLIENT_SECRET', 'LINKEDIN_CLIENT_SECRET',
@@ -69,20 +99,6 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
     'GITHUB_CLIENT_SECRET', 'AZURE_EMAIL_CLIENT_SECRET', 'OUTLOOK_CLIENT_VALUE', 'FACEBOOK_APP_SECRET',
     'SMARTTHINGS_CLIENT_SECRET', 'SMARTTHINGS_OAUTH_CLIENT_SECRET',
   ];
-  protected static readonly BROKERED_CRED_FILES: Readonly<Record<string, string>> = {
-    OSHAL_CRED_GOOGLE: '.oshal-cred-google',
-    OSHAL_CRED_OUTLOOK: '.oshal-cred-outlook',
-    OSHAL_CRED_TWITTER: '.oshal-cred-twitter',
-    OSHAL_CRED_SMARTTHINGS: '.oshal-cred-smartthings',
-    OSHAL_CRED_GCP: '.oshal-cred-gcp',
-    OSHAL_CRED_WALMART: '.oshal-cred-walmart',
-    OSHAL_CRED_UBER: '.oshal-cred-uber',
-    OSHAL_CRED_UBER_RIDES: '.oshal-cred-uber-rides',
-    OSHAL_CRED_SPOTIFY: '.oshal-cred-spotify',
-    OSHAL_CRED_TMDB: '.oshal-cred-tmdb',
-    OSHAL_CRED_DUFFEL: '.oshal-cred-duffel',
-    OSHAL_CRED_TWILIO: '.oshal-cred-twilio',
-  };
   private static readonly USER_SCOPE_TAILS = new Map<string, Promise<void>>();
 
   protected readonly logger: ReturnType<typeof createChildLogger>;
@@ -126,7 +142,7 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
       const { stdout } = await this.execWithTimeout(
         binary,
         ['--version'],
-        process.env as Record<string, string>,
+        buildCliDiagnosticEnv(),
         process.cwd(),
         5000,
       );
@@ -155,121 +171,61 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
    * in the task workspace (codex's sandbox strips env, but runs tools with cwd =
    * workspace). The tool reads whichever is present. Call from each adapter's run().
    *
-   * Token broker: when `creds` is provided (the caller's short-lived per-user access
-   * tokens, e.g. { OSHAL_CRED_GOOGLE, OSHAL_CRED_TWITTER }), also write each as a
-   * `.oshal-cred-<provider>` file + set the env var, so a shelled tool uses a provided
-   * token instead of decrypting `oshal_connections` with SESSION_SECRET.
+   * Connector credentials are deliberately excluded from this channel. The model-visible
+   * CLI process and workspace must never receive OSHAL_CRED_* values; connector operations
+   * are performed only by audited server-side brokers at their operation boundary.
    *
-   * @param env - The spawn env object (mutated in place to add OSHAL_USER_SUB + OSHAL_CRED_*).
+   * @param env - The spawn env object (mutated in place to add only caller identity).
    * @param workspacePath - The task workspace dir codex runs in (per-task isolated).
    * @param userSub - Authenticated caller's sub; no-op if absent.
-   * @param creds - The caller's provided access tokens as an env-key map; optional.
    */
   protected applyUserScoping(
     env: Record<string, string>,
     workspacePath: string,
     userSub?: string,
-    creds?: Record<string, string>,
   ): ScopedFileIdentity[] {
-    // Secret hygiene: the in-controller harness spawns codex (danger-full-access) IN the
-    // api container, which holds the master connector key + OAuth app secrets. Scrub them
-    // from EVERY bot spawn env so untrusted swarm code can't `printenv` them — the bot uses
-    // the controller-provided short-lived per-user token instead. Always runs.
+    // Secret hygiene: the in-controller harness spawns a model-visible process in the API
+    // container. Scrub platform secrets and every credential carrier before any spawn.
     for (const k of BaseCliHarnessAdapter.SECRET_ENV_KEYS) delete env[k];
+    for (const k of Object.keys(env)) {
+      if (k.startsWith('OSHAL_CRED_')) delete env[k];
+    }
     // Per-instance additions (controller-inline bots): the api container's platform-plane
     // credentials. REMOTE_CLIENT_SHARED_SECRET is the sharp one — it is machine trust on the
     // worker plane, so it SKIPS per-device ownership and would let an injected inline bot
     // enqueue a shell task on any user's desktop.
     for (const k of this.extraSecretEnvKeys) delete env[k];
-    const normalizedUserSub = typeof userSub === 'string' && userSub.trim()
-      ? userSub.trim().slice(0, 512)
-      : undefined;
-    const credEntries = creds ? Object.entries(creds).filter(([key, value]) => (
-      Object.prototype.hasOwnProperty.call(BaseCliHarnessAdapter.BROKERED_CRED_FILES, key)
-      && typeof value === 'string'
-      && value.length > 0
-      && value.length <= 32_768
-    )) : [];
+    const exactUserSub = optionalExactUserSubject(userSub, 'CLI userSub');
     const ownedFiles: ScopedFileIdentity[] = [];
-    if (!normalizedUserSub && credEntries.length === 0) return ownedFiles;
+    if (exactUserSub === undefined) return ownedFiles;
+    // FS-safe per-user key (sha256 of the sub) — the channel for per-user file space.
+    // Must match userKey() in swarm-pack-routes.ts so codex-packer writes packs where
+    // the routes read them: packs/<OSHAL_USER_KEY>/<slug>/. Subs aren't path-safe.
+    const userKey = crypto.createHash('sha256').update(exactUserSub).digest('hex').slice(0, 32);
+    const writes: Array<[string, string]> = [
+      ['.oshal-user-sub', exactUserSub],
+      ['.oshal-user-key', userKey],
+    ];
     try {
-      fs.mkdirSync(workspacePath, { recursive: true });
-    } catch (err) {
-      this.logger.warn({ err, workspacePath }, 'applyUserScoping: failed to mkdir workspace (env channel still set)');
-    }
-    if (normalizedUserSub) {
-      env.OSHAL_USER_SUB = normalizedUserSub;
-      // FS-safe per-user key (sha256 of the sub) — the channel for per-user file space.
-      // Must match userKey() in swarm-pack-routes.ts so codex-packer writes packs where
-      // the routes read them: packs/<OSHAL_USER_KEY>/<slug>/. Subs aren't path-safe.
-      const userKey = crypto.createHash('sha256').update(normalizedUserSub).digest('hex').slice(0, 32);
-      env.OSHAL_USER_KEY = userKey;
-      try {
-        ownedFiles.push(this.writePrivateScopedFile(
-          path.join(workspacePath, '.oshal-user-sub'),
-          normalizedUserSub,
-        ));
-        ownedFiles.push(this.writePrivateScopedFile(
-          path.join(workspacePath, '.oshal-user-key'),
-          userKey,
-        ));
-      } catch (err) {
-        this.logger.warn({ err, workspacePath }, 'applyUserScoping: failed to write .oshal-user-sub/.oshal-user-key (env channel still set)');
+      for (const [fileName, value] of writes) {
+        ownedFiles.push(writeScopedFile(path.join(workspacePath, fileName), value));
       }
+    } catch (error) {
+      for (const owned of ownedFiles.reverse()) removeOwnedScopedFile(owned);
+      this.logger.error({ err: error, workspacePath }, 'applyUserScoping: safe scoped-file publication failed');
+      throw error;
     }
-    // Token broker: env key -> cwd file the shelled tool prefers (skips DB decryption).
-    for (const [envKey, value] of credEntries) {
-      env[envKey] = String(value);
-      const fileName = BaseCliHarnessAdapter.BROKERED_CRED_FILES[envKey];
-      try {
-        ownedFiles.push(this.writePrivateScopedFile(
-          path.join(workspacePath, fileName),
-          String(value),
-        ));
-      } catch (err) {
-        this.logger.warn({ err, workspacePath, envKey }, 'applyUserScoping: failed to write cred file (env channel still set)');
-      }
-    }
+    env.OSHAL_USER_SUB = exactUserSub;
+    env.OSHAL_USER_KEY = userKey;
     return ownedFiles;
   }
 
-  private writePrivateScopedFile(filePath: string, value: string): ScopedFileIdentity {
-    fs.writeFileSync(filePath, value, { encoding: 'utf8', mode: 0o600 });
-    // mode applies only when creating a file; chmod constrains an existing file too.
-    fs.chmodSync(filePath, 0o600);
-    const stat = fs.statSync(filePath);
-    return {
-      filePath,
-      dev: stat.dev,
-      ino: stat.ino,
-      mtimeMs: stat.mtimeMs,
-      size: stat.size,
-    };
-  }
-
   private wipeOwnedUserScoping(ownedFiles: ScopedFileIdentity[]): void {
-    for (const owned of ownedFiles) {
-      try {
-        const stat = fs.statSync(owned.filePath);
-        if (stat.dev === owned.dev
-          && stat.ino === owned.ino
-          && stat.mtimeMs === owned.mtimeMs
-          && stat.size === owned.size) {
-          fs.unlinkSync(owned.filePath);
-        }
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-          this.logger.warn(
-            { err, file: owned.filePath },
-            'releaseUserScoping: failed to remove an invocation-owned scoping file',
-          );
-        }
-      }
-    }
+    for (const owned of ownedFiles) removeOwnedScopedFile(owned);
   }
 
   /**
-   * Acquire an exclusive credential-file lease for one workspace. Different workspaces
+   * Acquire an exclusive identity-file lease for one workspace. Different workspaces
    * remain concurrent; requests sharing a cwd wait until the previous subprocess has
    * removed only the files it created.
    */
@@ -277,7 +233,6 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
     env: Record<string, string>,
     workspacePath: string,
     userSub?: string,
-    creds?: Record<string, string>,
   ): Promise<() => void> {
     const key = path.resolve(workspacePath);
     const previous = BaseCliHarnessAdapter.USER_SCOPE_TAILS.get(key) ?? Promise.resolve();
@@ -289,7 +244,7 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
 
     let ownedFiles: ScopedFileIdentity[];
     try {
-      ownedFiles = this.applyUserScoping(env, workspacePath, userSub, creds);
+      ownedFiles = this.applyUserScoping(env, workspacePath, userSub);
     } catch (error) {
       unlock?.();
       if (BaseCliHarnessAdapter.USER_SCOPE_TAILS.get(key) === tail) {
@@ -308,30 +263,6 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
         BaseCliHarnessAdapter.USER_SCOPE_TAILS.delete(key);
       }
     };
-  }
-
-  /** Per-request scoping files written to the task workspace by applyUserScoping. */
-  protected static readonly SCOPING_FILES: readonly string[] = [
-    ...Object.values(BaseCliHarnessAdapter.BROKERED_CRED_FILES),
-    '.oshal-user-sub', '.oshal-user-key',
-  ];
-
-  /**
-   * @description Wipe the per-request credential/scoping files from the task workspace.
-   * Privileged-runtime hygiene (ADR-040): a provided short-lived token must not LINGER in the
-   * workspace after the task — "issue → use → wipe". Call from each adapter's run() in a
-   * `finally` so it runs on success AND failure. Best-effort; never throws.
-   * @param workspacePath - the task workspace applyUserScoping wrote into.
-   */
-  protected wipeUserScoping(workspacePath: string): void {
-    for (const f of BaseCliHarnessAdapter.SCOPING_FILES) {
-      try {
-        const p = path.join(workspacePath, f);
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      } catch (err) {
-        this.logger.warn({ err, workspacePath, file: f }, 'wipeUserScoping: failed to remove a scoping file');
-      }
-    }
   }
 
   /**

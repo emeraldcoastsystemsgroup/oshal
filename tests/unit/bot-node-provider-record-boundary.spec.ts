@@ -1,3 +1,14 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard structured provider evidence and request-scoped credential boundaries.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact owner preservation and fail-closed malformed-subject handling at the bot-node request boundary.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Align accountability fixtures with the hosted-provider boundary; generic runtime credentials are no longer forwarded without a deterministic provider operation.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve validated authoritative provider-config provenance through the production HTTP response boundary.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 import { createBotNodeExecutionHandler } from '../../src/app/bot-node-execution-handler';
 import { buildBotNodeHttpResponse } from '../../src/app/bot-node-http-response';
@@ -28,8 +39,8 @@ describe('bot-node structured provider evidence boundary', () => {
         createTask,
         processMessage,
       },
-      providerName: 'openai-codex',
-      modelName: 'codex-test',
+      providerName: 'test-provider',
+      modelName: 'test-model',
     });
 
     const result = await handler({
@@ -44,7 +55,6 @@ describe('bot-node structured provider evidence boundary', () => {
         workspaceTaskId: 'ticket-1',
         agenticMode: true,
         userSub: 'owner-123',
-        creds: { OSHAL_CRED_GOOGLE: 'owner-google-token' },
       },
     });
 
@@ -55,15 +65,18 @@ describe('bot-node structured provider evidence boundary', () => {
     );
     expect(processMessage).toHaveBeenCalledWith(
       'ticket-1',
-      { text: 'Show my important emails.' },
+      { text: expect.stringContaining('<UNTRUSTED_CONTENT>') },
       expect.objectContaining({
         agenticMode: true,
         extraEnv: {
           OSHAL_USER_SUB: 'owner-123',
-          OSHAL_CRED_GOOGLE: 'owner-google-token',
         },
       }),
     );
+    const containedPrompt = String(processMessage.mock.calls[0]?.[1]?.text || '');
+    expect(containedPrompt).toContain('Show my important emails.');
+    expect(containedPrompt).toContain('"user_sub":"owner-123"');
+    expect(containedPrompt).toContain('SERVER AUTHORITY REBIND');
     expect(result).toMatchObject({
       success: true,
       output: {
@@ -116,8 +129,8 @@ describe('bot-node structured provider evidence boundary', () => {
           model: 'claude-sonnet-4-6',
         })),
       },
-      providerName: 'openai-codex',
-      modelName: 'gpt-5.5',
+      providerName: 'anthropic',
+      modelName: 'claude-sonnet-4-6',
       recordCost,
     });
 
@@ -137,8 +150,8 @@ describe('bot-node structured provider evidence boundary', () => {
     const response = buildBotNodeHttpResponse(result, {
       durationMs: 30,
       taskId: 'ticket-accountability',
-      defaultProvider: 'openai-codex',
-      defaultModel: 'gpt-5.5',
+      defaultProvider: 'anthropic',
+      defaultModel: 'claude-sonnet-4-6',
     });
 
     expect(result).toMatchObject({
@@ -195,6 +208,9 @@ describe('bot-node structured provider evidence boundary', () => {
         usage: { totalTokens: 12 },
         provider: 'claude-code',
         model: 'claude-sonnet-4-6',
+        providerConfigSource: 'authoritative-dispatch',
+        providerConfigAction: 'corrected',
+        providerConfigVersion: 17,
       },
     }, {
       durationMs: 25,
@@ -211,6 +227,9 @@ describe('bot-node structured provider evidence boundary', () => {
       durationMs: 25,
       provider: 'claude-code',
       model: 'claude-sonnet-4-6',
+      providerConfigSource: 'authoritative-dispatch',
+      providerConfigAction: 'corrected',
+      providerConfigVersion: 17,
     });
   });
 
@@ -226,7 +245,7 @@ describe('bot-node structured provider evidence boundary', () => {
       OSHAL_CRED_SPOTIFY: 'spotify-token',
       OSHAL_CRED_TMDB: 'tmdb-token',
       OSHAL_CRED_DUFFEL: 'duffel-token',
-      OSHAL_CRED_TWILIO: 'twilio-token',
+      OSHAL_CRED_REMOVED_PHONE_CARRIER: 'twilio-token',
       OSHAL_USER_SUB: 'attacker-sub',
       PATH: '/attacker/bin',
       OSHAL_CRED_UNKNOWN: 'unknown-token',
@@ -240,9 +259,9 @@ describe('bot-node structured provider evidence boundary', () => {
       OSHAL_CRED_SPOTIFY: 'spotify-token',
       OSHAL_CRED_TMDB: 'tmdb-token',
       OSHAL_CRED_DUFFEL: 'duffel-token',
-      OSHAL_CRED_TWILIO: 'twilio-token',
     });
-    expect(normalizeBotNodeUserSub('  owner-123  ')).toBe('owner-123');
-    expect(normalizeBotNodeUserSub({ sub: 'owner-123' })).toBeUndefined();
+    expect(normalizeBotNodeUserSub('  owner-123  ')).toBe('  owner-123  ');
+    expect(() => normalizeBotNodeUserSub({ sub: 'owner-123' })).toThrow(/exact UTF-8/);
+    expect(() => normalizeBotNodeUserSub('owner\u007falias')).toThrow(/control-free/);
   });
 });

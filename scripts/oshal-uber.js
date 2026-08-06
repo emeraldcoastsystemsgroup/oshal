@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Uber Eats (eats bundle) food CLI.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *   Reads the operator's OPTIONAL Uber Eats affiliate/marketing config from the OSHAL
  *   connector store (oshal_connections, provider='uber') — connected once at /utilities,
  *   NO keys in env/compose. Mirrors scripts/oshal-walmart.js credential resolution: prefer
@@ -27,18 +28,21 @@
  *   node scripts/oshal-uber.js accounts                 # is an Uber Eats config connected?
  *
  * Exit 2 = no command match. The catalog + deep link work with or without a connection.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Make catalog/deep-link operations import-safe and
+ *   request-scoped. Library calls accept the credential explicitly and cannot fall through to a
+ *   child environment, credential file, or database; the guarded CLI retains legacy resolution.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read Uber connector configuration through the shared v2/k2/legacy connector-token codec.
  */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken } = require('./lib/connector-token-crypto');
 
 // ── Identity (mirrors oshal-walmart.js — codex sandbox may not forward env) ──
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 // ── Credential resolution: brokered first, then DB ──────────────────────────
@@ -51,30 +55,20 @@ function resolveBrokeredCred() {
   return process.env.OSHAL_CRED_UBER || undefined;
 }
 
-function secretKey() {
-  return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest();
-}
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
-
 /** Decrypt the operator's Uber Eats connection from the DB (personal ∪ shared/operator). */
 async function credFromDb(userSub) {
   if (!process.env.DATABASE_URL && !process.env.PGHOST) return undefined;
   const pool = new Pool(process.env.DATABASE_URL ? { connectionString: process.env.DATABASE_URL } : undefined);
   try {
     const r = await pool.query(
-      `SELECT access_token FROM oshal_connections
+      `SELECT user_sub, access_token FROM oshal_connections
        WHERE provider = 'uber' AND COALESCE(status,'') <> 'revoked'
          AND (user_sub = $1 OR tenant_id IS NOT NULL)
        ORDER BY is_default DESC, updated_at DESC LIMIT 1`,
       [userSub || ''],
     );
     if (!r.rows[0]) return undefined;
-    return decrypt(r.rows[0].access_token);
+    return decryptToken(pool, r.rows[0].user_sub, r.rows[0].access_token);
   } finally {
     await pool.end().catch(() => {});
   }
@@ -85,20 +79,52 @@ async function loadCred() {
   let raw = resolveBrokeredCred();
   if (!raw) raw = await credFromDb(resolveUserSub());
   if (!raw) return null;
-  // The stored blob may be plaintext JSON (brokered) or an encrypted DB value already
-  // decrypted above. Tolerate a bare affiliate-id string too.
-  let parsed;
-  try {
-    const s = String(raw).trim();
-    parsed = s.startsWith('{') ? JSON.parse(s) : { affiliateId: s.slice(0, 64) };
-  } catch {
-    parsed = { affiliateId: String(raw).slice(0, 64) };
+  return parseLegacyCredential(raw);
+}
+
+/** Parse only a request-scoped value; never consult ambient process or persistence state. */
+function parseCredentialArgument(raw) { return parseCredential(raw, false); }
+
+/** Preserve valid custom HTTP(S) base URLs for the guarded standalone CLI. */
+function parseLegacyCredential(raw) { return parseCredential(raw, true); }
+
+function parseCredential(raw, allowCustomBaseUrl) {
+  let candidate = raw;
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (!text || text.length > 4096) return null;
+    if (text.startsWith('{')) {
+      try { candidate = JSON.parse(text); } catch { return null; }
+    } else {
+      candidate = { affiliateId: text };
+    }
   }
-  return {
-    affiliateId: String(parsed.affiliateId || parsed.affiliate_id || parsed.publisherId || '').trim(),
-    marketUrl: String(parsed.marketUrl || '').trim(),
-    baseUrl: String(parsed.baseUrl || 'https://www.ubereats.com').replace(/\/$/, ''),
-  };
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  const affiliateId = String(candidate.affiliateId || candidate.affiliate_id || candidate.publisherId || '').trim();
+  if (affiliateId.length > 512 || /[\u0000-\u001f\u007f]/u.test(affiliateId)) return null;
+  const rawBaseUrl = String(candidate.baseUrl || 'https://www.ubereats.com').trim().replace(/\/$/, '');
+  let parsedBase;
+  try { parsedBase = new URL(rawBaseUrl); } catch { return null; }
+  const officialBase = rawBaseUrl === 'https://www.ubereats.com'
+    && parsedBase.protocol === 'https:'
+    && parsedBase.hostname.toLowerCase() === 'www.ubereats.com'
+    && !parsedBase.port
+    && !parsedBase.username
+    && !parsedBase.password
+    && (parsedBase.pathname === '/' || parsedBase.pathname === '')
+    && !parsedBase.search
+    && !parsedBase.hash;
+  const validLegacyBase = allowCustomBaseUrl
+    && (parsedBase.protocol === 'https:' || parsedBase.protocol === 'http:')
+    && !parsedBase.username
+    && !parsedBase.password
+    && !parsedBase.search
+    && !parsedBase.hash;
+  if (!officialBase && !validLegacyBase) return null;
+
+  const marketUrl = String(candidate.marketUrl || '').trim();
+  if (marketUrl.length > 2048 || /[\u0000-\u001f\u007f]/u.test(marketUrl)) return null;
+  return { affiliateId, marketUrl, baseUrl: rawBaseUrl };
 }
 
 function baseUrlOf(cred) { return (cred && cred.baseUrl) || 'https://www.ubereats.com'; }
@@ -240,52 +266,91 @@ function catalogSearch(cred, query, limit) {
 function out(obj) { process.stdout.write(JSON.stringify(obj)); }
 function die(msg, code = 2) { process.stdout.write(JSON.stringify({ error: msg })); process.exit(code); }
 
-async function main() {
-  const [cmd, ...args] = process.argv.slice(2);
-  let cred = null;
-  try { cred = await loadCred(); } catch { cred = null; } // DB fallback may be unreachable — deep links still work
+function operationUsage(message) {
+  const error = new Error(message);
+  error.operationUsageError = true;
+  return error;
+}
 
+/** Bound HTTP-derived catalog and deep-link arguments before use. */
+function operationArguments(rawArgs) {
+  if (!Array.isArray(rawArgs) || rawArgs.length > 4) throw operationUsage('Uber Eats operation arguments are invalid');
+  return rawArgs.map((value) => {
+    if (typeof value !== 'string' || value.length > 1024 || /[\u0000-\u001f\u007f]/u.test(value)) {
+      throw operationUsage('Uber Eats operation arguments are invalid');
+    }
+    return value;
+  });
+}
+
+/** Execute a deterministic catalog/deep-link operation with an already-parsed credential. */
+async function executeUberEatsCommand(cred, rawArgs) {
+  const [cmd, ...args] = operationArguments(rawArgs);
   switch (cmd) {
     case 'accounts':
-      out({ connected: !!cred, provider: 'uber', affiliate: !!(cred && cred.affiliateId) });
-      return;
+      return { connected: !!cred, provider: 'uber', affiliate: !!(cred && cred.affiliateId) };
     case undefined:
     case 'status':
-      out({
+      return {
         configured: !!cred, retailer: 'ubereats', baseUrl: baseUrlOf(cred),
         affiliate: !!(cred && cred.affiliateId),
         catalog: 'curated', ordering: 'deep-link-handoff',
         note: 'Uber Eats has no consumer order API — ordering is a deep link the person completes on their own Uber login.',
-      });
-      return;
+      };
     case 'search': {
       const query = args[0];
-      const limit = Number(args[1]) || 8;
-      out({ source: 'catalog', items: catalogSearch(cred, query, limit) });
-      return;
+      const requestedLimit = Number(args[1]) || 8;
+      const limit = Math.max(1, Math.min(20, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 8));
+      return { source: 'catalog', items: catalogSearch(cred, query, limit) };
     }
     case 'menu': {
       const storeId = args[0];
-      if (!storeId) return die('usage: menu "<storeId>"');
+      if (!storeId || !/^[A-Za-z0-9-]{1,128}$/u.test(storeId)) throw operationUsage('usage: menu "<storeId>"');
       const r = CATALOG.find((s) => s.storeId === storeId || s.slug === storeId);
-      if (!r) { out({ source: 'catalog', storeId, items: [] }); return; }
-      out({ source: 'catalog', storeId: r.storeId, store: r.name, items: r.items.map((it) => normalizeItem(cred, r, it)) });
-      return;
+      if (!r) return { source: 'catalog', storeId, items: [] };
+      return { source: 'catalog', storeId: r.storeId, store: r.name, items: r.items.map((it) => normalizeItem(cred, r, it)) };
     }
     case 'order':
     case 'cart': {
-      if (!args[0]) return die('usage: order "<storeId>"  (or  order "search:<terms>")');
-      out({
+      if (!args[0]) throw operationUsage('usage: order "<storeId>"  (or  order "search:<terms>")');
+      return {
         source: 'ubereats',
         checkoutUrl: orderDeepLink(cred, args[0]),
         tracked: !!(cred && cred.affiliateId),
         note: 'Open in a browser; sign in to Uber Eats and place the order. This is a handoff, not an in-app charge.',
-      });
-      return;
+      };
     }
     default:
-      die(`unknown command: ${cmd}`);
+      throw operationUsage(`unknown command: ${cmd}`);
   }
 }
 
-main().catch((e) => { out({ source: 'catalog', items: [], error: e && e.message ? e.message : 'uber CLI error' }); });
+/**
+ * Request-scoped Uber Eats entrypoint. No connection is valid because catalog browsing and an
+ * untracked official deep link are supported; a supplied malformed credential fails closed.
+ */
+async function executeUberEatsOperation(rawCredential, rawArgs) {
+  let cred = null;
+  if (rawCredential !== undefined && rawCredential !== null && rawCredential !== '') {
+    cred = parseCredentialArgument(rawCredential);
+    if (!cred) throw new Error('Uber Eats operation requires a valid request-scoped credential');
+  }
+  return executeUberEatsCommand(cred, rawArgs);
+}
+
+async function main() {
+  let cred = null;
+  try { cred = await loadCred(); } catch { cred = null; } // DB fallback may be unreachable — deep links still work
+  try {
+    out(await executeUberEatsCommand(cred, process.argv.slice(2)));
+  } catch (error) {
+    if (error && error.operationUsageError === true) return die(error.message);
+    throw error;
+  }
+}
+
+module.exports = { executeUberEatsOperation, parseCredentialArgument };
+
+if (require.main === module) {
+  main().catch((e) => { out({ source: 'catalog', items: [], error: e && e.message ? e.message : 'uber CLI error' }); });
+}

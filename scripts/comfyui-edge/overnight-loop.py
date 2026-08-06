@@ -7,7 +7,11 @@
 # the controller DB stays current round by round).
 #
 #   python overnight-loop.py --character oshbrainrot --start-version 1 --max-hours 9 --plateau 0.005 \
-#       --controller http://100.64.0.1:35457 --secret $SWARM_SERVICE_SECRET
+#       --controller http://100.64.0.1:35457 --owner-sub-b64 <subject>
+# 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Carry the initiating owner through every
+# nested train/validate callback and the final review callback using the canonical encoded header.
+# 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Keep the fleet secret solely in the edge
+# process environment; nested scripts inherit it without exposing it in argv or task journals.
 import argparse, json, os, subprocess, sys, time, glob, urllib.request
 
 HOME = os.path.expanduser("~")
@@ -41,11 +45,13 @@ def weak_values(sc):
     return [w.get("value", "") for w in (sc or {}).get("weak_cells", []) if w.get("value")]
 
 
-def post(controller, secret, payload):
+def post(controller, secret, owner_sub_b64, payload):
     try:
-        req = urllib.request.Request(controller.rstrip("/") + "/api/lora/ingest",
-                                     data=json.dumps(payload).encode(),
-                                     headers={"Content-Type": "application/json", "x-service-secret": secret})
+        req = urllib.request.Request(
+            controller.rstrip("/") + "/api/lora/ingest",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "x-service-secret": secret,
+                     "x-oshal-user-sub-b64": owner_sub_b64})
         urllib.request.urlopen(req, timeout=30).read()
     except Exception as e:
         log("post failed: %r" % e)
@@ -59,9 +65,11 @@ def main():
     ap.add_argument("--plateau", type=float, default=0.005)
     ap.add_argument("--dataset", default=os.path.join(HOME, "overnight", "curated.zip"))
     ap.add_argument("--controller", default=os.environ.get("OSHAL_CONTROLLER", ""))
-    ap.add_argument("--secret", default=os.environ.get("SWARM_SERVICE_SECRET", ""))
+    ap.add_argument("--owner-sub-b64", default=os.environ.get("OSHAL_USER_SUB_B64", ""))
     a = ap.parse_args()
-    tail = ["--controller", a.controller, "--secret", a.secret] if a.controller and a.secret else []
+    secret = os.environ.get("SWARM_SERVICE_SECRET", "")
+    tail = (["--controller", a.controller, "--owner-sub-b64", a.owner_sub_b64]
+            if a.controller and secret and a.owner_sub_b64 else [])
     t0 = time.time()
 
     cur = a.start_version
@@ -100,9 +108,10 @@ def main():
     summary = ("Overnight improve finished: best v%d at score %.3f after %d versions (%.1fh)."
                % (best, best_score, cur - a.start_version + 1, (time.time() - t0) / 3600))
     log("==== " + summary + " ====")
-    if a.controller and a.secret:
-        post(a.controller, a.secret, {"kind": "review", "character": a.character,
-                                      "best_version": best, "overall": best_score, "summary": summary})
+    if a.controller and secret and a.owner_sub_b64:
+        post(a.controller, secret, a.owner_sub_b64,
+             {"kind": "review", "character": a.character,
+              "best_version": best, "overall": best_score, "summary": summary})
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@
       "additionalProperties": false,
       "properties": {
         "description": { "type": "string" },
-        "category": { "type": "string", "description": "Marketplace shelf category (matches the CATEGORY_BY_PROVIDER taxonomy in marketplace.ts)." },
+        "category": { "type": "string", "description": "Human-reviewed marketplace shelf category. Runtime canonicalization lives in connectors/runtime/curation.ts." },
         "tags": { "type": "array", "items": { "type": "string" } },
         "icon": { "type": "string", "description": "Simple Icons slug or local icon key." },
         "iconTitle": { "type": "string", "description": "Human-readable logo title from the icon catalog." },
@@ -25,7 +25,14 @@
         "iconUrl": { "type": "string", "format": "uri" },
         "website": { "type": "string", "format": "uri" },
         "sourceCatalog": { "type": "string" },
-        "sourceUrl": { "type": "string", "format": "uri" }
+        "sourceUrl": { "type": "string", "format": "uri" },
+        "sourceCategories": {
+          "type": "array",
+          "description": "Category vocabulary declared by the source catalog; distinct from OpenAPI operation tags.",
+          "items": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
       }
     },
     "baseUrl": { "type": "string", "format": "uri" },

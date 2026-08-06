@@ -5,12 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Repo-audit (guc-pool fail-open-to-operator): proves OSHAL_DB_GUC_STRICT — default 'off' keeps identity-less work as trusted operator context (is_operator='on'); 'warn' keeps operator but audits each unique fail-open call site once; 'deny' stamps anonymous non-operator (is_operator='off', RLS scopes to nothing). A request WITH identity is always scoped to that identity regardless of the knob.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deny-by-default flip: the DEFAULT (no env) is now 'deny' — identity-less is stamped anonymous non-operator (is_operator='off'). 'off' is the break-glass that restores operator; unrecognized values fall back to deny (fail-closed). Added: the runWithSystemIdentity sentinel is STILL stamped operator under the deny default (the escape hatch background work uses).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin the shipped local stack to the completed deny rollout; a compose regression back to the former warn soak now fails beside the runtime-mode matrix.
  */
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { wrapPoolWithGuc, gucStrictMode, _resetFailOpenAudit } from '../../src/shared/services/database/guc-pool';
 import { runWithRequestIdentity, runWithSystemIdentity } from '../../src/shared/services/database/request-identity';
 import type { Pool } from 'pg';
+import { readFileSync } from 'node:fs';
 
 const ENV = 'OSHAL_DB_GUC_STRICT';
 let saved: string | undefined;
@@ -49,6 +51,12 @@ function stampedIsOperator(client: ReturnType<typeof fakeClient>): string | unde
 }
 
 describe('guc-pool fail-open strict mode', () => {
+  it('the shipped local stack defaults to deny, never the retired warn soak', () => {
+    const compose = readFileSync('docker-compose.oshal-local.yml', 'utf8');
+    expect(compose).toContain('OSHAL_DB_GUC_STRICT: ${OSHAL_DB_GUC_STRICT:-deny}');
+    expect(compose).not.toContain('OSHAL_DB_GUC_STRICT: ${OSHAL_DB_GUC_STRICT:-warn}');
+  });
+
   it('default (deny, no env): identity-less query is stamped anonymous non-operator (is_operator=off)', async () => {
     const client = fakeClient();
     const pool = wrapPoolWithGuc(fakePool(client));

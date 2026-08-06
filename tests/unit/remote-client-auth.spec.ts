@@ -21,13 +21,19 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the remote-client auth hardening (timing-safe compare, per-caller rate limit, worker-plane-on-node-token proof)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | 2026-07-31 23:21:37 America/Chicago — Raises the first HTTP router boot timeout because full-suite dynamic import load can exceed 15s before the auth assertions execute.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Re-point the two rate-limit assertions at the default-ON limiter. This spec PINNED the bug it was written to guard: it asserted the limiter must be "a no-op by default (flag off)", which is exactly why /api/remote-clients ran unlimited in every deployment (no compose file or .env ever set the flag). The default-off case becomes the explicit-opt-out case, and the source tripwire drops its keyGenerator substring check — that belonged to a substring, not to behaviour, and the keying is now proven over real requests in remote-client-rate-limit.spec.ts. Ordering (limiter AFTER auth) stays a source assertion because no HTTP call can observe it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Inject and await the explicit test-only task journal; production task routes no longer fall back to process memory.
  */
 
 import { readFileSync } from 'fs';
 import * as path from 'path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { remoteClientRateLimitKey, timingSafeSecretEquals } from '../../src/features/remote-client';
+import {
+  RemoteTaskJournalService,
+  remoteClientRateLimitKey,
+  timingSafeSecretEquals,
+} from '@/features/remote-client';
+import { InMemoryRemoteTaskJournalFixture } from '../helpers/in-memory-remote-task-journal';
 
 const ENV_KEYS = [
   'OSHAL_OPERATOR_SUBS',
@@ -146,16 +152,27 @@ describe('remote-client auth over HTTP', () => {
    * stamps for a `Bearer oshal_pat_…` node token — x-test-sub selects the owner.
    */
   async function bootApp(): Promise<string> {
-    const { createRemoteClientRoutes } = await import('../../src/app/routes/remote-client-routes');
+    const { createRemoteClientRoutes, remoteClientRegistry } = await import('../../src/app/routes/remote-client-routes');
     const app = express();
     app.use(express.json());
     app.use(nodeTokenShapedOidc());
-    app.use('/api/remote-clients', createRemoteClientRoutes());
+    app.use('/api/remote-clients', createRemoteClientRoutes({
+      taskJournalService: new RemoteTaskJournalService(new InMemoryRemoteTaskJournalFixture()),
+    }));
+    await waitForJournal(remoteClientRegistry);
     const server = app.listen(0);
     servers.push(server);
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('test server did not bind to a port');
     return `http://127.0.0.1:${address.port}/api/remote-clients`;
+  }
+
+  /** @description Waits for the route factory's asynchronous schema/replay readiness gate. */
+  async function waitForJournal(registry: { isTaskJournalReady(): boolean }): Promise<void> {
+    for (let attempt = 0; attempt < 20 && !registry.isTaskJournalReady(); attempt += 1) {
+      await Promise.resolve();
+    }
+    if (!registry.isTaskJournalReady()) throw new Error('test task journal did not become ready');
   }
 
   function registrationBody(clientId: string): Record<string, unknown> {

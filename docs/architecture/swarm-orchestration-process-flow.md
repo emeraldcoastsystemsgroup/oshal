@@ -29,6 +29,10 @@ For the reference comparison and improvement plan:
 - Postgres is still effectively required for a successful end-to-end swarm execution in the current wiring.
 - The direct route and the provider route are both synchronous process calls. They do not just enqueue work and return immediately.
 - The queue-manager polling loop picks up approved internal tickets, seeds workspaces, decomposes into subtasks, and feeds them into the swarm pipeline.
+- Remote queue dispatches carry ADR-034's authoritative provider/model record by default. The bot
+  self-corrects before execution, refuses unavailable authority or a concurrent mismatch, and
+  returns the config source/action/version; an authoritative transport error cannot fall through
+  to the unstamped localhost path.
 - `PhaseRoundOrchestrator` exists with multi-round state tracking but is not yet authoritative for phases 2-5.
 - Execution reaches Cline-backed worker path through `SwarmAgentWorker` → `LocalHostAgent` → `ClineCliTransport`.
 

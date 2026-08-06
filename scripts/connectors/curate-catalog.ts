@@ -20,6 +20,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — check/write backfill over swarm-apps/connectors, fail-closed on any uncategorisable connector (no 'other'/'General' default), text-level metadata upsert that preserves the rest of each file byte-for-byte.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep remediation guidance aligned with provenance-aware provider/source/signal category rules.
+ * -----------------------------------------------------------------------------
  *
  * @module scripts/connectors/curate-catalog
  */
@@ -106,7 +108,7 @@ function main(): void {
   if (unloadable.length || uncategorisable.length) {
     for (const u of unloadable) console.error(`  spec will not load: ${u.file} — ${u.error}`);
     for (const p of uncategorisable) {
-      console.error(`  no category derivable: ${p} — add an anchor to CATEGORY_RULES in src/app/connectors/runtime/curation.ts`);
+      console.error(`  no category derivable: ${p} — add reviewed provider/source/signal evidence in src/app/connectors/runtime/curation.ts`);
     }
     console.error(`\n✗ connector curation FAILED: ${unloadable.length} unloadable, ${uncategorisable.length} uncategorisable (nothing written).`);
     process.exit(1);

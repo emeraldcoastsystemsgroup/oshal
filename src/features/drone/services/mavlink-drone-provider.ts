@@ -17,14 +17,22 @@
  *                     |                             | (115) through the ACK-awaited commandLong rail — rotation
  *                     |                             | now works on real airframes. Camera equipment still
  *                     |                             | honestly rejects (DO_DIGICAM/gimbal manager = BACKLOG).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Require MAVLink 2 signing in both directions, pin the
+ *                     |                             | first authenticated autopilot system, reject unsigned,
+ *                     |                             | invalid, cross-system, and replayed packets, and emit
+ *                     |                             | monotonically signed commands over the real TCP link.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bound malformed TCP ingress, compare packet signatures
+ *                     |                             | in constant time, rate-limit rejection logs, and cleanly
+ *                     |                             | reset failed/reconnected links and pending commands.
  */
 
 import * as net from 'net';
+import { timingSafeEqual } from 'node:crypto';
+import type { TransformCallback } from 'node:stream';
 import {
   MavLinkPacketSplitter,
   MavLinkPacketParser,
-  MavLinkProtocolV2,
-  send as mavSend,
+  sendSigned as mavSendSigned,
   minimal,
   common,
   ardupilotmega,
@@ -60,6 +68,21 @@ const TICK_MS = 500;
 const ARRIVAL_RADIUS_M = 2;
 const ARRIVAL_ALT_M = 1.5;
 const EVENT_RETENTION = 200;
+const MAX_PENDING_MAVLINK_BYTES = 4_096;
+const AUTH_REJECTION_LOG_INTERVAL_MS = 1_000;
+
+/** Stop a peer from making node-mavlink retain an unbounded stream with no valid frame start. */
+class BoundedMavLinkPacketSplitter extends MavLinkPacketSplitter {
+  override _transform(chunk: Buffer, encoding: BufferEncoding, callback: TransformCallback): void {
+    super._transform(chunk, encoding, (error?: Error | null) => {
+      if (error) { callback(error); return; }
+      const pending = (this as unknown as { buffer: Buffer }).buffer;
+      callback(pending.length > MAX_PENDING_MAVLINK_BYTES
+        ? new Error('MAVLink ingress exceeded the pending-frame limit')
+        : null);
+    });
+  }
+}
 
 type Op =
   | { kind: 'none' }
@@ -72,6 +95,10 @@ export interface MavlinkDroneOptions {
   droneId?: string;
   /** e.g. tcp://127.0.0.1:5760 (SITL) or tcp://<companion-bridge>:<port>. */
   url: string;
+  /** Raw 32-byte MAVLink 2 packet-signing key shared only with this flight controller. */
+  signingKey: Buffer;
+  /** MAVLink signing link id for this companion/GCS connection (0-255). */
+  signingLinkId?: number;
 }
 
 /**
@@ -88,12 +115,18 @@ export class MavlinkDroneProvider implements DroneProvider {
   readonly droneId: string;
 
   private readonly url: string;
+  private readonly signingKey: Buffer;
+  private readonly signingLinkId: number;
   private socket: net.Socket | null = null;
-  private readonly protocol = new MavLinkProtocolV2(255, 190); // our GCS identity
   private targetSystem = 1;
   private targetComponent = 1;
+  private targetSystemLocked = false;
   private connected = false;
   private streamsRequested = false;
+  private readonly inboundSigningTimestamps = new Map<string, number>();
+  private lastOutboundSigningTimestamp = 0;
+  private lastAuthRejectionLogMs = 0;
+  private suppressedAuthRejections = 0;
 
   private armed = false;
   private customMode = 0;
@@ -111,8 +144,17 @@ export class MavlinkDroneProvider implements DroneProvider {
   private ticker: NodeJS.Timeout | null = null;
 
   constructor(opts: MavlinkDroneOptions) {
+    if (!Buffer.isBuffer(opts.signingKey) || opts.signingKey.length !== 32) {
+      throw new DroneCommandError('MAVLink signing requires an exact 32-byte key');
+    }
+    const linkId = opts.signingLinkId ?? 1;
+    if (!Number.isInteger(linkId) || linkId < 0 || linkId > 255) {
+      throw new DroneCommandError('MAVLink signing link id must be an integer from 0 through 255');
+    }
     this.droneId = opts.droneId ?? 'drone-1';
     this.url = opts.url;
+    this.signingKey = Buffer.from(opts.signingKey);
+    this.signingLinkId = linkId;
   }
 
   get home(): GeoPoint {
@@ -130,19 +172,40 @@ export class MavlinkDroneProvider implements DroneProvider {
     const m = /^tcp:\/\/([^:]+):(\d+)$/.exec(this.url.trim());
     if (!m) throw new DroneCommandError(`DRONE_MAVLINK_URL must look like tcp://host:port (got "${this.url}")`);
     const [, host, port] = m;
-    this.socket = net.connect({ host, port: Number(port) });
-    const reader = this.socket.pipe(new MavLinkPacketSplitter()).pipe(new MavLinkPacketParser());
+    this.disconnect();
+    this.inboundSigningTimestamps.clear();
+    this.targetSystemLocked = false;
+    this.streamsRequested = false;
+    this.haveFix = false;
+    this.lastAuthRejectionLogMs = 0;
+    this.suppressedAuthRejections = 0;
+    const socket = net.connect({ host, port: Number(port) });
+    this.socket = socket;
+    const splitter = new BoundedMavLinkPacketSplitter();
+    const reader = socket.pipe(splitter).pipe(new MavLinkPacketParser());
     reader.on('data', (packet: MavLinkPacket) => this.onPacket(packet));
-    this.socket.on('error', (err) => { this.connected = false; logger.error({ err: err.message }, 'MAVLink socket error'); });
-    this.socket.on('close', () => { this.connected = false; logger.warn('MAVLink socket closed'); });
+    const rejectMalformedStream = (err: Error) => {
+      logger.warn({ error: err.message }, 'Rejected malformed MAVLink stream');
+      socket.destroy();
+    };
+    splitter.on('error', rejectMalformedStream);
+    reader.on('error', rejectMalformedStream);
+    socket.on('error', (err) => {
+      if (this.socket === socket) this.connected = false;
+      logger.error({ err: err.message }, 'MAVLink socket error');
+    });
+    socket.on('close', () => this.onSocketClosed(socket));
     await new Promise<void>((resolve, reject) => {
-      this.socket!.once('connect', () => resolve());
-      this.socket!.once('error', (err) => reject(new DroneCommandError(`cannot reach flight controller at ${this.url}: ${err.message}`)));
+      socket.once('connect', () => resolve());
+      socket.once('error', (err) => reject(new DroneCommandError(`cannot reach flight controller at ${this.url}: ${err.message}`)));
     });
     this.ticker = setInterval(() => { void this.tick(); }, TICK_MS);
     const deadline = Date.now() + readyTimeoutMs;
     while (!(this.connected && this.haveFix)) {
-      if (Date.now() > deadline) throw new DroneCommandError('flight controller link up but no heartbeat/position fix arrived in time');
+      if (Date.now() > deadline) {
+        this.disconnect();
+        throw new DroneCommandError('flight controller link up but no authenticated heartbeat/position fix arrived in time');
+      }
       await new Promise((r) => setTimeout(r, 500));
     }
     this.logEvent('info', `MAVLink link established (${this.url}, sys ${this.targetSystem})`);
@@ -151,11 +214,37 @@ export class MavlinkDroneProvider implements DroneProvider {
   /** @description Stop the tick loop and close the link. */
   disconnect(): void {
     if (this.ticker) clearInterval(this.ticker);
+    this.ticker = null;
+    this.rejectPendingCommands();
     this.socket?.destroy();
+    this.socket = null;
     this.connected = false;
   }
 
+  private onSocketClosed(socket: net.Socket): void {
+    if (this.socket !== socket) return;
+    this.socket = null;
+    this.connected = false;
+    if (this.ticker) clearInterval(this.ticker);
+    this.ticker = null;
+    this.rejectPendingCommands();
+    logger.warn('MAVLink socket closed');
+  }
+
+  private rejectPendingCommands(): void {
+    for (const pending of this.pendingAcks.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(-1);
+    }
+    this.pendingAcks.clear();
+  }
+
   private onPacket(packet: MavLinkPacket): void {
+    const rejection = this.packetAuthenticationRejection(packet);
+    if (rejection) {
+      this.logPacketAuthenticationRejection(packet, rejection);
+      return;
+    }
     const registry = {
       ...minimal.REGISTRY, ...common.REGISTRY, ...ardupilotmega.REGISTRY,
     } as Record<number, Parameters<MavLinkPacket['protocol']['data']>[1] | undefined>;
@@ -175,6 +264,7 @@ export class MavlinkDroneProvider implements DroneProvider {
 
   private onHeartbeat(packet: MavLinkPacket, hb: InstanceType<typeof minimal.Heartbeat>): void {
     if (packet.header.compid !== 1) return; // autopilot component only
+    if (!this.targetSystemLocked) this.targetSystemLocked = true;
     this.targetSystem = packet.header.sysid;
     this.targetComponent = packet.header.compid;
     this.connected = true;
@@ -218,6 +308,42 @@ export class MavlinkDroneProvider implements DroneProvider {
     const sev = Number(st.severity);
     const level = sev <= 3 ? 'alert' : sev === 4 ? 'warn' : 'info';
     if (sev <= 5) this.logEvent(level, `FC: ${String(st.text).replace(/\0+$/, '')}`);
+  }
+
+  private packetAuthenticationRejection(packet: MavLinkPacket): string | null {
+    const signature = packet.signature;
+    if (!signature) return 'unsigned';
+    const expected = Buffer.from(signature.calculate(this.signingKey), 'hex');
+    const supplied = Buffer.from(signature.signature, 'hex');
+    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return 'invalid-signature';
+    if (packet.header.compid !== 1) return 'non-autopilot-component';
+    if (!this.targetSystemLocked && packet.header.msgid !== minimal.Heartbeat.MSG_ID) {
+      return 'heartbeat-required-before-telemetry';
+    }
+    if (this.targetSystemLocked && packet.header.sysid !== this.targetSystem) return 'cross-system';
+    const replayKey = `${packet.header.sysid}:${packet.header.compid}:${signature.linkId}`;
+    const prior = this.inboundSigningTimestamps.get(replayKey);
+    if (prior !== undefined && signature.timestamp <= prior) return 'replayed-timestamp';
+    this.inboundSigningTimestamps.set(replayKey, signature.timestamp);
+    return null;
+  }
+
+  private logPacketAuthenticationRejection(packet: MavLinkPacket, reason: string): void {
+    const now = Date.now();
+    if (now - this.lastAuthRejectionLogMs < AUTH_REJECTION_LOG_INTERVAL_MS) {
+      this.suppressedAuthRejections += 1;
+      return;
+    }
+    logger.warn({
+      droneId: this.droneId,
+      reason,
+      sysid: packet.header.sysid,
+      compid: packet.header.compid,
+      msgid: packet.header.msgid,
+      suppressed: this.suppressedAuthRejections,
+    }, 'Rejected unauthenticated MAVLink packet');
+    this.lastAuthRejectionLogMs = now;
+    this.suppressedAuthRejections = 0;
   }
 
   // ── Control tick (GCS heartbeat, stream request, mission loop) ─────────────
@@ -418,7 +544,9 @@ export class MavlinkDroneProvider implements DroneProvider {
 
   private async sendMsg(msg: MavLinkData): Promise<void> {
     if (!this.socket) throw new DroneCommandError('MAVLink socket not open');
-    await mavSend(this.socket, msg as never, this.protocol);
+    const timestamp = Math.max(Date.now(), this.lastOutboundSigningTimestamp + 1);
+    this.lastOutboundSigningTimestamp = timestamp;
+    await mavSendSigned(this.socket, msg as never, this.signingKey, this.signingLinkId, 255, 190, timestamp);
   }
 
   private async sendGcsHeartbeat(): Promise<void> {
@@ -443,6 +571,9 @@ export class MavlinkDroneProvider implements DroneProvider {
 
   /** Send COMMAND_LONG and await the matching COMMAND_ACK; non-zero results reject. */
   private async commandLong(command: number, params: number[], rejectionMessage: string): Promise<void> {
+    if (this.pendingAcks.has(command)) {
+      throw new DroneCommandError(`MAVLink command ${command} is already awaiting acknowledgement`);
+    }
     const msg = new common.CommandLong();
     msg.targetSystem = this.targetSystem;
     msg.targetComponent = this.targetComponent;
@@ -456,7 +587,14 @@ export class MavlinkDroneProvider implements DroneProvider {
       const timer = setTimeout(() => { this.pendingAcks.delete(command); resolve(-1); }, ACK_TIMEOUT_MS);
       this.pendingAcks.set(command, { resolve, timer });
     });
-    await this.sendMsg(msg);
+    try {
+      await this.sendMsg(msg);
+    } catch (error) {
+      const pending = this.pendingAcks.get(command);
+      if (pending) clearTimeout(pending.timer);
+      this.pendingAcks.delete(command);
+      throw error;
+    }
     const result = await ack;
     if (result !== 0) {
       throw new DroneCommandError(`${rejectionMessage} (MAV_RESULT ${result === -1 ? 'timeout' : result})`);

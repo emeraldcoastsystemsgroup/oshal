@@ -1,5 +1,17 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Compare owner_sub to the caller's OIDC subject exactly; retain case-insensitive normalization only for tenant, email, and group grant namespaces.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Split mixed allowed_users matching by namespace: OIDC subjects compare exactly, while verified source-system emails remain case-insensitive.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Enforce exact workspace narrowing before owner/group/public grants so workspace-scoped chunks cannot cross retrieval contexts.
+ */
+
 export interface RagPermissionMetadata {
   tenant_id?: string | null;
+  workspace_id?: string | null;
+  visibility?: string | null;
   owner_sub?: string | null;
   allowed_users?: string | string[] | null;
   allowed_groups?: string | string[] | null;
@@ -9,6 +21,8 @@ export interface RagPermissionMetadata {
 export interface RagPermissionContext {
   userSub: string;
   tenantId?: string | null;
+  /** Exact server-bound workspace identifier; workspace metadata narrows but never grants access. */
+  workspaceId?: string | null;
   groups?: readonly string[];
   /**
    * The caller's source-system identities (e.g. verified email addresses). Native source ACLs
@@ -42,12 +56,19 @@ export function permissionBasisForRagMetadata(
 
   const tenantId = normalized(metadata?.tenant_id);
   const contextTenantId = normalized(context.tenantId);
-  if (tenantId && contextTenantId && tenantId !== contextTenantId) {
+  if (tenantId && tenantId !== contextTenantId) {
     return null;
   }
 
-  const ownerSub = normalized(metadata?.owner_sub);
-  if (ownerSub && ownerSub === normalized(context.userSub)) {
+  // A workspace is a narrowing boundary, never an independent grant. Missing or mismatched
+  // context denies before owner/group/public checks, so knowing a workspace ID is insufficient.
+  const workspaceId = exactIdentity(metadata?.workspace_id);
+  if (workspaceId && workspaceId !== exactIdentity(context.workspaceId)) {
+    return null;
+  }
+
+  const ownerSub = exactIdentity(metadata?.owner_sub);
+  if (ownerSub && ownerSub === exactIdentity(context.userSub)) {
     return 'owner';
   }
 
@@ -56,11 +77,11 @@ export function permissionBasisForRagMetadata(
   // checked so a Drive file shared to alice@corp.com is readable by the OSHAL user who owns that
   // verified email, without a pre-sync step. Empty/unknown identities are filtered out so they
   // can never match a chunk that happens to carry an empty allowed_users entry.
-  const callerIdentities = new Set(
-    [normalized(context.userSub), ...(context.emails ?? []).map(normalized)].filter(Boolean),
-  );
-  const allowedUsers = normalizeList(metadata?.allowed_users);
-  if (allowedUsers.some((user) => callerIdentities.has(user))) {
+  const allowedUsers = identityList(metadata?.allowed_users);
+  const callerEmails = new Set((context.emails ?? []).map(normalized).filter(Boolean));
+  const exactSubjectGrant = allowedUsers.some((user) => user === context.userSub);
+  const verifiedEmailGrant = allowedUsers.some((user) => callerEmails.has(normalized(user)));
+  if (exactSubjectGrant || verifiedEmailGrant) {
     return 'explicit-user';
   }
 
@@ -70,7 +91,10 @@ export function permissionBasisForRagMetadata(
     return 'group';
   }
 
-  const hasAcl = Boolean(ownerSub || allowedUsers.length > 0 || allowedGroups.length > 0 || tenantId);
+  const visibility = normalized(metadata?.visibility);
+  const visibilityRestricts = Boolean(visibility && visibility !== 'shared');
+  const hasAcl = Boolean(ownerSub || allowedUsers.length > 0 || allowedGroups.length > 0
+    || tenantId || workspaceId || visibilityRestricts);
   if (!hasAcl && context.allowPublic) {
     return 'public';
   }
@@ -118,6 +142,19 @@ function normalizeList(value: string | string[] | null | undefined): string[] {
   return raw.map(normalized).filter(Boolean);
 }
 
+/** Preserve array identity values; a CSV string trims only its comma-delimiter whitespace. */
+function identityList(value: string | string[] | null | undefined): string[] {
+  if (Array.isArray(value)) return value.filter((entry) => entry.length > 0);
+  return typeof value === 'string'
+    ? value.split(',').map((entry) => entry.trim()).filter(Boolean)
+    : [];
+}
+
 function normalized(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/** OIDC subject values are case-sensitive identity bytes, never display text. */
+function exactIdentity(value: unknown): string {
+  return typeof value === 'string' && value.length > 0 ? value : '';
 }

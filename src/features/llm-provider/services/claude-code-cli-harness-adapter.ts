@@ -7,13 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add --allowedTools, --add-dir, --mcp-config so claude-code bots can read/write workspace and use MCP tools
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Parse is_error from stdout JSON even when claude exits non-zero, and strip ANTHROPIC_API_KEY when it is an expired OAuth token so file-based (.credentials.json) auth takes over
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: pass task.creds to applyUserScoping so the caller's provided short-lived tokens land as .oshal-cred-<provider> files in the workspace.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove connector-credential propagation into the model-visible CLI environment/workspace; preserve exact caller identity scoping only.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Idle-based timeouts (operator directive 2026-07-24, extends ADR-081): the absolute 10-min kill terminated actively-working runs. Default output format is now stream-json (+ --verbose, required by print mode) so silence is measurable, and the adapter opts into BaseCliHarnessAdapter idleReset — timeoutMs bounds SILENCE (default 600000, CLAUDE_CODE_INACTIVITY_TIMEOUT_MS) with a 60-min runaway ceiling (CLAUDE_CODE_MAX_DURATION_MS, falling back to CLAUDE_CODE_TIMEOUT_MS). Explicit json/text output keeps absolute semantics with the ceiling as the default bound. parseJsonOutput already parses line-wise NDJSON, so result extraction is unchanged.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Streaming crash guard (adversarial review): under stream-json, parseJsonOutput finding no final `type:"result"` event means the CLI crashed/was-killed mid-stream — it now throws instead of returning the raw partial stdout as a successful text result (silent garbage). Batch json keeps the raw-text fallback.
  */
 
 import fs from 'fs';
 import path from 'path';
-import { buildConversationAwarePrompt, type HarnessTask, type HarnessResult } from './harness-adapter';
+import { assertAuditedAutonomousHarness, buildConversationAwarePrompt, type HarnessTask, type HarnessResult } from './harness-adapter';
 import { BaseCliHarnessAdapter } from './base-cli-harness-adapter';
 import type { TokenUsage } from './llm-service';
 
@@ -210,6 +211,7 @@ export class ClaudeCodeCliHarnessAdapter extends BaseCliHarnessAdapter {
    * @description Executes the Claude Code CLI for one task and returns the result.
    */
   async run(task: HarnessTask): Promise<HarnessResult> {
+    assertAuditedAutonomousHarness(this.harnessType);
     const workspacePath = this.resolveWorkspacePath(task.taskId);
     fs.mkdirSync(workspacePath, { recursive: true });
 
@@ -221,7 +223,7 @@ export class ClaudeCodeCliHarnessAdapter extends BaseCliHarnessAdapter {
     const promptInput = buildConversationAwarePrompt(task);
     const env = this.buildEnv(workspacePath);
     const releaseUserScoping = await this.acquireUserScopingLease(
-      env, workspacePath, task.userSub, task.creds,
+      env, workspacePath, task.userSub,
     );
 
     this.logger.info({

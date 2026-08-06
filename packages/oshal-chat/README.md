@@ -132,10 +132,11 @@ When **Config → "Allow this machine to be controlled"** is enabled, the node e
 gated tools so the swarm can drive the machine ("open Outlook and screenshot it", "search My
 Documents for PDFs"): `screen.capture` (Electron `desktopCapturer` → PNG data URL), `shell.exec`
 (PowerShell), `desktop.control` (mouse move/click/type), and `app.open` (launch an app). Input uses
-**nut.js** when its native binding loads, and **falls back to zero-dep PowerShell** (`user32`
-P/Invoke + `SendKeys`) on any failure, so a flaky native build never blocks control. All of this
+the zero-dependency **PowerShell** path (`user32` P/Invoke + `SendKeys`), avoiding native Electron
+ABI drift and the unpatched image-parser dependency chain previously pulled in by nut.js. All of this
 lives in [src/main/system-tools.ts](src/main/system-tools.ts) and is refused unless the toggle is on
-(threaded through `runLocalTool`'s gate). Every action shows in the worker activity log.
+(threaded through `runLocalTool`'s gate). Desktop input and app launch are therefore Windows-only;
+Electron-backed screen capture remains cross-platform. Every action shows in the worker activity log.
 
 ## Accounts on this machine
 
@@ -222,16 +223,16 @@ This package isn't on the public npm registry (`private: true`), so serve a tarb
 **this** machine and `npx` it on the other one — no publish, no VPN:
 
 ```bash
-# On this machine (prepack builds dist/, produces oshal-chat-0.1.0.tgz):
+# On this machine (prepack builds dist/, produces oshal-chat-0.2.0.tgz):
 cd packages/oshal-chat
 npm pack
 # Share the .tgz over the LAN (file copy, or: npx serve . then fetch the URL).
 
-# On the OTHER computer (Node 20+ installed):
-npx ./oshal-chat-0.1.0.tgz      # or:  npx http://<this-ip>:3000/oshal-chat-0.1.0.tgz
+# On the OTHER computer (Node 22.12+ installed):
+npx ./oshal-chat-0.2.0.tgz      # or:  npx http://<this-ip>:3000/oshal-chat-0.2.0.tgz
 ```
 
-`npx` installs the package's deps (Electron + nut.js), runs the `postinstall` CLI bootstrap,
+`npx` installs the package's runtime Electron dependency, runs the `postinstall` CLI bootstrap,
 and opens the desktop window. First launch opens **Settings** — fill in:
 
 - **Control-plane URL:** `http://<this-machine-LAN-ip>:35457` (the oshal-local API host port;
@@ -287,7 +288,7 @@ that secret is fully trusted (this matches the existing remote-client/A2A model)
 | `src/main/worker.ts` | worker loop: pull tasks → run locally → complete/fail |
 | `src/main/local-tools.ts` | allowlisted local MCP tool registry (codex/claude/swarm.exec + gated system tools) |
 | `src/main/executors.ts` | spawn codex/claude CLIs against the user's real `~/.` creds |
-| `src/main/system-tools.ts` | gated screen/shell/input control (nut.js → PowerShell fallback) |
+| `src/main/system-tools.ts` | gated screen/shell/input control (PowerShell P/Invoke) |
 | `src/main/workspace-sync.ts` | scoped pull/additive-push of the held task's shared folder |
 | `src/main/auth-manager.ts` | local-account status probes + browser-popup CLI login |
 | `src/main/config.ts` | persisted settings (userData/config.json) |

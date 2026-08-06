@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add Change Log header; double-start guard + unref-ed timer handles (2026-07-05 leak audit)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 3 travel carve: this module now owns the swarm-shared price-history ENGINE that stays kernel-resident (ADR-093) — ensureTravelSchema (runtime fallback for migration 050), routeKeyFor, recordObservations, and priceRead moved here from travel-routes.ts (which carved to the app store; the packaged route imports them back via @/app/routes/travel-farewatch). The cron now ensures the schema at start (previously done by the createTravelRoutes mount at boot).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the BOOT setTimeout run in runWithSystemIdentity too — only the interval tick was wrapped, so the boot fare-watch sweep still ran identity-less (guc warn-audit site checkAllWatches).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: execute fare-watch Duffel requests with an explicit OS/network environment, exact watcher subject, and exact brokered Duffel token; database/session/controller/provider credentials are no longer inherited.
  */
 /**
  * Travel fare-watch + the swarm-shared travel price engine (ADR-059 §2/§5).
@@ -45,10 +46,39 @@ import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import type { AppContext } from '@/app/composition/app-context';
 import type { Pool } from 'pg';
-import { resolveBotCreds } from './connector-token-broker';
+import { resolveServerOperationCreds } from './connector-token-broker';
 
 const logger = createChildLogger({ module: 'travel-farewatch' });
 const DUFFEL_CLI = 'scripts/oshal-duffel.js';
+const TRAVEL_PROVIDER_PROCESS_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+  'NODE_USE_ENV_PROXY',
+] as const;
+
+/**
+ * Build one fare-watch provider child's environment without controller authority.
+ *
+ * The already brokered Duffel token and exact watch owner are the complete operation scope.
+ * Omitting database and session settings is deliberate: a missing brokered token must degrade
+ * as not-connected/demo in the legacy CLI rather than decrypt another credential itself.
+ */
+export function buildTravelFarewatchProcessEnv(
+  userSub: string,
+  duffelCredential: string | undefined,
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of TRAVEL_PROVIDER_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.OSHAL_USER_SUB = userSub;
+  if (duffelCredential) env.OSHAL_CRED_DUFFEL = duffelCredential;
+  return env;
+}
 
 // ── Schema (idempotent fallback for fresh deploys — migration 050 is the source) ─
 /**
@@ -201,14 +231,21 @@ export async function priceRead(pool: Pool, kind: string, routeKey: string, curr
   return { verdict, advice, currentBest, ...stats };
 }
 
-/** Run the Duffel CLI for a given watcher (broker-resolved token; no keys here). */
+/** Run the Duffel CLI for a given watcher with only its exact broker-resolved token. */
 async function duffelCli(pool: Pool, sub: string, args: string[]): Promise<any> {
-  const creds = await resolveBotCreds(pool as unknown as never, sub, ['duffel']);
+  const creds = await resolveServerOperationCreds(
+    pool as unknown as never,
+    sub,
+    ['duffel'],
+    'fixed-server-operation',
+  );
   return new Promise((resolve) => {
-    const env: NodeJS.ProcessEnv = { ...process.env, OSHAL_USER_SUB: sub };
-    if (creds.OSHAL_CRED_DUFFEL) env.OSHAL_CRED_DUFFEL = creds.OSHAL_CRED_DUFFEL;
-    execFile('node', [path.resolve(process.cwd(), DUFFEL_CLI), ...args],
-      { env, timeout: 30000, maxBuffer: 4 * 1024 * 1024 }, (_err, stdout) => {
+    execFile(process.execPath, [path.resolve(process.cwd(), DUFFEL_CLI), ...args],
+      {
+        env: buildTravelFarewatchProcessEnv(sub, creds.OSHAL_CRED_DUFFEL),
+        timeout: 30000,
+        maxBuffer: 4 * 1024 * 1024,
+      }, (_err, stdout) => {
         try { resolve(JSON.parse((stdout || '').trim() || '{}')); } catch { resolve({}); }
       });
   });

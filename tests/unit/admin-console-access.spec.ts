@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard admin-console fallback behavior and exact privileged subject matching without changing case-insensitive operator email semantics.
+ */
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
 import {
@@ -66,5 +74,22 @@ describe('requireAdminConsoleAccess', () => {
     requireAdminConsoleAccess()(reqFor(null, 'boss@example.com'), res, next);
     expect(next).toHaveBeenCalledOnce();
     expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('admits only the exact allowlisted subject, not case or whitespace aliases', () => {
+    process.env.OSHAL_OPERATOR_SUBS = ' Admin-Sub ';
+
+    for (const [sub, admitted] of [
+      ['Admin-Sub', true],
+      ['admin-sub', false],
+      [' Admin-Sub', false],
+      ['Admin-Sub ', false],
+    ] as const) {
+      const next = vi.fn();
+      const res = fakeRes();
+      requireAdminConsoleAccess()(reqFor(sub), res, next);
+      expect(next.mock.calls.length, sub).toBe(admitted ? 1 : 0);
+      expect(res.statusCode, sub).toBe(admitted ? undefined : 403);
+    }
   });
 });

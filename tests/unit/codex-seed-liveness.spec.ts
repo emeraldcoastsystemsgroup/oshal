@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the codex dead-seed audit: every codex OAuth consumer must resolve the LIVE ~/.codex/auth.json (rotated + written back by the harness) before the never-rotated config-seed copy. Goes red if getSwarmApiKey('openai') or ClineRuntimeConfigSyncService.syncOpenAiCodexCredentials ever reverts to seed-first resolution — the failure mode that pinned Cline/Haven to an expired token forever while codex auth was healthy.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: preserve live-first server credential resolution while proving the retired Codex-to-Cline compatibility method never materializes either live or seed OAuth credentials and empties legacy Cline secrets.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: make Codex OAuth live-only, prove the native nested token shape works, and prove a stale static seed is never executable fallback authority.
  */
 
 import fs from 'fs';
@@ -12,6 +14,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getSwarmApiKey } from '../../src/features/llm-provider/services/swarm-credentials';
 import { ClineRuntimeConfigSyncService } from '../../src/features/llm-provider/services/cline-runtime-config-sync-service';
+import { resolveFreeModel } from '../../src/app/routes/provider-routes';
 
 const FRESH_LIVE_TOKEN = 'FRESH-LIVE-ACCESS-TOKEN';
 const STALE_SEED_TOKEN = 'STALE-SEED-ACCESS-TOKEN';
@@ -22,9 +25,10 @@ const ENV_KEYS = [
   'OSHAL_SEED_SECRETS_PATH',
   'OSHAL_GLOBAL_CONFIG_PATH',
   'OPENAI_API_KEY',
+  'FREE_SHARED_MODEL_ENABLED',
 ] as const;
 
-describe('codex seed liveness — live ~/.codex/auth.json beats the never-rotated config-seed', () => {
+describe('codex credential liveness — only the rotating native auth source is executable', () => {
   const savedEnv: Record<string, string | undefined> = {};
   let root: string;
   let liveAuthPath: string;
@@ -77,17 +81,11 @@ describe('codex seed liveness — live ~/.codex/auth.json beats the never-rotate
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  /**
-   * Writes a native-CLI-shaped live auth.json (the shape codex login produces).
-   * @param withTopLevelApiKey - Also writes a top-level OPENAI_API_KEY string. getSwarmApiKey's
-   *   live read currently resolves the flat OPENAI_API_KEY field but NOT the nested
-   *   `{ tokens: { access_token } }` OAuth shape (extractOpenAiCodexAccessToken only unwraps
-   *   `tokens` beneath its two named blob keys) — a swarm-credentials.ts gap outside this fix's
-   *   scope, reported separately. The ordering guard here uses the flat field.
-   */
-  function writeLiveAuthJson(withTopLevelApiKey = false): void {
+  /** Writes the native nested auth.json shape produced and rotated by the Codex CLI. */
+  function writeLiveAuthJson(): void {
     fs.writeFileSync(liveAuthPath, JSON.stringify({
-      ...(withTopLevelApiKey ? { OPENAI_API_KEY: FRESH_LIVE_TOKEN } : {}),
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
       tokens: {
         access_token: FRESH_LIVE_TOKEN,
         refresh_token: 'fresh-live-refresh',
@@ -97,51 +95,60 @@ describe('codex seed liveness — live ~/.codex/auth.json beats the never-rotate
     }, null, 2));
   }
 
-  /** Reads the codex OAuth blob the sync service wrote into Cline data/secrets.json. */
-  function readSyncedBlob(): Record<string, unknown> {
+  /** Reads the legacy Cline secret envelope, treating a never-created file as empty. */
+  function readClineSecrets(): Record<string, unknown> {
     const secretsFile = path.join(clineDir, 'data', 'secrets.json');
-    const secrets = JSON.parse(fs.readFileSync(secretsFile, 'utf-8')) as Record<string, unknown>;
-    const raw = secrets['openai-codex-oauth-credentials'];
-    expect(typeof raw).toBe('string');
-    return JSON.parse(raw as string) as Record<string, unknown>;
+    if (!fs.existsSync(secretsFile)) return {};
+    return JSON.parse(fs.readFileSync(secretsFile, 'utf-8')) as Record<string, unknown>;
   }
 
-  it('getSwarmApiKey(openai) returns the fresh live token, not the stale seed copy', () => {
-    writeLiveAuthJson(true);
+  /** Seeds the raw runtime carrier written by releases before SEC-05 containment. */
+  function seedLegacyClineSecrets(accessToken: string): void {
+    const secretsFile = path.join(clineDir, 'data', 'secrets.json');
+    fs.mkdirSync(path.dirname(secretsFile), { recursive: true });
+    fs.writeFileSync(secretsFile, JSON.stringify({
+      'openai-codex-oauth-credentials': JSON.stringify({ access_token: accessToken }),
+    }));
+  }
 
-    expect(getSwarmApiKey('openai')).toBe(FRESH_LIVE_TOKEN);
-  });
-
-  it('getSwarmApiKey(openai) still falls back to the seed when the live source is missing', () => {
-    // No live auth.json written.
-    expect(getSwarmApiKey('openai')).toBe(STALE_SEED_TOKEN);
-  });
-
-  it('syncOpenAiCodexCredentials writes the LIVE token into Cline secrets when the envelope is empty', () => {
+  it('getSwarmApiKey(openai) reads the native nested live token, not the stale seed copy', () => {
     writeLiveAuthJson();
 
-    const service = new ClineRuntimeConfigSyncService(clineDir, outputDir);
-    const synced = service.syncOpenAiCodexCredentials(null);
-
-    expect(synced).toBe(true);
-    const blob = readSyncedBlob();
-    expect(blob.access_token).toBe(FRESH_LIVE_TOKEN);
-    expect(blob.access_token).not.toBe(STALE_SEED_TOKEN);
-    expect(blob.refresh_token).toBe('fresh-live-refresh');
-    expect(blob.accountId).toBe('acct-live-123');
-    // A partial mapping (missing expires) trips normalizeOpenAiCodexCredentials and silently
-    // falls back to null → the dead seed; the blob must always carry a numeric expiry.
-    expect(typeof blob.expires).toBe('number');
-    expect(Number.isFinite(blob.expires)).toBe(true);
+    expect(getSwarmApiKey('openai')).toBe(FRESH_LIVE_TOKEN);
+    expect(resolveFreeModel().available).toBe(true);
   });
 
-  it('syncOpenAiCodexCredentials still seeds fresh installs from config-seed when no live source exists', () => {
-    // No live auth.json written — the sanctioned bootstrap path must keep working.
+  it('getSwarmApiKey(openai) fails closed when only a stale seed copy exists', () => {
+    expect(getSwarmApiKey('openai')).toBe('');
+    expect(resolveFreeModel().available).toBe(false);
+  });
+
+  it('getSwarmApiKey(openai) permits an explicit platform API key without reviving the seed', () => {
+    process.env.OPENAI_API_KEY = 'explicit-platform-key';
+    expect(getSwarmApiKey('openai')).toBe('explicit-platform-key');
+    expect(resolveFreeModel().available).toBe(true);
+  });
+
+  it('syncOpenAiCodexCredentials rejects live-token materialization and tombstones legacy Cline secrets', () => {
+    writeLiveAuthJson();
+    seedLegacyClineSecrets('legacy-runtime-token');
+
     const service = new ClineRuntimeConfigSyncService(clineDir, outputDir);
     const synced = service.syncOpenAiCodexCredentials(null);
 
-    expect(synced).toBe(true);
-    const blob = readSyncedBlob();
-    expect(blob.access_token).toBe(STALE_SEED_TOKEN);
+    expect(synced).toBe(false);
+    expect(readClineSecrets()).toEqual({});
+    expect(JSON.stringify(readClineSecrets())).not.toContain(FRESH_LIVE_TOKEN);
+  });
+
+  it('syncOpenAiCodexCredentials rejects stale-seed materialization and tombstones legacy Cline secrets', () => {
+    // No live auth.json written. Static seed material is non-executable and must never be copied
+    // into Cline-owned files.
+    seedLegacyClineSecrets(STALE_SEED_TOKEN);
+    const service = new ClineRuntimeConfigSyncService(clineDir, outputDir);
+    const synced = service.syncOpenAiCodexCredentials(null);
+
+    expect(synced).toBe(false);
+    expect(readClineSecrets()).toEqual({});
   });
 });

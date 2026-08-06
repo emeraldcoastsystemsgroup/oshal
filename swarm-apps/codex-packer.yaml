@@ -30,8 +30,14 @@ description: >-
   single-purpose bot — persona + app manifest + tools + knowledge — staged for
   your one-click Inject. No redeploy. It appears in the gallery and at
   /cockpit/?app=<your-new-bot> immediately, live on your connectors.
-version: 1.1.0
+version: 1.1.1
 status: active
+
+# ADR-118: preserve current authenticated Forge authoring; operator assignments can narrow a
+# user to strict read-only or deny, and the operator Inject action remains separately guarded.
+access:
+  supported: [deny, viewer, editor, admin]
+  defaultTier: editor
 
 # The right-rail chat agent IS the packer — it interviews + emits + injects while the
 # Forge surface (below) shows the resulting bots going live in the swarm.

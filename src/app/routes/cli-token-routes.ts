@@ -8,6 +8,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | guc-strict fix: the auth middleware's token lookup ran with NO request identity (it IS the identity-stamper — chicken-and-egg), so once OSHAL_DB_GUC_STRICT=deny went live the FORCE-RLS oshal_cli_tokens SELECT returned zero rows and EVERY PAT 401'd on every route. Lookup + the best-effort last_used_at update now run under runWithSystemIdentity — the sanctioned trusted-path sentinel the deny log itself prescribes; safe because the read is proof-of-possession (keyed on the 48-hex token hash) and returns only that row. Guard: tests/unit/token-middleware-rls.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Closed the bootstrap-mint escalation. POST / previously accepted the x-oshal-user-sub assertion for ANY sub and minted a NON-EXPIRING PAT, so any holder of the fleet-wide SWARM_SERVICE_SECRET (every bot container carries it) could mint a permanent credential for an arbitrary user and then authenticate as them on every requiresAuth route — including /api/content and /api/linkedin-assistant, which the service secret alone cannot reach. That turned a per-request impersonation into persistent account takeover, which matters because a prompt-injected bot is an untrusted principal holding that secret. Header-asserted (session-less) mints are now (a) operator-only via isOperatorIdentity — fail-closed on an empty allowlist — and (b) time-boxed by OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS (default 30) using the existing expires_at column, so even the operator bootstrap is no longer a permanent credential. Session-authenticated mints (the cockpit path) are unchanged and still non-expiring. swarm-cli's service-secret login keeps working for the operator. Guard: tests/unit/cli-token-auth.spec.ts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | PER-NODE WORKER-PLANE TOKENS (docs/backlog/hardening.md #7 - retire the swarm-wide REMOTE_CLIENT_SHARED_SECRET). A token may now be BOUND to one device (node_client_id; migration 102 plus the lazy-DDL ALTER): the auth middleware admits such a token ONLY on the paths decideNodeTokenScope allows (its own /api/remote-clients/<clientId> plane plus the two enrollment-handshake paths) and stamps the binding on the request, so a credential lifted off an edge machine is NOT the account credential an unbound PAT is - it cannot reach /api/content, cannot mint tokens, and cannot touch a sibling device. rotateNodeToken revokes every live token for a device and mints its successor in ONE call (the rotation a compose-file secret structurally cannot offer). Unbound PATs behave identically. Guard: tests/unit/remote-client-node-token.spec.ts.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the verified principal issuer on newly minted PATs and rotated node credentials. Bearer authentication now replays the original (issuer, subject) namespace; legacy rows remain usable by core routes but carry no invented issuer, so issuer-bound applications fail closed instead of rebinding an old token to a newly configured IdP.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact owner subjects during node-token rotation. The required non-empty validation remains, but subject case/whitespace is no longer trimmed before owner-scoped revocation and successor minting.
  */
 import { Router, type RequestHandler, type Request, type Response } from 'express';
 import crypto from 'crypto';
@@ -16,6 +18,10 @@ import { createChildLogger } from '@/shared/logger';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { getCaller, getTrustedServiceUserSub, isOperator, isOperatorIdentity } from '@/shared/middleware/authz';
+import {
+  getAuthenticatedPrincipalIssuer,
+  normalizePrincipalIssuer,
+} from '@/shared/middleware/principal-issuer';
 import { decideNodeTokenScope } from '@/features/remote-client';
 
 const logger = createChildLogger({ module: 'cli-tokens' });
@@ -85,7 +91,8 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
         last_used_at TIMESTAMPTZ,
         revoked_at   TIMESTAMPTZ,
         expires_at   TIMESTAMPTZ,
-        node_client_id TEXT
+        node_client_id TEXT,
+        principal_issuer TEXT
       )`,
       // Additive migration for databases created before expiry existed — a NULL expires_at
       // is a non-expiring PAT, so existing rows are unaffected.
@@ -93,11 +100,17 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
       // Per-node binding (hardening #7; recorded form scripts/migrations/102-cli-token-node-binding.sql).
       // NULL = an ordinary account PAT, which every pre-existing row is, so they are unaffected.
       `ALTER TABLE oshal_cli_tokens ADD COLUMN IF NOT EXISTS node_client_id TEXT`,
+      // Null is intentionally retained for legacy tokens: guessing the current OIDC issuer
+      // would let an old subject value cross into a newly configured provider namespace.
+      `ALTER TABLE oshal_cli_tokens ADD COLUMN IF NOT EXISTS principal_issuer TEXT`,
       `CREATE INDEX IF NOT EXISTS idx_oshal_cli_tokens_node_client
          ON oshal_cli_tokens (node_client_id) WHERE node_client_id IS NOT NULL`,
       ...buildOwnerRlsPolicyStatements('oshal_cli_tokens', 'user_sub'),
     ],
-    requirements: [{ table: 'oshal_cli_tokens', columns: ['id', 'user_sub', 'token_hash', 'revoked_at', 'expires_at', 'node_client_id'] }],
+    requirements: [{
+      table: 'oshal_cli_tokens',
+      columns: ['id', 'user_sub', 'token_hash', 'revoked_at', 'expires_at', 'node_client_id', 'principal_issuer'],
+    }],
   });
 }
 
@@ -112,6 +125,68 @@ function patFromReq(req: Request): string | undefined {
   if (!auth || !auth.toLowerCase().startsWith('bearer ')) return undefined;
   const token = auth.slice(7).trim();
   return token.startsWith(CLI_TOKEN_PREFIX) ? token : undefined;
+}
+
+interface CliTokenAuthRow {
+  id: string;
+  user_sub: string;
+  email: string | null;
+  node_client_id: string | null;
+  principal_issuer: string | null;
+}
+
+/** Read one live credential under the trusted pre-identity SYSTEM sentinel. */
+async function findLiveCliToken(pool: Pool, token: string): Promise<CliTokenAuthRow | undefined> {
+  const { rows } = await runWithSystemIdentity(() =>
+    pool.query(
+      `SELECT id, user_sub, email, node_client_id, principal_issuer FROM oshal_cli_tokens
+        WHERE token_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
+        LIMIT 1`,
+      [hashCliToken(token)],
+    ),
+  );
+  return rows[0] as CliTokenAuthRow | undefined;
+}
+
+/** Enforce a device-bound token's narrow plane and stamp the verified binding. */
+function admitNodeTokenScope(req: Request, row: CliTokenAuthRow): boolean {
+  if (!row.node_client_id) return true;
+  const scope = decideNodeTokenScope({ boundClientId: row.node_client_id, path: req.path });
+  if (!scope.allowed) {
+    logger.warn(
+      { path: req.path, boundClientId: row.node_client_id, tokenId: row.id, reason: scope.reason },
+      'refused node-bound CLI token off its own device plane',
+    );
+    return false;
+  }
+  (req as { oshalNodeToken?: NodeTokenBinding }).oshalNodeToken = {
+    clientId: row.node_client_id,
+    tokenId: row.id,
+  };
+  return true;
+}
+
+/** Restore the owner and only the issuer verified when the token was minted. */
+function stampCliTokenPrincipal(req: Request, row: CliTokenAuthRow): void {
+  const issuer = normalizePrincipalIssuer(row.principal_issuer);
+  (req as { oidc?: unknown }).oidc = {
+    isAuthenticated: () => true,
+    user: {
+      ...(issuer ? { iss: issuer } : {}),
+      sub: row.user_sub,
+      email: row.email || undefined,
+      preferred_username: row.email || undefined,
+    },
+    idToken: 'cli-token',
+    accessToken: 'cli-token',
+  };
+}
+
+/** Best-effort usage telemetry; authentication never depends on this write. */
+function touchCliToken(pool: Pool, tokenId: string): void {
+  void runWithSystemIdentity(() =>
+    pool.query('UPDATE oshal_cli_tokens SET last_used_at = NOW() WHERE id = $1', [tokenId]),
+  ).catch((err) => logger.warn({ err }, 'cli token last_used_at update failed'));
 }
 
 /**
@@ -138,16 +213,7 @@ export function createCliTokenAuthMiddleware(pool: Pool): RequestHandler {
       // SYSTEM identity: this lookup necessarily precedes any request identity (it creates it),
       // and oshal_cli_tokens is FORCE-RLS — without the sentinel, guc-strict deny scopes the
       // read to nothing and every valid PAT is rejected. Proof-of-possession keyed on the hash.
-      const { rows } = await runWithSystemIdentity(() =>
-        pool.query(
-          `SELECT id, user_sub, email, node_client_id FROM oshal_cli_tokens
-            WHERE token_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
-            LIMIT 1`,
-          [hashCliToken(token)],
-        ),
-      );
-      const row = rows[0] as
-        { id: string; user_sub: string; email: string | null; node_client_id: string | null } | undefined;
+      const row = await findLiveCliToken(pool, token);
       if (!row) {
         logger.warn({ path: req.path }, 'rejected unknown/revoked CLI token');
         return next();
@@ -156,31 +222,11 @@ export function createCliTokenAuthMiddleware(pool: Pool): RequestHandler {
       // A token bound to a clientId authenticates only on that device's worker plane and the
       // enrollment handshake; anywhere else it leaves the request unauthenticated, so it hits
       // the normal 401 exactly like an unknown token. Unbound PATs skip this entirely.
-      if (row.node_client_id) {
-        const scope = decideNodeTokenScope({ boundClientId: row.node_client_id, path: req.path });
-        if (!scope.allowed) {
-          logger.warn(
-            { path: req.path, boundClientId: row.node_client_id, tokenId: row.id, reason: scope.reason },
-            'refused node-bound CLI token off its own device plane',
-          );
-          return next();
-        }
-        (req as { oshalNodeToken?: NodeTokenBinding }).oshalNodeToken = {
-          clientId: row.node_client_id,
-          tokenId: row.id,
-        };
-      }
-      (req as { oidc?: unknown }).oidc = {
-        isAuthenticated: () => true,
-        user: { sub: row.user_sub, email: row.email || undefined, preferred_username: row.email || undefined },
-        idToken: 'cli-token',
-        accessToken: 'cli-token',
-      };
+      if (!admitNodeTokenScope(req, row)) return next();
+      stampCliTokenPrincipal(req, row);
       // Usage telemetry is best-effort — never in the request's critical path. Runs under the
       // same SYSTEM sentinel: the row belongs to the token's owner, not yet to any request.
-      void runWithSystemIdentity(() =>
-        pool.query('UPDATE oshal_cli_tokens SET last_used_at = NOW() WHERE id = $1', [row.id]),
-      ).catch((err) => logger.warn({ err }, 'cli token last_used_at update failed'));
+      touchCliToken(pool, row.id);
     } catch (err) {
       logger.error({ err }, 'CLI token middleware failed');
     }
@@ -199,6 +245,8 @@ export interface CliTokenMintInput {
   sub: string;
   email?: string | null;
   label?: string;
+  /** Verified namespace of `sub`; null/omitted deliberately leaves issuer-bound apps closed. */
+  principalIssuer?: string | null;
   /** Lifetime in ms; when > 0 the token auto-expires (used by short-lived phone pairing). */
   ttlMs?: number;
   /**
@@ -238,10 +286,12 @@ export async function insertCliToken(pool: Pool, input: CliTokenMintInput): Prom
   const nodeClientId = typeof input.nodeClientId === 'string' && input.nodeClientId.trim().length > 0
     ? input.nodeClientId.trim().slice(0, 200)
     : null;
+  const principalIssuer = normalizePrincipalIssuer(input.principalIssuer);
   await pool.query(
-    `INSERT INTO oshal_cli_tokens (id, user_sub, email, label, token_hash, expires_at, node_client_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [id, input.sub, input.email ?? null, label, hashCliToken(token), expiresAt, nodeClientId],
+    `INSERT INTO oshal_cli_tokens
+       (id, user_sub, email, label, token_hash, expires_at, node_client_id, principal_issuer)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, input.sub, input.email ?? null, label, hashCliToken(token), expiresAt, nodeClientId, principalIssuer],
   );
   return {
     id, token, label,
@@ -285,11 +335,18 @@ export function readNodeTokenBinding(req: Request): NodeTokenBinding | null {
  */
 export async function rotateNodeToken(
   pool: Pool,
-  input: { clientId: string; ownerSub: string; email?: string | null; label?: string; ttlMs?: number },
+  input: {
+    clientId: string;
+    ownerSub: string;
+    email?: string | null;
+    label?: string;
+    ttlMs?: number;
+    principalIssuer?: string | null;
+  },
 ): Promise<MintedCliToken & { revokedCount: number }> {
   const clientId = String(input.clientId ?? '').trim();
-  const ownerSub = String(input.ownerSub ?? '').trim();
-  if (clientId.length === 0 || ownerSub.length === 0) {
+  const ownerSub = String(input.ownerSub ?? '');
+  if (clientId.length === 0 || ownerSub.trim().length === 0) {
     throw new Error('rotateNodeToken requires both clientId and ownerSub');
   }
   const revoked = await pool.query(
@@ -303,6 +360,7 @@ export async function rotateNodeToken(
     label: input.label ?? `node ${clientId}`,
     ttlMs: input.ttlMs,
     nodeClientId: clientId,
+    principalIssuer: input.principalIssuer,
   });
   logger.info(
     { clientId, ownerSub, revokedCount: revoked.rowCount ?? 0, tokenId: minted.id },
@@ -362,6 +420,9 @@ export function createCliTokenRoutes(pool: Pool): Router {
       const minted = await insertCliToken(pool, {
         sub, email: getCaller(req).email, label: (req.body as { label?: string } | undefined)?.label,
         ttlMs: sessionSub ? undefined : bootstrapTtlMs(),
+        // A service-secret assertion is not proof of an IdP namespace. Only an authenticated
+        // session can delegate its issuer; bootstrap PATs therefore remain app-fail-closed.
+        principalIssuer: sessionSub ? getAuthenticatedPrincipalIssuer(req) : null,
       });
       logger.info(
         { id: minted.id, sub, label: minted.label, bootstrap: !sessionSub, expiresAt: minted.expiresAt },

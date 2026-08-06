@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of AgentToolRepository for Layer 1 Tools Framework
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Aligned tool queries with current registry schema columns to prevent runtime SQL errors
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added persisted tool_config load/save support for dynamic per-agent tool credential and auth configuration
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added an exact AUTO-only executable lookup so unattended runtimes cannot treat ASK grants as pre-approved.
  */
 
 import { Pool } from 'pg';
@@ -280,6 +281,29 @@ export class AgentToolRepository {
    * @returns Array of Tool objects for enabled tools
    */
   async getEnabledTools(agentId: string): Promise<Tool[]> {
+    return this.getToolsByAuthModes(agentId, [AuthMode.AUTO, AuthMode.ASK], 'enabled');
+  }
+
+  /**
+   * @description Retrieves only tools that may execute without a new human decision. This method
+   * is the required lookup for unattended runtimes and bridges: `ask` means pending approval, not
+   * an executable grant, and therefore never appears here. A persisted AUTO grant is necessary
+   * but insufficient: the global catalog row must still be enabled and the agent installation
+   * must still be present, so global disable and uninstall are immediate revocation seams.
+   *
+   * @param agentId - The UUID of the agent.
+   * @returns Tools whose persisted authorization mode is exactly `auto`.
+   */
+  async getAutoExecutableTools(agentId: string): Promise<Tool[]> {
+    return this.getToolsByAuthModes(agentId, [AuthMode.AUTO], 'auto-executable');
+  }
+
+  /** @description Shared mapper for the two explicitly named authorization views above. */
+  private async getToolsByAuthModes(
+    agentId: string,
+    authModes: readonly AuthMode[],
+    view: 'enabled' | 'auto-executable',
+  ): Promise<Tool[]> {
     const query = `
       SELECT 
         t.tool_id,
@@ -310,12 +334,14 @@ export class AgentToolRepository {
       FROM tools t
       INNER JOIN agent_tools at ON t.tool_id = at.tool_id
       WHERE at.agent_id = $1
-        AND at.auth_mode != 'off'
+        AND at.auth_mode = ANY($2::text[])
+        AND t.enabled = TRUE
+        AND ($3::text <> 'auto-executable' OR at.installed = TRUE)
       ORDER BY t.name ASC
     `;
 
     try {
-      const result = await this.pool.query(query, [agentId]);
+      const result = await this.pool.query(query, [agentId, authModes, view]);
       
       const tools: Tool[] = result.rows.map((row) => ({
         toolId: row.tool_id,
@@ -345,10 +371,10 @@ export class AgentToolRepository {
         examples: row.examples,
       }));
 
-      logger.info({ agentId, count: tools.length }, 'Enabled tools retrieved');
+      logger.info({ agentId, count: tools.length, view }, 'Authorized tool view retrieved');
       return tools;
     } catch (error) {
-      logger.error({ err: error, agentId }, 'Failed to get enabled tools');
+      logger.error({ err: error, agentId, view }, 'Failed to get authorized tool view');
       throw error;
     }
   }

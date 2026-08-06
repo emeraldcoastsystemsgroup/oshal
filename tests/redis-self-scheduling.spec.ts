@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added service-level coverage for Redis-backed self scheduling with agent-scheduler toggle enforcement
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Await observable dispatch completion after dispatchDueSchedules intentionally became fire-and-forget, eliminating timing-dependent assertions without weakening cadence coverage.
  */
 
 import { expect, test } from '@playwright/test';
@@ -55,10 +56,11 @@ test.describe('Redis Self Scheduling', () => {
     store.markDue(schedule.id);
 
     const dispatchedCount = await service.dispatchDueSchedules();
-    const savedSchedule = await store.getSchedule(schedule.id);
 
     expect(dispatchedCount).toBe(1);
-    expect(dispatched).toEqual([schedule.id]);
+    await expect.poll(() => [...dispatched]).toEqual([schedule.id]);
+    await expect.poll(async () => (await store.getSchedule(schedule.id))?.executionCount).toBe(1);
+    const savedSchedule = await store.getSchedule(schedule.id);
     expect(savedSchedule?.executionCount).toBe(1);
     expect(savedSchedule?.lastRunAt).toBeTruthy();
   });
@@ -89,7 +91,7 @@ test.describe('Redis Self Scheduling', () => {
 
     expect(store.reconcileCalls).toBe(1);
     expect(dispatchedCount).toBe(1);
-    expect(dispatched).toEqual([schedule.id]);
+    await expect.poll(() => [...dispatched]).toEqual([schedule.id]);
   });
 
   test('advances stale missed schedules instead of dispatching them late', async () => {
@@ -129,6 +131,7 @@ test.describe('Redis Self Scheduling', () => {
   test('skips due self schedules after the scheduler tool is toggled off', async () => {
     const store = createFakeScheduleStore();
     let schedulerEnabled = true;
+    let schedulerChecks = 0;
     const dispatched: string[] = [];
     const service = new ScheduleService(
       store as any,
@@ -139,6 +142,7 @@ test.describe('Redis Self Scheduling', () => {
       {
         defaultTargetAgentId: DEFAULT_AGENT_ID,
         ensureSchedulingEnabled: async () => {
+          schedulerChecks++;
           if (!schedulerEnabled) {
             throw new Error(`Agent Scheduler is off for agent ${DEFAULT_AGENT_ID}`);
           }
@@ -155,6 +159,7 @@ test.describe('Redis Self Scheduling', () => {
     schedulerEnabled = false;
     store.markDue(schedule.id);
     const dispatchedCount = await service.dispatchDueSchedules();
+    await expect.poll(() => schedulerChecks).toBe(2);
     const savedSchedule = await store.getSchedule(schedule.id);
 
     expect(dispatchedCount).toBe(1);

@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard route-backed API execution and framework-owned trust headers, including exact base64url user-sub transport and model-header override denial.
+ */
+
 import http from 'http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { StreamManager } from '../../src/features/streaming';
@@ -21,6 +29,7 @@ describe('ToolExecutorService route-backed API tools', () => {
       url?: string;
       serviceSecret?: string | string[];
       userSub?: string | string[];
+      userSubB64?: string | string[];
       body: string;
     }> = [];
 
@@ -33,6 +42,7 @@ describe('ToolExecutorService route-backed API tools', () => {
           url: req.url,
           serviceSecret: req.headers['x-service-secret'],
           userSub: req.headers['x-oshal-user-sub'],
+          userSubB64: req.headers['x-oshal-user-sub-b64'],
           body,
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -56,6 +66,7 @@ describe('ToolExecutorService route-backed API tools', () => {
       registeredAt: new Date().toISOString(),
     });
 
+    const exactSub = ' User-Sub-123 ';
     try {
       const executor = new ToolExecutorService({
         streamManager: new StreamManager(),
@@ -67,7 +78,7 @@ describe('ToolExecutorService route-backed API tools', () => {
         'route-backed-search',
         { query: 'milk and bread' },
         'agent-route-api',
-        'user-sub-123',
+        exactSub,
       );
 
       expect(result).toContain('"ok":true');
@@ -76,7 +87,8 @@ describe('ToolExecutorService route-backed API tools', () => {
         method: 'GET',
         url: '/api/test/search?q=milk%20and%20bread',
         serviceSecret: 'unit-service-secret',
-        userSub: 'user-sub-123',
+        userSub: undefined,
+        userSubB64: Buffer.from(exactSub, 'utf8').toString('base64url'),
         body: '',
       });
     } finally {
@@ -98,6 +110,7 @@ describe('ToolExecutorService route-backed API tools', () => {
         seen.push({
           serviceSecret: req.headers['x-service-secret'],
           userSub: req.headers['x-oshal-user-sub'],
+          userSubB64: req.headers['x-oshal-user-sub-b64'],
           trace: req.headers['x-trace-id'],
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -135,6 +148,8 @@ describe('ToolExecutorService route-backed API tools', () => {
           headers: {
             'X-OSHAL-User-Sub': 'google-oauth2|victim-000',
             'x-oshal-user-sub': 'google-oauth2|victim-000',
+            'X-OSHAL-User-Sub-B64': Buffer.from('google-oauth2|victim-000').toString('base64url'),
+            'x-oshal-user-sub-b64': Buffer.from('google-oauth2|victim-000').toString('base64url'),
             'X-Service-Secret': 'forged-secret',
             'x-service-secret': 'forged-secret',
             'X-Trace-Id': 'harmless-passthrough',
@@ -145,7 +160,9 @@ describe('ToolExecutorService route-backed API tools', () => {
       );
 
       expect(seen).toHaveLength(1);
-      expect(seen[0].userSub).toBe('google-oauth2|attacker-999');
+      expect(seen[0].userSub).toBeUndefined();
+      expect(Buffer.from(String(seen[0].userSubB64), 'base64url').toString('utf8'))
+        .toBe('google-oauth2|attacker-999');
       expect(seen[0].serviceSecret).toBe('unit-service-secret');
       // A header that carries no trust still passes through — the fix is targeted, not a blanket ban.
       expect(seen[0].trace).toBe('harmless-passthrough');

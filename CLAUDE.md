@@ -145,7 +145,11 @@ the fix is to move the code to the right repo, not to widen the allowlist.
 
 ## What this project is
 
-**OSHAL** (Open Swarm Harness Agent LLM) — a multi-agent orchestration platform. A swarm controller accepts tickets, dispatches phases to bot-node workers, and each bot node runs a different agent harness (Cline, Claude Code, Codex, Gemini) against a different LLM provider. Bots collaborate via Redis Streams.
+**oshal** (Open Swarm Harness Agent LLM) is a multi-agent orchestration platform. A swarm controller
+accepts tickets and dispatches phases to accountable bot identities over Redis Streams. Reasoning
+uses an authorized hosted/BYO inference rail; exact external reads/actions use schema-bounded
+deterministic server provider intents. Registered local CLI harness families remain configuration
+interfaces, but unattended Cline, Claude Code, Codex, and Gemini CLI execution fails closed.
 
 See [README.md](README.md) for the operator-facing architecture diagram, compose service list, env var reference, and envelope lifecycle. The notes below are what isn't obvious from the README.
 
@@ -153,51 +157,88 @@ See [README.md](README.md) for the operator-facing architecture diagram, compose
 
 There is a single Docker image ([Dockerfile.oshal](Dockerfile.oshal)); the local installer and primary compose stack tag it `oshal-bot:latest`. Some incident/evidence profiles may retag the same image for their own compose files, but the runtime split is the same. `oshal-bot:latest` is the only sanctioned tag — never reintroduce retired legacy tag names. Which process runs is decided at container start by [scripts/bot-entrypoint.sh](scripts/bot-entrypoint.sh) reading `BOT_RUNTIME`:
 
-- `BOT_RUNTIME=swarm` → [src/app/server.ts](src/app/server.ts) — cockpit, API, queue manager, phase routing. **Never calls an LLM.**
-- `BOT_RUNTIME=bot-node` → [src/app/bot-node-server.ts](src/app/bot-node-server.ts) — SwarmAgentWorker + any-bot providers. **Owns all LLM execution.**
+- `BOT_RUNTIME=swarm` → [src/app/server.ts](src/app/server.ts) — cockpit, API, queue manager, phase
+  routing, and explicitly scoped inline-concierge orchestration. **Never launches an unattended
+  local CLI.**
+- `BOT_RUNTIME=bot-node` → [src/app/bot-node-server.ts](src/app/bot-node-server.ts) —
+  SwarmAgentWorker, dedicated provider execution, and deterministic provider-intent handlers.
 
-Keep this separation. The swarm controller orchestrates; the bot nodes execute. Do not add LLM calls to the controller path, and do not add queue-manager/cockpit logic to the bot-node path.
+Keep this separation. New model work uses the existing bot-node or `executeBotOrInline` accounting
+paths and an authorized hosted/BYO rail; never add a bespoke controller-local CLI call. Do not add
+queue-manager/cockpit logic to the bot-node path.
 
-Some lightweight personas (e.g. `codex-packer`, registered with `container: 'oshal-api'` in [src/app/extensions/swarm/swarm-bot-registry-local.ts](src/app/extensions/swarm/swarm-bot-registry-local.ts)) run **inline in the api container** rather than a dedicated bot-node — the dispatcher invokes codex CLI in-process for them. Use this pattern for personas that don't need their own LLM provider config.
+Some lightweight personas are registered with `container: 'oshal-api'` and run as **inline
+concierges** through the orchestrator rather than a dedicated bot-node. They may reason only over
+already authorized/redacted data through hosted/BYO inference. Inline requests reject connector
+credentials and deterministic provider intents, and they never fall back to an in-process Codex,
+Claude Code, Cline, or Gemini CLI.
 
 ## Two codebases in one repo
 
 - **TypeScript ([src/](src/))** — swarm controller, cockpit, routes, features. Follows Feature-Sliced Design.
-- **JavaScript ([any-bot/server/](any-bot/server/))** — battle-tested LLM execution (ClineProvider, ClaudeCodeProvider, TaskController). Bot nodes bridge from TS envelopes into this JS layer via [src/app/bot-node-execution-handler.ts](src/app/bot-node-execution-handler.ts).
+- **JavaScript ([any-bot/server/](any-bot/server/))** — the legacy provider/task layer plus the
+  current runtime-containment boundary. Bot nodes bridge from TS envelopes into this JS layer via
+  [src/app/bot-node-execution-handler.ts](src/app/bot-node-execution-handler.ts).
 
 ### Harness inventory
 
-`HarnessType` union in [harness-adapter.ts](src/features/llm-provider/services/harness-adapter.ts) — five concrete + one no-op:
+`HarnessType` in [harness-adapter.ts](src/features/llm-provider/services/harness-adapter.ts) remains a
+typed compatibility inventory:
 
-| harnessType | runtime | auth | adapter |
-|---|---|---|---|
-| `cline` | Cline CLI subprocess | provider-specific via secrets.json | `cline-provider` (legacy default) |
-| `codex-cli` | OpenAI Codex CLI subprocess | `~/.codex/auth.json` (ChatGPT OAuth) or `OPENAI_API_KEY` | `codex-cli-harness-adapter.ts` |
-| `claude-code` | Anthropic Claude Code CLI subprocess | `~/.claude/.credentials.json` (OAuth) or `ANTHROPIC_API_KEY` | `claude-code-cli-harness-adapter.ts` |
-| `gemini-cli` | Google Gemini CLI subprocess | `~/.gemini/oauth_creds.json` or `GEMINI_API_KEY`/`GOOGLE_API_KEY` | `gemini-cli-harness-adapter.ts` |
-| `a2a` | External A2A agent over JSON-RPC HTTP | endpoint + bearer token from registry/env | `a2a-harness-adapter.ts` |
-| `noop` | no-op for tests / local dev | none | `noop-provider.ts` |
+| harnessType | Interface | Current execution posture |
+|---|---|---|
+| `cline` | Cline CLI/provider wrapper | Unattended execution disabled; credential-bearing runtime settings rejected. |
+| `codex-cli` | OpenAI Codex CLI adapter | Unattended execution disabled; local OAuth presence is diagnostic only. |
+| `claude-code` | Anthropic Claude Code CLI adapter | Unattended execution disabled; local/mounted OAuth is not execution authority. |
+| `gemini-cli` | Google Gemini CLI adapter | Unattended execution disabled; local OAuth presence is diagnostic only. |
+| `a2a` | External A2A agent over JSON-RPC HTTP | Available only through its registered/authenticated external-agent boundary. |
+| `noop` | No-op | Tests and local surface exploration. |
 
-The three CLI-spawn harnesses (codex / claude / gemini) extend `BaseCliHarnessAdapter` for shared subprocess plumbing — adding a new CLI-spawn harness should follow that pattern, not reimplement it. See [docs/adr/033-multi-harness-execution-framework.md](docs/adr/033-multi-harness-execution-framework.md) for the architectural rationale and the extension pattern.
+The CLI adapters and controller-direct helpers call the shared audited-harness guard before task or
+workspace setup. Do not add a bypassing spawn path. Re-enable a local CLI only after an audited
+oshal-brokered sandbox enforces immutable request-start handler generations and exact operation
+scopes while keeping authentication and connector credentials outside the model-visible process and
+workspace. [ADR-033](docs/adr/033-multi-harness-execution-framework.md) records the historical
+framework shape; it does not override the current fail-closed posture.
 
 `HARNESS_FACTORIES` in [provider-runtime.ts](src/app/composition/provider-runtime.ts) is typed `Record<HarnessType, HarnessFactory>` — adding a value to the union without a factory entry is a compile-time error.
 
-Providers (Layer 0) include the hosted vendors **and** local runtimes — Ollama, LM Studio, and LiteLLM are wired in [provider-definitions.ts](src/features/llm-provider/services/provider-definitions.ts); Llama and Mistral run fully local via Ollama. `gpt-oss-120b` is offered via Cerebras (not self-hosted). A repeatable all-local swarm profile is roadmap work — see [ROADMAP.md](ROADMAP.md).
+Providers (Layer 0) include hosted vendors and non-autonomous local endpoints—Ollama, LM Studio, and
+LiteLLM are wired in [provider-definitions.ts](src/features/llm-provider/services/provider-definitions.ts).
+A caller-authorized `byoLlmConnection` is ephemeral and does not rewrite the bot default.
 
-The swarm dispatches to any-bot nodes; the swarm itself never calls an LLM. When adding new execution paths, build sibling implementations behind the existing provider/harness interfaces — do not modify the hardcoded JS providers in place.
+When adding a model execution path, use the existing accounted bot/inline interfaces and a
+hosted/BYO provider; do not add a controller-local CLI. When adding a connector operation, extend
+the closed deterministic provider-intent/fixed-server-operation boundary rather than a model-visible
+tool environment.
 
 ## Building an application: the bot owns the domain, the surface is a view
 
 **Read [docs/adr/036-bot-owned-application-architecture.md](docs/adr/036-bot-owned-application-architecture.md) before building any app feature.** The shortcut of doing data-fetch or LLM work in the controller/API is **wrong** — it bypasses cost capture (`chat_tasks`), per-bot harness/model settings, and per-user ownership. The rules:
 
-- **The bot owns its domain** — it fetches data (via its tools + the per-user connector token), **stores it in a `user_sub`-keyed encrypted store**, and does all reasoning. The surface (ribbon `ui.static`) is a **view** over the bot's store. The bot must be a real node (container + registry + persona, heartbeating) — never an inline stub.
-- **Separate data-access from reasoning.** Raw reads = cheap I/O the bot caches; reasoning = LLM work that **always runs on the bot** so cost + settings apply.
+- **The bot owns its domain** — exact server operations obtain caller-owned external data and pass
+  only normalized/redacted results into reasoning; the bot stores domain state in a
+  `user_sub`-keyed encrypted store. The surface (`ui.static`) is a view over that store. The model
+  never receives the connector credential.
+- **Separate data access from reasoning.** Deterministic provider I/O completes outside the model;
+  hosted/BYO reasoning remains cost-attributed to the accountable bot identity.
 - **Interactive → direct sync call:** `BotNodeClient.execute(agentId, prompt)` → bot `POST /api/swarm-execute`. Cost auto-tracked via `recordCost` → `chat_tasks`. **No queue.**
 - **Scheduled / swarm-initiated → dedicated `ticketType` + workflow** → the same bot endpoint (don't borrow `incident-rca`).
 
 Both transports hit the same accountable bot. See the ADR for the rails to reuse and the new-app checklist.
 
-**Apps are bundled into swarms by type** — [ADR-038](docs/adr/038-swarms-bundled-by-type.md): an app = a category bundle of {connectors per provider + provider CLIs the bot runs + bot(s) + a cockpit surface}. **Every manifest also declares `suite:`** — [ADR-097](docs/adr/097-app-suites-primary-categorization.md): exactly ONE primary catalog shelf (`ai-productivity` | `ai-knowledge` | `ai-finance` | `ai-creative` | `ai-home` | `ai-engineering`; `platform` reserved), chosen by who the app serves, never derived from tool `category:`. Unknown values fail the load; suite is grouping metadata only — never re-bundle packages by suite. The **email/Intelligent Communication swarm** ([ADR-037](docs/adr/037-communications-swarm.md)) is the **reference implementation** — Gmail via a per-user connector, a **codex** bot that runs `scripts/oshal-gmail.js` itself in its sandbox (codex is a first-class bot-node harness; claude-code-as-root can't shell out), and the cockpit surface. Adding a provider = a connector + a `scripts/oshal-<provider>.js` CLI, never a new app. The **social** bundle (publish to LinkedIn/X/Facebook Pages + the inbox-fed Signals feed), **storage**, and **presentations** bundles are now built; **devops/Vault** is a Private Preview facade ([ADR-040](docs/adr/040-devops-vault-swarm.md), runtime is the build); smart-home + the privileged-runtime security model remain roadmap — see the ADRs + [BACKLOG.md](docs/BACKLOG.md).
+**Apps are bundled into swarms by type** — [ADR-038](docs/adr/038-swarms-bundled-by-type.md):
+an app combines connector definitions, exact deterministic server operations, accountable bot
+identities, and cockpit surfaces. It does not give a provider CLI a connector credential. The
+email/Intelligent Communication path is the reference boundary: the caller-owned Gmail credential
+is consumed by the schema-bounded `priority-email` provider intent, and only its normalized result
+may reach hosted/BYO reasoning. Adding a provider means adding the connector plus a closed operation
+schema/handler and its authorization tests—not a generic `scripts/oshal-<provider>.js` model tool.
+
+**Every manifest also declares `suite:`** — [ADR-097](docs/adr/097-app-suites-primary-categorization.md):
+exactly one primary catalog shelf (`ai-productivity` | `ai-knowledge` | `ai-finance` |
+`ai-creative` | `ai-home` | `ai-engineering`; `platform` reserved), chosen by who the app serves,
+never derived from tool `category:`. Unknown values fail the load; suite is grouping metadata only.
 
 ## Architectural default: one bot per ticket-type workflow
 
@@ -384,6 +425,17 @@ it). Two corollaries: a spec that SKIPS in CI is a guard that doesn't exist (fai
 gate env is missing instead), and a red gate nobody acts on trains everyone to ignore red — fix it
 or explicitly quarantine it with a BACKLOG entry the same day.
 
+**Integration-boundary corollary:** a regression guard must cross the boundary whose failure the
+fix claims to prevent. A test may double collaborators outside that boundary, but it must not mock
+the database/RLS role, resolver, built image, filesystem, protocol adapter, or gateway behavior that
+caused the defect and then claim that boundary is protected. Database fixes need a real store/query
+against the enforcing role and schema; module-resolution fixes need the real resolver from an
+external package; image/config fixes need an artifact/image probe; gateway fixes need at least a
+real local protocol seam, with live-provider acceptance retained when the claim itself is live.
+Record scoped doubles and their real companion in
+[the real-boundary audit](docs/governance/real-boundary-regression-audit.md). A mock-only test is
+still useful for branch logic, but it is not closure evidence for the mocked boundary.
+
 ### Human testability gate
 
 At any handover point the system must be operable by a human from `localhost` without unavailable external services. OIDC is required in prod, but local dev must work with `MOCK_OIDC=true`. Don't mark a task complete unless a human can log in and exercise the feature in a browser.
@@ -396,7 +448,9 @@ At any handover point the system must be operable by a human from `localhost` wi
 - [any-bot/server/](any-bot/server/) — JS LLM execution layer. `services/llm/` has `ClineProvider`, `ClaudeCodeProvider`, `LLMProviderRegistry`. `controllers/TaskController.js` is the routing core.
 - [ai-lab/bot-personas/](ai-lab/bot-personas/) — persona YAML files consumed by bot nodes at prompt-assembly time. The `perspective:` block is the bot's full system prompt, including its quality gate.
 - [swarm-apps/](swarm-apps/) — application manifests that contribute new ticket types + workflows + bots + UI surfaces. See `intelligent-operations.yaml` for the incident bundle; `eats.yaml` for an app with custom ribbon UI. (little-monsters was carved out to the oshal-applications store repo — ADR-085.)
-- [config-seed/](config-seed/) — `global-config.json`, `secrets.json` (provider creds), `claude-credentials.json`. Shared across containers.
+- [config-seed/](config-seed/) — operator-local bootstrap/configuration material. Raw OAuth/CLI
+  credentials are not distributed through HTTP or Redis. A deployment may mount a credential file
+  read-only into its owning node; presence is diagnostic and does not enable unattended CLI work.
 - [scripts/](scripts/) — `bot-entrypoint.sh`, setup scripts, migrations, port-forwards, bot lifecycle helpers, `oshal-up.sh` (ordered bring-up after an engine restart), `api-bounce.sh`, `rag-enable-embeddings.sh`.
 - [tests/](tests/) — Playwright e2e specs.
 - This file is the canonical governance guide for repo agents. If repo rules change, update this file.
@@ -405,7 +459,12 @@ At any handover point the system must be operable by a human from `localhost` wi
 
 Bots are declared in [src/app/extensions/swarm/swarm-bot-registry.ts](src/app/extensions/swarm/swarm-bot-registry.ts) (and `swarm-bot-registry-local.ts` for the local variant) with `harnessType` and provider. Bots without an explicit harness fall back to the process-level `FORCE_LLM_PROVIDER` (default `openai-codex`). UUIDs must match across: compose file, registry, Redis heartbeats (`oshal:runtime-agent:{agentId}`), and Postgres. When adding a bot, update registry + compose + persona YAML together.
 
-**Before adding a bot, read [docs/building-a-bot.md](docs/building-a-bot.md).** A bot must take one of two forms — a **dedicated any-bot-swarm node** (own container; for shell-out / device / heavy-store bots) or a **concierge node** (inline on the api, reached via `POST /chat`; for reason-only bots). Register in **both** registry files. Everything is **BYOK on the swarm default login** (the mounted `~/.claude` / `~/.codex` / `~/.gemini` OAuth) — never add a vendor API key to a bot's env. Don't improvise a third "call it from one route" shortcut.
+**Before adding a bot, read [docs/building-a-bot.md](docs/building-a-bot.md).** A bot must be either a
+dedicated bot-node (isolation, long work, dedicated storage, or a validated deterministic provider
+intent) or an inline concierge (reasoning over already authorized/redacted data). Register in both
+registry files. Use hosted/BYO inference for reasoning; keep connector credentials inside exact
+server operations. Do not add vendor/connector keys to a bot environment, treat a mounted OAuth file
+as autonomous-execution authority, or invent a third one-off controller CLI path.
 
 ## Handover artifacts
 

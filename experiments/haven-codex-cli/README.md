@@ -2,7 +2,14 @@
 
 This folder contains isolated experiments for wiring Haven home assistant to the OpenAI Codex CLI as its LLM backend.
 
-**Status: BLOCKED — see root cause below. No changes were made to the production codebase.**
+**Status: RETIRED HISTORICAL EXPERIMENT. No changes were made to the production codebase.**
+
+> Do not apply the patch scripts or commands in this folder. The experiment predates the current
+> containment boundary: static `config-seed` OAuth copies are non-executable, Codex credentials are
+> never materialized into Cline files, direct controller/local-CLI model calls are disabled, and
+> approval/sandbox bypass flags are prohibited. Current Haven reasoning uses an authorized
+> hosted/BYO rail through the accountable bot path. See [`CLAUDE.md`](../../CLAUDE.md) and the
+> [current Codex credential boundary](../../src/features/openai-codex-oauth/README.md).
 
 ---
 
@@ -42,22 +49,15 @@ The Cline extension handles this scope exchange internally before calling the AP
 
 ---
 
-## What Will Actually Fix This
+## Historical Options Evaluated (Not Supported)
 
-**Option A — Run `codex login` properly on the host machine:**
-```bash
-# Opens browser, user completes ChatGPT Pro login
-# This creates a token with api.responses.write scope
-codex login
-```
-After that, test:
-```bash
-codex exec --ephemeral --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
-  -m gpt-4o-mini \
-  -o /tmp/haven-test.txt \
-  "Say hello in one sentence"
-```
-Then mount `C:/Users/you/.codex/auth.json` into the Docker container and wire Haven to call `codex exec` as a subprocess (see `patch-haven-codex-cli.js` template below for implementation).
+The following alternatives explain what the experiment considered in March 2026. They are not
+current setup instructions and must not be executed or wired into production.
+
+**Option A — Host Codex login/direct subprocess:** retired. OAuth presence is diagnostic and may
+seed the live vendor file for an authorized operator, but it does not authorize Haven or another
+unattended workload to launch Codex. The former approval-and-sandbox bypass test command has been
+removed because it violates the current execution boundary.
 
 **Option B — Add billing credits to the OpenAI API account:**
 Go to https://platform.openai.com/account/billing — add $5 minimum. Then the direct HTTP call in `scripts/patch-haven-openai.js` will work immediately (no CLI, no subprocess, fastest option).

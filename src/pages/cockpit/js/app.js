@@ -46,6 +46,7 @@
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Zen (full-window focus) mode wiring: header arrows-out button + floating exit button toggle body.zen-mode (all cockpit chrome hidden, surface gets the whole window); Esc exits when no modal is open; state survives same-tab reloads via sessionStorage so the once-per-deploy service-worker reload doesn't kick the operator back to chrome.
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | Mobile drawer closes on ANY ribbon-item tap: tapping the already-active view hit setActive's no-op early return, so switchView (and its drawer close) never ran and the drawer stayed open. Delegated listener on #ribbonContainer so it survives ribbon re-renders.
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | Honor `?ticket=<id>` on load: seed CockpitViewController.pendingTicketSelection and open the Tickets view so a global-search ticket hit lands on the RECORD. Every ticket hit previously linked to bare /cockpit/ - the right screen, the wrong (or no) row - and that is the half of the deep-link contract the API cannot fix by itself. Seeded before the first render rather than via focusTicket after it, because the post-render call races TicketView's list fetch and selects nothing.
+ * 44 | maintainer@emeraldcoastsystemsgroup.com   | Keep the full-screen mobile chat sheet collapsed on cold start so a background-created chat task cannot cover the phone's primary surface controls
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -175,10 +176,11 @@ class CockpitApp {
       await this.chatPanel.restoreSession();
     }
     this.initResizeHandle();
-    // The right-rail chat panel starts COLLAPSED by default — apps own the main surface (e.g. Jarvis
-    // IS the chat), so the generic swarm-bot panel shouldn't auto-open and crowd them. It reopens
-    // contextually ("Chat with bot", workspace focus); we only auto-open if a live task is running.
-    this.toggleChatPanel(Boolean(this.chatPanel.currentTaskId));
+    // The right-rail chat panel starts COLLAPSED on phones — it is a full-screen sheet there, so a
+    // background-created task must not cover the primary surface before the user taps Agents.
+    // Desktop retains the live-task auto-open behavior and every explicit chat action still opens it.
+    const isPhoneViewport = window.matchMedia('(max-width: 640px)').matches;
+    this.toggleChatPanel(!isPhoneViewport && Boolean(this.chatPanel.currentTaskId));
   }
 
   /**

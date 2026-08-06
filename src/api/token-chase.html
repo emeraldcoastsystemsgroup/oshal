@@ -367,7 +367,7 @@
       if (next) loadFrame(activeRun, next.seq);
     }
 
-    // ── Optimizer (ADR-046 step 3): replay this captured call on the user's own LLM connections ──
+    // ── Optimizer (ADR-046 step 3): replay on an owner-visible lane or free:auto rotation ──
     function renderFrameInspector(frame, seq, canReplay, observations, observationsUnavailable) {
       const baseline = frame.responseContent || (frame.phase === 'open' ? '(call still in flight)' : '(none)');
       const history = Array.isArray(frame.history) ? frame.history : [];
@@ -484,9 +484,9 @@
         <div class="row">
           <select id="connSel"><option value="">loading your providers…</option></select>
           <button class="opt-run" id="runVariantBtn" disabled>▶ Run</button>
-          <button class="opt-run all" id="runAllBtn" disabled>▶▶ Run all my providers</button>
+          <button class="opt-run all" id="runAllBtn" disabled>▶▶ Run all available lanes</button>
         </div>
-        <div class="hint">Fires this exact full prompt once against the provider you pick — your own logged-in LLM, billed to your key. Baseline = the captured <b>${esc(base)}</b> call. These are the logins the framework already has: your signed-in providers plus any Bring-Your-Own-LLM connections.</div>
+        <div class="hint">Fires this exact full prompt once against the lane you pick. <b>Free-provider rotation</b> uses only currently eligible, probed free lanes; a provider wall rotates or stops without falling through to a paid platform key. Explicitly selected non-free lanes keep their configured billing. Baseline = the captured <b>${esc(base)}</b> call.</div>
         <table class="cmp" id="cmpTable" style="display:none">
           <thead><tr><th>label</th><th>model</th><th>cost</th><th>Δ cost</th><th>latency</th><th>accuracy</th><th>verdict</th></tr></thead>
           <tbody id="cmpBody"></tbody>
@@ -495,7 +495,7 @@
       </div>`;
     }
 
-    // The caller's own configured LLM connections — what the framework already logged them into.
+    // Owner-visible configured lanes plus free:auto when a free lane is currently eligible.
     let connectionsCache = null;
     async function loadConnections() {
       if (connectionsCache) return connectionsCache;
@@ -544,7 +544,7 @@
       const rowId = 'lane-' + connectionId;
       let row = document.getElementById(rowId);
       if (!row) { row = document.createElement('tr'); row.id = rowId; body.appendChild(row); }
-      row.innerHTML = `<td><b>${esc(label)}</b></td><td colspan="6">⏳ re-firing on your provider…</td>`;
+      row.innerHTML = `<td><b>${esc(label)}</b></td><td colspan="6">⏳ re-firing on the selected lane…</td>`;
       $('optMsg').textContent = '';
       try {
         const r = await fetch(`/api/token-chase/runs/${encodeURIComponent(runId)}/frames/${seq}/variant`, {
@@ -561,14 +561,14 @@
 
     async function runAllConnections(runId, seq, conns) {
       const allBtn = $('runAllBtn'), runBtn = $('runVariantBtn');
-      if (!conns.length) { $('optMsg').textContent = 'No connected providers to sweep.'; return; }
+      if (!conns.length) { $('optMsg').textContent = 'No available provider lanes to sweep.'; return; }
       allBtn.disabled = true; runBtn.disabled = true;
       allBtn.textContent = `⏳ running ${conns.length} providers…`;
       ensureBaselineRow();
       // Sequential — one at a time (each fires the captured prompt against that provider).
       for (const c of conns) { await runVariant(runId, seq, c.connectionId, connLabel(c)); }
       allBtn.disabled = false; runBtn.disabled = false;
-      allBtn.textContent = '▶▶ Run all my providers';
+      allBtn.textContent = '▶▶ Run all available lanes';
     }
 
     function renderVariantRow(row, v) {

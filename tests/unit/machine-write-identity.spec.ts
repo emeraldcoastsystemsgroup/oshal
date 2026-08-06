@@ -4,6 +4,15 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The class-level gate for machine-write identity (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE, not just reads"). Two production incidents (a2a-routes July, ADR-119 alert intake August) shipped through full green suites because every guard STUBBED the store, so nobody ever observed what identity was on the connection at the moment of the write. This spec observes exactly that: it DISCOVERS machine-authenticated entry points from the source, forces each into the reviewed inventory, re-derives the owner-scoped writes each one performs so an entry cannot duck the rule by declaring none, and then DRIVES the real handlers against identity-capturing collaborators to assert what the connection actually carried.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added real HTTP drivers for the four former service-secret operator residuals, including missing-owner refusals and identity capture at Jarvis, Test Lab, tool-audit, and chat-task writes; broadened machine-auth discovery to include the new strict node-pool gate.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Closed the final behavioral-proof debt with real HTTP/auth-boundary drivers for A2A ticket creation, remote-client cost settlement, bot-node execution, pre-identity CLI-token lookup, and local-auth bootstrap; each captures the actual request identity at its owner-scoped operation. Extracted those focused implementations to tests/helpers/machine-write-identity-drivers.ts so this class gate remains below the repository decomposition cap.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed alert fixtures and suite registration into named, documented helpers so every function remains below the 50-line governance limit without weakening the class assertions.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Use the explicitly named service credential placeholder exported by the HTTP driver helper so fixture values remain distinguishable from deployable secrets at the commit gate.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Drive Profile Studio through its one-use exact-dispatch capability instead of the retired fleet-secret callback.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Drive Apply ingest through its model-hidden,
+ *   one-use exact-task capability and prove the ticket write uses the digest-bound owner identity.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Keep the Apply ingest identity driver explicit about confirmation-artifact retention so the callback cannot imply verified submission evidence without the reviewed persistence boundary.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Keep the internal-tool identity probe on its intended grant-denial path by supplying the request-start executor descriptor now required by the fail-closed MCP boundary.
  */
 
 /**
@@ -22,9 +31,9 @@
  *                    someone remembered the inventory. Adding one goes RED on arrival.
  *   2. DERIVATION  — the owner-scoped writes an entry performs are re-derived from its source, so
  *                    "ownerScopedTables: []" cannot be used to escape the identity requirement.
- *   3. THE RULE    — a non-service-secret machine caller that writes an owner-scoped table MUST
- *                    establish an identity. (Service-secret callers are carved out for one
- *                    factual reason, asserted below: server.ts stamps them operator.)
+ *   3. THE RULE    — every machine caller that writes an owner-scoped table MUST establish a
+ *                    caller, synthetic-machine, or deliberately trusted-system identity. The
+ *                    server's compatibility service-secret operator stamp is not an exemption.
  *   4. BEHAVIOUR   — the real handler is driven and the identity in scope AT THE WRITE is
  *                    captured. This is the check the two incidents needed and did not have.
  *
@@ -40,7 +49,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import crypto from 'node:crypto';
 import express from 'express';
-import http from 'node:http';
 
 import {
   MACHINE_WRITE_INVENTORY,
@@ -49,10 +57,7 @@ import {
   MAX_AMBIENT_OPERATOR_ENTRIES,
   type MachineWriteEntry,
 } from '../helpers/machine-write-inventory';
-import {
-  getRequestIdentity,
-  type RequestIdentity,
-} from '@/shared/services/database/request-identity';
+import { getRequestIdentity } from '@/shared/services/database/request-identity';
 import { ALERT_INTAKE_OWNER_SUB } from '@/features/alert-triage';
 import { ownerSubForA2aAgent } from '@/features/a2a-gateway';
 import {
@@ -62,9 +67,25 @@ import {
 import type { GitHubTicketWebhookTicketService } from '@/app/routes/github-ticket-webhook-sync';
 import { createAlertmanagerRoutes } from '@/app/routes/alertmanager-routes';
 import { createProfileStudioIngestRoutes } from '@/app/routes/profile-studio-ingest-routes';
-import { createApplyIngestRoutes } from '@/app/routes/apply-ingest-routes';
+import { createApplyIngestRoutes, type ApplyCompletionRuntime } from '@/app/routes/apply-ingest-routes';
 import { createFacebookDataDeletionRoute } from '@/app/routes/connectors-routes';
+import { createJarvisRoutes } from '@/app/routes/jarvis-routes';
+import { createTestLabGoldenRoutes } from '@/app/routes/test-lab-golden';
+import { createInternalToolBridgeRoutes } from '@/app/routes/internal-tool-bridge-routes';
+import { createMessageRoutes } from '@/app/routes/message-routes';
 import { ChannelLinkService } from '@/features/chat-channels';
+import {
+  MACHINE_WRITE_IDENTITY_RESIDUAL_DRIVERS,
+  SERVICE_USER_PLACEHOLDER,
+  assertMissingServiceOwnerRejected,
+  capturingPool,
+  serve,
+  serveServiceUserRoute,
+  serviceUserHeaders,
+  waitForObservation,
+  type MachineWriteIdentityDriver,
+  type WriteObservation,
+} from '../helpers/machine-write-identity-drivers';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -80,7 +101,7 @@ const MACHINE_AUTH_MARKERS: readonly RegExp[] = [
   /x-service-secret/i,
   /hasValidServiceSecret/,
   /serviceSecretOk/,
-  /requireServiceSecretWhenConfigured/,
+  /requireServiceSecret(?:WhenConfigured)?/,
   /authorizeBotNode/,
   /x-twilio-signature/i,
   /x-telegram-bot-api-secret-token/i,
@@ -96,6 +117,7 @@ const MACHINE_AUTH_MARKERS: readonly RegExp[] = [
   /OSHAL_INTERNAL_TOKEN/,
   /[A-Z_]*WEBHOOK_TOKEN/,
   /[A-Z_]*INGEST_TOKEN/,
+  /x-oshal-callback-capability/i,
 ];
 
 /** Where a machine entry point can live: routers, the webhook framework, and the node processes. */
@@ -188,54 +210,175 @@ function deriveOwnerScopedWrites(relFile: string, knownTables: Set<string>): str
 
 // ─────────────────────────── behavioural drivers ──────────────────────────────
 
-/** What one owner-scoped write saw: the identity on the connection, and the owner it wrote. */
-interface WriteObservation {
-  /** The AsyncLocalStorage identity in scope at the moment of the write. */
-  identity: RequestIdentity | undefined;
-  /** The owner value the row carried, when the write names one. */
-  ownerValue?: string | null;
-  /** Short label so a failure names the write. */
-  label: string;
+/** Configure the deterministic alert path used by the identity gate. */
+function configureAlertIdentityDriverEnv(token: string): void {
+  vi.stubEnv('ALERT_WEBHOOK_TOKEN', token);
+  vi.stubEnv('ALERT_DEFAULT_INTAKE', 'approved');
+  vi.stubEnv('ALERT_TICKET_TYPE', 'intelligent-processing');
+  vi.stubEnv('ALERT_WEBHOOK_HMAC_SECRET', '');
+  vi.stubEnv('ALERT_CLAIMS_FILE', '');
+  vi.stubEnv('ALERT_APPROVED_NAMES', '');
+  vi.stubEnv('ALERT_RCA_HOURLY_BUDGET_USD', '100');
 }
 
-type Driver = () => Promise<WriteObservation[]>;
-
-/** A pg-shaped pool that records the identity in scope for every interesting query. */
-function capturingPool(
-  observations: WriteObservation[],
-  respond: (sql: string, params: unknown[]) => { rows: unknown[]; rowCount: number },
-  interesting: RegExp,
-  ownerParamIndex: number,
-): { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }> } {
+/** One Alertmanager body that reaches ticket creation without exercising consolidation branches. */
+function alertIdentityDriverPayload(): Record<string, unknown> {
   return {
-    query: async (sql: string, params: unknown[] = []) => {
-      if (interesting.test(sql)) {
+    version: '4',
+    status: 'firing',
+    alerts: [{
+      status: 'firing',
+      labels: { alertname: 'MachineWriteGateProbe', container: 'oshal-local-gate', severity: 'critical' },
+      annotations: { summary: 'gate probe' },
+      startsAt: new Date().toISOString(),
+      fingerprint: 'fp-gate',
+    }],
+  };
+}
+
+const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
+  ...MACHINE_WRITE_IDENTITY_RESIDUAL_DRIVERS,
+
+  /** POST /api/jarvis/tasks/:id/delivered — a literal owner-scoped Jarvis update. */
+  'jarvis-service-callers': async () => {
+    vi.stubEnv('SWARM_SERVICE_SECRET', SERVICE_USER_PLACEHOLDER);
+    const observations: WriteObservation[] = [];
+    const pool = capturingPool(
+      observations,
+      () => ({ rows: [], rowCount: 1 }),
+      /UPDATE jarvis_tasks SET delivered/i,
+      1,
+    );
+    const router = createJarvisRoutes({ pool } as never, process.cwd());
+    const { url, close } = await serveServiceUserRoute('/api/jarvis', router);
+    try {
+      const endpoint = `${url}/api/jarvis/tasks/gate-task/delivered`;
+      await assertMissingServiceOwnerRejected(endpoint, { method: 'POST', body: '{}' });
+      const response = await fetch(endpoint, {
+        method: 'POST', headers: serviceUserHeaders('auth0|jarvis-owner'), body: '{}',
+      });
+      if (!response.ok) throw new Error(`Jarvis identity probe failed: HTTP ${response.status}`);
+    } finally {
+      await close();
+    }
+    return observations;
+  },
+
+  /** POST /api/test-lab/golden/run — the detached batch's real ticket creation boundary. */
+  'test-lab-golden': async () => {
+    vi.stubEnv('SWARM_SERVICE_SECRET', SERVICE_USER_PLACEHOLDER);
+    const observations: WriteObservation[] = [];
+    const ticketService = {
+      createTicket: async (input: { ownerSub?: string | null }) => {
         observations.push({
-          identity: getRequestIdentity(),
-          ownerValue: (params[ownerParamIndex] as string | undefined) ?? null,
-          label: sql.replace(/\s+/g, ' ').trim().slice(0, 60),
+          identity: getRequestIdentity(), ownerValue: input.ownerSub ?? null, label: 'ticketService.createTicket',
         });
-      }
-      return respond(sql, params);
-    },
-  };
-}
+        return { ticketId: crypto.randomUUID(), status: 'complete' };
+      },
+      getStatusHistory: async () => [],
+    };
+    const pool = { query: async () => ({ rows: [], rowCount: 0 }) };
+    const router = createTestLabGoldenRoutes({ pool, ticketService } as never);
+    const { url, close } = await serveServiceUserRoute('/api/test-lab/golden', router);
+    try {
+      const endpoint = `${url}/api/test-lab/golden/run`;
+      const body = JSON.stringify({ scenarioId: 'g-phone-validator' });
+      await assertMissingServiceOwnerRejected(endpoint, { method: 'POST', body });
+      const response = await fetch(endpoint, {
+        method: 'POST', headers: serviceUserHeaders('auth0|test-lab-owner'), body,
+      });
+      if (response.status !== 202) throw new Error(`Test Lab identity probe failed: HTTP ${response.status}`);
+      await waitForObservation(observations);
+    } finally {
+      await close();
+    }
+    return observations;
+  },
 
-/** Boots an express app around a router and returns its base URL + a closer. */
-async function serve(mount: string, router: express.Router): Promise<{ url: string; close: () => Promise<void> }> {
-  const app = express();
-  app.use(express.json());
-  app.use(mount, router);
-  const server = http.createServer(app);
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const port = (server.address() as { port: number }).port;
-  return {
-    url: `http://127.0.0.1:${port}`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-  };
-}
+  /** POST /api/tools/execute — the explicit append-only tool audit write. */
+  'internal-tool-bridge': async () => {
+    vi.stubEnv('SWARM_SERVICE_SECRET', SERVICE_USER_PLACEHOLDER);
+    const observations: WriteObservation[] = [];
+    const pool = {
+      query: async (sql: string, params: unknown[] = []) => {
+        if (/INSERT INTO access_audit_log/i.test(sql)) {
+          observations.push({
+            identity: getRequestIdentity(), ownerValue: params[0] as string, label: 'access_audit_log insert',
+          });
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    const dynamicToolExecutorRegistry = {
+      resolve: (toolName: string) => toolName === 'not-granted'
+        ? Object.freeze({
+          toolName,
+          executorType: 'api',
+          apiEndpoint: 'POST /api/test-only',
+          runtimeRegistered: true,
+          registeredAt: '2026-08-06T00:00:00.000Z',
+        })
+        : undefined,
+    };
+    const router = createInternalToolBridgeRoutes({ pool, dynamicToolExecutorRegistry } as never);
+    const { url, close } = await serveServiceUserRoute('/api/tools', router);
+    try {
+      const endpoint = `${url}/api/tools/execute`;
+      const body = JSON.stringify({ agentId: 'gate-agent', toolName: 'not-granted', input: {} });
+      await assertMissingServiceOwnerRejected(endpoint, { method: 'POST', body });
+      const response = await fetch(endpoint, {
+        method: 'POST', headers: serviceUserHeaders('auth0|tool-owner'), body,
+      });
+      if (response.status !== 403) throw new Error(`tool bridge grant probe failed: HTTP ${response.status}`);
+      await waitForObservation(observations);
+    } finally {
+      await close();
+    }
+    return observations;
+  },
 
-const DRIVERS: Record<string, Driver> = {
+  /** POST /api/send-message — canonical PM chat-task creation through the real route/intake rail. */
+  'message-routes-service-callers': async () => {
+    vi.stubEnv('SWARM_SERVICE_SECRET', SERVICE_USER_PLACEHOLDER);
+    const observations: WriteObservation[] = [];
+    const taskStore = {
+      get: async () => null,
+      create: async (input: { ownerSub?: string }) => {
+        observations.push({
+          identity: getRequestIdentity(), ownerValue: input.ownerSub ?? null, label: 'taskStore.create',
+        });
+        return { taskId: 'pm-gate-task', ownerSub: input.ownerSub };
+      },
+    };
+    const ticketService = {
+      createTicket: async (input: { title: string }) => ({
+        ticketId: crypto.randomUUID(), title: input.title, status: 'approved',
+      }),
+      linkTask: async () => undefined,
+    };
+    const ctx = {
+      pool: { query: async () => ({ rows: [], rowCount: 0 }) }, taskStore, ticketService,
+      workspaceService: { resolveTaskOwner: async () => null },
+      orchestrator: { processMessage: async () => ({ success: true, response: 'ok' }) },
+    };
+    const { url, close } = await serveServiceUserRoute('/api', createMessageRoutes(ctx as never));
+    try {
+      const endpoint = `${url}/api/send-message`;
+      const body = JSON.stringify({
+        taskId: 'requested-gate-task', text: 'please create a ticket to verify identity',
+        agentId: 'project-manager', source: 'dispatch-manifest-worker', userSub: 'auth0|forged-body-owner',
+      });
+      await assertMissingServiceOwnerRejected(endpoint, { method: 'POST', body });
+      const response = await fetch(endpoint, {
+        method: 'POST', headers: serviceUserHeaders('auth0|message-owner'), body,
+      });
+      if (!response.ok) throw new Error(`message route identity probe failed: HTTP ${response.status}`);
+    } finally {
+      await close();
+    }
+    return observations;
+  },
+
   /** POST /api/hooks/:provider/:event — the generic connector ticket path. */
   'connector-webhook-ingress': async () => {
     const observations: WriteObservation[] = [];
@@ -277,30 +420,14 @@ const DRIVERS: Record<string, Driver> = {
       recordActivity: async () => undefined,
     };
     const token = 'machine-write-gate-token';
-    vi.stubEnv('ALERT_WEBHOOK_TOKEN', token);
-    vi.stubEnv('ALERT_DEFAULT_INTAKE', 'approved');
-    vi.stubEnv('ALERT_TICKET_TYPE', 'intelligent-processing');
-    vi.stubEnv('ALERT_WEBHOOK_HMAC_SECRET', '');
-    vi.stubEnv('ALERT_CLAIMS_FILE', '');
-    vi.stubEnv('ALERT_APPROVED_NAMES', '');
-    vi.stubEnv('ALERT_RCA_HOURLY_BUDGET_USD', '100');
+    configureAlertIdentityDriverEnv(token);
 
     const { url, close } = await serve('/api/alerts', createAlertmanagerRoutes(ticketService as never));
     try {
       await fetch(`${url}/api/alerts/alertmanager`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          version: '4',
-          status: 'firing',
-          alerts: [{
-            status: 'firing',
-            labels: { alertname: 'MachineWriteGateProbe', container: 'oshal-local-gate', severity: 'critical' },
-            annotations: { summary: 'gate probe' },
-            startsAt: new Date().toISOString(),
-            fingerprint: 'fp-gate',
-          }],
-        }),
+        body: JSON.stringify(alertIdentityDriverPayload()),
       });
     } finally {
       await close();
@@ -341,15 +468,21 @@ const DRIVERS: Record<string, Driver> = {
   /** POST /api/profile-studio/ingest — the desktop-worker plan callback. */
   'profile-studio-ingest': async () => {
     const observations: WriteObservation[] = [];
-    const secret = 'profile-studio-gate-secret';
-    vi.stubEnv('SWARM_SERVICE_SECRET', secret);
+    const capability = `pscap_${'a'.repeat(43)}`;
     const pool = capturingPool(observations, () => ({ rows: [], rowCount: 1 }), /UPDATE linkedin_profile_plans/i, 0);
     const { url, close } = await serve('/api/profile-studio', createProfileStudioIngestRoutes({ pool } as never));
     try {
       await fetch(`${url}/api/profile-studio/ingest`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-service-secret': secret },
-        body: JSON.stringify({ userSub: 'auth0|plan-owner', result: 'applied', note: 'ok' }),
+        headers: { 'content-type': 'application/json', 'x-oshal-callback-capability': capability },
+        body: JSON.stringify({
+          taskId: 'liprofile-7-capability-proof',
+          context: {
+            userSub: 'auth0|plan-owner', generation: 1, clientId: 'desktop-proof',
+            operation: 'resolve-profile-plan',
+          },
+          result: { result: 'applied', note: 'ok' },
+        }),
       });
     } finally {
       await close();
@@ -360,22 +493,63 @@ const DRIVERS: Record<string, Driver> = {
   /** POST /api/apply/ingest — the desktop-worker outcome callback resolving the user's ticket. */
   'apply-ingest': async () => {
     const observations: WriteObservation[] = [];
-    const secret = 'apply-ingest-gate-secret';
-    vi.stubEnv('SWARM_SERVICE_SECRET', secret);
+    const capability = 'a'.repeat(43);
+    const claim = {
+      taskId: 'apply-11111111-2222-4333-8444-555555555555', tokenHash: 'b'.repeat(64),
+      userSub: 'auth0|applicant', ticketId: 'tk-apply-1', settleTicket: true, postingId: 77,
+      clientId: 'desktop-proof', targetHost: 'jobs.example.test', generation: 1,
+      expiresAt: '2026-08-05T22:00:00.000Z',
+    };
     const ticketService = {
       updateStatus: async () => {
         observations.push({ identity: getRequestIdentity(), ownerValue: null, label: 'ticketService.updateStatus' });
       },
     };
-    const pool = { query: async () => ({ rows: [], rowCount: 0 }) };
-    const { url, close } = await serve('/api/apply', createApplyIngestRoutes({ pool, ticketService } as never));
+    const runtime: ApplyCompletionRuntime = {
+      reserve: async () => claim,
+      consume: async () => true,
+      release: async () => undefined,
+      runCli: async (_sub, args) => args[0] === 'queue'
+        ? {
+          ok: true, posting_id: claim.postingId, status: args[3],
+          application_source: 'worker-reported', application_task_id: claim.taskId,
+          confirmation_verified: false,
+        }
+        : { ok: true },
+      persistConfirmation: () => null,
+      removeWorkspace: async () => undefined,
+      getRun: async () => ({
+        runId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', ticketId: claim.ticketId,
+        ownerSub: claim.userSub, postingId: claim.postingId,
+        claimToken: 'ffffffff-1111-4222-8333-444444444444', taskId: claim.taskId,
+        workerClientId: claim.clientId, state: 'queued_to_worker',
+        claimedAt: '2026-08-05T21:00:00.000Z', dispatchedAt: '2026-08-05T21:00:01.000Z',
+        acknowledgedAt: null, lastProgressAt: null, timeoutAt: claim.expiresAt,
+        finishedAt: null, result: null, failureCode: null, failureDetail: null,
+        confirmationPath: null, confirmationSha256: null,
+        metadata: {
+          trigger: 'authenticated-single-job', initiatedBySub: claim.userSub,
+          automationSettingsVersion: 'authenticated-single-job-v1',
+        },
+      }),
+      transitionRun: async (_pool, input) => ({
+        runId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', ticketId: claim.ticketId,
+        ownerSub: claim.userSub, postingId: claim.postingId,
+        claimToken: 'ffffffff-1111-4222-8333-444444444444', taskId: claim.taskId,
+        workerClientId: claim.clientId, state: input.to,
+      }) as never,
+    };
+    const pool = {};
+    const router = createApplyIngestRoutes({ pool, ticketService } as never, runtime);
+    const { url, close } = await serve('/api/apply', router);
     try {
       await fetch(`${url}/api/apply/ingest`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-service-secret': secret },
-        // No postingId on purpose: that branch shells out to the apply CLI, which this gate has no
-        // business running. The ticket resolve below is the write under test.
-        body: JSON.stringify({ ticketId: 'tk-apply-1', userSub: 'auth0|applicant', result: 'applied' }),
+        headers: { 'content-type': 'application/json', 'x-oshal-callback-capability': capability },
+        body: JSON.stringify({
+          taskId: claim.taskId, context: { workflow: 'apply', generation: claim.generation },
+          result: { result: 'applied', note: 'visible confirmation' },
+        }),
       });
     } finally {
       await close();
@@ -402,10 +576,10 @@ describe('machine-write identity — inventory integrity', () => {
     }
   });
 
-  it('the service-secret carve-out rests on a fact, not a hope: server.ts stamps operator for it', () => {
-    // The rule below lets `service-secret` entries ride the ambient identity. That is only sound
-    // while the global middleware actually grants them operator. If this line ever changes, those
-    // entries become the alert-intake failure and the rule must tighten with it.
+  it('documents why service-secret routes must actively replace the global compatibility stamp', () => {
+    // The server still grants a broad compatibility identity before route middleware runs. This
+    // assertion makes the threat model explicit: user-bound service routes must narrow it, while a
+    // future removal of the compatibility stamp should deliberately update this inventory model.
     const server = fs.readFileSync(path.join(REPO_ROOT, 'src/app/server.ts'), 'utf8');
     expect(server.replace(/\s+/g, ' ')).toContain('isOperator: isOperator(req) || hasValidServiceSecret(req)');
   });
@@ -423,7 +597,7 @@ describe('machine-write identity — discovery (a new webhook cannot arrive unno
       undeclared,
       'These files authenticate a MACHINE caller and are not in tests/helpers/machine-write-inventory.ts. '
         + 'Add an entry: the tables it writes and the identity it establishes before the first write. '
-        + 'If it writes an owner-scoped table under anything but a service secret, it MUST establish one.',
+        + 'If it writes an owner-scoped table, it MUST establish an accountable identity.',
     ).toEqual([]);
   });
 
@@ -460,129 +634,145 @@ describe('machine-write identity — derivation (declaring no writes is not an e
   });
 });
 
-describe('machine-write identity — THE RULE', () => {
-  it('a non-service-secret machine caller that writes an owner-scoped table must establish an identity', () => {
-    for (const entry of MACHINE_WRITE_INVENTORY.filter(writesOwnerScoped)) {
-      expect(
-        entry.identity.kind,
-        `${entry.id}: declares owner-scoped writes, so "no-owner-scoped-write" is contradictory`,
-      ).not.toBe('no-owner-scoped-write');
-
-      if (entry.auth === 'service-secret' || entry.auth === 'oidc-session') continue;
-
-      // Everything else authenticates without an OIDC session AND without the operator stamp, so
-      // the ambient identity is anonymous non-operator — the exact state that refused a2a's and
-      // the alert intake's INSERTs.
-      expect(
-        ['synthetic-machine-sub', 'caller-scoped', 'trusted-system'],
-        `${entry.id} (${entry.auth}) writes ${entry.ownerScopedTables.join(', ')} with identity.kind='${entry.identity.kind}'. `
-          + 'Its ambient identity is anonymous non-operator; Postgres will refuse the row. Establish a '
-          + 'synthetic namespaced machine sub (the alert:prometheus / a2a:<id> / webhook:<provider> rail).',
-      ).toContain(entry.identity.kind);
-    }
-  });
-
-  it('the ambient-operator carve-out is only ever claimed by a service-secret caller, and always cites a BACKLOG item', () => {
-    for (const entry of MACHINE_WRITE_INVENTORY) {
-      if (entry.identity.kind !== 'ambient-service-secret-operator') continue;
-      expect(entry.auth, `${entry.id}: only a service secret earns the operator stamp`).toBe('service-secret');
-      expect(entry.identity.backlogRef).toMatch(/BACKLOG/);
-    }
-  });
-
-  it('trusted-system is always justified in writing, never a shrug', () => {
-    for (const entry of MACHINE_WRITE_INVENTORY) {
-      if (entry.identity.kind !== 'trusted-system') continue;
-      expect(
-        entry.identity.why.trim().length,
-        `${entry.id}: runWithSystemIdentity is isOperator:true — say why nothing narrower works`,
-      ).toBeGreaterThan(60);
-    }
-  });
-
-  it('the synthetic machine subs match the constants the code actually uses', () => {
-    // Drift between this inventory and the real constants would make the assertions vacuous.
-    expect(ALERT_INTAKE_OWNER_SUB).toBe('alert:prometheus');
-    expect(ownerSubForA2aAgent('abc')).toBe('a2a:abc');
-    expect(webhookOwnerSub('github')).toBe('webhook:github');
-    for (const entry of MACHINE_WRITE_INVENTORY) {
-      if (entry.identity.kind !== 'synthetic-machine-sub') continue;
-      expect(entry.identity.sub, `${entry.id}: a machine sub must be namespaced`).toMatch(/^[a-z0-9-]+:/);
-    }
-  });
-
-  it('proof debt and ambient-operator debt only ratchet down', () => {
-    const unproven = MACHINE_WRITE_INVENTORY.filter((e) => !e.behaviorallyProven);
+/** Enforce explicit provenance for every machine caller that touches an owner-scoped table. */
+function assertMachineWriteIdentityRule(): void {
+  for (const entry of MACHINE_WRITE_INVENTORY.filter(writesOwnerScoped)) {
     expect(
-      unproven.length,
-      `Unproven entries: ${unproven.map((e) => e.id).join(', ')}. Lower MAX_UNPROVEN_ENTRIES when you add a proof; never raise it.`,
-    ).toBeLessThanOrEqual(MAX_UNPROVEN_ENTRIES);
-
-    const ambient = MACHINE_WRITE_INVENTORY.filter((e) => e.identity.kind === 'ambient-service-secret-operator');
+      entry.identity.kind,
+      `${entry.id}: declares owner-scoped writes, so "no-owner-scoped-write" is contradictory`,
+    ).not.toBe('no-owner-scoped-write');
+    if (entry.auth === 'oidc-session') continue;
+    // A secret proves the machine, not the affected tenant. Explicit provenance prevents the old
+    // ambient operator stamp from restoring cross-tenant reach while still satisfying RLS.
     expect(
-      ambient.length,
-      `Ambient-operator entries: ${ambient.map((e) => e.id).join(', ')}. Each is a secret-holder with cross-tenant reach.`,
-    ).toBeLessThanOrEqual(MAX_AMBIENT_OPERATOR_ENTRIES);
-  });
-});
-
-describe('machine-write identity — BEHAVIOUR (what the connection actually carried)', () => {
-  it('every entry claiming a behavioural proof has a driver here', () => {
-    const needsDriver = MACHINE_WRITE_INVENTORY.filter(
-      (e) => e.behaviorallyProven
-        && writesOwnerScoped(e)
-        && e.identity.kind !== 'oidc-session-identity',
-    ).map((e) => e.id);
-    const missing = needsDriver.filter((id) => !DRIVERS[id]);
-    expect(
-      missing,
-      'These entries claim behaviorallyProven:true but nothing here drives them. Either write the driver '
-        + 'or set the flag false — a claim with no proof is how this class shipped twice.',
-    ).toEqual([]);
-  });
-
-  beforeEach(() => {
-    // The gate must observe the identity the ROUTE establishes, never one leaking in from a
-    // surrounding context. Vitest runs each test at the top level of the ALS store, which is the
-    // pre-fix production state (no request identity at all) — assert it rather than assume it.
-    expect(getRequestIdentity()).toBeUndefined();
-  });
-
-  for (const entry of MACHINE_WRITE_INVENTORY.filter((e) => DRIVERS[e.id])) {
-    it(`${entry.id}: the write runs under the declared identity`, async () => {
-      const observations = await DRIVERS[entry.id]();
-      expect(observations.length, `${entry.id}: the driver produced no owner-scoped write to observe`).toBeGreaterThan(0);
-
-      for (const seen of observations) {
-        const where = `${entry.id} → ${seen.label}`;
-        expect(seen.identity, `${where}: NO identity in scope — this is the defect verbatim`).toBeDefined();
-
-        if (entry.identity.kind === 'trusted-system') {
-          expect(seen.identity?.system, `${where}: declared trusted-system, but the SYSTEM sentinel was not established`).toBe(true);
-          continue;
-        }
-
-        // Everything else must be a real, non-operator sub. isOperator:false is the load-bearing
-        // half: the system sentinel would also "have an identity" while handing the caller
-        // cross-tenant reach, which is the alternative the BACKLOG explicitly rules out.
-        expect(seen.identity?.isOperator, `${where}: a machine write must NOT run as operator`).toBe(false);
-        expect(seen.identity?.system ?? false, `${where}: must not be the SYSTEM sentinel`).toBe(false);
-        expect(String(seen.identity?.sub ?? ''), `${where}: anonymous sub — RLS refuses the row`).not.toBe('');
-
-        if (entry.identity.kind === 'synthetic-machine-sub') {
-          const namespace = entry.identity.sub.split(':')[0];
-          expect(seen.identity?.sub, `${where}: expected a ${namespace}: sub`).toMatch(new RegExp(`^${namespace}:`));
-          // BOTH halves of the RLS predicate. Stamping the connection alone still fails, because
-          // NULL never equals the stamped sub — the half PR #99 had to ship separately.
-          if (seen.ownerValue !== undefined) {
-            expect(seen.ownerValue, `${where}: the row's owner must equal the connection's sub`).toBe(seen.identity?.sub);
-          }
-        }
-
-        if (entry.identity.kind === 'caller-scoped' && seen.ownerValue) {
-          expect(seen.ownerValue, `${where}: the row's owner must equal the connection's sub`).toBe(seen.identity?.sub);
-        }
-      }
-    });
+      ['synthetic-machine-sub', 'caller-scoped', 'trusted-system'],
+      `${entry.id} (${entry.auth}) writes ${entry.ownerScopedTables.join(', ')} with identity.kind='${entry.identity.kind}'. `
+        + 'Establish a caller-scoped user, a synthetic namespaced machine sub '
+        + '(alert:prometheus / a2a:<id> / webhook:<provider>), or a justified trusted-system rail.',
+    ).toContain(entry.identity.kind);
   }
-});
+}
+
+/** Keep the retired ambient posture constrained to the historical service-secret class. */
+function assertAmbientPostureConstraint(): void {
+  for (const entry of MACHINE_WRITE_INVENTORY) {
+    if (entry.identity.kind !== 'ambient-service-secret-operator') continue;
+    expect(entry.auth, `${entry.id}: only a service secret earns the operator stamp`).toBe('service-secret');
+    expect(entry.identity.backlogRef).toMatch(/BACKLOG/);
+  }
+}
+
+/** Require a written threat-model justification anywhere full SYSTEM authority remains necessary. */
+function assertTrustedSystemJustifications(): void {
+  for (const entry of MACHINE_WRITE_INVENTORY) {
+    if (entry.identity.kind !== 'trusted-system') continue;
+    expect(
+      entry.identity.why.trim().length,
+      `${entry.id}: runWithSystemIdentity is isOperator:true — say why nothing narrower works`,
+    ).toBeGreaterThan(60);
+  }
+}
+
+/** Pin synthetic-owner namespaces to their production factories and constants. */
+function assertSyntheticMachineNamespaces(): void {
+  expect(ALERT_INTAKE_OWNER_SUB).toBe('alert:prometheus');
+  expect(ownerSubForA2aAgent('abc')).toBe('a2a:abc');
+  expect(webhookOwnerSub('github')).toBe('webhook:github');
+  for (const entry of MACHINE_WRITE_INVENTORY) {
+    if (entry.identity.kind !== 'synthetic-machine-sub') continue;
+    expect(entry.identity.sub, `${entry.id}: a machine sub must be namespaced`).toMatch(/^[a-z0-9-]+:/);
+  }
+}
+
+/** Ratchet both kinds of documented machine-identity debt toward zero. */
+function assertMachineIdentityDebtBudgets(): void {
+  const unproven = MACHINE_WRITE_INVENTORY.filter((entry) => !entry.behaviorallyProven);
+  expect(
+    unproven.length,
+    `Unproven entries: ${unproven.map((entry) => entry.id).join(', ')}. Lower MAX_UNPROVEN_ENTRIES when you add a proof; never raise it.`,
+  ).toBeLessThanOrEqual(MAX_UNPROVEN_ENTRIES);
+  const ambient = MACHINE_WRITE_INVENTORY.filter((entry) => entry.identity.kind === 'ambient-service-secret-operator');
+  expect(
+    ambient.length,
+    `Ambient-operator entries: ${ambient.map((entry) => entry.id).join(', ')}. Each is a secret-holder with cross-tenant reach.`,
+  ).toBeLessThanOrEqual(MAX_AMBIENT_OPERATOR_ENTRIES);
+}
+
+/** Register the small, independently named assertions that compose the class-level rule. */
+function defineMachineWriteRuleTests(): void {
+  it('every machine caller that writes an owner-scoped table must establish an identity', assertMachineWriteIdentityRule);
+  it('the retired ambient-operator posture can only describe its original service-secret debt', assertAmbientPostureConstraint);
+  it('trusted-system is always justified in writing, never a shrug', assertTrustedSystemJustifications);
+  it('the synthetic machine subs match the constants the code actually uses', assertSyntheticMachineNamespaces);
+  it('proof debt and ambient-operator debt only ratchet down', assertMachineIdentityDebtBudgets);
+}
+
+describe('machine-write identity — THE RULE', defineMachineWriteRuleTests);
+
+/** Return every proven, owner-writing machine entry whose executable proof is missing. */
+function missingBehavioralDrivers(): string[] {
+  return MACHINE_WRITE_INVENTORY.filter(
+    (entry) => entry.behaviorallyProven
+      && writesOwnerScoped(entry)
+      && entry.identity.kind !== 'oidc-session-identity',
+  ).map((entry) => entry.id).filter((id) => !DRIVERS[id]);
+}
+
+/** Ensure inventory proof claims stay coupled to executable drivers. */
+function assertEveryProofHasDriver(): void {
+  expect(
+    missingBehavioralDrivers(),
+    'These entries claim behaviorallyProven:true but nothing here drives them. Either write the driver '
+      + 'or set the flag false — a claim with no proof is how this class shipped twice.',
+  ).toEqual([]);
+}
+
+/** Reject any ALS identity leaked into a driver from its surrounding test context. */
+function assertCleanDriverIdentityContext(): void {
+  expect(getRequestIdentity()).toBeUndefined();
+}
+
+/** Assert the class rule against one identity captured at an owner-scoped operation. */
+function assertWriteObservation(entry: MachineWriteEntry, seen: WriteObservation): void {
+  const where = `${entry.id} → ${seen.label}`;
+  expect(seen.identity, `${where}: NO identity in scope — this is the defect verbatim`).toBeDefined();
+  if (entry.identity.kind === 'trusted-system') {
+    expect(seen.identity?.system, `${where}: declared trusted-system, but the SYSTEM sentinel was not established`).toBe(true);
+    return;
+  }
+  // A present SYSTEM sentinel is still cross-tenant authority, so non-system proofs must carry a
+  // real, non-operator sub as well as merely having an ALS value.
+  expect(seen.identity?.isOperator, `${where}: a machine write must NOT run as operator`).toBe(false);
+  expect(seen.identity?.system ?? false, `${where}: must not be the SYSTEM sentinel`).toBe(false);
+  expect(String(seen.identity?.sub ?? ''), `${where}: anonymous sub — RLS refuses the row`).not.toBe('');
+  if (entry.identity.kind === 'synthetic-machine-sub') {
+    const namespace = entry.identity.sub.split(':')[0];
+    expect(seen.identity?.sub, `${where}: expected a ${namespace}: sub`).toMatch(new RegExp(`^${namespace}:`));
+    if (seen.ownerValue !== undefined) {
+      expect(seen.ownerValue, `${where}: the row's owner must equal the connection's sub`).toBe(seen.identity?.sub);
+    }
+  }
+  if (entry.identity.kind === 'caller-scoped' && seen.ownerValue) {
+    expect(seen.ownerValue, `${where}: the row's owner must equal the connection's sub`).toBe(seen.identity?.sub);
+  }
+}
+
+/** Run one real driver and evaluate every owner-scoped operation it observed. */
+async function assertDriverMatchesInventory(entry: MachineWriteEntry): Promise<void> {
+  const driver = DRIVERS[entry.id];
+  if (!driver) throw new Error(`${entry.id}: behavioral driver is not registered`);
+  const observations = await driver();
+  expect(observations.length, `${entry.id}: the driver produced no owner-scoped write to observe`).toBeGreaterThan(0);
+  for (const seen of observations) assertWriteObservation(entry, seen);
+}
+
+/** Register the proof-presence check and one isolated behavioral test per inventoried entry. */
+function defineMachineWriteBehaviorTests(): void {
+  it('every entry claiming a behavioural proof has a driver here', assertEveryProofHasDriver);
+  beforeEach(assertCleanDriverIdentityContext);
+  for (const entry of MACHINE_WRITE_INVENTORY.filter((candidate) => DRIVERS[candidate.id])) {
+    it(`${entry.id}: the write runs under the declared identity`, () => assertDriverMatchesInventory(entry));
+  }
+}
+
+describe('machine-write identity — BEHAVIOUR (what the connection actually carried)', defineMachineWriteBehaviorTests);

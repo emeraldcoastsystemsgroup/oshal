@@ -25,6 +25,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added runWithoutRequestIdentity (store.exit) so machine-authenticated detached work can run as trusted system context instead of inheriting an anonymous request identity that RLS starves
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the positive SYSTEM identity sentinel (runWithSystemIdentity / SYSTEM_IDENTITY / isSystemIdentity) so legitimate background work marks itself trusted-operator on PURPOSE, instead of relying on the fail-open "no context" branch. This is the escape hatch that lets OSHAL_DB_GUC_STRICT flip to deny-by-default: bare undefined = "no context established" (deny under strict), SYSTEM sentinel = "trusted background" (always operator).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed runWithoutRequestIdentity (store.exit): its lone caller (remote-client-routes no-sub branch) now uses runWithSystemIdentity, which is a POSITIVE trusted marker rather than the ambiguous "no context" state. store.exit produced bare undefined — indistinguishable from a never-established context, which deny-by-default must starve. The sentinel is the intentional trusted path.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Carry the verified principal issuer beside sub so controller-to-bot delegation preserves identity-provider namespaces without trusting request headers or guessing from subject text.
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -33,6 +34,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface RequestIdentity {
   /** OIDC sub of the caller, or null for anonymous/unauthenticated requests. */
   sub: string | null;
+  /** Verified issuer namespace for sub, or null when the authentication rail did not establish one. */
+  principalIssuer?: string | null;
   /** Whether the caller is an operator (admin) — bypasses ownership scoping. */
   isOperator: boolean;
   /**
@@ -56,6 +59,7 @@ const store = new AsyncLocalStorage<RequestIdentity>();
  */
 export const SYSTEM_IDENTITY: Readonly<RequestIdentity> = Object.freeze({
   sub: null,
+  principalIssuer: 'urn:oshal:system',
   isOperator: true,
   system: true,
 });

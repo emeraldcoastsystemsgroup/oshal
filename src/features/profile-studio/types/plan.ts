@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | LinkedIn Profile Studio domain types: the per-user plan (desired headline/about/skills/custom URL + background-image and featured-resume asset paths) and its approval/dispatch state machine. LinkedIn has no profile-edit API, so the plan is human-approved, then dispatched to the desktop browser-control worker; canTransition is the single legal-move table both the store and the routes enforce.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add photoPath — the profile photo (headshot) asset, sourced by direct upload or picked from the user's Portrait Studio gallery (client-side integration; no cross-package coupling).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Expose the monotonic dispatch generation used to reject stale callback ABA races without exposing capability material.
  */
 
 /** The plan lifecycle. `draft` is editable; `approved` is frozen and dispatchable;
@@ -38,6 +39,8 @@ export interface LinkedInProfilePlan {
   dispatchTaskId: string | null;
   /** Remote client (desktop worker) the last dispatch went to. */
   dispatchClientId: string | null;
+  /** Monotonic generation; never reset, so an older callback cannot match a later dispatch. */
+  dispatchGeneration: number;
   /** The operator bot's outcome report — what was applied, what blocked. */
   resultNote: string | null;
   createdAt: string;

@@ -26,11 +26,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial opt-in morning delivery: notification-center 'morning-brief' pref gate (opt-in default OFF), persistent once/day cursor (jarvis_brief_deliveries), quiet-hours honor, email via the user's own Gmail / SMS via their own Twilio, env-gated 07:00 CT cron mirroring career-hunter-cron.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Ran the morning-brief cron tick under runWithSystemIdentity — a cross-owner background sweep over per-user brief/preference rows; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: send per-user Twilio SMS through the fixed in-process server operation; connector secrets no longer enter child environments, argv, or helper workspaces.
  *
  * @module jarvis-brief-cron
  */
-import * as path from 'path';
-import { spawn } from 'child_process';
 import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
@@ -39,6 +38,7 @@ import type { AppContext } from '@/app/composition/app-context';
 import { dueForDigest } from './digest-resend-guard';
 import { getValidAccessToken } from './connectors-routes';
 import { sendGmail } from './email-routes';
+import { sendUserTwilioSms } from './twilio-sms-operation';
 import { composeMorningBrief, defaultBriefDeps, type MorningBrief } from './jarvis-brief-sections';
 
 const logger = createChildLogger({ module: 'jarvis-brief-cron' });
@@ -153,23 +153,17 @@ async function sendViaEmail(pool: AppContext['pool'], userSub: string, brief: Mo
   }
 }
 
-/** Send via the user's own Twilio (scripts/oshal-twilio.js resolves their per-user secret). */
-function sendViaText(userSub: string, phone: string, brief: MorningBrief): Promise<boolean> {
-  const cli = path.resolve(process.cwd(), 'scripts', 'oshal-twilio.js');
-  const body = formatBriefSms(brief);
-  return new Promise((resolve) => {
-    const proc = spawn('node', [cli, 'sms', phone, body, '--confirm'], {
-      env: { ...process.env, OSHAL_USER_SUB: userSub, OSHAL_MESSAGE_SEND_CONFIRM: 'true' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let err = '';
-    proc.stderr?.on('data', (d) => { err += String(d); });
-    proc.on('exit', (code) => {
-      if (code === 0) { logger.info({ userSub }, 'brief: texted'); resolve(true); }
-      else { logger.warn({ userSub, code, err: err.slice(-300) }, 'brief: sms send failed'); resolve(false); }
-    });
-    proc.on('error', (e) => { logger.error({ userSub, err: (e as Error).message, stack: (e as Error).stack }, 'brief: sms spawn failed'); resolve(false); });
-  });
+/** Send via the user's own Twilio using a schema-bounded server operation. */
+async function sendViaText(
+  pool: AppContext['pool'],
+  userSub: string,
+  phone: string,
+  brief: MorningBrief,
+): Promise<boolean> {
+  const result = await sendUserTwilioSms(pool, userSub, phone, formatBriefSms(brief));
+  if (result.delivered) logger.info({ userSub, id: result.id }, 'brief: texted');
+  else logger.warn({ userSub, error: result.error }, 'brief: sms send failed');
+  return result.delivered;
 }
 
 /**
@@ -202,7 +196,7 @@ export async function sendBriefForUser(
   let ok = false;
   let channel: 'email' | 'sms' | undefined;
   if (pref.channel === 'email') { ok = await sendViaEmail(ctx.pool, userSub, brief); channel = ok ? 'email' : undefined; }
-  else if (pref.channel === 'sms' && pref.phone) { ok = await sendViaText(userSub, pref.phone, brief); channel = ok ? 'sms' : undefined; }
+  else if (pref.channel === 'sms' && pref.phone) { ok = await sendViaText(ctx.pool, userSub, pref.phone, brief); channel = ok ? 'sms' : undefined; }
   else if (pref.channel === 'telegram') {
     logger.warn({ userSub }, 'brief: pref channel telegram has no per-user delivery leg yet — skipped (cursor untouched)');
     return { sent: false, reason: 'telegram-unavailable' };

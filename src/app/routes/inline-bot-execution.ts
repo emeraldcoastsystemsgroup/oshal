@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Cost-governance interactive gate: executeBotOrInline is the chokepoint both remote BotNodeClient.execute and inline-orchestrator executions flow through (ADR-036 direct sync path), so a HARD user-scope budget breach now blocks interactive execution here — queued dispatch is separately gated in the queue manager. Fail-open on infra gaps per BudgetService semantics.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 skill-profile GENERAL carrier: executeBotOrInline is the shared bot-execution chokepoint, so resolve the calling app's domain profile ONCE here (controller-side; the bot holds no registry — ADR-036), guarded on request.app && request.capability. Inline path weaves the composed block into the text before processMessage; remote path sets request.pattern so it rides to the bot node's assembled-prompt append. Generalizes email-routes' hand-wired composition off request.app/capability instead of a hardcoded app. No-op for every call that omits app/capability.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot-endpoint privilege model" (diagnosis bot-endpoint-priv): executeBotOrInline now runs assertExecuteEntitlement BEFORE dispatching either branch — controller-INLINE bots resolve to a null endpoint (CONTROLLER_INLINE_CONTAINERS) and bypassed the bot-node HTTP entitlement gate entirely, so exactly the ADR-087 operator/swarm-scoped machinery (project-manager, codex-packer) had NO execute-time per-caller check; remote calls now also get an early controller-side denial. Reuses the SAME pure decideExecuteEntitlement the bot-node gate runs (no policy copy to drift). Mode: warn default (log-only), enforce throws CallerNotEntitledError (statusCode 403).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: reject generic credential carriers and require deterministic provider intents to execute on a dedicated audited bot node; inline model requests receive caller identity but never connector secrets.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -48,6 +49,19 @@ export async function executeBotOrInline(
     surface: 'executeBotOrInline',
   });
 
+  const carriesCreds = Boolean(request.creds && Object.keys(request.creds).length > 0);
+  const hasDedicatedEndpoint = botClient.hasEndpoint(agentId);
+  if (carriesCreds && !request.providerIntent) {
+    const error = new Error('Connector credentials require a validated deterministic provider intent') as Error & { code: string };
+    error.code = 'UNSCOPED_CREDENTIAL_CARRIER';
+    throw error;
+  }
+  if (!hasDedicatedEndpoint && (request.providerIntent || carriesCreds)) {
+    const error = new Error('Deterministic provider intents require a dedicated audited bot-node handler') as Error & { code: string };
+    error.code = 'PROVIDER_INTENT_REQUIRES_BOT_NODE';
+    throw error;
+  }
+
   // BudgetService holds no per-instance caches, so per-call construction is safe.
   const verdict = await new BudgetService(ctx.pool).checkBudget(request.userSub ?? null);
   if (!verdict.allowed) {
@@ -65,7 +79,7 @@ export async function executeBotOrInline(
     ? composeSkillProfilePrompt('', request.capability, resolveSkillProfileByApp(request.app, request.capability))
     : '';
 
-  if (botClient.hasEndpoint(agentId)) {
+  if (hasDedicatedEndpoint) {
     // Remote path: the resolved block rides to the bot node as request.pattern (→ envelope.payload).
     // The bot-node execution handler appends it to its assembled prompt in BOTH prompt branches —
     // the layered branch builds from persona layers + buildUserMessage, never from `text`, which is
@@ -84,7 +98,6 @@ export async function executeBotOrInline(
     source: 'inline-bot',
     agentId,
     userSub: request.userSub,
-    creds: request.creds,
     providerId: request.providerId,
     model: request.model,
     interactionMode: request.direct ? 'task' : 'chat',

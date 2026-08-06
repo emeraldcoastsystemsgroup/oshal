@@ -4,15 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Header backfill + communications-bot connector scope += 'twilio' (phone/text leg, BYO account via the token broker).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove Twilio from worker credential scope; controller-owned fixed operations retain authorized per-user SMS without exposing the account secret to a bot.
  */
 
 import { SwarmBotRegistry } from './extensions/swarm/swarm-bot-registry';
 
 /** Connector scopes supported by both bot runtimes, granted per worker role. */
 const PROVIDERS_BY_WORKER_NAME: Readonly<Record<string, readonly string[]>> = {
-  // twilio: the user's own "SID:AuthToken" secret, so the comms bot's phone/text leg
-  // (scripts/oshal-twilio.js) acts on THEIR Twilio account — BYO, never a platform key.
-  'communications-bot': ['google', 'twitter', 'twilio'],
+  'communications-bot': ['google', 'twitter'],
   'google-bot': ['google'],
   'social-writer': ['google', 'twitter'],
   'home-bot': ['smartthings'],

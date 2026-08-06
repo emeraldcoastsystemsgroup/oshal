@@ -6,16 +6,18 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CodexCliHarnessAdapter — HarnessAdapter implementation wrapping OpenAI Codex CLI subprocess
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Switched to `codex exec --json`, added ChatGPT OAuth auth.json bridge, and aligned sandbox handling with current CLI
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: pass task.creds to applyUserScoping so the caller's provided short-lived tokens land as .oshal-cred-<provider> files in the workspace.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove connector-credential propagation into the model-visible CLI environment/workspace; preserve exact caller identity scoping only.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Hardening-backlog #12: DEFAULT_SANDBOX_MODE danger-full-access → read-only (least-privilege fallback). The swarm opts into full access explicitly via CODEX_SANDBOX_MODE in compose, so the live deployment is unchanged; only an unconfigured run loses silent host-write.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081: idle-based timeout — `codex exec --json` streams JSONL, so the timer now bounds SILENCE (default 10 min, CODEX_INACTIVITY_TIMEOUT_MS) instead of total runtime, with a 2h max-duration backstop (CODEX_MAX_DURATION_MS). Fixes the 2026-07-06 incident where two actively-working dev runs were killed mid-typecheck at the absolute 600s cap.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Token-stranding fix: the CLI rotates its SINGLE-USE refresh_token in the per-task auth.json COPY and nothing wrote it back — one mid-run refresh bricked codex auth swarm-wide until a host re-login. Now snapshot the per-task auth.json and CAS-write-back a rotation to the shared source (codex-auth-write-back.ts) INSIDE the prime-gated closure, so the primer's fresh token is persisted before the gate opens.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review hardening: (1) the snapshot moved AFTER acquireUserScopingLease — pre-lease it baselines a stale chain for queued same-workspace runs, whose own rotation would then CAS-fail and re-strand the token; (2) gate waiters now RE-SEED an untouched per-task copy from the advanced source before spawning (reseedFromAdvancedSource) — they seeded pre-queue from the pre-rotation file, so without this the whole cold-start burst still died on the spent refresh token.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | E2BIG fix: the prompt was passed as a positional argv (`args.push(prompt)`), so a large conversation-aware prompt overflowed the OS ARG_MAX and the spawn died with `spawn E2BIG` — observed LIVE killing every Dungeon Master turn once the session context grew (invokeDungeonMaster → task-orchestrator → this adapter). Now delivered on STDIN (buildArgs drops the positional; execCodexLenient takes an `input` and forwards it to execCapturing) — `codex exec` reads its instructions from stdin when no positional PROMPT is given, mirroring the ClaudeCodeCliHarnessAdapter which piped stdin for the same reason.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove output/config-seed OAuth fallbacks; audited Codex runs require the live vendor auth source or an explicit platform API key and refuse stale per-task credentials otherwise.
  */
 
 import fs from 'fs';
 import path from 'path';
-import { buildConversationAwarePrompt, type HarnessTask, type HarnessResult } from './harness-adapter';
+import { assertAuditedAutonomousHarness, buildConversationAwarePrompt, type HarnessTask, type HarnessResult } from './harness-adapter';
 import { BaseCliHarnessAdapter } from './base-cli-harness-adapter';
 import { reseedFromAdvancedSource, snapshotCodexAuth, writeBackRotatedCodexAuth } from './codex-auth-write-back';
 import type { TokenUsage } from './llm-service';
@@ -32,9 +34,6 @@ const DEFAULT_MAX_DURATION_MS = 7_200_000; // 2h runaway backstop for still-stre
 // for the swarm (docker-compose.oshal-local.yml), so this only changes the fallback for
 // an unconfigured/fresh run, which should not silently get host-write access.
 const DEFAULT_SANDBOX_MODE = 'read-only';
-const APP_OPENAI_CODEX_CREDENTIALS_KEY = 'openAiCodexOauthCredentials';
-const CLINE_OPENAI_CODEX_CREDENTIALS_KEY = 'openai-codex-oauth-credentials';
-
 interface CodexJsonUsage {
   input_tokens?: number;
   cached_input_tokens?: number;
@@ -48,16 +47,6 @@ interface CodexJsonEvent {
     text?: string;
   };
   usage?: CodexJsonUsage;
-}
-
-interface CodexCredentialPayload {
-  access_token?: string;
-  accessToken?: string;
-  refresh_token?: string;
-  refreshToken?: string;
-  id_token?: string;
-  idToken?: string;
-  accountId?: string;
 }
 
 /**
@@ -214,6 +203,7 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
    * @description Executes the Codex CLI for one task and returns the result.
    */
   async run(task: HarnessTask): Promise<HarnessResult> {
+    assertAuditedAutonomousHarness(this.harnessType);
     const workspacePath = this.resolveWorkspacePath(task.taskId);
     fs.mkdirSync(workspacePath, { recursive: true });
 
@@ -233,7 +223,7 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
     const args = this.buildArgs(workspacePath, model);
     const env = this.buildEnv(workspacePath, runtimeHome);
     const releaseUserScoping = await this.acquireUserScopingLease(
-      env, workspacePath, task.userSub, task.creds,
+      env, workspacePath, task.userSub,
     );
     // Pre-run snapshot of the per-task auth.json — taken AFTER the per-workspace lease so a
     // queued same-workspace run baselines the PREVIOUS run's rotation, not a stale chain
@@ -360,24 +350,31 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
 
     fs.mkdirSync(authDir, { recursive: true });
 
-    if (fs.existsSync(authPath)) {
-      return runtimeHome;
-    }
-
     const sourceAuthPath = this.resolveSourceAuthPath();
     if (sourceAuthPath && fs.existsSync(sourceAuthPath)) {
-      fs.copyFileSync(sourceAuthPath, authPath);
-      this.logger.info({ authPath, sourceAuthPath }, 'Seeded Codex auth.json from mounted host credentials');
+      if (!fs.existsSync(authPath)) {
+        fs.copyFileSync(sourceAuthPath, authPath);
+        fs.chmodSync(authPath, 0o600);
+        this.logger.info({ authPath, sourceAuthPath }, 'Seeded Codex auth.json from the live auth source');
+      } else {
+        this.logger.debug({ authPath, sourceAuthPath }, 'Using the existing task-scoped Codex auth copy');
+      }
       return runtimeHome;
     }
 
-    const credentialPayload = this.loadCredentialPayload();
-    if (credentialPayload) {
-      fs.writeFileSync(authPath, JSON.stringify(this.buildAuthFilePayload(credentialPayload), null, 2), 'utf8');
-      this.logger.info({ authPath }, 'Seeded Codex auth.json from stored OpenAI Codex OAuth credentials');
+    const explicitApiKey = (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || '').trim();
+    if (explicitApiKey) {
+      // An old workspace must not override the current explicit key after its live auth source
+      // disappears. The CLI can authenticate directly from the narrowly selected environment key.
+      if (fs.existsSync(authPath)) fs.unlinkSync(authPath);
+      return runtimeHome;
     }
 
-    return runtimeHome;
+    const error = new Error(
+      'Codex live auth is required; static output/config-seed OAuth copies are disabled.',
+    );
+    (error as Error & { code?: string }).code = 'CODEX_LIVE_AUTH_REQUIRED';
+    throw error;
   }
 
   private resolveSourceAuthPath(): string | null {
@@ -392,53 +389,6 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
     }
 
     return path.join(homeDir, '.codex', 'auth.json');
-  }
-
-  private loadCredentialPayload(): CodexCredentialPayload | null {
-    const secretsFiles = [
-      path.join(process.env.CONFIG_OUTPUT_DIR || './output', 'secrets.json'),
-      process.env.OPENAI_CODEX_SHARED_SEED_PATH || '/app/config-seed/secrets.json',
-    ];
-
-    for (const filePath of secretsFiles) {
-      try {
-        if (!fs.existsSync(filePath)) {
-          continue;
-        }
-        const raw = fs.readFileSync(filePath, 'utf8');
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        const blob = parsed[APP_OPENAI_CODEX_CREDENTIALS_KEY] ?? parsed[CLINE_OPENAI_CODEX_CREDENTIALS_KEY];
-        if (typeof blob !== 'string' || blob.trim().length === 0) {
-          continue;
-        }
-        const payload = JSON.parse(blob) as CodexCredentialPayload;
-        const accessToken = payload.access_token || payload.accessToken;
-        const refreshToken = payload.refresh_token || payload.refreshToken;
-        const idToken = payload.id_token || payload.idToken;
-        if (!accessToken || !refreshToken || !idToken) {
-          continue;
-        }
-        return payload;
-      } catch (error) {
-        this.logger.warn({ err: error, filePath }, 'Failed to read OpenAI Codex credential seed');
-      }
-    }
-
-    return null;
-  }
-
-  private buildAuthFilePayload(payload: CodexCredentialPayload): Record<string, unknown> {
-    return {
-      auth_mode: 'chatgpt',
-      OPENAI_API_KEY: null,
-      last_refresh: new Date().toISOString(),
-      tokens: {
-        access_token: payload.access_token || payload.accessToken,
-        refresh_token: payload.refresh_token || payload.refreshToken,
-        id_token: payload.id_token || payload.idToken,
-        account_id: payload.accountId,
-      },
-    };
   }
 
   private parseJsonOutput(

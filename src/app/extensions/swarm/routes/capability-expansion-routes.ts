@@ -5,12 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added capability expansion + agent config API routes
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: operator-gate global capability and agent-configuration mutations.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: protect validation, expansion history, raw credential-bearing config reads, and config inventory behind the same exact operator boundary.
  */
 
 import { Router, type Request, type Response } from 'express';
 import type { CapabilityExpansionService } from '@/features/agent-management';
 import type { AgentConfigService } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
+import { isOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'capability-expansion-routes' });
 
@@ -33,6 +36,7 @@ export function createCapabilityExpansionRoutes(
    * POST /api/swarm/agents/expand-capability — Expand an agent's capabilities with a new tool.
    */
   router.post('/expand-capability', async (req: Request, res: Response) => {
+    if (!requireCapabilityOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info({ agentId: req.body?.agentId ?? null }, 'POST /api/swarm/agents/expand-capability');
     try {
@@ -57,6 +61,7 @@ export function createCapabilityExpansionRoutes(
    * POST /api/swarm/agents/expand-capability/validate — Dry-run validation of expansion spec.
    */
   router.post('/expand-capability/validate', async (req: Request, res: Response) => {
+    if (!requireCapabilityOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info({ agentId: req.body?.agentId ?? null }, 'POST /api/swarm/agents/expand-capability/validate');
     try {
@@ -74,6 +79,7 @@ export function createCapabilityExpansionRoutes(
    * GET /api/swarm/agents/:agentId/expansion-history — Get expansion history for an agent.
    */
   router.get('/:agentId/expansion-history', (req: Request, res: Response) => {
+    if (!requireCapabilityOperator(req, res)) return;
     const history = expansionService.getExpansionHistory(req.params.agentId as string);
     res.json({ agentId: req.params.agentId, history });
   });
@@ -84,6 +90,7 @@ export function createCapabilityExpansionRoutes(
    * GET /api/swarm/agents/:agentId/config — Get config schema + values for an agent.
    */
   router.get('/:agentId/config', async (req: Request, res: Response) => {
+    if (!requireCapabilityOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info({ agentId: req.params.agentId }, 'GET /api/swarm/agents/:agentId/config');
     try {
@@ -106,6 +113,7 @@ export function createCapabilityExpansionRoutes(
    * Body: { schema?: ConfigField[], values?: Record<string, unknown> }
    */
   router.put('/:agentId/config', async (req: Request, res: Response) => {
+    if (!requireCapabilityOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info({ agentId: req.params.agentId }, 'PUT /api/swarm/agents/:agentId/config');
     try {
@@ -137,6 +145,7 @@ export function createCapabilityExpansionRoutes(
    * DELETE /api/swarm/agents/:agentId/config — Delete all config for an agent.
    */
   router.delete('/:agentId/config', async (req: Request, res: Response) => {
+    if (!requireCapabilityOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info({ agentId: req.params.agentId }, 'DELETE /api/swarm/agents/:agentId/config');
     try {
@@ -157,7 +166,8 @@ export function createCapabilityExpansionRoutes(
   /**
    * GET /api/swarm/agents/configs/list — List all agents that have config registered.
    */
-  router.get('/configs/list', async (_req: Request, res: Response) => {
+  router.get('/configs/list', async (req: Request, res: Response) => {
+    if (!requireCapabilityOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info('GET /api/swarm/agents/configs/list');
     try {
@@ -172,4 +182,11 @@ export function createCapabilityExpansionRoutes(
 
   logger.info('Capability expansion routes registered');
   return router;
+}
+
+function requireCapabilityOperator(req: Request, res: Response): boolean {
+  if (isOperator(req)) return true;
+  logger.warn({ method: req.method }, 'Global agent capability or secret-bearing config access denied');
+  res.status(403).json({ error: 'operator_required' });
+  return false;
 }

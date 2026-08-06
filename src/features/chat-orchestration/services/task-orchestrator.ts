@@ -19,6 +19,8 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Marked task-orchestrator provider calls as interactionMode=chat so direct bot conversations stop inheriting swarm-style workspace execution behavior
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Routed direct-mode token telemetry through shared usage-cost resolver so zero-cost providers still persist estimated per-model usage
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Allow trusted internal direct-mode callers to bypass filesystem persona discovery with an explicit system prompt.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: stop threading connector credentials through model-provider calls; server-side connector operations resolve their own credentials at the operation boundary.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: fail closed when the tool authorization registry/interceptor is unavailable instead of exposing the raw executor.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -52,7 +54,7 @@ export interface TaskOrchestratorDeps {
   getTools: (agentId?: string) => Promise<LLMToolDefinition[]>;
   executeTool: ToolExecutionCallback;
   getSystemPrompt: (agentId?: string, tools?: LLMToolDefinition[], taskId?: string) => Promise<string>;
-  /** Optional tool auth interceptor — when provided, wraps executeTool with auth checks */
+  /** Tool auth interceptor; absence disables all agent-requested tool execution. */
   toolAuthInterceptor?: ToolAuthInterceptor;
   /** Optional non-swarm memory layer service for checkpoints and agent memory */
   memoryService?: MemoryLayerService;
@@ -245,7 +247,6 @@ export class TaskOrchestrator {
         providerId: (options as { providerId?: string }).providerId,
         model: (options as { model?: string }).model,
         userSub: options.userSub,
-        creds: (options as { creds?: Record<string, string> }).creds,
         interactionMode: ((options as Record<string, unknown>).interactionMode === 'task' ? 'task' : 'chat') as 'task' | 'chat',
       },
     );
@@ -283,7 +284,6 @@ export class TaskOrchestrator {
         providerId: (options as { providerId?: string }).providerId,
         model: (options as { model?: string }).model,
         userSub: options.userSub,
-        creds: (options as { creds?: Record<string, string> }).creds,
         interactionMode: ((options as { interactionMode?: string }).interactionMode === 'task') ? 'task' : 'chat',
       });
       const usageSummary = buildDirectUsageSummary(provider, response);
@@ -301,9 +301,8 @@ export class TaskOrchestrator {
   }
 
   /**
-   * @description Returns the tool executor, optionally wrapped with auth interceptor.
-   * If a ToolAuthInterceptor is provided in deps, wraps the base executor
-   * so that auth mode checks (auto/ask/off) are enforced before each tool call.
+   * @description Returns an authorization-wrapped executor. Missing authorization wiring returns
+   * a deterministic denial executor; the raw executor is never exposed to an agentic loop.
    *
    * @param taskId - Current task context
    * @param agentId - The agent requesting tool execution
@@ -317,7 +316,10 @@ export class TaskOrchestrator {
     );
 
     if (!this.deps.toolAuthInterceptor) {
-      return baseExecutor;
+      return async (toolName: string) => {
+        logger.warn({ toolName, taskId, agentId }, 'Tool authorization unavailable — execution denied');
+        return `[BLOCKED] Tool '${toolName}' cannot execute because authorization is unavailable.`;
+      };
     }
 
     return this.deps.toolAuthInterceptor.createInterceptedExecutor(

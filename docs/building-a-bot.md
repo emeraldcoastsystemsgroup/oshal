@@ -1,155 +1,153 @@
-# Building & registering a bot the right way
+# Building and Registering a Bot
 
-This is the canonical how-to for adding a new bot to the OSHAL swarm. It exists because the
-registry/compose/persona wiring was spread across ADRs and code comments, and "just register it
-inline" kept producing bots that aren't real swarm participants. Read this before adding a bot.
+**Status:** Current execution pattern (2026-08-06)
 
-## The rule: a bot takes one of exactly two forms
+**Author:** maintainer@emeraldcoastsystemsgroup.com
 
-A bot must be a **registered swarm node**, reached the standard way. There are two sanctioned forms.
-Pick by what the bot *does* — do not invent a third (no bespoke "run it from one route" shortcut).
+This is the canonical guide for adding a bot to the oshal swarm. A bot is a registered,
+cost-attributed identity with a persona and an accountable transport. Do not create a one-off route
+that silently invokes a model or provider under an unrelated identity.
 
-| | **A — Dedicated any-bot-swarm node** | **B — Concierge node (inline on the api)** |
+## Read this execution limit first
+
+Unattended Cline, Claude Code, Codex, and Gemini CLI execution is operationally disabled. The CLI
+adapter types remain in the registry for compatibility and future sandbox work, but their public and
+controller-direct execution paths fail closed before task lookup, persona/memory assembly, or
+workspace creation.
+
+A mounted `~/.claude`, `~/.codex`, or `~/.gemini` OAuth file—and a successful auth-status
+response—proves credential presence only. It does not authorize autonomous execution.
+
+Current work must use one of these rails:
+
+- **Hosted/BYO inference** for model reasoning. A caller's authorized `byoLlmConnection` is
+  request-scoped and never changes the bot's stored default.
+- **Schema-bounded deterministic server provider intent** for an exact external read/action. The
+  handler consumes the minimum connector credential outside the model runtime and completes before
+  persona, memory, task, or workspace side effects.
+
+Re-enable a local CLI only after an audited oshal-brokered sandbox enforces immutable request-start
+handler generations and exact operation scopes while keeping authentication and connector
+credentials outside the model-visible process and workspace.
+
+## A bot takes one of two forms
+
+| | Dedicated bot node | Inline concierge |
 |---|---|---|
-| Runs in | its own container (`BOT_RUNTIME=bot-node`) | the api container, via `ctx.orchestrator` |
-| Reach it via | `BotNodeClient.execute()` → `http://<container>:5000/api/swarm-execute`, and the `/chat` path | the app's **`POST /chat`** route (orchestrator brain), and the `/chat` path |
-| Use when | the bot **shells out** (codex CLI tools, `scripts/oshal-*.js`), controls external devices/APIs, owns a heavy per-user store, or needs its own LLM provider | the bot is **reason-only** / lightweight — a brain over data the api assembled, no shell-out |
-| Examples | `email-bot`, `home-bot`, `cloud-ops-bot`, `jarvis-bot` | `movies-concierge`, `spotify-concierge`, `travel-concierge`, `workflow-assistant` |
-| Cost capture | `recordCost` → `chat_tasks` under the bot's `agentId` | same |
+| Runs in | Its own `BOT_RUNTIME=bot-node` container | The `oshal-api` process through the orchestrator |
+| Reached by | `BotNodeClient.execute()` to `/api/swarm-execute` | The application's authenticated `POST /chat` route |
+| Use for | Isolation, long work, a dedicated store, or a validated deterministic provider intent | Reasoning over already authorized/redacted data |
+| Must not do | Run an autonomous local CLI or receive a generic credential carrier | Receive connector credentials/provider intents, run a shell, or become a control-plane shortcut |
+| Cost capture | `chat_tasks` under the bot `agentId` | Same |
 
-Both forms are **first-class swarm participants** — registered, selectable in `/chat`, cost-tracked.
-The only difference is where the LLM runs. `claude-code-as-root` cannot shell out, so any bot that
-needs a shell **must** be Form A on a `codex-cli` (or `cline`) harness.
+Both forms are registered swarm identities. The transport differs; authorization, caller ownership,
+prompt containment, tool allowlists, and cost attribution do not.
 
-## Credentials: everything is BYOK on the swarm default login
+## Identity and registry rules
 
-OSHAL does **not** bake a vendor API key per bot. Bots run **BYOK on the swarm default login** — the
-host OAuth sessions mounted read-only into the runtime:
+- Use one collision-free UUID and one name across the persona, both registries, and any manifest.
+  Boot-time `validatePersonaIdentities()` fails on duplicates or mismatches.
+- Register in both `swarm-bot-registry.ts` and `swarm-bot-registry-local.ts`; one profile must not
+  silently lose the bot.
+- A dedicated node's `container` is its service name and its port is unique. An inline concierge's
+  `container` is `oshal-api`.
+- `harnessType`/`apiType` describe configured runtime compatibility and precedence. They do not
+  bypass the autonomous-CLI preflight. Do not copy a legacy CLI harness entry and assume an OAuth
+  mount makes it runnable.
+- Internal or privileged bots should declare `accessRoles: ['operator', 'swarm']`. Omit that field
+  for ordinary user-facing domain bots only after reviewing Jarvis/catalog visibility.
 
-- `~/.claude` → Claude Code CLI  •  `~/.codex` → Codex CLI  •  `~/.gemini` → Gemini CLI
+Provider precedence remains server-owned:
 
-The default harness/model come from the compose `x-bot-env` anchor
-(`FORCE_LLM_PROVIDER` / `FORCE_LLM_MODEL`); a bot overrides them in its own compose service. A
-**per-request** key (a user's own endpoint) can ride in as `byoLlmConnection` and takes precedence
-for that one call (see [ADR-058 / byo-llm](../src/app/routes/byo-llm-routes.ts)) — but the *default* a
-bot runs on is the swarm login above. Do **not** add a vendor key to a bot's env to "make it work";
-that's a credential leak and bypasses the model.
+1. A non-generic registry `harnessType` pins the configured provider.
+2. For an unpinned entry, the per-agent database record wins.
+3. Registry `apiType` is the next fallback.
+4. `FORCE_LLM_PROVIDER`/global configuration is the deployment default and first-boot seed.
 
-## agentId rules
+That precedence selects configuration; it never converts a disabled CLI into an authorized
+execution rail. The Config Admin UI must show the server's effective provider/source rather than
+re-deriving precedence in browser code.
 
-- A v4-style UUID, unique across the registry. Boot runs `validatePersonaIdentities()`
-  ([swarm boot](../src/app/extensions/swarm/index.ts)) and **exits(1)** on a duplicate `agentId` or
-  `name`. The persona YAML `agent_id` must match the registry entry.
-- Registry id **must equal** the manifest id for app-contributed bots (the
-  [build-your-own-swarm-app](build-your-own-swarm-app.md) "compiles-but-fails" rule).
+## Credentials and provider actions
 
-## Which registry?
+Never add a vendor or connector key to a bot environment to make it work. Never put `creds`,
+`credentials`, `OSHAL_CRED_*`, or `.oshal-cred-*` in a generic request or workspace.
 
-`getActiveRegistry()` ([swarm-bot-registry.ts](../src/app/extensions/swarm/swarm-bot-registry.ts))
-returns the lean **local** registry by default, or the fuller canonical `SWARM_BOT_REGISTRY`
-when `SWARM_REGISTRY=full`. **Add your bot to both** files
-([swarm-bot-registry.ts](../src/app/extensions/swarm/swarm-bot-registry.ts) and
-[swarm-bot-registry-local.ts](../src/app/extensions/swarm/swarm-bot-registry-local.ts)) or it will be
-missing in one profile.
+Connector credentials remain in an exact server-side operation:
 
-## Should Jarvis see it? (`accessRoles`, ADR-087)
+1. authenticate the caller and derive their exact subject server-side;
+2. parse a closed, versioned provider intent and reject unknown fields;
+3. bind the dedicated handler identity and exact operation scope;
+4. resolve only the caller-owned connection for that operation;
+5. invoke the deterministic handler without a shell or model-authored arguments; and
+6. pass only the normalized/redacted result to hosted/BYO inference.
 
-By default every registered bot is discoverable and callable by every caller, **including Jarvis**
-(app catalog + the queue call-out on jarvis-sourced tickets). If the bot is internal machinery,
-privileged, or otherwise not something the assistant should reach, declare
-`accessRoles: ['operator', 'swarm']` on the registry entry — see
-[ADR-087](adr/087-access-roles-jarvis-visibility-scoping.md). Omit the field for normal
-user-facing domain bots. The same model scopes CLI tools out of Jarvis's auto tool-feed via
-`TOOL_CATALOG` in [jarvis-routes.ts](../src/app/routes/jarvis-routes.ts).
+See [connector-backed-apps.md](connector-backed-apps.md) for the complete operation recipe.
 
----
+## Dedicated bot-node recipe
 
-## Form A — add a dedicated any-bot-swarm node
+1. **Registry:** add the same identity to both registry files. Set a dedicated container name,
+   unique port, role, capabilities, and access roles. Choose a currently authorized hosted/BYO rail;
+   a legacy CLI harness value remains fail-closed.
+2. **Compose:** add a `BOT_RUNTIME=bot-node` service using the common bot image/environment. Set
+   `BOT_NAME`, `AGENT_ID`, `BOT_PERSONA_FILE`, and capabilities. Do not add connector keys or a
+   writable CLI-auth propagation path.
+3. **Persona:** create `ai-lab/bot-personas/<name>.yaml` with matching `agent_id`, bounded purpose,
+   output contract, capabilities, routing terms, and only the tools it is allowed to see.
+4. **Provider operation, if needed:** extend the closed provider-intent parser/executor and its
+   dedicated identity mapping. Do not create a generic CLI wrapper or pass a credential map.
+5. **Transport:** call `BotNodeClient.execute(agentId, request)` through the existing authenticated
+   route. Owner identity, task/workspace identity, capabilities, and authority bindings are
+   server-derived and immutable for that dispatch.
+6. **Evidence:** test denial before side effects, caller ownership, allowed/denied tools, prompt
+   containment, deterministic operation parsing, redaction, and cost attribution.
 
-1. **Registry (both files).** Give it its own `container` (NOT `oshal-api`) and a unique host `port`:
-   ```ts
-   {
-     agentId: 'a9000000-0000-0000-0000-0000000000NN',
-     name: 'calendar-bot',
-     port: 3099,
-     container: 'calendar-bot',
-     role: 'productivity/calendar',
-     capabilities: ['calendar-sync', 'event-management'],
-     harnessType: 'codex-cli',   // codex/cline can shell out; claude-code-as-root cannot
-     apiType: 'openai-codex',
-   }
-   ```
-2. **Compose service** in [docker-compose.oshal-local.yml](../docker-compose.oshal-local.yml) — copy an
-   existing bot (e.g. `home-bot`). Inherit `<<: *bot-common` and `<<: *bot-env`; set `BOT_NAME`,
-   `AGENT_ID`, `BOT_PERSONA_FILE`, `AGENT_CAPABILITIES`, optional `FORCE_LLM_PROVIDER`/`FORCE_LLM_MODEL`
-   override, the auth-volume anchors (`*codex-auth-volume` / `*claude-auth-volume` = the swarm login),
-   and an own output/data volume. `depends_on` redis + db + oshal-api healthy.
-3. **Persona** `ai-lab/bot-personas/<name>.yaml` — `name`, `role`, `agent_id` (matches registry),
-   `perspective` (system prompt), `capabilities`, `routing_keywords`, `selector_descriptor`,
-   `authorizations` for the tools it may call.
-4. **Tool CLI** (if it shells out) — `scripts/oshal-<provider>.js`, reading the caller's brokered token
-   (`OSHAL_CRED_*` / `.oshal-cred-*`), like [scripts/oshal-gmail.js](../scripts/oshal-gmail.js).
-5. **Reach it** — `BotNodeClient.execute(agentId, {...})` from the app route (use
-   [`executeBotOrInline`](../src/app/routes/inline-bot-execution.ts) so it works in both forms). The
-   node heartbeats to `oshal:runtime-agent:{agentId}` every 30s and resolves to `http://<container>:5000`.
+## Inline concierge recipe
 
-## Form B — add a concierge node (inline, reached via /chat)
+Use an inline bot only for reasoning over data the authenticated route already obtained safely. An
+inline request cannot carry connector credentials or a deterministic provider intent; those require
+a dedicated audited handler.
 
-This is the right form for a **reason-only** bot. Worked example:
-[`workflow-assistant`](../ai-lab/bot-personas/workflow-assistant.yaml) (Workflow Studio, ADR-039) and
-`travel-concierge` in the store-side Travel package.
+1. Register the identity in both registries with `container: 'oshal-api'`.
+2. Create the persona with a strict output contract. It should transform provided data, not fetch an
+   account through a hidden shell or credential.
+3. Mount an authenticated `POST /chat` route. Derive the exact caller subject, load caller-owned
+   non-secret context, resolve an authorized hosted/BYO inference connection when needed, and call
+   `executeBotOrInline` without any generic credential field:
 
-1. **Registry (both files)** with `container: 'oshal-api'`:
-   ```ts
-   {
-     agentId: 'a0000000-0000-0000-0000-000000000051',
-     name: 'workflow-assistant',
-     port: 3010,
-     container: 'oshal-api',                 // inline → orchestrator runs the brain
-     role: 'workflow/orchestration-specialist',
-     capabilities: ['workflow-design', 'process-architecture'],
-     harnessType: 'claude-code',
-     apiType: 'claude-code',
-   }
-   ```
-   No compose service is needed (it runs in the api container, on the swarm default login).
-2. **Persona** `ai-lab/bot-personas/<name>.yaml` — same shape as Form A. For a reason-only bot, pin a
-   strict **output contract** in the perspective (e.g. workflow-assistant emits one validated
-   `workflow-graph` JSON block and calls no API) so the surface can parse it deterministically.
-3. **`POST /chat` route** — the standard concierge transport. Resolve the caller `sub`, broker any
-   tool creds, run the brain, persist to the app's own store, return the result:
    ```ts
    const result = await executeBotOrInline(ctx, botClient, AGENT_ID, {
-     text: prompt, taskId: `myapp-${sub}`, workspaceFolderId: `myapp-${sub}`,
-     agentId: AGENT_ID, agenticMode: true, direct: true, userSub: sub, creds,
+     text: prompt,
+     taskId: `myapp-${sub}`,
+     workspaceFolderId: `myapp-${sub}`,
+     agentId: AGENT_ID,
+     agenticMode: true,
+     direct: true,
+     userSub: sub,
+     byoLlmConnection,
    });
-   // parse result.response, persist to the app store, return it
    ```
-   See the store-side `travel-routes.ts` (`router.post('/chat', ...)`) and
-   [workflow-studio-assist-routes.ts](../src/app/routes/workflow-studio-assist-routes.ts) for the two
-   shapes (concierge-envelope vs. a typed store like the Workflow Studio definition store).
-4. **Surface** — the cockpit page/panel calls `POST /api/<app>/chat`. Reasoning runs on the
-   accountable bot, so cost lands in `chat_tasks` under its `agentId` (ADR-036).
 
----
+4. Validate the bot's structured output and persist only to an owner-scoped application store.
+5. Return cost/usage under the bot identity. Never fall back to a controller-local CLI.
 
 ## New-bot checklist
 
-- [ ] Unique `agentId` (UUID) + `name`; persona `agent_id` matches.
-- [ ] Registered in **both** `swarm-bot-registry.ts` and `swarm-bot-registry-local.ts`.
-- [ ] Form A: compose service added (image, `BOT_*` env, auth-volume anchors, depends_on). Form B:
-      `container: 'oshal-api'`, no compose service.
-- [ ] Persona YAML present; reason-only bots pin a strict output contract.
-- [ ] Reached via `BotNodeClient`/`executeBotOrInline` and a `POST /chat` route — **not** a one-off
-      bespoke endpoint.
-- [ ] No vendor API key added to the bot's env — it runs BYOK on the swarm default login.
-- [ ] `npx tsc --noEmit` clean; boot does not fail `validatePersonaIdentities()`.
-- [ ] A human can exercise it from `localhost` with `MOCK_OIDC=true`.
+- [ ] One UUID/name across persona, both registries, and manifest; duplicate validation passes.
+- [ ] Dedicated node or inline concierge chosen explicitly; no bespoke third execution path.
+- [ ] Exact caller ownership and access roles enforced at every entry point.
+- [ ] Hosted/BYO inference or a closed deterministic provider intent selected.
+- [ ] No unattended Cline/Claude Code/Codex/Gemini CLI assumption.
+- [ ] OAuth/auth-file presence treated as diagnostics, not execution authority.
+- [ ] No `creds`, `credentials`, `OSHAL_CRED_*`, or `.oshal-cred-*` model/workspace carrier.
+- [ ] Persona has a bounded purpose, strict output contract, and minimum tool authorization.
+- [ ] Prompt/memory/tool containment and denial-before-side-effects tests pass.
+- [ ] Typecheck and focused tests pass; a human can exercise the safe rail locally.
 
-## See also
+## References
 
-- [ADR-019 — per-bot container architecture](adr/019-per-bot-container-architecture.md)
-- [ADR-033 — multi-harness execution framework](adr/033-multi-harness-execution-framework.md)
-- [ADR-036 — bot-owned application architecture](adr/036-bot-owned-application-architecture.md)
-- [ADR-039 — bot-driven workflow authoring](adr/039-bot-driven-workflow-authoring.md) (concierge worked example)
-- [build-your-own-swarm-app.md](build-your-own-swarm-app.md) — app manifests that contribute bots
+- [ADR-019](adr/019-per-bot-container-architecture.md) — per-bot container architecture.
+- [ADR-033](adr/033-multi-harness-execution-framework.md) — historical multi-harness framework;
+  current CLI execution is fail-closed as described above.
+- [ADR-036](adr/036-bot-owned-application-architecture.md) — accountable bot-owned domains.
+- [SECURITY-HARDENING.md](security/SECURITY-HARDENING.md) — current containment posture.

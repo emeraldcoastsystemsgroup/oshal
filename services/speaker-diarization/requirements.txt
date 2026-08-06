@@ -3,8 +3,13 @@
 # SEQ                 | AUTHOR                                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Pinned the isolated CPU inference and HTTP runtime.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Upgraded FastAPI and pinned its Starlette runtime to patched releases so multipart parsing and HTTP request handling no longer resolve known vulnerable versions.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin the latest patched pre-1.0 Starlette compatible with FastAPI's startup API; Starlette 1.x removed Router on_startup while FastAPI 0.141.1 still calls it.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Retire the incompatible FastAPI wrapper and run the small service directly on patched Starlette 1.3.1, removing an unused dependency while preserving the ASGI contract.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Pin Pydantic as an explicit production dependency after retiring FastAPI so the response schemas never depend on an accidental transitive install.
 
-fastapi==0.116.1
 numpy==2.2.6
+pydantic==2.13.4
 sherpa-onnx==1.13.1
+starlette==1.3.1
 uvicorn==0.35.0

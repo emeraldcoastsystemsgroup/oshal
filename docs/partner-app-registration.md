@@ -38,11 +38,17 @@ OSHAL splits cleanly:
 
 | Part | Who | What |
 |---|---|---|
-| **Code** | Claude | The connector (OAuth/token flow), the per-user encrypted token store, the CLI/bot that uses the token. Already built for each connector listed in the appendix. |
+| **Code** | `maintainer@emeraldcoastsystemsgroup.com` | The connector (OAuth/token flow), encrypted per-user token store, and exact deterministic server operation that may consume the token. |
 | **Human** | You | Register the app on the partner site, copy the credentials, paste them into `.env` (OAuth) or `/utilities` (token). That's it. |
 
 You never write code. You register the app and hand me the credentials. This doc
 tells you *exactly* which buttons to click and which values to copy.
+
+> **Execution boundary:** registration or OAuth presence does not authorize an autonomous
+> Cline/Claude Code/Codex/Gemini CLI. Unattended CLI execution is disabled pending an audited
+> oshal-brokered sandbox. A per-user token may be resolved only inside an exact schema-bounded
+> server operation; it never enters a prompt, model/CLI environment, generic bot request, or
+> workspace. Hosted/BYO inference receives only the normalized/redacted operation result.
 
 ---
 
@@ -123,7 +129,7 @@ Redirect URI (Shape A): https://oshal.example.com/api/connect/<id>/callback
 Scopes / permissions: __________
 Env vars (Shape A): <ID>_CLIENT_ID, <ID>_CLIENT_SECRET, <ID>_REDIRECT_URI
 Account-lookup endpoint: __________            # how we label the connection
-Downstream API the bot calls: __________       # must be a REAL usable API (no mock)
+Exact server operation + downstream API: __________  # must be real and schema-bounded
 ```
 
 > **No connectors to nowhere.** Only wire a connector whose token can actually *do*
@@ -161,8 +167,9 @@ OAuth-In so each signed-in user grants access to their own SmartThings data.
    - optional override: `SMARTTHINGS_REDIRECT_URI`
 6. Restart the API, then open `/utilities` -> **Smart Home** -> **SmartThings** -> **Connect**.
 
-The connector stores one SmartThings access/refresh token pair per signed-in OSHAL
-user. The home bot receives only that user's brokered access token at runtime.
+The connector stores one SmartThings access/refresh token pair per signed-in oshal user. An exact
+server operation may resolve that user's token for one bounded request; the home bot/model receives
+only the normalized result.
 
 ### Google Nest (Home) — Shape A (OAuth), **wired, needs your registration**
 
@@ -221,13 +228,14 @@ The **click-to-login** counterpart to the `gcloud` operator CLI login (above). A
 signed-in user connects their Google Cloud account on `/utilities`; the token drives
 the Cloud Resource Manager / Compute / Billing REST APIs (e.g.
 `GET cloudresourcemanager.googleapis.com/v1/projects`). Default scope is
-**read-only**; expand via `GCP_SCOPES` to let a bot act, not just read.
+**read-only**; expand `GCP_SCOPES` only after implementing an exact server-side write operation and
+its approval gate. Never expand scopes merely to let an autonomous bot/CLI act.
 
 Register its **own** OAuth client (NOT the login client — the consent screen must
 authorize the cloud-platform scope):
 
-1. At **https://console.cloud.google.com/apis/credentials** (signed in as the
-   **personal gmail that owns the org** — the deliberate Rule 0 exception):
+1. At **https://console.cloud.google.com/apis/credentials** (signed in as
+   `maintainer@emeraldcoastsystemsgroup.com`; Rule 0 has no connector-registration exception):
    - Enable the **Cloud Resource Manager API** (and any others a bot will call).
    - Configure the OAuth consent screen (add yourself as a test user).
    - *Create credentials → OAuth client ID → Web application.*
@@ -249,12 +257,11 @@ authorize the cloud-platform scope):
 
 ### Microsoft Outlook / M365 (`outlook`) — Shape A (OAuth), **wired, needs your Azure app registration**
 
-The email swarm's second mail provider (ADR-037: adding a provider = a connector +
-a `scripts/oshal-<provider>.js` CLI, never a new app). The token drives Microsoft
-Graph v1.0 — `GET /me/messages` (list), `GET /me/messages/{id}` (read one),
-`POST /me/sendMail` (send, `--confirm`-gated in the CLI), and `GET /me/calendarView`
-(the digest's calendar half) — via `scripts/oshal-outlook.js`, same output contract
-as `oshal-gmail.js` so the communications-bot runs either.
+The email swarm's second mail provider. The token can drive exact Microsoft Graph v1.0 operations:
+`GET /me/messages`, `GET /me/messages/{id}`, `POST /me/sendMail`, and
+`GET /me/calendarView`. Adding a provider means adding the connector plus closed server operation
+schemas/handlers and their authorization/approval tests—not a generic model-visible
+`scripts/oshal-<provider>.js` CLI.
 
 Filled-in template:
 
@@ -267,7 +274,7 @@ Redirect URI (Shape A): https://oshal.example.com/api/connect/outlook/callback
 Scopes / permissions: offline_access, Mail.Read, Mail.Send, Calendars.Read (+ openid profile email)
 Env vars (Shape A): AZURE_EMAIL_APPLICATION_ID, OUTLOOK_CLIENT_VALUE, AZURE_EMAIL_TENANT (optional)
 Account-lookup endpoint: GET https://graph.microsoft.com/v1.0/me (mail / userPrincipalName)
-Downstream API the bot calls: Microsoft Graph v1.0 /me/messages, /me/sendMail, /me/calendarView
+Exact server operations: Microsoft Graph v1.0 /me/messages, /me/sendMail, /me/calendarView
 ```
 
 The click-path (Azure wraps the standard Shape A steps in its own console names):
@@ -295,8 +302,9 @@ The click-path (Azure wraps the standard Shape A steps in its own console names)
 6. Optional: single-tenant lockdown via `.env` `AZURE_EMAIL_TENANT=<directory-id>`
    (default `common` = any account). Restart the api container.
 7. **Connect** at `/utilities → Outlook / Microsoft 365` — approve on the Microsoft
-   consent screen, done. The connection stores an encrypted refresh token per user;
-   the token broker hands the bot short-lived access tokens (`OSHAL_CRED_OUTLOOK`).
+   consent screen, done. The connection stores an encrypted refresh token per user. A bounded
+   server operation may resolve a short-lived access token internally; the bot/model never receives
+   `OSHAL_CRED_OUTLOOK` or another raw credential carrier.
 
 > ⚠️ **Scope change 2026-07-15:** `Mail.Send` was added for the send leg. If the
 > Azure app predates this, add the `Mail.Send` delegated permission (step 5) AND
@@ -361,6 +369,7 @@ URIs that are already registered under the business email.
 | Dropbox (`dropbox`) | A | `/api/connect/dropbox/callback` | `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` |
 | Facebook login (`facebook`) | A | `/auth/facebook/callback` | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` |
 | Facebook Pages (`meta-business`) | A | `/api/connect/meta-business/callback` | `META_APPID_OSHAL_BUSINESS`, `META_APPSECRET_OSHAL_BUSINESS` |
+| Facebook bot Page auth | A | `/api/facebook-auth/callback` | deployment-managed `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, and required `ENCRYPTION_KEY`; browser password/App-Secret write routes return 410 |
 | SmartThings (`smartthings`) | A | `/api/connect/smartthings/callback` | `SMARTTHINGS_CLIENT_ID`, `SMARTTHINGS_CLIENT_SECRET` |
 | Google Nest (`google-home`) | A | `/api/connect/google-home/callback` | `GOOGLE_HOME_CLIENT_ID/SECRET`, `GOOGLE_HOME_PROJECT_ID` |
 | Spotify (`spotify`) — Music | A | `/api/connect/spotify/callback` | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` (dev-mode: 5 Premium users, allowlist) |
@@ -399,6 +408,8 @@ customer box):
 > operator's home directory — it is **not** stored in the OSHAL token store and is
 > **not** per-end-user. Don't confuse the two: a DevOps login gives broad
 > account-level control, so it stays on the operator's machine, never in the app.
+> It is also not an oshal bot harness: never mount/copy this home into a bot container or treat the
+> login as authority for unattended model work. Shape C commands are interactive operator actions.
 
 ## Shape C — Operator CLI login
 
@@ -416,11 +427,9 @@ The repeatable steps (identical across cloud CLIs — only the commands change):
 
 ### Account choice (Rule 0 applies, with a caveat)
 
-Prefer the **business identity** that owns the cloud org and billing
-(`maintainer@emeraldcoastsystemsgroup.com`) so IAM grants, billing, and audit logs
-trace to one place — same reasoning as Rule 0. A personal account can authenticate
-the CLI, but it will only see projects that account has IAM on. Confirm
-`gcloud auth list` shows the identity you intend **before** acting.
+Use the business identity `maintainer@emeraldcoastsystemsgroup.com` so IAM grants, billing, and audit
+logs trace to the same maintained owner as partner applications. Do not create a new personal-owner
+exception. Confirm `gcloud auth list` shows the business identity before acting.
 
 ### Where the credential lives
 
@@ -433,15 +442,11 @@ the CLI, but it will only see projects that account has IAM on. Confirm
 
 # Appendix — Per-platform DevOps logins
 
-## Google Cloud Platform (`gcloud`) — wired, operator login
+## Google Cloud Platform (`gcloud`) — operator login
 
-> ⚠️ **Deliberate Rule 0 exception — GCP is owned by the personal account.** The
-> OSHAL GCP org/project (which fronts the hosting + domain) was created under
-> **a personal Google account**, not the business email. This was intentional: that
-> account was used to stand up the server and acquire the domain, and the org/billing
-> now live there. **Do not "correct" this to the business address** — `gcloud auth
-> login` for this platform uses the **personal gmail**. (Partner-app connectors above
-> still follow Rule 0 and use the business email; this exception is GCP-operator only.)
+Use `maintainer@emeraldcoastsystemsgroup.com`. If a legacy project is still owned by another
+identity, transfer IAM/billing ownership through the provider before calling the registration
+complete; do not copy that credential into this repository, a bot container, or documentation.
 
 As-built procedure (this is exactly how the workstation was set up):
 
@@ -478,9 +483,9 @@ As-built procedure (this is exactly how the workstation was set up):
    gcloud config get-value project        # confirm the project
    ```
 
-> **Note:** `gcloud` operates the platform via CLI — the web console at
-> `console.cloud.google.com` is GUI-only and not scriptable. Anything the console
-> does has a `gcloud` / `gsutil` / `bq` equivalent; use those for automation.
+> **Note:** `gcloud`, `gsutil`, and `bq` are operator-workstation tools. Use them only in an
+> interactive/operator-owned automation context with a reviewed command and explicit target. They
+> are not unattended oshal model harnesses, and their credential homes must never enter a bot.
 
 ## Template — adding another DevOps CLI (AWS, Azure, …)
 

@@ -5,6 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Canonicalize every legacy forceTaskId before lookup/creation, reject every supplied owner assertion on the runtime that cannot enforce owner scoping, and forbid containment refusals from falling through to a generated workspace.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove wildcard CORS, fail startup and all non-health requests closed behind service auth, require exact tool/scope grants, and retire unscoped legacy task/message APIs.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Reject raw credential carriers on provider mutations before changing runtime state; Cline metadata builders now receive provider/model only.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: retain exact dispatch agent identity in the authorization context; ownerless legacy nodes still cannot invoke user-bound MCP tools.
  */
 
 /**
@@ -23,14 +27,20 @@
  *
  * Per any-bot-swarm-separation-design.md:
  *   - The swarm controller assembles prompts and dispatches via HTTP
- *   - This node handles LLM execution, credential management, CLI spawning
+ *   - This node handles authorized LLM execution and provider metadata selection
  */
 
 const express = require('express');
-const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { authorizeSwarmExecute } = require('./services/codebase/swarm-execute-auth');
+const {
+  assertServiceSecretConfigured,
+  authorizeAnyBotRequest,
+  authorizeSwarmExecute,
+} = require('./services/codebase/swarm-execute-auth');
+const { canonicalWorkspaceId } = require('./services/codebase/task-workspace-scope');
+const { requireDispatchAuthorityList } = require('./utils/dispatch-capabilities');
+const { assertUnattendedProviderSelection } = require('./services/llm/assert-cli-tool-boundary');
 
 // LLM providers
 const ClineProvider = require('./services/llm/ClineProvider');
@@ -56,6 +66,18 @@ const logger = {
   error: (...args) => console.error(`[swarm-node]`, ...args),
   debug: (...args) => { if (process.env.LOG_LEVEL === 'debug') console.log(`[swarm-node:debug]`, ...args); },
 };
+
+/** True only for workspace security errors that must never select a fallback directory. */
+function isWorkspaceBoundaryError(error) {
+  return Boolean(error && error.code === 'UNSAFE_TASK_WORKSPACE');
+}
+
+/** Build a stable boundary error when TaskController violates the canonical ID contract. */
+function workspaceMismatchError() {
+  const error = new Error('TaskController returned a non-canonical workspace id');
+  error.code = 'UNSAFE_TASK_WORKSPACE';
+  return error;
+}
 
 /**
  * @description Broadcast a locally-originated bot config change up to the OSHAL controller
@@ -95,7 +117,7 @@ async function broadcastConfigChange(redisClient, agentId, params, source) {
 class SwarmNodeServer {
   constructor() {
     this.app = express();
-    this.app.use(cors());
+    this.app.use(authorizeAnyBotRequest);
     this.app.use(express.json({ limit: '50mb' }));
 
     this.currentLLMProvider = 'cline-cli';
@@ -107,6 +129,7 @@ class SwarmNodeServer {
   }
 
   async initialize() {
+    assertServiceSecretConfigured();
     logger.info('Initializing swarm node runtime...');
 
     // Stream controller (for SSE — lightweight, no socket.io)
@@ -217,7 +240,18 @@ class SwarmNodeServer {
     });
 
     this.app.put('/api/llm-provider', (req, res) => {
-      const { provider, model } = req.body;
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+        ? req.body
+        : {};
+      if (Object.prototype.hasOwnProperty.call(body, 'credentials')) {
+        res.status(400).json({
+          success: false,
+          error: 'credential fields are not accepted on runtime configuration mutations',
+        });
+        return;
+      }
+
+      const { provider, model } = body;
       if (provider === 'claude-code' && this.claudeCodeProvider) {
         this.currentLLMProvider = 'claude-code';
       } else {
@@ -231,8 +265,8 @@ class SwarmNodeServer {
       // Write Cline config if using cline-cli
       if (this.currentLLMProvider === 'cline-cli' && provider) {
         try {
-          const clineConfig = LLMProviderRegistry.buildClineConfig(provider, model, req.body.credentials);
-          const globalState = LLMProviderRegistry.buildGlobalState(provider, model, req.body.credentials);
+          const clineConfig = LLMProviderRegistry.buildClineConfig(provider, model);
+          const globalState = LLMProviderRegistry.buildGlobalState(provider, model);
           if (clineConfig) {
             const configDir = process.env.CLINE_CONFIG_DIR || path.join(process.env.HOME || '/root', '.cline');
             fs.mkdirSync(configDir, { recursive: true });
@@ -267,7 +301,8 @@ class SwarmNodeServer {
         // supported BOT_RUNTIME=any-bot entrypoint runs app.js, which implements
         // the authenticated owner-scoped contract. Reject instead of dropping or
         // accidentally exposing sensitive request data here.
-        const carriesUserSub = typeof req.body?.userSub === 'string' && req.body.userSub.trim().length > 0;
+        const carriesUserSub = Boolean(req.body
+          && Object.prototype.hasOwnProperty.call(req.body, 'userSub'));
         const carriesCreds = req.body?.creds && typeof req.body.creds === 'object'
           && Object.keys(req.body.creds).length > 0;
         if (carriesUserSub || carriesCreds) {
@@ -276,32 +311,49 @@ class SwarmNodeServer {
             error: 'owner-scoped execution is unsupported by the legacy swarm-node runtime',
           });
         }
-        const { text, taskId, workspaceFolderId, agentId, agenticMode = true } = req.body;
+        const {
+          text, taskId, workspaceFolderId, agentId, agenticMode = true,
+          allowedTools, authorizedScopes,
+        } = req.body;
 
         if (!text) {
           return res.status(400).json({ success: false, error: 'text is required' });
         }
+        const dispatchAllowedTools = requireDispatchAuthorityList(
+          allowedTools, 'allowedTools', 256,
+        );
+        const dispatchAuthorizedScopes = requireDispatchAuthorityList(
+          authorizedScopes, 'authorizedScopes', 512,
+        );
 
         logger.info(`[swarm-execute] taskId=${taskId}, agentId=${agentId}, textLen=${text.length}, workspace=${workspaceFolderId}`);
+        assertUnattendedProviderSelection(this.currentLLMProvider);
 
         // Resolve or create task
-        const effectiveTaskId = workspaceFolderId || taskId || `swarm-${Date.now()}`;
+        const logicalTaskId = workspaceFolderId !== undefined
+          ? workspaceFolderId
+          : taskId !== undefined ? taskId : `swarm-${Date.now()}`;
+        const effectiveTaskId = canonicalWorkspaceId(logicalTaskId);
         let task;
         try {
           task = await taskController.getTask(effectiveTaskId);
           if (!task) {
             task = await taskController.createTask(`Swarm execution for ${agentId}`, 'act', { forceTaskId: effectiveTaskId });
-            if (task.id !== effectiveTaskId) task.id = effectiveTaskId;
+            if (task.id !== effectiveTaskId) throw workspaceMismatchError();
           }
-        } catch {
+        } catch (error) {
+          if (isWorkspaceBoundaryError(error)) throw error;
           task = await taskController.createTask(`Swarm execution for ${agentId}`, 'act');
         }
 
         // Execute
         const result = await taskController.processMessage(task.id, { text }, {
           agenticMode,
-          autoApprove: { 'use_mcp_tool': true },
+          autoApprove: {},
           source: 'swarm-dispatch',
+          agentId,
+          allowedTools: dispatchAllowedTools,
+          authorizedScopes: dispatchAuthorizedScopes,
         });
 
         const durationMs = Date.now() - execStart;
@@ -353,56 +405,24 @@ class SwarmNodeServer {
       } catch (error) {
         const durationMs = Date.now() - execStart;
         logger.error(`[swarm-execute] Failed — ${error.message} (${durationMs}ms)`);
-        res.status(500).json({ success: false, error: error.message, durationMs });
+        const invalidAuthority = error?.code === 'INVALID_DISPATCH_AUTHORITY';
+        res.status(invalidAuthority ? 400 : 500).json({
+          success: false,
+          error: invalidAuthority ? 'invalid_execution_scope' : error.message,
+          durationMs,
+        });
       }
     });
 
     // ── Task endpoints (for workspace/session management) ────────────
-    this.app.post('/api/tasks', async (req, res) => {
-      try {
-        const { title, mode } = req.body;
-        const task = await taskController.createTask(title || 'Swarm task', mode || 'act');
-        res.json({ success: true, task });
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
+    const retiredUnscopedRoute = (_req, res) => res.status(410).json({
+      error: 'unscoped legacy task APIs are retired; use authenticated /api/swarm-execute',
     });
-
-    this.app.post('/api/tasks/:taskId/messages', async (req, res) => {
-      try {
-        const { taskId } = req.params;
-        const { text, agenticMode = true } = req.body;
-        const result = await taskController.processMessage(taskId, { text }, { agenticMode, autoApprove: {} });
-        res.json({ success: true, result });
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
-    });
+    this.app.post('/api/tasks', retiredUnscopedRoute);
+    this.app.post('/api/tasks/:taskId/messages', retiredUnscopedRoute);
 
     // ── Send message (legacy compat for incident pipeline) ───────────
-    this.app.post('/api/send-message', async (req, res) => {
-      try {
-        const { text, taskId, agentId, agenticMode = true } = req.body;
-        const effectiveTaskId = taskId || `msg-${Date.now()}`;
-        let task;
-        try {
-          task = await taskController.getTask(effectiveTaskId);
-        } catch { task = null; }
-        if (!task) {
-          task = await taskController.createTask(`Message for ${agentId || 'agent'}`, 'act', { forceTaskId: effectiveTaskId });
-          if (task.id !== effectiveTaskId) task.id = effectiveTaskId;
-        }
-        const result = await taskController.processMessage(task.id, { text }, { agenticMode, autoApprove: { 'use_mcp_tool': true }, source: 'swarm-dispatch' });
-        let response = '';
-        if (result.messages && result.messages.length > 0) {
-          const cm = result.messages.find(m => m.say === 'completion_result' && m.text && m.text.length > 20);
-          response = cm ? cm.text : result.messages.filter(m => m.say === 'text' && m.text).map(m => m.text).join('\n\n');
-        }
-        res.json({ success: true, response, taskId: task.id });
-      } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-      }
-    });
+    this.app.post('/api/send-message', retiredUnscopedRoute);
   }
 
   async registerWithRedis() {

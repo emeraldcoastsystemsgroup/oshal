@@ -17,14 +17,19 @@
  *   jobs       {status?, limit?}                                -> list jobs
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Send X-Service-Secret (SWARM_SERVICE_SECRET) — /api/vids is now guarded by serviceSecretOr(requiresAuth)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add story / story-next verbs — dispatch a multi-scene Extend story (or the next library story) to the remote Vids worker via POST /api/vids/story (backs creative_produce* tools).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bind service calls to the exact OSHAL_USER_SUB with the canonical base64url identity header so Vids route/RLS checks never run under fleet-wide authority.
  */
 'use strict';
 
 const BASE = `http://localhost:${process.env.PORT || '5000'}/api/vids`;
 const SECRET = (process.env.SWARM_SERVICE_SECRET || '').trim();
+const USER_SUB = process.env.OSHAL_USER_SUB || '';
 function authHeaders(extra) {
   const h = Object.assign({}, extra);
-  if (SECRET) h['X-Service-Secret'] = SECRET;
+  if (SECRET) {
+    h['X-Service-Secret'] = SECRET;
+    if (USER_SUB) h['X-Oshal-User-Sub-B64'] = Buffer.from(USER_SUB, 'utf8').toString('base64url');
+  }
   return h;
 }
 

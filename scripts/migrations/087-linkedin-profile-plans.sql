@@ -1,7 +1,6 @@
--- =============================================================================
--- Migration 087: LinkedIn Profile Studio plans (Intelligent Career)
+-- CHANGE LOG
 -- -----------------------------------------------------------------------------
--- DATE         | AUTHOR                                    | DESCRIPTION
+-- SEQ                 | AUTHOR                                      | DESCRIPTION
 -- -----------------------------------------------------------------------------
 -- 1 | maintainer@emeraldcoastsystemsgroup.com   | Per-user plan for the
 --              | LinkedIn Profile Studio: the desired profile shape (headline, about,
@@ -17,12 +16,12 @@
 --              | profile photo/headshot (direct upload or picked from the user's
 --              | Portrait Studio gallery). Trailing ALTER upgrades tables created
 --              | by the earlier same-day build in place.
--- =============================================================================
+-- 3 | maintainer@emeraldcoastsystemsgroup.com   | Add monotonic dispatch generations and one-use callback capability bindings so stale, replayed, expired, or mismatched desktop results cannot mutate a later plan.
 
 -- The user's desired LinkedIn profile + lifecycle. `state` is the machine
 -- (draft -> approved -> dispatched -> applied | failed; reset returns to draft).
--- Asset paths point into the per-user career store on the api container; the
--- dispatch prompt docker-cp's them out to the desktop worker. `result_note`
+-- Asset paths point into the per-user career store on the api container; trusted
+-- dispatch code stages contained regular files into the remote task workspace. `result_note`
 -- carries the operator's per-field outcome report (what changed / what blocked).
 CREATE TABLE IF NOT EXISTS linkedin_profile_plans (
   id                    SERIAL PRIMARY KEY,
@@ -37,6 +36,11 @@ CREATE TABLE IF NOT EXISTS linkedin_profile_plans (
   state                 TEXT NOT NULL DEFAULT 'draft',
   dispatch_task_id      TEXT,
   dispatch_client_id    TEXT,
+  dispatch_generation   BIGINT NOT NULL DEFAULT 0,
+  callback_capability_hash TEXT,
+  callback_capability_expires_at TIMESTAMPTZ,
+  callback_capability_operation TEXT,
+  callback_capability_used_at TIMESTAMPTZ,
   result_note           TEXT,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -47,3 +51,8 @@ CREATE INDEX IF NOT EXISTS idx_linkedin_profile_plans_state
 
 -- Upgrade-in-place for tables created before photo_path existed (same-day build).
 ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS photo_path TEXT;
+ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS dispatch_generation BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS callback_capability_hash TEXT;
+ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS callback_capability_expires_at TIMESTAMPTZ;
+ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS callback_capability_operation TEXT;
+ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS callback_capability_used_at TIMESTAMPTZ;

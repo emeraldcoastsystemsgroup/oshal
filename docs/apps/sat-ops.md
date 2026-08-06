@@ -95,5 +95,7 @@ truth-scored hold, 30 s star-tracker outage ride-through, momentum fault→auton
 **100% pass** against physics-derived criteria.
 
 Reproduce it here rather than reading the archive: the estimator and its guards are in-repo
-(`src/features/sat-ops/`, `tests/unit/sat-mekf.spec.ts`). Live NASA-42 missions and the architecture
-are in [ADR-102](../adr/102-sat-ops-satellites-as-swarm-nodes.md).
+(`src/features/sat-ops/`, `tests/unit/sat-mekf.spec.ts`). The direct-versus-conjugate NASA 42
+wire replay and its 2/2/20-arcsec body-axis covariance proof are in
+`tests/unit/sat-ops-nasa42-convention.spec.ts`. Live NASA-42 missions and the architecture are in
+[ADR-102](../adr/102-sat-ops-satellites-as-swarm-nodes.md).

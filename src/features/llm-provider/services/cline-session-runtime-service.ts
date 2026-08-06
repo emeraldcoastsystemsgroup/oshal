@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixed provider poisoning: applyResolvedSelection overwrites VSCode Cline settings in session config
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added copyClinerules to copy governance rules from project root to task workspace
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Session 99: Mirror MCP settings to data/settings/cline_mcp_settings.json
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: stop copying provider/seed secrets into task workspaces, overwrite session state with plan-only no-approval metadata, and leave model-selected MCP servers empty while unattended CLI execution is disabled.
  */
 
 import fs from 'fs';
@@ -16,6 +17,7 @@ import {
   ClineRuntimeConfigSyncService,
   type ClineRuntimeSelection,
 } from './cline-runtime-config-sync-service';
+import { buildClineConfig, buildClineGlobalState } from './cline-config-builder';
 import type { ToolCapabilityScope } from './tool-capability-scope';
 
 const logger = createChildLogger({ module: 'cline-session-runtime-service' });
@@ -30,8 +32,8 @@ export interface ClineSessionRuntime {
 }
 
 /**
- * @description Creates per-task Cline runtime directories so MCP settings can be session-specific
- * while provider credentials and global state are safely copied from the persisted runtime.
+ * @description Creates per-task Cline compatibility directories containing only non-secret,
+ * plan-only metadata. Provider credentials never enter the task workspace.
  */
 export class ClineSessionRuntimeService {
   private readonly runtimeSyncService: ClineRuntimeConfigSyncService;
@@ -69,12 +71,14 @@ export class ClineSessionRuntimeService {
 
     this.copyRuntimeFile('config.json', sessionConfigDir);
     this.copyRuntimeFile(path.join('data', 'globalState.json'), sessionConfigDir);
-    this.copyRuntimeFile(path.join('data', 'secrets.json'), sessionConfigDir);
 
     this.applyResolvedSelection(sessionConfigDir, selectionOverride);
     this.copyClinerules(workspacePath);
 
-    const mcpSettings = this.runtimeSyncService.buildSessionMcpSettings(capabilityScope ?? { agentId });
+    // Preserve the parameter for API compatibility, but never turn an advertised capability
+    // into a model-visible MCP server while autonomous CLI execution is disabled.
+    void capabilityScope;
+    const mcpSettings: Record<string, unknown> = { mcpServers: {} };
     const mcpSettingsPath = path.join(sessionConfigDir, 'mcp_settings.json');
     fs.writeFileSync(mcpSettingsPath, JSON.stringify(mcpSettings, null, 2), 'utf8');
     // Mirror to the path Cline CLI actually reads — fixes zero-tool bug (Session 99)
@@ -101,78 +105,48 @@ export class ClineSessionRuntimeService {
     const selection = selectionOverride || this.runtimeSyncService.readRuntimeSelection(defaultModel);
 
     const configPath = path.join(sessionConfigDir, 'config.json');
-    const existingConfig = fs.existsSync(configPath)
-      ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
-      : {};
-    existingConfig.provider = selection.provider;
-    existingConfig.model = selection.model;
-    existingConfig.autoApprove = true;
+    const config = buildClineConfig(selection.provider, selection.model) || {
+      provider: selection.provider,
+      model: selection.model,
+      autoApprove: false,
+    };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify(existingConfig, null, 2), 'utf8');
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 
     const gsPath = path.join(sessionConfigDir, 'data', 'globalState.json');
-    const gs = fs.existsSync(gsPath)
-      ? JSON.parse(fs.readFileSync(gsPath, 'utf8'))
-      : {};
-    {
-      fs.mkdirSync(path.dirname(gsPath), { recursive: true });
-      gs.mode = selection.mode;
-      gs.actModeApiProvider = selection.provider;
-      gs.planModeApiProvider = selection.provider;
-      gs.actModeApiModelId = selection.model;
-      gs.planModeApiModelId = selection.model;
-      gs.yoloModeToggled = true;
-
-      // Disable Cline focus-chain/task_progress prompt injection for OSHAL task runtimes.
-      gs.focusChainSettings = {
+    const globalState = {
+      ...buildClineGlobalState(selection.provider, selection.model),
+      focusChainSettings: {
         enabled: false,
         remindClineInterval: 0,
-      };
-      // Ensure bots have full tool access — always set, don't rely on existing config.
-      gs.autoApprovalSettings = {
-        ...(gs.autoApprovalSettings || {}),
-        version: 2,
-        enabled: true,
-        maxRequests: 0,
-        enableNotifications: false,
-        actions: {
-          readFiles: true,
-          readFilesExternally: false,
-          editFiles: true,
-          editFilesExternally: false,
-          executeSafeCommands: true,
-          executeAllCommands: true,
-          useBrowser: false,
-          useMcp: true,
-        },
-      };
-      fs.writeFileSync(gsPath, JSON.stringify(gs, null, 2), 'utf8');
-    }
+      },
+    };
+    fs.mkdirSync(path.dirname(gsPath), { recursive: true });
+    fs.writeFileSync(gsPath, JSON.stringify(globalState, null, 2), 'utf8');
 
-    // Also copy secrets to session dir so Cline CLI finds provider credentials
-    const seedSecretsPath = path.join(process.env.CONFIG_OUTPUT_DIR || './output', 'secrets.json');
+    // Tombstone any credential-bearing file left by a reused task workspace.
     const sessionSecretsDir = path.join(sessionConfigDir, 'data');
     const sessionSecretsPath = path.join(sessionSecretsDir, 'secrets.json');
-    if (fs.existsSync(seedSecretsPath) && !fs.existsSync(sessionSecretsPath)) {
-      fs.mkdirSync(sessionSecretsDir, { recursive: true });
-      fs.copyFileSync(seedSecretsPath, sessionSecretsPath);
-    }
+    fs.mkdirSync(sessionSecretsDir, { recursive: true });
+    fs.writeFileSync(sessionSecretsPath, '{}\n', { encoding: 'utf8', mode: 0o600 });
+    fs.chmodSync(sessionSecretsPath, 0o600);
 
     logger.info(
-      { sessionConfigDir, provider: selection.provider, model: selection.model, mode: selection.mode },
-      'Applied resolved provider selection to session runtime',
+      { sessionConfigDir, provider: selection.provider, model: selection.model, mode: 'plan' },
+      'Applied non-secret plan-only provider metadata to session runtime',
     );
   }
 
   /**
    * @description Copies a runtime file from the persisted config directory into the session config directory.
-   * Missing files are skipped because the runtime can tolerate absent optional artifacts like secrets.json.
+   * Missing files are skipped because the runtime can tolerate absent compatibility artifacts.
    *
    * @param relativePath - Relative runtime path inside the config root.
    * @param sessionConfigDir - Session config root.
    */
   /**
-   * @description Copies the project .clinerules directory into the workspace so cline has governance context.
+   * @description Copies the project .clinerules directory into the workspace so the registered
+   * compatibility interface retains governance context if an audited broker is later introduced.
    * @param workspacePath - Task workspace root
    */
   private copyClinerules(workspacePath: string): void {

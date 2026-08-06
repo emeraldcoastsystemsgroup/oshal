@@ -5,6 +5,7 @@ SEQ                 | AUTHOR                                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Added authenticated raw-audio health and diarization endpoints.
 2 | maintainer@emeraldcoastsystemsgroup.com   | Rejected concurrent inference before reading request audio so the single native worker never accumulates an unbounded memory queue.
+3 | maintainer@emeraldcoastsystemsgroup.com   | Move the small API directly onto patched Starlette 1.x after FastAPI admitted that version without supporting its removed lifecycle API; retain authenticated contracts, explicit model serialization, bounded inference, and error handling.
 """
 
 from __future__ import annotations
@@ -17,8 +18,11 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Callable, Protocol
 
-from fastapi import FastAPI, Header, Request
-from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from starlette.applications import Starlette
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from .audio import AudioInputError, read_raw_audio, wipe_bytearray
 from .engine import create_local_processor
@@ -87,7 +91,7 @@ def create_app(
     settings: ServiceSettings | None = None,
     provider: ProcessorProvider | None = None,
     warm_on_start: bool = True,
-) -> FastAPI:
+) -> Starlette:
     """Create an isolated service instance with injectable deterministic adapters."""
     resolved = settings or ServiceSettings.from_environment()
     processors = provider or ProcessorProvider(
@@ -96,44 +100,47 @@ def create_app(
     )
 
     @asynccontextmanager
-    async def lifespan(_application: FastAPI):
+    async def lifespan(_application: Starlette):
         if warm_on_start:
             resolved.validate()
             await processors.get()
         yield
 
-    application = FastAPI(
-        title="OSHAL Speaker Diarization",
-        version="1.0.0",
-        docs_url=None,
-        redoc_url=None,
-        openapi_url=None,
-        lifespan=lifespan,
-    )
+    application = Starlette(lifespan=lifespan)
+    application.add_middleware(TrustedHostMiddleware, allowed_hosts=list(resolved.allowed_hosts))
     _register_routes(application, resolved, processors)
     _register_errors(application)
     return application
 
 
-def _register_routes(app: FastAPI, settings: ServiceSettings, providers: ProcessorProvider) -> None:
+def _register_routes(app: Starlette, settings: ServiceSettings, providers: ProcessorProvider) -> None:
     inference_gate = asyncio.Lock()
+    app.add_route("/health", _health_handler(settings, providers), methods=["GET"])
+    app.add_route("/v1/diarize", _diarize_handler(settings, providers, inference_gate), methods=["POST"])
+    app.add_route("/v1/transcribe", _transcribe_handler(settings, providers, inference_gate), methods=["POST"])
 
-    async def authenticate(x_speaker_service_key: str | None = Header(default=None)) -> None:
-        expected = settings.service_key.encode("utf-8")
-        supplied = (x_speaker_service_key or "").encode("utf-8")
-        if not expected or not supplied or not hmac.compare_digest(expected, supplied):
-            raise AudioInputError(401, "unauthorized", "A valid speaker service key is required")
 
-    @app.get("/health", response_model=HealthResponse)
-    async def health(_: None = _auth_dependency(authenticate)) -> HealthResponse:
+def _authenticate(request: Request, settings: ServiceSettings) -> None:
+    expected = settings.service_key.encode("utf-8")
+    supplied = request.headers.get("x-speaker-service-key", "").encode("utf-8")
+    if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+        raise AudioInputError(401, "unauthorized", "A valid speaker service key is required")
+
+
+def _health_handler(settings: ServiceSettings, providers: ProcessorProvider):
+    async def health(request: Request) -> JSONResponse:
+        _authenticate(request, settings)
         await providers.get()
-        return HealthResponse(status="ok", ready=True, modelId=MODEL_ID, sampleRate=SAMPLE_RATE)
+        result = HealthResponse(status="ok", ready=True, modelId=MODEL_ID, sampleRate=SAMPLE_RATE)
+        return _model_response(result)
 
-    @app.post("/v1/diarize", response_model=DiarizationResponse)
-    async def diarize(request: Request, _: None = _auth_dependency(authenticate)) -> DiarizationResponse:
+    return health
+
+
+def _diarize_handler(settings: ServiceSettings, providers: ProcessorProvider, inference_gate: asyncio.Lock):
+    async def diarize(request: Request) -> JSONResponse:
+        _authenticate(request, settings)
         _validate_content_type(request)
-        # Native diarization is deliberately single-worker. Reject instead of
-        # letting encoded request bodies and to_thread calls queue in memory.
         if inference_gate.locked():
             raise AudioInputError(429, "service_busy", "Speaker inference is already in progress")
         await inference_gate.acquire()
@@ -143,8 +150,7 @@ def _register_routes(app: FastAPI, settings: ServiceSettings, providers: Process
         try:
             encoded = await read_raw_audio(request, settings.max_audio_bytes)
             _safe_log(logging.INFO, "diarization entered", request_id=request_id, audio_bytes=len(encoded))
-            processor = await providers.get()
-            result = await asyncio.to_thread(processor.process, encoded)
+            result = await asyncio.to_thread((await providers.get()).process, encoded)
             _safe_log(
                 logging.INFO,
                 "diarization completed",
@@ -153,21 +159,18 @@ def _register_routes(app: FastAPI, settings: ServiceSettings, providers: Process
                 turns=len(result.turns),
                 speakers=len(result.speakers),
             )
-            return result
+            return _model_response(result)
         finally:
             if encoded is not None:
                 wipe_bytearray(encoded)
             inference_gate.release()
 
-    @app.post("/v1/transcribe", response_model=TranscriptionResponse)
-    async def transcribe(request: Request, _: None = _auth_dependency(authenticate)) -> TranscriptionResponse:
-        """Speaker-labelled transcript of a whole recording, produced on this host.
+    return diarize
 
-        Separate from /v1/diarize on purpose: this accepts a long file under its OWN
-        budget and holds the inference gate for minutes, where the ambient path is
-        bounded to seconds. Same single-worker rule — a second caller is refused
-        rather than queued, because two of these would double peak memory.
-        """
+
+def _transcribe_handler(settings: ServiceSettings, providers: ProcessorProvider, inference_gate: asyncio.Lock):
+    async def transcribe(request: Request) -> JSONResponse:
+        _authenticate(request, settings)
         _validate_content_type(request)
         if inference_gate.locked():
             raise AudioInputError(429, "service_busy", "Speaker inference is already in progress")
@@ -188,25 +191,23 @@ def _register_routes(app: FastAPI, settings: ServiceSettings, providers: Process
                 segments=len(result.segments),
                 speakers=result.speakerCount,
             )
-            return result
+            return _model_response(result)
         finally:
             if encoded is not None:
                 wipe_bytearray(encoded)
             inference_gate.release()
 
-
-def _auth_dependency(authenticate):
-    from fastapi import Depends
-
-    return Depends(authenticate)
+    return transcribe
 
 
-def _register_errors(app: FastAPI) -> None:
-    @app.exception_handler(AudioInputError)
+def _model_response(model: BaseModel) -> JSONResponse:
+    return JSONResponse(model.model_dump(mode="json"))
+
+
+def _register_errors(app: Starlette) -> None:
     async def audio_error(_request: Request, error: AudioInputError) -> JSONResponse:
         return JSONResponse(status_code=error.status_code, content={"error": error.code, "message": str(error)})
 
-    @app.exception_handler(Exception)
     async def unexpected_error(request: Request, error: Exception) -> JSONResponse:
         _safe_log(
             logging.ERROR,
@@ -216,6 +217,9 @@ def _register_errors(app: FastAPI) -> None:
             error_type=type(error).__name__,
         )
         return JSONResponse(status_code=500, content={"error": "diarization_unavailable"})
+
+    app.add_exception_handler(AudioInputError, audio_error)
+    app.add_exception_handler(Exception, unexpected_error)
 
 
 def _validate_content_type(request: Request) -> None:

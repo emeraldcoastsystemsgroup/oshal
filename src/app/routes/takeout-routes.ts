@@ -1,28 +1,18 @@
 /**
- * Takeout Routes — the platform entry point for ingesting a Google Takeout archive and
- * routing its known slices to the owning apps (ADR-038 storage; the spine Kid Lens sits on).
+ * Generic Google Takeout entry point. Browser uploads and Dropbox pickup share one selective
+ * archive scanner, then dispatch each matched slice through the active package registry.
  *
- * Two sources, one pipeline (extract → route):
- *  - POST /ingest-zip   — the browser uploads the whole Takeout .zip (raw body).
- *  - POST /dropbox/pickup — OSHAL downloads a Takeout .zip the user delivered to (or dropped
- *    into) its connected Dropbox app-folder, streamed to a temp file so a multi-GB archive is
- *    never held whole in memory. GET /dropbox/list surfaces the candidates.
- *
- * Extraction is selective (takeout-ingest); routing dispatches each slice by `kind` to its
- * app's ingest function. No slices are registered today — the v1 youtube-watch-history
- * handler left with the youtube-kids carve (ADR-085); the packaged app accepts
- * watch-history.json directly on its own surface. Package-contributed slice registration
- * is framework roadmap. Nothing is dropped silently — the response reports what was
- * ingested, what was skipped, and any HTML-format slices that need a JSON re-export.
- *
- * Every route is requiresAuth-gated at mount (auth is opt-in per route, CLAUDE.md).
+ * The kernel owns authentication, Dropbox transport, archive safety, and aggregate reporting.
+ * It contains no application names, archive paths, or package ingest imports. Active manifests
+ * supply those details, and lifecycle teardown retracts them without a process restart.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                      | DESCRIPTION
+ * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — POST /ingest-zip (browser), GET /dropbox/list + POST /dropbox/pickup (Dropbox app-folder), extract+route Takeout slices; v1 routes YouTube watch history to Kid Lens. Reports ingested/skipped/HTML-format, no silent drops.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #2: youtube-kids carved to the store — removed the youtube-watch-history dispatch (and the youtube-kids-routes import). The spine stays app-agnostic core infra with zero registered slices until package-contributed slice registration lands.
+ * 1   | maintainer@emeraldcoastsystemsgroup.com     | Add browser and Dropbox Takeout ingestion with aggregate outcomes.
+ * 2   | maintainer@emeraldcoastsystemsgroup.com     | Remove the carved youtube-kids handler and literals from the kernel.
+ * 3   | maintainer@emeraldcoastsystemsgroup.com     | Dispatch active manifest-contributed slices and return typed archive-size failures.
  *
  * @module takeout-routes
  */
@@ -32,130 +22,303 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { Readable } from 'stream';
+import { Readable, Transform } from 'stream';
+import { pipeline } from 'stream/promises';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
+import type { TakeoutSliceRuntime } from '../takeout-slice-registry';
 import { getValidAccessToken } from './connectors-routes';
-import { extractTakeoutSlicesFromBuffer, extractTakeoutSlicesFromFile, type TakeoutScan, type ExtractedSlice } from './takeout-ingest';
+import {
+  extractTakeoutSlicesFromBuffer,
+  extractTakeoutSlicesFromFile,
+  DuplicateTakeoutSliceError,
+  TakeoutSliceTooLargeError,
+  type TakeoutScan,
+  type ExtractedSlice,
+} from './takeout-ingest';
 
 const logger = createChildLogger({ module: 'takeout-routes' });
 const DBX = 'https://api.dropboxapi.com/2';
 const DBX_CONTENT = 'https://content.dropboxapi.com/2';
-/** Browser-upload cap. A YouTube-only Takeout is small; for a full-life archive use Dropbox pickup. */
+/** Browser-upload cap. Large full-life archives should use the streamed Dropbox path. */
 const MAX_ZIP = 200 * 1024 * 1024;
+const DEFAULT_DROPBOX_ZIP_MAX = 10 * 1024 * 1024 * 1024;
+const ABSOLUTE_DROPBOX_ZIP_MAX = 100 * 1024 * 1024 * 1024;
 
-/** Signed-in caller's OIDC sub. */
+/** Typed compressed-archive cap for the disk-streamed Dropbox path. */
+class TakeoutArchiveTooLargeError extends Error {
+  readonly code = 'takeout_archive_too_large';
+
+  constructor(readonly maxBytes: number) {
+    super(`Takeout archive exceeds the configured ${maxBytes}-byte compressed limit`);
+    this.name = 'TakeoutArchiveTooLargeError';
+  }
+}
+
+/** Operator-owned disk budget, fail-safe on invalid values and bounded to 100 GiB. */
+function dropboxArchiveLimit(): number {
+  const configured = Number(process.env.OSHAL_TAKEOUT_DROPBOX_MAX_BYTES ?? DEFAULT_DROPBOX_ZIP_MAX);
+  if (!Number.isSafeInteger(configured) || configured < 1) return DEFAULT_DROPBOX_ZIP_MAX;
+  return Math.min(configured, ABSOLUTE_DROPBOX_ZIP_MAX);
+}
+
+/** Signed-in caller's OIDC sub. The router is also mounted behind requiresAuth. */
 function callerSub(req: Request): string | null {
-  const u = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user;
-  return u?.sub ? String(u.sub) : null;
+  const user = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user;
+  return user?.sub ? String(user.sub) : null;
 }
 
-/** One slice's routing outcome, surfaced to the user. */
-interface RoutedSlice { kind: string; label: string; app: string; ok: boolean; summary?: string; error?: string; }
-
-/** Dispatch one extracted slice to its owning app's ingest function. No handlers are
- *  registered today (the youtube-watch-history one left with the youtube-kids carve);
- *  every slice reports no_handler until package-contributed registration lands. */
-async function routeSlice(_pool: AppContext['pool'], _sub: string, slice: ExtractedSlice): Promise<RoutedSlice> {
-  return { kind: slice.kind, label: slice.label, app: slice.app, ok: false, error: 'no_handler' };
+/** One package handler's bounded public outcome. */
+interface RoutedSlice {
+  kind: string;
+  label: string;
+  app: string;
+  ok: boolean;
+  summary?: string;
+  error?: string;
 }
 
-/** Route every slice in a scan and assemble the user-facing result body. */
-async function routeScan(pool: AppContext['pool'], sub: string, scan: TakeoutScan): Promise<{ ingested: RoutedSlice[]; htmlHits: string[] }> {
+/** Dispatch one extracted slice without allowing one package failure to hide other outcomes. */
+async function routeSlice(
+  runtime: TakeoutSliceRuntime,
+  sub: string,
+  slice: ExtractedSlice,
+): Promise<RoutedSlice> {
+  try {
+    const result = await runtime.ingest(sub, slice);
+    return { kind: slice.kind, label: slice.label, app: slice.app, ok: true, ...result };
+  } catch (err) {
+    logger.error({ err, app: slice.app, kind: slice.kind, sub }, 'Package Takeout handler failed');
+    const code = (err as Error & { code?: unknown }).code;
+    return {
+      kind: slice.kind,
+      label: slice.label,
+      app: slice.app,
+      ok: false,
+      error: typeof code === 'string' ? code : 'ingest_failed',
+    };
+  }
+}
+
+/** Route every extracted slice and preserve per-slice success/failure reporting. */
+async function routeScan(
+  runtime: TakeoutSliceRuntime,
+  sub: string,
+  scan: TakeoutScan,
+): Promise<{ ingested: RoutedSlice[]; htmlHits: string[] }> {
   const ingested: RoutedSlice[] = [];
-  for (const slice of scan.slices) ingested.push(await routeSlice(pool, sub, slice));
-  logger.info({ sub, found: scan.slices.length, ok: ingested.filter((r) => r.ok).length, htmlHits: scan.htmlHits.length }, 'takeout scan routed');
+  for (const slice of scan.slices) ingested.push(await routeSlice(runtime, sub, slice));
+  logger.info(
+    { sub, found: scan.slices.length, ok: ingested.filter((result) => result.ok).length, htmlHits: scan.htmlHits.length },
+    'Takeout scan routed',
+  );
   return { ingested, htmlHits: scan.htmlHits };
 }
 
-/** A valid Dropbox token for the caller, or null when Dropbox isn't connected. */
+/** A valid caller-owned Dropbox token, or null when Dropbox is not connected. */
 async function dropboxToken(ctx: AppContext, sub: string): Promise<string | null> {
   return getValidAccessToken(ctx.pool, sub, 'dropbox');
 }
 
-/** Download a Dropbox file (streamed) to a fresh temp path; returns the path. */
+/** Download a Dropbox file to a fresh temp path without buffering the whole archive. */
 async function downloadDropboxToTemp(token: string, dropboxPath: string): Promise<string> {
-  const r = await fetch(`${DBX_CONTENT}/files/download`, {
-    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Dropbox-API-Arg': JSON.stringify({ path: dropboxPath }) },
+  const response = await fetch(`${DBX_CONTENT}/files/download`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Dropbox-API-Arg': JSON.stringify({ path: dropboxPath }),
+    },
   });
-  if (!r.ok || !r.body) throw new Error(`dropbox download failed: ${r.status} ${(await r.text().catch(() => '')).slice(0, 160)}`);
-  const tmp = path.join(os.tmpdir(), `oshal-takeout-${crypto.randomUUID()}.zip`);
-  await new Promise<void>((resolve, reject) => {
-    const ws = fs.createWriteStream(tmp);
-    Readable.fromWeb(r.body as Parameters<typeof Readable.fromWeb>[0]).pipe(ws).on('finish', () => resolve()).on('error', reject);
+  if (!response.ok || !response.body) {
+    throw new Error(
+      `Dropbox download failed: ${response.status} ${(await response.text().catch(() => '')).slice(0, 160)}`,
+    );
+  }
+  const maxBytes = dropboxArchiveLimit();
+  const advertisedBytes = Number(response.headers.get('content-length'));
+  if (Number.isFinite(advertisedBytes) && advertisedBytes > maxBytes) {
+    throw new TakeoutArchiveTooLargeError(maxBytes);
+  }
+  const tempPath = path.join(os.tmpdir(), `oshal-takeout-${crypto.randomUUID()}.zip`);
+  let receivedBytes = 0;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      receivedBytes += chunk.length;
+      callback(receivedBytes > maxBytes ? new TakeoutArchiveTooLargeError(maxBytes) : null, chunk);
+    },
   });
-  return tmp;
+  try {
+    await pipeline(
+      Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+      limiter,
+      fs.createWriteStream(tempPath),
+    );
+    return tempPath;
+  } catch (err) {
+    await fs.promises.unlink(tempPath).catch(() => { /* best-effort partial-download cleanup */ });
+    throw err;
+  }
+}
+
+/** Common response for an archive with no slice owned by an active application. */
+function sendNoKnownSlices(res: Response, result: { ingested: RoutedSlice[]; htmlHits: string[] }): void {
+  res.status(422).json({
+    error: 'no_known_slices',
+    message: 'No active application recognized data in this archive. If an HTML match is listed, re-export that service in JSON format.',
+    ...result,
+  });
 }
 
 /**
- * @description Builds the Takeout ingestion router (mount at /api/takeout behind requiresAuth).
- * @param ctx - App context (Postgres pool + Dropbox connector token).
- * @returns Express router.
+ * @description Build the Takeout router. Mount it at `/api/takeout` behind `requiresAuth`.
+ * Specs are read for each request so activation/deactivation takes effect without restart.
  */
-export function createTakeoutRoutes(ctx: AppContext): Router {
+export function createTakeoutRoutes(ctx: AppContext, runtime: TakeoutSliceRuntime): Router {
   const router = Router();
 
-  /** POST /ingest-zip — browser uploads the whole Takeout .zip (raw body). */
+  /** Browser uploads the complete zip as a bounded raw request body. */
   router.post('/ingest-zip', raw({ type: '*/*', limit: MAX_ZIP }), async (req: Request, res: Response) => {
     const sub = callerSub(req);
-    if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+    if (!sub) {
+      res.status(401).json({ error: 'not_authenticated' });
+      return;
+    }
     const body = req.body as Buffer;
-    if (!body || !body.length) { res.status(400).json({ error: 'empty body' }); return; }
+    if (!body?.length) {
+      res.status(400).json({ error: 'empty_body' });
+      return;
+    }
     try {
-      const scan = await extractTakeoutSlicesFromBuffer(body);
-      const result = await routeScan(ctx.pool, sub, scan);
-      if (!scan.slices.length) { res.status(422).json({ error: 'no_known_slices', message: 'No recognized Takeout data found. This needs the YouTube watch-history.json (export YouTube history as JSON).', ...result }); return; }
+      const specs = runtime.specs();
+      if (specs.length === 0) {
+        sendNoKnownSlices(res, { ingested: [], htmlHits: [] });
+        return;
+      }
+      const scan = await extractTakeoutSlicesFromBuffer(body, specs);
+      const result = await routeScan(runtime, sub, scan);
+      if (scan.slices.length === 0) {
+        sendNoKnownSlices(res, result);
+        return;
+      }
       res.json({ ok: true, ...result });
     } catch (err) {
-      logger.error({ err }, 'takeout ingest-zip failed');
-      res.status(422).json({ error: 'bad_archive', message: 'That did not look like a valid Takeout .zip. Upload the .zip Google gave you (or the watch-history.json directly).' });
+      // Invalid/hostile caller archives are expected boundary refusals, not platform outages.
+      logger.warn({ err }, 'Takeout browser archive refused');
+      if (err instanceof TakeoutSliceTooLargeError || err instanceof TakeoutArchiveTooLargeError) {
+        res.status(413).json({ error: err.code, message: err.message });
+        return;
+      }
+      res.status(422).json({
+        error: 'bad_archive',
+        message: 'That archive is invalid, ambiguous, or could not be read safely.',
+      });
     }
   });
 
-  /** GET /dropbox/list — Takeout .zip candidates in the caller's connected Dropbox app-folder. */
+  /** List zip candidates from the caller's connected Dropbox app-folder. */
   router.get('/dropbox/list', async (req: Request, res: Response) => {
     const sub = callerSub(req);
-    if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+    if (!sub) {
+      res.status(401).json({ error: 'not_authenticated' });
+      return;
+    }
     try {
-      const tok = await dropboxToken(ctx, sub);
-      if (!tok) { res.status(409).json({ error: 'no_dropbox', message: 'Connect Dropbox at /utilities, then deliver your Takeout there.' }); return; }
-      const r = await fetch(`${DBX}/files/list_folder`, {
-        method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      const token = await dropboxToken(ctx, sub);
+      if (!token) {
+        res.status(409).json({ error: 'no_dropbox', message: 'Connect Dropbox at /utilities, then deliver your Takeout there.' });
+        return;
+      }
+      const response = await fetch(`${DBX}/files/list_folder`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: '', recursive: true, limit: 2000 }),
       });
-      const j = await r.json() as { entries?: Array<{ '.tag': string; name: string; path_lower: string; size?: number; server_modified?: string }> };
-      if (!r.ok) { res.status(502).json({ error: JSON.stringify(j).slice(0, 200) }); return; }
-      const zips = (j.entries || [])
-        .filter((e) => e['.tag'] === 'file' && /\.zip$/i.test(e.name))
-        .map((e) => ({ name: e.name, path: e.path_lower, size: e.size, modified: e.server_modified, looksLikeTakeout: /takeout/i.test(e.name) }))
-        .sort((a, b) => String(b.modified).localeCompare(String(a.modified)));
-      res.json({ candidates: zips });
+      const payload = await response.json() as {
+        entries?: Array<{
+          '.tag': string;
+          name: string;
+          path_lower: string;
+          size?: number;
+          server_modified?: string;
+        }>;
+      };
+      if (!response.ok) {
+        res.status(502).json({ error: JSON.stringify(payload).slice(0, 200) });
+        return;
+      }
+      const candidates = (payload.entries ?? [])
+        .filter((entry) => entry['.tag'] === 'file' && /\.zip$/i.test(entry.name))
+        .map((entry) => ({
+          name: entry.name,
+          path: entry.path_lower,
+          size: entry.size,
+          modified: entry.server_modified,
+          looksLikeTakeout: /takeout/i.test(entry.name),
+        }))
+        .sort((left, right) => String(right.modified).localeCompare(String(left.modified)));
+      res.json({ candidates });
     } catch (err) {
-      logger.error({ err }, 'takeout dropbox list failed');
+      logger.error({ err }, 'Takeout Dropbox list failed');
       res.status(502).json({ error: (err as Error).message });
     }
   });
 
-  /** POST /dropbox/pickup {path} — download a Takeout .zip from Dropbox, extract + route it. */
+  /** Download one caller-selected Dropbox zip to disk, then extract and route it. */
   router.post('/dropbox/pickup', async (req: Request, res: Response) => {
     const sub = callerSub(req);
-    if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
-    const dropboxPath = String((req.body as { path?: string })?.path || '').trim();
-    if (!dropboxPath) { res.status(400).json({ error: 'path required' }); return; }
-    let tmp: string | null = null;
+    if (!sub) {
+      res.status(401).json({ error: 'not_authenticated' });
+      return;
+    }
+    const dropboxPath = String((req.body as { path?: string })?.path ?? '').trim();
+    if (!dropboxPath) {
+      res.status(400).json({ error: 'path_required' });
+      return;
+    }
+    let tempPath: string | null = null;
     try {
-      const tok = await dropboxToken(ctx, sub);
-      if (!tok) { res.status(409).json({ error: 'no_dropbox', message: 'Connect Dropbox at /utilities first.' }); return; }
-      tmp = await downloadDropboxToTemp(tok, dropboxPath);
-      const scan = await extractTakeoutSlicesFromFile(tmp);
-      const result = await routeScan(ctx.pool, sub, scan);
-      if (!scan.slices.length) { res.status(422).json({ error: 'no_known_slices', message: 'That archive had no recognized Takeout data (need the YouTube watch-history.json in JSON format).', ...result }); return; }
+      const specs = runtime.specs();
+      if (specs.length === 0) {
+        sendNoKnownSlices(res, { ingested: [], htmlHits: [] });
+        return;
+      }
+      const token = await dropboxToken(ctx, sub);
+      if (!token) {
+        res.status(409).json({ error: 'no_dropbox', message: 'Connect Dropbox at /utilities first.' });
+        return;
+      }
+      tempPath = await downloadDropboxToTemp(token, dropboxPath);
+      const scan = await extractTakeoutSlicesFromFile(tempPath, specs);
+      const result = await routeScan(runtime, sub, scan);
+      if (scan.slices.length === 0) {
+        sendNoKnownSlices(res, result);
+        return;
+      }
       res.json({ ok: true, ...result });
     } catch (err) {
-      logger.error({ err }, 'takeout dropbox pickup failed');
+      const archiveFailure = tempPath !== null
+        || err instanceof TakeoutSliceTooLargeError
+        || err instanceof TakeoutArchiveTooLargeError
+        || err instanceof DuplicateTakeoutSliceError;
+      if (archiveFailure) {
+        logger.warn({ err }, 'Takeout Dropbox archive refused');
+      } else {
+        logger.error({ err }, 'Takeout Dropbox pickup failed');
+      }
+      if (err instanceof TakeoutSliceTooLargeError || err instanceof TakeoutArchiveTooLargeError) {
+        res.status(413).json({ error: err.code, message: err.message });
+        return;
+      }
+      if (archiveFailure) {
+        res.status(422).json({
+          error: 'bad_archive',
+          message: 'That archive is invalid, ambiguous, or could not be read safely.',
+        });
+        return;
+      }
       res.status(502).json({ error: (err as Error).message });
     } finally {
-      if (tmp) fs.promises.unlink(tmp).catch(() => { /* best-effort temp cleanup */ });
+      if (tempPath) fs.promises.unlink(tempPath).catch(() => { /* best-effort temp cleanup */ });
     }
   });
 

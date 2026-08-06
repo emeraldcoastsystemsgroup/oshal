@@ -231,7 +231,15 @@ Each links to the authoritative done-when text in [../BACKLOG.md](../BACKLOG.md)
    from disk however current the image is, so reconcile ALL bind-mounted paths after a recreate, not
    just this one file.**
 
-**6. Known still-unproven, not deploy blockers** — recorded so they are not mistaken for regressions:
-   the installer-gaps remainders (per-app smoke `--apps`, the `noop`-returns-text no-AI surface state,
-   `oshal-verify.sh --live`), and the concierge-surface note that "next deployment must prove the
-   running UI matches these source files".
+**6. CORE-05 is source-complete; running-image proof remains a release check** — the canonical
+   verifier now supports package-owned `--apps` smokes, no-AI routes return HTTP 503 `ai_disabled`
+   and their web surfaces render that state, and explicit `--live` performs one PAT-authorized
+   generation with owner-scoped cost attribution. Before release, prove the exact candidate image:
+
+   ```bash
+   bash scripts/oshal-verify.sh --env-file .env --apps <comma-separated-installed-apps>
+   OSHAL_VERIFY_PAT='oshal_pat_...' bash scripts/oshal-verify.sh --live
+   ```
+
+   A source test is not deployment evidence. Preserve the concierge-surface requirement that the
+   next deployment must also prove the running UI matches the reviewed source files.

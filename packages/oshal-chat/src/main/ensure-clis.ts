@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Install + always-update the agent CLIs on node start, so swarm.exec/claude.exec/codex.exec never ENOENT.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: npm receives only runtime, owner config/cache, proxy, and registry settings rather than every desktop-node credential.
  */
 
 import { spawn } from 'child_process';
+import { buildLocalNodeProcessEnv } from './process-environment';
 
 /**
  * @description The agent CLIs the worker spawns. `@anthropic-ai/claude-code` provides `claude`,
@@ -50,7 +52,7 @@ export function ensureAgentClis(opts: { packages?: string[]; onLog?: (message: s
     const child = spawn(isWin ? 'npm.cmd' : 'npm', ['install', '-g', ...packages], {
       stdio: 'ignore',
       shell: isWin,
-      env: process.env,
+      env: buildLocalNodeProcessEnv(),
     });
     child.on('error', (err) => {
       log(`Agent CLI update skipped (${err.message}) — continuing without it`);

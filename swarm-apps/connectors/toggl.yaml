@@ -1,3 +1,10 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Refresh the retired Toggl Track Simple Icons slug to the current verified Toggl brand slug.
+# -----------------------------------------------------------------------------
+
 provider: toggl
 displayName: Toggl Track
 version: 1.0.0
@@ -30,7 +37,7 @@ resources:
 metadata:
   description: "Toggl Track — reads me, workspaces, projects, time entries via api.track.toggl.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
   category: "Productivity"
-  icon: toggltrack
-  iconTitle: Toggl Track
+  icon: toggl
+  iconTitle: Toggl
   iconSource: simple-icons
   iconVerified: true

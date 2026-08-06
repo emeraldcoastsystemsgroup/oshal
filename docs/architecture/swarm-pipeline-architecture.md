@@ -1,6 +1,6 @@
 # Swarm Pipeline Architecture Diagrams
 
-Updated: 2026-03-30 (Session 18)
+Updated: 2026-08-06
 
 ## 1. Phase Lifecycle Flow
 
@@ -82,31 +82,38 @@ flowchart TD
     style RECURSIVE fill:#ff9,stroke:#333
 ```
 
-## 4. Credential Propagation Flow
+## 4. Credential containment boundary
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant API as API Server
-    participant Redis
-    participant PM as PM Bot
-    participant Worker as Worker Bots
-    participant Seed as config-seed/secrets.json
+    participant User as Authenticated caller
+    participant API as Controller broker
+    participant Store as Encrypted connection store
+    participant Handler as Exact deterministic operation
+    participant Provider as Provider API
+    participant Model as Hosted/BYO inference
 
-    User->>API: OAuth Callback (code, state)
-    API->>API: Exchange code for tokens
-    API->>API: EncryptedConfigManager.saveSecrets()
-    API->>Seed: writeSharedSeedCredentials()
-    API->>Redis: PUBLISH swarm.codex-credentials.update
-
-    Redis-->>PM: message (credentials JSON)
-    PM->>PM: Write to local seed path
-    PM->>PM: syncOpenAiCodexCredentials()
-
-    Redis-->>Worker: message (credentials JSON)
-    Worker->>Worker: Write to local seed path
-    Worker->>Worker: syncOpenAiCodexCredentials()
+    User->>API: Schema-bounded provider intent
+    API->>API: Bind caller, operation, handler generation, scopes
+    API->>Store: Resolve caller-owned credential
+    Store-->>API: Request-scoped credential
+    API->>Handler: Exact intent + minimum credential
+    Handler->>Provider: Bounded provider request
+    Provider-->>Handler: Provider response
+    Handler-->>API: Redacted operation result
+    API-->>Model: Result only; no credential
+    Model-->>User: Reasoned response
 ```
+
+Raw credential propagation is retired. Redis carries coordination state, not OAuth/CLI credential
+JSON. Controller and bot-node HTTP import endpoints cannot copy raw credentials, and legacy runtime
+configuration bodies reject credential fields. A node may observe locally persisted authentication
+or a deployment-mounted read-only OAuth file, but its presence is not execution authority.
+
+Unattended Cline, Claude Code, Codex, and Gemini CLI execution fails closed until an audited
+oshal-brokered sandbox can enforce immutable request-start handler generations and exact operation
+scopes while keeping credentials outside the model process and workspace. Current execution uses
+hosted/BYO inference or schema-bounded deterministic server provider intents.
 
 ## 5. Docker Container Topology (Swarm)
 
@@ -135,7 +142,7 @@ graph TB
 
     subgraph Shared Volumes
         SEED[config-seed :ro]
-        CLAUDE[claude-auth]
+        CLAUDE[local/read-only auth presence]
     end
 
     API --> PG
@@ -151,8 +158,8 @@ graph TB
     SEED -.->|bind mount| PM
     SEED -.->|bind mount :ro| CD
     SEED -.->|bind mount :ro| TB
-    CLAUDE -.->|shared volume| PM
-    CLAUDE -.->|shared volume| CD
+    CLAUDE -.->|not execution authority| PM
+    CLAUDE -.->|not execution authority| CD
 ```
 
 ## 6. Metrics Collection Flow

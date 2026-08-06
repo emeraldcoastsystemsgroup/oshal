@@ -65,7 +65,7 @@ In production, the clean pattern is:
 - `ARCHITECTURE.md` — recommended topology, gateway pattern, Docker Desktop guidance, and rollout advice
 - `docker-compose.yaml` — starter Docker Compose deployment for Headscale
 - `config/config.yaml` — starter Headscale configuration
-- `config/policy.hujson` — permissive starter ACL policy for local lab use
+- `config/policy.hujson` — active deny-by-default role-tagged ACL policy
 - `kustomization.yaml` — root Kubernetes entrypoint for applying the lab manifests safely
 - `kubernetes/` — Kubernetes starter manifests for Docker Desktop or another single-node cluster
 - `HANDOVER.md` — status, debt, and next steps for the next developer/session
@@ -159,15 +159,15 @@ If two nodes cannot establish a direct peer-to-peer path because of hard NAT or 
 
 If you want **full self-host ownership with no dependency on Tailscale-operated relays**, add a self-hosted DERP plan before production.
 
-### 4. The starter ACL policy is intentionally open
+### 4. Node tags are required
 
-`config/policy.hujson` currently allows broad connectivity so you can get a lab running quickly.
+`config/policy.hujson` is deny-by-default. A new node has no path until it receives one of
+`tag:controller`, `tag:bot`, `tag:worker`, or `tag:operator`. The active rules grant only
+the documented controller-facing and dispatch-back ports; bot↔bot, worker↔worker, and cross-role
+lateral traffic remain denied.
 
-Before production, tighten it so:
-
-- only approved nodes can talk to cluster-facing gateways
-- route advertisement is limited
-- sensitive services are not broadly reachable
+Follow [the ACL rollout runbook](../../docs/runbooks/headscale-acl-hardening.md) to inventory and
+tag existing nodes before applying the policy to a live fleet.
 
 ## Recommended final direction for your use case
 

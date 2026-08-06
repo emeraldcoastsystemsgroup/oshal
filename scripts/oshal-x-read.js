@@ -5,6 +5,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | X/Twitter reader for the social swarm: reads the connected account's OWN home timeline (reverse_chronological = tweets from accounts you follow) and the list of accounts you follow, via the per-user connector token (oshal_connections). This is the keyless path — follow accounts (e.g. @realDonaldTrump) from your logged-in X account and they stream into your home timeline; no paid search tier needed. Refreshes the OAuth2 token (confidential client, HTTP Basic) when expired. The social bot uses this to sense signals for other swarm bots (e.g. notify the trading bot on a market-moving tweet).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: PREFER a controller-provided access token (.oshal-cred-twitter in cwd, or OSHAL_CRED_TWITTER env) — use it directly and skip ALL DB/SESSION_SECRET decryption. Falls back to the existing per-user DB-decrypt+refresh path when no cred is provided.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Use the shared version-aware connector-token codec and persist X token rotations as caller-owned v2 envelopes.
  *
  *   OSHAL_USER_SUB=... node scripts/oshal-x-read.js              # home timeline (default)
  *   X_MODE=following OSHAL_USER_SUB=... node scripts/oshal-x-read.js   # who I follow
@@ -12,17 +14,16 @@
  * Exit 2 = no X connection. Exit 3 = token refresh failed. Exit 4 = API tier blocks reads.
  */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken, encryptToken } = require('./lib/connector-token-crypto');
 
 /** Codex may not forward OSHAL_USER_SUB to shelled commands; the wrapper also drops
  *  it as a cwd-relative file. Read whichever is present. */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 /** Token broker: a short-lived X access token the controller decrypted for THIS user and
@@ -34,20 +35,6 @@ function resolveProvidedToken() {
     if (t) return t;
   } catch { /* no file — try env */ }
   return process.env.OSHAL_CRED_TWITTER || undefined;
-}
-
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
-function encrypt(plain) {
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', key(), iv);
-  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
-  return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
 }
 
 async function getToken(pool) {
@@ -63,7 +50,7 @@ async function getToken(pool) {
   }
   if (!row) { console.error('No X connection. Connect X at /utilities first.'); process.exit(2); }
   if (row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60000) {
-    return { token: decrypt(row.access_token), account: row.account_email };
+    return { token: await decryptToken(pool, row.user_sub, row.access_token), account: row.account_email };
   }
   if (!row.refresh_token) { console.error('No refresh token; reconnect X at /utilities.'); process.exit(2); }
   const clientId = process.env.TWITTER_CLIENT_ID || process.env.X_CLIENT_ID || '';
@@ -72,12 +59,12 @@ async function getToken(pool) {
   const r = await fetch('https://api.twitter.com/2/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basic}` },
-    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: decrypt(row.refresh_token), client_id: clientId }),
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: await decryptToken(pool, row.user_sub, row.refresh_token), client_id: clientId }),
   });
   if (!r.ok) { console.error('X token refresh failed: ' + r.status + ' ' + (await r.text()).slice(0, 200)); process.exit(3); }
   const tok = await r.json();
   await pool.query(`UPDATE oshal_connections SET access_token=$2, refresh_token=COALESCE($3, refresh_token), expiry=$4, updated_at=NOW() WHERE connection_id=$1`,
-    [row.connection_id, encrypt(tok.access_token), tok.refresh_token ? encrypt(tok.refresh_token) : null, tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null]);
+    [row.connection_id, await encryptToken(pool, row.user_sub, tok.access_token), tok.refresh_token ? await encryptToken(pool, row.user_sub, tok.refresh_token) : null, tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null]);
   return { token: tok.access_token, account: row.account_email };
 }
 

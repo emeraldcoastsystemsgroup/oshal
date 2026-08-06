@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Added live swarm-registry agent filtering so cockpit bot selectors stop offering undeployed persisted profiles like devops-bot
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Replaced cockpit API client silent catches with structured warning logs and shared response-error parsing to satisfy governance during bot-selector hardening
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Kept cockpit selectors on the registry roster even when swarm heartbeats are offline so standalone hosts stop falling back to stale persisted bots like devops-bot
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: surface the canonical ai_disabled message instead of reducing the deployment state to its machine code.
  */
 
 /**
@@ -137,7 +138,10 @@ class ApiClient {
 
   async throwResponseError(response, action) {
     const error = await this.readErrorPayload(response, action);
-    throw new Error(error.error || response.statusText);
+    const message = (error.code === 'ai_disabled' || error.error === 'ai_disabled')
+      ? error.message
+      : error.error;
+    throw new Error(message || response.statusText);
   }
 
   async readErrorPayload(response, action) {

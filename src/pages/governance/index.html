@@ -9,6 +9,13 @@
   Framework surface conventions: local CSS vars are overridden from the cockpit's active theme by
   the theme-sync script at the bottom (light/dark aware, reacts to data-theme + cockpit-theme), so
   this page does NOT hardcode a palette beyond its standalone defaults. Vanilla fetch, no build.
+
+  CHANGE LOG
+  1 | maintainer@emeraldcoastsystemsgroup.com | Render CSP mode, rate-limit coverage, default-on
+    | envelope crypto, and Alertmanager HMAC honestly instead of reducing partial controls to an
+    | optimistic on/off light or checking retired environment names.
+  2 | maintainer@emeraldcoastsystemsgroup.com | Display explicit shared-HKDF DEK-store break-glass
+    | as a warning instead of presenting it as the normal per-user envelope posture.
 -->
 <html lang="en"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -144,13 +151,32 @@ function render(p){
   const legacyTag = ctrls.legacyUnownedAllowed ? {state:'warn',label:'allowed'} : {state:'on',label:'closed'};
   const mockTag = ctrls.mockOidc ? {state:'bad',label:'mock OIDC'} : {state:'on',label:'real IdP'};
   const tlsTag = ctrls.tlsRejectUnauthorized ? {state:'on',label:'verifying'} : {state:'bad',label:'disabled'};
+  const cspTag = ctrls.cspMode === 'enforce'
+    ? {state:'on',label:'enforcing'}
+    : (ctrls.cspMode === 'report-only'
+      ? {state:'warn',label:'report-only'}
+      : {state:'bad',label:'disabled'});
+  const cryptoTag = !ctrls.cryptoAtRest
+    ? {state:'bad',label:'SESSION_SECRET missing'}
+    : (!ctrls.envelopeCrypto
+      ? {state:'warn',label:'k2 shared rollback'}
+      : (ctrls.envelopeDekFailure === 'shared-hkdf'
+        ? {state:'warn',label:'DEK + k2 break-glass'}
+        : {state:'on',label:'per-user DEK / deny'}));
+  const rateTag = ctrls.internalRateLimit && ctrls.expensiveRateLimit
+    ? {state:'on',label:'all rails'}
+    : {state:'warn',label:'external only / partial'};
+  const hmacTag = ctrls.alertWebhookHmac
+    ? {state:'on',label:'configured'}
+    : {state:'warn',label:'bearer only'};
 
   const controlRows = [
     ['RBAC enforcement', rbacTag],
     ['Legacy unowned access', legacyTag],
-    ['Content-Security-Policy', ctrls.cspEnabled],
-    ['Crypto at rest (ENCRYPTION_KEY)', ctrls.cryptoAtRest],
-    ['Rate limiting', ctrls.rateLimitEnabled],
+    ['Content-Security-Policy', cspTag],
+    ['Connector token crypto', cryptoTag],
+    ['Rate limiting', rateTag],
+    ['Alertmanager HMAC', hmacTag],
     ['Operator allowlist configured', ctrls.operatorAllowlistConfigured],
     ['OIDC mode', mockTag],
     ['TLS cert verification', tlsTag],

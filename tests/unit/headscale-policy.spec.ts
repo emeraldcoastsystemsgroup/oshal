@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for hardening.md #15/#16: the staged hardened Headscale ACL must stay APPLY-READY (real user agentmesh not the the operator@ placeholder, no :5000 placeholder ports, no allow-all src:["*"] rule) and must stay in lockstep with the ports the edge agent actually dials (start-local-agent.bat *_URL lines) — the 2026-07-24 diagnosis found the staged policy would have bricked the edge agent because policy and script contradicted each other. Also goes red if a plaintext hskey-auth pre-auth key is ever re-committed to start-local-agent.bat (the original #16 leak shape), and if the enrollment helper loses its ephemeral/tagged/single-use key properties.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: guard the policy actually mounted by Docker/Kubernetes, require all four role tags and exact directional paths, and prove bot/worker lateral paths remain absent.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -11,7 +12,7 @@ import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 
 const REPO_ROOT = resolve(__dirname, '../..');
-const POLICY_PATH = join(REPO_ROOT, 'infra/headscale/config/policy.hardened.hujson');
+const POLICY_PATH = join(REPO_ROOT, 'infra/headscale/config/policy.hujson');
 const EDGE_AGENT_PATH = join(REPO_ROOT, 'scripts/start-local-agent.bat');
 const ENROLL_HELPER_PATH = join(REPO_ROOT, 'scripts/headscale-enroll-worker.sh');
 
@@ -64,11 +65,11 @@ describe('headscale hardened ACL stays apply-ready (hardening.md #15)', () => {
     }
   });
 
-  it('has no :5000 placeholder port in any dst (controller API publishes 35457 on the host)', () => {
+  it('never mistakes controller port 5000 for the tailnet-published API port', () => {
     const policy = loadPolicy();
     for (const rule of policy.acls) {
       for (const dst of rule.dst) {
-        expect(dst, `dst in rule src=${JSON.stringify(rule.src)}`).not.toMatch(/:5000$/);
+        expect(dst, `dst in rule src=${JSON.stringify(rule.src)}`).not.toBe('tag:controller:5000');
       }
     }
   });
@@ -86,6 +87,33 @@ describe('headscale hardened ACL stays apply-ready (hardening.md #15)', () => {
       .filter((r) => r.action === 'accept' && r.src.includes('tag:worker'))
       .flatMap((r) => r.dst);
     expect(workerDsts).toContain('tag:controller:35457');
+  });
+
+  it('declares controller, bot, worker, and operator tag ownership', () => {
+    const policy = loadPolicy();
+    expect(Object.keys(policy.tagOwners).sort()).toEqual([
+      'tag:bot', 'tag:controller', 'tag:operator', 'tag:worker',
+    ]);
+    for (const owners of Object.values(policy.tagOwners)) expect(owners).toEqual(['agentmesh@']);
+  });
+
+  it('allows only the required controller-to-runtime dispatch listeners', () => {
+    const policy = loadPolicy();
+    const controllerDsts = policy.acls
+      .filter((rule) => rule.action === 'accept' && rule.src.includes('tag:controller'))
+      .flatMap((rule) => rule.dst)
+      .sort();
+    expect(controllerDsts).toEqual(['tag:bot:5000', 'tag:worker:3099']);
+  });
+
+  it('contains no bot-to-bot, bot-to-worker, worker-to-bot, or worker-to-worker rule', () => {
+    const policy = loadPolicy();
+    for (const rule of policy.acls) {
+      if (!rule.src.some((src) => src === 'tag:bot' || src === 'tag:worker')) continue;
+      for (const dst of rule.dst) {
+        expect(dst).not.toMatch(/^tag:(?:bot|worker):/);
+      }
+    }
   });
 
   it('every infra port the edge agent dials over the VPN is worker-reachable in the policy', () => {

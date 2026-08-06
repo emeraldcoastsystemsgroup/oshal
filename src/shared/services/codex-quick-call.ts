@@ -4,10 +4,13 @@
  * SEQ                 | AUTHOR                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Lightweight codex exec wrapper for quick LLM questions — no workspace, no session, ~2-5s responses. Uses the same OAuth token from Codex login.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject unattended Codex quick calls before binary lookup or spawn until an audited brokered sandbox exists.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Import the dependency-free unattended-provider policy so controller helpers do not acquire the bot-node harness runtime graph.
  */
 
 import { spawn } from 'child_process';
 import { createChildLogger } from '@/shared/logger';
+import { assertAuditedAutonomousHarness } from '@/features/llm-provider';
 
 const logger = createChildLogger({ module: 'codex-quick-call' });
 
@@ -25,6 +28,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
  * @returns Agent response text, or null on failure/timeout
  */
 export async function codexQuickCall(prompt: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string | null> {
+  assertAuditedAutonomousHarness('codex-cli');
   try {
     const raw = await spawnCodexExec(prompt, timeoutMs);
     const text = extractAgentMessage(raw);
@@ -43,6 +47,7 @@ export async function codexQuickCall(prompt: string, timeoutMs = DEFAULT_TIMEOUT
  * @description Spawns `codex exec` and collects stdout.
  */
 function spawnCodexExec(prompt: string, timeoutMs: number): Promise<string> {
+  assertAuditedAutonomousHarness('codex-cli');
   return new Promise((resolve, reject) => {
     const binary = process.env.CODEX_CLI_PATH || 'codex';
     const args = ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', prompt];

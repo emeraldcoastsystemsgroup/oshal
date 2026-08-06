@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Security tests for the ADR-077 super-admin double-gate on the Developer Console.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact, case-sensitive super-admin subject matching at both request and queue-side gates; email matching remains case-insensitive.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { createDevConsoleRoutes, shouldAuditDeny } from '@/app/routes/dev-console-routes';
+import { isSuperAdminSub } from '@/shared/middleware/superadmin';
 
 const ENV_KEYS = [
   'OSHAL_DEV_CONSOLE_ENABLED',
@@ -90,6 +92,22 @@ describe('Developer Console super-admin double-gate (ADR-077)', () => {
     expect(res.body.capabilities.recover).toBe(false);
     // `edit` reflects whether the self-edit runtime (repo + docker) is reachable on this node.
     expect(typeof res.body.capabilities.edit).toBe('boolean');
+  });
+
+  it('DENIES case and whitespace variants of an allowlisted subject', async () => {
+    process.env.OSHAL_DEV_CONSOLE_ENABLED = 'true';
+    process.env.OSHAL_SUPERADMIN_SUBS = ADMIN.sub;
+    expect((await hit(appFor({ ...ADMIN, sub: 'Super-Sub-1' }), '/api/dev-console/status')).status).toBe(403);
+    expect((await hit(appFor({ ...ADMIN, sub: ` ${ADMIN.sub}` }), '/api/dev-console/status')).status).toBe(403);
+    expect((await hit(appFor({ ...ADMIN, sub: `${ADMIN.sub} ` }), '/api/dev-console/status')).status).toBe(403);
+  });
+
+  it('matches queue-side super-admin subjects exactly too', () => {
+    process.env.OSHAL_SUPERADMIN_SUBS = ` ${ADMIN.sub} , another-sub `;
+    expect(isSuperAdminSub(ADMIN.sub)).toBe(true);
+    expect(isSuperAdminSub('Super-Sub-1')).toBe(false);
+    expect(isSuperAdminSub(` ${ADMIN.sub}`)).toBe(false);
+    expect(isSuperAdminSub(`${ADMIN.sub} `)).toBe(false);
   });
 
   it('matches the allowlist by email, case-insensitively', async () => {

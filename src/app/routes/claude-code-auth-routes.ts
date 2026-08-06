@@ -8,12 +8,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added GET /credentials and POST /import routes for cross-bot credential propagation
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | /start route now passes buildCallbackUri(req) to startLogin() for auto-callback OAuth — no copy/paste required
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fixed OAuth redirect URI to use root /callback (Claude only allows localhost:{port}/callback); removed swarm propagation; each bot owns its own auth
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Restricted every controller credential operation to exact operators, kept machine import directional on authenticated bot-node targets only, and removed raw credential reads
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: replace controller credential import with a stable no-op denial and derive redacted diagnostics from auth status without exporting token material.
  */
 
-import { Router, type Request, type Response, type RequestHandler } from 'express';
+import { Router, type NextFunction, type Request, type Response, type RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { ClaudeCodeAuthService } from '@/features/claude-code-auth';
-import { SwarmBotRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
+import { requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'claude-code-auth-routes' });
 const authService = new ClaudeCodeAuthService();
@@ -76,14 +78,33 @@ export { handleClaudeCodeOAuthCallback as default_handler };
  */
 export function createClaudeCodeAuthRoutes(requiresAuth: RequestHandler): Router {
   const router = Router();
-  registerStatusRoute(router, requiresAuth);
-  registerStartRoute(router, requiresAuth);
+  const operatorSession = createOperatorSessionGuard(requiresAuth);
+  registerStatusRoute(router, operatorSession);
+  registerStartRoute(router, operatorSession);
   registerCallbackRoute(router);
-  registerSubmitCodeRoute(router, requiresAuth);
-  registerSignOutRoute(router, requiresAuth);
-  registerCredentialsRoute(router, requiresAuth);
-  registerImportRoute(router, requiresAuth);
+  registerSubmitCodeRoute(router, operatorSession);
+  registerSignOutRoute(router, operatorSession);
+  registerCredentialsRoute(router, operatorSession);
+  registerImportRoute(router, operatorSession);
   return router;
+}
+
+/**
+ * @description Composes session authentication with the exact operator allowlist. Authentication
+ * runs first so unauthenticated browser callers retain the deployment's normal 401 behavior.
+ * @param requiresAuth - Deployment-specific OIDC/session authentication middleware
+ * @returns Middleware that admits authenticated operators only
+ */
+function createOperatorSessionGuard(requiresAuth: RequestHandler): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    requiresAuth(req, res, (error?: unknown) => {
+      if (error) {
+        next(error);
+        return;
+      }
+      requiresOperator(req, res, next);
+    });
+  };
 }
 
 /**
@@ -227,20 +248,27 @@ function registerSignOutRoute(router: Router, requiresAuth: RequestHandler): voi
 }
 
 /**
- * @description Registers GET /credentials endpoint to read persisted OAuth credentials for propagation.
+ * @description Registers GET /credentials endpoint for redacted platform credential diagnostics.
  * @param router - Router instance
  * @param requiresAuth - Session middleware requiring authenticated OSHAL user context
  */
 function registerCredentialsRoute(router: Router, requiresAuth: RequestHandler): void {
-  router.get('/credentials', requiresAuth, (req: Request, res: Response) => {
+  router.get('/credentials', requiresAuth, async (req: Request, res: Response) => {
     logger.info({ method: req.method, path: req.path }, 'Claude Code credentials read route invoked');
     try {
-      const credentials = authService.getCredentials();
-      if (!credentials) {
+      const status = await authService.getStatus();
+      if (!status.authenticated) {
         res.status(404).json({ success: false, error: 'No valid credentials found' });
         return;
       }
-      res.json({ success: true, credentials });
+      res.json({
+        success: true,
+        credentials: {
+          configured: true,
+          auth_method: status.authMethod,
+          has_access_token: true,
+        },
+      });
     } catch (error) {
       logger.error({ err: error }, 'Claude Code credentials read route failed');
       res.status(500).json({ success: false, error: toErrorMessage(error) });
@@ -249,30 +277,18 @@ function registerCredentialsRoute(router: Router, requiresAuth: RequestHandler):
 }
 
 /**
- * @description Registers POST /import endpoint to accept credentials from swarm propagation.
+ * @description Registers a stable no-op POST /import endpoint; raw distribution is retired.
  * @param router - Router instance
  * @param requiresAuth - Session middleware requiring authenticated OSHAL user context
  */
 function registerImportRoute(router: Router, requiresAuth: RequestHandler): void {
   router.post('/import', requiresAuth, (req: Request, res: Response) => {
-    logger.info({ method: req.method, path: req.path }, 'Claude Code credential import route invoked');
-    try {
-      const payload = req.body?.credentials;
-      if (!payload || typeof payload.access_token !== 'string' || payload.access_token.length === 0) {
-        res.status(400).json({ success: false, error: 'Missing or invalid credentials payload' });
-        return;
-      }
-      authService.importCredentials({
-        access_token: payload.access_token,
-        refresh_token: typeof payload.refresh_token === 'string' ? payload.refresh_token : null,
-        token_type: typeof payload.token_type === 'string' ? payload.token_type : 'Bearer',
-        expires_at: typeof payload.expires_at === 'number' ? payload.expires_at : 0,
-      });
-      res.json({ success: true, imported: true });
-    } catch (error) {
-      logger.error({ err: error }, 'Claude Code credential import route failed');
-      res.status(500).json({ success: false, error: toErrorMessage(error) });
-    }
+    logger.warn({ method: req.method, path: req.path }, 'Claude Code raw credential import refused');
+    res.status(409).json({
+      success: false,
+      imported: false,
+      error: 'credential_distribution_disabled_pending_versioned_revocation_rail',
+    });
   });
 }
 
@@ -344,44 +360,6 @@ h2{color:#991b1b;margin:0 0 8px}p{color:#4b5563;margin:0 0 20px}.close-btn{backg
 </div>
 <script>setTimeout(()=>window.close(),8000)</script>
 </body></html>`;
-}
-
-/**
- * @description Broadcasts freshly-persisted OAuth credentials to every other bot in the swarm.
- * Called fire-and-forget after a successful OAuth callback on the PM bot.
- */
-async function propagateCredentialsToSwarm(): Promise<void> {
-  const credentials = authService.getCredentials();
-  if (!credentials) {
-    logger.warn('Auto-propagation skipped — no credentials found after OAuth callback');
-    return;
-  }
-
-  const selfIdentity = SwarmBotRegistry.resolveRuntimeIdentity(process.env);
-  const allBots = SwarmBotRegistry.listDefinitions();
-  const targets = allBots.filter((bot) => bot.name !== selfIdentity.agentName);
-
-  const results = await Promise.all(targets.map(async (bot) => {
-    const url = `http://${bot.container}:5000/api/claude-code/auth/import`;
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credentials }),
-        signal: AbortSignal.timeout(10000),
-      });
-      return { name: bot.name, ok: response.ok };
-    } catch (error) {
-      return { name: bot.name, ok: false, error: (error as Error).message };
-    }
-  }));
-
-  const succeeded = results.filter((r) => r.ok).length;
-  const failed = results.filter((r) => !r.ok);
-  logger.info(
-    { succeeded, failed: failed.length, total: targets.length, failures: failed },
-    'Auto-propagated Claude Code credentials to swarm after OAuth callback',
-  );
 }
 
 /**

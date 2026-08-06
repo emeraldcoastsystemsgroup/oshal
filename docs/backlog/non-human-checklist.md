@@ -101,9 +101,6 @@ Legend: `[x]` done+merged · `[~]` in flight (bot assigned) · `[ ]` queued (non
 
 - [ ] **CI Playwright e2e normalization** (~132 specs; baseURL conventions) — Done-when: the suite runs
   clean under one baseURL convention.
-- [ ] **`deploy.yml` deploys to the ephemeral runner, not a real environment** — Done-when: either a
-  real target is wired (needs an environment → may be `[H]`) or the job is honestly scoped/disabled.
-
 ---
 
 ## Human-only — NOT fleet scope (listed for completeness)

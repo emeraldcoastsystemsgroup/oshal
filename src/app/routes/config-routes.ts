@@ -16,6 +16,8 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Added explicit config ownership contract route so cockpit and docs can distinguish global OSHAL config from per-agent profile/tool configuration
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log attribution for governance compliance during engineering-screen retrofit work
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /api/config now MERGES partial saves: non-secret settings merge into existing global-config.json and global secrets are preserved across saves (was wholesale-overwrite, which wiped previously-saved provider keys + service configs when saving one provider at a time)
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Restricted global configuration and runtime mutation to exact operators and recursively redacted credential-bearing responses
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: make plaintext migration one-way; the operator endpoint refuses any request to retain secrets.json and always removes it after verified encrypted persistence.
  */
 
 import { Router, Request, Response } from 'express';
@@ -25,6 +27,7 @@ import { createChildLogger } from '@/shared/logger';
 // eslint-disable-next-line no-restricted-imports -- two-runtimes: LLM execution runtime, deliberately off the barrel graph (barrel split, TODO-BOUNDARY-FINDING)
 import { ClineRuntimeConfigSyncService } from '@/features/llm-provider/services';
 import { buildConfigOwnershipContract } from './config-ownership-contract';
+import { requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'config-routes' });
 
@@ -54,6 +57,34 @@ const SECRET_KEY_PATTERNS = [
 function isSecretKey(key: string): boolean {
   const lower = key.toLowerCase();
   return SECRET_KEY_PATTERNS.some((pattern) => lower.includes(pattern.toLowerCase()));
+}
+
+const RESPONSE_SECRET_KEY_PATTERN = /(api[-_]?key|access[-_]?key|authorization|bearer|token|secret|password|passphrase|credential|private[-_]?key|keypem|certpem|service[-_]?account|kubeconfig|cookie)/i;
+const REDACTED_CONFIG_VALUE = '[REDACTED]';
+
+/**
+ * @description Recursively removes credential material from configuration responses. Every leaf
+ * beneath an `env` object is treated as secret because MCP/server environment variable names are
+ * extensible and cannot be safely enumerated. Secret-shaped keys are redacted at any depth.
+ *
+ * @param value - Configuration value being prepared for an HTTP response
+ * @param redactLeaves - Whether every descendant scalar must be redacted
+ * @returns A response-safe clone that never aliases the persisted object
+ */
+export function redactConfigForResponse(value: unknown, redactLeaves = false): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactConfigForResponse(entry, redactLeaves));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
+      const redactEntry = redactLeaves || RESPONSE_SECRET_KEY_PATTERN.test(key);
+      if (redactEntry) {
+        return [key, REDACTED_CONFIG_VALUE];
+      }
+      return [key, redactConfigForResponse(entry, key.toLowerCase() === 'env')];
+    }));
+  }
+  return redactLeaves && value !== undefined && value !== null ? REDACTED_CONFIG_VALUE : value;
 }
 
 /**
@@ -140,6 +171,9 @@ function partitionSecretsEnvelope(allSecrets: Record<string, any>): {
 export function createConfigRoutes(): Router {
   const router = Router();
   const context = createConfigRoutesContext();
+  // This router owns platform-wide files, encrypted secrets, and live Cline runtime state.
+  // Keep authorization before every read/write handler so a denial cannot touch the filesystem.
+  router.use(requiresOperator);
   registerRootConfigRoutes(router, context);
   registerMigrationRoutes(router, context);
   registerMcpRoutes(router, context);
@@ -261,6 +295,7 @@ function registerLegacyLlmRoutes(router: Router, context: ConfigRoutesContext): 
  */
 function handleGetMergedConfig(context: ConfigRoutesContext) {
   return (req: Request, res: Response): void => {
+    if (!requireEncryptedSecrets(context, res)) return;
     try {
       logger.info('GET /api/config — loading merged configuration');
       const settings = readJsonSafe(context.settingsPath);
@@ -270,10 +305,8 @@ function handleGetMergedConfig(context: ConfigRoutesContext) {
       // Expose env-level LLM_PROVIDER / LLM_MODEL so the UI can resolve agent "auto" values
       if (process.env.LLM_PROVIDER) merged.llmProvider = process.env.LLM_PROVIDER;
       if (process.env.LLM_MODEL) merged.llmModel = process.env.LLM_MODEL;
-      // Redact secret values before sending to client
-      const redacted = Object.fromEntries(
-        Object.entries(merged).map(([k, v]) => [k, isSecretKey(k) ? '***' : v]),
-      );
+      // Clone and recursively redact nested service/MCP credentials before responding.
+      const redacted = redactConfigForResponse(merged);
       logger.info(
         { settingsKeys: Object.keys(settings).length, secretsKeys: Object.keys(globalSecrets).length },
         'Configuration loaded',
@@ -352,8 +385,8 @@ function splitSettingsAndSecrets(body: Record<string, any>): {
 function saveGlobalSecretsPreservingUsers(
   context: ConfigRoutesContext,
   secrets: Record<string, any>,
+  existingEnvelope = context.secretsManager.loadSecrets(),
 ): number {
-  const existingEnvelope = context.secretsManager.loadSecrets();
   const { globalSecrets, userEnvelopes } = partitionSecretsEnvelope(existingEnvelope);
   // Preserve previously-saved global secrets so an incremental save (one provider
   // key at a time) does not wipe the others; new values in `secrets` override.
@@ -370,10 +403,15 @@ function saveGlobalSecretsPreservingUsers(
  */
 function handleSaveMergedConfig(context: ConfigRoutesContext) {
   return (req: Request, res: Response): void => {
+    // Preflight before settings or runtime files mutate so a missing key cannot produce a
+    // misleading partial-success configuration.
+    if (!requireEncryptedSecrets(context, res)) return;
     try {
       const body = req.body || {};
       logger.info({ keyCount: Object.keys(body).length }, 'POST /api/config — saving configuration');
       const { settings, secrets } = splitSettingsAndSecrets(body);
+      // Also detects a legacy plaintext store before any non-secret settings mutation.
+      const existingSecrets = context.secretsManager.loadSecrets();
       if (!fs.existsSync(context.configDir)) {
         fs.mkdirSync(context.configDir, { recursive: true });
       }
@@ -381,7 +419,7 @@ function handleSaveMergedConfig(context: ConfigRoutesContext) {
       // model + active selection) preserves unrelated keys (rag/presentron/etc.).
       const existingSettings = readJsonSafe(context.settingsPath);
       writeJsonSafe(context.settingsPath, { ...existingSettings, ...settings });
-      const preservedCount = saveGlobalSecretsPreservingUsers(context, secrets);
+      const preservedCount = saveGlobalSecretsPreservingUsers(context, secrets, existingSecrets);
       const userId = getOptionalOidcUserId(req);
       const selection = context.runtimeSyncService.syncFromPersistedConfig(
         process.env.CLINE_MODEL || process.env.LLM_MODEL || 'gpt-5.3-codex',
@@ -434,8 +472,11 @@ function getOptionalOidcUserId(req: Request): string | null {
  */
 function handleDeleteMergedConfig(context: ConfigRoutesContext) {
   return (req: Request, res: Response): void => {
+    if (!requireEncryptedSecrets(context, res)) return;
     try {
       logger.info('DELETE /api/config — clearing configuration');
+      // Validate the encrypted store and legacy-plaintext invariant before deleting settings.
+      context.secretsManager.loadSecrets();
       if (fs.existsSync(context.settingsPath)) {
         fs.unlinkSync(context.settingsPath);
         logger.info({ path: context.settingsPath }, 'Settings file deleted');
@@ -461,16 +502,40 @@ function handleDeleteMergedConfig(context: ConfigRoutesContext) {
  */
 function handleMigrateSecrets(context: ConfigRoutesContext) {
   return (req: Request, res: Response): void => {
+    if (!requireEncryptedSecrets(context, res)) return;
     try {
       const { removePlain } = req.body || {};
       logger.info({ removePlain }, 'POST /api/config/migrate');
-      const result = context.secretsManager.migrateFromPlaintext(!!removePlain);
-      res.json({ success: true, ...result });
+      if (removePlain === false) {
+        res.status(400).json({
+          success: false,
+          error: 'plaintext_secret_retention_disabled',
+        });
+        return;
+      }
+      const result = context.secretsManager.migrateFromPlaintext(true);
+      res.json({ success: true, ...(redactConfigForResponse(result) as Record<string, unknown>) });
     } catch (err: any) {
       logger.error({ err }, 'Migration failed');
       res.status(500).json({ success: false, error: err.message });
     }
   };
+}
+
+/**
+ * @description Enforces the controller-only encryption prerequisite before any config handler
+ * reads, writes, or deletes secret-bearing state.
+ * @param context - Shared route context
+ * @param res - Express response used for the stable service-unavailable result
+ * @returns True only when encrypted secret storage is configured
+ */
+function requireEncryptedSecrets(context: ConfigRoutesContext, res: Response): boolean {
+  if (context.secretsManager.isEncrypted()) return true;
+  res.status(503).json({
+    success: false,
+    error: 'encrypted_secret_storage_required',
+  });
+  return false;
 }
 
 /**
@@ -485,7 +550,7 @@ function handleGetMcpConfig(context: ConfigRoutesContext) {
       const config = context.runtimeSyncService.readMcpSettings();
       res.json({
         success: true,
-        config,
+        config: redactConfigForResponse(config),
         path: context.runtimeSyncService.getMcpSettingsPath(),
       });
     } catch (err: any) {
@@ -517,7 +582,7 @@ function handleSaveMcpConfig(context: ConfigRoutesContext) {
       context.runtimeSyncService.writeMcpSettings(normalized as Record<string, unknown>);
       res.json({
         success: true,
-        config: normalized,
+        config: redactConfigForResponse(normalized),
         path: context.runtimeSyncService.getMcpSettingsPath(),
       });
     } catch (err: any) {
@@ -550,7 +615,7 @@ function handleGetServiceConfig(
         ? value
         : defaults;
       logger.info({ routeLabel, hasCustomConfig: value !== undefined }, 'Service configuration loaded');
-      res.json({ success: true, config });
+      res.json({ success: true, config: redactConfigForResponse(config) });
     } catch (err: any) {
       logger.error({ err, routeLabel }, 'Failed to load service configuration');
       res.status(500).json({ success: false, error: err.message });
@@ -583,7 +648,7 @@ function handleSaveServiceConfig(
       const nextSettings = { ...settings, [key]: body };
       writeJsonSafe(context.settingsPath, nextSettings);
       logger.info({ routeLabel, keyCount: Object.keys(body).length }, 'Service configuration saved');
-      res.json({ success: true, config: body });
+      res.json({ success: true, config: redactConfigForResponse(body) });
     } catch (err: any) {
       logger.error({ err, routeLabel }, 'Failed to save service configuration');
       res.status(500).json({ success: false, error: err.message });
@@ -700,11 +765,11 @@ function handleGetLegacyLlmConfig(context: ConfigRoutesContext) {
       if (fs.existsSync(context.legacyConfigPath)) {
         const config = JSON.parse(fs.readFileSync(context.legacyConfigPath, 'utf-8'));
         logger.info('LLM configuration loaded (legacy)');
-        res.json(config);
+        res.json(redactConfigForResponse(config));
         return;
       }
       logger.info('No LLM configuration found, returning defaults');
-      res.json({ provider: '', model: '', apiKey: '' });
+      res.json({ provider: '', model: '', apiKeyConfigured: false });
     } catch (err: any) {
       logger.error({ err }, 'Failed to load LLM config');
       res.status(500).json({ error: 'Failed to load configuration' });
@@ -735,7 +800,11 @@ function handleSaveLegacyLlmConfig(context: ConfigRoutesContext) {
         updateLegacyClineAnthropicConfig(model, apiKey);
       }
       logger.info({ provider, model }, 'LLM configuration saved (legacy)');
-      res.json({ success: true, message: 'Configuration saved successfully', config });
+      res.json({
+        success: true,
+        message: 'Configuration saved successfully',
+        config: redactConfigForResponse(config),
+      });
     } catch (err: any) {
       logger.error({ err }, 'Failed to save LLM config');
       res.status(500).json({ error: 'Failed to save configuration' });

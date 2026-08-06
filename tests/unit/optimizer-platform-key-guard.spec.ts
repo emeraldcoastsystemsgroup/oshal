@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pins the optimizer spend guard: the Token Chase framework:openrouter lane, when backed by the platform's shared OPENROUTER_API_KEY (which now carries the one-time $10 credit), must coerce to platformFreeConnection()'s :free pick — and refuse the lane when free quota is walled — instead of replaying on the registry's paid default model (found 2026-07-11: the lane defaulted to anthropic/claude-3.5-sonnet and bypassed the 791286de :free-only guard entirely).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep the platform-key guard isolated while optimizer provider discovery also reads the aggregate free-lane eligibility and rotation APIs.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -31,7 +32,12 @@ vi.mock('../../src/app/routes/connector-tenancy', () => ({
 }));
 
 vi.mock('../../src/app/routes/free-tier-rotation', () => ({
+  freeTierRuntimeSnapshot: vi.fn(() => ({ configured: false, verdict: 'unknown', model: null })),
+  listFreeTierConnections: vi.fn(async () => []),
   platformFreeConnection: vi.fn(),
+  reportResolvedLlmFailure: vi.fn(async () => false),
+  reportSuccess: vi.fn(async () => undefined),
+  resolveLiveFreeTierConnection: vi.fn(async () => null),
 }));
 
 import { listOptimizerLogins, resolveOptimizerLane } from '../../src/app/routes/optimizer-providers';

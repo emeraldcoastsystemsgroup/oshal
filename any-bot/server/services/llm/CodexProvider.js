@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial CodexProvider for the bot-node runtime — lets a bot container execute via the OpenAI Codex CLI alongside Cline + ClaudeCode. Implements the same generateResponse() contract; wraps CodexCLIWrapper. With a sandbox (danger-full-access) a codex bot can shell out (run scripts/oshal-gmail.js) — which claude-code-as-root cannot. See docs/adr/037-communications-swarm.md.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny constrained execution before autonomous Codex CLI can bypass server tool authorization.
  */
 
 'use strict';
 
 const CodexCLIWrapper = require('../codebase/CodexCLIWrapper');
 const { formatProviderFailure, isProviderRuntimeBanner } = require('./providerFailureClassifier');
+const { assertCliToolBoundary } = require('./assert-cli-tool-boundary');
 
 /**
  * @description LLM provider backed by the OpenAI Codex CLI (`codex exec`).
@@ -41,6 +43,7 @@ class CodexProvider {
    * @returns {Promise<object>} { content, contentBlocks, stopReason, usage, cost, latency, model, provider }
    */
   async generateResponse(messages, options = {}) {
+    assertCliToolBoundary(options, 'openai-codex');
     const start = Date.now();
 
     // Model-gateway pre-flight (budgets/quotas/cost-aware routing). One gate for

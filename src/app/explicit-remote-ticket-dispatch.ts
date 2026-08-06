@@ -31,11 +31,13 @@
  *   re-running it: completed → adopt its result; still queued/in-flight → resume waiting; unknown
  *   (registry wiped by the restart) → REFUSE and escalate, because a repeat of an outward-facing
  *   action is not a safe retry. Guard: tests/unit/explicit-remote-at-most-once.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Await the PostgreSQL task journal for enqueue, in-flight, and terminal reads under the trusted controller identity so restart recovery uses durable state rather than process memory.
  */
 import type { InternalTicket } from '@/entities/ticket';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 import { assertDeviceUsable, type DeviceRequester } from '@/features/remote-client';
 import { createChildLogger } from '@/shared/logger';
+import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 
 const logger = createChildLogger({ module: 'explicit-remote-ticket-dispatch' });
 
@@ -57,8 +59,8 @@ export function explicitRemoteClientId(ticket: InternalTicket): string | null {
 
 /**
  * @description The remote task id a previous dispatch of this ticket recorded, if any. Its
- * presence is the durable "this ticket has already been sent to a machine once" marker that
- * survives a controller restart — the in-memory registry does not.
+ * presence is the durable "this ticket has already been sent to a machine once" marker used to
+ * locate the task's PostgreSQL journal row and retained terminal tombstone after a restart.
  * @param ticket - The ticket being dispatched.
  * @returns The recorded task id, or null when this ticket has never been dispatched.
  */
@@ -118,7 +120,9 @@ export async function dispatchExplicitRemoteTicket(
   // rollback). The node may well have DONE the work. Adopt the known outcome; never re-run blind.
   const prior = priorRemoteTaskId(ticket);
   if (prior) {
-    const completed = remoteClientRegistry.getCompletedResult(clientId, prior);
+    const completed = await runWithSystemIdentity(
+      () => remoteClientRegistry.getCompletedResult(clientId, prior),
+    );
     if (completed) {
       logger.info({ ticketId: ticket.ticketId, clientId, taskId: prior, status: completed.status }, 'Adopted the prior dispatch result — not re-running');
       return {
@@ -129,22 +133,23 @@ export async function dispatchExplicitRemoteTicket(
         ...(completed.error ? { error: completed.error } : {}),
       };
     }
-    if (remoteClientRegistry.getInFlightTask(clientId, prior)) {
+    if (await runWithSystemIdentity(() => remoteClientRegistry.getInFlightTask(clientId, prior))) {
       logger.info({ ticketId: ticket.ticketId, clientId, taskId: prior }, 'Prior dispatch still in flight — resuming the wait instead of re-dispatching');
       return waitForResult(clientId, prior, timeoutMs);
     }
-    // No record either way. The registry is in-memory, so a restart erases the evidence while the
-    // node keeps working — exactly the state that produced a duplicate send. Refuse.
+    // No durable row either way means the marker committed before enqueue, the tombstone was
+    // administratively removed/expired, or storage is inconsistent. Repeating an outward action
+    // is unsafe in every case, so retain the historical fail-closed behavior.
     logger.error(
       { ticketId: ticket.ticketId, clientId, taskId: prior },
-      'Prior dispatch outcome is unknown (registry has no record) — refusing to repeat an outward action',
+      'Prior dispatch outcome has no durable journal row — refusing to repeat an outward action',
     );
     return {
       handled: true,
       success: false,
       clientId,
       taskId: prior,
-      error: `This ticket was already dispatched to ${clientId} as task ${prior} and the controller lost track of it (a restart clears the in-memory task registry). Re-running could repeat a real-world action, so it was not re-dispatched — confirm on the machine whether the work completed, then close or re-file this ticket.`,
+      error: `This ticket was already dispatched to ${clientId} as task ${prior}, but its durable journal row is unavailable. Re-running could repeat a real-world action, so it was not re-dispatched — confirm on the machine whether the work completed, then close or re-file this ticket.`,
     };
   }
 
@@ -162,7 +167,7 @@ export async function dispatchExplicitRemoteTicket(
     }
   }
 
-  remoteClientRegistry.enqueueTask(clientId, {
+  await runWithSystemIdentity(() => remoteClientRegistry.enqueueTask(clientId, {
     taskId,
     correlationId: ticket.ticketId,
     fromAgentId: 'queue-manager',
@@ -186,13 +191,13 @@ export async function dispatchExplicitRemoteTicket(
       },
     },
     createdAt: new Date().toISOString(),
-  });
+  }));
 
   return waitForResult(clientId, taskId, timeoutMs);
 }
 
 /**
- * @description Poll the registry for one task's completion until the deadline.
+ * @description Poll the durable task journal for one task's completion until the deadline.
  * @param clientId - The device running the task.
  * @param taskId - The task to await.
  * @param timeoutMs - How long to wait before giving up.
@@ -205,7 +210,9 @@ async function waitForResult(
 ): Promise<{ handled: boolean; success?: boolean; clientId?: string; taskId?: string; error?: string }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const result = remoteClientRegistry.getCompletedResult(clientId, taskId);
+    const result = await runWithSystemIdentity(
+      () => remoteClientRegistry.getCompletedResult(clientId, taskId),
+    );
     if (result) {
       return {
         handled: true,

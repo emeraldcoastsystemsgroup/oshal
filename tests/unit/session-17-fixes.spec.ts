@@ -4,6 +4,7 @@
  * DATE         | AUTHOR  | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Session 17: Tests for dispatch pipeline, cost rollup, retry logic, logging fixes
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: replace stale OAuth-preservation/act-mode expectations with plan-only, credential-free Cline compatibility-state guards.
  */
 
 /**
@@ -302,7 +303,7 @@ describe('Ticket agent assignment — assigned_agent_id persistence', () => {
 // ── setup-cline-auth.sh provider env var test ────────────────────────────
 
 describe('setup-cline-auth.sh — LLM_PROVIDER env var usage', () => {
-  it('should use LLM_PROVIDER instead of hardcoded claude-code', async () => {
+  it('uses bounded provider metadata without enabling unattended Cline execution', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const scriptPath = path.resolve(__dirname, '../../scripts/setup-cline-auth.sh');
@@ -310,21 +311,29 @@ describe('setup-cline-auth.sh — LLM_PROVIDER env var usage', () => {
 
     // Should reference LLM_PROVIDER env var
     expect(content).toContain('LLM_PROVIDER');
-    expect(content).toContain('CLINE_PROVIDER="${LLM_PROVIDER:-claude-code}"');
+    expect(content).toContain('CLINE_PROVIDER="${LLM_PROVIDER:-noop}"');
 
     // Should NOT hardcode claude-code as provider in globalState
     expect(content).not.toContain('"actModeApiProvider": "claude-code"');
     // Should use the variable instead
     expect(content).toContain('"actModeApiProvider": "${CLINE_PROVIDER}"');
+    expect(content).toContain('"mode": "plan"');
+    expect(content).toContain('"autoApprove": false');
+    expect(content).not.toContain('"autoApprove": true');
   });
 
-  it('should preserve existing OAuth tokens via merge logic', async () => {
+  it('tombstones legacy OAuth/MCP carriers and disables every automatic action', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const scriptPath = path.resolve(__dirname, '../../scripts/setup-cline-auth.sh');
     const content = fs.readFileSync(scriptPath, 'utf8');
 
-    expect(content).toContain('Merging provider/model into existing globalState');
-    expect(content).toContain('OAuth tokens preserved');
+    expect(content).toContain("printf '{}\\n' > \"${CLINE_DATA_DIR}/secrets.json\"");
+    expect(content).toContain('"mcpServers": {}');
+    expect(content).toContain('"yoloModeToggled": false');
+    expect(content).toContain('"enabled": false');
+    expect(content).toContain('"maxRequests": 0');
+    expect(content).not.toContain('Merging provider/model into existing globalState');
+    expect(content).not.toContain('OAuth tokens preserved');
   });
 });

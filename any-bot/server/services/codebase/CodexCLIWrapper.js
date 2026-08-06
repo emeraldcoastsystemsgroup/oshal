@@ -8,6 +8,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Token-stranding fix (parity with the TS adapter's codex-auth-write-back.ts): the CLI rotates its SINGLE-USE ChatGPT refresh_token in the per-workspace auth.json COPY and nothing wrote it back — one mid-run refresh left the shared source holding an already-spent token, bricking codex auth until a host re-login. Now snapshot auth.json before the spawn and CAS-write-back a rotation to authSourcePath after the run (only when the source still equals the snapshot; atomic tmp+rename; never throws). Also corrected the stale ":ro mount" comment — the local compose mounts ~/.codex :rw precisely so rotations can persist.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review hardening (parity with the TS twin): snapshot moved AFTER the workspace lease (pre-lease it baselines a stale chain for queued same-workspace runs, whose own rotation would then CAS-fail and re-strand the token); _reseedFromSource refreshes an untouched copy the source advanced past; _looksLikeAuth blocks torn/injected content from reaching the shared credential; a MISSING source (secrets-seeded container) is now created exclusively instead of warn-looping as "moved".
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Verifier round 2 (parity with codex-auth-write-back.ts): _reseedFromSource requires a valid-shaped source that is provably NEWER (last_refresh) — after a failed write-back the source holds the dead chain and "differs" alone would erase the only live copy; non-ENOENT source read errors return 'failed' honestly instead of 'source-moved'; missing-source create is tmp+linkSync (atomic AND exclusive, no torn source on crash). The unscoped-request lease bypass is fixed in user-scoping.js (lease now unconditional, TS parity).
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: default-deny unbrokered autonomous CLI execution before copying OAuth material or spawning danger-full-access Codex.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: isolate the live Codex availability probe from ambient process credentials.
  */
 
 'use strict';
@@ -16,6 +18,8 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { acquireUserScoping } = require('./user-scoping');
+const { buildCliDiagnosticEnv } = require('./cli-diagnostic-env');
+const { assertCliToolBoundary } = require('../llm/assert-cli-tool-boundary');
 const { captureProviderRecord, stripModelProviderRecordFences } = require('./provider-record-capture');
 
 const MAX_DIAGNOSTIC_CHARS = 1200;
@@ -276,6 +280,7 @@ class CodexCLIWrapper {
    * @returns {Promise<{success: boolean, text: string, result: string, providerRecords: object[], costUSD: number, usage: object, durationMs: number, exitCode: number, stderr: string}>}
    */
   async executeTask(taskDescription, workspaceDir, options = {}) {
+    assertCliToolBoundary(options, 'openai-codex');
     const model = options.model || this.model;
     const sandbox = options.sandboxMode || this.sandboxMode;
     fs.mkdirSync(workspaceDir, { recursive: true });
@@ -411,7 +416,9 @@ class CodexCLIWrapper {
   async isAvailable() {
     return new Promise((resolve) => {
       try {
-        const child = this.spawnImpl(this.codexCommand, ['--version']);
+        const child = this.spawnImpl(this.codexCommand, ['--version'], {
+          env: buildCliDiagnosticEnv(),
+        });
         child.on('close', (code) => resolve(code === 0));
         child.on('error', () => resolve(false));
       } catch { resolve(false); }

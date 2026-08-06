@@ -30,7 +30,9 @@ volume-vs-store forensic tool; this daemon is the always-on tripwire).
 - `POST /api/updates/apps/:name/apply` — auth + **operator** gated. Re-runs
   `scripts/oshal-app.js install` with repo/ref taken from the *installed* manifest (never the
   caller; name is slug-fenced and must already be installed), then hot-reloads the package via
-  the swarm-app service with the caller stamped as owner. Returns the installer log tail.
+  the swarm-app service with the caller stamped as owner. Detection still reads the source
+  manifest directly; apply independently reads the official catalog audit record and enforces
+  its app/version/source-SHA binding before replacing files. Returns the installer log tail.
 - **Cockpit** (`/applications/`): amber "vX.Y.Z available" badge + operator "Update to vX.Y.Z"
   row action + "Check for updates" button in the admin bar.
 - **Notification center**: when a check *first* sees a given update (per app version / per core
@@ -46,6 +48,7 @@ volume-vs-store forensic tool; this daemon is the always-on tripwire).
 | `UPDATE_CHECK_CORE_REPO` | `emeraldcoastsystemsgroup/oshal` | upstream repo for the core check |
 | `UPDATE_CHECK_CORE_BRANCH` | `main` | upstream branch |
 | `OSHAL_STORE_TOKEN` (fallback `GITHUB_TOKEN`) | unset | **opt-in** GitHub PAT for private-store checks *and* applies — see below |
+| `OSHAL_PACKAGE_AUDIT_MODE` | `compatible` | `compatible` warns and grants no pin for a valid pending/failed record; `enforce` permits only a fully passed, evidenced record and checks out its exact SHA |
 
 ## Private store: why every app may read "unknown"
 
@@ -74,6 +77,9 @@ packages.
 - **Apply returns 502 with a git error** — the store repo isn't reachable with the current
   credentials (usually: private store, no `OSHAL_STORE_TOKEN`). The package on disk is untouched
   — the installer stages to a temp clone before replacing anything.
+- **Apply reports an APP-02 audit denial** — fix the official catalog/record structure or publish
+  a passed record for enforce mode. Do not switch modes to bypass a malformed, missing, unsafe,
+  or SHA-mismatched binding; those are blocking in both modes.
 - **Apply returns "installed on disk but hot-reload failed"** — the new files landed but the
   manifest reload errored; load it from the admin bar (`Load manifest` →
   `deployed-apps/<name>/oshal-app.yaml`) or check api logs for the loader error.

@@ -18,6 +18,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | runScan awaits the now-async scanDependencies + scanTrivy (were execFileSync — npm audit blocked the api event loop up to 90s and a trivy image scan up to 15min from the POST /scan handler; the 07-15 spawnSync wedge class). scanSecrets/auditRoutes stay sync (CPU-bound in-process collectors, no shell-out on their hot path).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | runScan accepts optional manifestRoutes (the active app manifests' routes[] flattened to ManifestRouteAuditEntry) and forwards them to auditRoutes — carved apps mount dynamically (ADR-085), so a server.ts-only route audit decays as apps carve. Omission keeps the old server.ts-only behavior for existing callers.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: surfaced the hardening middleware presets (webhook HMAC guard, rate-limit presets, global-skip predicate, CSP builder) consumers were deep-importing from ./hardening/*.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Exported executable contracts for helper-mounted, mixed-auth, and non-/api security-sensitive route surfaces.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exported the shared limiter-only mount classifier used by both runtime and CI route inventories.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Surface the SEC-01 legacy service-identity read guard through the feature barrel for route-layer containment without deep imports.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Surface the durable SEC-01 workload credential, PostgreSQL delegation authority, issuer, route metadata, and migration middleware.
  *
  * @module features/security
  */
@@ -34,7 +38,13 @@ import type { ScanKind, ScannerReport } from './types';
 
 export * from './types';
 export { scanSecrets, auditRoutes, scanDependencies, detectThreats, monitorLedgers, auditAccess };
-export { PUBLIC_BY_DESIGN, type ManifestRouteAuditEntry } from './route-audit';
+export { PUBLIC_BY_DESIGN, isLimiterOnlyMiddleware, type ManifestRouteAuditEntry } from './route-audit';
+export {
+  auditRouteSurfaceContracts,
+  ROUTE_SURFACE_CONTRACTS,
+  type RouteGuardRequirement,
+  type RouteSurfaceContract,
+} from './route-surface-contracts';
 export { scanTrivy, buildTrivyArgs, parseTrivyReport, mapTrivySeverity, TRIVY_CATEGORIES } from './trivy-scanner';
 
 // FSD deep-import burn-down (2026-07-24): hardening middleware presets surfaced through the barrel.
@@ -48,6 +58,17 @@ export {
   RESERVED_BODY_PARSER_PREFIXES,
 } from './hardening/body-limits';
 export { shouldSkipGlobalRateLimit } from './hardening/global-rate-limit-skip';
+export {
+  legacyWorkloadLogContext,
+  rejectLegacyServiceIdentityForUserRead,
+  type LegacyWorkloadLogContext,
+} from './legacy-service-identity-containment';
+export * from './workload-delegation-types';
+export * from './workload-credential';
+export * from './postgres-workload-delegation-store';
+export * from './workload-delegation-issuer';
+export * from './workload-delegation-route-policy';
+export * from './workload-delegation-middleware';
 export {
   cspFromEnv,
   cspMode,

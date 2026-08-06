@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — gha-local execution engine: runs a Plan locally. needs-gated jobs, service containers (docker run + health-wait + guaranteed teardown), per-step live interpolation (steps./needs. contexts), GITHUB_OUTPUT/GITHUB_ENV plumbing, if-conditions with success()/failure()/always(), continue-on-error, timeouts, artifact copy to .gha-local/artifacts. Secrets come only from the caller.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: workflow shell steps inherit only OS/runtime values plus declared workflow/caller inputs, matching the documented secrets contract instead of exposing the launcher's entire environment.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -27,11 +28,33 @@ export interface RunOptions {
   log?: (line: string) => void;
 }
 
+const GHA_STEP_RUNTIME_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'APPDATA', 'LOCALAPPDATA', 'LANG', 'LC_ALL', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS',
+] as const;
+
+/** Build one local workflow step's environment without ambient host secrets. */
+export function buildGhaStepProcessEnv(
+  stepEnv: Record<string, string>,
+  extraEnv: Record<string, string>,
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { CI: 'true' };
+  for (const key of GHA_STEP_RUNTIME_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...stepEnv, ...extraEnv };
+}
+
 /** Executes a command under the step's shell via a temp script (multiline-safe on Windows). */
 function executeCmd(step: PlannedStep, cwd: string, extraEnv: Record<string, string>): number {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gha-local-'));
   try {
-    const env = { ...process.env, CI: 'true', ...step.env, ...extraEnv };
+    const env = buildGhaStepProcessEnv(step.env, extraEnv);
     const timeoutMs = (step.timeoutMinutes ?? 60) * 60_000;
     const runCwd = step.cwd ? path.resolve(cwd, step.cwd) : cwd;
     let file: string; let cmd: string; let args: string[];

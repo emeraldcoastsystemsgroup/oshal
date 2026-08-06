@@ -11,7 +11,6 @@ const request: BotNodeRequest = {
   agenticMode: true,
   direct: true,
   userSub: 'user-1',
-  creds: { OSHAL_CRED_GOOGLE: 'token' },
 };
 
 describe('executeBotOrInline', () => {
@@ -45,7 +44,7 @@ describe('executeBotOrInline', () => {
     expect(ctx.orchestrator.processMessage).not.toHaveBeenCalled();
   });
 
-  it('routes controller-inline agents through the local orchestrator with user and token scope', async () => {
+  it('routes controller-inline agents through the local orchestrator with owner identity and no credential carrier', async () => {
     const botClient = {
       hasEndpoint: vi.fn(() => false),
       execute: vi.fn(async () => {
@@ -88,9 +87,9 @@ describe('executeBotOrInline', () => {
       source: 'inline-bot',
       agentId: 'inline-agent',
       userSub: 'user-1',
-      creds: { OSHAL_CRED_GOOGLE: 'token' },
       interactionMode: 'task',
     }));
+    expect(processMessage.mock.calls[0][2]).not.toHaveProperty('creds');
     expect(response).toMatchObject({
       success: true,
       response: 'local',
@@ -100,5 +99,21 @@ describe('executeBotOrInline', () => {
       provider: 'inline-orchestrator',
       taskId: 'inline-task',
     });
+  });
+
+  it('rejects generic connector credentials before remote or inline work is accepted', async () => {
+    const botClient = {
+      hasEndpoint: vi.fn(() => true),
+      execute: vi.fn(),
+    } as unknown as BotNodeClient;
+    const processMessage = vi.fn();
+    const ctx = { orchestrator: { processMessage } } as unknown as AppContext;
+
+    await expect(executeBotOrInline(ctx, botClient, 'inline-agent', {
+      ...request,
+      creds: { OSHAL_CRED_GOOGLE: 'must-not-enter-model' },
+    })).rejects.toMatchObject({ code: 'UNSCOPED_CREDENTIAL_CARRIER' });
+    expect(botClient.execute).not.toHaveBeenCalled();
+    expect(processMessage).not.toHaveBeenCalled();
   });
 });

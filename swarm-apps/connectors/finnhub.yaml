@@ -1,3 +1,10 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Replace contradictory favicon/Simple Icons metadata with the deterministic reviewed Finnhub favicon fallback.
+# -----------------------------------------------------------------------------
+
 # Finnhub — the CONSENSUS/SURPRISE feed (ADR-096 fundamental overlay).
 #
 # WHY THIS CONNECTOR EXISTS: the platform already ingests the forward event CALENDAR (earnings,
@@ -70,6 +77,6 @@ metadata:
   description: Earnings actual-vs-consensus surprises, forward earnings + economic calendars with estimates. The consensus half of the fundamental event overlay.
   tags: [finance, market-data, fundamentals, events]
   website: https://finnhub.io
-  icon: finnhub
-  iconTitle: Finnhub
   iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/finnhub.io.ico

@@ -30,13 +30,24 @@
  *   operator-gated) mount, so enumerating every registered node handed each signed-in user the
  *   client id of every other user's desktop — and that id is exactly what pins dispatch. All three
  *   entry points now take the requester and filter through filterUsableDevices.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reuse the generic dispatcher's exact browser-control and browser-pilot-consent predicate so unauthorized execution-only nodes are neither listed nor reported ready.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Extract queue-row projection from snapshot orchestration to keep each function below the repository limit without changing RLS reads or lane accounting.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Project exact assigned-worker truth and explicit failed/assist-review states so an idle orphan never renders as active work.
  *
  * @module app/apply-queue-status
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
-import { applyInFlight } from '@/app/apply-inflight';
+import {
+  isAuthorizedBrowserWorker,
+  NO_AUTHORIZED_BROWSER_WORKER_ERROR,
+} from '@/app/browser-worker-eligibility';
+import {
+  APPLY_WORKER_ACK_TIMEOUT_MS,
+  applyInFlight,
+  type ApplyInFlight,
+} from '@/app/apply-inflight';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { filterUsableDevices, type DeviceRequester, type RemoteClientRecord } from '@/features/remote-client';
@@ -50,10 +61,16 @@ const LANE_BY_STATUS: Record<string, ApplyLane> = {
   in_process_build: 'submitting',
   complete: 'applied',
   customer_action: 'needs_you',
+  paused: 'needs_you',
+  escalated: 'failed',
+  dead_letter: 'failed',
   cancelled: 'dismissed',
 };
 
-export type ApplyLane = 'queued' | 'submitting' | 'applied' | 'needs_you' | 'dismissed' | 'other';
+export type ApplyLane = 'queued' | 'submitting' | 'applied' | 'needs_you' | 'failed' | 'dismissed' | 'other';
+export type ApplyExecutionState =
+  | 'queued' | 'assigned' | 'working' | 'no_worker' | 'callback_pending'
+  | 'needs_review' | 'failed' | 'submitted' | 'dismissed' | 'other';
 
 /** One queued/finished submission as the queue surface shows it. */
 export interface ApplyQueueItem {
@@ -74,6 +91,12 @@ export interface ApplyQueueItem {
   targetClientId?: string | null;
   /** That node's hostname when it is currently registered, else null (offline / unknown). */
   targetHostname?: string | null;
+  /** Exact worker selected by dispatch, not merely the requested/default target. */
+  assignedClientId?: string | null;
+  assignedHostname?: string | null;
+  /** Truthful state derived from the ticket, exact in-flight record, and assigned worker heartbeat. */
+  executionState: ApplyExecutionState;
+  executionDetail: string;
 }
 
 /** Whether the desktop box can actually be handed a submission right now, and if not, why. */
@@ -110,19 +133,13 @@ export interface ApplyWorkerOption {
   state: string;
 }
 
-/** codex.exec / shell.exec is what lets a node drive a real logged-in browser with OS input — the
- *  screen-control capability. A node without it can never run an apply, so it is never a candidate. */
-function canRunApply(c: RemoteClientRecord): boolean {
-  return (c.capabilities ?? []).includes('codex.exec') || (c.capabilities ?? []).includes('shell.exec');
-}
-
 /**
- * All screen-control-capable nodes THIS requester may drive (the dropdown's candidate set).
+ * All explicitly browser-authorized nodes THIS requester may drive (the dropdown's candidate set).
  * Owner-scoped: the dropdown is a list of real people's desktops, so enumerating it unfiltered both
  * leaked the fleet to every signed-in user and offered them a machine they must not be able to pick.
  */
 function applyCandidates(requester: DeviceRequester): RemoteClientRecord[] {
-  try { return filterUsableDevices(requester, remoteClientRegistry.listClients().filter(canRunApply)); } catch { return []; }
+  try { return filterUsableDevices(requester, remoteClientRegistry.listClients().filter(isAuthorizedBrowserWorker)); } catch { return []; }
 }
 
 const nodeHost = (c: RemoteClientRecord): string =>
@@ -189,14 +206,80 @@ export interface ApplyQueueSnapshot {
   counts: Record<ApplyLane, number>;
   items: ApplyQueueItem[];
   /** The submission currently holding this user's single desktop slot, if any. */
-  active: { ticketId: string; postingId: number; ageMs: number } | null;
+  active: {
+    ticketId: string; postingId: number; ageMs: number;
+    clientId: string | null; executionState: ApplyExecutionState;
+  } | null;
   at: string;
+}
+
+/** Values shared while projecting one RLS-scoped ticket row into its queue item. */
+interface ApplyQueueProjectionContext {
+  counts: Record<ApplyLane, number>;
+  mine: ApplyInFlight[];
+  hostById: Map<string, string | null>;
+  clientById: Map<string, RemoteClientRecord>;
+  now: number;
+}
+
+/** Convert the exact assigned worker's public heartbeat into a non-ambiguous UI state. */
+function executionProjection(
+  lane: ApplyLane,
+  inFlight: ApplyInFlight | undefined,
+  context: ApplyQueueProjectionContext,
+  recoveryState: string,
+): { executionState: ApplyExecutionState; executionDetail: string } {
+  if (lane === 'queued') return { executionState: 'queued', executionDetail: 'Queued; no worker has claimed it yet.' };
+  if (lane === 'needs_you') return { executionState: 'needs_review', executionDetail: recoveryState === 'assist_review'
+    ? 'Submission outcome unknown. Confirm it with the employer before retrying.' : 'Human action is required.' };
+  if (lane === 'failed') return { executionState: 'failed', executionDetail: 'The run stopped and is not progressing.' };
+  if (lane === 'applied') return { executionState: 'submitted', executionDetail: 'A completion record exists; see its provenance.' };
+  if (lane === 'dismissed') return { executionState: 'dismissed', executionDetail: 'This application was dismissed.' };
+  if (lane !== 'submitting' || !inFlight) return { executionState: 'no_worker', executionDetail: 'No worker picked this up.' };
+  if (inFlight.callbackPending) return { executionState: 'callback_pending', executionDetail: 'Worker finished; trusted result settlement is pending.' };
+  const worker = inFlight.clientId ? context.clientById.get(inFlight.clientId) : undefined;
+  if (worker?.activeTaskId === inFlight.taskId) return { executionState: 'working', executionDetail: 'Claimed and running on the assigned worker.' };
+  if (Number(worker?.taskQueueDepth || 0) > 0) return { executionState: 'assigned', executionDetail: 'Assigned; waiting for the worker to claim it.' };
+  if (context.now - inFlight.startedAt < APPLY_WORKER_ACK_TIMEOUT_MS) return { executionState: 'assigned', executionDetail: 'Assigned; waiting for the worker acknowledgement window.' };
+  return { executionState: 'no_worker', executionDetail: 'No worker picked this up; recovery is moving it to review.' };
+}
+
+/** @description Projects one database ticket and increments its canonical lane count. */
+function projectApplyQueueItem(
+  row: Record<string, unknown>,
+  context: ApplyQueueProjectionContext,
+): ApplyQueueItem {
+  const status = String(row.status || '');
+  const lane = LANE_BY_STATUS[status] ?? 'other';
+  context.counts[lane] += 1;
+  const ticketId = String(row.ticket_id);
+  const inFlight = context.mine.find((task) => task.ticketId === ticketId);
+  const targetClientId = row.target_client != null ? String(row.target_client) : null;
+  const assignedClientId = inFlight?.clientId ?? null;
+  const execution = executionProjection(
+    lane, inFlight, context, String(row.recovery_state || ''),
+  );
+  return {
+    ticketId,
+    postingId: row.posting_id != null ? Number(row.posting_id) : null,
+    lane, status, title: String(row.title || ''),
+    company: row.company != null ? String(row.company) : null,
+    jobUrl: row.job_url != null ? String(row.job_url) : null,
+    createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : null,
+    updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null,
+    targetClientId,
+    targetHostname: targetClientId ? (context.hostById.get(targetClientId) ?? null) : null,
+    assignedClientId,
+    assignedHostname: assignedClientId ? (context.hostById.get(assignedClientId) ?? null) : null,
+    ...execution,
+    ...(inFlight ? { inFlightMs: context.now - inFlight.startedAt } : {}),
+  };
 }
 
 /**
  * @description Describe ONE target node's reachability the way an operator needs to read it —
  * connected/claiming/available, with the wedged case called out by name. Mirrors the availability
- * rule in `pickApplyClient` (online + healthy + draining + can run codex/shell) so the surface never
+ * rule in `pickApplyClient` (online + healthy + draining + explicit browser capability/consent) so the surface never
  * reports "ready" for a box the dispatcher would refuse.
  * @param preferredClientId - The node the operator explicitly selected in the dropdown. When it is a
  *   live candidate, its status is reported; otherwise (or when omitted) the auto-picked default is.
@@ -213,7 +296,7 @@ export function describeApplyWorker(preferredClientId: string | undefined, reque
     return {
       connected: false, clientId: null, hostname: null, status: null, healthy: false,
       taskQueueDepth: 0, lastSeenAt: null, wedged: false, available: false,
-      detail: 'No desktop worker is connected. Install and start the OSHAL leaf client on the machine (or remote node) that has your logged-in Chrome, with screen control enabled.',
+      detail: `${NO_AUTHORIZED_BROWSER_WORKER_ERROR} Install and start an owned OSHAL leaf client with browser control and explicit browser-pilot consent.`,
     };
   }
 
@@ -250,28 +333,40 @@ export function describeApplyWorker(preferredClientId: string | undefined, reque
 export async function getApplyQueueSnapshot(ctx: AppContext, userSub: string, limit = 100, preferredClientId?: string): Promise<ApplyQueueSnapshot> {
   const requester: DeviceRequester = { sub: userSub };
   const worker = describeApplyWorker(preferredClientId, requester);
-  const counts: Record<ApplyLane, number> = { queued: 0, submitting: 0, applied: 0, needs_you: 0, dismissed: 0, other: 0 };
+  const counts: Record<ApplyLane, number> = {
+    queued: 0, submitting: 0, applied: 0, needs_you: 0, failed: 0, dismissed: 0, other: 0,
+  };
   const at = new Date().toISOString();
 
   // The single per-user desktop slot (includes entries rehydrated from Postgres after a restart).
   const mine = [...applyInFlight.values()].filter((t) => t.userSub === userSub);
   const now = Date.now();
+  const clients = applyCandidates(requester);
+  const clientById = new Map(clients.map((client) => [client.clientId, client]));
+  const hostById = new Map(clients.map((client) => [
+    client.clientId, (client as { tailnetHostname?: string }).tailnetHostname ?? null,
+  ]));
+  const activeState = mine[0]
+    ? executionProjection('submitting', mine[0], { counts, mine, hostById, clientById, now }, '')
+    : null;
   const active = mine.length
-    ? { ticketId: mine[0].ticketId ?? '', postingId: mine[0].postingId, ageMs: now - mine[0].startedAt }
+    ? {
+      ticketId: mine[0].ticketId ?? '', postingId: mine[0].postingId,
+      ageMs: now - mine[0].startedAt, clientId: mine[0].clientId ?? null,
+      executionState: activeState?.executionState ?? 'no_worker',
+    }
     : null;
 
   if (!ctx.pool) return { worker, counts, items: [], active, at };
-
-  // Resolve pinned-node ids → hostnames for display (only nodes currently registered are known).
-  const hostById = new Map(listApplyWorkers(requester).workers.map((w) => [w.clientId, w.hostname]));
 
   try {
     const { rows } = await runWithRequestIdentity({ sub: userSub, isOperator: false }, () => ctx.pool!.query(
       `SELECT ticket_id, title, status, created_at, updated_at,
               metadata->>'applyPostingId'       AS posting_id,
-              metadata->>'company'              AS company,
-              metadata->>'jobUrl'               AS job_url,
-              metadata->>'targetRemoteClientId' AS target_client
+               metadata->>'company'              AS company,
+               metadata->>'jobUrl'               AS job_url,
+               metadata->>'targetRemoteClientId' AS target_client,
+               metadata->>'applyRecoveryState'   AS recovery_state
          FROM tickets
         WHERE metadata->>'source' = 'apply-enqueue'
         ORDER BY updated_at DESC
@@ -279,27 +374,9 @@ export async function getApplyQueueSnapshot(ctx: AppContext, userSub: string, li
       [Math.max(1, Math.min(500, limit))],
     ));
 
-    const items: ApplyQueueItem[] = (rows as Array<Record<string, unknown>>).map((r) => {
-      const status = String(r.status || '');
-      const lane = LANE_BY_STATUS[status] ?? 'other';
-      counts[lane] += 1;
-      const ticketId = String(r.ticket_id);
-      const inFlight = mine.find((t) => t.ticketId === ticketId);
-      const targetClientId = r.target_client != null ? String(r.target_client) : null;
-      return {
-        ticketId,
-        postingId: r.posting_id != null ? Number(r.posting_id) : null,
-        lane, status,
-        title: String(r.title || ''),
-        company: r.company != null ? String(r.company) : null,
-        jobUrl: r.job_url != null ? String(r.job_url) : null,
-        createdAt: r.created_at ? new Date(String(r.created_at)).toISOString() : null,
-        updatedAt: r.updated_at ? new Date(String(r.updated_at)).toISOString() : null,
-        targetClientId,
-        targetHostname: targetClientId ? (hostById.get(targetClientId) ?? null) : null,
-        ...(inFlight ? { inFlightMs: now - inFlight.startedAt } : {}),
-      };
-    });
+    const projection = { counts, mine, hostById, clientById, now };
+    const items = (rows as Array<Record<string, unknown>>)
+      .map((row) => projectApplyQueueItem(row, projection));
 
     return { worker, counts, items, active, at };
   } catch (err) {

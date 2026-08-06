@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the render-node availability gate: the blackout clock (including the wrap-midnight window a naive comparison never fires), fail-closed behaviour on every unreadable signal, the busy/in-flight refusals, and the node package dir no longer defaulting to a path that has never existed on the node.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the PostgreSQL shared lease refusal, exact-token self re-entry, store-failure fail-closed path, and removal of the racy node-local JSON authority.
  */
 /**
  * @description The gate decides whether anything is allowed to touch the render node, and every
@@ -195,6 +196,40 @@ describe('the availability verdict', () => {
     const v = await checkVidsNodeAvailability(fakePool([{ rows: [] }]), { skipProbe: true });
     expect(v).toMatchObject({ available: true, check: 'free', clientId: 'node-1' });
   });
+
+  it('refuses an active durable lease and permits only its exact token to re-enter', async () => {
+    listClients.mockReturnValue(IDLE_NODE);
+    const row = {
+      resource_key: 'vids-render-node:node-1',
+      lease_id: '11111111-2222-4333-8444-555555555555',
+      holder: 'daily-recap:2026-08-06:run',
+      purpose: 'daily-recap-build-publish',
+      acquired_at: new Date(), heartbeat_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000), metadata: {},
+    };
+    const blocked = await checkVidsNodeAvailability(fakePool([{ rows: [] }, { rows: [row] }]), {
+      skipProbe: true,
+    });
+    expect(blocked).toMatchObject({ available: false, check: 'leased' });
+
+    const self = await checkVidsNodeAvailability(fakePool([{ rows: [] }, { rows: [row] }]), {
+      skipProbe: true, selfLeaseId: row.lease_id,
+    });
+    expect(self).toMatchObject({ available: true, check: 'free' });
+  });
+
+  it('fails closed when the durable lease authority cannot be read', async () => {
+    listClients.mockReturnValue(IDLE_NODE);
+    let call = 0;
+    const pool = {
+      query: vi.fn(async () => {
+        if (call++ === 0) return { rows: [] };
+        throw new Error('lease database unavailable');
+      }),
+    } as unknown as Pool;
+    const v = await checkVidsNodeAvailability(pool, { skipProbe: true });
+    expect(v).toMatchObject({ available: false, check: 'lease-store-failed' });
+  });
 });
 
 /**
@@ -219,7 +254,7 @@ describe('the render dispatch is gated too', () => {
   });
 
   it('skips the node probe there, so a 20s reconciler sweep never blocks on it', () => {
-    expect(src).toMatch(/checkVidsNodeAvailability\(pool, \{ skipProbe: true \}\)/);
+    expect(src.match(/skipProbe: true/g)).toHaveLength(2);
   });
 
   it('refuses rather than dispatching when the node is not free', () => {
@@ -250,5 +285,15 @@ describe('an empty env var falls back to the default, not to "no setting"', () =
     const v = await checkVidsNodeAvailability(fakePool([{ rows: [] }]), { skipProbe: true });
     vi.useRealTimers();
     expect(v).toMatchObject({ available: false, check: 'blackout' });
+  });
+});
+
+describe('one durable lease authority', () => {
+  const source = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'vids-node-availability.ts'), 'utf8');
+
+  it('does not retain the check-then-write node.lock implementation', () => {
+    expect(source).not.toContain('node.lock');
+    expect(source).not.toContain('LEASE_OK');
+    expect(source).toContain('getActiveNodeResourceLease');
   });
 });

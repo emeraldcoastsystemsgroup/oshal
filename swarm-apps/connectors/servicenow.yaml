@@ -1,3 +1,10 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Mark the reviewed ServiceNow product-domain favicon honestly as a fallback instead of a verified Simple Icons asset.
+# -----------------------------------------------------------------------------
+
 provider: servicenow
 displayName: ServiceNow
 version: 1.0.0
@@ -52,6 +59,6 @@ resources:
 metadata:
   description: "Read ServiceNow incidents, change requests, CMDB CIs, and arbitrary table records via the Table API."
   category: "Operations"
-  iconVerified: true
-  iconSource: favicon-curated
+  iconVerified: false
+  iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/servicenow.com.ico

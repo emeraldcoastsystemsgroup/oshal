@@ -11,6 +11,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | W3: orbit-track sampler, conjunction
  *                     |                             | screening, TLE catalog + orbit types for the fleet
  *                     |                             | plane.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export NASA 42's pure star-tracker mount and
+ *                     |                             | convention mapping boundaries for covariance replay.
  */
 
 export type { MtbClusterConfig, Quat, SatAttitudeState, SatBodyConfig, Vec3, WheelLimits } from './model/sat-types';
@@ -63,7 +65,14 @@ export {
   type AcBufLens,
   type LayoutField,
 } from './services/nasa42-codec';
-export { Nasa42SimAdapter, type Nasa42ConnectOptions, type Nasa42Vehicle } from './services/nasa42-sim-adapter';
+export {
+  Nasa42SimAdapter,
+  mapNasa42BodyAttitude,
+  nasa42StarTrackerBodyBase,
+  type Nasa42ConnectOptions,
+  type Nasa42QuaternionConvention,
+  type Nasa42Vehicle,
+} from './services/nasa42-sim-adapter';
 export {
   SAT_HEARTBEAT_STALE_MS,
   SAT_ID_RE,

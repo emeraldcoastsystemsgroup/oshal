@@ -19,6 +19,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — cross-provider browse model (roots/browse/readBytes/previewFile) over Dropbox, GitHub repos+contents, and the OSHAL-local per-user dir, for the unified file browser with drill-down + preview.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'career' root — the caller's OWN career-hunter store (generated résumé/cover packets under applications/, uploaded artifacts under uploads/, and the migrated lessons library under career-library/) so job-hunt artifacts are browsable/downloadable in Files ("artifacts in the user's folder system"). Read-only, sub-scoped, traversal-guarded; the store is on the api-output volume keyed by RAW sub (not the sha256 userfiles key).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Career stores through the installed app's exact-subject mapper and reject traversal or symlink escapes in both local file providers.
  *
  * @module storage-browse
  */
@@ -28,6 +29,7 @@ import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
+import { findCareerUserStoreLayout } from '@/shared/career-user-store-path';
 import { getValidAccessToken } from './connectors-routes';
 
 const logger = createChildLogger({ module: 'storage-browse' });
@@ -58,35 +60,64 @@ function userKey(sub: string): string { return crypto.createHash('sha256').updat
 function localUserRoot(sub: string): string { return path.join(localFilesRoot(), userKey(sub)); }
 
 /**
- * Resolve a relative path inside the caller's OSHAL-local root, dropping `.`/`..` segments and
- * asserting the result stays within the root. Unlike sanitizeSubfolder this preserves spaces and
+ * Resolve a relative path inside one caller-owned root, rejecting `.`/`..` segments and
+ * asserting the result stays link-free within the root. Unlike sanitizeSubfolder this preserves spaces and
  * other valid filename characters so real artifact names (e.g. "Q3 deck.pptx") resolve.
  */
-function safeLocalPath(sub: string, p: string): string {
-  const root = path.resolve(localUserRoot(sub));
-  const segs = String(p || '').split(/[/\\]+/).filter((s) => s && s !== '.' && s !== '..');
-  const full = path.resolve(root, ...segs);
+function safeOwnedPath(rootPath: string, p: string): string {
+  const root = path.resolve(rootPath);
+  const rawSegments = String(p || '').split(/[/\\]+/);
+  if (rawSegments.some((segment) => segment === '.' || segment === '..')) throw new Error('invalid path');
+  const full = path.resolve(root, ...rawSegments.filter(Boolean));
   if (full !== root && !full.startsWith(root + path.sep)) throw new Error('invalid path');
+  assertLinkFreePath(root, full);
   return full;
 }
 
-/** The career-hunter per-user store root (api-output volume, keyed by RAW sub — NOT the
- *  sha256 userfiles key). Mirrors STORE_ROOT/TENANT in career-hunter-routes.ts. */
-function careerStoreRoot(): string {
-  return process.env.JOBHUNTER_STORE_ROOT || path.resolve(process.cwd(), 'output', 'career-hunter-data');
+/** Reject an existing root/descendant component that redirects through a symbolic link. */
+function assertLinkFreePath(root: string, candidate: string): void {
+  const relative = path.relative(root, candidate);
+  let current = root;
+  for (const segment of ['', ...relative.split(path.sep).filter(Boolean)]) {
+    if (segment) current = path.join(current, segment);
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) throw new Error('linked path is not browsable');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+  }
 }
-function careerUserRoot(sub: string): string { return path.join(careerStoreRoot(), 'default', sub); }
+
+function safeLocalPath(sub: string, p: string): string {
+  return safeOwnedPath(localUserRoot(sub), p);
+}
 
 /** Only these top-level subtrees are surfaced (hides the per-user .db/.indexing internals). */
 const CAREER_TOP = ['applications', 'uploads', 'career-library'];
 
 /** Resolve a relative path inside the caller's career store, traversal-guarded. */
 function safeCareerPath(sub: string, p: string): string {
-  const root = path.resolve(careerUserRoot(sub));
-  const segs = String(p || '').split(/[/\\]+/).filter((s) => s && s !== '.' && s !== '..');
-  const full = path.resolve(root, ...segs);
-  if (full !== root && !full.startsWith(root + path.sep)) throw new Error('invalid path');
-  return full;
+  const layout = findCareerUserStoreLayout(sub);
+  if (!layout) throw new Error('career store not found');
+  return safeOwnedPath(layout.userDir, p);
+}
+
+/** List one owned directory without following symbolic-link entries. */
+function browseOwnedDirectory(dir: string, base: string): BrowseEntry[] {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return [];
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => !entry.isSymbolicLink())
+    .map((entry) => {
+      const stat = fs.statSync(path.join(dir, entry.name));
+      return {
+        name: entry.name,
+        type: (entry.isDirectory() ? 'folder' : 'file') as BrowseEntry['type'],
+        path: base ? `${base}/${entry.name}` : entry.name,
+        size: entry.isDirectory() ? undefined : stat.size,
+        modified: stat.mtime.toISOString(),
+      };
+    }).sort(sortEntries);
 }
 
 /** Browse the career store: at root, only the curated CAREER_TOP subtrees that exist; below, plain listing. */
@@ -98,15 +129,7 @@ function browseCareer(sub: string, p: string): BrowseEntry[] {
       .map((d) => ({ name: d, type: 'folder' as const, path: d }));
   }
   const dir = safeCareerPath(sub, rel);
-  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return [];
-  return fs.readdirSync(dir, { withFileTypes: true }).map((e) => {
-    const st = fs.statSync(path.join(dir, e.name));
-    return {
-      name: e.name, type: (e.isDirectory() ? 'folder' : 'file') as BrowseEntry['type'],
-      path: `${rel}/${e.name}`,
-      size: e.isDirectory() ? undefined : st.size, modified: st.mtime.toISOString(),
-    };
-  }).sort(sortEntries);
+  return browseOwnedDirectory(dir, rel);
 }
 
 /** Providers the caller currently has connected. */
@@ -207,16 +230,8 @@ export async function listRoots(ctx: AppContext, sub: string): Promise<BrowseRoo
 /** Browse the OSHAL-local per-user directory at a relative path. */
 function browseLocal(sub: string, p: string): BrowseEntry[] {
   const dir = safeLocalPath(sub, p);
-  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return [];
   const base = p ? p.replace(/^[/\\]+|[/\\]+$/g, '') : '';
-  return fs.readdirSync(dir, { withFileTypes: true }).map((e) => {
-    const st = fs.statSync(path.join(dir, e.name));
-    return {
-      name: e.name, type: (e.isDirectory() ? 'folder' : 'file') as BrowseEntry['type'],
-      path: base ? `${base}/${e.name}` : e.name,
-      size: e.isDirectory() ? undefined : st.size, modified: st.mtime.toISOString(),
-    };
-  }).sort(sortEntries);
+  return browseOwnedDirectory(dir, base);
 }
 
 /** Browse a folder in the caller's Dropbox (app-folder sandbox). */

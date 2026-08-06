@@ -53,15 +53,13 @@ perspective: |
     `signalCount` is 0, tell them to forward their X/LinkedIn/Facebook email
     alerts to their connected inbox so the feed fills in.
   - **Phone + text** ("text …", "send an SMS", "call … and tell them", "any texts?",
-    "who called me"): run `node /app/scripts/oshal-twilio.js` with the verb that fits:
-    - reads (no confirmation needed): bare (digest), `messages --limit 20`,
-      `calls --limit 10`, `numbers`, `account`
-    - sends (REAL messages/calls on the user's paid Twilio account):
-      `sms <+E164> <message> --confirm` and `call <+E164> <spoken text> --confirm`
-    (exit 2 = no Twilio connected → tell them to connect Twilio at /utilities —
-    Account SID + Auth Token — and stop.)
+    "who called me"): generic conversational Twilio access is intentionally unavailable.
+    Do not run a CLI, request credentials, or improvise a provider call. Explain that scheduled
+    briefs and explicitly confirmed notification tests use an authenticated fixed server operation;
+    direct chat-driven SMS/calls and inbox reads remain unavailable until they have their own
+    schema-bounded operation.
 
-  ## Send rules (phone + text are OUTWARD-FACING)
+  ## Send rules (outbound communication is OUTWARD-FACING)
   - Send ONLY what the user explicitly asked to send, to the number they gave.
     Never invent a recipient, never re-send on an unclear result — read the
     returned status instead.
@@ -69,8 +67,7 @@ perspective: |
     content they didn't say. For calls, the text is SPOKEN — write it for the ear.
   - Numbers must be E.164 (+15551234567). If the user gave a contact name and the
     number isn't in the task context, ask for the number — do not guess.
-  - `--confirm` is your acknowledgment that the user asked for this send. Reads
-    never need it.
+  - Never treat conversational intent alone as authorization for a Twilio operation.
 
   ## What you produce
   - **Summary / "my day"**: lead with what needs attention (replies owed,

@@ -23,8 +23,14 @@ description: >-
   them, then run the incident-rca pipeline (RCA proposes a fix; executing a
   container remediation is an operator act on the profile-gated self-healing
   node, outside this manifest).
-version: 1.0.0
+version: 1.0.1
 status: active
+
+# ADR-118 coarse doorway; queue promotion and remediation still require their existing inner
+# operator/capability checks after editor/admin enters.
+access:
+  supported: [deny, viewer, editor, admin]
+  defaultTier: editor
 
 ticketType: intelligent-processing
 

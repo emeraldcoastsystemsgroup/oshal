@@ -5,6 +5,9 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | New shared authorization helpers to close object-level authorization (IDOR) gaps. Provides caller-identity extraction from the OIDC session, an operator (admin) allowlist (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS), and per-resource ownership checks. Object-level handlers must call canAccessResource() and return 404 on failure so resource ids are not oracle-able. Operator-only listing/override routes use requireOperator().
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | requiresOperator: middleware-shaped operator gate for whole mounts (requireOperator is handler-shaped and can't be listed in app.use). First consumer: /api/security — the Security Center exposes the platform's own weak points and redacted secret previews, so it must never be reachable by basic users.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added requireServiceSecret for privileged machine-only control planes. Unlike the compatibility-only requireServiceSecretWhenConfigured helper, the strict gate fails closed when SWARM_SERVICE_SECRET is absent and never falls back to a human session.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve OIDC subjects as exact case-sensitive identifiers in operator checks, and add a canonical base64url trusted-service subject header so whitespace/case survive HTTP transport without aliasing. Legacy plain headers remain readable during rollout but are never normalized.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Expose an independently authenticated user predicate so legacy service credentials can never override an established browser or PAT principal on user-scoped routes.
  */
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
@@ -22,6 +25,11 @@ interface OidcUserShape {
   preferred_username?: string;
 }
 
+interface AuthenticatedOidcShape {
+  isAuthenticated?: () => boolean;
+  user?: OidcUserShape;
+}
+
 /**
  * @description Extracts the caller's identity from the validated OIDC session.
  * Never trusts request body/query for identity — only req.oidc.user (set by the
@@ -35,7 +43,31 @@ export function getCaller(req: Request): CallerIdentity {
   return { sub, email };
 }
 
-function parseAllowlist(value: string | undefined): Set<string> {
+/**
+ * @description Confirms that the request already carries an independently authenticated user
+ * principal established by the OIDC, PAT, TV-token, local-auth, or guest middleware. A populated
+ * `user` object alone is insufficient: the owning authentication rail must also report success.
+ * This predicate lets compatibility machine credentials defer to a real user instead of
+ * replacing that user's request identity with an attacker-controlled forwarded subject.
+ * @param req - Express request after the global user-authentication middleware.
+ * @returns True only for an authenticated request with a non-empty exact subject.
+ */
+export function hasAuthenticatedUserIdentity(req: Request): boolean {
+  const oidc = (req as { oidc?: AuthenticatedOidcShape }).oidc;
+  if (oidc?.isAuthenticated?.() !== true) return false;
+  return typeof oidc.user?.sub === 'string' && oidc.user.sub.length > 0;
+}
+
+function parseSubjectAllowlist(value: string | undefined): Set<string> {
+  return new Set(
+    (value ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  );
+}
+
+function parseEmailAllowlist(value: string | undefined): Set<string> {
   return new Set(
     (value ?? '')
       .split(',')
@@ -66,10 +98,10 @@ export function isOperator(req: Request): boolean {
  * @returns true when the identity is on the operator allowlist
  */
 export function isOperatorIdentity(sub?: string | null, email?: string | null): boolean {
-  const subs = parseAllowlist(process.env.OSHAL_OPERATOR_SUBS);
-  const emails = parseAllowlist(process.env.OSHAL_OPERATOR_EMAILS);
-  if (sub && subs.has(sub.toLowerCase())) return true;
-  if (email && emails.has(email.toLowerCase())) return true;
+  const subs = parseSubjectAllowlist(process.env.OSHAL_OPERATOR_SUBS);
+  const emails = parseEmailAllowlist(process.env.OSHAL_OPERATOR_EMAILS);
+  if (typeof sub === 'string' && sub.length > 0 && subs.has(sub)) return true;
+  if (typeof email === 'string' && email.length > 0 && emails.has(email.toLowerCase())) return true;
   return false;
 }
 
@@ -135,16 +167,55 @@ export function hasValidServiceSecret(req: Request): boolean {
   );
 }
 
+const MAX_TRUSTED_USER_SUB_BYTES = 512;
+const MAX_TRUSTED_USER_SUB_ENCODED_CHARS = Math.ceil(MAX_TRUSTED_USER_SUB_BYTES * 4 / 3);
+
 /**
  * @description Resolves the user identity stamped by a trusted internal service
- * call. External callers cannot use this because the header is honored only when
+ * call. Prefers canonical `X-Oshal-User-Sub-B64`; a present malformed encoded header
+ * fails closed without consulting the constrained legacy plain header. External callers
+ * cannot use this because the identity header is honored only when
  * SWARM_SERVICE_SECRET is configured and the request presents the matching
  * X-Service-Secret value.
  */
 export function getTrustedServiceUserSub(req: Request): string | null {
   if (!hasValidServiceSecret(req)) return null;
-  const sub = String(req.headers['x-oshal-user-sub'] || '').trim();
-  return sub || null;
+  const encoded = req.headers['x-oshal-user-sub-b64'];
+  if (encoded !== undefined) return decodeTrustedServiceUserSub(encoded);
+
+  // Rollout compatibility for callers that have not adopted the encoded header yet. Never trim
+  // or lowercase here: `sub` is a case-sensitive identity, not display text. New kernel callers
+  // use trustedServiceUserHeaders(), which is unambiguous even when the subject has HTTP OWS.
+  const legacy = req.headers['x-oshal-user-sub'];
+  if (typeof legacy !== 'string' || legacy.length === 0 || legacy !== legacy.trim()) return null;
+  const bytes = Buffer.from(legacy, 'utf8');
+  return bytes.length <= MAX_TRUSTED_USER_SUB_BYTES && bytes.toString('utf8') === legacy ? legacy : null;
+}
+
+function decodeTrustedServiceUserSub(value: string | string[]): string | null {
+  if (typeof value !== 'string'
+    || value.length > MAX_TRUSTED_USER_SUB_ENCODED_CHARS
+    || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  try {
+    const bytes = Buffer.from(value, 'base64url');
+    if (bytes.length === 0 || bytes.length > MAX_TRUSTED_USER_SUB_BYTES) return null;
+    if (bytes.toString('base64url') !== value) return null;
+    const sub = bytes.toString('utf8');
+    return Buffer.from(sub, 'utf8').equals(bytes) ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
+function encodeTrustedServiceUserSub(userSub: string): string {
+  if (typeof userSub !== 'string' || userSub.length === 0) {
+    throw new TypeError('trusted service userSub must be a non-empty string');
+  }
+  const bytes = Buffer.from(userSub, 'utf8');
+  if (bytes.length > MAX_TRUSTED_USER_SUB_BYTES || bytes.toString('utf8') !== userSub) {
+    throw new RangeError(`trusted service userSub must be valid UTF-8 up to ${MAX_TRUSTED_USER_SUB_BYTES} bytes`);
+  }
+  return bytes.toString('base64url');
 }
 
 /**
@@ -158,13 +229,29 @@ export function serviceSecretHeaders(): Record<string, string> {
 }
 
 /**
+ * @description Builds authenticated internal-service headers carrying an exact user subject.
+ * The subject is UTF-8/base64url encoded so HTTP optional whitespace and header parsing cannot
+ * trim or reinterpret it. Returns an empty object when the service secret is unconfigured, matching
+ * {@link serviceSecretHeaders}; invalid or oversized subjects throw instead of being truncated.
+ * @param userSub - Exact, case-sensitive OIDC subject to bind to the machine request.
+ * @returns Service-secret plus canonical encoded-sub headers, or an empty object when disabled.
+ */
+export function trustedServiceUserHeaders(userSub: string): Record<string, string> {
+  const encoded = encodeTrustedServiceUserSub(userSub);
+  const auth = serviceSecretHeaders();
+  if (!auth['X-Service-Secret']) return {};
+  return { ...auth, 'X-Oshal-User-Sub-B64': encoded };
+}
+
+/**
  * @description Middleware wrapper that allows an internal service call carrying a valid
  * `X-Service-Secret` header (matching SWARM_SERVICE_SECRET, constant-time compared) to pass,
  * and otherwise delegates to `fallback` (normally the OIDC `requiresAuth`). This is how internal
- * bots authenticate to the controller (e.g. POST /api/tools/register) without an OIDC session —
- * the same session-OR-shared-secret pattern used for remote clients. External callers, having no
- * secret, still go through the normal auth wall. No secret configured => always falls through to
- * `fallback` (fail-safe: the bypass simply doesn't exist).
+ * bots authenticate to reviewed controller bootstrap/read protocols without an OIDC session —
+ * the same session-OR-shared-secret pattern used for remote clients. Process-global mutation
+ * surfaces still need their own identity/ownership authorization after this authentication step.
+ * External callers, having no secret, still go through the normal auth wall. No secret configured
+ * => always falls through to `fallback` (fail-safe: the bypass simply doesn't exist).
  */
 export function serviceSecretOr(fallback: RequestHandler): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
@@ -174,6 +261,30 @@ export function serviceSecretOr(fallback: RequestHandler): RequestHandler {
     }
     fallback(req, res, next);
   };
+}
+
+/**
+ * @description Strict machine-to-machine authorization for privileged control planes.
+ * A configured, matching `X-Service-Secret` is always required: an absent deployment
+ * secret returns 503 (the control plane is not safely configured), and a missing or
+ * incorrect caller secret returns 401. There is deliberately no OIDC fallback because
+ * callers of this middleware are controller/node protocols rather than user surfaces.
+ *
+ * @param req - Express request carrying the machine credential.
+ * @param res - Express response used for a generic fail-closed result.
+ * @param next - Next middleware, called only after an exact constant-time match.
+ */
+export function requireServiceSecret(req: Request, res: Response, next: NextFunction): void {
+  const configured = String(process.env.SWARM_SERVICE_SECRET || '').trim();
+  if (!configured) {
+    res.status(503).json({ success: false, error: 'Service unavailable' });
+    return;
+  }
+  if (!hasValidServiceSecret(req)) {
+    res.status(401).json({ success: false, error: 'Unauthorized' });
+    return;
+  }
+  next();
 }
 
 /**

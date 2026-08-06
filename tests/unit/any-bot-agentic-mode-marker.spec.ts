@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the explicit agentic-mode marker (BACKLOG "BYO / free-tier connections bypass the agentic loop"): options.toolLess / OSHAL_TOOL_LESS must drive processMessage routing, with the legacy !byoLlm derivation only when the marker is absent, and the direct path must surface toolLess: true on its response.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exercise the request-scoped tool-registry contract and prove the tool-less direct path advertises an exact empty capability set.
  */
 
 import { createRequire } from 'node:module';
@@ -28,11 +29,16 @@ interface ControllerStub {
   taskStore: { saveTask(task: Record<string, unknown>): Promise<Record<string, unknown>> };
   messageStore: { saveMessage(taskId: string, message: Record<string, unknown>): Promise<void> };
   activeTasks: Map<string, Record<string, unknown>>;
-  toolRegistry: Map<string, unknown>;
+  toolRegistry: {
+    getAll(): unknown[];
+    capture(name: string): null;
+    isSnapshotCurrent(snapshot: unknown): boolean;
+  };
   stream: null;
   agenticController: object;
   agenticCalls: number;
   directCalls: number;
+  directTools: unknown;
   processWithAgenticMode(taskId: string, userMessage: { text: string }, options: Record<string, unknown>): Promise<Record<string, unknown>>;
   processMessage: typeof TaskController.prototype.processMessage;
   _buildByoLlm(conn: unknown): object | null;
@@ -52,26 +58,33 @@ function makeController(): ControllerStub {
   controller.activeTasks = new Map([[task.id, task]]);
   controller.taskStore = { saveTask: async (saved) => saved };
   controller.messageStore = { saveMessage: async () => undefined };
-  controller.toolRegistry = new Map();
+  controller.toolRegistry = {
+    getAll: () => [],
+    capture: () => null,
+    isSnapshotCurrent: () => true,
+  };
   controller.stream = null;
   controller.agenticController = { sentinel: true };
   controller.agenticCalls = 0;
   controller.directCalls = 0;
+  controller.directTools = undefined;
   controller.processWithAgenticMode = async () => {
     controller.agenticCalls += 1;
     return { success: true, path: 'agentic' };
   };
   controller._buildByoLlm = (conn) => (conn
     ? {
-      generateResponse: async () => {
+      generateResponse: async (_messages: unknown, options: { tools?: unknown }) => {
         controller.directCalls += 1;
+        controller.directTools = options.tools;
         return { content: 'byo answer', provider: 'byo', model: 'byo-model' };
       },
     }
     : null);
   controller.llm = {
-    generateResponse: async () => {
+    generateResponse: async (_messages: unknown, options: { tools?: unknown }) => {
       controller.directCalls += 1;
+      controller.directTools = options.tools;
       return { content: 'direct answer', provider: 'stub', model: 'stub-model' };
     },
   };
@@ -122,6 +135,7 @@ describe('any-bot explicit agentic-mode marker', () => {
       const result = await controller.processMessage('task-marker', { text: 'hello' }, { toolLess: true });
       expect(controller.agenticCalls).toBe(0);
       expect(controller.directCalls).toBe(1);
+      expect(controller.directTools).toEqual([]);
       expect(result).toMatchObject({ success: true, toolLess: true });
     });
 
@@ -143,6 +157,7 @@ describe('any-bot explicit agentic-mode marker', () => {
       });
       expect(controller.agenticCalls).toBe(0);
       expect(controller.directCalls).toBe(1);
+      expect(controller.directTools).toEqual([]);
       expect(result).toMatchObject({ success: true, toolLess: true, provider: 'byo' });
     });
 

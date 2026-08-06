@@ -19,13 +19,13 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Credential bag now resolves the codex OAuth token through getSwarmApiKey('openai') (live ~/.codex/auth.json first, seed fallback with warn) instead of reading the dead config-seed blob directly; removed the duplicated private extractOpenAiCodexAccessToken
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Stopped injecting google-search-mcp unless explicitly configured — the container was retired from every active compose stack, so the hardcoded http://google-search-mcp:8080/mcp fallback handed every managed session an unresolvable MCP endpoint. Mirrors the 2026-03-12 chroma-mcp fix
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Closed the last dead-seed codex consumer: the OAuth-blob resolution chain (syncOpenAiCodexCredentials → findOpenAiCodexCredentialBlob) now reads the LIVE ~/.codex/auth.json (via resolveCodexAuthSourcePath) before falling back to the never-rotated config-seed copy, so Cline data/secrets.json can no longer be poisoned with an expired seed token while codex auth is healthy; seed fallback downgraded to a warn mirroring swarm-credentials
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: runtime sync writes non-secret metadata only, overwrites legacy credential-bearing Cline files, and retires API-key/OAuth materialization into data/secrets.json.
  */
 
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
-import { getSwarmApiKey, resolveCodexAuthSourcePath } from './swarm-credentials';
-import { buildClineConfig, buildClineGlobalState, type CredentialBag } from './cline-config-builder';
+import { buildClineConfig, buildClineGlobalState } from './cline-config-builder';
 import {
   filterMcpSettingsByCapabilities,
   type ToolCapabilityScope,
@@ -35,17 +35,10 @@ const logger = createChildLogger({ module: 'cline-runtime-config-sync-service' }
 
 const DEFAULT_CONFIG_OUTPUT_DIR = 'output';
 const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || 'claude-code';
-const OPENAI_CODEX_PROVIDER = 'openai-codex';
 const DEFAULT_CHROMA_MCP_URL = process.env.CHROMA_MCP_URL;
 const DEFAULT_PRESENTRON_MCP_URL = process.env.PRESENTRON_MCP_URL || 'http://presentron-mcp:8081';
 const DEFAULT_GOOGLE_SEARCH_MCP_URL = process.env.GOOGLE_SEARCH_MCP_URL;
 const DEFAULT_PLANE_MCP_URL = process.env.PLANE_MCP_URL || 'http://plane-mcp:3000';
-const APP_OPENAI_CODEX_CREDENTIALS_KEY = 'openAiCodexOauthCredentials';
-const CLINE_OPENAI_CODEX_CREDENTIALS_KEY = 'openai-codex-oauth-credentials';
-
-interface SecretsManagerLike {
-  loadSecrets(userId?: string | null): Record<string, unknown>;
-}
 
 /**
  * @description Active provider/model/mode selection derived from persisted settings.
@@ -99,8 +92,8 @@ export class ClineRuntimeConfigSyncService {
   }
 
   /**
-   * @description Syncs runtime provider/model/mode and provider-specific secrets to Cline files.
-   * Intended to run from save/callback/signout flows, not per chat request.
+   * @description Syncs non-secret runtime provider/model metadata and tombstones legacy Cline
+   * credential files. Intended to run from save/callback/signout flows, not per chat request.
    *
    * @param defaultModel - Model fallback when settings do not define one
    * @param userId - Optional authenticated user id for per-user secrets lookup
@@ -110,8 +103,7 @@ export class ClineRuntimeConfigSyncService {
     const selection = this.readRuntimeSelection(defaultModel);
     this.writeClineConfig(selection);
     this.writeClineGlobalState(selection);
-    this.syncProviderApiKeys(selection);
-    this.syncOpenAiCodexCredentials(userId);
+    this.purgeLegacyClineSecrets();
 
     logger.debug({ selection, userId: userId || null }, 'Synchronized Cline runtime configuration from persisted settings');
     return selection;
@@ -173,120 +165,44 @@ export class ClineRuntimeConfigSyncService {
   }
 
   /**
-   * @description Syncs provider API keys from env into Cline secrets so the CLI subprocess
-   * can authenticate with the selected provider.
-   * @param selection - Active runtime selection containing the resolved provider
+   * @description Clears the legacy Cline secrets file. Unattended CLI auth is isolated in
+   * vendor-owned storage and is never copied into model-runtime configuration.
    */
-  private syncProviderApiKeys(selection: ClineRuntimeSelection): void {
+  private purgeLegacyClineSecrets(): void {
     const filePath = path.join(this.configDir, 'data', 'secrets.json');
     const existing = this.readJsonObject(filePath);
-    const updates: Record<string, string> = {};
-
-    const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    if (anthropicKey && anthropicKey.trim().length > 0) {
-      updates.anthropicApiKey = anthropicKey;
+    if (Object.keys(existing).length > 0) {
+      this.writeJsonObject(filePath, {});
+      logger.info({ filePath }, 'Removed legacy Cline runtime credential material');
     }
-
-    // Propagate every provider API key the operator saved through the cockpit
-    // (POST /api/config routes secret-pattern keys into the encrypted store).
-    // Cline reads these from data/secrets.json keyed by its own field names —
-    // which are exactly the `configKeys` declared in provider-definitions
-    // (anthropicApiKey, openAiApiKey, geminiApiKey, openRouterApiKey, …).
-    // Without this, a key entered in the UI lands in the store but never
-    // authenticates the CLI, so only Anthropic ever worked.
-    const persistedKeys = this.collectPersistedProviderApiKeys();
-    for (const [key, value] of Object.entries(persistedKeys)) {
-      // env-sourced keys above take precedence when set
-      if (!updates[key]) {
-        updates[key] = value;
-      }
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return;
-    }
-
-    this.writeJsonObject(filePath, { ...existing, ...updates });
-    logger.debug(
-      { filePath, provider: selection.provider, keysSynced: Object.keys(updates) },
-      'Synchronized provider API keys to Cline runtime secrets',
-    );
   }
 
   /**
-   * @description Loads global provider API keys persisted via the cockpit config save.
-   * Returns the top-level string secrets from the encrypted store (the values
-   * `POST /api/config` writes), excluding per-user OAuth envelopes and the Codex
-   * OAuth credential blobs which `syncOpenAiCodexCredentials` handles separately.
-   *
-   * @returns Map of Cline secret field name → API key value
-   */
-  private collectPersistedProviderApiKeys(): Record<string, string> {
-    const result: Record<string, string> = {};
-    let allSecrets: Record<string, unknown>;
-    try {
-      allSecrets = this.createSecretsManager().loadSecrets();
-    } catch (error) {
-      logger.warn({ err: error }, 'Could not load persisted secrets for provider key sync');
-      return result;
-    }
-
-    const codexKeys = new Set([APP_OPENAI_CODEX_CREDENTIALS_KEY, CLINE_OPENAI_CODEX_CREDENTIALS_KEY]);
-    for (const [key, value] of Object.entries(allSecrets)) {
-      // Skip per-user OAuth envelopes (nested objects) and the Codex blobs.
-      if (typeof value !== 'string' || codexKeys.has(key)) {
-        continue;
-      }
-      const trimmed = value.trim();
-      if (trimmed.length > 0) {
-        result[key] = trimmed;
-      }
-    }
-    return result;
-  }
-
-  /**
-   * @description Syncs OpenAI Codex OAuth credentials from app secrets into Cline secrets.
+   * @description Compatibility no-op for the retired Codex-to-Cline credential copy. It clears
+   * legacy Cline secret material and always reports that nothing was propagated.
    * @param userId - Optional authenticated user id for per-user secrets lookup
-   * @returns True when credentials were written to Cline secrets
+   * @returns Always false; raw credential materialization is disabled
    */
   syncOpenAiCodexCredentials(userId?: string | null): boolean {
-    const credentials = this.loadClineCompatibleOpenAiCodexCredentials(userId);
-    if (!credentials) {
-      // Not-an-error: when the codex CLI authenticates from its own ~/.codex/auth.json
-      // (bind-mounted into bot containers on boot) there is nothing to propagate here.
-      // This used to log at WARN on every provider resolution, flooding the journal.
-      logger.debug({ userId: userId || null }, 'No cockpit-stored OpenAI Codex credentials to sync (codex CLI uses its own auth)');
-      return false;
-    }
-
-    const filePath = path.join(this.configDir, 'data', 'secrets.json');
-    const existing = this.readJsonObject(filePath);
-    const next = {
-      ...existing,
-      [CLINE_OPENAI_CODEX_CREDENTIALS_KEY]: JSON.stringify(credentials),
-    };
-    this.writeJsonObject(filePath, next);
-    logger.debug({ filePath, userId: userId || null }, 'Synchronized OpenAI Codex credentials to Cline runtime secrets');
-    return true;
+    this.purgeLegacyClineSecrets();
+    logger.info(
+      { userId: userId || null },
+      'OpenAI Codex credential materialization is disabled; local vendor auth remains isolated',
+    );
+    return false;
   }
 
   /**
-   * @description Removes OpenAI Codex credentials from Cline runtime secrets.
-   * @returns True when a credential key existed and was removed
+   * @description Clears any legacy Cline runtime secrets left by older releases.
+   * @returns True when the legacy file contained material and was emptied
    */
   removeOpenAiCodexCredentials(): boolean {
     const filePath = path.join(this.configDir, 'data', 'secrets.json');
     const existing = this.readJsonObject(filePath);
-    if (!(CLINE_OPENAI_CODEX_CREDENTIALS_KEY in existing)) {
-      return false;
-    }
-
-    const next = { ...existing };
-    delete next[CLINE_OPENAI_CODEX_CREDENTIALS_KEY];
-    this.writeJsonObject(filePath, next);
-    logger.info({ filePath }, 'Removed OpenAI Codex credentials from Cline runtime secrets');
-    return true;
+    const removed = Object.keys(existing).length > 0;
+    if (removed) this.writeJsonObject(filePath, {});
+    logger.info({ filePath, removed }, 'Ensured Cline runtime credential file is empty');
+    return removed;
   }
 
   /**
@@ -323,99 +239,38 @@ export class ClineRuntimeConfigSyncService {
   }
 
   /**
-   * @description Writes runtime provider/model to Cline config.json using per-provider credential mapping.
-   * Phase 0: Now uses buildClineConfig() from cline-config-builder.ts which maps provider-specific
-   * credential field names (awsAccessKey, geminiApiKey, openAiNativeApiKey, etc.) — ported from
-   * any-bot LLMProviderRegistry.js PHASE_62.
+   * @description Overwrites Cline config.json with non-secret provider/model metadata and
+   * auto-approval disabled. Existing fields are not merged so legacy secrets are tombstoned.
    * @param selection - Selection to persist
    * @returns Void after persistence
    */
   private writeClineConfig(selection: ClineRuntimeSelection): void {
     const filePath = path.join(this.configDir, 'config.json');
-    const existing = this.readJsonObject(filePath);
-    const credentials = this.loadCredentialBag();
-    const providerConfig = buildClineConfig(selection.provider, selection.model, credentials);
+    const providerConfig = buildClineConfig(selection.provider, selection.model);
 
     if (providerConfig === null) {
-      // Provider doesn't use config.json (e.g. cline-cli, claude-code)
-      logger.info({ provider: selection.provider }, 'Provider does not use Cline config.json — skipping write');
+      // Overwrite instead of preserving a legacy credential-bearing wrapper config.
+      this.writeJsonObject(filePath, {
+        autoApprove: false,
+        provider: selection.provider,
+        model: selection.model,
+      });
       return;
     }
 
-    const next = { ...existing, ...providerConfig };
-    this.writeJsonObject(filePath, next);
+    this.writeJsonObject(filePath, providerConfig);
   }
 
   /**
-   * @description Writes runtime mode/provider/model to Cline globalState.json using per-provider state keys.
-   * Phase 0: Now uses buildClineGlobalState() from cline-config-builder.ts which maps provider-specific
-   * state key names (awsAuthentication, openAiNativeApiKey, geminiApiKey, etc.) — ported from
-   * any-bot LLMProviderRegistry.js PHASE_62.
+   * @description Overwrites Cline globalState.json with non-secret provider/model metadata,
+   * plan mode, and every autonomous approval disabled.
    * @param selection - Selection to persist
    * @returns Void after persistence
    */
   private writeClineGlobalState(selection: ClineRuntimeSelection): void {
     const filePath = path.join(this.configDir, 'data', 'globalState.json');
-    const existing = this.readJsonObject(filePath);
-    const credentials = this.loadCredentialBag();
-    const providerState = buildClineGlobalState(selection.provider, selection.model, credentials);
-
-    const next = {
-      ...existing,
-      ...providerState,
-      mode: selection.mode,
-    };
-    this.writeJsonObject(filePath, next);
-  }
-
-  /**
-   * @description Loads provider credentials from environment variables and persisted secrets.
-   * Used by writeClineConfig/writeClineGlobalState to populate provider-specific credential fields.
-   * @returns Credential bag with all available provider credentials
-   */
-  private loadCredentialBag(): CredentialBag {
-    const bag: CredentialBag = {};
-
-    // Environment variables
-    const envKeys = [
-      'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
-      'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
-      'GEMINI_API_KEY', 'VERTEX_PROJECT_ID', 'VERTEX_REGION',
-      'AZURE_API_KEY', 'AZURE_ENDPOINT', 'AZURE_DEPLOYMENT_ID', 'AZURE_API_VERSION',
-      'MISTRAL_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'GROQ_API_KEY',
-      'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'CEREBRAS_API_KEY',
-      'SAMBANOVA_API_KEY', 'NEBIUS_API_KEY', 'ASKSAGE_API_KEY',
-      'REQUESTY_API_KEY', 'LITELLM_BASE_URL',
-      'OLLAMA_HOST', 'LMSTUDIO_HOST',
-    ];
-
-    for (const key of envKeys) {
-      const value = process.env[key];
-      if (value && value.trim().length > 0) {
-        bag[key] = value.trim();
-      }
-    }
-
-    // Also load from persisted secrets (global-config.json, secrets.json)
-    const configDir = process.env.CONFIG_OUTPUT_DIR || './output';
-    const globalConfig = this.readJsonObject(path.join(configDir, 'global-config.json'));
-    const seedSecrets = this.readJsonObject(this.resolveSharedSeedPath());
-
-    // OpenAI Codex OAuth token — resolve through the shared swarm-credentials resolver so the
-    // LIVE ~/.codex/auth.json (rotated by the codex harness + written back since the
-    // token-stranding fix) wins over the never-rotated config-seed copy. getSwarmApiKey
-    // handles the full order: named keys → live auth.json → seed blob (with its "SEEDED
-    // codex credential" warn) → env override. Reading the seed blob directly here was the
-    // dead-seed consumer flagged in the 2026-07-18 codex seed audit.
-    if (!bag['OPENAI_API_KEY']) {
-      const oauthToken = getSwarmApiKey('openai');
-      if (oauthToken) {
-        bag['OPENAI_API_KEY'] = oauthToken;
-        logger.info('Credential bag: resolved OPENAI_API_KEY via swarm-credentials (live-first codex resolution)');
-      }
-    }
-
-    return bag;
+    const providerState = buildClineGlobalState(selection.provider, selection.model);
+    this.writeJsonObject(filePath, providerState);
   }
 
   /**
@@ -663,293 +518,7 @@ export class ClineRuntimeConfigSyncService {
     return {};
   }
 
-  /**
-   * @description Loads and normalizes OpenAI Codex credentials from app secrets.
-   * @param userId - Optional authenticated user id for per-user secrets lookup
-   * @returns Cline-compatible credential object or null when unavailable/invalid
-   */
-  private loadClineCompatibleOpenAiCodexCredentials(userId?: string | null): Record<string, unknown> | null {
-    const secretsManager = this.createSecretsManager();
-    const allSecrets = secretsManager.loadSecrets();
-    const userSecrets = userId ? secretsManager.loadSecrets(userId) : null;
-    const seedSecrets = this.readSharedSeedSecrets();
-    const rawBlob = this.findOpenAiCodexCredentialBlob(allSecrets, userSecrets, seedSecrets);
-
-    if (!rawBlob) {
-      return null;
-    }
-
-    try {
-      const parsed = JSON.parse(rawBlob) as Record<string, unknown>;
-      return this.normalizeOpenAiCodexCredentials(parsed);
-    } catch (error) {
-      logger.error({ err: error, userId: userId || null }, 'Failed to parse OpenAI Codex credential payload');
-      return null;
-    }
-  }
-
-  /**
-   * @description Creates the encrypted/plain secrets manager used by app config persistence.
-   * @returns Secrets manager instance
-   */
-  private createSecretsManager(): SecretsManagerLike {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { EncryptedConfigManager } = require(this.resolveEncryptedConfigManagerModulePath());
-    return new EncryptedConfigManager(this.outputDir, process.env.ENCRYPTION_KEY || null);
-  }
-
-  /**
-   * @description Resolves the encrypted-config-manager module path across repo-root test execution,
-   * direct source runs, and compiled/container runtime layouts.
-   *
-   * @returns Absolute module path suitable for CommonJS require.
-   */
-  private resolveEncryptedConfigManagerModulePath(): string {
-    const candidates = [
-      path.resolve(process.cwd(), 'src/api/encrypted-config-manager'),
-      path.resolve(process.cwd(), 'control-plane/OSHAL/src/api/encrypted-config-manager'),
-      path.resolve(__dirname, '../../../api/encrypted-config-manager'),
-      path.resolve(__dirname, '../../../../src/api/encrypted-config-manager'),
-    ];
-
-    for (const candidate of candidates) {
-      if (fs.existsSync(`${candidate}.js`) || fs.existsSync(`${candidate}.ts`)) {
-        return candidate;
-      }
-    }
-
-    return candidates[0];
-  }
-
-  /**
-   * @description Finds OpenAI Codex credential JSON blob from user/global envelopes.
-   * @param allSecrets - Full secrets envelope payload
-   * @param userSecrets - Optional user-scoped secret envelope
-   * @returns Serialized credential blob when found
-   */
-  private findOpenAiCodexCredentialBlob(
-    allSecrets: Record<string, unknown>,
-    userSecrets: Record<string, unknown> | null,
-    seedSecrets: Record<string, unknown> | null,
-  ): string | null {
-    logger.info(
-      { hasUserSecrets: !!userSecrets, globalKeyCount: Object.keys(allSecrets).length, hasSeedSecrets: !!seedSecrets },
-      'Credential lookup: starting resolution chain',
-    );
-
-    const userBlob = userSecrets ? this.readCredentialBlobFromEnvelope(userSecrets) : null;
-    if (userBlob) {
-      logger.info('Credential lookup: resolved from user-scoped secrets');
-      return userBlob;
-    }
-
-    const globalBlob = this.readCredentialBlobFromEnvelope(allSecrets);
-    if (globalBlob) {
-      logger.info('Credential lookup: resolved from global secrets envelope');
-      return globalBlob;
-    }
-
-    // LIVE codex auth.json comes BEFORE the config-seed fallback. The seed copy is written once
-    // at install/login and never rotated, while the codex harness rotates the live source and
-    // (since the token-stranding fix) writes the rotated token back. Resolving the seed first
-    // synced a dead token into Cline data/secrets.json forever — the 2026-07-18 codex seed
-    // audit's last remaining dead-seed consumer.
-    const liveBlob = this.readLiveCodexAuthBlob();
-    if (liveBlob) {
-      logger.info('Credential lookup: resolved from live ~/.codex/auth.json (live-first codex resolution)');
-      return liveBlob;
-    }
-
-    const seedBlob = seedSecrets ? this.readCredentialBlobFromEnvelope(seedSecrets) : null;
-    if (seedBlob) {
-      logger.warn('Credential lookup: resolved from SEEDED codex credential (config-seed) — live ~/.codex/auth.json was unreadable; the seed is never rotated and may be expired');
-      return seedBlob;
-    }
-
-    for (const value of Object.values(allSecrets)) {
-      if (!value || typeof value !== 'object') {
-        continue;
-      }
-      const nestedBlob = this.readCredentialBlobFromEnvelope(value as Record<string, unknown>);
-      if (nestedBlob) {
-        logger.info('Credential lookup: resolved from nested envelope iteration');
-        return nestedBlob;
-      }
-    }
-
-    logger.warn('Credential lookup: all resolution paths exhausted — no credentials found');
-    return null;
-  }
-
-  /**
-   * @description Reads the LIVE codex auth source (`~/.codex/auth.json`, the file the codex
-   * harness rotates and writes back to) and serializes it into the same credential-blob shape
-   * the envelope lookups return, so `normalizeOpenAiCodexCredentials` accepts it unchanged.
-   *
-   * Accepts both the native CLI shape (`{ tokens: { access_token, refresh_token, id_token,
-   * account_id } }`) and a flat token object. Expiry is taken from an explicit numeric field
-   * when present, else derived from the access/id token JWT `exp` claim, else a short 1-hour
-   * window (mirroring openai-codex-oauth-service) so a near-term refresh repopulates it —
-   * a missing `expires` would otherwise trip normalize and silently fall back to the dead seed.
-   *
-   * @returns Serialized live credential blob, or null when the live source is missing/incomplete
-   */
-  private readLiveCodexAuthBlob(): string | null {
-    const filePath = resolveCodexAuthSourcePath();
-    if (!filePath) {
-      return null;
-    }
-    const live = this.readJsonObject(filePath);
-    const tokens = this.readNamedObject(live.tokens);
-    const bag = Object.keys(tokens).length > 0 ? tokens : live;
-
-    const accessToken = this.readNonEmptyString(bag.access_token) || this.readNonEmptyString(bag.accessToken);
-    const refreshToken = this.readNonEmptyString(bag.refresh_token) || this.readNonEmptyString(bag.refreshToken);
-    if (!accessToken || !refreshToken) {
-      return null;
-    }
-
-    const idToken = this.readNonEmptyString(bag.id_token) || this.readNonEmptyString(bag.idToken);
-    const expires = this.readNumberValue(bag.expires)
-      ?? this.readNumberValue(bag.expiresAt)
-      ?? this.readNumberValue(live.expires)
-      ?? this.readNumberValue(live.expiresAt)
-      ?? this.parseJwtExpiryMs(idToken || accessToken)
-      ?? Date.now() + 60 * 60 * 1000;
-
-    const blob: Record<string, unknown> = {
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expires,
-    };
-    if (idToken) {
-      blob.id_token = idToken;
-    }
-    const accountId = this.readNonEmptyString(bag.account_id) || this.readNonEmptyString(bag.accountId);
-    if (accountId) {
-      blob.accountId = accountId;
-    }
-    const email = this.readNonEmptyString(bag.email) || this.readNonEmptyString(live.email);
-    if (email) {
-      blob.email = email;
-    }
-    return JSON.stringify(blob);
-  }
-
-  /**
-   * @description Extracts an absolute expiry (milliseconds) from a JWT `exp` claim.
-   * @param jwt - Candidate JWT string, or null when no token is available
-   * @returns Expiry in epoch milliseconds, or undefined when the claim cannot be read
-   */
-  private parseJwtExpiryMs(jwt: string | null): number | undefined {
-    if (!jwt) {
-      return undefined;
-    }
-    const parts = jwt.split('.');
-    if (parts.length !== 3) {
-      return undefined;
-    }
-    try {
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<string, unknown>;
-      const exp = this.readNumberValue(payload.exp);
-      return exp !== undefined ? exp * 1000 : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * @description Reads known OpenAI Codex credential keys from one envelope object.
-   * @param envelope - Candidate secrets envelope
-   * @returns Serialized credential blob when available
-   */
-  private readCredentialBlobFromEnvelope(envelope: Record<string, unknown>): string | null {
-    const appBlob = envelope[APP_OPENAI_CODEX_CREDENTIALS_KEY];
-    if (typeof appBlob === 'string' && appBlob.trim().length > 0) {
-      return appBlob;
-    }
-
-    const clineBlob = envelope[CLINE_OPENAI_CODEX_CREDENTIALS_KEY];
-    if (typeof clineBlob === 'string' && clineBlob.trim().length > 0) {
-      return clineBlob;
-    }
-
-    return null;
-  }
-
-  /**
-   * @description Reads the shared swarm config-seed secrets payload when available.
-   * @returns Shared seed secrets object or null when missing/invalid.
-   */
-  private readSharedSeedSecrets(): Record<string, unknown> | null {
-    const filePath = this.resolveSharedSeedPath();
-    if (!fs.existsSync(filePath)) {
-      logger.info({ filePath }, 'Shared seed secrets file does not exist');
-      return null;
-    }
-
-    try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      const parsed = JSON.parse(raw) as unknown;
-      const isValid = parsed && typeof parsed === 'object' && !Array.isArray(parsed);
-      logger.info({ filePath, keyCount: isValid ? Object.keys(parsed as object).length : 0, valid: isValid }, 'Read shared seed secrets');
-      return isValid ? parsed as Record<string, unknown> : null;
-    } catch (error) {
-      logger.warn({ err: error, filePath }, 'Failed to read shared swarm seed secrets');
-      return null;
-    }
-  }
-
-  /**
-   * @description Resolves the shared swarm seed secrets path from env with a container-safe default.
-   * @returns Shared seed secrets path.
-   */
-  private resolveSharedSeedPath(): string {
-    return process.env.OPENAI_CODEX_SHARED_SEED_PATH || '/app/config-seed/secrets.json';
-  }
-
-  /**
-   * @description Normalizes credential payload to Cline OAuth schema.
-   * @param payload - Parsed credential object
-   * @returns Cline-compatible credentials or null when required fields are missing
-   */
-  private normalizeOpenAiCodexCredentials(payload: Record<string, unknown>): Record<string, unknown> | null {
-    const accessToken = this.readNonEmptyString(payload.access_token) || this.readNonEmptyString(payload.accessToken);
-    const refreshToken = this.readNonEmptyString(payload.refresh_token) || this.readNonEmptyString(payload.refreshToken);
-    const expires = this.readNumberValue(payload.expires) ?? this.readNumberValue(payload.expiresAt);
-    if (!accessToken || !refreshToken || typeof expires !== 'number') {
-      logger.warn('OpenAI Codex credentials missing required token fields');
-      return null;
-    }
-
-    const normalized: Record<string, unknown> = {
-      type: OPENAI_CODEX_PROVIDER,
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expires,
-      expiresAt: expires,
-    };
-
-    const idToken = this.readNonEmptyString(payload.id_token) || this.readNonEmptyString(payload.idToken);
-    if (idToken) {
-      normalized.id_token = idToken;
-      normalized.idToken = idToken;
-    }
-
-    const email = this.readNonEmptyString(payload.email);
-    if (email) {
-      normalized.email = email;
-    }
-
-    const accountId = this.readNonEmptyString(payload.accountId);
-    if (accountId) {
-      normalized.accountId = accountId;
-    }
-
-    return normalized;
-  }
-
-  /**
+ /**
    * @description Resolves Cline runtime directory from explicit value, env, or home fallback.
    * @param configuredDir - Optional runtime directory override
    * @returns Absolute runtime directory path
@@ -999,12 +568,4 @@ export class ClineRuntimeConfigSyncService {
     return normalized.length > 0 ? normalized : null;
   }
 
-  /**
-   * @description Reads finite numeric values from unknown inputs.
-   * @param value - Candidate numeric value
-   * @returns Parsed finite number or undefined
-   */
-  private readNumberValue(value: unknown): number | undefined {
-    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-  }
 }

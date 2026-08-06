@@ -20,6 +20,9 @@
  *                     |                             | heartbeats (telemetry + events) to the controller, and
  *                     |                             | executes secret-guarded command envelopes. A device node:
  *                     |                             | no LLM, no vendor keys, never originates flight.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Require an exact MAVLink 2 signing key for hardware mode
+ *                     |                             | and reuse the shared constant-time service-secret gate for
+ *                     |                             | command envelopes instead of a local string comparison.
  *
  * Run one per drone (host, Pi, or ground station):
  *   SWARM_SERVICE_SECRET=<secret> DRONE_NODE_ID=drone-1 OSHAL_API_URL=http://localhost:35457 \
@@ -31,11 +34,11 @@
  *   - node on another box → http://<its-LAN/tailnet-IP>:<port>
  */
 
-import express, { type Request, type Response, type NextFunction } from 'express';
+import express, { type Request, type Response } from 'express';
 import * as os from 'os';
 import { createChildLogger } from '@/shared/logger';
 import { installProcessCrashGuards } from '@/shared/services/process-crash-guards';
-import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { requireServiceSecret, serviceSecretHeaders } from '@/shared/middleware/authz';
 import {
   SimDroneProvider,
   MavlinkDroneProvider,
@@ -58,6 +61,8 @@ interface NodeConfig {
   home: { lat: number; lon: number };
   engine: 'sim' | 'mavlink';
   mavlinkUrl: string;
+  mavlinkSigningKey: Buffer | null;
+  mavlinkSigningLinkId: number;
   /** Camera-feed URL this node's hardware serves ('' = none — never fabricated). */
   videoUrl: string;
   /** Airborne link-loss self-RTL threshold, seconds (0 disables). */
@@ -82,6 +87,16 @@ function loadConfig(): NodeConfig {
     logger.error('DRONE_MAVLINK_URL is required for the mavlink engine (e.g. tcp://127.0.0.1:5760)');
     process.exit(1);
   }
+  const signingKeyHex = (process.env.DRONE_MAVLINK_SIGNING_KEY || '').trim();
+  if (engine === 'mavlink' && !/^[a-fA-F0-9]{64}$/.test(signingKeyHex)) {
+    logger.error('DRONE_MAVLINK_SIGNING_KEY must be an exact 64-hex-character MAVLink 2 key');
+    process.exit(1);
+  }
+  const signingLinkId = Number(process.env.DRONE_MAVLINK_SIGNING_LINK_ID || '1');
+  if (engine === 'mavlink' && (!Number.isInteger(signingLinkId) || signingLinkId < 0 || signingLinkId > 255)) {
+    logger.error('DRONE_MAVLINK_SIGNING_LINK_ID must be an integer from 0 through 255');
+    process.exit(1);
+  }
   const port = Number(process.env.DRONE_NODE_PORT) || 4100;
   const rawVideo = (process.env.DRONE_VIDEO_URL || '').trim();
   if (rawVideo && !/^https?:\/\/\S{1,300}$/.test(rawVideo)) {
@@ -99,16 +114,11 @@ function loadConfig(): NodeConfig {
     },
     engine: engine as 'sim' | 'mavlink',
     mavlinkUrl,
+    mavlinkSigningKey: engine === 'mavlink' ? Buffer.from(signingKeyHex, 'hex') : null,
+    mavlinkSigningLinkId: signingLinkId,
     videoUrl: /^https?:\/\/\S{1,300}$/.test(rawVideo) ? rawVideo : '',
     linkFailsafeS: Number.isFinite(failsafeRaw) ? Math.max(0, failsafeRaw) : 20,
   };
-}
-
-/** Reject any request not presenting the swarm service secret (constant config at boot). */
-function requireSecret(req: Request, res: Response, next: NextFunction): void {
-  const provided = String(req.headers['x-service-secret'] || '').trim();
-  if (provided && provided === (process.env.SWARM_SERVICE_SECRET || '').trim()) { next(); return; }
-  res.status(401).json({ error: 'valid X-Service-Secret required' });
 }
 
 /**
@@ -214,7 +224,13 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   let provider: DroneProvider;
   if (cfg.engine === 'mavlink') {
-    const mav = new MavlinkDroneProvider({ droneId: cfg.droneId, url: cfg.mavlinkUrl });
+    if (!cfg.mavlinkSigningKey) throw new DroneCommandError('MAVLink signing key unavailable after configuration validation');
+    const mav = new MavlinkDroneProvider({
+      droneId: cfg.droneId,
+      url: cfg.mavlinkUrl,
+      signingKey: cfg.mavlinkSigningKey,
+      signingLinkId: cfg.mavlinkSigningLinkId,
+    });
     logger.info({ url: cfg.mavlinkUrl }, 'Connecting to flight controller (waiting for heartbeat + position fix)…');
     await mav.connect();
     provider = mav;
@@ -230,7 +246,7 @@ async function main(): Promise<void> {
     res.json({ ok: true, droneId: cfg.droneId, engine: cfg.engine });
   });
 
-  app.post('/api/drone-node/command', requireSecret, async (req: Request, res: Response) => {
+  app.post('/api/drone-node/command', requireServiceSecret, async (req: Request, res: Response) => {
     const command = String(req.body?.command || '');
     const args = (req.body?.args || {}) as Record<string, unknown>;
     const started = Date.now();

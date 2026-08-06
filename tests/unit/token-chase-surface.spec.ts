@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add the missing Change Log header + a step-2b debugger guard: the surface must keep the call-by-call stepper, the recorded-results (replays/variants/grades) section, and the read-only /observations + /inspect reads — and the routes file must gain NO new POST (the debugger never fires replays; ADR-046 §10).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the honest `free:auto` optimizer surface and route wiring: eligible free lanes rotate or fail closed, selected provider/model evidence is returned, and non-free lanes retain explicit billing language.
  */
 
 import { readFileSync } from 'node:fs';
@@ -37,13 +38,23 @@ describe('token chase optimizer surface', () => {
     expect(html).toContain("field('Sent history (' + history.length + ' messages)'");
   });
 
-  it('retains bring-your-own-provider comparison hooks', () => {
+  it('retains owner-visible provider-lane comparison hooks', () => {
     expect(html).toContain('/api/token-chase/connections');
     expect(html).toContain('runVariantBtn');
     expect(html).toContain('runAllBtn');
-    expect(html).toContain('Run all my providers');
+    expect(html).toContain('Run all available lanes');
     expect(routes).toContain('/demo/comparison');
     expect(routes).toContain('buildTokenChaseDemoComparison');
+  });
+
+  it('documents and wires health-qualified free rotation without a paid fallback', () => {
+    expect(html).toContain('<b>Free-provider rotation</b>');
+    expect(html).toContain('currently eligible, probed free lanes');
+    expect(html).toContain('without falling through to a paid platform key');
+    expect(routes).toContain('createOptimizerLaneRotation');
+    expect(routes).toContain('replayVariantRotating');
+    expect(routes).toContain('selection: replay.selection');
+    expect(routes).toContain('rotation: laneSelection');
   });
 
   it('wires the step-2b debugger view: stepper, recorded results, and the read-only endpoints', () => {
