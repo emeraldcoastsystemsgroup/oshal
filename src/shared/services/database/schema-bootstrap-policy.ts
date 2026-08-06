@@ -120,7 +120,25 @@ export async function runRuntimeSchemaBootstrap(
     }
 
     if (options.lockKey !== undefined) {
-      await applyLockedSchema(options.pool, options.lockKey, options.statements);
+      const { privilegeDenied } = await applyLockedSchema(
+        options.pool, options.lockKey, options.statements,
+      );
+      if (privilegeDenied.length > 0) {
+        // ONE warn carrying the count, not a stack trace per statement. Under ADR-076 the runtime
+        // role is deliberately not the schema owner, so this is the expected steady state when the
+        // owner-run migrator already installed the same DDL — it is only a problem if the schema
+        // it was supposed to produce is absent, which the assertion below is what decides.
+        logger.warn(
+          {
+            moduleName: options.moduleName,
+            skipped: privilegeDenied.length,
+            of: options.statements.length,
+            firstSkipped: privilegeDenied[0].replace(/\s+/g, ' ').trim().slice(0, 120),
+          },
+          'Schema bootstrap skipped owner-only DDL as a non-owner role; verifying the schema is present anyway',
+        );
+        await assertSchemaReady(options.pool, options.moduleName, options.requirements);
+      }
     } else {
       for (const statement of options.statements) {
         await options.pool.query(statement);
