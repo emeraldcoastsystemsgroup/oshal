@@ -8,6 +8,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Serialize overlapping poll ticks with one in-flight promise and refuse to claim while currentTaskId is set, preventing duplicate claim/execution when a slow task outlives the polling interval.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Deliver one-use browser-task callbacks from trusted daemon metadata after execution; capability, subject, URL, and operation never enter MCP arguments or model context.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Separate execution/result-parse failure from callback transport failure: validate before journal completion, retry the identical valid result, and never replace a completed result with a contradictory failed callback.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: local MCP children receive only OS/runtime, proxy, and desktop-session settings; control-plane tokens and unrelated local credentials remain in the daemon.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: bind every local MCP call to the immutable claimed task's caller, target, task ID, and exact discovered tool capability.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -32,6 +34,26 @@ import {
 } from '../types';
 
 const logger = createChildLogger({ module: 'remote-client-service' });
+const REMOTE_MCP_PROCESS_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'APPDATA', 'LOCALAPPDATA', 'LANG', 'LC_ALL', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS',
+  'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'XAUTHORITY',
+] as const;
+
+/** Build the local MCP child environment without leaking the daemon's control-plane authority. */
+export function buildRemoteMcpProcessEnv(
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of REMOTE_MCP_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
 
 /**
  * @description Long-running service that keeps one remote endpoint client registered and synced.
@@ -60,7 +82,7 @@ export class RemoteClientService {
       command: config.mcpCommand,
       args: config.mcpArgs,
       cwd: config.mcpCwd,
-      env: process.env,
+      env: buildRemoteMcpProcessEnv(),
     });
     this.registeredAgentId = config.agentId ?? config.clientId;
   }
@@ -351,8 +373,14 @@ export class RemoteClientService {
     if (task.intent === 'mcp.call-tool') {
       const toolName = this.readString(task.input.toolName) || this.readString(task.input.name);
       if (!toolName) throw new Error('Remote task missing toolName');
+      this.assertTaskTarget(task);
       const args = this.readRecord(task.input.arguments ?? task.input.params ?? task.input.input);
-      return this.completedResult(task, await this.mcpClient.callTool(toolName, args));
+      return this.completedResult(task, await this.mcpClient.callTool(toolName, args, {
+        taskId: task.taskId,
+        callerId: task.fromAgentId,
+        targetId: task.toAgentId,
+        allowedTools: [toolName],
+      }));
     }
     if (task.intent === 'mcp.shutdown') {
       await this.stop();
@@ -371,6 +399,14 @@ export class RemoteClientService {
       output,
       completedAt: new Date().toISOString(),
     });
+  }
+
+  /** @description Refuse a claimed task whose immutable target is not this daemon. */
+  private assertTaskTarget(task: RemoteClientTask): void {
+    const targets = new Set([this.config.clientId, this.registeredAgentId].filter(Boolean));
+    if (!targets.has(task.toAgentId)) {
+      throw new Error('Remote MCP task target does not match this client.');
+    }
   }
 
   /** @description Returns the status-sync payload for the local remote runtime. */

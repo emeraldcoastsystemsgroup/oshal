@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Validate a bounded, link-free PNG/JPEG from the exact Apply task workspace and publish one immutable copy inside the exact Career user store before provenance can be marked verified.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Return the retained artifact's SHA-256 beside its path so Apply V2 can atomically require exact confirmation evidence before submitted_verified.
  *
  * @module app/apply-confirmation-artifact
  */
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { taskWorkspaceFolder } from '@/app/routes/remote-client-workspace-routes';
 import { findCareerUserStoreLayout } from '@/shared/career-user-store-path';
@@ -19,6 +21,7 @@ const SAFE_IMAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(?:png|jpe?g)$/i;
 const MAX_CONFIRMATION_BYTES = 8 * 1024 * 1024;
 
 interface ValidatedImage { data: Buffer; extension: '.png' | '.jpg' }
+export interface PersistedApplyConfirmation { path: string; sha256: string }
 
 /** True only for a complete PNG or JPEG payload matching the requested filename extension. */
 function validatedImage(data: Buffer, filename: string): ValidatedImage | null {
@@ -51,7 +54,11 @@ function readValidatedImage(filePath: string, filename: string): ValidatedImage 
 }
 
 /** Publish one exclusive private file, or reuse an already-valid idempotent task copy. */
-function publishImage(directory: string, taskId: string, image: ValidatedImage): string | null {
+function publishImage(
+  directory: string,
+  taskId: string,
+  image: ValidatedImage,
+): PersistedApplyConfirmation | null {
   const target = path.join(directory, `${taskId}${image.extension}`);
   let created: { dev: bigint; ino: bigint } | null = null;
   try {
@@ -76,19 +83,23 @@ function publishImage(directory: string, taskId: string, image: ValidatedImage):
     }
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return null;
   }
-  return readValidatedImage(target, path.basename(target)) ? target : null;
+  const retained = readValidatedImage(target, path.basename(target));
+  return retained ? {
+    path: target,
+    sha256: createHash('sha256').update(retained.data).digest('hex'),
+  } : null;
 }
 
 /**
  * @description Retain a callback-named confirmation image only when it is a direct child of the
  * exact task workspace and can be copied into the exact user's existing Career store link-free.
- * @returns Absolute retained path for the Career CLI, or null on every refusal/absence.
+ * @returns Absolute retained path and SHA-256 for the ledger, or null on every refusal/absence.
  */
 export function persistApplyConfirmationArtifact(
   userSub: string,
   taskId: string,
   confirmationFile: string | undefined,
-): string | null {
+): PersistedApplyConfirmation | null {
   if (!APPLY_TASK_ID.test(taskId) || !confirmationFile || !SAFE_IMAGE_NAME.test(confirmationFile)
     || path.basename(confirmationFile) !== confirmationFile) return null;
   try {

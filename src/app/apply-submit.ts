@@ -31,6 +31,10 @@
  *   authorization into ApplyDispatchInput. Every unspecified/internal/automated call defaults to
  *   assist mode; authenticated single-job routes and authorized ticket metadata opt in explicitly.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Reap legacy/expired raw claims, bind the exact assigned worker, reconcile idle-worker divergence, and park every ambiguous submit outcome for human review with final-submit authority stripped.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Isolate queue/profile/trace helpers from controller and connector credentials with an explicit process environment.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Make apply_runs the durable authority: create before Career claim, bind claim tokens, CAS terminal recovery, and keep applyInFlight as timer/projection cache only.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Give an undispatched Career claim only two minutes and install the longer submission deadline only when dispatch binds its exact worker.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | Reconcile expired durable deadlines directly so controller restarts cannot stretch a two-minute claim into the legacy ticket-age window.
  *
  * @module app/apply-submit
  */
@@ -54,6 +58,13 @@ import {
   isApplyFinalSubmitAuthorized,
   type ApplySubmitAuthorization,
 } from '@/app/apply-submit-authorization';
+import {
+  createApplyRun,
+  APPLY_UNDISPATCHED_TIMEOUT_MS,
+  listExpiredApplyRuns,
+  transitionApplyRun,
+  type ApplyRunMetadata,
+} from '@/app/apply-run-ledger';
 
 const logger = createChildLogger({ module: 'apply-submit' });
 const CLI = path.resolve(process.cwd(), 'scripts', 'oshal-apply.js');
@@ -65,6 +76,34 @@ const RAW_CLAIM_MAX_AGE_MS = Math.max(
 
 /** Cap collected stdout at the old spawnSync maxBuffer so a runaway CLI can't balloon memory. */
 const MAX_OUT_BYTES = 32 * 1024 * 1024;
+const APPLY_CLI_ENV_KEYS = [
+  'PATH', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ',
+  'JOBHUNTER_STORE_ROOT', 'JOBHUNTER_APP_DIR', 'JOBHUNTER_CORPUS_DB',
+  'CLINE_WORKSPACE_ROOT', 'OSHAL_STORE_DIR', 'OSHAL_TENANT',
+] as const;
+const APPLY_CLI_TRACE_ENV_KEYS = [
+  'APPLY_POSTING_ID', 'APPLY_COMPANY', 'APPLY_RESULT', 'APPLY_HOW', 'APPLY_BLOCKER',
+] as const;
+
+/** Build the trusted local apply-helper environment without platform or provider secrets. */
+export function buildApplyCliProcessEnv(
+  userSub: string,
+  extra: Record<string, string> = {},
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of APPLY_CLI_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.OSHAL_USER_SUB = userSub;
+  for (const key of APPLY_CLI_TRACE_ENV_KEYS) {
+    const value = extra[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
 
 /**
  * @description Runs an oshal-apply.js verb for a user WITHOUT blocking the event loop and
@@ -74,8 +113,8 @@ const MAX_OUT_BYTES = 32 * 1024 * 1024;
  * loop — the same class that wedged the front end on 2026-07-15. Never rejects.
  * @param userSub - The OIDC sub the CLI run is scoped to (OSHAL_USER_SUB).
  * @param args - CLI argv after the script path.
- * @param opts - timeoutMs (default 60s, matches the old spawnSync timeout) + extraEnv
- *   (APPLY_* trace vars etc., merged over process.env).
+ * @param opts - timeoutMs (default 60s, matches the old spawnSync timeout) + exact
+ *   non-secret APPLY_* trace values merged over the restricted helper environment.
  * @returns The parsed last stdout line, or null.
  */
 export function runApplyCli(
@@ -85,7 +124,7 @@ export function runApplyCli(
 ): Promise<unknown> {
   return new Promise((resolve) => {
     const proc = spawn('node', [CLI, ...args], {
-      env: { ...process.env, OSHAL_USER_SUB: userSub, ...(opts.extraEnv || {}) },
+      env: buildApplyCliProcessEnv(userSub, opts.extraEnv),
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: opts.timeoutMs ?? 60000,
     });
@@ -114,6 +153,21 @@ function deferRecovery(ctx: AppContext, task: ApplyInFlight): void {
 
 /** Return the claim to the reviewable queue, distinguishing a callback that already wrote applied. */
 async function releaseUnknownClaim(task: ApplyInFlight): Promise<'released' | 'applied' | 'failed'> {
+  if (task.runId && task.claimToken) {
+    const value = await runApplyCli(task.userSub, [
+      'queue', 'record', String(task.postingId), 'deferred',
+      '--note', 'Outcome unknown; human reconciliation required before another submission.',
+      '--run-id', task.runId, '--claim-token', task.claimToken,
+    ]);
+    if (value && typeof value === 'object') {
+      const row = value as Record<string, unknown>;
+      if (row.ok === true && Number(row.posting_id) === task.postingId) return 'released';
+      if (row.applied_at) return 'applied';
+    }
+    return 'failed';
+  }
+  // Pre-ledger compatibility only: old claims have no compare-and-set token. They are parked by the
+  // ticket recovery path and never re-dispatched automatically; remove after the migration window.
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const value = await runApplyCli(task.userSub, ['queue', 'requeue', String(task.postingId)]);
     if (value && typeof value === 'object') {
@@ -190,8 +244,24 @@ export async function recoverUnknownApply(
     return false;
   }
   if (capability === 'processing') { deferRecovery(ctx, task); return false; }
-  clearInFlight(taskId);
   const claim = await releaseUnknownClaim(task);
+  if (task.runId) {
+    try {
+      await transitionApplyRun(ctx.pool, {
+        runId: task.runId,
+        from: ['queued_to_worker', 'acknowledged', 'running'],
+        to: 'unknown_outcome',
+        result: { reason, careerClaim: claim },
+        failureCode: reason,
+        failureDetail: 'A submission side effect may have occurred, but no trusted confirmation was retained.',
+      });
+    } catch (err) {
+      logger.error({ err, taskId, runId: task.runId }, 'apply recovery: durable run transition failed');
+      deferRecovery(ctx, task);
+      return false;
+    }
+  }
+  clearInFlight(taskId);
   const message = reason === 'apply_worker_idle_orphan'
     ? 'The assigned worker reported idle without claiming or completing this task. The posting was released; confirm whether any submission landed before retrying.'
     : reason === 'apply_controller_restart_orphan'
@@ -207,6 +277,51 @@ export async function recoverUnknownApply(
   return true;
 }
 
+/**
+ * @description Release a task the selected worker positively reports it never accepted. Unlike a
+ * running timeout, this pre-submit state is safe to retry: revoke the unused callback, CAS the run
+ * to abandoned, release only the matching Career claim, and return the durable ticket to approved.
+ */
+export async function abandonUnacknowledgedApply(
+  ctx: AppContext,
+  task: ApplyInFlight,
+): Promise<boolean> {
+  if (!task.runId || !task.claimToken) return recoverUnknownApply(
+    ctx, task.taskId, 'apply_worker_idle_orphan',
+  );
+  const capability = await revokeUnclaimedApplyCapability(ctx.pool, task.taskId);
+  if (capability === 'processing') return false;
+  const released = await runApplyCli(task.userSub, [
+    'queue', 'requeue', String(task.postingId),
+    '--run-id', task.runId, '--claim-token', task.claimToken,
+  ]);
+  const releaseOk = Boolean(
+    released && typeof released === 'object' && (released as Record<string, unknown>).ok === true,
+  );
+  const terminal = await transitionApplyRun(ctx.pool, {
+    runId: task.runId,
+    from: ['claimed', 'queued_to_worker'],
+    to: 'abandoned',
+    failureCode: 'worker_ack_timeout_idle',
+    failureDetail: 'The assigned healthy worker reported no active or queued task before acknowledgement.',
+    result: { careerClaimReleased: releaseOk },
+  });
+  if (!terminal) return false;
+  clearInFlight(task.taskId);
+  await removeApplyWorkspace(task.taskId);
+  if (task.ticketId && task.settleTicket !== false) {
+    await runWithRequestIdentity({ sub: task.userSub, isOperator: false }, () =>
+      ctx.ticketService.updateStatus(task.ticketId as string, 'approved', {
+        source: 'apply-recovery', reason: 'worker_ack_timeout_idle', postingId: task.postingId,
+      }),
+    );
+  }
+  logger.warn({
+    taskId: task.taskId, runId: task.runId, postingId: task.postingId, releaseOk,
+  }, 'apply run abandoned before worker acknowledgement');
+  return true;
+}
+
 /** @description Release stale raw claims for one user while preserving exact in-process postings. */
 export async function reapUserApplyClaims(userSub: string): Promise<Record<string, unknown> | null> {
   const live = [...applyInFlight.values()].filter((task) => task.userSub === userSub)
@@ -215,6 +330,81 @@ export async function reapUserApplyClaims(userSub: string): Promise<Record<strin
     'queue', 'reap', '--older-ms', String(RAW_CLAIM_MAX_AGE_MS), '--live', live.join(','),
   ]);
   return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+}
+
+/**
+ * @description Enforce state-specific ledger deadlines independently of process timers. Claimed
+ * rows are CAS-failed before their exact Career token is released, closing the dispatch race;
+ * dispatched rows enter the normal ambiguity-safe recovery path and are never auto-retried.
+ */
+export async function recoverExpiredApplyRuns(ctx: AppContext): Promise<number> {
+  if (!ctx.pool) return 0;
+  const runs = await listExpiredApplyRuns(ctx.pool);
+  let recovered = 0;
+  for (const run of runs) {
+    if (run.state === 'claimed') {
+      const terminal = await transitionApplyRun(ctx.pool, {
+        runId: run.runId,
+        from: ['claimed'],
+        to: 'failed',
+        failureCode: 'undispatched_claim_timeout',
+        failureDetail: 'No durable task/worker binding was created within two minutes.',
+      });
+      // A concurrent dispatcher won the CAS. Its longer deadline now governs this run.
+      if (!terminal) continue;
+      const released = await runApplyCli(run.ownerSub, [
+        'queue', 'requeue', String(run.postingId),
+        '--run-id', run.runId, '--claim-token', run.claimToken,
+      ]);
+      const releaseOk = Boolean(
+        released && typeof released === 'object' &&
+        (released as Record<string, unknown>).ok === true,
+      );
+      try {
+        await runWithRequestIdentity({ sub: run.ownerSub, isOperator: false }, async () => {
+          const ticket = await ctx.ticketService.getTicket(run.ticketId);
+          if (!ticket || ['complete', 'cancelled'].includes(ticket.status)) return;
+          await ctx.ticketService.updateStatus(
+            run.ticketId,
+            releaseOk ? 'approved' : 'customer_action',
+            {
+              source: 'apply-recovery', reason: 'undispatched_claim_timeout',
+              postingId: run.postingId, careerClaimReleased: releaseOk,
+            },
+          );
+        });
+      } catch (err) {
+        logger.warn({ err, runId: run.runId, ticketId: run.ticketId },
+          'expired undispatched Apply ticket projection failed');
+      }
+      if (!releaseOk) {
+        logger.error({ runId: run.runId, postingId: run.postingId },
+          'expired Apply run failed closed but its Career claim still needs raw-claim cleanup');
+      }
+      recovered += 1;
+      continue;
+    }
+
+    if (!run.taskId) continue;
+    if (!applyInFlight.has(run.taskId)) {
+      const timer = setTimeout(() => undefined, 30_000);
+      if (typeof timer.unref === 'function') timer.unref();
+      applyInFlight.set(run.taskId, {
+        taskId: run.taskId,
+        ticketId: run.ticketId,
+        settleTicket: true,
+        postingId: run.postingId,
+        userSub: run.ownerSub,
+        clientId: run.workerClientId || undefined,
+        runId: run.runId,
+        claimToken: run.claimToken,
+        timer,
+        startedAt: new Date(run.dispatchedAt || run.claimedAt).getTime(),
+      });
+    }
+    if (await recoverUnknownApply(ctx, run.taskId, 'apply_submission_timeout')) recovered += 1;
+  }
+  return recovered;
 }
 
 /**
@@ -228,25 +418,50 @@ export async function reconcileApplyInFlight(ctx: AppContext, now = Date.now()):
     if (!task.clientId || now - task.startedAt < APPLY_WORKER_ACK_TIMEOUT_MS) continue;
     const worker = remoteClientRegistry.getClient(task.clientId);
     if (!worker || worker.status !== 'online' || worker.healthy === false) continue;
-    if (worker.activeTaskId === task.taskId || Number(worker.taskQueueDepth || 0) > 0) continue;
+    if (worker.activeTaskId === task.taskId) {
+      if (task.runId) await transitionApplyRun(ctx.pool, {
+        runId: task.runId, from: ['queued_to_worker', 'acknowledged'], to: 'running',
+      });
+      continue;
+    }
+    if (Number(worker.taskQueueDepth || 0) > 0) {
+      if (task.runId) await transitionApplyRun(ctx.pool, {
+        runId: task.runId, from: ['queued_to_worker'], to: 'acknowledged',
+      });
+      continue;
+    }
     try {
       if (await remoteClientRegistry.getCompletedResult(task.clientId, task.taskId)) {
         task.callbackPending = true;
         continue;
       }
     } catch { continue; }
-    if (await recoverUnknownApply(ctx, task.taskId, 'apply_worker_idle_orphan')) recovered += 1;
+    if (await abandonUnacknowledgedApply(ctx, task)) recovered += 1;
   }
   return recovered;
 }
 
 export interface GatherResult { status: number; body: Record<string, unknown>; }
 
+/** @description Produce mandatory, controller-derived automation provenance for the run ledger. */
+function applyRunMetadata(
+  userSub: string,
+  authorization: ApplySubmitAuthorization,
+): ApplyRunMetadata {
+  const source = isApplyFinalSubmitAuthorized(authorization) ? authorization.source : 'assist-only';
+  return {
+    trigger: source,
+    initiatedBySub: userSub,
+    automationSettingsVersion: `${source}-v1`,
+  };
+}
+
 /** @description Prove the per-user CLI claimed the exact posting before browser dispatch. */
-function exactClaimAcknowledged(value: unknown, postingId: number): boolean {
+function exactClaimAcknowledged(value: unknown, postingId: number, runId: string): boolean {
   if (!value || typeof value !== 'object') return false;
   const row = value as Record<string, unknown>;
-  return row.ok === true && row.claimed === true && Number(row.posting_id) === postingId;
+  return row.ok === true && row.claimed === true && Number(row.posting_id) === postingId
+    && row.apply_run_id === runId;
 }
 
 // ── gather+dispatch concurrency guard (mirrors the 07-15 career-hunter fix) ──────────────────
@@ -302,12 +517,42 @@ export async function gatherAndDispatch(
     const profile = await runApplyCli(userSub, ['profile']);
     if (!profile) return { status: 409, body: { error: 'no career profile for this user' } };
 
-    const claimed = await runApplyCli(userSub, ['queue', 'claim', String(postingId)]);
-    if (!exactClaimAcknowledged(claimed, postingId)) {
+    const runTicketId = ticketId || `apply_${postingId}_${Date.now()}`;
+    let run: Awaited<ReturnType<typeof createApplyRun>>;
+    try {
+      run = await createApplyRun(ctx.pool, {
+        ticketId: runTicketId,
+        ownerSub: userSub,
+        postingId,
+        timeoutAt: new Date(Date.now() + APPLY_UNDISPATCHED_TIMEOUT_MS),
+        metadata: applyRunMetadata(userSub, authorization),
+      });
+    } catch (err) {
+      logger.error({ err, ticketId: runTicketId, postingId }, 'apply dispatch could not create durable run');
+      return { status: 503, body: { error: 'the durable Apply ledger is unavailable', retryable: true } };
+    }
+    if (!run) {
+      return { status: 409, body: { error: 'an active durable run already owns this posting', retryable: true } };
+    }
+
+    const claimed = await runApplyCli(userSub, [
+      'queue', 'claim', String(postingId),
+      '--run-id', run.runId, '--claim-token', run.claimToken,
+    ]);
+    if (!exactClaimAcknowledged(claimed, postingId, run.runId)) {
+      await transitionApplyRun(ctx.pool, {
+        runId: run.runId,
+        from: ['claimed'],
+        to: 'failed',
+        failureCode: 'career_claim_not_acknowledged',
+        failureDetail: 'The per-user Career queue did not accept the exact durable run binding.',
+      });
       return { status: 503, body: { error: 'the per-user queue did not acknowledge the posting claim', retryable: true } };
     }
     const input: ApplyDispatchInput = {
-      ticketId: ticketId || `apply_${postingId}_${Date.now()}`,
+      applyRunId: run.runId,
+      timeoutAt: new Date(Date.now() + APPLY_TIMEOUT_MS),
+      ticketId: runTicketId,
       settleTicket: Boolean(ticketId),
       finalSubmitAuthorized: isApplyFinalSubmitAuthorized(authorization),
       userSub, postingId,
@@ -325,7 +570,20 @@ export async function gatherAndDispatch(
       // `queue next --posting <id>` returns nothing and the ticket escalates "no submittable job
       // ready", poisoned by its own dispatch attempt (that cost 8 tickets on 2026-07-21). requeue
       // hard-refuses when applied_at is set, so a genuinely-submitted application is never resurrected.
-      await runApplyCli(userSub, ['queue', 'requeue', String(postingId)]);
+      const released = await runApplyCli(userSub, [
+        'queue', 'requeue', String(postingId),
+        '--run-id', run.runId, '--claim-token', run.claimToken,
+      ]);
+      await transitionApplyRun(ctx.pool, {
+        runId: run.runId,
+        from: ['claimed', 'queued_to_worker'],
+        to: 'failed',
+        failureCode: 'worker_dispatch_failed',
+        failureDetail: String(d.error || 'The selected worker did not accept the browser task.'),
+        result: { careerClaimReleased: Boolean(
+          released && typeof released === 'object' && (released as Record<string, unknown>).ok === true,
+        ) },
+      });
       return { status: 503, body: { error: d.error || 'dispatch failed', retryable: true } };
     }
 
@@ -336,6 +594,7 @@ export async function gatherAndDispatch(
     applyInFlight.set(d.taskId, {
       taskId: d.taskId, ticketId: input.ticketId, settleTicket: input.settleTicket,
       postingId, userSub, company: input.job.company, clientId: d.clientId,
+      runId: run.runId, claimToken: run.claimToken,
       timer, startedAt: Date.now(),
     });
     if (ticketId) { ctx.ticketService.updateStatus(ticketId, 'in_process_build').catch((err) => logger.warn({ err, ticketId }, 'submit: in_process update failed')); }

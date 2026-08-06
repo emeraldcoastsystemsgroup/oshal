@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | gha-local tests: expression evaluator (contexts, ==/&&/||/!, fallbacks, status fns, hashFiles), workflow parser (matrix product+include/exclude, needs topo, services), action mapping (never-push, unknown surfaced), planner (env merge, runtime-context deferral), and an ACCEPTANCE pass over the repo's real ci.yml.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove local workflow steps receive declared inputs but never ambient host/controller credentials.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -14,8 +15,29 @@ import { evalExpr, interpolate, RUNTIME_CONTEXTS, type ExprWarnings } from '../.
 import { parseWorkflow, expandMatrix, orderJobs, type GhaJob } from '../../scripts/lib/gha/parse';
 import { mapAction } from '../../scripts/lib/gha/actions-map';
 import { buildPlan } from '../../scripts/lib/gha/plan';
+import { buildGhaStepProcessEnv } from '../../scripts/lib/gha/run';
 
 const W = (): ExprWarnings => ({ warnings: [] });
+
+describe('workflow step subprocess environment', () => {
+  it('uses runtime and declared values without ambient secrets', () => {
+    expect(buildGhaStepProcessEnv(
+      { JOB_VALUE: 'declared-job' },
+      { CALLER_SECRET: 'explicit-caller-secret' },
+      {
+        Path: 'C:\\runtime',
+        DATABASE_URL: 'ambient-database',
+        GITHUB_TOKEN: 'ambient-token',
+        ANTHROPIC_API_KEY: 'ambient-provider-key',
+      },
+    )).toEqual({
+      CI: 'true',
+      Path: 'C:\\runtime',
+      JOB_VALUE: 'declared-job',
+      CALLER_SECRET: 'explicit-caller-secret',
+    });
+  });
+});
 
 describe('expression evaluator', () => {
   const ctx = {

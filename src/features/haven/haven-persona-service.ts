@@ -8,15 +8,12 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Phase 2: Replaced inline HTTP calls with harness providers
  *                     |                           |   Priority: 1) codex exec  2) claude code CLI  3) cline CLI fallback
  *                     |                           |   No direct Anthropic HTTP calls — all through CLI harnesses
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove hard-coded autonomous CLI fallback construction and use only the injected accounted provider, which independently rejects disabled local harnesses.
  */
 
 import { createChildLogger } from '@/shared/logger';
 import { HomeContextService, type HomeContextSnapshot, HAVEN_DEFAULT_HOUSEHOLD_ID } from './home-context-service';
 import type { LLMService } from '@/features/llm-provider';
-// eslint-disable-next-line no-restricted-imports -- two-runtimes: LLM execution runtime, deliberately off the barrel graph (barrel split, TODO-BOUNDARY-FINDING)
-import { CodexHarnessProvider } from '@/features/llm-provider/services/codex-cli-provider';
-// eslint-disable-next-line no-restricted-imports -- two-runtimes: LLM execution runtime, deliberately off the barrel graph (barrel split, TODO-BOUNDARY-FINDING)
-import { ClaudeCodeCliProvider } from '@/features/llm-provider/services/claude-code-cli-provider';
 
 const logger = createChildLogger({ module: 'haven-persona-service' });
 
@@ -145,25 +142,19 @@ function buildContextBlock(snapshot: HomeContextSnapshot): string {
 /**
  * @description Haven persona service.
  *
- * LLM call priority order (all through CLI harness providers, no direct HTTP):
- *   1. CodexHarnessProvider (`codex exec`) — ~2-5s, uses Codex OAuth token
- *   2. ClaudeCodeCliProvider (`claude -p`) — ~2-5s, uses ANTHROPIC_API_KEY or Claude OAuth
- *   3. Existing cline CLI subprocess (full agent loop) — ~30-60s fallback
+ * LLM access is supplied by the composition root. An authorized hosted/BYO provider is
+ * accounted normally; a disabled local CLI provider rejects before task/workspace setup.
  */
 export class HavenPersonaService {
   private readonly homeContextService: HomeContextService;
   private readonly getProvider: () => LLMService;
-  private readonly ticketService?: DispatchableTicketService;
-  private readonly codexProvider: CodexHarnessProvider;
-  private readonly claudeProvider: ClaudeCodeCliProvider;
 
   /**
    * @description Wires Haven to its household context source and LLM access, and eagerly
-   * constructs the fast CLI harness providers (Codex, Claude Code) used ahead of the
-   * slower cline fallback.
+   * receives the one provider selected by the composition root.
    * @param homeContextService Source of household snapshots injected into the system prompt.
-   * @param getProvider Lazy accessor for the cline CLI fallback LLM service.
-   * @param ticketService Optional service for dispatching work into downstream tickets.
+   * @param getProvider Lazy accessor for the composition-root-authorized LLM service.
+   * @param ticketService Retired direct-dispatch dependency retained for constructor compatibility.
    */
   constructor(
     homeContextService: HomeContextService,
@@ -172,16 +163,13 @@ export class HavenPersonaService {
   ) {
     this.homeContextService = homeContextService;
     this.getProvider = getProvider;
-    this.ticketService = ticketService;
-    this.codexProvider = new CodexHarnessProvider();
-    this.claudeProvider = new ClaudeCodeCliProvider();
+    void ticketService;
   }
 
   /**
    * @description Produces a Haven reply for a user message: loads household context,
-   * builds the system prompt, and attempts the LLM call through the provider priority
-   * chain (Codex CLI, then Claude Code CLI, then cline CLI fallback), returning a
-   * friendly placeholder if every provider yields empty text.
+   * builds the system prompt, and calls only the provider authorized by the composition root,
+   * returning a friendly placeholder if that provider yields empty text.
    * @param householdId Household to scope context to; defaults to the Haven default household.
    * @param userMessage The latest user input to respond to.
    * @param history Prior conversation turns replayed for context.
@@ -203,54 +191,26 @@ export class HavenPersonaService {
       { role: 'user' as const, content: userMessage },
     ];
 
-    const lastUserMsg = userMessage;
-
-    // ── LLM call — priority order (all CLI harness providers) ───────────────
-    //
-    // 1. codex exec  (~2-5s) — uses Codex OAuth token via CodexHarnessProvider
-    // 2. claude -p   (~2-5s) — uses ANTHROPIC_API_KEY via ClaudeCodeCliProvider
-    // 3. cline CLI   (~30-60s) — full agent loop via existing getProvider()
-    //
-    let text = '';
-
-    try {
-      // ── Priority 1: Codex CLI (fast, uses Codex OAuth) ─────────────────────
-      const codexResult = await this.codexProvider.complete(
-        `User: ${lastUserMsg}\n\nRespond naturally as Haven. Do not use any tools or read any files.`,
-        systemPrompt,
-      );
-      text = codexResult.text;
-      logger.info({ householdId, replyLength: text.length, provider: 'codex-cli' }, 'Haven: codex exec reply ready');
-    } catch (codexErr) {
-      logger.warn({ err: codexErr }, 'Haven: codex exec failed — trying Claude Code CLI');
-
-      try {
-        // ── Priority 2: Claude Code CLI (fast, uses ANTHROPIC_API_KEY or OAuth) ─
-        const claudeResult = await this.claudeProvider.complete(lastUserMsg, systemPrompt);
-        text = claudeResult.text;
-        logger.info({ householdId, replyLength: text.length, provider: 'claude-code-cli' }, 'Haven: Claude Code CLI reply ready');
-      } catch (claudeErr) {
-        logger.warn({ err: claudeErr }, 'Haven: Claude Code CLI failed — falling back to cline CLI (~30-60s)');
-
-        // ── Priority 3: cline CLI subprocess (slow fallback) ────────────────
-        const taskId = `haven-chat-${householdId}-${Date.now()}`;
-        const response = await this.getProvider().sendRequest({
-          messages,
-          systemPrompt,
-          taskId,
-          agentId: 'haven',
-          interactionMode: 'chat',
-          maxTokens: 1024,
-          temperature: 0.7,
-        });
-        text = response.content
-          .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-          .map((b) => b.text)
-          .join('')
-          .trim();
-        logger.info({ householdId, replyLength: text.length, provider: 'cline-cli' }, 'Haven: cline CLI reply ready');
-      }
-    }
+    const provider = this.getProvider();
+    const taskId = `haven-chat-${householdId}-${Date.now()}`;
+    const response = await provider.sendRequest({
+      messages,
+      systemPrompt,
+      taskId,
+      agentId: 'haven',
+      interactionMode: 'chat',
+      maxTokens: 1024,
+      temperature: 0.7,
+    });
+    const text = response.content
+      .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+      .map((block) => block.text)
+      .join('')
+      .trim();
+    logger.info(
+      { householdId, replyLength: text.length, provider: provider.getProviderName() },
+      'Haven: accounted provider reply ready',
+    );
 
     if (!text) {
       logger.warn({ householdId }, 'Haven: empty response from LLM');

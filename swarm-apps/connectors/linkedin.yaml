@@ -3,6 +3,8 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Declarative LinkedIn connector so member-share publishing runs through the connector write-action executor instead of a bespoke fetch(). The `create-post` action is the UGC Posts call linkedin-assistant-routes used to make directly: declared params, riskLevel high + requiresConfirmation, the caller's own brokered token, and a connector_action_audit row per attempt.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace the retired Simple Icons slug with the deterministic LinkedIn-domain favicon fallback.
+# -----------------------------------------------------------------------------
 
 provider: linkedin
 displayName: LinkedIn
@@ -63,7 +65,6 @@ actions:
 metadata:
   category: "Social"
   description: "LinkedIn — reads the connected member's profile, and publishes a member share through the confirm-gated, audited write-action tier. OAuth: the operator registers the provider app once, then each user connects their own account."
-  icon: linkedin
-  iconTitle: LinkedIn
-  iconSource: simple-icons
-  iconVerified: true
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/linkedin.com.ico

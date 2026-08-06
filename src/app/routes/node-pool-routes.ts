@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Phase 1: Node pool identity API — assign, release, status endpoints for hot-loading bot identities.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: require the configured machine secret on every /node route; validate bounded strict payloads; remove credential-bearing request logs; serialize lifecycle transitions; constrain persona reads; and restore credential/config snapshots on release or failed assignment.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Scrub abandoned assignment files when a pool process restarts with an active-session marker, preventing crash-resident credentials from becoming the next idle node's baseline.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: node assignments accept non-secret identity/provider/model metadata only; credential fields are rejected by the strict schema before lifecycle mutation.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -22,17 +23,6 @@ import {
 
 const logger = createChildLogger({ module: 'node-pool-routes' });
 const safeToken = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
-const credentialKey = /^[A-Z][A-Z0-9_]*$/;
-
-const credentialsSchema = z.record(z.string().max(64 * 1024)).superRefine((value, ctx) => {
-  const keys = Object.keys(value);
-  if (keys.length > 64) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Too many credential fields' });
-  for (const key of keys) {
-    if (key.length > 128 || !credentialKey.test(key)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid credential field name', path: [key] });
-    }
-  }
-});
 
 const boundedToken = (maximum: number) => z.string().trim().min(1).max(maximum).regex(safeToken);
 const assignmentRequestSchema = z.object({
@@ -41,7 +31,6 @@ const assignmentRequestSchema = z.object({
   agent: boundedToken(64),
   model: boundedToken(256),
   provider: boundedToken(128),
-  credentials: credentialsSchema.optional().default({}),
 }).strict();
 
 type NodeAssignmentRequest = z.infer<typeof assignmentRequestSchema>;
@@ -211,7 +200,7 @@ async function serializeTransition(
 }
 
 /**
- * @description Creates the initial idle node-pool state. Credential snapshots and
+ * @description Creates the initial idle node-pool state. Session snapshots and
  * the lifecycle serializer are intentionally internal and never included in status.
  * @returns Mutable state for the node-pool router and worker lifecycle hooks.
  */

@@ -567,8 +567,9 @@ export class RibbonNav {
   /**
    * @description Fetches registered tools (DB + dynamic) and appends those
    * whose names match the active profile's `dynamicTools.allow` patterns.
-   * Bots self-register UI surfaces via POST /api/tools/register; dynamic
-   * tools disappear automatically when the bot's TTL expires.
+   * Exact operators may register ephemeral UI surfaces through POST /api/tools/register;
+   * application manifests use the in-process loader. A fleet service secret alone cannot
+   * register or replace a ribbon because it does not establish bot ownership.
    */
   async _loadToolViews() {
     try {

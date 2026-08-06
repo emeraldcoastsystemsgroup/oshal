@@ -81,7 +81,6 @@ export {
 export {
   buildClineConfig,
   buildClineGlobalState,
-  type CredentialBag,
 } from './cline-config-builder';
 export {
   isProviderRecoverableRuntimeFailure,

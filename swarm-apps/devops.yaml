@@ -17,8 +17,14 @@ description: >-
   credentials from your HashiCorp Vault per task, acts on your infrastructure, and wipes the
   session when done — the controlled "real credentials → real results" loop. Not the free
   local demo. Live: KV + credential broker + DB dynamic secrets. Architecture: docs/adr/040-devops-vault-swarm.md.
-version: 0.2.0
+version: 0.2.1
 status: active
+
+# ADR-118: privileged Vault/DevOps administration intentionally collapses to deny/admin. The
+# superadmin gate, confirmations, and governance audit remain mandatory inside the doorway.
+access:
+  supported: [deny, admin]
+  defaultTier: admin
 
 # Per-app skin (approved palette) — black so the ops console reads distinct.
 theme: black

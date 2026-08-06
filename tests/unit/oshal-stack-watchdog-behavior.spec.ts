@@ -5,6 +5,9 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add isolated behavioral guards for watchdog output draining, timeout tree cleanup, atomic/live-owner locking, and windowless launcher exit propagation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exercise process-tree fallback when taskkill fails and prove alert delivery uses a finite native-command budget only after the recovery lock is released.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the remaining real PowerShell boundary probes explicit process-startup budgets; their production timeout and cleanup assertions remain unchanged under full-suite host contention.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Identify spawned processes by PID plus start time so rapid Windows PID reuse cannot masquerade as an orphan after exact tree cleanup.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Give the real descendant-CIM and VBS boundaries explicit outer process budgets under full-suite contention; production cleanup and exit assertions remain exact.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
@@ -126,10 +129,10 @@ const verifyTimeoutTreeCleanup = (): void => {
   const probe = join(scratch, 'invoke-timed-timeout.ps1');
   const parentPid = join(scratch, 'timeout-parent.pid');
   const childPid = join(scratch, 'timeout-child.pid');
-  writeFileSync(child, 'param([string]$PidFile)\nSet-Content -LiteralPath $PidFile -Value $PID\nStart-Sleep -Seconds 300\n');
+  writeFileSync(child, 'param([string]$PidFile)\n@{ Pid = $PID; StartedAt = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks } | ConvertTo-Json -Compress | Set-Content -LiteralPath $PidFile\nStart-Sleep -Seconds 300\n');
   writeFileSync(parent,
     'param([string]$ParentPidFile, [string]$ChildPidFile, [string]$ChildScript, [string]$Shell)\n' +
-    'Set-Content -LiteralPath $ParentPidFile -Value $PID\n' +
+    '@{ Pid = $PID; StartedAt = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ParentPidFile\n' +
     '$child = Start-Process -FilePath $Shell -ArgumentList @("-NoProfile", "-File", $ChildScript, $ChildPidFile) -PassThru\n' +
     'while (-not (Test-Path -LiteralPath $ChildPidFile)) { Start-Sleep -Milliseconds 10 }\n' +
     'Start-Sleep -Seconds 300\n');
@@ -137,25 +140,32 @@ const verifyTimeoutTreeCleanup = (): void => {
   writeFileSync(probe, `param([string]$Parent, [string]$ParentPid, [string]$ChildPid, [string]$Child, [string]$Shell)\n${errorFormatter}${invokeTimedSource}\n${taskkillShim}\n` +
     '$parentArgs = "-NoProfile -File `"$Parent`" `"$ParentPid`" `"$ChildPid`" `"$Child`" `"$Shell`""\n' +
     '$result = Invoke-Timed $Shell $parentArgs 2000\n' +
+    'function Test-ExactProcessAlive([string]$IdentityFile) {\n' +
+    '  if (-not (Test-Path -LiteralPath $IdentityFile)) { return $true }\n' +
+    '  $identity = Get-Content -LiteralPath $IdentityFile -Raw | ConvertFrom-Json\n' +
+    '  $candidate = Get-Process -Id ([int]$identity.Pid) -ErrorAction SilentlyContinue\n' +
+    '  if ($null -eq $candidate) { return $false }\n' +
+    '  try { return $candidate.StartTime.ToUniversalTime().Ticks -eq [long]$identity.StartedAt } catch { return $false }\n' +
+    '}\n' +
     '$deadline = (Get-Date).AddSeconds(5)\n' +
     'do {\n' +
-    '  $parentAlive = if (Test-Path $ParentPid) { $null -ne (Get-Process -Id ([int](Get-Content $ParentPid)) -ErrorAction SilentlyContinue) } else { $true }\n' +
-    '  $childAlive = if (Test-Path $ChildPid) { $null -ne (Get-Process -Id ([int](Get-Content $ChildPid)) -ErrorAction SilentlyContinue) } else { $true }\n' +
+    '  $parentAlive = Test-ExactProcessAlive $ParentPid\n' +
+    '  $childAlive = Test-ExactProcessAlive $ChildPid\n' +
     '  if (-not $parentAlive -and -not $childAlive) { break }\n' +
     '  Start-Sleep -Milliseconds 50\n' +
     '} while ((Get-Date) -lt $deadline)\n' +
     '$observedParentAlive = $parentAlive; $observedChildAlive = $childAlive\n' +
-    'if ($parentAlive) { Stop-Process -Id ([int](Get-Content $ParentPid)) -Force -ErrorAction SilentlyContinue }\n' +
-    'if ($childAlive) { Stop-Process -Id ([int](Get-Content $ChildPid)) -Force -ErrorAction SilentlyContinue }\n' +
+    'if ($parentAlive) { Stop-Process -Id ([int](Get-Content $ParentPid -Raw | ConvertFrom-Json).Pid) -Force -ErrorAction SilentlyContinue }\n' +
+    'if ($childAlive) { Stop-Process -Id ([int](Get-Content $ChildPid -Raw | ConvertFrom-Json).Pid) -Force -ErrorAction SilentlyContinue }\n' +
     '@{ Exited = $result.Exited; ExitCode = $result.ExitCode; TreeStopped = $result.TreeStopped; Err = $result.Err; ParentAlive = $observedParentAlive; ChildAlive = $observedChildAlive } | ConvertTo-Json -Compress\n');
 
   const shell = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : powershell;
-  const result = runPowerShell(probe, [parent, parentPid, childPid, child, shell], 15_000);
+  const result = runPowerShell(probe, [parent, parentPid, childPid, child, shell], 30_000);
   expect(result.status, `${result.error?.message ?? ''}\n${result.stdout}\n${result.stderr}`).toBe(0);
   const outcome = parseLastJsonLine<{
     Exited: boolean; ExitCode: number; TreeStopped: boolean; Err: string; ParentAlive: boolean; ChildAlive: boolean;
   }>(result.stdout);
-  expect(outcome).toMatchObject({
+  expect(outcome, JSON.stringify(outcome)).toMatchObject({
     Exited: false,
     ExitCode: -1,
     TreeStopped: true,
@@ -216,7 +226,7 @@ const verifyLauncherExit = (): void => {
   const harmlessWatchdog = join(scratch, 'oshal-stack-watchdog.ps1');
   copyFileSync(launcherPath, launcher);
   writeFileSync(harmlessWatchdog, 'exit 37\n');
-  const result = spawnSync('cscript.exe', ['//B', '//Nologo', launcher], { encoding: 'utf8', timeout: 10_000 });
+  const result = spawnSync('cscript.exe', ['//B', '//Nologo', launcher], { encoding: 'utf8', timeout: 15_000 });
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(37);
 };
 
@@ -255,9 +265,9 @@ const verifyIncompleteTreeFailure = (): void => {
 
 describe('oshal stack watchdog reliability (behavioral)', () => {
   it('drains stdout and stderr beyond pipe capacity without deadlocking', verifyOutputDrain, 30_000);
-  it('returns a timeout failure only after the spawned process tree is gone', verifyTimeoutTreeCleanup, 20_000);
+  it('returns a timeout failure only after the spawned process tree is gone', verifyTimeoutTreeCleanup, 35_000);
   it('admits exactly one atomic lock contender and never steals an old lock from a live PID', verifyLockOwnership, 20_000);
-  it('propagates the underlying watchdog exit through the hidden VBS launcher', verifyLauncherExit);
-  it('bounds alert docker work after releasing the recovery lock', verifyAlertLockBoundary);
-  it('returns an explicit failure when a timed-out process tree survives cleanup', verifyIncompleteTreeFailure);
+  it('propagates the underlying watchdog exit through the hidden VBS launcher', verifyLauncherExit, 20_000);
+  it('bounds alert docker work after releasing the recovery lock', verifyAlertLockBoundary, 20_000);
+  it('returns an explicit failure when a timed-out process tree survives cleanup', verifyIncompleteTreeFailure, 20_000);
 });

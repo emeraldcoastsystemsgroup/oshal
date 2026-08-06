@@ -6,6 +6,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Added starter Headscale configuration for Docker and Kubernetes labs
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: make the mounted policy deny-by-default; first-time labs must tag nodes instead of receiving allow-all connectivity.
 # =============================================================================
 
 # The URL your Tailscale clients will use to reach this Headscale server.
@@ -60,7 +61,7 @@ database:
     write_ahead_log: true
     wal_autocheckpoint: 1000
 
-# The starter policy is intentionally permissive for local lab use only.
+# The active policy is deny-by-default. Enroll/tag nodes before expecting mesh connectivity.
 policy:
   mode: file
   path: /etc/headscale/policy.hujson

@@ -5,6 +5,11 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact tool caller subjects and resolve the trusted task cwd through the shared link-free workspace boundary before any handler receives it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: add request-start handler snapshots, reject replacement/revocation, and accept approval only from trusted execution options.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: freeze registered definitions and nested schemas against in-place TOCTOU mutation, and reject model-carried credential fields.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 credential containment: reject generic OSHAL_CRED_* execution context before a handler runs; only exact caller identity reaches model-selected tools.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: attest authorized snapshot executions with a module-private capability so MCP transports cannot be called through a raw handler reference.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Keep the attestation-minting captured-definition executor private so only registry entry points can reach it.
  */
 
 /**
@@ -14,9 +19,10 @@
 
 const logger = require('../utils/logger');
 const path = require('path');
-const { sanitizeBrokeredCreds } = require('./codebase/user-scoping');
 const { optionalExactUserSubject } = require('./codebase/exact-user-subject');
 const { resolveExistingTaskWorkspace } = require('./codebase/task-workspace-scope');
+
+const AUTHORIZED_EXECUTION = Symbol('oshal.tool-registry.authorized-execution');
 
 /** Workspace roots from which a trusted per-task tool cwd may be selected. */
 function toolWorkspaceRoots() {
@@ -75,16 +81,17 @@ class ToolRegistry {
     }
 
     // Register tool
-    this.tools.set(name, {
+    const registeredTool = Object.freeze({
       name,
       description: description || '',
       category,
-      inputSchema: inputSchema || {},
+      inputSchema: deepCloneAndFreeze(inputSchema || {}),
       handler,
       requiresApproval,
       timeout,
       registered: Date.now(),
     });
+    this.tools.set(name, registeredTool);
 
     // For MCP tools with prefixed names, register alias without prefix
     // Format: mcp_servername_toolname -> toolname
@@ -178,6 +185,38 @@ class ToolRegistry {
   }
 
   /**
+   * Capture the exact handler definition authorized for one request.
+   * A later unregister/re-register creates a different object and invalidates this snapshot.
+   */
+  capture(toolName) {
+    const tool = this.get(toolName);
+    if (!tool) return null;
+    return Object.freeze({
+      requestedName: toolName,
+      canonicalName: tool.name,
+      registered: tool.registered,
+      tool,
+    });
+  }
+
+  /** Return true only while the captured name still resolves to the same immutable definition. */
+  isSnapshotCurrent(snapshot) {
+    return Boolean(
+      snapshot
+      && snapshot.tool
+      && snapshot.registered === snapshot.tool.registered
+      && this.get(snapshot.requestedName) === snapshot.tool,
+    );
+  }
+
+  /** Return true only for context minted while this registry executed the current definition. */
+  isAuthorizedExecutionContext(context, toolName) {
+    if (!context || typeof context !== 'object') return false;
+    const tool = context[AUTHORIZED_EXECUTION];
+    return Boolean(tool && tool.name === toolName && this.get(toolName) === tool);
+  }
+
+  /**
    * Get tools by category
    */
   getByCategory(category) {
@@ -233,6 +272,12 @@ class ToolRegistry {
       throw new Error(`Tool not found: ${toolName}`);
     }
 
+    return this.validateCapturedInput(toolName, tool, input);
+  }
+
+  /** Validate input against the already captured definition, without a second name lookup. */
+  validateCapturedInput(toolName, tool, input) {
+
     // Basic validation - check required fields
     const schema = tool.inputSchema;
     if (schema.required && Array.isArray(schema.required)) {
@@ -266,23 +311,39 @@ class ToolRegistry {
       throw new Error(`Tool not found: ${toolName}`);
     }
 
-    // Auto-inject gitlab_token for presentron-mcp tools if not provided
-    const actualToolName = this.aliases.get(toolName) || toolName;
-    if (actualToolName.includes('presentron-mcp') && actualToolName.includes('gitlab')) {
-      if (!input.gitlab_token) {
-        const gitlabToken = process.env.GITLAB_TOKEN;
-        if (!gitlabToken) {
-          throw new Error('GITLAB_TOKEN is required for GitLab-backed presentron MCP tools.');
-        }
-        input = { ...input, gitlab_token: gitlabToken };
-        logger.info(`Auto-injected configured gitlab_token for tool: ${actualToolName}`);
-      }
+    return this.#executeCapturedTool(toolName, tool, input, options);
+  }
+
+  /** Execute only the exact definition captured at request start. */
+  async executeSnapshot(snapshot, input, options = {}) {
+    if (!this.isSnapshotCurrent(snapshot)) {
+      throw new Error('Tool capability was replaced or revoked after request authorization.');
+    }
+    return this.#executeCapturedTool(snapshot.requestedName, snapshot.tool, input, options);
+  }
+
+  /** Internal execution path shared by live and snapshot dispatch. */
+  async #executeCapturedTool(toolName, tool, input, options = {}) {
+
+    // Secrets are server-brokered context, never model/tool input. Accepting a model-supplied
+    // credential value would let prompt content choose which account the operation uses.
+    if (input && typeof input === 'object'
+      && Object.prototype.hasOwnProperty.call(input, 'gitlab_token')) {
+      throw new Error('Credential-bearing tool input is prohibited; use the server credential broker.');
+    }
+    if (options.extraEnv && typeof options.extraEnv === 'object'
+      && Object.keys(options.extraEnv).some((key) => key.startsWith('OSHAL_CRED_'))) {
+      const error = new Error(
+        'Generic tool credential carriers are prohibited; use a deterministic server-side provider intent.',
+      );
+      error.code = 'UNSCOPED_CREDENTIAL_CARRIER';
+      throw error;
     }
 
     // Validate input
-    this.validateInput(toolName, input);
+    this.validateCapturedInput(toolName, tool, input);
 
-    if (tool.requiresApproval && options.approved !== true && input?.approved !== true && input?._approved !== true) {
+    if (tool.requiresApproval && options.approved !== true) {
       throw new Error(`Tool '${toolName}' requires approval before execution.`);
     }
 
@@ -297,9 +358,9 @@ class ToolRegistry {
       ...options,
       taskWorkspace,
       extraEnv: {
-        ...sanitizeBrokeredCreds(options.extraEnv),
         ...(scopedUserSub === undefined ? {} : { OSHAL_USER_SUB: scopedUserSub }),
       },
+      [AUTHORIZED_EXECUTION]: tool,
     };
 
     // Execute with timeout
@@ -347,6 +408,21 @@ class ToolRegistry {
   getAliases() {
     return new Map(this.aliases);
   }
+}
+
+/** Clone ordinary schema/config data and recursively freeze it before publication. */
+function deepCloneAndFreeze(value, seen = new WeakMap()) {
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) throw new TypeError('Tool definition contains a cyclic schema/config object');
+  const clone = Array.isArray(value) ? [] : {};
+  seen.set(value, clone);
+  for (const [key, nested] of Object.entries(value)) {
+    if (typeof nested === 'function' || typeof nested === 'symbol') {
+      throw new TypeError(`Tool definition field ${key} is not immutable data`);
+    }
+    clone[key] = deepCloneAndFreeze(nested, seen);
+  }
+  return Object.freeze(clone);
 }
 
 module.exports = ToolRegistry;

@@ -1,45 +1,45 @@
 /**
- * Takeout ingestion spine — the generic "unzip a Google Takeout archive and pull out the
- * slices we know how to use" layer (ADR-038 storage). It is deliberately app-agnostic: it
- * only extracts the file contents for known slice patterns and tags each with a `kind`/`app`;
- * the caller (takeout-routes) routes each slice to the owning app's ingest function.
+ * Takeout ingestion spine: selectively extract active package-owned slices from a Google
+ * Takeout archive. Package manifests contribute literal suffixes; this kernel layer retains
+ * every archive safety decision and never imports an application.
  *
- * Extraction is SELECTIVE and streamed (yauzl, lazyEntries) so a multi-GB archive is read
- * entry-by-entry and only the matched files are pulled into memory — we never inflate the
- * whole Takeout. Two sources: an in-memory Buffer (browser upload) or a file path (a large
- * archive downloaded from the user's Dropbox to a temp file).
- *
- * No slices are registered today: the v1 YouTube watch-history slice left with the
- * youtube-kids carve (ADR-085). Adding a lens = one KNOWN_SLICES entry + a route case;
- * no change to the extractor.
+ * Extraction is streamed with yauzl/lazyEntries. Only a matched entry is inflated, every entry
+ * has a declared uncompressed ceiling, duplicate slice entries are rejected, and total retained
+ * data is bounded. The browser and Dropbox paths share this exact implementation.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                      | DESCRIPTION
+ * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — selective streamed extraction of known Takeout slices (yauzl) from a Buffer or a file path; v1 slice = YouTube watch-history.json. Flags HTML-format history so the surface can ask for a JSON re-export.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #2: removed the youtube-watch-history slice + its HTML hint — youtube-kids carved to the store (no app literals in the kernel). Extractor unchanged; KNOWN_SLICES is empty until the next lens (or package-contributed registration) lands.
+ * 1   | maintainer@emeraldcoastsystemsgroup.com     | Initial selective Takeout extraction with YouTube history support.
+ * 2   | maintainer@emeraldcoastsystemsgroup.com     | Remove the carved youtube-kids literal from the kernel.
+ * 3   | maintainer@emeraldcoastsystemsgroup.com     | Accept active package specs; add literal matching, traversal rejection, duplicate detection, and zip-bomb byte fences.
  *
  * @module takeout-ingest
  */
 
 import * as yauzl from 'yauzl';
-import { createChildLogger } from '@/shared/logger';
 
-const logger = createChildLogger({ module: 'takeout-ingest' });
+/** Maximum aggregate UTF-8 source bytes retained from one archive scan. */
+const MAX_RETAINED_BYTES = 256 * 1024 * 1024;
 
-/** A slice of a Takeout archive this platform knows how to consume. */
+/** One active package-owned slice the archive scanner may extract. */
 export interface TakeoutSliceSpec {
-  kind: string;   // stable id the router switches on (e.g. 'location-history')
-  app: string;    // owning app/manifest name
-  label: string;  // human label for the surface
-  match: RegExp;  // tested against the zip entry's full path
+  /** Stable id unique across active applications. */
+  kind: string;
+  /** Owning manifest/application name. */
+  app: string;
+  /** Human label returned to the caller. */
+  label: string;
+  /** Case-insensitive literal suffix for the JSON archive entry. */
+  pathSuffix: string;
+  /** Optional HTML counterpart used to explain a required JSON re-export. */
+  htmlPathSuffix?: string;
+  /** Maximum uncompressed bytes accepted for this one entry. */
+  maxBytes: number;
 }
 
-/** The known slices. Order matters only for display; matching is independent. */
-export const KNOWN_SLICES: TakeoutSliceSpec[] = [];
-
-/** A known slice whose contents were pulled out of the archive. */
+/** A known slice whose contents passed the archive guards. */
 export interface ExtractedSlice {
   kind: string;
   app: string;
@@ -48,40 +48,134 @@ export interface ExtractedSlice {
   content: string;
 }
 
-/** Result of scanning one archive. `htmlHits` flags slices present only in HTML format. */
+/** Result of scanning one archive. `htmlHits` reports known data exported in HTML format. */
 export interface TakeoutScan {
   slices: ExtractedSlice[];
   htmlHits: string[];
 }
 
-/** Entry paths that indicate a known slice was exported as HTML instead of JSON. */
-const HTML_HINTS: RegExp[] = [];
+/** Typed size failure so HTTP routes can return 413 rather than misreporting a bad zip. */
+export class TakeoutSliceTooLargeError extends Error {
+  readonly code = 'takeout_slice_too_large';
+
+  constructor(readonly fileName: string, readonly maxBytes: number) {
+    super(`Takeout entry exceeds its ${maxBytes}-byte uncompressed limit: ${fileName}`);
+    this.name = 'TakeoutSliceTooLargeError';
+  }
+}
+
+/** Reject archives with duplicate entries for one logical app/kind. */
+export class DuplicateTakeoutSliceError extends Error {
+  readonly code = 'duplicate_takeout_slice';
+
+  constructor(readonly app: string, readonly kind: string) {
+    super(`Takeout archive contains more than one ${app}/${kind} entry`);
+    this.name = 'DuplicateTakeoutSliceError';
+  }
+}
+
+/** A suffix match with an explicit segment boundary, not an arbitrary string tail. */
+function matchesSuffix(entryName: string, suffix: string): boolean {
+  const entry = entryName.toLowerCase();
+  const expected = suffix.toLowerCase();
+  return entry === expected || entry.endsWith(`/${expected}`);
+}
+
+/** Traversal-shaped names are never candidates, even though extraction never writes to disk. */
+function isSafeEntryName(entryName: string): boolean {
+  if (entryName.startsWith('/') || /^[A-Za-z]:\//.test(entryName) || entryName.includes('\0')) return false;
+  return entryName.split('/').every((segment) => segment !== '' && segment !== '..' && segment !== '.');
+}
 
 /**
- * @description Walks an opened zip entry-by-entry, reading only the entries that match a
- * known slice into memory; everything else is skipped. Also records HTML-format hits.
- * @param zip - An opened yauzl ZipFile (must be opened with lazyEntries:true).
- * @returns The matched slices plus any HTML-only slice hits.
+ * @description Walk an opened zip entry-by-entry, inflating only entries matching the supplied
+ * active package specs. The returned promise rejects on malformed matched data; it never silently
+ * hands a partial or oversized slice to an app.
  */
-function harvest(zip: yauzl.ZipFile): Promise<TakeoutScan> {
+function harvest(zip: yauzl.ZipFile, specs: readonly TakeoutSliceSpec[]): Promise<TakeoutScan> {
   return new Promise((resolve, reject) => {
     const slices: ExtractedSlice[] = [];
     const htmlHits: string[] = [];
-    zip.on('error', reject);
-    zip.on('end', () => resolve({ slices, htmlHits }));
+    const seenHtmlKinds = new Set<string>();
+    const seen = new Set<string>();
+    let retainedBytes = 0;
+    let settled = false;
+
+    const fail = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      try { zip.close(); } catch { /* already closed */ }
+      reject(error);
+    };
+
+    zip.once('error', (error) => fail(error));
+    zip.once('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve({ slices, htmlHits });
+    });
     zip.on('entry', (entry: yauzl.Entry) => {
-      const name = entry.fileName.replace(/\\/g, '/'); // normalize separators (some zips use backslashes)
-      if (/\/$/.test(name)) { zip.readEntry(); return; } // directory entry
-      if (HTML_HINTS.some((r) => r.test(name))) htmlHits.push(name);
-      const spec = KNOWN_SLICES.find((s) => s.match.test(name));
-      if (!spec) { zip.readEntry(); return; }
-      zip.openReadStream(entry, (err, rs) => {
-        if (err || !rs) { logger.warn({ err, name }, 'openReadStream failed; skipping slice'); zip.readEntry(); return; }
+      if (settled) return;
+      const name = entry.fileName.replace(/\\/g, '/');
+      if (name.endsWith('/') || !isSafeEntryName(name)) {
+        zip.readEntry();
+        return;
+      }
+
+      for (const spec of specs) {
+        if (spec.htmlPathSuffix && matchesSuffix(name, spec.htmlPathSuffix)) {
+          const htmlIdentity = `${spec.app}\0${spec.kind}`;
+          if (!seenHtmlKinds.has(htmlIdentity)) {
+            seenHtmlKinds.add(htmlIdentity);
+            htmlHits.push(name);
+          }
+        }
+      }
+
+      const spec = specs.find((candidate) => matchesSuffix(name, candidate.pathSuffix));
+      if (!spec) {
+        zip.readEntry();
+        return;
+      }
+
+      const identity = `${spec.app}\0${spec.kind}`;
+      if (seen.has(identity)) {
+        fail(new DuplicateTakeoutSliceError(spec.app, spec.kind));
+        return;
+      }
+      if (entry.uncompressedSize > spec.maxBytes || retainedBytes + entry.uncompressedSize > MAX_RETAINED_BYTES) {
+        fail(new TakeoutSliceTooLargeError(name, Math.min(spec.maxBytes, MAX_RETAINED_BYTES - retainedBytes)));
+        return;
+      }
+
+      zip.openReadStream(entry, (error, stream) => {
+        if (error || !stream) {
+          fail(error ?? new Error(`Unable to read Takeout entry: ${name}`));
+          return;
+        }
         const chunks: Buffer[] = [];
-        rs.on('data', (c: Buffer) => chunks.push(c));
-        rs.on('error', (e) => { logger.warn({ err: e, name }, 'slice read error; skipping'); zip.readEntry(); });
-        rs.on('end', () => {
-          slices.push({ kind: spec.kind, app: spec.app, label: spec.label, fileName: name, content: Buffer.concat(chunks).toString('utf8') });
+        let entryBytes = 0;
+        stream.on('data', (chunk: Buffer | Uint8Array) => {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          entryBytes += buffer.length;
+          if (entryBytes > spec.maxBytes || retainedBytes + entryBytes > MAX_RETAINED_BYTES) {
+            stream.destroy(new TakeoutSliceTooLargeError(name, Math.min(spec.maxBytes, MAX_RETAINED_BYTES - retainedBytes)));
+            return;
+          }
+          chunks.push(buffer);
+        });
+        stream.once('error', (streamError) => fail(streamError));
+        stream.once('end', () => {
+          if (settled) return;
+          retainedBytes += entryBytes;
+          seen.add(identity);
+          slices.push({
+            kind: spec.kind,
+            app: spec.app,
+            label: spec.label,
+            fileName: name,
+            content: Buffer.concat(chunks, entryBytes).toString('utf8'),
+          });
           zip.readEntry();
         });
       });
@@ -90,31 +184,34 @@ function harvest(zip: yauzl.ZipFile): Promise<TakeoutScan> {
   });
 }
 
-/**
- * @description Extracts known Takeout slices from an in-memory zip (browser upload path).
- * @param buf - The raw zip archive bytes.
- * @returns The matched slices + HTML hits. Rejects if the buffer is not a valid zip.
- */
-export function extractTakeoutSlicesFromBuffer(buf: Buffer): Promise<TakeoutScan> {
+/** Extract active package slices from an in-memory browser upload. */
+export function extractTakeoutSlicesFromBuffer(
+  buf: Buffer,
+  specs: readonly TakeoutSliceSpec[],
+): Promise<TakeoutScan> {
   return new Promise((resolve, reject) => {
-    yauzl.fromBuffer(buf, { lazyEntries: true }, (err, zip) => {
-      if (err || !zip) { reject(err || new Error('not a zip archive')); return; }
-      harvest(zip).then(resolve, reject);
+    yauzl.fromBuffer(buf, { lazyEntries: true, validateEntrySizes: true }, (error, zip) => {
+      if (error || !zip) {
+        reject(error ?? new Error('Not a zip archive'));
+        return;
+      }
+      harvest(zip, specs).then(resolve, reject);
     });
   });
 }
 
-/**
- * @description Extracts known Takeout slices from a zip on disk (Dropbox-pickup path — a
- * large archive is downloaded to a temp file and streamed, never held whole in memory).
- * @param filePath - Absolute path to the zip archive.
- * @returns The matched slices + HTML hits. Rejects if the file is not a valid zip.
- */
-export function extractTakeoutSlicesFromFile(filePath: string): Promise<TakeoutScan> {
+/** Extract active package slices from a Dropbox-downloaded archive on disk. */
+export function extractTakeoutSlicesFromFile(
+  filePath: string,
+  specs: readonly TakeoutSliceSpec[],
+): Promise<TakeoutScan> {
   return new Promise((resolve, reject) => {
-    yauzl.open(filePath, { lazyEntries: true }, (err, zip) => {
-      if (err || !zip) { reject(err || new Error('not a zip archive')); return; }
-      harvest(zip).then(resolve, reject);
+    yauzl.open(filePath, { lazyEntries: true, validateEntrySizes: true }, (error, zip) => {
+      if (error || !zip) {
+        reject(error ?? new Error('Not a zip archive'));
+        return;
+      }
+      harvest(zip, specs).then(resolve, reject);
     });
   });
 }

@@ -4,15 +4,17 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Remove the unused raw credential hot-reload carrier after retiring unordered Facebook Redis credential publication.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Require an encryption-backed manager for persisted Facebook tokens; deployments without ENCRYPTION_KEY may use read-only environment credentials but cannot create plaintext token files.
  */
 
 /**
  * Facebook Credential Store
  *
  * Manages Facebook OAuth credentials using the existing EncryptedConfigManager.
- * Credentials persist across restarts in secrets.enc.json (or secrets.json in
- * plain mode). The bot loads credentials on startup and hot-reloads when a
- * Redis pubsub message arrives on the facebook.credentials.update channel.
+ * Persisted credentials live only in secrets.enc.json. The bot loads credentials
+ * directly from that local store; raw credential publication, plaintext storage,
+ * and hot-reload envelopes are intentionally unsupported.
  *
  * @module facebookCredentialStore
  * @agent facebook-bot
@@ -56,6 +58,9 @@ let configManager = null;
  * @param {object} encryptedConfigManager - Instance of EncryptedConfigManager
  */
 function init(encryptedConfigManager) {
+  if (!encryptedConfigManager || !encryptedConfigManager.encryptionKey) {
+    throw new Error('Facebook persisted credential storage requires an encryption-backed manager');
+  }
   configManager = encryptedConfigManager;
   cachedCredentials = null;
   logger.info('Facebook credential store initialized');
@@ -69,11 +74,15 @@ function getConfigManager() {
   if (configManager) return configManager;
 
   try {
+    const encryptionKey = process.env.ENCRYPTION_KEY?.trim();
+    if (!encryptionKey) {
+      logger.warn('Facebook persisted credential storage disabled: ENCRYPTION_KEY is required');
+      return null;
+    }
     const EncryptedConfigManager = require('../../../../src/api/encrypted-config-manager');
     const outputDir = process.env.OUTPUT_DIR || path.join(process.cwd(), 'output');
-    const encryptionKey = process.env.ENCRYPTION_KEY || null;
     configManager = new EncryptedConfigManager(outputDir, encryptionKey);
-    logger.info({ outputDir, encrypted: !!encryptionKey }, 'Auto-initialized config manager');
+    logger.info({ outputDir, encrypted: true }, 'Auto-initialized config manager');
     return configManager;
   } catch (err) {
     logger.warn({ err: err.message }, 'Could not auto-initialize config manager, using env var fallback');
@@ -140,7 +149,7 @@ function loadCredentials() {
 function saveCredentials(credentials) {
   const mgr = getConfigManager();
   if (!mgr) {
-    throw new Error('Config manager not initialized — cannot persist Facebook credentials');
+    throw new Error('Encrypted config manager not initialized — cannot persist Facebook credentials');
   }
 
   // Load existing secrets, merge Facebook creds, save back
@@ -187,21 +196,6 @@ function getCachedCredentials() {
 }
 
 /**
- * Hot-reload credentials into the cache (called from Redis pubsub handler).
- *
- * @param {object} credentials - New credential envelope
- */
-function hotReload(credentials) {
-  if (credentials === null) {
-    cachedCredentials = null;
-    logger.info('Facebook credentials hot-reloaded: disconnected');
-  } else {
-    cachedCredentials = credentials;
-    logger.info({ pageId: credentials.facebookPageId }, 'Facebook credentials hot-reloaded');
-  }
-}
-
-/**
  * Check if the stored token is nearing expiry.
  * Returns true if the user token expires within 10 days.
  *
@@ -240,7 +234,6 @@ module.exports = {
   saveCredentials,
   clearCredentials,
   getCachedCredentials,
-  hotReload,
   needsRefresh,
   CREDENTIAL_KEYS,
 };

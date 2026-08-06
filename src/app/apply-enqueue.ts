@@ -31,6 +31,8 @@
  *   ticket/owner/posting/source, holding new tickets in backlog until the seal is durable so generic
  *   metadata writes and queue races cannot counterfeit or observe half-authorized work.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Rehydrate exact durable task/worker bindings and recover stale tickets into assist review, never blind auto-resubmission; periodic sweeps also reconcile raw claims and healthy-idle workers.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Rehydrate and reap from the Apply V2 run ledger, including the exact Career claim token, rather than reconstructing authority from callback capability rows.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Sweep durable timeout_at deadlines every thirty seconds so two-minute undispatched claims remain two-minute claims across restarts.
  *
  * @module app/apply-enqueue
  */
@@ -39,7 +41,9 @@ import type { AppContext } from '@/app/composition/app-context';
 import { CreateInternalTicketSchema, type InternalTicket } from '@/entities/ticket';
 import {
   reapUserApplyClaims,
+  abandonUnacknowledgedApply,
   reconcileApplyInFlight,
+  recoverExpiredApplyRuns,
   recoverUnknownApply,
   runApplyCli,
 } from '@/app/apply-submit';
@@ -250,13 +254,14 @@ export async function rehydrateApplyInFlight(ctx: AppContext): Promise<number> {
     const { rows } = await runWithSystemIdentity(() => ctx.pool!.query(
       `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
               EXTRACT(EPOCH FROM (now() - t.updated_at)) * 1000 AS age_ms,
-              cap.task_id, cap.client_id
+              run.run_id, run.claim_token, run.task_id, run.worker_client_id AS client_id
          FROM tickets t
          LEFT JOIN LATERAL (
-           SELECT task_id, client_id FROM apply_task_capabilities
-            WHERE ticket_id=t.ticket_id AND state IN ('active','processing')
-            ORDER BY generation DESC LIMIT 1
-         ) cap ON TRUE
+           SELECT run_id, claim_token, task_id, worker_client_id FROM apply_runs
+            WHERE ticket_id=t.ticket_id
+              AND state IN ('claimed','queued_to_worker','acknowledged','running')
+            ORDER BY claimed_at DESC LIMIT 1
+         ) run ON TRUE
         WHERE t.metadata->>'source' = 'apply-enqueue'
           AND t.status = 'in_process_build'
           AND t.updated_at > now() - ($1::int * interval '1 millisecond')`,
@@ -265,7 +270,8 @@ export async function rehydrateApplyInFlight(ctx: AppContext): Promise<number> {
     let restored = 0;
     for (const row of rows as Array<{
       ticket_id: string; owner_sub: string | null; posting_id: string | null;
-      age_ms: string; task_id: string | null; client_id: string | null;
+      age_ms: string; run_id: string | null; claim_token: string | null;
+      task_id: string | null; client_id: string | null;
     }>) {
       const userSub = typeof row.owner_sub === 'string' ? row.owner_sub : '';
       if (userSub.length === 0) continue;
@@ -278,6 +284,7 @@ export async function rehydrateApplyInFlight(ctx: AppContext): Promise<number> {
       applyInFlight.set(taskId, {
         taskId, ticketId: row.ticket_id, postingId: Number(row.posting_id) || 0,
         userSub, clientId: row.client_id || undefined,
+        runId: row.run_id || undefined, claimToken: row.claim_token || undefined,
         timer, startedAt: Date.now() - Number(row.age_ms || 0),
       });
       restored += 1;
@@ -294,6 +301,8 @@ interface StaleApplyRow {
   ticket_id: string;
   owner_sub: string | null;
   posting_id: string | null;
+  run_id: string | null;
+  claim_token: string | null;
   task_id: string | null;
   client_id: string | null;
 }
@@ -310,6 +319,7 @@ function seedStaleApplyRun(row: StaleApplyRow): string | null {
   applyInFlight.set(taskId, {
     taskId, ticketId: row.ticket_id, postingId: Number(row.posting_id) || 0,
     userSub, clientId: row.client_id || undefined, timer,
+    runId: row.run_id || undefined, claimToken: row.claim_token || undefined,
     startedAt: Date.now() - ORPHAN_AFTER_MS,
   });
   return taskId;
@@ -341,12 +351,12 @@ export async function reapOrphanedApplyTickets(ctx: AppContext): Promise<number>
     // OSHAL_DB_GUC_STRICT=deny rejects the identity-less query and nothing is ever reaped.
     const { rows } = await runWithSystemIdentity(() => ctx.pool!.query(
       `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
-              cap.task_id, cap.client_id
+              run.run_id, run.claim_token, run.task_id, run.worker_client_id AS client_id
          FROM tickets t
          LEFT JOIN LATERAL (
-           SELECT task_id, client_id FROM apply_task_capabilities
-            WHERE ticket_id=t.ticket_id ORDER BY generation DESC LIMIT 1
-         ) cap ON TRUE
+           SELECT run_id, claim_token, task_id, worker_client_id FROM apply_runs
+            WHERE ticket_id=t.ticket_id ORDER BY claimed_at DESC LIMIT 1
+         ) run ON TRUE
         WHERE t.metadata->>'source' = 'apply-enqueue'
           AND t.status = 'in_process_build'
           AND t.updated_at < now() - ($1::int * interval '1 millisecond')`,
@@ -355,7 +365,13 @@ export async function reapOrphanedApplyTickets(ctx: AppContext): Promise<number>
     let reaped = 0;
     for (const row of rows as StaleApplyRow[]) {
       const taskId = seedStaleApplyRun(row);
-      if (taskId && await recoverUnknownApply(ctx, taskId, 'apply_controller_restart_orphan')) {
+      const task = taskId ? applyInFlight.get(taskId) : undefined;
+      const settled = task && !row.task_id
+        ? await abandonUnacknowledgedApply(ctx, task)
+        : taskId
+          ? await recoverUnknownApply(ctx, taskId, 'apply_controller_restart_orphan')
+          : false;
+      if (settled) {
         reaped += 1;
       }
     }
@@ -369,6 +385,20 @@ export async function reapOrphanedApplyTickets(ctx: AppContext): Promise<number>
 }
 
 let recoverySweepRunning = false;
+let deadlineSweepRunning = false;
+
+/** Enforce ledger deadlines and current healthy-worker truth on the fast recovery cadence. */
+async function runApplyDeadlineSweep(ctx: AppContext): Promise<void> {
+  if (deadlineSweepRunning) return;
+  deadlineSweepRunning = true;
+  try {
+    const expired = await recoverExpiredApplyRuns(ctx);
+    const live = await reconcileApplyInFlight(ctx);
+    if (expired || live) logger.warn({ expired, live }, 'apply deadline sweep settled stale work');
+  } catch (err) {
+    logger.error({ err }, 'apply deadline sweep failed');
+  } finally { deadlineSweepRunning = false; }
+}
 
 /** Reconcile live worker truth before the slower stale-ticket/raw-claim sweep. */
 async function runApplyRecoverySweep(ctx: AppContext): Promise<void> {
@@ -389,9 +419,12 @@ async function runApplyRecoverySweep(ctx: AppContext): Promise<void> {
  * @param ctx - App context.
  */
 export function startApplyReaper(ctx: AppContext): void {
-  const kick = setTimeout(() => { void runApplyRecoverySweep(ctx); }, 60 * 1000);
+  const kick = setTimeout(() => {
+    void runApplyDeadlineSweep(ctx);
+    void runApplyRecoverySweep(ctx);
+  }, 60 * 1000);
   const timer = setInterval(() => { void runApplyRecoverySweep(ctx); }, REAP_EVERY_MS);
-  const reconcile = setInterval(() => { void reconcileApplyInFlight(ctx); }, RECONCILE_EVERY_MS);
+  const reconcile = setInterval(() => { void runApplyDeadlineSweep(ctx); }, RECONCILE_EVERY_MS);
   if (typeof kick.unref === 'function') kick.unref();
   if (typeof timer.unref === 'function') timer.unref();
   if (typeof reconcile.unref === 'function') reconcile.unref();

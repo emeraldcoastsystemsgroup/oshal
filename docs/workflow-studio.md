@@ -53,9 +53,13 @@ orchestrator, parses the block, auto-lays-out node positions, and **saves the gr
 is Zod-validated** before the canvas renders it. A bad graph fails loudly back into the chat for the bot
 to fix — robustness comes from server-side validation, not from trusting free-form chat.
 
-This avoids every wall earlier attempts hit (LLM tool round-trips, provider ghosting, chat-text parsing,
-a bot→api auth seam). The bot runs **BYOK on the swarm default login** (the mounted CLI OAuth), and its
-reasoning cost lands in `chat_tasks` under agent `…051`.
+This avoids every wall earlier attempts hit (LLM tool round-trips, provider ghosting, chat-text
+parsing, and a bot→api auth seam). The workflow assistant now follows the same fail-closed inference
+boundary as every other bot: a mounted Cline/Claude Code/Codex/Gemini OAuth file is credential
+presence, not autonomous-execution authority. Unattended CLI execution is disabled pending an
+audited oshal-brokered sandbox. The chat route must have an authorized hosted/BYO inference rail; if
+none is available it fails closed, while manual canvas editing and the published deterministic
+runtime remain usable. Successful reasoning cost lands in `chat_tasks` under agent `…051`.
 
 Underneath, a published workflow runs on the existing **`ProcessDefinitionExecutionEngine`** (the `graph`
 pipeline) — the deterministic runtime for the node graph.

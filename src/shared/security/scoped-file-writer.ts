@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added the controller-runtime scoped-file writer: approved names only, link-free parents, regular-target refusal, exclusive 0600 same-directory temp writes, atomic publish, and identity-owned cleanup.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Track file ownership with lossless bigint device/inode metadata and rename-stable fields; Windows preserves a destination name's birth time across delete/recreate, so birth/ctime are not ownership identifiers.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: narrow the exported writer to exact identity markers; credential workspace files are no longer an approved target class.
  */
 
 import crypto from 'crypto';
@@ -13,7 +14,7 @@ import path from 'path';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'scoped-file-writer' });
-const SCOPED_FILE_PATTERN = /^(?:\.oshal-user-(?:sub|key)|\.oshal-cred-[a-z0-9][a-z0-9-]{0,63})$/;
+const SCOPED_FILE_PATTERN = /^\.oshal-user-(?:sub|key)$/;
 
 /** Filesystem identity retained so cleanup never removes another invocation's replacement. */
 export interface ScopedFileIdentity {
@@ -134,7 +135,7 @@ function tempPathFor(targetPath: string): string {
 }
 
 /**
- * Write an approved scoped identity or credential file without opening the target for writing.
+ * Write an approved scoped identity marker without opening the target for writing.
  * Publishing is atomic and failure cleanup is bound to the invocation-owned inode/file identity.
  */
 export function writeScopedFile(filePath: string, value: string): ScopedFileIdentity {

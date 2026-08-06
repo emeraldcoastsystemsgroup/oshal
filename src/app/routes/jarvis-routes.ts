@@ -36,6 +36,8 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Multi-app planner residuals: the dispatch ack now SHOWS the compiled plan (describePlan — which apps, in what order, which step pauses for approval) instead of only "I've lined up N steps", and a work item whose ticket ended escalated/cancelled reports an honest failure line instead of status 'error' with a null message. Both are honesty properties of the planner, not cosmetics.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Narrow valid service-secret calls to their trusted user sub before any Jarvis owner-scoped read/write; a machine credential without X-OSHAL-User-Sub now fails closed instead of retaining the global cross-tenant operator database stamp.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-01 containment: preflight every owner-scoped Jarvis read before legacy subject resolution, return the stable 403 refusal for fleet-secret callers, and preserve independently authenticated OIDC/PAT access under mixed headers.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Resolve delegated Jarvis identity exclusively from verified, durable, exact-route SEC-01 claims before the legacy shadow-only subject carrier.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | CORE-05: return the canonical 503 ai_disabled state before Jarvis starts an inference job.
  *
  * @module jarvis-routes
  */
@@ -46,7 +48,11 @@ import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
-import { rejectLegacyServiceIdentityForUserRead } from '@/features/security';
+import { requireAiEnabled } from '@/shared/middleware/ai-availability';
+import {
+  getVerifiedWorkloadDelegation,
+  rejectLegacyServiceIdentityForUserRead,
+} from '@/features/security';
 import type { AppContext } from '@/app/composition/app-context';
 import type { InternalTicket } from '@/entities/ticket';
 import {
@@ -161,13 +167,14 @@ function ticketTypeForHandoff(h: Pick<HandoffDirective, 'platform'>): string {
   return h.platform ? 'oshal-dev' : 'task';
 }
 
-/** Caller's sub: the OIDC session (browser surface) first, else the trusted-service identity
- *  (X-Service-Secret + x-oshal-user-sub — headless swarm CLI / internal bots). Same resolution
- *  order as message-routes; the header is honored ONLY with a valid service secret. */
+/** Caller's sub: independently authenticated user first, verified SEC-01 delegation second, then
+ * the temporary fleet-secret subject retained only until workload enforcement is enabled. */
 function callerSub(req: Request): string | null {
   const u = (req as { oidc?: { user?: { sub?: string; oid?: string } } }).oidc?.user;
   const sub = u?.sub || u?.oid;
   if (sub) return String(sub);
+  const delegated = getVerifiedWorkloadDelegation(req);
+  if (delegated) return delegated.sub;
   return getTrustedServiceUserSub(req);
 }
 
@@ -416,7 +423,7 @@ function storedJarvisSourceId(value: unknown): string | undefined {
 }
 
 /**
- * @description Builds the Jarvis router (mount at /api/jarvis behind requiresAuth).
+ * @description Builds the Jarvis router behind ordinary user auth or durable SEC-01 delegation.
  * @param ctx - App context (Postgres pool).
  * @param apiDir - Directory holding the HTML surface.
  * @returns Express router.
@@ -424,8 +431,8 @@ function storedJarvisSourceId(value: unknown): string | undefined {
 export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
   const router = Router();
   registerLegacyReadContainment(router);
-  // serviceSecretOr authenticates the machine at the outer mount. Jarvis is user-bound, so replace
-  // that broad operator stamp with the asserted owner before any sub-router or detached turn runs.
+  // Legacy mode can still arrive with the fleet secret. Narrow only that compatibility path to its
+  // asserted owner; OIDC/PAT and verified delegation already carry authoritative user identity.
   router.use(requireTrustedServiceUserIdentity);
   const visualResponseService = new VisualResponseService(ctx.pool);
   void ensureJarvisSchema(ctx.pool);   // durable Tasks list table
@@ -602,7 +609,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
   /** POST /ask — { message } → { jobId }. Forwards to the Jarvis BOT-NODE (which runs in the any-bot
    *  wrapper with real tools); the surface polls GET /ask/result?jobId. Async because a tool-using
    *  agentic turn exceeds Cloudflare's ~100s edge timeout if the connection is held. */
-  router.post('/ask', async (req: Request, res: Response) => {
+  router.post('/ask', requireAiEnabled, async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const body = (req.body || {}) as { message?: string; sessionId?: string; attachments?: unknown };

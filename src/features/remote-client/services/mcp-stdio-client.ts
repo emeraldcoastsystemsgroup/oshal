@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added stdio JSON-RPC bridge for local MCP server processes
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: require exact task/caller/target/tool context and a discovered-tool snapshot for every tools/call request; keep raw JSON-RPC requests private.
  */
 
 import { createInterface } from 'node:readline';
@@ -47,6 +48,16 @@ export interface McpStdioClientOptions {
 }
 
 /**
+ * @description Exact authorization context a trusted remote-task boundary supplies per call.
+ */
+export interface McpToolCallContext {
+  taskId: string;
+  callerId: string;
+  targetId: string;
+  allowedTools: readonly string[];
+}
+
+/**
  * @description Minimal stdio MCP bridge that can initialize, list tools, and call tools.
  */
 export class McpStdioClient {
@@ -55,6 +66,7 @@ export class McpStdioClient {
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason: unknown) => void }>();
   private readonly notifications: string[] = [];
+  private readonly discoveredTools = new Set<string>();
   private ready = false;
 
   constructor(options: McpStdioClientOptions) {
@@ -101,6 +113,7 @@ export class McpStdioClient {
       this.failAllPending(new Error(`Local MCP process exited (${code ?? 'unknown'}:${signal ?? 'none'})`));
       this.process = null;
       this.ready = false;
+      this.discoveredTools.clear();
     });
 
     await this.request('initialize', {
@@ -128,7 +141,11 @@ export class McpStdioClient {
    * @description Calls the MCP tools/list method.
    */
   async listTools(): Promise<unknown> {
-    return this.request('tools/list', {});
+    const result = await this.request('tools/list', {});
+    this.discoveredTools.clear();
+    const tools = this.readToolList(result);
+    for (const tool of tools) this.discoveredTools.add(tool);
+    return result;
   }
 
   /**
@@ -136,8 +153,15 @@ export class McpStdioClient {
    *
    * @param toolName - MCP tool name
    * @param args - Tool arguments
+   * @param context - Immutable task, caller, target, and exact tool authority from the broker.
+   * @returns The MCP server's tool result.
    */
-  async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
+  async callTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    context: McpToolCallContext,
+  ): Promise<unknown> {
+    this.assertToolCallContext(toolName, context);
     return this.request('tools/call', {
       name: toolName,
       arguments: args,
@@ -150,7 +174,7 @@ export class McpStdioClient {
    * @param method - JSON-RPC method name
    * @param params - Optional JSON-RPC params
    */
-  async request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  private async request<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (!this.process || !this.process.stdin.writable) {
       throw new Error('MCP process is not connected');
     }
@@ -208,6 +232,7 @@ export class McpStdioClient {
     this.process.kill('SIGTERM');
     this.process = null;
     this.ready = false;
+    this.discoveredTools.clear();
   }
 
   /**
@@ -268,5 +293,46 @@ export class McpStdioClient {
       pending.reject(error);
       this.pending.delete(id);
     }
+  }
+
+  /**
+   * @description Deny missing, malformed, unknown, or non-allowlisted tool invocations.
+   * @param toolName - Requested MCP tool name.
+   * @param context - Broker-supplied authority bound to the claimed remote task.
+   */
+  private assertToolCallContext(toolName: string, context: McpToolCallContext): void {
+    const exact = (value: unknown): value is string => (
+      typeof value === 'string'
+      && value.length > 0
+      && value.length <= 512
+      && !/[\u0000-\u001f\u007f]/.test(value)
+    );
+    if (!context || !exact(context.taskId) || !exact(context.callerId) || !exact(context.targetId)) {
+      throw new Error('MCP tool execution context is missing or invalid.');
+    }
+    if (!exact(toolName) || !Array.isArray(context.allowedTools)
+      || !context.allowedTools.every(exact) || !context.allowedTools.includes(toolName)) {
+      throw new Error(`MCP tool is not authorized for this task: ${toolName}`);
+    }
+    if (!this.discoveredTools.has(toolName)) {
+      throw new Error(`MCP tool was not present in the discovered capability snapshot: ${toolName}`);
+    }
+  }
+
+  /**
+   * @description Extract exact tool names from one MCP tools/list response.
+   * @param value - Untrusted MCP tools/list result.
+   * @returns Valid exact tool names used as the current capability snapshot.
+   */
+  private readToolList(value: unknown): string[] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const tools = (value as { tools?: unknown }).tools;
+    if (!Array.isArray(tools)) return [];
+    return tools.flatMap((tool) => {
+      if (!tool || typeof tool !== 'object' || Array.isArray(tool)) return [];
+      const name = (tool as { name?: unknown }).name;
+      return typeof name === 'string' && name.length > 0 && name.length <= 512
+        && !/[\u0000-\u001f\u007f]/.test(name) ? [name] : [];
+    });
   }
 }

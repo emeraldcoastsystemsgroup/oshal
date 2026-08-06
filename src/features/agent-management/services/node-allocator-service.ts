@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed assignNode into focused reservation, HTTP, persistence, and rollback helpers so the security-sensitive control flow remains below the repository's fifty-line function limit.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Quarantine nodes after any unknown assign/release outcome. A rejected, timed-out, or unreachable release can no longer be recorded as idle while the prior assignment's credentials may still be resident.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Fence partial Redis transitions: an active-map residue can no longer bypass quarantine, release cleanup failures withhold the node, and restart registration removes stale assignments before idle membership is restored.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: retire credential-bearing node assignments and reject legacy carriers before reservation or network activity.
  */
 
 import Redis from 'ioredis';
@@ -37,7 +38,6 @@ export interface NodeAssignmentConfig {
   agent: string;
   model: string;
   provider: string;
-  credentials?: Record<string, string>;
 }
 
 /**
@@ -128,6 +128,9 @@ export class NodeAllocatorService {
    * @throws Error when no idle nodes are available or assignment fails
    */
   async assignNode(config: NodeAssignmentConfig): Promise<NodeAssignment> {
+    if (Object.prototype.hasOwnProperty.call(config, 'credentials')) {
+      throw new Error('credential fields are not accepted on node assignments');
+    }
     const startedAt = Date.now();
     logger.info({ agentId: config.agentId, agent: config.agent, model: config.model, provider: config.provider }, 'Assigning node for agent');
     const existing = await this.findExistingAssignment(config);

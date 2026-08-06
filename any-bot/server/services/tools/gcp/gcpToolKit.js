@@ -1,54 +1,51 @@
 /*
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | GCP (Google Cloud) connector TOOLS (ADR-025 dynamic tools + ADR-042 multi-account). Thin wrappers over scripts/oshal-gcp.js — each shells the per-user CLI scoped by OSHAL_USER_SUB + an optional connection SELECTOR (label/account). The API-based replacement for `gcloud` so a remote web user's bot can drive Google Cloud (the user connects via web OAuth at /utilities — cloud-platform scope — no interactive CLI login). Auto-discovered via cloud.yaml toolsDir. Pattern: exports { 'tool-name': handlerFn } (same as smartthingsToolKit.js).
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | GCP connector tools for the cloud bot (ADR-025 dynamic tools + ADR-042 multi-account).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: retire the credential-bearing GCP subprocess behind the canonical broker denial until an audited server-side connector broker exists; model input can no longer select OSHAL_USER_SUB or inherit controller secrets.
  */
 'use strict';
-const path = require('path');
-const { spawnSync } = require('child_process');
 
-// /app/any-bot/server/services/tools/gcp → /app/scripts/oshal-gcp.js
-const CLI = path.resolve(__dirname, '..', '..', '..', '..', '..', 'scripts', 'oshal-gcp.js');
+const { runBrokeredCli } = require('../brokered-cli-runner');
 
-/** Per-request env: caller identity + chosen connection selector. */
-function envFor(params) {
-  const env = { ...process.env };
-  if (params.userSub) env.OSHAL_USER_SUB = String(params.userSub);
-  if (params.label) env.OSHAL_CONNECTION_LABEL = String(params.label);
-  if (params.account || params.email) env.OSHAL_CONNECTION_EMAIL = String(params.account || params.email);
-  if (params.connection || params.connectionId) env.OSHAL_CONNECTION_ID = String(params.connection || params.connectionId);
-  return env;
-}
-
-/** Run a CLI verb; return { ok, exitCode, stdout, stderr }. stdout is the CLI's JSON. */
-function runCli(verb, args, params) {
+/** Keep the stable tool contract while failing closed before any credential carrier is created. */
+function runCli(verb, args, params = {}, context = {}) {
   const argv = (verb ? [verb] : []).concat(args || []);
-  const r = spawnSync('node', [CLI, ...argv], { env: envFor(params || {}), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  return { ok: r.status === 0, exitCode: r.status, stdout: (r.stdout || '').slice(-200000), stderr: (r.stderr || '').slice(-8000) };
+  return runBrokeredCli({
+    script: 'oshal-gcp.js',
+    args: argv,
+    params,
+    context,
+    errorLabel: 'gcp',
+  });
 }
 
 module.exports = {
-  /** List the user's labeled GCP connections (the catalog to select from). */
-  'gcp-accounts': async function (params = {}) { return runCli('accounts', [], params); },
-
-  /** List the user's Google Cloud projects (Cloud Resource Manager API). */
-  'gcp-projects': async function (params = {}) { return runCli('projects', [], params); },
-
-  /** Detail for one project. */
-  'gcp-project': async function (params = {}) {
-    if (!params.projectId) return { ok: false, error: 'projectId required' };
-    return runCli('project', [String(params.projectId)], params);
+  /** List the caller's labeled GCP connections. */
+  'gcp-accounts': async function (params = {}, context = {}) {
+    return runCli('accounts', [], params, context);
   },
 
-  /** Enabled APIs/services on a project. */
-  'gcp-services': async function (params = {}) {
-    if (!params.projectId) return { ok: false, error: 'projectId required' };
-    return runCli('services', [String(params.projectId)], params);
+  /** List the caller's Google Cloud projects. */
+  'gcp-projects': async function (params = {}, context = {}) {
+    return runCli('projects', [], params, context);
   },
 
-  /** Compute Engine instances across all zones in a project. */
-  'gcp-instances': async function (params = {}) {
+  /** Read one project. */
+  'gcp-project': async function (params = {}, context = {}) {
     if (!params.projectId) return { ok: false, error: 'projectId required' };
-    return runCli('instances', [String(params.projectId)], params);
+    return runCli('project', [String(params.projectId)], params, context);
+  },
+
+  /** List enabled APIs for one project. */
+  'gcp-services': async function (params = {}, context = {}) {
+    if (!params.projectId) return { ok: false, error: 'projectId required' };
+    return runCli('services', [String(params.projectId)], params, context);
+  },
+
+  /** List Compute Engine instances for one project. */
+  'gcp-instances': async function (params = {}, context = {}) {
+    if (!params.projectId) return { ok: false, error: 'projectId required' };
+    return runCli('instances', [String(params.projectId)], params, context);
   },
 };

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Edge agent: real swarm bot running outside Docker, connects to shared Redis over Headscale VPN, executes local MCP tools
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: retire unauthenticated mesh-to-MCP execution and MCP capability advertisement until an owner-bound remote-task broker supplies exact caller/tool authority.
  */
 
 /**
@@ -14,7 +15,8 @@
  *   RedisMeshTransport subscribes directly to Redis Streams — same as any Docker bot.
  *   AgentRuntimeRegistryService writes oshal:runtime-agent:{agentId} with TTL 90s.
  *   SwarmAgentWorker polls agent.{AGENT_ID} direct channel + swarm.broadcast.
- *   Local MCP server (stdio) is the execution engine for tool calls.
+ *   Local MCP server (stdio) may be inspected for diagnostics. Tool execution is
+ *   disabled until the edge runtime consumes the owner-bound remote-task broker.
  *
  * Required env vars:
  *   AGENT_ID        UUID for this edge agent (must be stable across restarts)
@@ -23,7 +25,7 @@
  * Optional env vars:
  *   BOT_NAME        Human-readable name shown in cockpit (default: edge-agent)
  *   BOT_ROLE        Role string shown in cockpit (default: edge/local-executor)
- *   BOT_CAPABILITIES  Comma-separated capability tags (augmented by MCP tool names)
+ *   BOT_CAPABILITIES  Comma-separated non-MCP capability tags
  *   MCP_COMMAND     Local MCP server binary (e.g. npx, node, python)
  *   MCP_ARGS        JSON array of args for MCP_COMMAND (e.g. '["@modelcontextprotocol/server-filesystem","/tmp"]')
  *   MCP_CWD         Working directory for the MCP process
@@ -101,23 +103,18 @@ function buildMcpExecutionHandler(
   mcp: McpStdioClient,
   agentId: string,
   agentName: string,
-  mcpTools: string[],
 ) {
   return async (envelope: MeshEnvelope): Promise<EnvelopeExecutionResult> => {
     const { payload } = envelope;
 
-    // Direct tool call: { mcpTool: "tool_name", mcpArgs: { ... } }
+    // A Redis mesh envelope is not an owner-bound execution grant. Keep local MCP
+    // execution unavailable until this runtime claims the canonical durable task.
     if (typeof payload.mcpTool === 'string') {
-      const args = (payload.mcpArgs ?? {}) as Record<string, unknown>;
-      logger.info({ agentId, tool: payload.mcpTool }, 'Executing MCP tool call');
-      try {
-        const output = await mcp.callTool(payload.mcpTool, args);
-        return { success: true, output };
-      } catch (err) {
-        const error = (err as Error).message;
-        logger.error({ err, tool: payload.mcpTool }, 'MCP tool call failed');
-        return { success: false, error };
-      }
+      logger.warn({ agentId, tool: payload.mcpTool }, 'Rejected unbrokered edge MCP tool call');
+      return {
+        success: false,
+        error: 'Edge MCP execution requires an owner-bound remote-task authorization broker.',
+      };
     }
 
     // Tool discovery: { intent: "mcp.list-tools" }
@@ -136,8 +133,7 @@ function buildMcpExecutionHandler(
       output: {
         agentId,
         agentName,
-        note: 'Edge agent received envelope. Set payload.mcpTool to call a local tool.',
-        availableTools: mcpTools,
+        note: 'Edge agent received envelope. Local MCP execution is disabled pending brokered authority.',
       },
     };
   };
@@ -210,8 +206,9 @@ async function main(): Promise<void> {
     logger.info('No MCP_COMMAND configured — edge agent joins swarm without local tooling');
   }
 
-  // Merge static capabilities with MCP tool names
-  const capabilities = [...new Set([...cfg.staticCapabilities, ...mcpTools, 'edge-agent'])];
+  // Discovery is diagnostic only; advertising an MCP tool name would let the router
+  // treat an unauthenticated mesh payload as if it were an execution capability.
+  const capabilities = [...new Set([...cfg.staticCapabilities, 'edge-agent'])];
 
   // Build runtime registration
   const startedAt = new Date().toISOString();
@@ -230,7 +227,7 @@ async function main(): Promise<void> {
 
   // Swarm worker — subscribes to direct channel + broadcast
   const executionHandler = mcp
-    ? buildMcpExecutionHandler(mcp, cfg.agentId, cfg.agentName, mcpTools)
+    ? buildMcpExecutionHandler(mcp, cfg.agentId, cfg.agentName)
     : buildNoMcpHandler(cfg.agentId, cfg.agentName);
 
   const worker = new SwarmAgentWorker({

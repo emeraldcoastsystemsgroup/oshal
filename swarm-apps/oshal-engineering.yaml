@@ -17,8 +17,13 @@ description: >-
   intake → planning → execution → testing → review → delivery. Seven bots
   collaborate through Redis mesh; operators work through the cockpit
   tickets + chat + task explorer surfaces.
-version: 1.0.0
+version: 1.0.1
 status: active
+
+# ADR-118 coarse doorway. Ticket/bot/tool authorization remains authoritative after entry.
+access:
+  supported: [deny, viewer, editor, admin]
+  defaultTier: editor
 
 bots:
   - agentId: a0000000-0000-0000-0000-000000000001

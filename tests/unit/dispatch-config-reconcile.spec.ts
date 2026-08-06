@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for ADR-034 push-on-dispatch (gap b) substrate: the controller-side resolver (dispatch-runtime-params.ts) and the bot-side reconciler (bot-node-dispatch-config.ts). Proves the load-bearing invariant — ABSENT carried config = byte-identical legacy dispatch (runtime untouched) — plus divergence self-correction, fail-open on an un-switchable provider, fail-open resolver errors, and the "no providerId = not actionable" contract. Both modules are complete + tested here; wiring them into the live dispatch/execution paths is the remaining reviewed step (see burndown ADR-034 gap b).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Update the ADR-034 contract to fail closed when an authoritative provider cannot be switched or is reported as unapplied.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -97,11 +98,19 @@ describe('bot-node-dispatch-config (bot half)', () => {
     expect(out.active).toEqual({ provider: 'openai-codex', model: 'gpt-5' });
   });
 
-  it('FAILS OPEN when the carried provider cannot be switched to — executes self-resolved', () => {
+  it('FAILS CLOSED when the carried provider cannot be switched to', () => {
     const rt = fakeRuntime({ provider: 'cline-cli', model: 'sonnet' });
     rt.setActiveProvider = () => { throw new Error('unknown provider'); };
-    const out = reconcileDispatchProviderConfig({ providerId: 'bogus-provider' }, rt, {}, silentLog);
-    expect(out.action).toBe('failed-open');
-    expect(out.active).toEqual({ provider: 'cline-cli', model: 'sonnet' });
+    expect(() => reconcileDispatchProviderConfig(
+      { providerId: 'bogus-provider' }, rt, {}, silentLog,
+    )).toThrow('Authoritative provider config is unavailable');
+  });
+
+  it('FAILS CLOSED when the runtime claims a switch but returns a different identity', () => {
+    const rt = fakeRuntime({ provider: 'cline-cli', model: 'sonnet' });
+    rt.setActiveProvider = () => ({ provider: 'cline-cli', model: 'sonnet' });
+    expect(() => reconcileDispatchProviderConfig(
+      { providerId: 'openai-codex', model: 'gpt-5' }, rt, {}, silentLog,
+    )).toThrow('Authoritative provider config was not applied');
   });
 });

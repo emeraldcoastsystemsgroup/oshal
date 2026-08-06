@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added agent factory CRUD routes for bot generation API
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | POST /create-and-start — one-call create+launch replacing the unrolled-back POST /api/swarm/agents + POST /api/agents/:agentId/launch pair. Same requiresAuth-mounted router (swarm extension mounts this factory under /api/swarm/agents), same spec schema; on launch failure the service rolls the creation back (502 with rolledBack in the body), so a failed launch never leaves a routable zombie.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: require an exact authenticated operator for globally trusted agent creation, launch, deletion, and tool assignment.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -13,6 +14,7 @@ import { AuthMode } from '@/shared/types/tool';
 import { ToolRuntimeConfigSchema } from '@/entities/tool';
 import { createChildLogger } from '@/shared/logger';
 import { z, ZodError } from 'zod';
+import { isOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'agent-factory-routes' });
 
@@ -72,6 +74,7 @@ export function createAgentFactoryRoutes(factoryService: AgentFactoryService): R
    * POST /api/swarm/agents — Create a new agent from a specification.
    */
   router.post('/', async (req: Request, res: Response) => {
+    if (!requireAgentFactoryOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info({ name: req.body?.name ?? null }, 'POST /api/swarm/agents');
     try {
@@ -114,6 +117,7 @@ export function createAgentFactoryRoutes(factoryService: AgentFactoryService): R
    * rolledBack/rollbackError so the caller sees exactly what happened.
    */
   router.post('/create-and-start', async (req: Request, res: Response) => {
+    if (!requireAgentFactoryOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info({ name: req.body?.name ?? null }, 'POST /api/swarm/agents/create-and-start');
     try {
@@ -179,6 +183,7 @@ export function createAgentFactoryRoutes(factoryService: AgentFactoryService): R
    * DELETE /api/swarm/agents/:agentId — Delete an agent.
    */
   router.delete('/:agentId', async (req: Request, res: Response) => {
+    if (!requireAgentFactoryOperator(req, res)) return;
     const startedAt = Date.now();
     logger.info({ agentId: req.params.agentId }, 'DELETE /api/swarm/agents/:agentId');
     try {
@@ -198,4 +203,11 @@ export function createAgentFactoryRoutes(factoryService: AgentFactoryService): R
 
   logger.info('Agent factory routes registered');
   return router;
+}
+
+function requireAgentFactoryOperator(req: Request, res: Response): boolean {
+  if (isOperator(req)) return true;
+  logger.warn({ method: req.method }, 'Globally trusted agent mutation denied');
+  res.status(403).json({ error: 'operator_required' });
+  return false;
 }

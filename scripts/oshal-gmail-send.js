@@ -8,20 +8,17 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Two bugs that made this CLI unable to send anything but an mp4, and then unable to send at all. (a) ENVELOPE-CRYPTO DRIFT, the third and last CLI carrying it: OSHAL_ENVELOPE_CRYPTO defaulted ON 2026-07-20 so connector tokens re-encrypt to `v2:` per-user-DEK blobs, but this file's decrypt knew only the legacy single-KEK format and THREW UNCAUGHT out of getAccessToken - every send died with "Unsupported state or unable to authenticate data". oshal-gmail.js (SEQ 6) and oshal-recap-email.js (SEQ 3) were ported at the time and this one was missed. Fixed by REUSING the sibling's exported decryptToken rather than pasting a third copy, and an access_token decrypt failure now falls through to a refresh_token refresh instead of aborting - same shape as both siblings. (b) The attachment Content-Type was hardcoded `video/mp4` from the recap-video use case, so a PDF/PNG/zip attachment went out mislabelled as video; now derived from the file extension with an application/octet-stream fallback. Guard: tests/unit/gmail-send-attachment-mime.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | THIRD bug in the same path, and the one that made SEQ 3 look like it had not worked: oshal_connections is RLS-enabled AND force-RLS, and its policy grants on `oshal.is_operator='on'` OR `user_sub = current_setting('oshal.current_sub')`. This CLI queried on a PLAIN pool that sets neither GUC, so current_setting returned NULL, every row was filtered, and it exited "SEND_FAIL no Google connection" on a box with three live Google connections — indistinguishable from genuinely having none. oshal-recap-email.js (SEQ 2) already set oshal.current_sub for exactly this reason; the pattern was never ported here or to oshal-gmail.js. Now takes a pooled CLIENT with the GUC set before any query, and the failure message names RLS instead of blaming the connection. Operator-wide lookup (GMAIL_ACCOUNT / single-connection auto-pick) requires an EXPLICIT OSHAL_OPERATOR=1 rather than silently escalating. Guard: the RLS block in tests/unit/gmail-send-attachment-mime.spec.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Use the shared connector-token codec directly; refreshed access tokens remain caller-owned v2 envelopes with hkdf1 DEK wrapping instead of being rewritten as shared raw-SHA256 blobs.
  */
 /* Send an email (optionally with one attachment) via the OSHAL Google connection token.
  * Reuses the oshal-gmail.js auth (controller-provided token, else DB refresh-token decrypt).
  * Usage: node oshal-gmail-send.js <to> <subject> <bodyFile> [attachmentPath]
  * Requires the Google connection to have a send-capable scope (gmail.send / modify / compose). */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
-// Format-aware connector-token decrypt lives in the sibling CLI and is exported for exactly this
-// reuse. Requiring it is safe: oshal-gmail.js guards its entry point behind `require.main === module`.
-// Do NOT paste a fourth copy of the v2 unwrap — the drift that broke all three CLIs was copy-paste.
-const { decryptToken } = require('./oshal-gmail');
+const { decryptToken, encryptToken } = require('./lib/connector-token-crypto');
 
 /**
  * @description Attachment MIME type from the filename extension. This CLI was written for the
@@ -45,12 +42,6 @@ function mimeFor(name) {
 function resolveProvidedToken() {
   try { const t = fs.readFileSync(path.join(process.cwd(), '.oshal-cred-google'), 'utf8').trim(); if (t) return t; } catch {}
   return process.env.OSHAL_CRED_GOOGLE || undefined;
-}
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function encrypt(plain) {
-  const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key(), iv);
-  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
-  return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
 }
 /**
  * @description Put the pooled client into the RLS context its queries need. oshal_connections is
@@ -117,7 +108,7 @@ async function getAccessToken(client) {
   if (!r.ok) { console.error('SEND_FAIL token refresh ' + r.status + ' ' + (await r.text()).slice(0, 200)); process.exit(3); }
   const tok = await r.json();
   await client.query(`UPDATE oshal_connections SET access_token=$3, expiry=$4, updated_at=NOW() WHERE provider='google' AND account_email=$1 AND user_sub=$2`,
-    [row.account_email, row.user_sub, encrypt(tok.access_token), tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null]).catch(() => {});
+    [row.account_email, row.user_sub, await encryptToken(client, row.user_sub, tok.access_token), tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null]).catch(() => {});
   return { token: tok.access_token, account: row.account_email };
 }
 function b64url(buf) { return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }

@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Exported DynamicComposeService so the swarm extension can wire the AgentFactoryService launch deps (createAndStartAgent) through the barrel instead of a deep import
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported delegation-aware BotNodeClient construction options through the feature barrel.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 memory namespace, ACL, provenance, and promotion contracts.
  */
 
 export { RedisMeshTransport, type RedisMeshTransportOptions } from './redis-mesh-transport';
@@ -75,10 +76,16 @@ export {
 } from './agent-memory-service';
 export {
   SwarmMemoryService,
+  SWARM_RAG_NAMESPACES,
+  SWARM_RAG_NAMESPACE_LIST,
   type SwarmLearning,
   type CompletedWorkContext,
   type SwarmMemoryEntry,
   type SwarmContextBlock,
+  type SwarmMemoryAccessContext,
+  type SwarmMemoryPromotion,
+  type SwarmMemoryProvenance,
+  type SwarmMemoryVisibility,
 } from './swarm-memory-service';
 export {
   MeshBidBroadcaster,

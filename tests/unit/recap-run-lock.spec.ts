@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Two-process behavioral guard for the normal-run mutex: block a second shared-file run, keep verifier/manifest probes exempt, and prove release permits the next run.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep the concurrency scenario readable and policy-compliant by extracting each independent process assertion into a small named helper.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Guard recap's acquisition, heartbeat, and exact-token release of the durable render-node lease shared with the pump; the companion live spec proves real PostgreSQL contention.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Bound every PowerShell child and give only their host-startup handshakes full-suite headroom; mutex acquisition, exclusion, and release behavior remain unchanged.
  */
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -12,7 +14,7 @@ import {
   afterAll, describe, expect, it,
 } from 'vitest';
 import {
-  existsSync, mkdtempSync, rmSync, writeFileSync,
+  existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,7 +31,7 @@ const delay = (milliseconds: number) => new Promise((resolve) => {
 });
 
 /** @description Waits for the real runner to cross its post-lock, pre-staging test boundary. */
-const waitForFile = async (path: string, timeoutMs = 8_000): Promise<void> => {
+const waitForFile = async (path: string, timeoutMs = 20_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (!existsSync(path)) {
     if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
@@ -43,7 +45,7 @@ const makeContract = (label: string, token: string, released = false) => {
   const ready = join(scratch, `${label}.ready`);
   const release = join(scratch, `${label}.release`);
   writeFileSync(path, JSON.stringify({
-    operation: 'holdNormalRunLock', token, ready, release,
+    operation: 'holdNormalRunLock', token, ready, release, holdTimeoutMs: 60_000,
   }));
   if (released) writeFileSync(release, 'release');
   return { path, ready, release };
@@ -71,7 +73,7 @@ const startNormalRun = (contract: string) => {
 
 const assertSecondRunBlocked = (contract: ReturnType<typeof makeContract>) => {
   const second = spawnSync(powershell, args, {
-    encoding: 'utf8', windowsHide: true, timeout: 5_000,
+    encoding: 'utf8', windowsHide: true, timeout: 20_000,
     env: probeEnv(contract.path),
   });
   const output = `${second.stdout}\n${second.stderr}`;
@@ -87,7 +89,9 @@ const assertProbeModesStayLockFree = (contract: string) => {
   }));
   const manifestResult = spawnSync(powershell, [
     ...args, '-ManifestContractProbe', manifestProbe,
-  ], { encoding: 'utf8', windowsHide: true, env: probeEnv(contract) });
+  ], {
+    encoding: 'utf8', windowsHide: true, timeout: 20_000, env: probeEnv(contract),
+  });
   expect(manifestResult.status).toBe(0);
   expect(manifestResult.stdout).toContain('"valid":false');
 
@@ -95,7 +99,9 @@ const assertProbeModesStayLockFree = (contract: string) => {
   writeFileSync(invalidDelivery, '{}');
   const verifierResult = spawnSync(powershell, [
     ...args, '-VerifyDeliveryManifest', invalidDelivery,
-  ], { encoding: 'utf8', windowsHide: true, env: probeEnv(contract) });
+  ], {
+    encoding: 'utf8', windowsHide: true, timeout: 20_000, env: probeEnv(contract),
+  });
   expect(verifierResult.status).toBe(1);
   expect(verifierResult.stdout).toContain('"valid":false');
   expect(`${verifierResult.stdout}\n${verifierResult.stderr}`).not.toMatch(/another daily recap run/i);
@@ -104,7 +110,7 @@ const assertProbeModesStayLockFree = (contract: string) => {
 const assertNextRunEnters = (token: string) => {
   const nextContract = makeContract('next', token, true);
   const next = spawnSync(powershell, args, {
-    encoding: 'utf8', windowsHide: true, timeout: 5_000,
+    encoding: 'utf8', windowsHide: true, timeout: 20_000,
     env: probeEnv(nextContract.path),
   });
   expect(next.status, `${next.stdout}\n${next.stderr}`).toBe(0);
@@ -131,5 +137,26 @@ describe('daily recap full-run concurrency lock (behavioral)', () => {
 
     expect(firstStatus, first.output()).toBe(0);
     assertNextRunEnters(token);
-  }, 30_000);
+  }, 75_000);
+});
+
+describe('daily recap shared render-node lease wiring', () => {
+  const source = readFileSync(runner, 'utf8');
+
+  it('acquires the PostgreSQL lease before the first node preflight', () => {
+    const acquire = source.indexOf('$sharedNodeLease = Enter-SharedNodeLease');
+    const preflight = source.indexOf('# 1) PREFLIGHT');
+    expect(acquire).toBeGreaterThan(0);
+    expect(acquire).toBeLessThan(preflight);
+    expect(source).toContain('/app/scripts/oshal-node-lease.js');
+  });
+
+  it('heartbeats during the long build and releases before the host mutex', () => {
+    expect(source.match(/Renew-SharedNodeLease \$sharedNodeLease/g)?.length).toBeGreaterThanOrEqual(4);
+    const finalizer = source.lastIndexOf('} finally {');
+    const releaseLease = source.indexOf('Exit-SharedNodeLease $sharedNodeLease', finalizer);
+    const releaseMutex = source.indexOf('Exit-RecapRunLock $recapRunLock', finalizer);
+    expect(releaseLease).toBeGreaterThan(finalizer);
+    expect(releaseLease).toBeLessThan(releaseMutex);
+  });
 });

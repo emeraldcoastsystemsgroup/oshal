@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase step 2b (ADR-046 §10 debugger view): two READ-ONLY debugger endpoints — GET /runs/:runId/observations (the run's persisted replay/variant/grade history, for timeline badges) and GET /runs/:runId/frames/:seq/inspect (one frame's full captured payload + its recorded observations side-by-side, the drill-in). The debugger never fires replays — the existing replay/variant routes stay the only actions; the inspect route degrades to frame-only (flagged) when the corpus read fails so a DB hiccup can't blank the forensics view.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Keep-winner → re-baseline + judge spend cap (ADR-046 step 4 loop, BACKLOG "auto keep-winner then re-baseline loop + per-run judge budget cap"): (1) mounts the promotion routes (promote/revert/list — see token-chase-promotion-routes.ts); (2) both replay paths load the run's ACTIVE promotions as baseline overrides so a promoted lane IS the frame's cost baseline from now on (the corpus rows then carry it, so the savings report re-baselines automatically); (3) the savings grading loop consults a per-run TokenChaseJudgeBudget BEFORE every judge call — TOKEN_CHASE_JUDGE_BUDGET_USD hard ceiling measured against the judge agent's REAL chat_tasks spend since the run began; on breach remaining frames persist UNGRADED and the response says partiallyGraded honestly; (4) after the loop the OPERATOR-GATED auto keep-winner pass runs (TOKEN_CHASE_AUTO_PROMOTE, default OFF — maybeAutoPromote touches nothing when disabled).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Tail-replay action (ADR-046 §1/§8): new POST /runs/:runId/tail-replay restages frame N's workspace tree and replays N..end on the accountable bot, determinism-gating each frame and stopping at the first divergence (which frame + why). Read-of-the-run + bot re-fires only; the controller never calls an LLM. Additive — the promotion routes and every existing action are untouched.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Wire Token Chase's aggregate `free:auto` selector into variant and savings actions: health-qualified free lanes rotate on classified provider walls, expose exact provider/model evidence, and fail closed without falling through to the bot's paid/default lane.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -36,7 +37,12 @@ import {
 } from '@/features/token-chase';
 import { JudgeService, QUALITY_JUDGE_AGENT_ID } from '@/features/quality-judge';
 import { BudgetService } from '@/features/cost-governance';
-import { listOptimizerLogins, resolveOptimizerLane } from './optimizer-providers';
+import {
+  createOptimizerLaneRotation,
+  listOptimizerLogins,
+  optimizerReplayLane,
+  resolveOptimizerLane,
+} from './optimizer-providers';
 import { createTokenChasePromotionRoutes, loadBaselineOverrides, maybeAutoPromote } from './token-chase-promotion-routes';
 
 const logger = createChildLogger({ module: 'token-chase-routes' });
@@ -198,7 +204,7 @@ export function createTokenChaseRoutes(apiDir: string, ctx: AppContext): Router 
   router.get('/demo/comparison', (_req: Request, res: Response) => {
     res.json({ variant: buildTokenChaseDemoComparison(), noTokenSpend: true });
   });
-  // The caller's own configured LLM connections — the providers the optimizer runs against.
+  // Owner-visible provider lanes plus the health-qualified aggregate free rotation selector.
   router.get('/connections', handleConnections(ctx));
   // Token Chase optimizer (ADR-046 step 3) — replay a captured call on the caller's chosen connection.
   router.post('/runs/:runId/frames/:seq/variant', handleVariant(optimizeService, ctx));
@@ -243,9 +249,10 @@ function handleConnections(ctx: AppContext) {
 
 /**
  * @description POST /runs/:runId/frames/:seq/variant — replays one captured frame against the caller's
- * own chosen LLM connection (controller-side, no bot node) and returns the baseline-vs-variant
- * cost/latency/accuracy diff. The connection is one of the caller's configured providers
- * (`GET /api/token-chase/connections`), billed to their own key. Body:
+ * chosen LLM connection and returns the baseline-vs-variant cost/latency/accuracy diff. The
+ * connection is one of `GET /api/token-chase/connections`; `free:auto` rotates only through
+ * probed-live free lanes and fails closed, while explicitly selected non-free lanes retain their
+ * configured billing semantics. Body:
  * `{ connectionId: string, label?: string }`.
  */
 function handleVariant(service: TokenChaseOptimizeService, ctx: AppContext) {
@@ -284,12 +291,16 @@ function handleVariant(service: TokenChaseOptimizeService, ctx: AppContext) {
       return;
     }
     try {
-      // Every lane replays through the bot node's /api/token-chase/replay-call. `byo` lanes hand the bot
-      // an ephemeral OpenAI-compatible endpoint; `current` runs the bot's own configured provider.
-      const byo = lane.kind === 'byo' ? { baseUrl: lane.baseUrl, apiKey: lane.apiKey, model: lane.model } : undefined;
+      // Every lane replays through the bot node's /api/token-chase/replay-call. The aggregate free
+      // selector keeps credentials server-side and can only rotate to another free BYO lane.
+      const replayLane = optimizerReplayLane(lane, label);
+      const laneRotation = createOptimizerLaneRotation(ctx.pool, sub, lane);
       // Re-baseline: a frame with an ACTIVE promotion measures cost against the promoted lane.
       const overrides = await loadBaselineOverrides(ctx.pool, sub, runId);
-      const result = await service.replayVariant(runId, seq, { label, byo }, accessOf(req), overrides.get(seq));
+      const replay = await service.replayVariantRotating(
+        runId, seq, replayLane, accessOf(req), overrides.get(seq), laneRotation,
+      );
+      const result = replay.result;
       if (!result) {
         res.status(404).json({ error: 'Frame not found' });
         return;
@@ -297,7 +308,7 @@ function handleVariant(service: TokenChaseOptimizeService, ctx: AppContext) {
       // Judge-grade (step 4) then append the corpus observation for graded results
       // (fire-and-forget — never blocks the response).
       if (result.tier) void assessAndRecord(ctx, sub, result);
-      res.json({ variant: result });
+      res.json({ variant: result, selection: replay.selection });
     } catch (error) {
       logger.error({ err: error, runId, seq }, 'Token Chase variant replay failed');
       res.status(500).json({ error: 'Variant replay failed' });
@@ -534,7 +545,8 @@ function handleJudgedSavingsRead(ctx: AppContext) {
 /**
  * @description POST /runs/:runId/savings — the end-to-end savings loop over a REAL run: replays every
  * replayable frame on the caller's chosen connection (`{ connectionId }`), grades each, persists the
- * observations to the corpus, and returns the aggregate SavingsSummary. Spends the caller's own tokens.
+ * observations to the corpus, and returns the aggregate SavingsSummary. `free:auto` spends only on
+ * eligible free lanes and fails closed; explicitly selected non-free lanes keep their configured billing.
  */
 function handleRunSavings(service: TokenChaseOptimizeService, ctx: AppContext) {
   return async (req: Request, res: Response): Promise<void> => {
@@ -556,16 +568,17 @@ function handleRunSavings(service: TokenChaseOptimizeService, ctx: AppContext) {
       return;
     }
     const label = (body.label ?? '').trim() || lane.label;
-    const byo = lane.kind === 'byo' ? { baseUrl: lane.baseUrl, apiKey: lane.apiKey, model: lane.model } : undefined;
+    const replayLane = optimizerReplayLane(lane, label);
+    const laneRotation = createOptimizerLaneRotation(ctx.pool, sub, lane);
     try {
       // The per-run JUDGE spend cap (TOKEN_CHASE_JUDGE_BUDGET_USD) — consulted before EVERY judge
       // call; on breach the remaining frames persist ungraded and the response says so honestly.
       const judgeBudget = buildJudgeBudget(ctx);
       // Re-baseline: frames with an ACTIVE promotion measure savings against the promoted lane.
       const overrides = await loadBaselineOverrides(ctx.pool, sub, runId);
-      const { summary, results, budget } = await service.runSavings(
+      const { summary, results, budget, rotation: laneSelection } = await service.runSavings(
         runId,
-        { label, byo },
+        replayLane,
         accessOf(req),
         // Step 4: each graded frame is judge-assessed then persisted with its grade (awaited so
         // the corpus is complete when the loop returns; the assessor never throws).
@@ -574,6 +587,7 @@ function handleRunSavings(service: TokenChaseOptimizeService, ctx: AppContext) {
         // each round; an exhausted budget stops the loop cleanly and is reported in `budget`.
         buildBudgetGate(ctx, sub),
         overrides,
+        laneRotation,
       );
       // Operator-gated auto keep-winner (TOKEN_CHASE_AUTO_PROMOTE, default OFF): promote each
       // frame's fresh winner to its new baseline. A no-op that touches nothing when disabled.
@@ -583,6 +597,7 @@ function handleRunSavings(service: TokenChaseOptimizeService, ctx: AppContext) {
         savings: summary,
         frames: results.length,
         budget,
+        laneSelection,
         judgeBudget: judge,
         partiallyGraded: judge.partiallyGraded,
         rebaselinedFrames: overrides.size,

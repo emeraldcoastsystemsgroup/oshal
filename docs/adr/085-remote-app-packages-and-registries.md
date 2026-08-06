@@ -125,6 +125,14 @@ little-monsters/                 # its own repo / subdir — this IS the app
 | `routes[]`, `migrations[]` | **Now honored by the loader** (§2), pointing at the package's own `routes/*.js` and `migrations/*.sql`. |
 | `bots`, `workflow`, `ticketType`, `schedules` | As today — a package brings its own bots, workflow, ticket type. |
 
+Schedule execution is now explicit. A declaration with no `target` (or `target: prompt`) retains
+the agent-prompt path. `target: service-route` instead names a deterministic export in the compiled
+module backing an exact package-owned `auth: service` route. The loader validates canonical route
+ownership, static bounded JSON, and a named export; activation realpath-confines and loads that
+export, and toggle-off retracts it before Redis teardown. The scheduler invokes the frozen handler
+input in-process and never falls back to a prompt or loopback HTTP path. This prevents an inactive
+or unmounted package target from falling through to an unrelated same-path kernel route.
+
 ### 2. The loader honors `routes` and `migrations` — in-process dynamic mount
 
 This is the core mechanism that makes a route-having app (little-monsters) installable with

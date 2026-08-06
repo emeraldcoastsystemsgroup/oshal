@@ -66,22 +66,25 @@ external `oshal-apps` store:
 | `jobs` | Requests the external `career-hunter` and `job-apply` packages. |
 
 Add **individual external packages** with `--apps name1,name2`. The installer
-downloads the [public app store](https://github.com/emeraldcoastsystemsgroup/oshal-apps),
-checks each requested package directory, and reports and skips a package that is missing.
-The resolved package names are deduplicated, and an already-staged package is skipped
-on a later run.
+uses the shipped core image to run the same `oshal-app.js install` rail as the registry and
+operator update APIs against the [public app store](https://github.com/emeraldcoastsystemsgroup/oshal-apps).
+That rail validates the official APP-02 audit record before package validation, dependency
+resolution, and staging. The resolved package names are deduplicated. Compatible mode skips an
+already-staged package; enforce mode revalidates and replaces it from the exact audited SHA.
+Set `OSHAL_PACKAGE_AUDIT_MODE=enforce` (or pass `--audit-mode enforce`) only after the selected
+packages have passed records; malformed/missing/mismatched bindings fail in every mode.
 
 ```mermaid
 flowchart LR
     Bundle["--bundle selection"] --> Union["Union package names"]
     Apps["--apps a,b,c"] --> Union
     Union --> Dedupe["Deduplicate names"]
-    Dedupe --> Store["Download external oshal-apps store"]
-    Store --> Exists{"Requested directory exists?"}
-    Exists -->|No| SkipMissing["Report and skip missing package"]
-    Exists -->|Yes| Staged{"Already staged?"}
-    Staged -->|Yes| Skip["Skip package"]
-    Staged -->|No| Copy["Copy into workspace deployed-apps"]
+    Dedupe --> Store["Core installer clones official catalog"]
+    Store --> Audit{"APP-02 structure and policy pass?"}
+    Audit -->|No| Refuse["Fail without staging"]
+    Audit -->|Yes| Pin["Use exact audit SHA when verified"]
+    Pin --> Validate["Validate package and dependencies"]
+    Validate --> Stage["Stage into workspace deployed-apps"]
 ```
 
 **When it finishes** the installer opens your cockpit (`http://localhost:35457/cockpit/` — the
@@ -371,6 +374,8 @@ count is not success. Re-run it any time:
 ```bash
 bash scripts/oshal-verify.sh                      # strict: any broken leg fails
 bash scripts/oshal-verify.sh --pre-onboarding     # fresh box: wizard-pending legs warn only
+bash scripts/oshal-verify.sh --env-file .env --apps career-hunter,job-apply
+OSHAL_VERIFY_PAT='oshal_pat_...' bash scripts/oshal-verify.sh --live
 ```
 
 It reads `GET /api/readiness` — per-capability status (`llm` / `bots` / `credentials` /
@@ -378,6 +383,17 @@ It reads `GET /api/readiness` — per-capability status (`llm` / `bots` / `crede
 liveness-only and reports `ok` on a box with no engine. A deliberately model-less box declares
 that posture with `--no-ai` at install (writes `OSHAL_NO_AI=true`); undeclared "no model" is a
 verification failure, not a quiet default.
+
+`--apps` executes every manifest-declared smoke for the exact comma-separated package set through
+the running HTTP routes. Missing, inactive, smoke-less, or assertion-failing packages fail by name;
+service-auth probes read `SWARM_SERVICE_SECRET` from the environment or `--env-file` as data.
+`--live` is deliberately separate because it spends tokens: it accepts only an operator PAT from
+`OSHAL_VERIFY_PAT`, performs exactly one direct generation with no retry/tool loop, rejects
+empty/noop/stub output, and confirms the normal owner-scoped `chat_tasks` cost attribution.
+
+On a declared no-AI box, chat, Jarvis, and app routes marked `requiresAi` return HTTP 503 with
+`ai_disabled`; the corresponding web surfaces render that unavailable state instead of placeholder
+model output. Do not use `--live` for that posture.
 
 **Never copy a credential file (`~/.claude`, `~/.codex`, `~/.gemini`) between machines** — one
 OAuth grant serves one machine; the other host's refresh rotates the token and both logins die.

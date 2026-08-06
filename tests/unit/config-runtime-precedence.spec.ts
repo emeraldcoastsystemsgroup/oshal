@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard authoritative-runtime-config-precedence: direct clients cannot mutate a registry-pinned provider, model-only writes omit that provider, runtime refusal is explicit, and successful responses carry applied/pushed/version/effective truth
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: credential fields are rejected before config reads or push-down; successful runtime mutation carries provider/model only.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exercise mutations through an exact operator browser identity after the control-plane authorization gate became fail-closed.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
@@ -16,13 +18,22 @@ import type { ConfigSyncService } from '@/features/config-sync';
 import type { AgentConfigService } from '@/features/agent-management';
 
 let activeServer: Server | undefined;
+let savedOperatorSubs: string | undefined;
+
+beforeEach(() => {
+  savedOperatorSubs = process.env.OSHAL_OPERATOR_SUBS;
+  process.env.OSHAL_OPERATOR_SUBS = 'runtime-config-operator';
+});
 
 afterEach(async () => {
-  if (!activeServer) return;
-  await new Promise<void>((resolve, reject) => {
-    activeServer?.close((err) => (err ? reject(err) : resolve()));
-  });
-  activeServer = undefined;
+  if (activeServer) {
+    await new Promise<void>((resolve, reject) => {
+      activeServer?.close((err) => (err ? reject(err) : resolve()));
+    });
+    activeServer = undefined;
+  }
+  if (savedOperatorSubs === undefined) delete process.env.OSHAL_OPERATOR_SUBS;
+  else process.env.OSHAL_OPERATOR_SUBS = savedOperatorSubs;
 });
 
 async function listen(
@@ -31,6 +42,13 @@ async function listen(
 ): Promise<string> {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as typeof req & { oidc?: unknown }).oidc = {
+      isAuthenticated: () => true,
+      user: { sub: 'runtime-config-operator' },
+    };
+    next();
+  });
   app.use('/api/agents', createConfigRuntimeRoutes(configSync, agentConfig));
   activeServer = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => activeServer?.once('listening', resolve));
@@ -78,11 +96,25 @@ describe('authoritative-runtime-config-precedence', () => {
     });
     expect(pushToBot).not.toHaveBeenCalled();
 
+    const readsBeforeCredentialCarrier = getConfig.mock.calls.length;
+    const credentialCarrier = await jsonPut(`${base}/${encodeURIComponent(agentId)}/runtime`, {
+      modelId: 'must-not-apply',
+      credentials: { API_KEY: 'sentinel-secret' },
+    });
+    expect(credentialCarrier.status).toBe(400);
+    expect(await credentialCarrier.json()).toMatchObject({
+      success: false,
+      applied: false,
+      error: 'credential fields are not accepted on runtime configuration mutations',
+    });
+    expect(getConfig).toHaveBeenCalledTimes(readsBeforeCredentialCarrier);
+    expect(pushToBot).not.toHaveBeenCalled();
+
     const accepted = await jsonPut(`${base}/${encodeURIComponent(agentId)}/runtime`, {
       modelId: 'new-model',
     });
     expect(accepted.status).toBe(200);
-    expect(pushToBot).toHaveBeenCalledWith(agentId, { modelId: 'new-model' }, undefined);
+    expect(pushToBot).toHaveBeenCalledWith(agentId, { modelId: 'new-model' });
     expect(await accepted.json()).toMatchObject({
       applied: true,
       pushed: true,

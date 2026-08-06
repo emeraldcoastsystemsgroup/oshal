@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Exhaustively drive every caller-scoped graph read against legacy victim-substitution headers, prove the exact SEC-01 refusal, and preserve OIDC/PAT owner precedence plus the explicitly retained write compatibility.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile the retained-write description with the implemented workload-delegation design: compatibility remains only for the explicit legacy rollout mode, not because the design is pending.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -184,7 +185,7 @@ describe('SEC-01 graph read containment', () => {
     }
   });
 
-  it('retains legacy graph writes only while the durable delegation design is pending', async () => {
+  it('retains legacy graph writes only while the durable delegation rollout remains in legacy mode', async () => {
     const harness = graphHarness();
     const server = await serve(harness.app);
     try {

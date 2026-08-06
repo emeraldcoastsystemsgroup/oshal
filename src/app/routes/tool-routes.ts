@@ -7,21 +7,25 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Switched tool-controller import to feature barrel and normalized legacy timestamp format
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added deregisterDynamicToolUI + DELETE /api/tools/dynamic/:toolName for swarm-app toggle
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11: POST /runtime/register and DELETE /runtime/:toolName now 409 when the tool is provided by an ACTIVE app (injected manifestToolOwner port). These routes sit behind serviceSecretOr(requiresAuth) — reachable by ANY signed-in user and every bot node — and were a second write door straight past manifest ownership: POST repointed an app's tool at an arbitrary endpoint/CLI command, DELETE removed it. Manifest registration does not come through here, so failing closed costs the framework nothing.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fail closed on tool control-plane writes: catalog/runtime mutations and executor inventory require an operator; dynamic UI registration is operator-only until an owner-bound per-bot delegation protocol exists.
  */
 
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z, ZodError } from 'zod';
 import { ToolController, RuntimeToolRegistrationService } from '@/features/tool-registry';
 import { CreateToolSchema } from '@/entities/tool';
 import { AuthMode, InstallMethod, ToolType } from '@/shared/types/tool';
 import { createChildLogger } from '@/shared/logger';
+import { requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'tool-routes' });
 
 /**
  * In-memory store for dynamically registered bot UI tools.
- * Bots POST to /api/tools/register with a TTL; the cockpit ribbon
- * fetches GET /api/tools/dynamic and renders them as iframe buttons.
+ * Operators may POST to /api/tools/register with a TTL; the cockpit ribbon
+ * fetches GET /api/tools/dynamic and renders them as iframe buttons. Bot-node
+ * service credentials cannot mutate this process-global map because the fleet
+ * secret does not establish a bot identity or ownership boundary.
  * When the TTL expires the tool is removed and the button disappears.
  */
 interface DynamicToolEntry {
@@ -191,10 +195,10 @@ export function createToolRoutes(
     return true;
   };
 
-  // ── Dynamic tool registration (bot UI self-registration) ────────────────
+  // ── Dynamic tool registration (operator control plane) ─────────────────
 
-  /** POST /api/tools/register — bot registers its UI surface with a TTL */
-  router.post('/register', (req, res) => {
+  /** POST /api/tools/register — an exact operator registers a UI surface with a TTL. */
+  router.post('/register', requiresOperator, (req, res) => {
     const { toolName, serverUrl, description, registeredBy, ttlMs, ui } = req.body;
     if (!toolName) {
       res.status(400).json({ error: 'toolName is required' });
@@ -233,10 +237,11 @@ export function createToolRoutes(
   });
 
   /** DELETE /api/tools/dynamic/:toolName — remove a registered UI (used by swarm-app toggle) */
-  router.delete('/dynamic/:toolName', (req, res) => {
-    const removed = dynamicTools.delete(req.params.toolName);
-    logger.info({ toolName: req.params.toolName, removed }, 'Dynamic tool deregister');
-    res.json({ deregistered: removed, toolName: req.params.toolName });
+  router.delete('/dynamic/:toolName', requiresOperator, (req, res) => {
+    const toolName = Array.isArray(req.params.toolName) ? req.params.toolName[0] : req.params.toolName;
+    const removed = dynamicTools.delete(toolName);
+    logger.info({ toolName, removed }, 'Dynamic tool deregister');
+    res.json({ deregistered: removed, toolName });
   });
 
   // ── Runtime executable tool registration ────────────────────────────────
@@ -274,10 +279,10 @@ export function createToolRoutes(
     }
   };
 
-  router.post('/runtime/register', registerRuntimeTool);
-  router.post('/register-runtime', registerRuntimeTool);
+  router.post('/runtime/register', requiresOperator, registerRuntimeTool);
+  router.post('/register-runtime', requiresOperator, registerRuntimeTool);
 
-  router.get('/runtime', async (_req, res) => {
+  router.get('/runtime', requiresOperator, async (_req, res) => {
     if (!runtimeToolRegistrationService) {
       res.status(503).json({ error: 'Runtime tool registration is not available in this process' });
       return;
@@ -286,14 +291,15 @@ export function createToolRoutes(
     res.json({ executors, count: executors.length });
   });
 
-  router.delete('/runtime/:toolName', async (req, res) => {
+  router.delete('/runtime/:toolName', requiresOperator, async (req, res) => {
     if (!runtimeToolRegistrationService) {
       res.status(503).json({ error: 'Runtime tool registration is not available in this process' });
       return;
     }
-    if (await rejectIfManifestOwned(req.params.toolName, res)) return;
-    const result = await runtimeToolRegistrationService.deregisterRuntimeTool(req.params.toolName);
-    res.json({ toolName: req.params.toolName, ...result });
+    const toolName = Array.isArray(req.params.toolName) ? req.params.toolName[0] : req.params.toolName;
+    if (await rejectIfManifestOwned(toolName, res)) return;
+    const result = await runtimeToolRegistrationService.deregisterRuntimeTool(toolName);
+    res.json({ toolName, ...result });
   });
 
   // ── Metadata routes (must come before parameterized routes) ─────────────
@@ -307,9 +313,9 @@ export function createToolRoutes(
   router.get('/', controller.getAllTools);
   router.get('/list', controller.getAllTools);  // alias — bots call /api/tools/list
   router.get('/:id', controller.getToolById);
-  router.post('/', controller.createTool);
-  router.put('/:id', controller.updateTool);
-  router.delete('/:id', controller.deleteTool);
+  router.post('/', requiresOperator, controller.createTool);
+  router.put('/:id', requiresOperator, controller.updateTool);
+  router.delete('/:id', requiresOperator, controller.deleteTool);
 
   logger.info('Tool routes registered (with dynamic registration support)');
   return router;

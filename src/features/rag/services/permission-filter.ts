@@ -5,10 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Compare owner_sub to the caller's OIDC subject exactly; retain case-insensitive normalization only for tenant, email, and group grant namespaces.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Split mixed allowed_users matching by namespace: OIDC subjects compare exactly, while verified source-system emails remain case-insensitive.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Enforce exact workspace narrowing before owner/group/public grants so workspace-scoped chunks cannot cross retrieval contexts.
  */
 
 export interface RagPermissionMetadata {
   tenant_id?: string | null;
+  workspace_id?: string | null;
+  visibility?: string | null;
   owner_sub?: string | null;
   allowed_users?: string | string[] | null;
   allowed_groups?: string | string[] | null;
@@ -18,6 +21,8 @@ export interface RagPermissionMetadata {
 export interface RagPermissionContext {
   userSub: string;
   tenantId?: string | null;
+  /** Exact server-bound workspace identifier; workspace metadata narrows but never grants access. */
+  workspaceId?: string | null;
   groups?: readonly string[];
   /**
    * The caller's source-system identities (e.g. verified email addresses). Native source ACLs
@@ -51,7 +56,14 @@ export function permissionBasisForRagMetadata(
 
   const tenantId = normalized(metadata?.tenant_id);
   const contextTenantId = normalized(context.tenantId);
-  if (tenantId && contextTenantId && tenantId !== contextTenantId) {
+  if (tenantId && tenantId !== contextTenantId) {
+    return null;
+  }
+
+  // A workspace is a narrowing boundary, never an independent grant. Missing or mismatched
+  // context denies before owner/group/public checks, so knowing a workspace ID is insufficient.
+  const workspaceId = exactIdentity(metadata?.workspace_id);
+  if (workspaceId && workspaceId !== exactIdentity(context.workspaceId)) {
     return null;
   }
 
@@ -79,7 +91,10 @@ export function permissionBasisForRagMetadata(
     return 'group';
   }
 
-  const hasAcl = Boolean(ownerSub || allowedUsers.length > 0 || allowedGroups.length > 0 || tenantId);
+  const visibility = normalized(metadata?.visibility);
+  const visibilityRestricts = Boolean(visibility && visibility !== 'shared');
+  const hasAcl = Boolean(ownerSub || allowedUsers.length > 0 || allowedGroups.length > 0
+    || tenantId || workspaceId || visibilityRestricts);
   if (!hasAcl && context.allowPublic) {
     return 'public';
   }

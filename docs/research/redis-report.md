@@ -4,6 +4,7 @@
   SEQ                 | AUTHOR                      | DESCRIPTION
   =============================================================================
   1 | maintainer@emeraldcoastsystemsgroup.com   | Added Redis scheduler report with live verification results, runtime status, and remaining risks
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Reconciled the report with owner-scoped schedule ids, manifest-owned job reservations, and the authenticated legacy-execute boundary; retained the dated live evidence unchanged.
 -->
 
 # Redis Report
@@ -19,6 +20,11 @@ This report covers the Redis-backed self-scheduling path in `oshal`, the `agent-
 - The standalone chat settings modal now includes a **Redis Scheduler Report** block in the Tools panel.
 - The `agent-scheduler` tool remains the switch-framework control for self-scheduling capability.
 - Schedule execution is now blocked when the `agent-scheduler` tool is `off` for the target bot.
+- User-created schedule ids are scoped by exact owner and exact task type. Reusing a task type in a
+  second tenant creates a separate record instead of replacing the first tenant's job.
+- Manifest-derived `app:` and `app-route:` schedules are lifecycle-owned by reviewed package
+  manifests and are immutable through the user API. Workflow-ticket schedules are operator-only.
+- The legacy execute callback enforces the same ownership check as the by-id trigger route.
 - Bot profile pictures are now uploaded as files and stored in the agent profile record instead of requiring an external URL.
 
 ## Live Verification
@@ -66,6 +72,8 @@ That is now fixed by waiting for Redis readiness before command dispatch.
 
 ## Remaining Risks
 
-- Scheduler endpoints under `/api/v1/agent` still need production hardening if they will be exposed beyond trusted internal use.
+- The `/api/v1/agent` scheduler surface is authenticated and owner-scoped, but any future task
+  namespace that dispatches privileged system work must be added to the controller's reservation
+  policy before it is exposed to user-authored schedules.
 - Multi-replica scheduler locking is still not implemented; current polling is single-process safe, not distributed-safe.
 - The report is diagnostic only. There is still no first-class schedule creation/edit UI comparable to the old any-bot scheduling screens.

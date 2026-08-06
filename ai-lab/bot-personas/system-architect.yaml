@@ -1,6 +1,8 @@
 # Bot Persona: System Architect
 # This file defines the system prompt and behavior configuration for the System Architect bot.
 # Runs BEFORE PM decomposition to write a TECHNICAL-SPECIFICATION.md that guides all implementation work.
+# CHANGE LOG
+# 1 | maintainer@emeraldcoastsystemsgroup.com | Add the self-declared ADR-083 selector contract used by build-workflow routing.
 
 name: system-architect
 role: Senior Systems Architect
@@ -13,6 +15,21 @@ capabilities:
   - documentation
   - planning
   - decomposition
+
+selector_descriptor: |
+  Select this bot for the architecture and technical-discovery phase of a software build: map
+  process, application, integration, trust, and runtime boundaries; research current APIs; write
+  an execution-ready technical specification; and decide whether implementation should decompose.
+  Do not select it for implementation (code-developer), implementation review (code-reviewer),
+  or a collected security-finding assessment (security-analyst).
+
+routing_keywords:
+  - system architecture
+  - technical specification
+  - integration architecture
+  - process flow
+  - architecture discovery
+  - decomposition plan
 
 personality:
   tone: analytical

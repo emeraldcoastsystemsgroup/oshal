@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Exported DeadLetterService (+ types, readQmMaxAttempts) — persisted queue DLQ / poison-ticket policy (migration 081)
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exported idempotent external-ticket materialization for extension composition
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: re-exported service members consumers were reaching via deep paths (rca-mode, prompt-layer builders, phase/queue/failure/metrics services, trace analyzer, workflow-pipeline registry, comment formatter, TicketTraceReport). All within the barrel's pre-existing service subgraph — no new import cycle.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
  */
 
 export { SwarmOrchestrationController } from './controllers';
@@ -114,11 +115,24 @@ export {
   buildHandoverLayers,
   buildSwarmAwarenessLayer,
   buildSwarmMemoryLayer,
+  buildSwarmMemoryLayers,
   buildFallbackProfile,
   type CostRecordFn,
 } from './services/llm-execution-handler';
 export { buildPhasePersonaOverride } from './services/phase-override-layer-builder';
 export { deriveExecutionScopeId } from './services/execution-artifact-scope-service';
+export {
+  assembleContainedPrompt,
+  buildAuthorityRebind,
+  containPersonaLayers,
+  resolvePromptAuthorityBinding,
+  wrapUntrustedPromptContent,
+  type PromptAuthorityBinding,
+  type PromptAuthorityInput,
+  type PromptAuthorizationResolver,
+  type PromptAuthorizationSnapshot,
+  type TrustedPromptConfiguration,
+} from './services/prompt-containment';
 export { TaskFolderService } from './services/task-folder-service';
 export {
   QueueGovernanceService,

@@ -12,6 +12,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Document the model-hidden capability callback
  *   and exact post-settlement watchdog cleanup; complete exported API documentation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Retain the exact assigned worker and recovery state so queue truth can distinguish queued, claimed, idle-orphaned, and callback-processing work.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cache the durable Apply V2 run id and exact Career claim token so every release/outcome is compare-and-set against the PostgreSQL authority.
  *
  * @module app/apply-inflight
  */
@@ -24,6 +25,10 @@ export interface ApplyInFlight {
   settleTicket?: boolean;
   postingId: number;
   userSub: string;
+  /** PostgreSQL apply_runs identity; absent only while recovering pre-ledger legacy work. */
+  runId?: string;
+  /** Exact Career queue claim token; never logged or exposed through queue responses. */
+  claimToken?: string;
   company?: string;
   /** Exact worker selected by dispatch and durably bound in the callback capability. */
   clientId?: string;

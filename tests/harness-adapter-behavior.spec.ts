@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Behavior tests for BaseCliHarnessAdapter + adapter parse paths (no live CLI / no docker)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 idle-timeout semantics: an actively-streaming child survives past timeoutMs (output refreshes the timer), a silent child still dies at timeoutMs, and maxDurationMs hard-caps a chatty runaway. Real subprocesses, no mocks.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: CLI scoping leases publish exact owner identity only and scrub every ambient OSHAL_CRED_* variable; no credential file is materialized.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: prove the live base health probe excludes ambient NODE_OPTIONS from its real Node subprocess.
  */
 
 import { test, expect } from '@playwright/test';
@@ -44,9 +46,8 @@ class TestSubclass extends BaseCliHarnessAdapter {
     env: Record<string, string>,
     workspacePath: string,
     userSub?: string,
-    creds?: Record<string, string>,
   ): Promise<() => void> {
-    return this.acquireUserScopingLease(env, workspacePath, userSub, creds);
+    return this.acquireUserScopingLease(env, workspacePath, userSub);
   }
 }
 
@@ -163,32 +164,45 @@ test.describe('BaseCliHarnessAdapter — subprocess plumbing', () => {
     expect(usage.totalTokens).toBe(6);
   });
 
-  test('healthCheck returns true when the probed binary exists (node)', async () => {
+  test('healthCheck excludes ambient process options from the real diagnostic child', async () => {
     const sub = new TestSubclass();
-    const ok = await sub.healthCheck();
-    expect(ok).toBe(true);
+    const previousNodeOptions = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = '--oshal-invalid-health-probe-option';
+    try {
+      // Raw process.env inheritance makes `node --version` fail on the invalid option. A
+      // successful result therefore crosses the actual healthCheck -> spawn boundary and proves
+      // the diagnostic allowlist, rather than merely testing a standalone environment helper.
+      await expect(sub.healthCheck()).resolves.toBe(true);
+    } finally {
+      if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = previousNodeOptions;
+    }
   });
 });
 
-test.describe('BaseCliHarnessAdapter brokered credential isolation', () => {
-  test('serializes a shared workspace and exposes only each invocation credential', async () => {
+test.describe('BaseCliHarnessAdapter credential isolation', () => {
+  test('serializes exact identity markers and scrubs ambient connector credentials', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-ts-scope-'));
     const sub = new TestSubclass();
     try {
-      const shoppingEnv: Record<string, string> = {};
+      const shoppingEnv: Record<string, string> = {
+        OSHAL_CRED_WALMART: 'walmart-token',
+        OSHAL_CRED_UNKNOWN: 'unknown-token',
+      };
       const releaseShopping = await sub.publicAcquireUserScopingLease(
         shoppingEnv, dir, 'owner-1',
-        { OSHAL_CRED_WALMART: 'walmart-token', PATH: '/forbidden' },
       );
-      expect(shoppingEnv.OSHAL_CRED_WALMART).toBe('walmart-token');
-      expect(shoppingEnv.PATH).toBeUndefined();
-      expect(fs.existsSync(path.join(dir, '.oshal-cred-walmart'))).toBe(true);
+      expect(shoppingEnv.OSHAL_USER_SUB).toBe('owner-1');
+      expect(shoppingEnv.OSHAL_CRED_WALMART).toBeUndefined();
+      expect(shoppingEnv.OSHAL_CRED_UNKNOWN).toBeUndefined();
+      expect(fs.readFileSync(path.join(dir, '.oshal-user-sub'), 'utf8')).toBe('owner-1');
+      expect(fs.existsSync(path.join(dir, '.oshal-cred-walmart'))).toBe(false);
       expect(fs.existsSync(path.join(dir, '.oshal-cred-uber'))).toBe(false);
 
-      const eatsEnv: Record<string, string> = {};
+      const eatsEnv: Record<string, string> = { OSHAL_CRED_UBER: 'uber-token' };
       let eatsAcquired = false;
       const releaseEatsPromise = sub.publicAcquireUserScopingLease(
-        eatsEnv, dir, 'owner-1', { OSHAL_CRED_UBER: 'uber-token' },
+        eatsEnv, dir, 'owner-2',
       ).then((release) => {
         eatsAcquired = true;
         return release;
@@ -199,14 +213,13 @@ test.describe('BaseCliHarnessAdapter brokered credential isolation', () => {
       releaseShopping();
       const releaseEats = await releaseEatsPromise;
       expect(fs.existsSync(path.join(dir, '.oshal-cred-walmart'))).toBe(false);
-      expect(fs.readFileSync(path.join(dir, '.oshal-cred-uber'), 'utf8')).toBe('uber-token');
-      releaseShopping();
-      expect(fs.existsSync(path.join(dir, '.oshal-cred-uber'))).toBe(true);
-      if (process.platform !== 'win32') {
-        expect(fs.statSync(path.join(dir, '.oshal-cred-uber')).mode & 0o777).toBe(0o600);
-      }
-      releaseEats();
       expect(fs.existsSync(path.join(dir, '.oshal-cred-uber'))).toBe(false);
+      expect(eatsEnv.OSHAL_CRED_UBER).toBeUndefined();
+      expect(fs.readFileSync(path.join(dir, '.oshal-user-sub'), 'utf8')).toBe('owner-2');
+      releaseShopping();
+      expect(fs.readFileSync(path.join(dir, '.oshal-user-sub'), 'utf8')).toBe('owner-2');
+      releaseEats();
+      expect(fs.existsSync(path.join(dir, '.oshal-user-sub'))).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

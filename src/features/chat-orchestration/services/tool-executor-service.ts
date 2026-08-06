@@ -17,6 +17,8 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: model-supplied `headers` in a route-backed api tool's input could OVERRIDE the framework's own trust headers. They were spread LAST over X-Service-Secret and X-OSHAL-User-Sub, and toolInput is the raw tool_use block from the LLM (agentic-loop passes block.input straight through, unvalidated against inputSchema) — so a prompt injection could pick which user the service-secret call acted for. buildDynamicApiHeaders now spreads the model's record FIRST and strips every trust header from it case-insensitively; identity and the service secret are never the model's to set. Guarded by tests/unit/tool-executor-api-route.spec.ts.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Send framework-owned user identity through the canonical base64url trusted-service header and strip that header from model input too, preserving exact subject case/whitespace without reopening header override.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Replace the dynamic CLI's best-effort identity write with the shared exact-subject, link-safe atomic writer; serialize same-workspace invocations and remove only the identity file each invocation still owns.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny model-driven RAG ingestion into kernel-owned swarm collections.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: execute dynamic CLI tools with an explicit OS/runtime allowlist instead of the controller environment; retain only the exact caller identity marker.
  */
 
 import fs from 'fs';
@@ -25,7 +27,7 @@ import { exec as execCallback, execFile as execFileCallback } from 'child_proces
 import { promisify } from 'util';
 import { createChildLogger } from '@/shared/logger';
 import { readRagRuntimeSettings } from '@/shared/services';
-import { RagService, type RagPermissionContext } from '@/features/rag';
+import { assertGenericRagCollection, RagService, type RagPermissionContext } from '@/features/rag';
 import { StreamManager } from '@/features/streaming';
 import { renderPptx, isThemeId, isLayoutId, type RenderableSlide } from '@/features/presentation-generation';
 import {
@@ -47,6 +49,24 @@ const execFileAsync = promisify(execFileCallback);
 const logger = createChildLogger({ module: 'tool-executor-service' });
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+const TOOL_PROCESS_ENV_KEYS = [
+  'PATH', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ',
+] as const;
+
+/** Build a minimal dynamic-tool environment without controller, database, or connector secrets. */
+export function buildDynamicToolProcessEnv(
+  userSub: string | undefined,
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of TOOL_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  if (userSub !== undefined) env.OSHAL_USER_SUB = userSub;
+  return env;
+}
 
 /**
  * Headers that carry TRUST and are therefore owned exclusively by the framework, never by tool
@@ -279,7 +299,7 @@ export class ToolExecutorService {
         timeout: timeoutMs,
         maxBuffer: 4 * 1024 * 1024,
         encoding: 'utf8',
-        env: scope.userSub === undefined ? process.env : { ...process.env, OSHAL_USER_SUB: scope.userSub },
+        env: buildDynamicToolProcessEnv(scope.userSub),
       });
 
       return this.limitOutput(this.formatCommandResult(command, String(stdout), String(stderr), 0));
@@ -645,6 +665,10 @@ export class ToolExecutorService {
     const content = this.readRequiredString(toolInput.content, 'content');
     const metadata = this.readRecord(toolInput.metadata) || {};
     const ragConfig = readRagRuntimeSettings();
+    const collection = this.readOptionalString(toolInput.collection)
+      || this.readOptionalString(ragConfig.defaultCollection)
+      || 'default';
+    assertGenericRagCollection(collection);
     const configuredEndpoint = this.readOptionalString(process.env.RAG_INGESTION_ENDPOINT)
       || this.readOptionalString(ragConfig.endpoint);
 
@@ -658,9 +682,6 @@ export class ToolExecutorService {
       return this.limitOutput(JSON.stringify(result, null, 2));
     }
 
-    const collection = this.readOptionalString(toolInput.collection)
-      || this.readOptionalString(ragConfig.defaultCollection)
-      || 'default';
     const ragService = new RagService();
     const normalizedMetadata = this.normalizeMetadata({
       ...metadata,

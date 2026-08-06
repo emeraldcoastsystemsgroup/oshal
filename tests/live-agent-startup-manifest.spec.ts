@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added regression coverage to preserve shared OpenAI Codex runtime credentials even when persisted global provider selection is not Codex
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added regression coverage for live agent startup manifest assembly and agentId propagation
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove trusted direct-mode system prompts retain bot attribution while bypassing filesystem persona resolution.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: require per-task compatibility state to be plan-only, credential-free, and MCP-empty while autonomous Cline execution is disabled.
  */
 
 import fs from 'fs';
@@ -119,7 +120,7 @@ test.describe('Live Agent Startup Manifest', () => {
     expect(JSON.stringify(manifest)).not.toContain('super-secret-api-key');
   });
 
-  test('builds session MCP settings and runtime config inside the task workspace', async () => {
+  test('builds non-secret plan-only compatibility state inside the task workspace', async () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-runtime-root-'));
     const outputRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-output-root-'));
     const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-workspace-'));
@@ -153,24 +154,34 @@ test.describe('Live Agent Startup Manifest', () => {
       fs.readFileSync(path.join(sessionRuntime.configDir, 'data', 'globalState.json'), 'utf8'),
     ) as Record<string, any>;
     const sessionMcpSettings = JSON.parse(fs.readFileSync(sessionRuntime.mcpSettingsPath, 'utf8')) as Record<string, any>;
+    const sessionSecrets = JSON.parse(
+      fs.readFileSync(path.join(sessionRuntime.configDir, 'data', 'secrets.json'), 'utf8'),
+    ) as Record<string, unknown>;
 
+    expect(sessionGlobalState.mode).toBe('plan');
+    expect(sessionGlobalState.yoloModeToggled).toBe(false);
+    expect(sessionGlobalState.autoApprovalSettings.enabled).toBe(false);
+    expect(Object.values(sessionGlobalState.autoApprovalSettings.actions).every((value) => value === false)).toBe(true);
     expect(sessionGlobalState.focusChainSettings).toEqual({
       enabled: false,
       remindClineInterval: 0,
     });
-    expect(sessionMcpSettings.mcpServers['chroma-mcp']).toBeUndefined();
-    expect(sessionMcpSettings.mcpServers['google-search-mcp'].url).toBe('http://google-search-mcp.custom:8090');
-    expect(sessionMcpSettings.mcpServers['presentron-mcp'].url).toBe('http://presentron-mcp.custom:8081');
-    expect(sessionMcpSettings.mcpServers.filesystem.command).toBe('npx');
+    expect(sessionMcpSettings.mcpServers).toEqual({});
+    expect(sessionSecrets).toEqual({});
+    expect(JSON.stringify({ sessionGlobalState, sessionMcpSettings, sessionSecrets })).not.toContain('secret');
   });
 
-  test('preserves shared OpenAI Codex credentials in runtime sync even when another provider is selected', async () => {
+  test('tombstones legacy Cline credentials even when server storage contains another provider token', async () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-runtime-root-'));
     const outputRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-output-root-'));
 
     fs.mkdirSync(path.join(runtimeRoot, 'data'), { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, 'config.json'), JSON.stringify({ provider: 'claude-code' }, null, 2));
     fs.writeFileSync(path.join(runtimeRoot, 'data', 'globalState.json'), JSON.stringify({ mode: 'act' }, null, 2));
+    fs.writeFileSync(
+      path.join(runtimeRoot, 'data', 'secrets.json'),
+      JSON.stringify({ 'openai-codex-oauth-credentials': 'legacy-runtime-access-token' }),
+    );
     fs.writeFileSync(
       path.join(outputRoot, 'global-config.json'),
       JSON.stringify({
@@ -197,8 +208,8 @@ test.describe('Live Agent Startup Manifest', () => {
     const secrets = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'data', 'secrets.json'), 'utf8')) as Record<string, string>;
 
     expect(selection.provider).toBe('claude-code');
-    expect(secrets['openai-codex-oauth-credentials']).toBeTruthy();
-    expect(secrets['openai-codex-oauth-credentials']).toContain('access-token');
+    expect(secrets).toEqual({});
+    expect(JSON.stringify(secrets)).not.toContain('access-token');
   });
 
   test('passes agentId through the agentic loop provider call', async () => {

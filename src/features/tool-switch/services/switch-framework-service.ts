@@ -6,15 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of SwitchFrameworkService for Layer 1 Tools Framework
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Returned full tool catalog with effective per-agent auth modes so chat configuration can render switch state before explicit assignments
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added default unified auth config generation and per-tool runtime configuration persistence
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Disable persisted free-form verification and cleanup shell commands on HTTP-driven grant transitions; non-NONE installation now fails closed for reviewed out-of-band provisioning.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Make unattended isToolEnabled checks exact-AUTO so ASK remains a pending decision rather than an executable grant.
  */
 
 import { logger } from '@/shared/logger';
 import { AuthMode, Tool, InstallMethod, ToolAuthType } from '@/shared/types/tool';
 import { AgentToolRepository, ToolRepository } from '@/entities/tool';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
 
 /**
  * @description Service for managing tool authorization modes and installation state.
@@ -59,48 +57,44 @@ export class SwitchFrameworkService {
       throw new Error(error);
     }
 
-    // Set the new auth mode
+    // Preflight an enable before changing the durable grant. Persisted install/verify shell
+    // strings are legacy data, not reviewed executable policy; a non-NONE tool must be
+    // provisioned out of band before an HTTP grant can make it available.
+    if (authMode !== 'off' && !currentlyInstalled) {
+      const installResult = await this.installTool(agentId, tool);
+      if (!installResult.success) {
+        return {
+          success: false,
+          message: `Tool grant unchanged: ${installResult.error}`,
+          installed: false,
+        };
+      }
+    }
+
     await this.agentToolRepo.setAuthMode(agentId, toolId, authMode);
     this.logger.info(
       { agentId, toolId, oldMode: currentAuthMode, newMode: authMode },
       'Auth mode updated'
     );
 
-    // Handle installation state transitions
-    if (authMode !== 'off' && currentAuthMode === 'off' && !currentlyInstalled) {
-      // Transitioning from off to ask/auto - install tool
-      const installResult = await this.installTool(agentId, tool);
-      if (installResult.success) {
-        await this.agentToolRepo.markInstalled(agentId, toolId);
-        return {
-          success: true,
-          message: `Auth mode set to ${authMode} and tool installed`,
-          installed: true,
-        };
-      } else {
-        return {
-          success: true,
-          message: `Auth mode set to ${authMode}, but installation failed: ${installResult.error}`,
-          installed: false,
-        };
-      }
-    } else if (authMode === 'off' && currentlyInstalled) {
-      // Transitioning to off - uninstall tool
-      const uninstallResult = await this.uninstallTool(agentId, tool);
-      if (uninstallResult.success) {
-        await this.agentToolRepo.markUninstalled(agentId, toolId);
-        return {
-          success: true,
-          message: `Auth mode set to off and tool uninstalled`,
-          installed: false,
-        };
-      } else {
-        return {
-          success: true,
-          message: `Auth mode set to off, but uninstallation failed: ${uninstallResult.error}`,
-          installed: true,
-        };
-      }
+    if (authMode !== 'off' && !currentlyInstalled) {
+      await this.agentToolRepo.markInstalled(agentId, toolId);
+      return {
+        success: true,
+        message: `Auth mode set to ${authMode}; no-process installation verified`,
+        installed: true,
+      };
+    }
+
+    if (authMode === 'off' && currentlyInstalled) {
+      // Disabling is always safe and never invokes a persisted cleanup command.
+      await this.uninstallTool(agentId, tool);
+      await this.agentToolRepo.markUninstalled(agentId, toolId);
+      return {
+        success: true,
+        message: 'Auth mode set to off and tool marked uninstalled',
+        installed: false,
+      };
     }
 
     // No installation state change needed (ask ↔ auto, or already in correct state)
@@ -137,41 +131,42 @@ export class SwitchFrameworkService {
     const currentAgentTools = await this.agentToolRepo.getAgentTools(agentId);
     const installResults: Record<string, boolean> = {};
 
-    // Set auth mode for all tools in group
+    // Preflight every newly-enabled member before the bulk write. One legacy install method
+    // blocks the entire transition, preventing a half-applied group and preventing any persisted
+    // verification command from becoming an HTTP-triggered shell program.
+    if (authMode !== AuthMode.OFF) {
+      for (const tool of toolsInGroup) {
+        const currentTool = currentAgentTools.find((entry) => entry.toolId === tool.toolId);
+        if (!currentTool?.installed) {
+          const installResult = await this.installTool(agentId, tool);
+          installResults[tool.name] = installResult.success;
+          if (!installResult.success) {
+            this.logger.warn(
+              { agentId, toolId: tool.toolId, groupName },
+              'Tool group grant refused by no-shell installation policy',
+            );
+            return { success: false, count: 0, installResults };
+          }
+        }
+      }
+    }
+
     const count = await this.agentToolRepo.setGroupAuthMode(agentId, groupName, authMode);
 
-    // Handle installation state transitions for each tool
+    // Persist installation flags only after the atomic authorization-mode update. Disabling never
+    // invokes cleanupCommand; it only revokes the grant and records the safe logical state.
     for (const tool of toolsInGroup) {
       const currentTool = currentAgentTools.find((at) => at.toolId === tool.toolId);
       const currentAuthMode = currentTool?.authMode || 'off';
       const currentlyInstalled = currentTool?.installed || false;
 
-      if (authMode !== 'off' && currentAuthMode === 'off' && !currentlyInstalled) {
-        // Install tool
-        const installResult = await this.installTool(agentId, tool);
-        if (installResult.success) {
-          await this.agentToolRepo.markInstalled(agentId, tool.toolId);
-          installResults[tool.name] = true;
-        } else {
-          this.logger.warn(
-            { agentId, toolId: tool.toolId, error: installResult.error },
-            'Tool installation failed during group auth mode change'
-          );
-          installResults[tool.name] = false;
-        }
+      if (authMode !== 'off' && !currentlyInstalled) {
+        await this.agentToolRepo.markInstalled(agentId, tool.toolId);
+        installResults[tool.name] = true;
       } else if (authMode === 'off' && currentlyInstalled) {
-        // Uninstall tool
-        const uninstallResult = await this.uninstallTool(agentId, tool);
-        if (uninstallResult.success) {
-          await this.agentToolRepo.markUninstalled(agentId, tool.toolId);
-          installResults[tool.name] = true;
-        } else {
-          this.logger.warn(
-            { agentId, toolId: tool.toolId, error: uninstallResult.error },
-            'Tool uninstallation failed during group auth mode change'
-          );
-          installResults[tool.name] = false;
-        }
+        await this.uninstallTool(agentId, tool);
+        await this.agentToolRepo.markUninstalled(agentId, tool.toolId);
+        installResults[tool.name] = true;
       }
     }
 
@@ -184,8 +179,8 @@ export class SwitchFrameworkService {
   }
 
   /**
-   * @description Installs a tool based on its install_spec configuration.
-   * Handles different installation methods (apt, npm, pip, binary, script, none).
+   * @description Applies the no-process installation policy for HTTP grant transitions.
+   * Only `none` is accepted. Persisted scripts and verify commands are data and are never run.
    * 
    * @param agentId - The UUID of the agent (for logging)
    * @param tool - The Tool object with install_spec
@@ -195,66 +190,26 @@ export class SwitchFrameworkService {
     agentId: string,
     tool: Tool
   ): Promise<{ success: boolean; error?: string }> {
-    const { installSpec } = tool;
-    const { method, verifyCommand, cleanupCommand } = installSpec;
+    const { method } = tool.installSpec;
 
     this.logger.info(
-      { agentId, toolId: tool.toolId, method, verifyCommand },
-      'Installing tool'
+      { agentId, toolId: tool.toolId, method },
+      'Evaluating no-process tool installation policy'
     );
 
-    // Handle NONE method - no installation needed
     if (method === InstallMethod.NONE) {
       this.logger.info({ agentId, toolId: tool.toolId }, 'Tool requires no installation');
       return { success: true };
     }
 
-    // Validate verifyCommand exists
-    if (!verifyCommand) {
-      const error = 'Verify command not specified in install_spec';
-      this.logger.error({ agentId, toolId: tool.toolId }, error);
-      throw new Error(error);
-    }
-
-    try {
-      // Execute installation verify command
-      const { stdout, stderr } = await execAsync(verifyCommand);
-
-      this.logger.info(
-        { agentId, toolId: tool.toolId, stdout, stderr },
-        'Installation verify command output'
-      );
-
-      // Verify installation if verifyCommand is provided
-      if (verifyCommand) {
-        try {
-          await execAsync(verifyCommand);
-          this.logger.info({ agentId, toolId: tool.toolId }, 'Tool installation verified');
-        } catch (verifyError) {
-          const error = 'Installation verification failed';
-          this.logger.warn(
-            { agentId, toolId: tool.toolId, verifyError },
-            error
-          );
-          return { success: false, error };
-        }
-      }
-
-      this.logger.info({ agentId, toolId: tool.toolId }, 'Tool installed successfully');
-      return { success: true };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        { err: error, agentId, toolId: tool.toolId },
-        'Tool installation failed'
-      );
-      return { success: false, error: errorMessage };
-    }
+    const error = `Install method '${method}' requires reviewed out-of-band provisioning; persisted shell commands are disabled`;
+    this.logger.warn({ agentId, toolId: tool.toolId, method }, error);
+    return { success: false, error };
   }
 
   /**
-   * @description Uninstalls a tool based on its install_spec configuration.
-   * Uses cleanupCommand if provided, otherwise uses method-specific defaults.
+   * @description Records the safe logical uninstall step. A cleanup command stored in a manifest
+   * is deliberately ignored; revocation must never become arbitrary shell execution.
    * 
    * @param agentId - The UUID of the agent (for logging)
    * @param tool - The Tool object with install_spec
@@ -264,42 +219,11 @@ export class SwitchFrameworkService {
     agentId: string,
     tool: Tool
   ): Promise<{ success: boolean; error?: string }> {
-    const { installSpec } = tool;
-    const { method, cleanupCommand } = installSpec;
-
     this.logger.info(
-      { agentId, toolId: tool.toolId, method, cleanupCommand },
-      'Uninstalling tool'
+      { agentId, toolId: tool.toolId, method: tool.installSpec.method },
+      'Tool marked uninstalled without executing persisted cleanup commands',
     );
-
-    // If no cleanup command, log warning and return success
-    // (Tool may not support uninstallation or may require manual removal)
-    if (!cleanupCommand) {
-      this.logger.warn(
-        { agentId, toolId: tool.toolId },
-        'No cleanup command specified - marking as uninstalled without execution'
-      );
-      return { success: true };
-    }
-
-    try {
-      // Execute cleanup command
-      const { stdout, stderr } = await execAsync(cleanupCommand);
-
-      this.logger.info(
-        { agentId, toolId: tool.toolId, stdout, stderr },
-        'Cleanup command output'
-      );
-      this.logger.info({ agentId, toolId: tool.toolId }, 'Tool uninstalled successfully');
-      return { success: true };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        { err: error, agentId, toolId: tool.toolId },
-        'Tool uninstallation failed'
-      );
-      return { success: false, error: errorMessage };
-    }
+    return { success: true };
   }
 
   /**
@@ -377,15 +301,15 @@ export class SwitchFrameworkService {
   }
 
   /**
-   * @description Determines whether a named tool is currently enabled for an agent.
+   * @description Determines whether a named tool may execute unattended for an agent.
    *
    * @param agentId - The UUID of the agent
    * @param toolName - Stable tool registry name
-   * @returns True when the tool is enabled (`auth_mode != off`)
+   * @returns True only when the durable grant is exactly `auto`; ASK still needs a decision.
    */
   async isToolEnabled(agentId: string, toolName: string): Promise<boolean> {
-    const enabledTools = await this.getEnabledTools(agentId);
-    return enabledTools.some((tool) => tool.name === toolName);
+    const executableTools = await this.agentToolRepo.getAutoExecutableTools(agentId);
+    return executableTools.some((tool) => tool.name === toolName);
   }
 
   /**

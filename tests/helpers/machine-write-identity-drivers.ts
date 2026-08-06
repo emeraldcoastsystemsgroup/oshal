@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the machine-write HTTP driver infrastructure and the five final proof-debt drivers from the class-gate spec so both files remain below the repository code-line decomposition threshold.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Name deterministic test credentials as placeholders so the fail-closed repository secret scanner can distinguish fixtures from deployable secret material.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove CORE-05 live verification preserves one operator PAT owner across its loopback message request and into the owner-scoped chat-task write seam.
  */
 
 import crypto from 'node:crypto';
@@ -15,6 +16,7 @@ import express from 'express';
 import { vi } from 'vitest';
 import {
   getRequestIdentity,
+  runWithRequestIdentity,
   type RequestIdentity,
 } from '@/shared/services/database/request-identity';
 import { A2A_TOKEN_PREFIX, ownerSubForA2aAgent } from '@/features/a2a-gateway';
@@ -28,9 +30,11 @@ import { createA2aRpcHandler } from '@/app/routes/a2a-routes';
 import { createRemoteClientRoutes } from '@/app/routes/remote-client-routes';
 import { createCliTokenAuthMiddleware, generateCliToken } from '@/app/routes/cli-token-routes';
 import { createLocalAuthRoutes } from '@/app/routes/local-auth-routes';
+import { createInstallVerificationRoutes } from '@/app/routes/install-verification-routes';
+import { createMessageRoutes } from '@/app/routes/message-routes';
 import { authorizeBotNodeExecutionCall } from '@/app/bot-node-request-auth';
 import { runBotNodeExecutionWithSystemIdentity } from '@/app/bot-node-request-identity';
-import { serviceSecretOr } from '@/shared/middleware/authz';
+import { getCaller, isOperator, serviceSecretOr } from '@/shared/middleware/authz';
 import { InMemoryRemoteTaskJournalFixture } from './in-memory-remote-task-journal';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -350,11 +354,82 @@ async function driveLocalAuthIdentity(): Promise<WriteObservation[]> {
   return observations;
 }
 
-/** The five formerly deferred machine-write proofs extracted from the class-gate spec. */
+const INSTALL_VERIFY_PAT = `oshal_pat_${'b'.repeat(48)}`;
+const INSTALL_VERIFY_OWNER = 'auth0|install-verification-owner';
+
+/** PostgreSQL seam for real PAT authentication plus the post-generation ledger read. */
+function installVerificationPool() {
+  return {
+    query: async (sql: string) => {
+      if (/SELECT id, user_sub/i.test(sql)) return { rows: [{
+        id: 'install-verification-pat', user_sub: INSTALL_VERIFY_OWNER, email: 'operator@example.test',
+        node_client_id: null, principal_issuer: null,
+      }], rowCount: 1 };
+      if (/FROM chat_tasks/i.test(sql)) return { rows: [{
+        provider_id: 'identity-provider', total_input_tokens: 2, total_output_tokens: 1,
+        total_cost: 0.001, total_requests: 1, usage_by_model: { 'identity-model': { requestCount: 1 } },
+      }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+}
+
+/** Production-shaped PAT identity binding used on both sides of the verifier loopback call. */
+const bindPatIdentity: express.RequestHandler = (req, _res, next) => {
+  runWithRequestIdentity({ sub: getCaller(req).sub, isOperator: isOperator(req) }, () => next());
+};
+
+/** Minimal requiresAuth equivalent: the production PAT middleware must have established a user. */
+const requirePatUser: express.RequestHandler = (req, res, next) => {
+  if (getCaller(req).sub) { next(); return; }
+  res.status(401).json({ error: 'unauthorized' });
+};
+
+/** Serve the ordinary message route and observe its owner-scoped orchestrator persistence seam. */
+async function serveInstallVerificationTarget(observations: WriteObservation[]) {
+  const pool = installVerificationPool();
+  const ctx = {
+    pool, taskStore: { get: async () => null }, ticketService: {},
+    workspaceService: { resolveTaskOwner: async () => null },
+    orchestrator: { processMessage: async (_taskId: string, _text: string, options: { userSub?: string }) => {
+      observations.push({ identity: getRequestIdentity(), ownerValue: options.userSub, label: 'chat_tasks write seam' });
+      return { success: true, response: 'OSHAL_LIVE_OK' };
+    } },
+  };
+  const router = express.Router();
+  router.use(createCliTokenAuthMiddleware(pool as never), bindPatIdentity, serviceSecretOr(requirePatUser));
+  router.use(createMessageRoutes(ctx as never));
+  return serve('/api', router);
+}
+
+/** Drive the PAT-only live verifier through its real second HTTP authentication boundary. */
+async function driveInstallVerificationIdentity(): Promise<WriteObservation[]> {
+  vi.stubEnv('OSHAL_OPERATOR_SUBS', INSTALL_VERIFY_OWNER);
+  vi.stubEnv('OSHAL_NO_AI', 'false');
+  const observations: WriteObservation[] = [];
+  const target = await serveInstallVerificationTarget(observations);
+  const pool = installVerificationPool();
+  const router = express.Router();
+  router.use(createCliTokenAuthMiddleware(pool as never), bindPatIdentity, serviceSecretOr(requirePatUser));
+  router.use(createInstallVerificationRoutes(
+    { pool } as never, { getApp: async () => null } as never,
+    { apiBaseUrl: target.url, randomUUID: () => 'machine-write-identity' },
+  ));
+  const verifier = await serve('/api/install-verification', router);
+  try {
+    await requireHttpStatus(await fetch(`${verifier.url}/api/install-verification/live`, {
+      method: 'POST', headers: { authorization: `Bearer ${INSTALL_VERIFY_PAT}`, 'content-type': 'application/json' }, body: '{}',
+    }), 200, 'install live verification identity probe');
+  } finally { await Promise.all([verifier.close(), target.close()]); }
+  return observations;
+}
+
+/** Machine-write proofs extracted from the class-gate spec to keep it below the file cap. */
 export const MACHINE_WRITE_IDENTITY_RESIDUAL_DRIVERS: Record<string, MachineWriteIdentityDriver> = {
   'a2a-rpc': driveA2aRpcIdentity,
   'remote-client-plane': driveRemoteClientIdentity,
   'bot-node-swarm-execute': driveBotNodeIdentity,
   'cli-token-auth': driveCliTokenIdentity,
   'local-auth': driveLocalAuthIdentity,
+  'install-verification-live': driveInstallVerificationIdentity,
 };

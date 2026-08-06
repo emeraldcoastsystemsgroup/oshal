@@ -4,9 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real 375px-viewport scroll guard for the cockpit app shell. The only existing coverage for the flexbox scroll trap was tests/unit/cockpit-ticket-view-scroll.spec.ts, which REGEXES the stylesheet — it proves the declarations are written, never that Chromium lays them out that way, so a trap introduced by an ancestor rule (the actual failure mode: an intermediate flex item with a content-based automatic minimum size) passes it silently. These assertions measure real layout in a real engine: for each surface the designated scroll child must be the element that scrolls, its bottom edge must stay inside the viewport (content below the fold with no scroller is content a phone user can never reach), the app shell must not scroll the document, and nothing may widen the page horizontally. Covers the ticket detail (.td-body), the calendar grid and the settings pane — the audit list from the backlog item.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Close the mobile audit with real pinned-control and chat-sheet hit tests for calendar/settings plus an artifact/browser guard proving the unreachable legacy workboard CSS is no longer loaded or shipped
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /** iPhone SE / 6-8 portrait — the narrowest mainstream phone the cockpit has to survive. */
 const PHONE = { width: 375, height: 667 };
@@ -79,6 +82,16 @@ interface ScrollProbe {
   horizontalOverflowPx: number;
 }
 
+/** Layout facts for a primary control whose sibling content scrolls. */
+interface PinnedControlProbe {
+  controlVisible: boolean;
+  debug: string;
+  delta: number;
+  hitElement: string;
+  hitTested: boolean;
+  scrolledTo: number;
+}
+
 /**
  * @description Measure whether `scrollSel` is genuinely the scrolling element of `rootSel` at the
  * current viewport. `bottomOverflowPx > 0` is the failure that matters on a phone: the scroll box
@@ -121,6 +134,48 @@ async function probeScroll(page: Page, rootSel: string, scrollSel: string): Prom
 }
 
 /**
+ * @description Scroll the designated content child and measure that its primary control remains
+ * in the same visible, hit-testable viewport position.
+ * @param page - Playwright page.
+ * @param controlSel - Selector for the pinned primary controls.
+ * @param scrollSel - Selector for the content child that owns vertical scrolling.
+ * @returns Measured scroll offset and control-position facts.
+ */
+async function probePinnedControl(
+  page: Page,
+  controlSel: string,
+  scrollSel: string,
+): Promise<PinnedControlProbe> {
+  return page.evaluate(async ([controlSelector, scrollSelector]) => {
+    const control = document.querySelector(controlSelector) as HTMLElement;
+    const scroller = document.querySelector(scrollSelector) as HTMLElement;
+    const before = control.getBoundingClientRect();
+    scroller.scrollTop = 1_000_000;
+    await new Promise<void>((done) => requestAnimationFrame(() => done()));
+    const after = control.getBoundingClientRect();
+    const x = Math.min(window.innerWidth - 1, Math.max(0, after.left + after.width / 2));
+    const y = Math.min(window.innerHeight - 1, Math.max(0, after.top + after.height / 2));
+    const hit = document.elementFromPoint(x, y);
+    const chat = document.getElementById('chatPanel');
+    const chatRect = chat?.getBoundingClientRect();
+    return {
+      controlVisible: after.top >= -1 && after.bottom <= window.innerHeight + 1,
+      debug: JSON.stringify({
+        chatClass: chat?.className,
+        chatRect: chatRect && [chatRect.left, chatRect.top, chatRect.right, chatRect.bottom],
+        chatTransform: chat && getComputedStyle(chat).transform,
+        controlRect: [after.left, after.top, after.right, after.bottom],
+        point: [x, y],
+      }),
+      delta: Math.round(after.top - before.top),
+      hitElement: hit instanceof HTMLElement ? `${hit.tagName.toLowerCase()}.${hit.className}` : '',
+      hitTested: Boolean(hit && (hit === control || control.contains(hit))),
+      scrolledTo: scroller.scrollTop,
+    };
+  }, [controlSel, scrollSel] as [string, string]);
+}
+
+/**
  * @description Switch the cockpit to a view through the SAME entry point the ribbon button uses,
  * then wait for the surface root. Clicking through the phone drawer would test the drawer, which
  * tests/cockpit-mobile-drawer.spec.ts already owns.
@@ -135,11 +190,32 @@ async function openView(page: Page, viewId: string, rootSelector: string): Promi
     viewId,
   );
   await page.waitForSelector(rootSelector, { state: 'attached', timeout: 30000 });
+  await page.waitForFunction(() => {
+    const chat = document.getElementById('chatPanel');
+    return window.innerWidth > 640 || chat?.classList.contains('collapsed') === true;
+  });
 }
 
 test.describe('Cockpit at 375px — the designated scroll child is the element that scrolls', () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize(PHONE);
+  });
+
+  test('mobile chat sheet stays non-interactive until the user explicitly opens it', async ({ page }) => {
+    await page.goto('/cockpit/');
+    await page.waitForFunction(() => Boolean((window as unknown as { __cockpit?: unknown }).__cockpit));
+    const chat = page.locator('#chatPanel');
+    await expect(chat).toHaveClass(/collapsed/);
+    await expect(chat).toHaveCSS('pointer-events', 'none');
+    await page.locator('#agentsBtn').click();
+    await expect(chat).not.toHaveClass(/collapsed/);
+    await expect(chat).toHaveCSS('pointer-events', 'auto');
+    await page.evaluate(() => {
+      (window as unknown as { __cockpit: { toggleChatPanel: (show: boolean) => void } })
+        .__cockpit.toggleChatPanel(false);
+    });
+    await expect(chat).toHaveClass(/collapsed/);
+    await expect(chat).toHaveCSS('pointer-events', 'none');
   });
 
   test('ticket detail: .td-body scrolls, the pane does not, and nothing falls below the fold', async ({ page }) => {
@@ -208,6 +284,17 @@ test.describe('Cockpit at 375px — the designated scroll child is the element t
     expect(probe.scrolledTo).toBeGreaterThan(0);
   });
 
+  test('calendar: month navigation and schedule controls stay pinned above the scrolling grid', async ({ page }) => {
+    await mockTicketApis(page);
+    await page.goto('/cockpit/');
+    await openView(page, 'calendar', '.calendar-view');
+    const probe = await probePinnedControl(page, '.cal-toolbar', '.cal-grid-container');
+    expect(probe.scrolledTo).toBeGreaterThan(0);
+    expect(probe.delta).toBe(0);
+    expect(probe.controlVisible).toBe(true);
+    expect(probe.hitTested, `calendar control covered by ${probe.hitElement}: ${probe.debug}`).toBe(true);
+  });
+
   test('settings: .settings-content is the scroll child and stays inside the viewport', async ({ page }) => {
     await mockTicketApis(page);
     await page.goto('/cockpit/');
@@ -221,5 +308,28 @@ test.describe('Cockpit at 375px — the designated scroll child is the element t
     expect(probe.horizontalOverflowPx).toBeLessThanOrEqual(1);
     expect(probe.scrollerScrolls).toBe(true);
     expect(probe.scrolledTo).toBeGreaterThan(0);
+  });
+
+  test('settings: primary tabs stay pinned above the scrolling settings pane', async ({ page }) => {
+    await mockTicketApis(page);
+    await page.goto('/cockpit/');
+    await openView(page, 'settings', '.settings-view');
+    const probe = await probePinnedControl(page, '.settings-tab.active', '.settings-content');
+    expect(probe.scrolledTo).toBeGreaterThan(0);
+    expect(probe.delta).toBe(0);
+    expect(probe.controlVisible).toBe(true);
+    expect(probe.hitTested, `settings tab covered by ${probe.hitElement}: ${probe.debug}`).toBe(true);
+  });
+
+  test('retired workboard CSS is absent from both the browser shell and shipped source trees', async ({ page, request }) => {
+    await page.goto('/cockpit/');
+    const stylesheets = await page.locator('link[rel="stylesheet"]').evaluateAll((links) =>
+      links.map((link) => (link as HTMLLinkElement).href),
+    );
+    expect(stylesheets.some((href) => href.endsWith('/cockpit/css/workboard.css'))).toBe(false);
+    expect(existsSync(resolve(process.cwd(), 'src/pages/cockpit/css/workboard.css'))).toBe(false);
+    expect(existsSync(resolve(process.cwd(), 'src/api/cockpit/css/workboard.css'))).toBe(false);
+    const response = await request.get('/cockpit/css/workboard.css');
+    expect(response.status()).toBe(404);
   });
 });

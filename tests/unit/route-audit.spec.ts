@@ -23,6 +23,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the PROGRAMMATIC two-list sync check the backlog's done-when asks for, plus the method-coverage guard behind it. The scanner used to match only `app.use(` (its own docblock called app.get/app.post "out of scope"), so four unguarded inline-handler mounts were invisible to it and the Security Center reported "0 route_auth findings" while structurally blind — and two of the four ('/api/security/csp-report', '/api/branding') existed ONLY in the CI spec's UNGUARDED_ALLOWLIST, never in PUBLIC_BY_DESIGN. The lists referenced each other in prose comments alone, so nothing could catch that. Now: the scanner walks every Express method, and this spec imports BOTH lists and asserts the containment relationship in both directions.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed the manual limiter-only exception from list reconciliation; both scanners now derive that handler-less shape through one shared classifier.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Split list synchronization from parser-method coverage so governance-counted describe callbacks remain below fifty physical lines.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Pin the SEC-01 delegated-user middleware as an explicit route-auditor guard.
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
@@ -266,5 +267,14 @@ describe('route auditor — parser (the truncating-regex guard)', () => {
     const report = auditRoutes(file);
     expect(report.findings).toEqual([]);
     expect(report.note).toContain('inspected 0 /api mounts');
+  });
+});
+
+describe('route auditor - delegated-user guard', () => {
+  it('does not report a route wrapped by SEC-01 delegation or ordinary user auth', () => {
+    const file = syntheticServer(
+      `app.use('/api/synthetic-delegated', delegatedUserRouteAuth, createRoutes(ctx));\n`,
+    );
+    expect(auditRoutes(file).findings).toEqual([]);
   });
 });

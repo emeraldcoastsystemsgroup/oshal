@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Moved UNGUARDED_ALLOWLIST (content unchanged, reasons verbatim) to tests/helpers/unguarded-route-allowlist.ts so tests/unit/route-audit.spec.ts can import it and cross-check it against the runtime scanner's PUBLIC_BY_DESIGN. The two lists previously referenced each other only in prose and HAD diverged: '/api/security/csp-report' and '/api/branding' were reviewed here and absent from the scanner's list entirely, which the scanner's app.use-only parser hid. Importing a spec from a spec would re-register its suites, hence a plain helper module. Every assertion in this file is unchanged.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Classify handler-less limiter mounts with the runtime scanner's shared rule instead of the anonymous-route allowlist; synthetic limiter/open mounts pin both sides of the distinction.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Split parser-liveness assertions from allowlist integrity so governance-counted describe callbacks remain below fifty physical lines.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the SEC-01 delegated-user route middleware as an authenticated mount posture so Graph and Jarvis cannot be misclassified as anonymous.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -113,7 +114,7 @@ interface Mount {
   paths: string[];
   args: string;
   line: number;
-  mode: 'service-or-oidc' | 'operator' | 'oidc' | 'limiter-only' | 'unguarded';
+  mode: 'delegated-or-oidc' | 'service-or-oidc' | 'operator' | 'oidc' | 'limiter-only' | 'unguarded';
 }
 
 /**
@@ -126,6 +127,7 @@ interface Mount {
  */
 function classifyMount(args: string): Mount['mode'] {
   if (isLimiterOnlyMiddleware(middlewareArgs(args))) return 'limiter-only';
+  if (args.includes('delegatedUserRouteAuth')) return 'delegated-or-oidc';
   if (args.includes('serviceSecretOr')) return 'service-or-oidc';
   if (args.includes('requiresOperator')) return 'operator';
   if (args.includes('requiresAuth')) return 'oidc';
@@ -198,6 +200,7 @@ describe('server.ts /api route-auth parser liveness', () => {
     // (Floor 80→75 on 2026-07-20: the trading carve removed three serviceSecretOr mounts —
     //  78 guarded remain; same anti-bitrot rationale as the inventory floor above.)
     expect(modes.has('oidc')).toBe(true);
+    expect(modes.has('delegated-or-oidc')).toBe(true);
     expect(modes.has('service-or-oidc')).toBe(true);
     expect(modes.has('operator')).toBe(true);
     expect(mounts.filter((mt) => mt.mode !== 'unguarded').length).toBeGreaterThanOrEqual(75);

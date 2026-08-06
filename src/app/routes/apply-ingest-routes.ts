@@ -21,6 +21,8 @@
  *   target, and final-submit authority from the durable ticket when present. Body-only service calls
  *   default to assist mode and bulk calls cannot manufacture a request identity from userSub.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Promote a worker report to verified-submission only after a named PNG/JPEG is link-free, bounded, and retained inside the exact Career user store.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Settle the exact Apply V2 ledger run by CAS, require retained path+SHA for submitted_verified, and classify evidence-free applied reports as unknown_outcome for human review.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Make a capability retry idempotent after the ledger committed but ticket/capability settlement was interrupted.
  *
  * @module app/routes/apply-ingest-routes
  */
@@ -45,6 +47,11 @@ import {
 import { timingSafeSecretEquals } from '@/features/remote-client';
 import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
 import { persistApplyConfirmationArtifact } from '@/app/apply-confirmation-artifact';
+import {
+  getApplyRunByTask,
+  transitionApplyRun,
+  type ApplyRunRecord,
+} from '@/app/apply-run-ledger';
 import {
   applySubmitAuthorizationFromMetadata,
   FINAL_SUBMIT_DENIED,
@@ -72,6 +79,8 @@ export interface ApplyCompletionRuntime {
   runCli: typeof runApplyCli;
   removeWorkspace: typeof removeApplyWorkspace;
   persistConfirmation: typeof persistApplyConfirmationArtifact;
+  getRun: typeof getApplyRunByTask;
+  transitionRun: typeof transitionApplyRun;
 }
 
 const DEFAULT_COMPLETION_RUNTIME: ApplyCompletionRuntime = {
@@ -81,6 +90,8 @@ const DEFAULT_COMPLETION_RUNTIME: ApplyCompletionRuntime = {
   runCli: runApplyCli,
   removeWorkspace: removeApplyWorkspace,
   persistConfirmation: persistApplyConfirmationArtifact,
+  getRun: getApplyRunByTask,
+  transitionRun: transitionApplyRun,
 };
 
 /** @description Constant-time authentication for internal dispatch and queue-control callers. */
@@ -223,12 +234,18 @@ function currentRunMatches(claim: ApplyCapabilityClaim): boolean {
   return !ticketRun || ticketRun.taskId === claim.taskId;
 }
 
-interface QueueRecordResult { accepted: boolean; applicationSource: string | null }
+interface QueueRecordResult {
+  accepted: boolean;
+  applicationSource: string | null;
+  confirmationPath: string | null;
+  confirmationSha256: string | null;
+}
 
 /** @description Persist one outcome and accept verified provenance only for a retained artifact. */
 async function recordQueueOutcome(
   runtime: ApplyCompletionRuntime,
   claim: ApplyCapabilityClaim,
+  run: ApplyRunRecord,
   result: string,
   note: string,
   confirmationFile?: string,
@@ -239,15 +256,26 @@ async function recordQueueOutcome(
     ? (retained ? 'verified-submission' : 'worker-reported') : null;
   const args = ['queue', 'record', String(claim.postingId), result, '--note', note];
   if (source) args.push('--source', source, '--task', claim.taskId);
-  if (retained) args.push('--confirmation', retained);
+  if (retained) args.push('--confirmation', retained.path);
+  args.push('--run-id', run.runId, '--claim-token', run.claimToken);
   const output = await runtime.runCli(claim.userSub, args, { timeoutMs: 30000 });
-  if (!output || typeof output !== 'object') return { accepted: false, applicationSource: source };
+  if (!output || typeof output !== 'object') return {
+    accepted: false,
+    applicationSource: source,
+    confirmationPath: retained?.path ?? null,
+    confirmationSha256: retained?.sha256 ?? null,
+  };
   const row = output as Record<string, unknown>;
   const accepted = row.ok === true && Number(row.posting_id) === claim.postingId
     && row.status === result && row.application_source === source
     && row.application_task_id === (source ? claim.taskId : null)
     && (source !== 'verified-submission' || row.confirmation_verified === true);
-  return { accepted, applicationSource: source };
+  return {
+    accepted,
+    applicationSource: source,
+    confirmationPath: retained?.path ?? null,
+    confirmationSha256: retained?.sha256 ?? null,
+  };
 }
 
 /** @description Resolve the exact owner ticket only after the queue outcome is durable. */
@@ -256,13 +284,16 @@ async function resolveApplyTicket(
   claim: ApplyCapabilityClaim,
   result: string,
   applicationSource: string | null,
+  ledgerState: ApplyRunRecord['state'],
 ): Promise<void> {
   if (!claim.settleTicket) return;
-  const status = result === 'applied' ? 'complete' : result === 'dismissed' ? 'cancelled' : 'customer_action';
+  const status = ledgerState === 'submitted_verified'
+    ? 'complete' : result === 'dismissed' ? 'cancelled' : 'customer_action';
   await runWithRequestIdentity({ sub: claim.userSub, isOperator: false }, () =>
     ctx.ticketService.updateStatus(claim.ticketId, status, {
       source: 'apply-trusted-completion', taskId: claim.taskId,
       postingId: claim.postingId, generation: claim.generation, result, applicationSource,
+      applyRunState: ledgerState,
     }),
   );
 }
@@ -286,6 +317,72 @@ async function releaseClaim(ctx: AppContext, runtime: ApplyCompletionRuntime, cl
   catch (error) { logger.error({ err: error, taskId: claim.taskId }, 'apply completion claim release failed'); }
 }
 
+/** @description Require the capability and ledger to name the same immutable task/owner/work. */
+function runMatchesClaim(run: ApplyRunRecord | null, claim: ApplyCapabilityClaim): run is ApplyRunRecord {
+  return Boolean(run && run.taskId === claim.taskId && run.ownerSub === claim.userSub
+    && run.ticketId === claim.ticketId && run.postingId === claim.postingId
+    && run.workerClientId === claim.clientId);
+}
+
+/** @description CAS the active run to its evidence-derived terminal state. */
+async function settleApplyRun(
+  ctx: AppContext,
+  runtime: ApplyCompletionRuntime,
+  run: ApplyRunRecord,
+  result: string,
+  recorded: QueueRecordResult,
+  note: string,
+): Promise<ApplyRunRecord | null> {
+  let current = run;
+  const expectedTerminal = result === 'applied'
+    ? recorded.confirmationPath && recorded.confirmationSha256
+      ? 'submitted_verified'
+      : 'unknown_outcome'
+    : 'failed';
+  // The queue recorder is idempotent for this exact run/task. If a prior callback committed the
+  // ledger and then lost the ticket/capability acknowledgement, let the retry finish those remaining
+  // projections without replaying an illegal terminal transition.
+  if (current.state === expectedTerminal) return current;
+  if (current.state === 'queued_to_worker' || current.state === 'acknowledged') {
+    const running = await runtime.transitionRun(ctx.pool, {
+      runId: current.runId,
+      from: [current.state],
+      to: 'running',
+    });
+    if (!running) return null;
+    current = running;
+  }
+  if (current.state !== 'running') return null;
+  if (result === 'applied' && recorded.confirmationPath && recorded.confirmationSha256) {
+    return runtime.transitionRun(ctx.pool, {
+      runId: current.runId,
+      from: ['running'],
+      to: 'submitted_verified',
+      result: { result, applicationSource: recorded.applicationSource },
+      confirmationPath: recorded.confirmationPath,
+      confirmationSha256: recorded.confirmationSha256,
+    });
+  }
+  if (result === 'applied') {
+    return runtime.transitionRun(ctx.pool, {
+      runId: current.runId,
+      from: ['running'],
+      to: 'unknown_outcome',
+      result: { result, applicationSource: recorded.applicationSource },
+      failureCode: 'confirmation_evidence_missing',
+      failureDetail: 'The worker reported an application side effect without retained confirmation evidence.',
+    });
+  }
+  return runtime.transitionRun(ctx.pool, {
+    runId: current.runId,
+    from: ['running'],
+    to: 'failed',
+    result: { result },
+    failureCode: `worker_${result}`,
+    failureDetail: note,
+  });
+}
+
 /** @description Validate bindings and commit one capability-authenticated terminal outcome. */
 async function processCompletion(ctx: AppContext, runtime: ApplyCompletionRuntime, token: string, body: CompletionBody): Promise<RouteResult> {
   const claim = await runtime.reserve(ctx.pool, token);
@@ -295,16 +392,23 @@ async function processCompletion(ctx: AppContext, runtime: ApplyCompletionRuntim
     await releaseClaim(ctx, runtime, claim);
     return { status: 409, body: { error: 'stale or mismatched Apply completion' } };
   }
+  const run = await runtime.getRun(ctx.pool, claim.taskId);
+  if (!runMatchesClaim(run, claim)) {
+    await releaseClaim(ctx, runtime, claim);
+    return { status: 409, body: { error: 'Apply completion does not match the durable run ledger' } };
+  }
   const result = body.result.result === 'failed' ? 'deferred' : body.result.result;
   try {
     const recorded = await recordQueueOutcome(
-      runtime, claim, result, body.result.note, body.result.confirmationFile,
+      runtime, claim, run, result, body.result.note, body.result.confirmationFile,
     );
     if (!recorded.accepted) {
       await releaseClaim(ctx, runtime, claim);
       return { status: 503, body: { error: 'queue outcome was not durably recorded', retryable: true } };
     }
-    await resolveApplyTicket(ctx, claim, result, recorded.applicationSource);
+    const terminalRun = await settleApplyRun(ctx, runtime, run, result, recorded, body.result.note);
+    if (!terminalRun) throw new Error('Apply run ledger settlement lost its compare-and-set');
+    await resolveApplyTicket(ctx, claim, result, recorded.applicationSource, terminalRun.state);
     if (!(await runtime.consume(ctx.pool, claim))) throw new Error('capability settlement lost its reservation');
     finishApplyRun(runtime, claim, result, body.result.note);
     logger.info({ taskId: claim.taskId, ticketId: claim.ticketId, postingId: claim.postingId, result }, 'trusted Apply outcome committed');

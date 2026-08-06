@@ -90,9 +90,8 @@ function buildApp(ctx: AppContext): express.Express {
   app.use(express.json({ limit: '1mb' }));
   app.use(fakeAuth);
   // (/api/email removed at the email-summarizer carve, ADR-085 Wave 3 — its no-send 428
-  //  gate ships in the store package. no-send is NOT exclusive to the carved app: the
-  //  kernel-resident Twilio CLI (the comms bot's phone/text leg) keeps its own no-send
-  //  confirm gate, proven below via the CLI probe.)
+  //  gate ships in the store package. The retired Twilio compatibility CLI is also proven
+  //  fail closed below; live per-user SMS is owned by fixed controller operations.)
   // (/api/payments removed: payments carved to the app store, ADR-085 — its no-charge
   //  guard ships in the package.)
   // (/api/finance also removed at the finance carve — the kernel now owns NO charge routes;
@@ -113,7 +112,7 @@ function buildApp(ctx: AppContext): express.Express {
 const probes: Probe[] = [
   // (The no-send HTTP probe left with the email-summarizer carve, ADR-085 Wave 3 — the
   //  packaged /api/email/send keeps its 428 gate, proven by the package + deploy battery.
-  //  The kernel's surviving no-send owner is the Twilio CLI, proven by runCliNoSendProbe.)
+  //  The former Twilio CLI is separately proven retired by runCliNoSendProbe.)
   {
     // no-post now proven from its kernel-resident owner: the LinkedIn AI Content Assistant.
     // (The Social app's /api/social/post, /twitter/follow, /facebook/pages/:id/post no-post
@@ -176,10 +175,9 @@ async function runEngineNoTradeProbe(ctx: AppContext, queryEvents: QueryEvent[])
 }
 
 /**
- * The kernel-resident no-send owner: scripts/oshal-twilio.js (the comms bot's phone/text
- * leg) refuses sms/call sends without OSHAL_MESSAGE_SEND_CONFIRM=true or --confirm — at the
- * CLI, before any token or DB lookup. Live-executed here (real process, real fail-closed
- * exit) and shaped into the same ProbeResult row as the HTTP guards.
+ * The retired Twilio compatibility entry point refuses every verb before configuration,
+ * credential, database, or network access. Live-executed here as a real process and shaped
+ * into the same ProbeResult row as the HTTP guards.
  */
 function runCliNoSendProbe(): ProbeResult {
   const result = spawnSync(process.execPath, [
@@ -189,21 +187,19 @@ function runCliNoSendProbe(): ProbeResult {
     'guard probe — must not send',
   ], {
     cwd: process.cwd(),
-    env: { ...process.env, OSHAL_MESSAGE_SEND_CONFIRM: '', OSHAL_ALLOW_MESSAGE_SEND: '', OSHAL_CRED_TWILIO: '' },
     encoding: 'utf8',
   });
   const stderr = String(result.stderr || '');
-  const passed = result.status === 1 && stderr.includes('no-send') && stderr.includes('Nothing was sent');
+  const passed = result.status === 73 && stderr.includes('retired') && stderr.includes('Nothing was sent');
   return {
-    id: 'no-send',
+    id: 'retired-twilio-cli',
     method: 'POST',
-    path: 'CLI scripts/oshal-twilio.js sms (unconfirmed)',
+    path: 'retired Twilio compatibility CLI',
     body: {},
-    expectedStatus: 1,
-    expectedError: 'no-send',
-    expectedGuard: 'no-send',
+    expectedStatus: 73,
+    expectedError: 'retired',
     status: result.status ?? -1,
-    response: { error: 'no-send', guard: 'no-send', detail: stderr.split('\n').find((l) => l.includes('no-send'))?.trim().slice(0, 200) || '' },
+    response: { error: 'retired', detail: stderr.trim().slice(0, 200) },
     passed,
     queryCount: 0,
   };
@@ -254,7 +250,7 @@ function renderMarkdown(results: ProbeResult[], queries: QueryEvent[], generated
   return [
     `# Risky Write Guards Evidence - ${dateStamp(generatedAt)}`,
     '',
-    '**Proof-Tier:** live - loopback HTTP execution of the real Express route modules with an authenticated proof user, plus direct live execution of the kernel trading ENGINE gate and the Twilio CLI gate; no external provider tokens are configured or called.',
+    '**Proof-Tier:** live - loopback HTTP execution of the real Express route modules with an authenticated proof user, plus direct live execution of the kernel trading ENGINE gate and the retired Twilio compatibility boundary; no external provider tokens are configured or called.',
     '',
     `Generated: ${formatTimestamp(generatedAt)}`,
     '',
@@ -262,7 +258,7 @@ function renderMarkdown(results: ProbeResult[], queries: QueryEvent[], generated
     '',
     'This run proves the write guard surfaces that matter competitively:',
     '',
-    '- no-send: the kernel-resident Twilio CLI (the comms bot phone/text leg) blocks sms/call sends at the CLI before token or DB lookup (the email app /send 428 gate carved to the email-summarizer store package, ADR-085 Wave 3, and is proven by its package + the live deploy battery).',
+    '- no-send: the former Twilio CLI is retired before configuration/credential access; per-user SMS is restricted to fixed authenticated controller operations (the email app /send 428 gate remains in the email-summarizer store package and its deploy battery).',
     '- no-charge: merchant charge and personal money movement are blocked before payment rail work.',
     '- no-post: the kernel-resident LinkedIn AI Content Assistant blocks publish before draft lookup (social publish / X follow / Facebook Page publish carved to the social store package, ADR-085 Wave 2).',
     '- no-device-write: assistant, direct control, scene run, and schedule write paths are blocked before SmartThings/bot execution.',

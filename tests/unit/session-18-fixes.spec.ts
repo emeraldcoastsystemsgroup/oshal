@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Session 18: Vitest unit tests for Phase 8 trigger, metrics collector functional test, cost rollup schema, credential broadcast, refactoring compliance
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: update the historical credential-broadcast guard to require the unordered raw Redis publication path to remain absent.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -200,18 +201,20 @@ describe('Cost rollup schema', () => {
 });
 
 // ---------------------------------------------------------------------------
-// OAuth Broadcast
+// OAuth Broadcast Retirement
 // ---------------------------------------------------------------------------
 
-describe('OpenAI Codex credential Redis broadcast', () => {
-  it('broadcasts after writeCredentials', async () => {
+describe('OpenAI Codex credential Redis broadcast retirement', () => {
+  it('keeps raw credential publication and subscription absent', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const filePath = path.resolve(__dirname, '../../src/features/openai-codex-oauth/services/openai-codex-oauth-service.ts');
     const content = fs.readFileSync(filePath, 'utf8');
 
-    expect(content).toContain('this.broadcastCodexCredentials(credentials)');
-    expect(content).toContain('CODEX_CREDENTIAL_CHANNEL');
+    expect(content).not.toContain('this.broadcastCodexCredentials(credentials)');
+    expect(content).not.toContain('CODEX_CREDENTIAL_CHANNEL');
+    expect(content).not.toContain('swarm.codex-credentials.update');
+    expect(content).not.toContain('subscribeToBroadcast');
   });
 });
 

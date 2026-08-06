@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Render the governance API's actual CSP mode, rate-limit coverage, connector envelope posture, and Alertmanager HMAC state instead of obsolete binary flags.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Warn when the explicit shared-HKDF DEK-store break-glass is active instead of presenting it as normal per-user isolation.
+ */
 const state = {
   whoami: null,
   posture: null,
@@ -109,13 +117,22 @@ function renderIdentity() {
 
 function renderControls() {
   const controls = state.posture?.controls || {};
+  const cspValue = controls.cspMode || (controls.cspEnabled ? 'enabled' : 'disabled');
+  const cspTone = controls.cspMode === 'enforce' ? 'ok' : (controls.cspEnabled ? 'warn' : 'bad');
+  const rateComplete = controls.internalRateLimit && controls.expensiveRateLimit;
+  const cryptoValue = !controls.cryptoAtRest
+    ? 'SESSION_SECRET missing'
+    : (!controls.envelopeCrypto
+      ? 'k2 shared rollback'
+      : (controls.envelopeDekFailure === 'shared-hkdf' ? 'DEK + k2 break-glass' : 'per-user DEK / deny'));
   const rows = [
     ['RBAC', controls.rbacEnforce ? 'enforcing' : 'permissive', controls.rbacEnforce ? 'ok' : 'warn'],
     ['RLS GUC', state.posture?.rls?.controls?.dbGuc ? 'on' : 'off', state.posture?.rls?.controls?.dbGuc ? 'ok' : 'bad'],
     ['Legacy unowned', controls.legacyUnownedAllowed ? 'allowed' : 'closed', controls.legacyUnownedAllowed ? 'bad' : 'ok'],
-    ['CSP', controls.cspEnabled ? 'on' : 'off', controls.cspEnabled ? 'ok' : 'warn'],
-    ['Rate limit', controls.rateLimitEnabled ? 'on' : 'off', controls.rateLimitEnabled ? 'ok' : 'warn'],
-    ['Token crypto', controls.cryptoAtRest ? 'configured' : 'missing', controls.cryptoAtRest ? 'ok' : 'warn'],
+    ['CSP', cspValue, cspTone],
+    ['Rate limit', rateComplete ? 'all rails' : 'external / partial', rateComplete ? 'ok' : 'warn'],
+    ['Token crypto', cryptoValue, controls.cryptoAtRest && controls.envelopeCrypto && controls.envelopeDekFailure !== 'shared-hkdf' ? 'ok' : 'warn'],
+    ['Alertmanager HMAC', controls.alertWebhookHmac ? 'configured' : 'bearer only', controls.alertWebhookHmac ? 'ok' : 'warn'],
     ['Mock OIDC', controls.mockOidc ? 'on' : 'off', controls.mockOidc ? 'bad' : 'ok'],
     ['Audit forwarding', controls.auditForwarding ? 'on' : 'off', controls.auditForwarding ? 'ok' : 'warn'],
   ];

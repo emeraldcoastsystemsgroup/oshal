@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the one-call create-and-start path: AgentFactoryService.createAndStartAgent must launch after create, ROLL BACK the creation on any launch failure (compose removal + profile deletion; inactive-mark fallback when deletion fails — never a silent zombie), return a clean error when creation itself fails, and the /create-and-start route must map those outcomes to 201/502/500/409/400. Would go red if create+launch went back to being two unrolled-back calls.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: exercise exact operator authorization on both globally trusted agent creation routes.
  */
 
 import { mkdtempSync, rmSync } from 'fs';
@@ -154,6 +155,7 @@ describe('AgentFactoryService.createAndStartAgent (rollback semantics)', () => {
 
 const PORT = 42311;
 const API = `http://127.0.0.1:${PORT}`;
+const originalOperatorSubs = process.env.OSHAL_OPERATOR_SUBS;
 
 const routeOutcome = vi.fn();
 const factoryStub = {
@@ -163,10 +165,14 @@ const factoryStub = {
   deleteAgent: vi.fn(async () => true),
 } as unknown as AgentFactoryService;
 
-async function post(path: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+async function post(
+  path: string,
+  body: unknown,
+  subject = 'Operator-Exact',
+): Promise<{ status: number; body: Record<string, unknown> }> {
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-test-sub': subject },
     body: JSON.stringify(body),
   });
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -176,14 +182,25 @@ describe('POST /api/swarm/agents/create-and-start (route boundary)', () => {
   let server: Server;
 
   beforeAll(async () => {
+    process.env.OSHAL_OPERATOR_SUBS = 'Operator-Exact';
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      const subject = req.header('x-test-sub');
+      (req as unknown as { oidc: unknown }).oidc = {
+        isAuthenticated: () => true,
+        user: subject ? { sub: subject } : {},
+      };
+      next();
+    });
     app.use('/api/swarm/agents', createAgentFactoryRoutes(factoryStub)); // requiresAuth wrapping is the swarm extension mount's job
     server = await new Promise<Server>((resolve) => { const s = app.listen(PORT, () => resolve(s)); });
   });
 
   afterAll(async () => {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
+    if (originalOperatorSubs === undefined) delete process.env.OSHAL_OPERATOR_SUBS;
+    else process.env.OSHAL_OPERATOR_SUBS = originalOperatorSubs;
   });
 
   afterEach(() => { routeOutcome.mockReset(); });
@@ -223,6 +240,17 @@ describe('POST /api/swarm/agents/create-and-start (route boundary)', () => {
   it('400s an invalid specification without touching the service', async () => {
     const r = await post('/api/swarm/agents/create-and-start', { name: 'x' });
     expect(r.status).toBe(400);
+    expect(routeOutcome).not.toHaveBeenCalled();
+  });
+
+  it('denies a non-operator on both persona-only and create-and-start paths', async () => {
+    const deployPersonaOnly = factoryStub.deployPersonaOnly as unknown as ReturnType<typeof vi.fn>;
+    deployPersonaOnly.mockClear();
+    routeOutcome.mockClear();
+
+    expect((await post('/api/swarm/agents', SPEC, 'ordinary-user')).status).toBe(403);
+    expect((await post('/api/swarm/agents/create-and-start', SPEC, 'operator-exact')).status).toBe(403);
+    expect(deployPersonaOnly).not.toHaveBeenCalled();
     expect(routeOutcome).not.toHaveBeenCalled();
   });
 });

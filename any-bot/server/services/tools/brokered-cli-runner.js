@@ -4,12 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact caller subjects and fail closed on linked or out-of-root task cwd values before spawning brokered connector CLIs.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: retire generic connector subprocess execution until an audited, versioned server broker exists; no credential-bearing child environment or workspace is created.
  */
 'use strict';
 
-const { execFile } = require('child_process');
 const path = require('path');
-const { CRED_FILES, sanitizeBrokeredCreds } = require('../codebase/user-scoping');
 const { optionalExactUserSubject } = require('../codebase/exact-user-subject');
 const { resolveExistingTaskWorkspace } = require('../codebase/task-workspace-scope');
 
@@ -29,43 +28,22 @@ function resolveTaskWorkspace(value) {
 }
 
 function trustedChildEnv(extraEnv) {
-  const env = { ...process.env };
-  // The connector child receives only request-scoped credentials, never a controller master key.
-  delete env.SESSION_SECRET;
-  delete env.AUTH_SESSION_SECRET;
-  // A long-lived bot process may have served another owner. Never inherit a broker token
-  // from that ambient process; populate the child exclusively from this invocation's map.
-  for (const key of Object.keys(CRED_FILES)) delete env[key];
-  Object.assign(env, sanitizeBrokeredCreds(extraEnv));
+  // Kept as an inspection helper for regressions. It intentionally returns only owner
+  // identity; runBrokeredCli never spawns while this legacy carrier lacks an audited broker.
+  const env = {};
   const userSub = optionalExactUserSubject(extraEnv?.OSHAL_USER_SUB, 'brokered CLI userSub');
   if (userSub !== undefined) env.OSHAL_USER_SUB = userSub;
-  else delete env.OSHAL_USER_SUB;
   return env;
 }
 
-function runBrokeredCli({ script, args, params = {}, context = {}, errorLabel }) {
-  return new Promise((resolve) => {
-    const env = trustedChildEnv(context.extraEnv);
-    if (params.label) env.OSHAL_CONNECTION_LABEL = String(params.label).slice(0, 256);
-    const taskWorkspace = resolveTaskWorkspace(
-      context.taskWorkspace || params.taskWorkspace || params.workspace_dir,
-    );
-    const cli = path.join(APP_ROOT, 'scripts', script);
-    execFile('node', [cli, ...args], {
-      cwd: taskWorkspace || APP_ROOT,
-      env,
-      timeout: 30_000,
-      maxBuffer: 4 * 1024 * 1024,
-    }, (err, stdout) => {
-      const text = (stdout || '').trim();
-      try { resolve(JSON.parse(text || '{}')); }
-      catch {
-        resolve({
-          error: (err && err.message) || `${errorLabel || script} CLI parse error`,
-          raw: text.slice(0, 500),
-        });
-      }
-    });
+function runBrokeredCli({ script, params = {}, context = {}, errorLabel }) {
+  // Validate identity and workspace before returning the stable denial so malformed values
+  // cannot hide behind an operational limitation. No executable, args, env, or cwd is used.
+  trustedChildEnv(context.extraEnv);
+  resolveTaskWorkspace(context.taskWorkspace || params.taskWorkspace || params.workspace_dir);
+  return Promise.resolve({
+    error: 'connector_cli_disabled_pending_audited_broker',
+    provider: String(errorLabel || script || 'connector').slice(0, 128),
   });
 }
 

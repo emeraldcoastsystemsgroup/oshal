@@ -5,6 +5,8 @@ SEQ                 | AUTHOR                                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Added authenticated raw-body, size-limit, contract, and zeroization tests.
 2 | maintainer@emeraldcoastsystemsgroup.com   | Proved concurrent native inference is rejected without building an in-memory request queue.
+3 | maintainer@emeraldcoastsystemsgroup.com   | Exercise malformed/untrusted Host rejection through the real ASGI middleware stack.
+4 | maintainer@emeraldcoastsystemsgroup.com   | Reject wildcard and URL-shaped trusted-host deployment configuration instead of silently widening the sidecar boundary.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import threading
 from pathlib import Path
 
 import httpx
+import pytest
 
 from speaker_service.api import ProcessorProvider, create_app
 from speaker_service.schemas import (
@@ -100,6 +103,23 @@ def test_health_is_authenticated_and_reports_pinned_model() -> None:
     assert response.json() == {
         "status": "ok", "ready": True, "modelId": MODEL_ID, "sampleRate": SAMPLE_RATE,
     }
+
+
+def test_untrusted_host_is_rejected_before_authentication() -> None:
+    app, _processor = fixture()
+
+    response = request(app, "GET", "/health", headers={**auth_headers(), "Host": "attacker.invalid"})
+
+    assert response.status_code == 400
+    assert "host" in response.text.lower()
+
+
+@pytest.mark.parametrize("value", ["", "*", "*.example.com", "https://speaker-diarization"])
+def test_trusted_host_configuration_rejects_wildcards_and_urls(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("SPEAKER_ALLOWED_HOSTS", value)
+
+    with pytest.raises(RuntimeError, match="explicit comma-separated hostnames"):
+        ServiceSettings.from_environment()
 
 
 def test_diarize_accepts_raw_audio_and_wipes_the_request_buffer() -> None:

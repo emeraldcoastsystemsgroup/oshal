@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the trading-autopilot dispatch branch (deterministic multi-timeframe loop) alongside the home branch + its scheduling-gate bypass and service injection
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added the trading-lab dispatch branch (ADR-092 Strategy Lab: nightly forward walks + pinned-window regressions) + its gate bypass — a system sim pass, same class as review/optimize
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the schedule dispatch callback + the enablement gate in runWithSystemIdentity so scheduled DB work (ticket/trading/world/series writes, tool-enablement reads) keeps operator visibility once OSHAL_DB_GUC_STRICT denies the identity-less case. Per-user home actions re-scope to the owner sub inside home-schedule-dispatch (nested, mirrors the interactive path).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch active manifest service-route schedules through their deterministic loopback worker instead of the generic orchestrator, with the same system-schedule gate bypass as other kernel-owned deterministic branches.
  */
 
 import type { AppContext } from './composition-root';
@@ -31,6 +32,10 @@ import { isLabSchedule, dispatchTradingLab } from './trading-lab-dispatch';
 import { isSwingSchedule, dispatchTradingSwing } from './trading-swing-dispatch';
 import { isWorldSchedule, dispatchWorldSchedule } from './world-schedule-dispatch';
 import { isWorkflowTicketSchedule, dispatchWorkflowTicketSchedule } from './workflow-ticket-schedule-dispatch';
+import {
+  isManifestServiceRouteSchedule,
+  type ManifestServiceRouteScheduleRuntime,
+} from './manifest-service-route-schedule';
 
 const logger = createChildLogger({ module: 'schedule-runtime' });
 let schedulerShutdownHookRegistered = false;
@@ -40,7 +45,10 @@ let schedulerShutdownHookRegistered = false;
  * @param ctx - Application context used to dispatch scheduled prompts.
  * @returns Bound schedule controller instance for route registration.
  */
-export function createScheduleController(ctx: AppContext): ScheduleController {
+export function createScheduleController(
+  ctx: AppContext,
+  serviceRouteSchedules: ManifestServiceRouteScheduleRuntime,
+): ScheduleController {
   const store = new RedisScheduleStore();
   // Home schedules (smart-home timers) dispatch through the home branch — broker the
   // owner's token, run on the home-bot, log a home-control ticket. Everything else
@@ -61,6 +69,7 @@ export function createScheduleController(ctx: AppContext): ScheduleController {
       : isSwingSchedule(schedule.taskType) ? dispatchTradingSwing(ctx, schedule)
       : isWorldSchedule(schedule.taskType) ? dispatchWorldSchedule(ctx, schedule)
       : isWorkflowTicketSchedule(schedule.taskType) ? dispatchWorkflowTicketSchedule(ctx, schedule)
+      : isManifestServiceRouteSchedule(schedule.taskType) ? serviceRouteSchedules.dispatch(schedule)
       : dispatchScheduleToOrchestrator(ctx, schedule)), {
     defaultTargetAgentId: DEFAULT_CHAT_AGENT_ID,
     ensureSchedulingEnabled: (targetAgentId, taskType) => runWithSystemIdentity(async () => {
@@ -89,6 +98,9 @@ export function createScheduleController(ctx: AppContext): ScheduleController {
       // Workflow-ticket schedules (taskType `workflow:<ticketType>`) only create a ticket;
       // the workflow engine owns execution. Operator/system-declared — bypass the per-agent gate.
       if (isWorkflowTicketSchedule(taskType)) return;
+      // Installed-package deterministic workers are validated service-auth routes. The active
+      // registry, rather than an agent tool grant, is their execution authority.
+      if (isManifestServiceRouteSchedule(taskType)) return;
       if (!targetAgentId) {
         throw new Error(`Schedule ${taskType} is missing a target agent`);
       }

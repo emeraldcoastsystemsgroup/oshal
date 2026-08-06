@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial authenticated Jarvis image route and non-blocking visual integration adapter.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve SEC-01 verified delegation claims before the legacy service-sub compatibility path on owner-scoped visual reads.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { getVerifiedWorkloadDelegation } from '@/features/security';
 import {
   parseVisualResponseSpec, VisualResponseService, type FactLockedAnswerPacket, type VisualResponseArtifact,
 } from '@/features/visual-response';
@@ -46,8 +48,8 @@ export async function createOptionalJarvisVisual(
 
 /**
  * @description Creates the authenticated, owner-scoped route that serves persisted Jarvis images.
- * The parent `/api/jarvis` mount applies `requiresAuth`; this router additionally binds every read
- * to the caller's sub so artifact ids cannot cross user boundaries.
+ * The parent `/api/jarvis` mount admits ordinary user auth or a durable route delegation; this
+ * router additionally binds every read to that verified subject so artifact ids cannot cross users.
  * @param service - Visual artifact service shared with the `/ask` integration.
  * @returns Express router mounted at `/api/jarvis/visuals`.
  */
@@ -89,5 +91,7 @@ export function createJarvisVisualRoutes(service: VisualResponseService): Router
 function callerSub(req: Request): string | null {
   const user = (req as { oidc?: { user?: { sub?: string; oid?: string } } }).oidc?.user;
   const sub = user?.sub || user?.oid;
-  return sub ? String(sub) : getTrustedServiceUserSub(req);
+  if (sub) return String(sub);
+  const delegated = getVerifiedWorkloadDelegation(req);
+  return delegated?.sub ?? getTrustedServiceUserSub(req);
 }

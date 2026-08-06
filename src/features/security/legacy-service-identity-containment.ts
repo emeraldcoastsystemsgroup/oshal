@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add immediate SEC-01 containment for legacy shared-secret calls to user-scoped read routes, preserving independently authenticated users while returning a stable 403 and sanitized route/workload telemetry for machine-only attempts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Share the bounded unverified workload telemetry with durable delegation enforcement so every refused fleet-secret call retains route/workload evidence.
  */
 
 import type { Request, RequestHandler } from 'express';
@@ -21,7 +22,8 @@ const WORKLOAD_HEADERS = [
   'x-remote-client-id',
 ] as const;
 
-interface WorkloadLogContext {
+/** @description Sanitized, explicitly unverified workload attribution for legacy-call telemetry. */
+export interface LegacyWorkloadLogContext {
   workload: string;
   workloadSource: string;
 }
@@ -36,7 +38,7 @@ function sanitizedLabel(value: string | string[] | undefined): string | null {
 }
 
 /** Resolve only a claimed workload label; it is telemetry and never authorization input. */
-function workloadLogContext(req: Request): WorkloadLogContext {
+export function legacyWorkloadLogContext(req: Request): LegacyWorkloadLogContext {
   for (const header of WORKLOAD_HEADERS) {
     const workload = sanitizedLabel(req.headers[header]);
     if (workload) return { workload, workloadSource: header };
@@ -72,7 +74,7 @@ export function rejectLegacyServiceIdentityForUserRead(route: string): RequestHa
     logger.warn({
       route,
       method: req.method,
-      ...workloadLogContext(req),
+      ...legacyWorkloadLogContext(req),
       workloadAttribution: 'unverified',
       assertedSubjectHeader: assertedSubjectHeader(req),
     }, 'Refused legacy service identity on user-scoped read route');

@@ -8,6 +8,8 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | v2 — the ONE-CLICK installer. Four modes: (1) swarm from registry, no source; (2) swarm from source (clone + build); (3) leaf-node bot joining an existing swarm; (4) k8s pointer (deploy/terraform). Bundles install the KERNEL plus curated app sets with dependencies BOUND (little-monsters pulls the office tools + deck-builder bot; gaming = dnd + game-show; jobs = career-hunter + job-apply), --apps adds individual store packages, and the resolved set is DEDUPED — a package stages once and a bot/surface registers once no matter how many bundles/flags name it (idempotent re-runs skip already-staged packages). Ends with the cockpit opening, superadmin instructions, and the operator email wired into .env when provided.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | First-run fix (lockstep with oshal-install.ps1) — the closing instructions were false and the identity was never the user's. MOCK_OIDC has NO sign-in page; it fabricates alex@demo.local / mock-user-001 and treats every request as authenticated, so "sign in at the cockpit with your email" could never happen: the user was silently someone else, not the superadmin, with every connector token binding to the shared demo sub. The email prompt now writes MOCK_OIDC_EMAIL/NAME/SUB alongside OSHAL_OPERATOR_EMAILS, the sub being a stable sha256-of-lowercased-email (local_sub(), byte-identical to the ps1's LocalSub) so a reinstall against the same workspace volume keeps its sub-keyed data. Also opens /welcome instead of /cockpit/ — linking an AI model is mandatory and browser-only, and /cockpit just 302s to the wizard anyway — and says plainly what the wizard will ask for.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G1/G2/G4 (the G-Squared incident): (G1) install now ENDS with scripts/oshal-verify.sh in --pre-onboarding posture — counting containers is no longer success; a broken leg (kernel service, heartbeat, db, contradictory no-AI posture) fails the install loudly by name. The verify trio (oshal-verify.sh, swarm-routability-check.sh, routability-critical-bots.txt) is extracted from the image in registry mode, with a raw.githubusercontent fallback for images predating it. (G2) new --no-ai flag: running without a connected model is now an EXPLICIT choice recorded in .env (OSHAL_NO_AI=true + FORCE_LLM_PROVIDER=noop + a comment saying what will not work) — never a silent default; with it, the installer opens the cockpit instead of a wizard that could never complete. (G4) preflight now owns the credential paths BEFORE first `up` (~/.claude, ~/.codex, ~/.gemini as directories; ~/.claude.json as a FILE, so Docker cannot auto-create a root-owned directory where a file belongs) and writes CLAUDE_AUTH_MOUNT_MODE=rw / GEMINI_AUTH_MOUNT_MODE=rw for server installs — a CLI that cannot write cannot refresh its token, and `claude auth login` reports success while saving nothing.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: pass the exact deduplicated app set to the canonical postflight verifier so a staged package cannot report installed without executing its manifest smoke.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: assess every requested store package in the shipped core image, block invalid audit bindings, and stage verified packages only from their exact SHA archive.
 # =============================================================================
 #
 # One-click:
@@ -19,6 +21,7 @@
 #                       3 leaf-node bot (join an existing swarm) · 4 kubernetes (pointer)
 #   --bundle NAME       kernel | full | little-monsters | gaming | jobs   (default: full)
 #   --apps a,b,c        individual store packages to add (deduped against the bundle)
+#   --audit-mode MODE   package audit posture: compatible (default) | enforce
 #   --dir DIR           install directory (default ./oshal)
 #   --tag TAG           image tag (default latest)      --registry REG   (default ghcr.io/emeraldcoastsystemsgroup)
 #   --admin-email E     wire E as the swarm operator/superadmin in .env
@@ -34,15 +37,17 @@
 set -euo pipefail
 
 MODE=""; BUNDLE="full"; APPS=""; DIR="./oshal"; TAG="latest"; NO_AI=0
+PACKAGE_AUDIT_MODE="${OSHAL_PACKAGE_AUDIT_MODE:-compatible}"
 REGISTRY="ghcr.io/emeraldcoastsystemsgroup"; ADMIN_EMAIL=""; DRY=0; FROM_ARCHIVE=""
 CONTROL_PLANE=""; JOIN_CODE=""; ENROLL_TOKEN=""
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
-STORE_TARBALL="https://codeload.github.com/emeraldcoastsystemsgroup/oshal-apps/tar.gz/refs/heads/main"
+STORE_REPO="https://github.com/emeraldcoastsystemsgroup/oshal-apps"
 
 while [ $# -gt 0 ]; do case "$1" in
   --mode) MODE="$2"; shift 2 ;;
   --bundle) BUNDLE="$2"; shift 2 ;;
   --apps) APPS="$2"; shift 2 ;;
+  --audit-mode) PACKAGE_AUDIT_MODE="$2"; shift 2 ;;
   --dir) DIR="$2"; shift 2 ;;
   --tag) TAG="$2"; shift 2 ;;
   --registry) REGISTRY="$2"; shift 2 ;;
@@ -55,6 +60,8 @@ while [ $# -gt 0 ]; do case "$1" in
   --dry-run) DRY=1; shift ;;
   *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac; done
+
+case "$PACKAGE_AUDIT_MODE" in compatible|enforce) ;; *) echo "--audit-mode must be compatible or enforce" >&2; exit 2 ;; esac
 
 say()  { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
@@ -118,7 +125,7 @@ fi
 # ${!arr[*]} lists keys, but ADDING :- flips bash into INDIRECTION on the joined VALUES
 # ("1 1: invalid variable name") — caught live by the first stranger-path dry-run. Two steps.
 pkg_list="${!PKG_SET[*]}"
-PLAN="mode=$MODE bundle=$BUNDLE packages=[${pkg_list:-none}] dir=$DIR tag=$TAG"
+PLAN="mode=$MODE bundle=$BUNDLE packages=[${pkg_list:-none}] audit=$PACKAGE_AUDIT_MODE dir=$DIR tag=$TAG"
 if [ "$DRY" -eq 1 ]; then say "DRY RUN — $PLAN"; exit 0; fi
 
 # ── Mode 4: Kubernetes pointer ───────────────────────────────────────────────
@@ -240,6 +247,7 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "# Generated by oshal-install.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) — operator-local, never commit."
     echo "OSHAL_REGISTRY=$REGISTRY"
     echo "OSHAL_IMAGE_TAG=$TAG"
+    echo "OSHAL_PACKAGE_AUDIT_MODE=$PACKAGE_AUDIT_MODE"
     echo "POSTGRES_PASSWORD=$(rand)"
     echo "SWARM_SERVICE_SECRET=$(rand)"
     echo "SESSION_SECRET=$(rand)"
@@ -308,20 +316,27 @@ DC=(docker compose -f "$COMPOSE_FILE" --project-directory "$(dirname "$ENV_FILE"
 # twice — the loader keys on the staged directory, and each stages at most once.
 if [ "${#PKG_SET[@]}" -gt 0 ]; then
   say "staging ${#PKG_SET[@]} store package(s): ${!PKG_SET[*]}"
-  STORE_TMP=$(mktemp -d)
-  curl -fsSL ${GITHUB_TOKEN:+-H "Authorization: token $GITHUB_TOKEN"} "$STORE_TARBALL" | tar -xz -C "$STORE_TMP"
-  STORE_DIR=$(find "$STORE_TMP" -maxdepth 1 -type d -name "oshal-apps-*" | head -1)
+  STORE_TOKEN="${OSHAL_STORE_TOKEN:-${GITHUB_TOKEN:-}}"
+  INSTALL_ENV=(-e "OSHAL_PACKAGE_AUDIT_MODE=$PACKAGE_AUDIT_MODE")
+  if [ -n "$STORE_TOKEN" ]; then
+    export OSHAL_STORE_TOKEN="$STORE_TOKEN"
+    INSTALL_ENV+=(-e OSHAL_STORE_TOKEN)
+  fi
   for p in "${!PKG_SET[@]}"; do
-    if [ ! -d "$STORE_DIR/$p" ]; then note "SKIP $p — not in the public store"; continue; fi
     if MSYS_NO_PATHCONV=1 docker run --rm -v oshal-local_oshal_workspace:/ws alpine:3 sh -c "[ -d /ws/deployed-apps/$p ]" 2>/dev/null; then
-      note "SKIP $p — already installed (never register a bot/surface twice)"
-      continue
+      if [ "$PACKAGE_AUDIT_MODE" = "compatible" ]; then
+        note "SKIP $p — already installed (never register a bot/surface twice)"
+        continue
+      fi
+      note "$p is already installed; enforce mode revalidates and replaces it from the audited SHA"
     fi
-    MSYS_NO_PATHCONV=1 docker run --rm -v oshal-local_oshal_workspace:/ws -v "$STORE_DIR/$p":/src:ro alpine:3 \
-      sh -c "mkdir -p /ws/deployed-apps && cp -r /src /ws/deployed-apps/$p"
+    MSYS_NO_PATHCONV=1 docker run --rm "${INSTALL_ENV[@]}" \
+      -v oshal-local_oshal_workspace:/ws "$IMAGE" \
+      node /app/scripts/oshal-app.js install "$p" \
+      --repo "$STORE_REPO" \
+      --ref main --dest /ws/deployed-apps --audit-mode "$PACKAGE_AUDIT_MODE"
     note "staged $p"
   done
-  rm -rf "$STORE_TMP"
 fi
 
 # ── Ordered, batched bring-up ────────────────────────────────────────────────
@@ -376,8 +391,14 @@ if [ -z "$VERIFY" ]; then
   [ -f "$DIR/oshal-verify.sh" ] && VERIFY="$DIR/oshal-verify.sh"
 fi
 if [ -n "$VERIFY" ]; then
-  NOAI_FLAG=""; [ "$NO_AI" -eq 1 ] && NOAI_FLAG="--no-ai"
-  if ! bash "$VERIFY" --pre-onboarding $NOAI_FLAG --env-file "$ENV_FILE"; then
+  VERIFY_ARGS=(--pre-onboarding --env-file "$ENV_FILE")
+  [ "$NO_AI" -eq 1 ] && VERIFY_ARGS+=(--no-ai)
+  if [ "${#PKG_SET[@]}" -gt 0 ]; then
+    VERIFY_APPS=""
+    for p in "${!PKG_SET[@]}"; do VERIFY_APPS="${VERIFY_APPS:+$VERIFY_APPS,}$p"; done
+    VERIFY_ARGS+=(--apps "$VERIFY_APPS")
+  fi
+  if ! bash "$VERIFY" "${VERIFY_ARGS[@]}"; then
     say "INSTALL FAILED postflight verification — the leg(s) named above are broken."
     note "Nothing hides behind a green container count. Fix the named leg, then re-check:"
     note "  bash $VERIFY --env-file $ENV_FILE"

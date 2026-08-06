@@ -12,14 +12,15 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Returned callback user id from completeAuthorization to enable centralized save-time runtime credential sync
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Added Redis pub/sub broadcast for OpenAI Codex credentials — bot containers auto-import on auth callback without relying on Windows bind mount propagation
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Gate swarm-wide credential propagation (shared config-seed mirror + Redis broadcast) to OPERATORS ONLY. Per-user encrypted storage is unchanged and always runs; only the platform-default mirror is restricted. Previously ANY authenticated user's Codex import overwrote /app/config-seed/secrets.json (the api inline/default codex credential), so a guest's ChatGPT plan became the platform default — a billing/abuse hole once a deployment has >1 user. A single-operator local swarm still propagates (operator is on the allowlist).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Made sign-out tenant-safe, prevented status reads/allowlist transitions from promoting private credentials, and disabled unordered Redis credential broadcasts until versioned tombstones exist
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: require encrypted secret storage before OAuth state, exchange, import, status, or sign-out work so Codex credentials can never fall back to plaintext persistence.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: replace the non-rotating shared config-seed credential mirror with an explicit owner-only live Codex auth source; platform promotion now fails closed without that controller path.
  */
 
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import Redis from 'ioredis';
 import { createChildLogger } from '@/shared/logger';
-import { isOperatorIdentity } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'openai-codex-oauth-service' });
 
@@ -36,6 +37,7 @@ interface PendingAuthorization {
   codeVerifier: string;
   redirectUri: string;
   userId: string;
+  platformPromotion: boolean;
   expiresAt: number;
 }
 
@@ -60,6 +62,16 @@ interface OAuthTokenResponse {
 interface OpenAiCodexAuthorizationResult {
   userId: string;
   credentials: OpenAiCodexCredentials;
+  platformPromoted: boolean;
+}
+
+/**
+ * @description Internal sign-out disposition used by the route layer to decide whether the shared
+ * Cline runtime credential may also be removed. Per-user sign-out never implies platform cleanup.
+ */
+export interface OpenAiCodexSignOutResult {
+  signedOut: boolean;
+  platformCredentialsRemoved: boolean;
 }
 
 interface SecretsManagerLike {
@@ -74,13 +86,14 @@ interface SecretsManagerLike {
 export class OpenAiCodexOAuthService {
   private pendingAuthorizations: Map<string, PendingAuthorization>;
   private secretsManager: SecretsManagerLike;
+  private encryptedStorageReady: boolean;
   private clientId: string;
   private redirectUri: string;
 
   /**
    * @description Constructs the OpenAI Codex OAuth service with environment-aware configuration.
    * @param configOutputDir - Directory where settings and encrypted secrets are persisted
-   * @param encryptionKey - Optional encryption key for secrets-at-rest
+   * @param encryptionKey - Controller-only encryption key required for every credential operation
    * @returns New OpenAiCodexOAuthService instance
    */
   constructor(
@@ -89,6 +102,7 @@ export class OpenAiCodexOAuthService {
   ) {
     this.pendingAuthorizations = new Map<string, PendingAuthorization>();
     this.secretsManager = this.createSecretsManager(configOutputDir, encryptionKey);
+    this.encryptedStorageReady = typeof encryptionKey === 'string' && encryptionKey.trim().length > 0;
     this.clientId = process.env.OPENAI_CODEX_CLIENT_ID || OPENAI_CODEX_DEFAULT_CLIENT_ID;
     this.redirectUri = this.resolveRedirectUri();
 
@@ -105,9 +119,11 @@ export class OpenAiCodexOAuthService {
   /**
    * @description Creates a new PKCE authorization URL and stores pending state for callback validation.
    * @param userId - Authenticated OSHAL user identifier used for per-user credential persistence
+   * @param platformPromotion - Trusted OSHAL operator decision captured at authenticated start
    * @returns Authorization URL that the browser should open for OpenAI account sign-in
    */
-  startAuthorization(userId: string): string {
+  startAuthorization(userId: string, platformPromotion = false): string {
+    this.assertEncryptedStorage();
     const startedAt = Date.now();
     logger.info({ userId }, 'Starting OpenAI Codex authorization flow');
 
@@ -122,6 +138,7 @@ export class OpenAiCodexOAuthService {
       codeVerifier,
       redirectUri,
       userId,
+      platformPromotion,
       expiresAt: startedAt + AUTHORIZATION_TTL_MS,
     });
 
@@ -137,6 +154,7 @@ export class OpenAiCodexOAuthService {
    * @returns Callback result containing persisted credentials and authenticated user id
    */
   async completeAuthorization(state: string, code: string): Promise<OpenAiCodexAuthorizationResult> {
+    this.assertEncryptedStorage();
     const startedAt = Date.now();
     logger.info({ stateLength: state.length }, 'Completing OpenAI Codex authorization flow');
 
@@ -155,7 +173,7 @@ export class OpenAiCodexOAuthService {
 
     const tokenResponse = await this.exchangeAuthorizationCode(code, pending.codeVerifier, pending.redirectUri);
     const credentials = this.buildCredentials(tokenResponse);
-    this.writeCredentials(pending.userId, credentials);
+    this.writeCredentials(pending.userId, credentials, pending.platformPromotion);
 
     logger.info(
       {
@@ -169,6 +187,7 @@ export class OpenAiCodexOAuthService {
     return {
       userId: pending.userId,
       credentials,
+      platformPromoted: pending.platformPromotion,
     };
   }
 
@@ -190,9 +209,12 @@ export class OpenAiCodexOAuthService {
   /**
    * @description Returns the current OpenAI Codex OAuth status for a user and refreshes tokens when needed.
    * @param userId - Authenticated OSHAL user identifier
+   * @param platformPromotion - Trusted OSHAL operator decision for refreshing state that was
+   * already explicitly promoted; this flag can never promote a private credential on read
    * @returns Authentication status with optional account metadata and expiry details
    */
-  async getStatus(userId: string): Promise<Record<string, unknown>> {
+  async getStatus(userId: string, platformPromotion = false): Promise<Record<string, unknown>> {
+    this.assertEncryptedStorage();
     const startedAt = Date.now();
     logger.info({ userId }, 'Loading OpenAI Codex OAuth status');
 
@@ -203,17 +225,23 @@ export class OpenAiCodexOAuthService {
         return { authenticated: false };
       }
 
-      const activeCredentials = this.isTokenExpired(stored)
+      const refreshRequired = this.isTokenExpired(stored);
+      const refreshPromotedState = platformPromotion && this.liveAuthCredentialsMatch(stored);
+      const activeCredentials = refreshRequired
         ? await this.refreshCredentials(stored)
         : stored;
 
       if (!activeCredentials) {
-        this.deleteCredentials(userId);
+        this.deleteCredentials(userId, platformPromotion);
         logger.warn({ userId }, 'OpenAI Codex credentials expired and refresh failed');
         return { authenticated: false };
       }
 
-      this.writeCredentials(userId, activeCredentials);
+      // Status is observational. Persist only an actual refresh, and carry platform promotion
+      // forward only when this exact credential already owned the shared seed before refresh.
+      if (activeCredentials !== stored) {
+        this.writeCredentials(userId, activeCredentials, refreshPromotedState);
+      }
       logger.info({ userId, durationMs: Date.now() - startedAt }, 'OpenAI Codex OAuth status loaded');
 
       return {
@@ -231,11 +259,13 @@ export class OpenAiCodexOAuthService {
   /**
    * @description Deletes stored OpenAI Codex OAuth credentials for a user.
    * @param userId - Authenticated OSHAL user identifier
-   * @returns Void when sign-out persistence is complete
+   * @param platformPromotion - Trusted OSHAL operator decision from the authenticated request
+   * @returns Whether per-user and matching operator-owned platform credentials were removed
    */
-  signOut(userId: string): void {
+  signOut(userId: string, platformPromotion = false): OpenAiCodexSignOutResult {
+    this.assertEncryptedStorage();
     logger.info({ userId }, 'Signing out OpenAI Codex credentials');
-    this.deleteCredentials(userId);
+    return this.deleteCredentials(userId, platformPromotion);
   }
 
   /**
@@ -249,9 +279,15 @@ export class OpenAiCodexOAuthService {
    *
    * @param userId - Authenticated OSHAL user identifier used for per-user credential persistence
    * @param rawAuthJson - The auth.json contents as a string or parsed object
+   * @param platformPromotion - Trusted OSHAL operator decision from the authenticated request
    * @returns Persisted credentials (sans secrets in logs)
    */
-  importCredentialsFromCodexCli(userId: string, rawAuthJson: unknown): OpenAiCodexCredentials {
+  importCredentialsFromCodexCli(
+    userId: string,
+    rawAuthJson: unknown,
+    platformPromotion = false,
+  ): OpenAiCodexCredentials {
+    this.assertEncryptedStorage();
     const startedAt = Date.now();
     logger.info({ userId }, 'Importing OpenAI Codex credentials from codex CLI auth.json');
 
@@ -285,7 +321,7 @@ export class OpenAiCodexOAuthService {
       accountId,
     };
 
-    this.writeCredentials(userId, credentials);
+    this.writeCredentials(userId, credentials, platformPromotion);
     logger.info({ userId, durationMs: Date.now() - startedAt, expiresAt, hasAccountId: !!accountId }, 'Imported OpenAI Codex credentials from CLI auth.json');
     return credentials;
   }
@@ -365,7 +401,7 @@ export class OpenAiCodexOAuthService {
   /**
    * @description Creates the encrypted secrets manager instance used for credential persistence.
    * @param configOutputDir - Output directory for settings/secrets
-   * @param encryptionKey - Optional encryption key for secrets-at-rest
+   * @param encryptionKey - Controller-only encryption key required for credential operations
    * @returns Encrypted config manager instance with load/save helpers
    */
   private createSecretsManager(configOutputDir: string, encryptionKey: string | null): SecretsManagerLike {
@@ -395,6 +431,20 @@ export class OpenAiCodexOAuthService {
     }
 
     return candidates[0];
+  }
+
+  /**
+   * @description Refuses every credential lifecycle operation unless the service was constructed
+   * with a non-empty controller encryption key. The stable code lets HTTP adapters return 503
+   * without exposing configuration internals.
+   * @returns Void when encrypted storage is available
+   * @throws Error with ENCRYPTION_KEY_REQUIRED when unavailable
+   */
+  private assertEncryptedStorage(): void {
+    if (this.encryptedStorageReady) return;
+    const error = new Error('Encrypted Codex credential storage is required');
+    (error as Error & { code?: string }).code = 'ENCRYPTION_KEY_REQUIRED';
+    throw error;
   }
 
   /**
@@ -710,22 +760,22 @@ export class OpenAiCodexOAuthService {
   /**
    * @description Writes OpenAI Codex credentials into the encrypted secrets envelope for a user.
    *
-   * Per-user storage ALWAYS happens (that copy is what gets bundled onto a bot node at runtime, in
-   * the caller's private workspace — dedicated bot nodes do NOT read the shared seed). Swarm-wide
-   * propagation — mirroring into the shared `/app/config-seed/secrets.json` and the Redis broadcast —
-   * is **OPERATOR-ONLY**. That seed is what the API's own inline/concierge codex path and the api
-   * default model resolve from; it is writable on the api container. Before this gate, any
-   * authenticated user who imported their `~/.codex/auth.json` overwrote it, so a guest's ChatGPT
-   * plan silently became the platform default — a billing/abuse hole the moment the deployment has
-   * more than one user. A single-operator local swarm is unaffected: the operator IS on the
-   * allowlist, so propagation still runs for them. (The Redis broadcast currently has no subscribers;
-   * gating it is harmless and future-proofs it against re-subscription.)
+   * Per-user encrypted storage always happens. A trusted operator may additionally promote the
+   * credential into the explicitly configured live Codex vendor auth source. Static config-seed
+   * mirrors are prohibited: they do not rotate, are commonly mounted into every worker, and can
+   * resurrect expired or revoked credentials. Promotion authority comes only from the validated
+   * OSHAL session; claims inside an uploaded provider token are never OSHAL authorization.
    *
    * @param userId - Authenticated OSHAL user identifier
    * @param credentials - Credential record to persist
+   * @param platformPromotion - Trusted OSHAL operator decision; never derived from provider tokens
    * @returns Void after persisting credentials
    */
-  private writeCredentials(userId: string, credentials: OpenAiCodexCredentials): void {
+  private writeCredentials(
+    userId: string,
+    credentials: OpenAiCodexCredentials,
+    platformPromotion = false,
+  ): void {
     const secrets = this.secretsManager.loadSecrets(userId);
     const updatedSecrets = {
       ...secrets,
@@ -733,203 +783,197 @@ export class OpenAiCodexOAuthService {
     };
     this.secretsManager.saveSecrets(updatedSecrets, userId);
 
-    if (!isOperatorIdentity(userId, credentials.email)) {
+    if (!platformPromotion) {
       logger.info(
         { userId },
-        'Codex credentials stored for this user only — swarm-wide propagation is operator-only',
+        'Codex credentials stored for this user only — live platform promotion is operator-only',
       );
       return;
     }
 
-    this.writeSharedSeedCredentials(credentials);
-    this.broadcastCodexCredentials(credentials).catch((err) => {
-      logger.warn({ err }, 'Non-fatal: failed to broadcast credentials after write');
-    });
+    this.writeLiveCodexAuth(credentials);
   }
 
   /**
    * @description Deletes persisted OpenAI Codex credentials for a user.
    * @param userId - Authenticated OSHAL user identifier
-   * @returns Void after deleting credentials from persisted secrets
+   * @param platformPromotion - Trusted OSHAL operator decision; never provider-asserted identity
+   * @returns Sign-out result identifying whether matching platform credentials were removed
    */
-  private deleteCredentials(userId: string): void {
+  private deleteCredentials(userId: string, platformPromotion = false): OpenAiCodexSignOutResult {
+    const credentials = this.readCredentials(userId);
     const secrets = this.secretsManager.loadSecrets(userId);
 
     if (!(OPENAI_CODEX_CREDENTIALS_KEY in secrets)) {
-      return;
+      return { signedOut: true, platformCredentialsRemoved: false };
     }
 
     const updatedSecrets = { ...secrets };
     delete updatedSecrets[OPENAI_CODEX_CREDENTIALS_KEY];
     this.secretsManager.saveSecrets(updatedSecrets, userId);
-    this.removeSharedSeedCredentials();
+
+    // A tenant sign-out must never delete platform auth. Even an operator can remove it only when
+    // the live source still matches that operator's credential pair; this avoids deleting a newer
+    // token chain promoted or rotated by another operation.
+    const platformCredentialsRemoved = !!credentials
+      && platformPromotion
+      && this.removeLiveCodexAuth(credentials);
+    return { signedOut: true, platformCredentialsRemoved };
   }
 
   /**
-   * @description Mirrors OAuth credentials into the shared swarm seed so other Docker bots can consume them.
-   * @param credentials - Credential record to persist for swarm-wide fallback use.
-   * @returns Void after best-effort shared-seed update.
+   * @description Atomically promotes an operator credential into the live Codex vendor auth file.
+   * The write target must be explicitly configured so a web request can never discover and replace
+   * an unrelated developer login through HOME/USERPROFILE fallback. The native file remains the
+   * single rotating credential source used by the CLI harness.
+   * @param credentials - Exact operator credential approved for platform execution
+   * @returns Void after an owner-only atomic write
+   * @throws Error with a stable code when the path or native token set is incomplete
    */
-  private writeSharedSeedCredentials(credentials: OpenAiCodexCredentials): void {
-    const filePath = this.resolveSharedSeedPath();
+  private writeLiveCodexAuth(credentials: OpenAiCodexCredentials): void {
+    const filePath = this.resolveLiveCodexAuthPath();
     if (!filePath) {
-      return;
+      const error = new Error('An explicit live Codex auth path is required for platform promotion');
+      (error as Error & { code?: string }).code = 'CODEX_LIVE_AUTH_PATH_REQUIRED';
+      throw error;
+    }
+    if (!credentials.idToken || !credentials.accessToken || !credentials.refreshToken) {
+      const error = new Error('A complete native Codex token set is required for platform promotion');
+      (error as Error & { code?: string }).code = 'CODEX_LIVE_AUTH_INCOMPLETE';
+      throw error;
     }
 
+    const authDirectory = path.dirname(filePath);
+    const temporaryPath = path.join(
+      authDirectory,
+      `.auth.json.promote-${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.tmp`,
+    );
+    const nativeAuth = {
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
+      last_refresh: new Date().toISOString(),
+      tokens: {
+        access_token: credentials.accessToken,
+        refresh_token: credentials.refreshToken,
+        id_token: credentials.idToken,
+        account_id: credentials.accountId,
+      },
+    };
+
+    let descriptor: number | null = null;
     try {
-      const current = this.readSharedSeedSecrets(filePath);
-      const next = {
-        ...current,
-        [OPENAI_CODEX_CREDENTIALS_KEY]: JSON.stringify(credentials),
-      };
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, JSON.stringify(next, null, 2), 'utf-8');
-      logger.info({ filePath }, 'Mirrored OpenAI Codex OAuth credentials into shared swarm seed');
+      fs.mkdirSync(authDirectory, { recursive: true, mode: 0o700 });
+      descriptor = fs.openSync(temporaryPath, 'wx', 0o600);
+      fs.writeFileSync(descriptor, `${JSON.stringify(nativeAuth, null, 2)}\n`, 'utf-8');
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+      descriptor = null;
+      fs.chmodSync(temporaryPath, 0o600);
+      fs.renameSync(temporaryPath, filePath);
+      fs.chmodSync(filePath, 0o600);
+      logger.info('Promoted operator credentials into the live Codex auth source');
     } catch (error) {
-      // Issue #5: when /app/config-seed is mounted read-only (the standard
-      // sandbox setup — operators don't want the container modifying host-
-      // sourced secrets), the write fails with EROFS on every credential
-      // refresh. The behaviour is correct (don't write to a read-only mount);
-      // the noise is the warn-level log every ~30s. Demote to debug for that
-      // specific errno so other write failures still surface.
-      const errno = (error as NodeJS.ErrnoException).code;
-      if (errno === 'EROFS') {
-        logger.debug({ filePath }, 'Shared-seed credential mirror skipped — config-seed mount is read-only (expected)');
-      } else {
-        logger.warn({ err: error, filePath }, 'Failed to mirror OpenAI Codex OAuth credentials into shared swarm seed');
+      if (descriptor !== null) {
+        try { fs.closeSync(descriptor); } catch { /* preserve the original filesystem error */ }
       }
+      try { fs.unlinkSync(temporaryPath); } catch { /* temp may not exist or may already be renamed */ }
+      throw error;
     }
   }
 
   /**
-   * @description Removes mirrored shared-seed OAuth credentials when the active user signs out.
-   * @returns Void after best-effort shared-seed cleanup.
+   * @description Removes the live Codex auth file only when its current credential fingerprint
+   * still matches the exact operator credential being signed out. A rotated or newly promoted
+   * token chain is preserved.
+   * @param expectedCredentials - Operator credential being removed from encrypted storage
+   * @returns True only when the matching live auth file was removed
    */
-  private removeSharedSeedCredentials(): void {
-    const filePath = this.resolveSharedSeedPath();
-    if (!filePath || !fs.existsSync(filePath)) {
-      return;
-    }
+  private removeLiveCodexAuth(expectedCredentials: OpenAiCodexCredentials): boolean {
+    const filePath = this.resolveLiveCodexAuthPath();
+    if (!filePath || !fs.existsSync(filePath)) return false;
 
     try {
-      const current = this.readSharedSeedSecrets(filePath);
-      if (!(OPENAI_CODEX_CREDENTIALS_KEY in current)) {
-        return;
+      const current = this.readLiveCodexCredentials(filePath);
+      if (!current || !this.credentialsMatch(current, expectedCredentials)) {
+        logger.info('Live Codex auth belongs to a different or rotated platform promotion; cleanup skipped');
+        return false;
       }
-      const next = { ...current };
-      delete next[OPENAI_CODEX_CREDENTIALS_KEY];
-      fs.writeFileSync(filePath, JSON.stringify(next, null, 2), 'utf-8');
-      logger.info({ filePath }, 'Removed OpenAI Codex OAuth credentials from shared swarm seed');
+      fs.unlinkSync(filePath);
+      logger.info('Removed the matching live Codex platform auth source');
+      return true;
     } catch (error) {
-      logger.warn({ err: error, filePath }, 'Failed to remove OpenAI Codex OAuth credentials from shared swarm seed');
+      logger.warn({ err: error }, 'Failed to remove the matching live Codex platform auth source');
+      return false;
     }
   }
 
   /**
-   * @description Reads the shared swarm seed secrets JSON with object-only fallback semantics.
-   * @param filePath - Shared seed file path.
-   * @returns Parsed secrets object or empty object when missing/invalid.
+   * @description Determines whether an exact private credential already owns the live platform
+   * auth source. Used only to carry an existing promotion across refresh; status reads never create
+   * a new promotion.
+   * @param expectedCredentials - Stored per-user credential before refresh
+   * @returns True only when the live auth source carries the same credential fingerprint
    */
-  private readSharedSeedSecrets(filePath: string): Record<string, unknown> {
-    if (!fs.existsSync(filePath)) {
-      return {};
-    }
-
+  private liveAuthCredentialsMatch(expectedCredentials: OpenAiCodexCredentials): boolean {
+    const filePath = this.resolveLiveCodexAuthPath();
+    if (!filePath || !fs.existsSync(filePath)) return false;
     try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      const parsed = JSON.parse(raw) as unknown;
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : {};
-    } catch (error) {
-      logger.warn({ err: error, filePath }, 'Failed to parse shared swarm seed secrets');
-      return {};
+      const current = this.readLiveCodexCredentials(filePath);
+      return !!current && this.credentialsMatch(current, expectedCredentials);
+    } catch {
+      return false;
     }
   }
 
   /**
-   * @description Resolves the shared swarm seed secrets path from runtime env with a safe container default.
-   * @returns Shared seed secrets path.
+   * @description Compares credential ownership without exposing or logging token material.
    */
-  private resolveSharedSeedPath(): string {
-    return process.env.OPENAI_CODEX_SHARED_SEED_PATH || '/app/config-seed/secrets.json';
-  }
-
-  // ---------------------------------------------------------------------------
-  // Redis pub/sub credential broadcast (swarm-wide propagation)
-  // ---------------------------------------------------------------------------
-
-  private static readonly CODEX_CREDENTIAL_CHANNEL = 'swarm.codex-credentials.update';
-
-  /**
-   * @description Publishes OpenAI Codex credentials to Redis so every bot container picks them up.
-   * Called after successful OAuth token exchange — supplements config-seed file propagation
-   * which fails on Windows bind mounts.
-   */
-  private async broadcastCodexCredentials(credentials: OpenAiCodexCredentials): Promise<void> {
-    const redisUrl = process.env.REDIS_URL;
-    if (!redisUrl || process.env.SWARM_MODE !== 'container') return;
-
-    const pub = new Redis(redisUrl);
-    try {
-      const receivers = await pub.publish(
-        OpenAiCodexOAuthService.CODEX_CREDENTIAL_CHANNEL,
-        JSON.stringify(credentials),
-      );
-      logger.info({ receivers }, 'Broadcast OpenAI Codex credentials to swarm via Redis');
-    } catch (err) {
-      logger.warn({ err }, 'Failed to broadcast OpenAI Codex credentials via Redis');
-    } finally {
-      pub.disconnect();
-    }
+  private credentialsMatch(left: OpenAiCodexCredentials, right: OpenAiCodexCredentials): boolean {
+    const fingerprint = (credentials: OpenAiCodexCredentials): Buffer => crypto.createHash('sha256')
+      .update(credentials.accessToken || '')
+      .update('\0')
+      .update(credentials.refreshToken || '')
+      .digest();
+    return crypto.timingSafeEqual(fingerprint(left), fingerprint(right));
   }
 
   /**
-   * @description Subscribes to OpenAI Codex credential broadcasts on bot startup.
-   * Auto-imports credentials published by the API server after OAuth callback.
-   * @param runtimeSyncService - Cline runtime sync service for writing credentials to local runtime
+   * @description Parses the native live Codex auth shape into the service's internal credential
+   * record without accepting legacy app/config-seed envelopes.
+   * @param filePath - Explicit live Codex auth.json path
+   * @returns Normalized credentials or null for an incomplete/invalid native file
    */
-  static async subscribeToBroadcast(runtimeSyncService?: { syncOpenAiCodexCredentials: (userId?: string | null) => boolean }): Promise<void> {
-    const redisUrl = process.env.REDIS_URL;
-    if (!redisUrl || process.env.SWARM_MODE !== 'container') return;
+  private readLiveCodexCredentials(filePath: string): OpenAiCodexCredentials | null {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const tokenBag = this.extractTokenBag(parsed as Record<string, unknown>);
+    const accessToken = this.readOptionalStringField(tokenBag.access_token);
+    const refreshToken = this.readOptionalStringField(tokenBag.refresh_token);
+    const idToken = this.readOptionalStringField(tokenBag.id_token);
+    if (!accessToken || !refreshToken) return null;
+    const claimSource = idToken || accessToken;
+    const claims = this.parseJwtClaims(claimSource);
+    return {
+      type: 'openai-codex',
+      accessToken,
+      refreshToken,
+      expiresAt: this.resolveExpiryFromClaims(claims),
+      idToken,
+      email: this.readEmailFromClaims(claims),
+      accountId: this.readOptionalStringField(tokenBag.account_id)
+        || this.extractAccountId(claimSource),
+    };
+  }
 
-    try {
-      const sub = new Redis(redisUrl);
-      await sub.subscribe(OpenAiCodexOAuthService.CODEX_CREDENTIAL_CHANNEL);
-      logger.info('Subscribed to OpenAI Codex credential broadcast channel');
-
-      sub.on('message', (_channel: string, message: string) => {
-        try {
-          const credentials = JSON.parse(message) as OpenAiCodexCredentials;
-          if (!credentials.accessToken) return;
-
-          // Write credentials to the shared seed file so the sync service can pick them up
-          const seedPath = process.env.OPENAI_CODEX_SHARED_SEED_PATH || '/app/config-seed/secrets.json';
-          let existing: Record<string, unknown> = {};
-          if (fs.existsSync(seedPath)) {
-            try { existing = JSON.parse(fs.readFileSync(seedPath, 'utf-8')) as Record<string, unknown>; } catch { /* ignore */ }
-          }
-          existing[OPENAI_CODEX_CREDENTIALS_KEY] = JSON.stringify(credentials);
-          fs.mkdirSync(path.dirname(seedPath), { recursive: true });
-          fs.writeFileSync(seedPath, JSON.stringify(existing, null, 2), 'utf-8');
-          logger.info('Received OpenAI Codex credential broadcast — written to seed');
-
-          // Trigger runtime sync if service is available
-          if (runtimeSyncService) {
-            runtimeSyncService.syncOpenAiCodexCredentials();
-          }
-        } catch (err) {
-          // Same EROFS-on-read-only-mount demotion as writeSharedSeedCredentials.
-          if ((err as NodeJS.ErrnoException).code === 'EROFS') {
-            logger.debug('OpenAI Codex credential broadcast skipped — config-seed mount is read-only (expected)');
-          } else {
-            logger.warn({ err }, 'Failed to process OpenAI Codex credential broadcast');
-          }
-        }
-      });
-    } catch (err) {
-      logger.warn({ err }, 'Failed to subscribe to OpenAI Codex credential broadcast');
-    }
+  /**
+   * @description Resolves the controller-owned live Codex write target. There is deliberately no
+   * HOME/USERPROFILE fallback for web-triggered writes; deployments must opt in explicitly.
+   * @returns Trimmed explicit auth path or null when platform promotion is not configured
+   */
+  private resolveLiveCodexAuthPath(): string | null {
+    const configured = (process.env.CODEX_AUTH_SOURCE_PATH || '').trim();
+    return configured || null;
   }
 
   /**

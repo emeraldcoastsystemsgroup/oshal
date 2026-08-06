@@ -9,7 +9,11 @@
 #
 # Usage (typically invoked by the worker via shell.exec):
 #   python train-lora.py --character oshbrainrot --version 1 --dataset ~/overnight/curated.zip \
-#       --controller http://100.64.0.1:35457 --secret $SWARM_SERVICE_SECRET
+#       --controller http://100.64.0.1:35457 --owner-sub-b64 <subject>
+# 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Bind callbacks to the initiating owner's
+# canonical base64url identity header; a fleet secret without owner attribution is insufficient.
+# 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Read the callback fleet secret only from
+# the edge process environment so it cannot leak through task payloads, argv, or shell history.
 import argparse, json, os, re, shutil, subprocess, time, zipfile, glob, urllib.request
 
 HOME = os.path.expanduser("~")
@@ -68,9 +72,10 @@ def base_checkpoint(base_name):
     return p
 
 
-def train(character, version, dataset_zip, base_name, controller, secret, parent_version, resolution=512, epochs=EPOCHS, rank=NETWORK_DIM):
+def train(character, version, dataset_zip, base_name, controller, secret, owner_sub_b64,
+          parent_version, resolution=512, epochs=EPOCHS, rank=NETWORK_DIM):
     if not os.path.exists(VENV_PY) or not os.path.exists(TRAIN_PY):
-        fail(character, version, controller, secret,
+        fail(character, version, controller, secret, owner_sub_b64,
              "kohya not installed (%s missing) - run setup-kohya.ps1 first" % VENV_PY)
         return 2
     os.makedirs(MODELS, exist_ok=True); os.makedirs(LORA_DIR, exist_ok=True)
@@ -117,7 +122,8 @@ def train(character, version, dataset_zip, base_name, controller, secret, parent
 
     out_path = os.path.join(MODELS, out_name + ".safetensors")
     if rc != 0 or not os.path.exists(out_path):
-        fail(character, version, controller, secret, "kohya exited rc=%s, no model at %s" % (rc, out_path))
+        fail(character, version, controller, secret, owner_sub_b64,
+             "kohya exited rc=%s, no model at %s" % (rc, out_path))
         return rc or 1
 
     # Make the model loadable by ComfyUI's LoraLoader (validate-lora.py uses --lora-name <file>).
@@ -135,25 +141,28 @@ def train(character, version, dataset_zip, base_name, controller, secret, parent
     json.dump(metrics, open(os.path.join(MODELS, out_name + ".json"), "w"), indent=2)
     log("DONE %s in %ds (loss %s, %s steps) -> %s" % (out_name, duration, final_loss, steps, out_path))
     print("OSHAL_TRAIN_RESULT " + json.dumps(metrics), flush=True)   # captured by shell.exec
-    if controller and secret:
-        post_ingest(controller, secret, metrics)
+    if controller and secret and owner_sub_b64:
+        post_ingest(controller, secret, owner_sub_b64, metrics)
     return 0
 
 
-def fail(character, version, controller, secret, msg):
+def fail(character, version, controller, secret, owner_sub_b64, msg):
     log("TRAIN FAILED: " + msg)
     payload = {"kind": "training", "character": character, "version": version, "status": "failed",
                "metrics": {"error": msg}}
     print("OSHAL_TRAIN_RESULT " + json.dumps(payload), flush=True)
-    if controller and secret:
-        post_ingest(controller, secret, payload)
+    if controller and secret and owner_sub_b64:
+        post_ingest(controller, secret, owner_sub_b64, payload)
 
 
-def post_ingest(controller, secret, payload):
+def post_ingest(controller, secret, owner_sub_b64, payload):
     url = controller.rstrip("/") + "/api/lora/ingest"
     try:
-        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-                                     headers={"Content-Type": "application/json", "x-service-secret": secret})
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "x-service-secret": secret,
+                     "x-oshal-user-sub-b64": owner_sub_b64})
         r = json.loads(urllib.request.urlopen(req, timeout=30).read())
         log("ingest ok: %s" % r)
     except Exception as e:
@@ -171,10 +180,12 @@ def main():
     ap.add_argument("--epochs", type=int, default=EPOCHS)
     ap.add_argument("--rank", type=int, default=NETWORK_DIM)
     ap.add_argument("--controller", default=os.environ.get("OSHAL_CONTROLLER", ""))
-    ap.add_argument("--secret", default=os.environ.get("SWARM_SERVICE_SECRET", ""))
+    ap.add_argument("--owner-sub-b64", default=os.environ.get("OSHAL_USER_SUB_B64", ""))
     a = ap.parse_args()
+    secret = os.environ.get("SWARM_SERVICE_SECRET", "")
     raise SystemExit(train(a.character, a.version, os.path.expanduser(a.dataset), a.base,
-                           a.controller, a.secret, a.parent_version, a.resolution, a.epochs, a.rank))
+                           a.controller, secret, a.owner_sub_b64, a.parent_version,
+                           a.resolution, a.epochs, a.rank))
 
 
 if __name__ == "__main__":

@@ -13,6 +13,11 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G12: on the direct (non-agentic) path, an agentic-only node passed the old `activeLlm || agenticController` truthiness check and then threw "activeLlm.generateResponse is not a function" mid-request. processMessage now rejects direct:true + agenticMode:false up front with an actionable error ({ success:false, error:'direct_mode_unsupported' }, task status 'error') when no provider implements generateResponse; the legacy "LLM service not configured" stub path for nodes with NO engine at all is unchanged. Guard: tests/unit/task-controller-direct-mode.spec.ts.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact task owners and route force, ticket, parent, and generated workspaces through canonical IDs plus resolved link-free containment before reuse or creation.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Reject empty, malformed, orphaned-parent, or conflicting workspace directives by property presence so unsafe forceTaskId/ticketId input cannot fall through to a generated workspace.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05: fence persisted prior user/agent messages as data while leaving the current contained request and final authority binding intact.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 audit: remove the one-backtick shell shortcut and constrain direct-path schemas by exact operation scopes while flagging unbrokered CLI execution.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 audit: capture and revalidate direct hosted-provider capabilities at request and provider boundaries.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: expose owner-filtered task pagination for authenticated object routes.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com  | Bind the explicit tool-less path to an empty tool allowlist so bypassing the agentic loop cannot advertise or invoke registry tools.
  */
 
 /**
@@ -30,6 +35,15 @@ const AgenticController = require('./AgenticController');
 const GitLabService = require('../services/GitLabService');
 const ClineCLIWrapper = require('../services/codebase/ClineCLIWrapper');
 const { optionalExactUserSubject } = require('../services/codebase/exact-user-subject');
+const {
+  containPriorMessages,
+  normalizeAllowedTools,
+} = require('../utils/untrusted-content');
+const {
+  assertDispatchCapabilitiesCurrent,
+  captureDispatchCapabilities,
+  normalizeAuthorizedScopes,
+} = require('../utils/dispatch-capabilities');
 const {
   UnsafeWorkspacePathError,
   ensureTaskWorkspace,
@@ -292,14 +306,6 @@ class TaskController {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    const commandRegex = /^`([^`]+)`$/;
-    const match = userMessage.text.match(commandRegex);
-
-    if (match) {
-      const command = match[1];
-      return this.executeTool(taskId, 'execute_command', { command }, options.autoApprove);
-    }
-
     // Bring-Your-Own-LLM: when the caller threaded a per-user OpenAI-compatible
     // connection, this request runs inference on THEIR endpoint+key+model instead of
     // the bot's configured provider. BYO is a reasoning path (no vendor CLI harness
@@ -381,12 +387,20 @@ class TaskController {
         });
       }
 
-      const availableTools = this.getAvailableTools();
+      // Tool-less is an execution authority boundary, not only a routing hint. An absent
+      // allowedTools option means unrestricted on the legacy interactive path, so force an
+      // exact empty list here before any registry capability can be captured or advertised.
+      const allowedTools = normalizeAllowedTools(toolLess ? [] : options.allowedTools);
+      const authorizedScopes = normalizeAuthorizedScopes(options.authorizedScopes);
+      const dispatchCapabilities = captureDispatchCapabilities(
+        this.toolRegistry, allowedTools, authorizedScopes,
+      );
+      const availableTools = dispatchCapabilities.definitions;
 
-      const formattedMessages = task.messages.map(msg => ({
-        role: msg.type === 'say' && msg.text.includes('Task:') ? 'user' : 'user',
-        content: msg.text || msg.say || ''
-      }));
+      const formattedMessages = [
+        ...containPriorMessages(task.messages.slice(0, -1)),
+        { role: 'user', content: userMessage.text },
+      ];
 
       let systemPrompt = `You are an OSHAL agent, a helpful AI coding assistant with full Cline capabilities. You have access to ${availableTools.length} tools including file operations and DevOps CLI tools. The current task is: ${task.text}`;
 
@@ -394,12 +408,15 @@ class TaskController {
         systemPrompt += global.PLANE_CONTEXT;
       }
 
+      assertDispatchCapabilitiesCurrent(this.toolRegistry, dispatchCapabilities);
       const response = await activeLlm.generateResponse(formattedMessages, {
         systemPrompt: systemPrompt,
         maxTokens: 4096,
         temperature: 0.7,
         tools: availableTools,
-        extraEnv: options.extraEnv // per-request scoping (e.g. OSHAL_USER_SUB) → provider spawn
+        extraEnv: options.extraEnv,
+        enforceToolBoundary: true,
+        authorizedScopes: options.authorizedScopes,
       });
       const finalText = typeof (response.content || response.text) === 'string'
         ? String(response.content || response.text).trim() : '';
@@ -625,6 +642,10 @@ class TaskController {
     return await this.taskStore.listTasks(limit, offset);
   }
 
+  async listTasksForOwner(ownerSub, limit = 50, offset = 0) {
+    return await this.taskStore.listTasksForOwner(ownerSub, limit, offset);
+  }
+
   async deleteTask(taskId) {
     this.activeTasks.delete(taskId);
     const deleted = await this.taskStore.deleteTask(taskId);
@@ -733,13 +754,7 @@ class TaskController {
 
       const recentMessages = (providerName === 'cline-cli')
         ? []  // Cline CLI is stateless — persona+task go in workspace README
-        : task.messages
-            .filter(msg => msg.type === 'say' && msg.text)
-            .slice(-10)
-            .map(msg => ({
-              role: 'user',
-              content: msg.text,
-            }));
+        : containPriorMessages(task.messages.slice(0, -1));
 
       logger.info(`[TaskController] Provider: ${providerName}, conversation history: ${recentMessages.length} messages`);
 

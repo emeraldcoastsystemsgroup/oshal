@@ -56,6 +56,8 @@
  *   credentials no longer enter the model-visible prompt.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Require strict server-derived final-submit state
  *   on every dispatch input and carry it unchanged to the installed Career prompt builder.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Bind the selected task and worker into the durable Apply V2 ledger before enqueue; enqueue failure terminalizes that exact run.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | Replace the short undispatched claim deadline with the controller's full submission deadline at the exact task/worker bind.
  *
  * @module app/apply-dispatch
  */
@@ -70,6 +72,7 @@ import { dispatchBrowserTask, type DispatchResult } from '@/app/browser-task-dis
 import { resolveApplyPromptBuilder } from '@/app/apply-prompt-bridge';
 import { assertPublicHttpUrl } from '@/shared/security/ssrf-guard';
 import { issueApplyCapability, revokeApplyCapability } from '@/app/apply-task-capability';
+import { bindApplyRunDispatch, transitionApplyRun } from '@/app/apply-run-ledger';
 
 // The generic browser-task rail moved to browser-task-dispatch. Re-exported so existing importers
 // (apply-submit's DispatchResult, tests) keep resolving the same names from here.
@@ -89,6 +92,10 @@ const MAX_AUTOFILL_BYTES = 2 * 1024 * 1024;
 const MAX_JSON_BYTES = 512 * 1024;
 
 export interface ApplyDispatchInput {
+  /** PostgreSQL-authoritative run created before the Career queue is claimed. */
+  applyRunId: string;
+  /** Full worker execution deadline, installed only after the durable task/worker bind succeeds. */
+  timeoutAt: Date;
   ticketId: string;
   /** True only when ticketId names a real durable ticket that terminal ingest must settle. */
   settleTicket: boolean;
@@ -158,6 +165,10 @@ function prepareApplyCompletion(
   job: ApplyDispatchInput['job'],
 ) {
   return async ({ controllerUrl, client }: { controllerUrl: string; client: { clientId: string } }) => {
+    const bound = await bindApplyRunDispatch(
+      deps.pool, input.applyRunId, taskId, client.clientId, input.timeoutAt,
+    );
+    if (!bound) throw new Error('durable Apply run lost its claimed-state compare-and-set');
     const targetHost = new URL(String(job.url)).hostname.toLowerCase();
     const issued = await issueApplyCapability(deps.pool, {
       taskId, userSub: input.userSub, ticketId: input.ticketId, settleTicket: input.settleTicket,
@@ -171,7 +182,16 @@ function prepareApplyCompletion(
         capability: issued.token,
         context: { workflow: 'apply', generation: issued.generation },
       },
-      onEnqueueFailure: () => revokeApplyCapability(deps.pool, taskId),
+      onEnqueueFailure: async () => {
+        await revokeApplyCapability(deps.pool, taskId);
+        await transitionApplyRun(deps.pool, {
+          runId: input.applyRunId,
+          from: ['queued_to_worker'],
+          to: 'failed',
+          failureCode: 'worker_enqueue_failed',
+          failureDetail: 'The selected worker did not accept the durable browser task.',
+        });
+      },
     };
   };
 }

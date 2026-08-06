@@ -1,3 +1,10 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Mark the reviewed Outlook product-domain favicon honestly as a fallback instead of a verified Simple Icons asset.
+# -----------------------------------------------------------------------------
+
 provider: outlook
 displayName: Microsoft 365 (Outlook)
 version: 1.0.0
@@ -46,6 +53,6 @@ resources:
 metadata:
   description: "Read Outlook mail and calendar events through Microsoft Graph, with a sendMail resource for outbound messages."
   category: "Email"
-  iconVerified: true
-  iconSource: favicon-curated
+  iconVerified: false
+  iconSource: favicon-fallback
   iconUrl: https://icons.duckduckgo.com/ip3/outlook.office.com.ico

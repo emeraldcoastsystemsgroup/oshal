@@ -1,508 +1,492 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * DATE         | AUTHOR  | DESCRIPTION
+ * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of encrypted storage tests
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added per-user config envelope tests
+ * 1   | maintainer@emeraldcoastsystemsgroup.com     | Initial implementation of encrypted storage tests
+ * 2   | maintainer@emeraldcoastsystemsgroup.com     | Added per-user config envelope tests
+ * 3   | maintainer@emeraldcoastsystemsgroup.com     | Guarded fail-closed encrypted storage, one-way plaintext migration, owner-only file modes, and operator config-route behavior
  */
 
-import { test, expect } from '@playwright/test';
-import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
+import { test, expect, request as apiRequest, type APIRequestContext } from '@playwright/test';
+import express from 'express';
+import http from 'node:http';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { AddressInfo } from 'node:net';
+import { createConfigRoutes } from '@/app/routes/config-routes';
 
-const OUTPUT_DIR = path.resolve(__dirname, '../output');
-const SECRETS_PLAIN = path.join(OUTPUT_DIR, 'secrets.json');
-const SECRETS_ENCRYPTED = path.join(OUTPUT_DIR, 'secrets.enc.json');
-const GLOBAL_CONFIG = path.join(OUTPUT_DIR, 'global-config.json');
-const CLINE_CONFIG = path.join(OUTPUT_DIR, 'cline-config.json');
+const ENCRYPTED_FILE = 'secrets.enc.json';
+const PLAINTEXT_FILE = 'secrets.json';
+const TEST_KEY = 'test-encryption-key-for-manager';
+const OPERATOR_SUB = 'Encrypted-Store-Test-Operator';
 
-// ============================================================
-// Helpers
-// ============================================================
+interface CodedError extends Error {
+  code?: string;
+}
 
-function cleanOutput() {
-  const files = [SECRETS_PLAIN, SECRETS_ENCRYPTED, GLOBAL_CONFIG, CLINE_CONFIG];
-  for (const f of files) {
-    if (fs.existsSync(f)) fs.unlinkSync(f);
+interface ConfigApiHarness {
+  api: APIRequestContext;
+  root: string;
+  close: () => Promise<void>;
+}
+
+/** Create one disposable directory for a real filesystem boundary test. */
+function createTempDir(label: string): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), `oshal-${label}-`));
+}
+
+/** Persist a deliberate legacy plaintext fixture without using the live manager. */
+function writePlainSecrets(outputDir: string, data: Record<string, unknown>): void {
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(path.join(outputDir, PLAINTEXT_FILE), JSON.stringify(data, null, 2), 'utf8');
+}
+
+/** Capture a synchronous failure so tests can assert its stable code and message. */
+function captureError(action: () => unknown): CodedError {
+  try {
+    action();
+  } catch (error) {
+    return error as CodedError;
+  }
+  throw new Error('Expected operation to fail');
+}
+
+/** Assert a stable manager error code without discarding its diagnostic message. */
+function expectErrorCode(action: () => unknown, code: string): CodedError {
+  const error = captureError(action);
+  expect(error.code).toBe(code);
+  expect(error.message.length).toBeGreaterThan(0);
+  return error;
+}
+
+/** Require a 0600 encrypted envelope on filesystems that expose POSIX mode bits. */
+function expectOwnerOnlyPermissions(filePath: string): void {
+  expect(fs.existsSync(filePath)).toBe(true);
+  // Node exposes synthetic mode bits on Windows; Linux CI and production containers enforce 0600.
+  if (process.platform === 'win32') return;
+  expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+}
+
+/** Restore a bounded set of environment variables after an in-process API harness. */
+function restoreEnvironment(snapshot: Record<string, string | undefined>): void {
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
 }
 
-function writeSecretsPlain(data: Record<string, string>) {
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  }
-  fs.writeFileSync(SECRETS_PLAIN, JSON.stringify(data, null, 2), 'utf-8');
-}
+/** Start the real config router with an exact operator and disposable persistence paths. */
+async function startConfigApi(encryptionKey: string | null): Promise<ConfigApiHarness> {
+  const root = createTempDir('config-api');
+  const keys = ['OSHAL_OPERATOR_SUBS', 'CONFIG_OUTPUT_DIR', 'CLINE_CONFIG_DIR',
+    'OPENAI_CODEX_SHARED_SEED_PATH', 'ENCRYPTION_KEY'];
+  const snapshot = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  process.env.OSHAL_OPERATOR_SUBS = OPERATOR_SUB;
+  process.env.CONFIG_OUTPUT_DIR = root;
+  process.env.CLINE_CONFIG_DIR = path.join(root, 'cline');
+  process.env.OPENAI_CODEX_SHARED_SEED_PATH = path.join(root, 'seed', 'secrets.json');
+  if (encryptionKey === null) delete process.env.ENCRYPTION_KEY;
+  else process.env.ENCRYPTION_KEY = encryptionKey;
 
-// ============================================================
-// 1. UNIT TESTS — crypto-utils encrypt/decrypt round-trip
-// ============================================================
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as any).oidc = { isAuthenticated: () => true, user: { sub: OPERATOR_SUB } };
+    next();
+  });
+  app.use('/api/config', createConfigRoutes());
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  const api = await apiRequest.newContext({ baseURL: `http://127.0.0.1:${port}` });
+
+  return {
+    api,
+    root,
+    close: async () => {
+      await api.dispose();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      restoreEnvironment(snapshot);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
 
 test.describe('Unit — crypto-utils encrypt/decrypt', () => {
   test('encrypts and decrypts a simple string', () => {
     const { encrypt, decrypt } = require('../src/api/crypto-utils');
-    const masterKey = 'test-master-key-12345';
     const plaintext = 'Hello, encrypted world!';
-
-    const envelope = encrypt(plaintext, masterKey);
+    const envelope = encrypt(plaintext, TEST_KEY);
 
     expect(envelope).toHaveProperty('salt');
     expect(envelope).toHaveProperty('iv');
     expect(envelope).toHaveProperty('authTag');
     expect(envelope).toHaveProperty('ciphertext');
-
-    const decrypted = decrypt(envelope, masterKey);
-    expect(decrypted).toBe(plaintext);
+    expect(decrypt(envelope, TEST_KEY)).toBe(plaintext);
   });
 
   test('encrypts and decrypts JSON config data', () => {
     const { encrypt, decrypt } = require('../src/api/crypto-utils');
-    const masterKey = 'my-secret-encryption-key';
     const configData = {
-      apiKey: 'sk-ant-api03-abc123',
-      awsAccessKey: 'AKIAIOSFODNN7EXAMPLE',
-      awsSecretKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+      apiKey: 'provider-test-value',
+      accessKey: 'cloud-access-test-value',
+      secretKey: 'cloud-secret-test-value',
     };
-
-    const plaintext = JSON.stringify(configData);
-    const envelope = encrypt(plaintext, masterKey);
-    const decrypted = decrypt(envelope, masterKey);
-
-    expect(JSON.parse(decrypted)).toEqual(configData);
+    const envelope = encrypt(JSON.stringify(configData), TEST_KEY);
+    expect(JSON.parse(decrypt(envelope, TEST_KEY))).toEqual(configData);
   });
 
-  test('each encryption produces different ciphertext (unique salt/IV)', () => {
+  test('uses a unique salt and IV for each encryption', () => {
     const { encrypt } = require('../src/api/crypto-utils');
-    const masterKey = 'test-key';
-    const plaintext = 'same-data';
+    const first = encrypt('same-data', TEST_KEY);
+    const second = encrypt('same-data', TEST_KEY);
 
-    const envelope1 = encrypt(plaintext, masterKey);
-    const envelope2 = encrypt(plaintext, masterKey);
-
-    expect(envelope1.ciphertext).not.toBe(envelope2.ciphertext);
-    expect(envelope1.salt).not.toBe(envelope2.salt);
-    expect(envelope1.iv).not.toBe(envelope2.iv);
+    expect(first.ciphertext).not.toBe(second.ciphertext);
+    expect(first.salt).not.toBe(second.salt);
+    expect(first.iv).not.toBe(second.iv);
   });
 
-  test('wrong key fails to decrypt', () => {
+  test('rejects a wrong decryption key', () => {
     const { encrypt, decrypt } = require('../src/api/crypto-utils');
-    const masterKey = 'correct-key';
-    const wrongKey = 'wrong-key';
-
-    const envelope = encrypt('secret data', masterKey);
-
-    expect(() => decrypt(envelope, wrongKey)).toThrow(/Decryption failed/);
+    const envelope = encrypt('secret data', TEST_KEY);
+    expect(() => decrypt(envelope, 'wrong-key')).toThrow(/Decryption failed/);
   });
 
-  test('tampered ciphertext fails to decrypt', () => {
+  test('rejects tampered ciphertext', () => {
     const { encrypt, decrypt } = require('../src/api/crypto-utils');
-    const masterKey = 'test-key';
-
-    const envelope = encrypt('secret data', masterKey);
-
-    // Tamper with the ciphertext
-    const buf = Buffer.from(envelope.ciphertext, 'base64');
-    buf[0] = buf[0] ^ 0xff;
-    envelope.ciphertext = buf.toString('base64');
-
-    expect(() => decrypt(envelope, masterKey)).toThrow(/Decryption failed/);
+    const envelope = encrypt('secret data', TEST_KEY);
+    const bytes = Buffer.from(envelope.ciphertext, 'base64');
+    bytes[0] ^= 0xff;
+    envelope.ciphertext = bytes.toString('base64');
+    expect(() => decrypt(envelope, TEST_KEY)).toThrow(/Decryption failed/);
   });
 });
 
-// ============================================================
-// 2. UNIT TESTS — EncryptedConfigManager
-// ============================================================
-
-test.describe('Unit — EncryptedConfigManager', () => {
-  const TEST_KEY = 'test-encryption-key-for-manager';
+test.describe('Unit — EncryptedConfigManager fail-closed storage', () => {
+  let outputDir: string;
 
   test.beforeEach(() => {
-    cleanOutput();
+    outputDir = createTempDir('encrypted-manager');
   });
 
-  test.afterAll(() => {
-    cleanOutput();
+  test.afterEach(() => {
+    fs.rmSync(outputDir, { recursive: true, force: true });
   });
 
-  test('saves and loads encrypted secrets', () => {
+  test('saves only an encrypted owner-only envelope and loads it', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    const secrets = { apiKey: 'sk-test-123', awsSecretKey: 'aws-secret' };
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    const secrets = { apiKey: 'provider-test-value', secretKey: 'cloud-test-value' };
     manager.saveSecrets(secrets);
 
-    expect(fs.existsSync(SECRETS_ENCRYPTED)).toBe(true);
-    expect(fs.existsSync(SECRETS_PLAIN)).toBe(false);
-
-    // Verify encrypted file is not readable as plain JSON secrets
-    const raw = JSON.parse(fs.readFileSync(SECRETS_ENCRYPTED, 'utf-8'));
-    expect(raw).toHaveProperty('salt');
+    const encryptedPath = path.join(outputDir, ENCRYPTED_FILE);
+    expect(fs.existsSync(path.join(outputDir, PLAINTEXT_FILE))).toBe(false);
+    expectOwnerOnlyPermissions(encryptedPath);
+    const raw = JSON.parse(fs.readFileSync(encryptedPath, 'utf8'));
     expect(raw).toHaveProperty('ciphertext');
-    expect(raw).not.toHaveProperty('apiKey');
-
-    const loaded = manager.loadSecrets();
-    expect(loaded).toEqual(secrets);
+    expect(JSON.stringify(raw)).not.toContain('provider-test-value');
+    expect(manager.loadSecrets()).toEqual(secrets);
   });
 
-  test('falls back to plain JSON when no key', () => {
+  test('requires an encryption key for every secret operation', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, null);
+    const manager = new EncryptedConfigManager(outputDir, null);
+    const operations = [
+      () => manager.saveSecrets({ apiKey: 'blocked' }),
+      () => manager.loadSecrets(),
+      () => manager.deleteSecrets(),
+      () => manager.deleteUserSecrets('user-a'),
+      () => manager.migrateFromPlaintext(),
+      () => manager.rotateKey('replacement-key'),
+    ];
 
-    const secrets = { apiKey: 'sk-plain-123' };
+    for (const operation of operations) {
+      expect(captureError(operation).message).toMatch(/ENCRYPTION_KEY|encryption key/i);
+    }
+    expect(manager.getSecretsPath()).toBe(path.join(outputDir, ENCRYPTED_FILE));
+    expect(fs.existsSync(path.join(outputDir, PLAINTEXT_FILE))).toBe(false);
+    expect(fs.existsSync(path.join(outputDir, ENCRYPTED_FILE))).toBe(false);
+  });
+
+  test('returns an empty object only when a key is configured and no envelope exists', () => {
+    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    expect(manager.loadSecrets()).toEqual({});
+  });
+
+  test('blocks normal reads and writes while legacy plaintext exists', () => {
+    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
+    const plainSecrets = { apiKey: 'legacy-provider-value' };
+    writePlainSecrets(outputDir, plainSecrets);
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+
+    expectErrorCode(() => manager.loadSecrets(), 'LEGACY_PLAINTEXT_SECRETS_PRESENT');
+    expectErrorCode(() => manager.saveSecrets({ apiKey: 'replacement' }), 'LEGACY_PLAINTEXT_SECRETS_PRESENT');
+    expectErrorCode(() => manager.deleteSecrets(), 'LEGACY_PLAINTEXT_SECRETS_PRESENT');
+    expect(fs.existsSync(path.join(outputDir, ENCRYPTED_FILE))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(outputDir, PLAINTEXT_FILE), 'utf8'))).toEqual(plainSecrets);
+  });
+
+  test('rejects migration that would retain plaintext', () => {
+    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
+    const plainSecrets = { apiKey: 'legacy-provider-value' };
+    writePlainSecrets(outputDir, plainSecrets);
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+
+    expectErrorCode(() => manager.migrateFromPlaintext(false), 'PLAINTEXT_SECRET_RETENTION_DISABLED');
+    expect(fs.existsSync(path.join(outputDir, ENCRYPTED_FILE))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(outputDir, PLAINTEXT_FILE), 'utf8'))).toEqual(plainSecrets);
+  });
+
+  test('performs explicit one-way migration and removes plaintext', () => {
+    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
+    const plainSecrets = { apiKey: 'migrate-provider-value', token: 'migrate-token-value' };
+    writePlainSecrets(outputDir, plainSecrets);
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    const result = manager.migrateFromPlaintext();
+
+    expect(result).toEqual({ migrated: true, recordCount: 2 });
+    expect(fs.existsSync(path.join(outputDir, PLAINTEXT_FILE))).toBe(false);
+    expectOwnerOnlyPermissions(path.join(outputDir, ENCRYPTED_FILE));
+    expect(manager.loadSecrets()).toEqual(plainSecrets);
+  });
+
+  test('rejects encrypted and plaintext store conflicts without changing either file', () => {
+    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    manager.saveSecrets({ apiKey: 'encrypted-provider-value' });
+    writePlainSecrets(outputDir, { apiKey: 'plaintext-provider-value' });
+    const encryptedPath = path.join(outputDir, ENCRYPTED_FILE);
+    const plainPath = path.join(outputDir, PLAINTEXT_FILE);
+    const before = { encrypted: fs.readFileSync(encryptedPath), plain: fs.readFileSync(plainPath) };
+
+    expectErrorCode(() => manager.loadSecrets(), 'LEGACY_PLAINTEXT_SECRETS_PRESENT');
+    expectErrorCode(() => manager.migrateFromPlaintext(), 'SECRET_STORE_MIGRATION_CONFLICT');
+    expect(fs.readFileSync(encryptedPath).equals(before.encrypted)).toBe(true);
+    expect(fs.readFileSync(plainPath).equals(before.plain)).toBe(true);
+  });
+
+  test('reports no migration when no plaintext file exists', () => {
+    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    expect(manager.migrateFromPlaintext()).toEqual({ migrated: false, recordCount: 0 });
+  });
+
+  test('does not migrate plaintext without an encryption key', () => {
+    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
+    writePlainSecrets(outputDir, { apiKey: 'legacy-provider-value' });
+    const manager = new EncryptedConfigManager(outputDir, null);
+    const error = captureError(() => manager.migrateFromPlaintext());
+
+    expect(error.message).toContain('ENCRYPTION_KEY');
+    expect(fs.existsSync(path.join(outputDir, PLAINTEXT_FILE))).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, ENCRYPTED_FILE))).toBe(false);
+  });
+
+  test('rotates the key and invalidates the old key', () => {
+    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
+    const manager = new EncryptedConfigManager(outputDir, 'old-encryption-key');
+    const secrets = { apiKey: 'rotate-provider-value', token: 'rotate-token-value' };
     manager.saveSecrets(secrets);
+    expect(manager.rotateKey('new-encryption-key')).toEqual({ rotated: true, recordCount: 2 });
 
-    expect(fs.existsSync(SECRETS_PLAIN)).toBe(true);
-    expect(fs.existsSync(SECRETS_ENCRYPTED)).toBe(false);
-
-    const raw = JSON.parse(fs.readFileSync(SECRETS_PLAIN, 'utf-8'));
-    expect(raw).toEqual(secrets);
-
-    const loaded = manager.loadSecrets();
-    expect(loaded).toEqual(secrets);
-  });
-
-  test('returns empty object when no secrets file exists', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    const loaded = manager.loadSecrets();
-    expect(loaded).toEqual({});
-  });
-
-  test('migrates plain secrets to encrypted', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-
-    // Write plain secrets
-    const plainSecrets = { apiKey: 'sk-migrate-me', token: 'tok-123' };
-    writeSecretsPlain(plainSecrets);
-    expect(fs.existsSync(SECRETS_PLAIN)).toBe(true);
-
-    // Migrate
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-    const result = manager.migrateFromPlaintext(false);
-
-    expect(result.migrated).toBe(true);
-    expect(result.recordCount).toBe(2);
-    expect(fs.existsSync(SECRETS_ENCRYPTED)).toBe(true);
-    // Plain file still exists (removePlain = false)
-    expect(fs.existsSync(SECRETS_PLAIN)).toBe(true);
-
-    // Verify encrypted data is correct
-    const loaded = manager.loadSecrets();
-    expect(loaded).toEqual(plainSecrets);
-  });
-
-  test('migrates and removes plain file', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-
-    writeSecretsPlain({ apiKey: 'remove-me' });
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    manager.migrateFromPlaintext(true);
-
-    expect(fs.existsSync(SECRETS_ENCRYPTED)).toBe(true);
-    expect(fs.existsSync(SECRETS_PLAIN)).toBe(false);
-  });
-
-  test('migration with no plain file returns not-migrated', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    const result = manager.migrateFromPlaintext(false);
-    expect(result.migrated).toBe(false);
-    expect(result.recordCount).toBe(0);
-  });
-
-  test('migration without encryption key throws', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, null);
-
-    expect(() => manager.migrateFromPlaintext(false)).toThrow(/no encryption key/);
-  });
-
-  test('key rotation re-encrypts with new key', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const oldKey = 'old-encryption-key';
-    const newKey = 'new-encryption-key';
-
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, oldKey);
-    const secrets = { apiKey: 'sk-rotate-me', token: 'tok-rotate' };
-    manager.saveSecrets(secrets);
-
-    // Rotate key
-    const result = manager.rotateKey(newKey);
-    expect(result.rotated).toBe(true);
-    expect(result.recordCount).toBe(2);
-
-    // Old key should fail
-    const oldManager = new EncryptedConfigManager(OUTPUT_DIR, oldKey);
+    const oldManager = new EncryptedConfigManager(outputDir, 'old-encryption-key');
     expect(() => oldManager.loadSecrets()).toThrow(/Decryption failed/);
-
-    // New key should work
-    const newManager = new EncryptedConfigManager(OUTPUT_DIR, newKey);
-    const loaded = newManager.loadSecrets();
-    expect(loaded).toEqual(secrets);
+    const newManager = new EncryptedConfigManager(outputDir, 'new-encryption-key');
+    expect(newManager.loadSecrets()).toEqual(secrets);
   });
 
-  test('key rotation without encryption key throws', () => {
+  test('rejects an empty replacement key', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, null);
-
-    expect(() => manager.rotateKey('new-key')).toThrow(/no encryption key/);
-  });
-
-  test('key rotation with empty new key throws', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, 'current-key');
-
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
     expect(() => manager.rotateKey('')).toThrow(/new key is empty/);
   });
 
-  test('deleteSecrets removes the secrets file', () => {
+  test('deletes only the encrypted secrets file', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    manager.saveSecrets({ apiKey: 'delete-me' });
-    expect(fs.existsSync(SECRETS_ENCRYPTED)).toBe(true);
-
-    const deleted = manager.deleteSecrets();
-    expect(deleted).toBe(true);
-    expect(fs.existsSync(SECRETS_ENCRYPTED)).toBe(false);
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    manager.saveSecrets({ apiKey: 'delete-provider-value' });
+    expect(manager.deleteSecrets()).toBe(true);
+    expect(fs.existsSync(path.join(outputDir, ENCRYPTED_FILE))).toBe(false);
+    expect(manager.deleteSecrets()).toBe(false);
   });
 
-  test('deleteSecrets returns false when no file', () => {
+  test('rejects corrupted encrypted envelopes', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    const deleted = manager.deleteSecrets();
-    expect(deleted).toBe(false);
-  });
-
-  test('corrupted encrypted file throws on load', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    // Write a corrupted envelope
-    if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-    fs.writeFileSync(SECRETS_ENCRYPTED, JSON.stringify({
-      salt: 'invalid',
-      iv: 'invalid',
-      authTag: 'invalid',
-      ciphertext: 'invalid',
-    }), 'utf-8');
-
+    fs.writeFileSync(path.join(outputDir, ENCRYPTED_FILE), JSON.stringify({
+      salt: 'invalid', iv: 'invalid', authTag: 'invalid', ciphertext: 'invalid',
+    }), 'utf8');
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
     expect(() => manager.loadSecrets()).toThrow();
   });
 
-  test('isEncrypted returns correct status', () => {
+  test('reports encryption availability without enabling plaintext mode', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-
-    const encrypted = new EncryptedConfigManager(OUTPUT_DIR, 'key');
-    expect(encrypted.isEncrypted()).toBe(true);
-
-    const plain = new EncryptedConfigManager(OUTPUT_DIR, null);
-    expect(plain.isEncrypted()).toBe(false);
+    expect(new EncryptedConfigManager(outputDir, TEST_KEY).isEncrypted()).toBe(true);
+    expect(new EncryptedConfigManager(outputDir, null).isEncrypted()).toBe(false);
   });
 });
-
-// ============================================================
-// 2b. UNIT TESTS — Per-user config envelopes
-// ============================================================
 
 test.describe('Unit — EncryptedConfigManager per-user envelopes', () => {
-  const TEST_KEY = 'test-encryption-key-per-user';
-  const USER_A = 'user-a-sub-claim-123';
-  const USER_B = 'user-b-sub-claim-456';
+  let outputDir: string;
+  const userA = 'user-a-sub-claim-123';
+  const userB = 'user-b-sub-claim-456';
 
   test.beforeEach(() => {
-    cleanOutput();
+    outputDir = createTempDir('encrypted-users');
   });
 
-  test.afterAll(() => {
-    cleanOutput();
+  test.afterEach(() => {
+    fs.rmSync(outputDir, { recursive: true, force: true });
   });
 
-  test('saves and loads secrets for different users independently', () => {
+  test('saves and loads different users independently', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    manager.saveSecrets({ apiKey: 'user-a-provider-value' }, userA);
+    manager.saveSecrets({ apiKey: 'user-b-provider-value', secretKey: 'user-b-secret-value' }, userB);
 
-    const secretsA = { apiKey: 'sk-user-a-key' };
-    const secretsB = { apiKey: 'sk-user-b-key', awsSecretKey: 'aws-b' };
-
-    manager.saveSecrets(secretsA, USER_A);
-    manager.saveSecrets(secretsB, USER_B);
-
-    const loadedA = manager.loadSecrets(USER_A);
-    const loadedB = manager.loadSecrets(USER_B);
-
-    expect(loadedA).toEqual(secretsA);
-    expect(loadedB).toEqual(secretsB);
+    expect(manager.loadSecrets(userA)).toEqual({ apiKey: 'user-a-provider-value' });
+    expect(manager.loadSecrets(userB)).toEqual({
+      apiKey: 'user-b-provider-value', secretKey: 'user-b-secret-value',
+    });
   });
 
-  test('user secrets do not leak between users', () => {
+  test('does not leak one user partition to another', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    manager.saveSecrets({ apiKey: 'sk-a-only' }, USER_A);
-
-    const loadedB = manager.loadSecrets(USER_B);
-    expect(loadedB).toEqual({});
-    expect(loadedB).not.toHaveProperty('apiKey');
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    manager.saveSecrets({ apiKey: 'user-a-only-value' }, userA);
+    expect(manager.loadSecrets(userB)).toEqual({});
   });
 
-  test('returns empty object for user with no secrets', () => {
+  test('deletes only the selected user partition', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    manager.saveSecrets({ apiKey: 'user-a-value' }, userA);
+    manager.saveSecrets({ apiKey: 'user-b-value' }, userB);
 
-    const loaded = manager.loadSecrets('nonexistent-user');
-    expect(loaded).toEqual({});
+    expect(manager.deleteUserSecrets(userA)).toBe(true);
+    expect(manager.loadSecrets(userA)).toEqual({});
+    expect(manager.loadSecrets(userB)).toEqual({ apiKey: 'user-b-value' });
+    expect(manager.deleteUserSecrets('missing-user')).toBe(false);
   });
 
-  test('deleteUserSecrets removes only specified user', () => {
+  test('returns all encrypted partitions only for a global load', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    manager.saveSecrets({ apiKey: 'sk-a' }, USER_A);
-    manager.saveSecrets({ apiKey: 'sk-b' }, USER_B);
-
-    const deleted = manager.deleteUserSecrets(USER_A);
-    expect(deleted).toBe(true);
-
-    const loadedA = manager.loadSecrets(USER_A);
-    expect(loadedA).toEqual({});
-
-    const loadedB = manager.loadSecrets(USER_B);
-    expect(loadedB).toEqual({ apiKey: 'sk-b' });
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    manager.saveSecrets({ apiKey: 'user-a-value' }, userA);
+    manager.saveSecrets({ apiKey: 'user-b-value' }, userB);
+    expect(manager.loadSecrets()).toEqual({
+      [userA]: { apiKey: 'user-a-value' },
+      [userB]: { apiKey: 'user-b-value' },
+    });
   });
 
-  test('deleteUserSecrets returns false for nonexistent user', () => {
+  test('supports caller-managed merging inside one encrypted partition', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    manager.saveSecrets({ apiKey: 'sk-a' }, USER_A);
-
-    const deleted = manager.deleteUserSecrets('nonexistent-user');
-    expect(deleted).toBe(false);
+    const manager = new EncryptedConfigManager(outputDir, TEST_KEY);
+    manager.saveSecrets({ apiKey: 'user-a-value' }, userA);
+    const existing = manager.loadSecrets(userA);
+    manager.saveSecrets({ ...existing, secretKey: 'user-a-secret-value' }, userA);
+    expect(manager.loadSecrets(userA)).toEqual({
+      apiKey: 'user-a-value', secretKey: 'user-a-secret-value',
+    });
   });
 
-  test('per-user works with plain mode (no encryption)', () => {
+  test('rejects per-user persistence when the encryption key is absent', () => {
     const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, null);
-
-    manager.saveSecrets({ apiKey: 'sk-plain-a' }, USER_A);
-    manager.saveSecrets({ apiKey: 'sk-plain-b' }, USER_B);
-
-    expect(manager.loadSecrets(USER_A)).toEqual({ apiKey: 'sk-plain-a' });
-    expect(manager.loadSecrets(USER_B)).toEqual({ apiKey: 'sk-plain-b' });
-  });
-
-  test('global load returns all user partitions when no userId', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    manager.saveSecrets({ apiKey: 'sk-a' }, USER_A);
-    manager.saveSecrets({ apiKey: 'sk-b' }, USER_B);
-
-    const allData = manager.loadSecrets(null);
-    expect(allData[USER_A]).toEqual({ apiKey: 'sk-a' });
-    expect(allData[USER_B]).toEqual({ apiKey: 'sk-b' });
-  });
-
-  test('saveSecrets merges with existing user secrets', () => {
-    const { EncryptedConfigManager } = require('../src/api/encrypted-config-manager');
-    const manager = new EncryptedConfigManager(OUTPUT_DIR, TEST_KEY);
-
-    manager.saveSecrets({ apiKey: 'sk-a' }, USER_A);
-
-    // Load, merge, and save again (simulating ConfigManager behavior)
-    const existing = manager.loadSecrets(USER_A);
-    manager.saveSecrets({ ...existing, awsSecretKey: 'aws-a' }, USER_A);
-
-    const loaded = manager.loadSecrets(USER_A);
-    expect(loaded).toEqual({ apiKey: 'sk-a', awsSecretKey: 'aws-a' });
+    const manager = new EncryptedConfigManager(outputDir, null);
+    expect(captureError(() => manager.saveSecrets({ apiKey: 'blocked' }, userA)).message)
+      .toContain('ENCRYPTION_KEY');
+    expect(captureError(() => manager.loadSecrets(userA)).message).toContain('ENCRYPTION_KEY');
+    expect(fs.existsSync(path.join(outputDir, PLAINTEXT_FILE))).toBe(false);
   });
 });
 
-// ============================================================
-// 3. API INTEGRATION — server endpoints with encryption
-// ============================================================
+test.describe('API integration — encrypted global config storage', () => {
+  test.describe.configure({ mode: 'serial' });
 
-test.describe('API Integration — encrypted storage via server', () => {
-  test.beforeEach(async ({ request }) => {
-    // Clear config before each test
-    await request.delete('/api/config');
+  test('saves settings separately and returns only a redacted secret', async () => {
+    const harness = await startConfigApi('config-route-test-encryption-key');
+    try {
+      const saved = await harness.api.post('/api/config', {
+        data: { provider: 'anthropic', apiKey: 'route-provider-secret-value' },
+      });
+      expect(saved.status()).toBe(200);
+      const loaded = await harness.api.get('/api/config');
+      const body = await loaded.json();
+      expect(body.config.provider).toBe('anthropic');
+      expect(body.config.apiKey).toBe('[REDACTED]');
+
+      const settings = fs.readFileSync(path.join(harness.root, 'global-config.json'), 'utf8');
+      const encrypted = fs.readFileSync(path.join(harness.root, ENCRYPTED_FILE), 'utf8');
+      expect(settings).not.toContain('route-provider-secret-value');
+      expect(encrypted).not.toContain('route-provider-secret-value');
+      expectOwnerOnlyPermissions(path.join(harness.root, ENCRYPTED_FILE));
+    } finally {
+      await harness.close();
+    }
   });
 
-  test('POST /api/config saves and GET retrieves with secrets', async ({ request }) => {
-    const config = {
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
-      apiKey: 'sk-ant-test-123',
-    };
-
-    const postRes = await request.post('/api/config', { data: config });
-    expect(postRes.ok()).toBe(true);
-
-    const postBody = await postRes.json();
-    expect(postBody.success).toBe(true);
-
-    const getRes = await request.get('/api/config');
-    expect(getRes.ok()).toBe(true);
-
-    const getBody = await getRes.json();
-    expect(getBody.success).toBe(true);
-    expect(getBody.config.provider).toBe('anthropic');
-    expect(getBody.config.apiKey).toBe('sk-ant-test-123');
+  test('returns a stable unavailable result when encrypted storage is not configured', async () => {
+    const harness = await startConfigApi(null);
+    try {
+      const responses = [
+        await harness.api.get('/api/config'),
+        await harness.api.post('/api/config', { data: { apiKey: 'blocked-value' } }),
+        await harness.api.delete('/api/config'),
+        await harness.api.post('/api/config/migrate', { data: {} }),
+      ];
+      for (const response of responses) {
+        expect(response.status()).toBe(503);
+        expect(await response.json()).toMatchObject({
+          success: false,
+          error: 'encrypted_secret_storage_required',
+        });
+      }
+      expect(fs.existsSync(path.join(harness.root, PLAINTEXT_FILE))).toBe(false);
+      expect(fs.existsSync(path.join(harness.root, ENCRYPTED_FILE))).toBe(false);
+    } finally {
+      await harness.close();
+    }
   });
 
-  test('GET /api/status includes encryption status', async ({ request }) => {
-    const res = await request.get('/api/status');
-    expect(res.ok()).toBe(true);
+  test('requires one-way migration and removes the legacy plaintext file', async () => {
+    const harness = await startConfigApi('config-route-migration-key');
+    try {
+      writePlainSecrets(harness.root, { apiKey: 'route-legacy-secret-value' });
+      const retain = await harness.api.post('/api/config/migrate', { data: { removePlain: false } });
+      expect(retain.status()).toBe(400);
+      expect((await retain.json()).error).toBe('plaintext_secret_retention_disabled');
+      expect(fs.existsSync(path.join(harness.root, ENCRYPTED_FILE))).toBe(false);
 
-    const body = await res.json();
-    expect(body.success).toBe(true);
-    expect(body).toHaveProperty('encrypted');
-    expect(typeof body.encrypted).toBe('boolean');
-    expect(body).toHaveProperty('writeMode');
-    expect(body).toHaveProperty('outputDir');
+      const migrated = await harness.api.post('/api/config/migrate', { data: {} });
+      expect(migrated.status()).toBe(200);
+      expect(await migrated.json()).toMatchObject({ success: true, migrated: true, recordCount: 1 });
+      expect(fs.existsSync(path.join(harness.root, PLAINTEXT_FILE))).toBe(false);
+      expectOwnerOnlyPermissions(path.join(harness.root, ENCRYPTED_FILE));
+    } finally {
+      await harness.close();
+    }
   });
 
-  test('DELETE /api/config clears all files', async ({ request }) => {
-    // Save something first
-    await request.post('/api/config', {
-      data: { provider: 'openai', apiKey: 'sk-test-delete' },
-    });
-
-    const delRes = await request.delete('/api/config');
-    expect(delRes.ok()).toBe(true);
-
-    const delBody = await delRes.json();
-    expect(delBody.cleared).toBe(true);
-
-    // Verify config is empty
-    const getRes = await request.get('/api/config');
-    const getBody = await getRes.json();
-    expect(Object.keys(getBody.config).length).toBe(0);
-  });
-
-  test('POST /api/config/migrate endpoint responds', async ({ request }) => {
-    const res = await request.post('/api/config/migrate', {
-      data: { removePlain: false },
-    });
-
-    const body = await res.json();
-
-    // Without ENCRYPTION_KEY set, migrate returns 500 with error
-    // With ENCRYPTION_KEY set, it returns 200 with migrated status
-    if (res.ok()) {
-      expect(body.success).toBe(true);
-      expect(body).toHaveProperty('migrated');
-    } else {
-      expect(res.status()).toBe(500);
-      expect(body.success).toBe(false);
-      expect(body.error).toContain('no encryption key');
+  test('deletes encrypted config without recreating plaintext', async () => {
+    const harness = await startConfigApi('config-route-delete-key');
+    try {
+      const saved = await harness.api.post('/api/config', {
+        data: { provider: 'openai', apiKey: 'route-delete-secret-value' },
+      });
+      expect(saved.status()).toBe(200);
+      const deleted = await harness.api.delete('/api/config');
+      expect(deleted.status()).toBe(200);
+      expect(await deleted.json()).toMatchObject({ success: true, cleared: true });
+      expect(fs.existsSync(path.join(harness.root, 'global-config.json'))).toBe(false);
+      expect(fs.existsSync(path.join(harness.root, ENCRYPTED_FILE))).toBe(false);
+      expect(fs.existsSync(path.join(harness.root, PLAINTEXT_FILE))).toBe(false);
+    } finally {
+      await harness.close();
     }
   });
 });

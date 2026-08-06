@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove allocator control calls carry machine authentication and poisoned Redis endpoints cannot receive credential-bearing assignment payloads.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove unknown assignment/release outcomes quarantine a node instead of making credential residue eligible for reassignment.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove partial Redis active-map and release-cleanup residue cannot bypass quarantine or restore idle reuse authority.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: prove allocator requests contain non-secret assignment metadata and legacy credential carriers fail before reservation/network activity.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,7 +49,6 @@ const assignment = {
   agent: 'cline',
   model: 'claude-sonnet-4-6',
   provider: 'anthropic',
-  credentials: { ANTHROPIC_API_KEY: 'provider-secret' },
 };
 
 beforeEach(() => {
@@ -72,7 +72,7 @@ afterEach(() => {
 });
 
 describe('node allocator authenticated assignment', () => {
-  it('sends the configured service secret on credential-bearing assignment calls', async () => {
+  it('sends the configured service secret with non-secret assignment metadata', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => '' });
     vi.stubGlobal('fetch', fetchMock);
     const allocator = new NodeAllocatorService({ nodeEndpoints: { 'node-1': 'http://node-1:5000' } });
@@ -82,10 +82,26 @@ describe('node allocator authenticated assignment', () => {
       'Content-Type': 'application/json',
       'X-Service-Secret': 'node-control-secret',
     });
-    expect(String(options.body)).toContain('provider-secret');
+    expect(JSON.parse(String(options.body))).toEqual(assignment);
+    expect(String(options.body)).not.toMatch(/api[_-]?key|access[_-]?token|secret/i);
   });
 
-  it('rejects a registry-poisoned endpoint before making the credential-bearing request', async () => {
+  it('rejects a legacy credential carrier before reserving a node or making a request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const allocator = new NodeAllocatorService({ nodeEndpoints: { 'node-1': 'http://node-1:5000' } });
+    const legacyAssignment = {
+      ...assignment,
+      credentials: { ANTHROPIC_API_KEY: 'must-not-leave-controller' },
+    };
+    await expect(allocator.assignNode(legacyAssignment)).rejects.toThrow(
+      'credential fields are not accepted on node assignments',
+    );
+    expect(mocks.redis.spop).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a registry-poisoned endpoint before making the privileged request', async () => {
     mocks.redis.get.mockResolvedValue('http://169.254.169.254');
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

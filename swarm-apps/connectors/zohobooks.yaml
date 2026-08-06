@@ -1,3 +1,10 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Replace the nonexistent Zoho Books Simple Icons slug with the verified Zoho brand slug.
+# -----------------------------------------------------------------------------
+
 # Zoho Books — invoices, contacts, and items via Authorization "Zoho-oauthtoken <t>" header plus required organization_id query.
 provider: zohobooks
 displayName: Zoho Books
@@ -34,7 +41,7 @@ resources:
 metadata:
   description: "Zoho Books — reads invoices, contacts, items via www.zohoapis.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store."
   category: "Finance"
-  icon: zohobooks
-  iconTitle: Zoho Books
+  icon: zoho
+  iconTitle: Zoho
   iconSource: simple-icons
   iconVerified: true

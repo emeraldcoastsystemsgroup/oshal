@@ -57,6 +57,8 @@
  * 52 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the durable Apply ticket owner exactly
  *   when requesting internal dispatch. The endpoint reloads ticket-bound submit authorization,
  *   posting, owner, and target server-side instead of trusting asserted request fields.
+ * 53 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable swarm-memory provenance and persisted prompt tool authorization into controller-local execution.
+ * 54 | maintainer@emeraldcoastsystemsgroup.com   | Document default-on authoritative provider/model stamping and its fail-closed missing-database behavior at the composition seam.
  */
 
 import type { Pool } from 'pg';
@@ -108,6 +110,7 @@ import { SelectorCompositionService } from '@/features/selector-composition';
 import { BudgetService } from '@/features/cost-governance';
 import { SelfHealAutoApplyEngine } from '@/features/alert-triage';
 import { createSelfHealRemediationExecutor } from '@/app/self-heal-remediation-executor';
+import { createPromptAuthorizationResolver } from '@/app/prompt-authorization-resolver';
 import {
   PlaneTicketWritebackAdapter,
   GitHubTicketWritebackAdapter,
@@ -166,15 +169,12 @@ import { createOpsIntelligenceRoutes } from './routes/ops-intelligence-routes';
 import { createBotRegistryRoutes } from './routes/bot-registry-routes';
 import { createConfigPropagationRoutes } from './routes/config-propagation-routes';
 import { createConfigRuntimeRoutes } from './routes/config-runtime-routes';
-import { ClaudeCodeAuthService } from '@/features/claude-code-auth';
-import { OpenAiCodexOAuthService } from '@/features/openai-codex-oauth';
 import { SwarmBotRegistry, validatePersonaIdentities, getActiveRegistry, isBotAccessibleTo, type SwarmRuntimeIdentity } from './swarm-bot-registry';
 import { resolveHarnessForAgent } from '@/app/composition/provider-runtime';
 import { waitForBootstrapComplete } from '@/app/composition/app-runtime-factory';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
-import { resolveBotCreds as resolveConnectorBotCreds } from '@/app/routes/connector-token-broker';
+import { resolveServerOperationCreds } from '@/app/routes/connector-token-broker';
 import { buildQueueDlqOperatorNotifier } from '@/app/routes/queue-dlq-routes';
-import { connectorProvidersForManifestWorker } from '@/app/manifest-worker-connector-scope';
 import {
   canUseRuntimeRegistry,
   buildStatusAwareOnlineResolver,
@@ -382,7 +382,7 @@ export function createSwarmExtensionBindings(
   // Memory services — per-agent + shared swarm memory backed by ChromaDB via RagService
   const ragService = new RagService();
   const agentMemoryService = new AgentMemoryService(ragService);
-  const swarmMemoryService = new SwarmMemoryService(ragService);
+  const swarmMemoryService = new SwarmMemoryService(ragService, pool ?? undefined);
 
   const consensusReviewService = new ConsensusReviewService({
     meshTransport,
@@ -568,6 +568,7 @@ export function createSwarmExtensionBindings(
   // bot can create ticket_task_links entries for its cost data (ADR-027).
   const costLinkingTicketStore = pool ? new PostgresTicketStore(pool) : undefined;
   const costLinkingTicketService = costLinkingTicketStore ? new TicketService(costLinkingTicketStore) : undefined;
+  const promptAgentToolRepository = pool ? new AgentToolRepository(pool) : undefined;
 
   // The swarm controller's execution handler only handles envelopes for the PM bot
   // (local execution via agent.processMessage). All other bots consume their own
@@ -582,6 +583,7 @@ export function createSwarmExtensionBindings(
         recordCost: (event) => costTrackingService.recordCost(event),
         recordMetrics: (event) => agentMetricsServiceInstance.recordExecution(event),
         ticketService: costLinkingTicketService,
+        resolvePromptAuthorization: createPromptAuthorizationResolver(promptAgentToolRepository),
         resolveAgentHarness: (agentId: string) => resolveHarnessForAgent(agentId, logger),
       })
     : undefined;
@@ -657,7 +659,8 @@ export function createSwarmExtensionBindings(
   // ADR-034 gap-b push-on-dispatch: a resolver over the SAME authoritative agent_config
   // record ConfigSyncService versions, so each bot-node dispatch can carry the expected
   // provider/model/configVersion. Consumed by the queue manager's manifest-worker + incident
-  // dispatch paths, gated by OSHAL_PUSH_ON_DISPATCH (default off → the resolver is never called).
+  // dispatch paths. OSHAL_PUSH_ON_DISPATCH defaults on; without this DB-backed resolver the
+  // request carries an unavailable-authority marker and the remote bot refuses before execution.
   const runtimeParamsResolver = agentConfigService
     ? createAgentConfigRuntimeParamsResolver(agentConfigService)
     : undefined;
@@ -815,14 +818,16 @@ export function createSwarmExtensionBindings(
         taskStore: conversationStores?.taskStore,
         messageStore: conversationStores?.messageStore,
         resolveBotCreds: pool
-          ? async (ownerSub: string, workerAgentId: string, providerIntent) => {
-              const providers = [...new Set([
-                ...connectorProvidersForManifestWorker(workerAgentId),
-                ...(providerIntent?.kind === 'priority-email' ? ['google'] : []),
-                ...(providerIntent?.kind === 'walmart-catalog' ? ['walmart'] : []),
-              ])];
+          ? async (ownerSub: string, _workerAgentId: string, providerIntent) => {
+              // A credential may cross this boundary only for the one validated deterministic
+              // provider operation. Generic worker/model connector sets are deliberately excluded.
+              const providers = providerIntent?.kind === 'priority-email'
+                ? ['google']
+                : providerIntent?.kind === 'walmart-catalog'
+                  ? ['walmart']
+                  : [];
               return providers.length > 0
-                ? resolveConnectorBotCreds(pool, ownerSub, providers)
+                ? resolveServerOperationCreds(pool, ownerSub, providers, 'trusted-provider-intent')
                 : {};
             }
           : undefined,
@@ -837,7 +842,8 @@ export function createSwarmExtensionBindings(
         // ADR-083: knowledge-owner call-out for the 'task' lane.
         resolveTaskWorker,
         // ADR-034 gap-b push-on-dispatch: authoritative-config stamping for bot-node
-        // dispatches (gated by OSHAL_PUSH_ON_DISPATCH; undefined without a DB pool).
+        // dispatches (default-on OSHAL_PUSH_ON_DISPATCH; undefined without a DB pool becomes
+        // an explicit unavailable-authority refusal rather than a silent self-selected provider).
         runtimeParamsResolver,
         // At-most-once for explicit-remote work: the dispatcher stamps the remote task id onto the
         // ticket's own metadata BEFORE enqueueing, so a controller restart mid-flight cannot lose
@@ -1015,11 +1021,9 @@ export function registerSwarmExtensionRoutes(
     );
   }
 
-  // Subscribe to credential broadcasts so any bot that signs in propagates its key to the swarm
-  ClaudeCodeAuthService.subscribeToBroadcast()
-    .catch((err) => logger.warn({ err }, 'Failed to subscribe to Claude Code credential broadcast (non-fatal)'));
-  OpenAiCodexOAuthService.subscribeToBroadcast()
-    .catch((err) => logger.warn({ err }, 'Failed to subscribe to OpenAI Codex credential broadcast (non-fatal)'));
+  // Claude Code and OpenAI Codex credential broadcast distribution are intentionally disabled.
+  // Redis pub/sub has no ordered durable tombstone, so a delayed credential event could resurrect
+  // revoked auth. Re-enable only behind a versioned, monotonic rail with revocation ordering.
   if (bindings.queueManagerService) {
     const qms = bindings.queueManagerService;
     // Register the shutdown hook up front (stop() on a not-yet-started manager is a safe

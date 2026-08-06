@@ -46,6 +46,7 @@
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Idle-timeout directive (adversarial-review follow-up): DISPATCH_PIPELINE_TIMEOUT_MS + MAX_DISPATCH_DURATION_MS raised 30min→2h and made env-tunable — the 30-min queue watchdog was killing actively-working pipelines below the 60-min harness idle ceiling. The pair stays coupled (watchdog never fires before the pipeline times out); the real stuck-detector is the harness idle timeout underneath.
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | Docs-only: added the missing JSDoc block to dispatchTicket (the exported class's core swarm/build dispatch path) — every other method already carried one. Explains WHY it is the heavy path (owns child-ticket creation + parent-assembly + failure triage). No logic change (additive comment only).
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): setAutoApplyGate — the bounded auto-apply hook threaded into the incident-RCA dispatch deps, wired at the app layer exactly like setBudgetService (optional; unset = unchanged Mode-A human gate). The hook is only ever consulted by the incident pipeline's Mode-A finalizer, never by the build/manifest/graph paths.
+ * 44 | maintainer@emeraldcoastsystemsgroup.com   | Document the promoted default-on/fail-closed ADR-034 runtime-param rail threaded into manifest and incident dispatches.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -220,7 +221,8 @@ export interface QueueManagerPipelineDeps {
    * @description ADR-034 gap-b push-on-dispatch resolver: yields a target agent's
    * authoritative provider/model/configVersion record so manifest-worker + incident
    * dispatches can stamp it on the BotNodeClient.execute request (gated by
-   * OSHAL_PUSH_ON_DISPATCH, default off). Fail-open; absent → legacy dispatch.
+   * OSHAL_PUSH_ON_DISPATCH, default on). Missing records are marked for bot-side refusal;
+   * explicit flag-off restores legacy dispatch.
    */
   runtimeParamsResolver?: import('@/features/agent-management').RuntimeParamsResolver;
 }
@@ -720,7 +722,8 @@ export class QueueManagerService {
       dispatchJobApplicationTask: this.pipelineDeps?.dispatchJobApplicationTask,
       promoteToSwarm: (t) => this.dispatchTicket(t),
       // ADR-034 gap-b push-on-dispatch: carry the authoritative config record per dispatch
-      // (gated by OSHAL_PUSH_ON_DISPATCH). Absent resolver → legacy dispatch, unchanged.
+      // (default-on OSHAL_PUSH_ON_DISPATCH). An absent resolver becomes an explicit
+      // unavailable-authority marker; flag-off is the compatibility rollback.
       runtimeParamsResolver: this.pipelineDeps?.runtimeParamsResolver,
     });
   }
@@ -765,7 +768,8 @@ export class QueueManagerService {
       dispatchStartTimes: this.dispatchStartTimes,
       ticketService: this.ticketService,
       // ADR-034 gap-b push-on-dispatch: same authoritative-config resolver the manifest
-      // worker uses; gated by OSHAL_PUSH_ON_DISPATCH, fail-open, legacy when absent.
+      // worker uses; default-on OSHAL_PUSH_ON_DISPATCH fails closed at the bot when
+      // authority is unavailable, with an explicit flag-off compatibility rollback.
       runtimeParamsResolver: this.pipelineDeps?.runtimeParamsResolver,
       // ADR-119 P4 (A2): the bounded auto-apply gate for Mode-A verdicts (optional).
       autoApply: this.autoApplyGate,

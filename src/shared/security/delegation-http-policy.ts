@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Centralized the controller-to-bot HTTP delegation header, exact scope, identity defaults, and key-material rollout detection so issuer and verifier cannot drift.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Define the exact bot execution method/path and the durable API audience used by route-bound workload delegations.
  */
 
 /** Header carrying the private Ed25519 delegation media type; never an OIDC bearer token. */
@@ -12,8 +13,14 @@ export const DELEGATION_HTTP_HEADER = 'x-oshal-delegation-token';
 export const DEFAULT_DELEGATION_ISSUER = 'urn:oshal:controller';
 /** Default bot-node HTTP audience. */
 export const DEFAULT_DELEGATION_AUDIENCE = 'urn:oshal:bot-node';
+/** Default controller API audience for durable workload-to-user delegation tokens. */
+export const DEFAULT_WORKLOAD_DELEGATION_AUDIENCE = 'urn:oshal:api';
 /** Only capability granted by this first HTTP integration. */
 export const SWARM_EXECUTE_DELEGATION_SCOPE = Object.freeze(['swarm:execute'] as const);
+/** Exact HTTP method protected by the controller-to-bot execution delegation. */
+export const SWARM_EXECUTE_DELEGATION_METHOD = 'POST';
+/** Exact HTTP path protected by the controller-to-bot execution delegation. */
+export const SWARM_EXECUTE_DELEGATION_PATH = '/api/swarm-execute';
 /** Explicit subject stamped only for work running under the positive SYSTEM sentinel. */
 export const CONTROLLER_SYSTEM_SUBJECT = 'system:oshal-controller';
 /** Trusted namespace paired with the explicit controller system subject. */
@@ -46,6 +53,22 @@ export function delegationIssuerFromEnvironment(env: DelegationEnvironment = pro
  */
 export function delegationAudienceFromEnvironment(env: DelegationEnvironment = process.env): string {
   return readIdentifier(env.OSHAL_DELEGATION_AUDIENCE, DEFAULT_DELEGATION_AUDIENCE, 'audience');
+}
+
+/**
+ * @description Resolves the durable controller API audience independently from the bot-node
+ * audience so a valid execution token can never be replayed against a user-data route.
+ * @param env - Controller API environment.
+ * @returns Bounded exact API audience string.
+ */
+export function workloadDelegationAudienceFromEnvironment(
+  env: DelegationEnvironment = process.env,
+): string {
+  return readIdentifier(
+    env.OSHAL_WORKLOAD_DELEGATION_AUDIENCE,
+    DEFAULT_WORKLOAD_DELEGATION_AUDIENCE,
+    'audience',
+  );
 }
 
 /**

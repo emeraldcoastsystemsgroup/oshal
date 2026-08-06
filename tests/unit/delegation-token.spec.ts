@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reworked the guards for Ed25519, separate issuer/verifier capabilities, public-only bot configuration, key-role validation, and sanitized parser failures.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the separately signed principal issuer against identity-provider namespace substitution.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard the exact canonical request-body digest claim and reject body-integrity substitution.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact method/path bindings plus durable receipt issuance and the public route-only verifier.
  */
 
 import {
@@ -18,6 +19,8 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
   createDelegationTokenIssuer,
+  createDelegationRouteTokenVerifier,
+  createRecordedDelegationTokenIssuer,
   createDelegationTokenVerifier,
   DelegationTokenError,
   type DelegationTokenErrorCode,
@@ -109,6 +112,8 @@ function grant(overrides: Partial<DelegationTokenGrant> = {}): DelegationTokenGr
     principal_iss: 'https://identity.example.test/realms/main',
     azp: 'agent-17',
     task_id: 'task-42',
+    method: 'POST',
+    path: '/api/swarm-execute',
     body_sha256: BODY_SHA256,
     scope: ['store:read', 'task:execute'],
     ...overrides,
@@ -125,6 +130,8 @@ function expectations(
     principal_iss: 'https://identity.example.test/realms/main',
     azp: 'agent-17',
     task_id: 'task-42',
+    method: 'POST',
+    path: '/api/swarm-execute',
     body_sha256: BODY_SHA256,
     scope: ['store:read', 'task:execute'],
     ...overrides,
@@ -195,7 +202,7 @@ describe('delegation capability separation and wire contract', () => {
 
     expect(controller.issue(grant())).toBe(token);
     expect(decodeSegment(encodedHeader)).toEqual({
-      alg: 'EdDSA', typ: 'OSHAL-DLG', kid: 'current', v: 1,
+      alg: 'EdDSA', typ: 'OSHAL-DLG', kid: 'current', v: 2,
     });
     expect(verifier().verify(token, expectations({ scope: ['task:execute', 'store:read'] }))).toEqual({
       ...grant({ scope: ['store:read', 'task:execute'] }),
@@ -219,6 +226,37 @@ describe('delegation capability separation and wire contract', () => {
     const publicOnlyEnv = verifierEnvironment();
     expect(publicOnlyEnv.OSHAL_DELEGATION_SIGNING_PRIVATE_KEY).toBeUndefined();
     expect(verifier(publicOnlyEnv).verify(issuer().issue(grant()), expectations()).sub).toBe('oidc|alice');
+  });
+
+  it('returns exact claims for durable recording and verifies route metadata before store binding', () => {
+    const recorded = createRecordedDelegationTokenIssuer({
+      env: issuerEnvironment(),
+      nowEpochSeconds: () => NOW,
+      generateJti: () => 'durable-jti-1',
+    }).issue(grant(), { expiresAtEpochSeconds: NOW + 900 });
+    expect(recorded.claims).toMatchObject({
+      jti: 'durable-jti-1', method: 'POST', path: '/api/swarm-execute', exp: NOW + 900,
+    });
+    const routeVerifier = createDelegationRouteTokenVerifier({
+      env: verifierEnvironment(),
+      nowEpochSeconds: () => NOW,
+    });
+    expect(routeVerifier.verify(recorded.token, {
+      iss: 'oshal-controller',
+      aud: 'oshal-bot-node',
+      method: 'POST',
+      path: '/api/swarm-execute',
+      body_sha256: BODY_SHA256,
+      scope: ['store:read', 'task:execute'],
+    }).azp).toBe('agent-17');
+    expectCode(() => routeVerifier.verify(recorded.token, {
+      iss: 'oshal-controller',
+      aud: 'oshal-bot-node',
+      method: 'POST',
+      path: '/api/another-route',
+      body_sha256: BODY_SHA256,
+      scope: ['store:read', 'task:execute'],
+    }), 'invalid_binding');
   });
 
   it('fails startup if private signing material leaks into a verifier environment', () => {
@@ -310,7 +348,7 @@ describe('delegation strict signed shape', () => {
   it.each([
     ['algorithm', { alg: 'none' }],
     ['type', { typ: 'JWT' }],
-    ['version', { v: 2 }],
+    ['version', { v: 1 }],
     ['key id', { kid: 'retired' }],
   ])('rejects a signed token with the wrong %s header', (_label, override) => {
     const { header, claims } = issuedParts();
@@ -342,6 +380,8 @@ describe('delegation exact dispatch binding', () => {
     ['audience', { aud: 'other-service' }],
     ['agent', { azp: 'agent-18' }],
     ['task', { task_id: 'task-43' }],
+    ['method', { method: 'GET' }],
+    ['path', { path: '/api/another-route' }],
     ['request body', { body_sha256: 'b'.repeat(64) }],
     ['scope', { scope: ['task:execute'] }],
     ['subject', { sub: 'oidc|mallory' }],

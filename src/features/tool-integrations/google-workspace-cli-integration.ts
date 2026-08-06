@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added GoogleWorkspaceCliIntegration for gogcli-backed Google Workspace bot execution
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replaced gog dependency with repo-native Google Workspace CLI backed by official Google APIs
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: isolate each Google Workspace child to its agent-owned home, OS/network runtime settings, and exact Google configuration; controller/database/session and unrelated provider credentials are no longer inherited.
  */
 
 import fs from 'fs';
@@ -17,6 +18,24 @@ const execFileAsync = promisify(execFileCallback);
 const logger = createChildLogger({ module: 'google-workspace-cli-integration' });
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+const GOOGLE_WORKSPACE_PROCESS_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+  'NODE_USE_ENV_PROXY',
+] as const;
+const GOOGLE_WORKSPACE_ENDPOINT_ENV_KEYS = [
+  'GOOGLE_OAUTH_AUTH_BASE_URL',
+  'GOOGLE_OAUTH_TOKEN_URL',
+  'GOOGLE_OAUTH_REVOKE_URL',
+  'GOOGLE_GMAIL_API_BASE_URL',
+  'GOOGLE_DRIVE_API_BASE_URL',
+  'GOOGLE_DOCS_API_BASE_URL',
+  'GOOGLE_SHEETS_API_BASE_URL',
+  'GOOGLE_SLIDES_API_BASE_URL',
+  'GOOGLE_CALENDAR_API_BASE_URL',
+] as const;
 
 /**
  * @description Configuration that binds the Google Workspace CLI integration to a specific
@@ -48,6 +67,55 @@ export interface GoogleWorkspaceCliRequest {
   json?: boolean;
   cwd?: string;
   timeoutMs?: number;
+}
+
+/**
+ * Build one Google Workspace CLI child's least-privilege environment.
+ *
+ * The agent-specific home replaces ambient user-profile paths so OAuth profiles cannot escape
+ * into the controller account. Only settings consumed by the repo-native Google CLI are admitted;
+ * each explicit config value wins over the corresponding deployment default.
+ */
+export function buildGoogleWorkspaceCliProcessEnv(
+  config: Readonly<GoogleWorkspaceCliConfig>,
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of GOOGLE_WORKSPACE_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  for (const key of GOOGLE_WORKSPACE_ENDPOINT_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+
+  const homeDir = path.resolve(config.homeDir);
+  Object.assign(env, {
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    APPDATA: path.join(homeDir, 'AppData', 'Roaming'),
+    LOCALAPPDATA: path.join(homeDir, 'AppData', 'Local'),
+    XDG_CONFIG_HOME: path.join(homeDir, '.config'),
+    XDG_CACHE_HOME: path.join(homeDir, '.cache'),
+    OSHAL_GOOGLE_WORKSPACE_HOME: homeDir,
+    OSHAL_AGENT_ID: config.agentId,
+  });
+
+  const googleSettings: Record<string, string | undefined> = {
+    GOOGLE_CLIENT_ID: config.clientId || parent.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: config.clientSecret || parent.GOOGLE_CLIENT_SECRET,
+    GOOGLE_ACCOUNT_EMAIL: config.accountEmail || parent.GOOGLE_ACCOUNT_EMAIL,
+    GOG_ACCOUNT: config.defaultAccount || parent.GOG_ACCOUNT,
+    GOOGLE_SERVICE_ACCOUNT_JSON: config.serviceAccountJson || parent.GOOGLE_SERVICE_ACCOUNT_JSON,
+    GOOGLE_SERVICE_ACCOUNT_SUBJECT: config.serviceAccountSubject || parent.GOOGLE_SERVICE_ACCOUNT_SUBJECT,
+    GOOGLE_REDIRECT_PORT: config.redirectPort || parent.GOOGLE_REDIRECT_PORT,
+    GOOGLE_SCOPES: config.scopes || parent.GOOGLE_SCOPES,
+  };
+  for (const [key, value] of Object.entries(googleSettings)) {
+    if (value) env[key] = value;
+  }
+  return env;
 }
 
 /**
@@ -141,26 +209,8 @@ export class GoogleWorkspaceCliIntegration {
   }
 
   private buildEnvironment(): NodeJS.ProcessEnv {
-    const homeDir = this.config.homeDir;
-    const pathSeparator = process.platform === 'win32' ? ';' : ':';
-    const pathValue = process.env.PATH || '';
-
-    fs.mkdirSync(homeDir, { recursive: true });
-
-    return {
-      ...process.env,
-      PATH: pathValue,
-      OSHAL_GOOGLE_WORKSPACE_HOME: homeDir,
-      GOOGLE_CLIENT_ID: this.config.clientId || process.env.GOOGLE_CLIENT_ID || '',
-      GOOGLE_CLIENT_SECRET: this.config.clientSecret || process.env.GOOGLE_CLIENT_SECRET || '',
-      GOOGLE_ACCOUNT_EMAIL: this.config.accountEmail || process.env.GOOGLE_ACCOUNT_EMAIL || '',
-      GOG_ACCOUNT: this.config.defaultAccount || process.env.GOG_ACCOUNT || '',
-      GOOGLE_SERVICE_ACCOUNT_JSON: this.config.serviceAccountJson || process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '',
-      GOOGLE_SERVICE_ACCOUNT_SUBJECT: this.config.serviceAccountSubject || process.env.GOOGLE_SERVICE_ACCOUNT_SUBJECT || '',
-      GOOGLE_REDIRECT_PORT: this.config.redirectPort || process.env.GOOGLE_REDIRECT_PORT || '',
-      GOOGLE_SCOPES: this.config.scopes || process.env.GOOGLE_SCOPES || '',
-      PATH_EXTENDED: pathValue ? `${pathValue}${pathSeparator}${homeDir}` : homeDir,
-    };
+    fs.mkdirSync(this.config.homeDir, { recursive: true });
+    return buildGoogleWorkspaceCliProcessEnv(this.config);
   }
 
   private tokenize(command?: string): string[] {

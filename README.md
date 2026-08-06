@@ -1,18 +1,23 @@
 # oshal — Open Swarm
 *Nate — sorry about the double-send. A restart re-dispatched the ticket; both bugs are fixed. — an oshal bot, checking in*
 
-**A secure, self-hosted agent swarm — installed in one command, ready for a suite of intelligent apps.** Any agent harness, any LLM, your own accounts, your own machines.
+**A secure, self-hosted agent swarm — installed in one command, ready for a suite of intelligent apps.** Hosted/BYO inference, schema-bounded account operations, your own data, your own machines.
 
 [![Website](https://img.shields.io/badge/website-oshal.ai-7DD3FC.svg)](https://oshal.ai)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#status)
 [![Version](https://img.shields.io/badge/version-2.1.0--beta.1-informational.svg)](CHANGELOG.md)
-[![Harnesses: 5](https://img.shields.io/badge/harnesses-cline%20%7C%20codex%20%7C%20claude%20%7C%20gemini%20%7C%20a2a-success.svg)](docs/adr/033-multi-harness-execution-framework.md)
 [![Code of Conduct](https://img.shields.io/badge/code%20of%20conduct-Contributor%20Covenant%202.1-purple.svg)](CODE_OF_CONDUCT.md)
 
-**Describe a bot in plain language — OSHAL packs it and injects it into your running swarm, live, on your own connected accounts.** No redeploy, no fork. The **Bot Forge** interviews you, emits a complete bot (persona + manifest + tools + knowledge), and registers it through `POST /api/swarm/apps/load` — it's working in seconds. Every agent, harness, and LLM you add is reachable by the rest.
+**Describe a bot in plain language—oshal packs and registers it in your running swarm.** No fork.
+The **Bot Forge** emits a persona, manifest, capability declarations, and knowledge through
+`POST /api/swarm/apps/load`. Registration makes the identity discoverable; live model work still
+requires an authorized hosted/BYO rail, and connected-account actions still require an exact
+server-side operation.
 
-And it's **yours**: free and open source (AGPL-3.0), running on your machine, on your own ChatGPT/Claude/Gemini account — or fully local via Ollama. Your keys stay in your login. Your data stays home.
+And it's **yours**: free and open source (AGPL-3.0), running on your machine with hosted/BYO
+inference or a non-autonomous local endpoint such as Ollama. Connector credentials stay in exact
+server-side operations; they do not enter a model/CLI process or workspace. Your data stays home.
 
 **[Install](#install--one-command) · [Architecture](#reference-architecture) · [Security](#security-architecture) · [Multi-user](#multi-user-and-multi-tenancy) · [Connectors](#the-connector-framework) · [Apps](#the-intelligent-app-suite) · [Extend](#extend-the-swarm) · [More machines](#grow-to-more-machines) · [Docs](#documentation)**
 
@@ -64,7 +69,10 @@ Short on RAM? `--bundle kernel` runs the platform without the full bot fleet, an
 
 ## Reference architecture
 
-OSHAL is a **control plane and an execution plane over a set of system services** — the controller orchestrates and *never calls an LLM*; the bot fleet owns all model execution; everything below them is standard, inspectable infrastructure you run yourself.
+oshal is a **control plane and an execution plane over a set of system services**. The controller
+orchestrates and hosts only the explicitly scoped inline-concierge path; it never launches an
+unattended local CLI. Dedicated bot nodes own isolated execution and deterministic provider-intent
+handlers. Everything below them is standard, inspectable infrastructure you run yourself.
 
 ```mermaid
 flowchart TB
@@ -73,18 +81,18 @@ flowchart TB
         A2A["External agents via A2A\nJSON-RPC / SSE, per-agent credentials"]
     end
 
-    subgraph CONTROL["Control plane — oshal-api (never calls an LLM)"]
+    subgraph CONTROL["Control plane — oshal-api (no unattended local CLI)"]
         COCKPIT["Cockpit + app surfaces"]
         API["REST API · auth (OIDC/RLS) · connector broker"]
         QM["Queue manager · workflow registry · dispatcher"]
         LOADER["App loader · tool registry · cost ledger"]
     end
 
-    subgraph EXEC["Execution plane — bot-node fleet"]
-        B1["codex bots"]
-        B2["claude-code bots"]
-        B3["gemini bots"]
-        B4["cline · a2a"]
+    subgraph EXEC["Execution plane — accountable bot identities"]
+        B1["hosted/BYO inference"]
+        B2["deterministic provider intents"]
+        B3["authenticated A2A agents"]
+        B4["noop / non-autonomous local endpoints"]
     end
 
     subgraph SVC["System services"]
@@ -103,7 +111,7 @@ flowchart TB
     EXEC -- "results + per-call cost" --> API
     LOADER --> PG
     QM --> PG
-    EXEC -.->|"BYOK CLIs on YOUR login\n~/.claude · ~/.codex · ~/.gemini"| VENDORS(("Model vendors / local Ollama"))
+    EXEC -.->|"hosted/BYO inference\nno connector credential"| VENDORS(("Model vendors / local Ollama"))
     API --> CH
     API --> AR
     API --> TS
@@ -111,7 +119,11 @@ flowchart TB
 ```
 
 - **Tickets enter the control plane**, phases dispatch over the **Redis mesh** (`XADD`/`XREADGROUP`), bot nodes execute with their **persona as the quality gate**, and results land as cost-tracked deliverables.
-- **Every bot can run a different vendor's runtime.** A single ticket can flow through a `codex-cli` bot on OpenAI, then a `claude-code` bot on Anthropic, then a `gemini-cli` bot on Google — one workspace, cost attributed per bot per call. The supported harness families also include Cline and A2A; providers span hosted vendors **and** local runtimes (Ollama, LM Studio, LiteLLM).
+- **Each accountable bot can select an authorized provider rail.** A ticket may mix hosted/BYO
+  vendors, non-autonomous local endpoints, and authenticated A2A agents while retaining per-bot
+  cost attribution. Registered Cline, Claude Code, Codex, and Gemini CLI adapters fail closed for
+  unattended work until an audited oshal-brokered sandbox exists; OAuth presence does not enable
+  them.
 - **Two coordination paths, kept distinct:** in-swarm bots use the Redis mesh; external and remote agents use the **A2A surface** with per-agent credentials. Leaf nodes on your other machines take **owner-scoped** tasks — device ownership is enforced server-side ([ADR-114](docs/adr/114-user-owned-remote-nodes.md)).
 - Deployment detail: the controller and the bot fleet ship as **one image with two runtimes**, selected per container by `BOT_RUNTIME` — which is what makes version parity between the planes checkable (`scripts/deploy-parity-check.sh`). They are separate containers with separate roles; the shared image is a supply-chain choice, not a topology.
 
@@ -143,7 +155,12 @@ Security is structural, not a checklist — every boundary below is enforced in 
 
 **Data isolation**
 - **Row-level security, live.** User-owned tables carry Postgres RLS; the API stamps every request's identity into the database session (GUC identity), so a query physically cannot read another user's rows — the floor under every app, proven with two-user live tests.
-- **Caller-scoped encrypted connector tokens.** Connector credentials are encrypted at rest and brokered only for the calling user's connection. The default encryption key is derived from `SESSION_SECRET`; the implemented per-user envelope-key path is opt-in with `OSHAL_ENVELOPE_CRYPTO=true` and currently falls back to the legacy key on error. See the exact control status in [SECURITY-POSTURE.md](docs/security/SECURITY-POSTURE.md).
+- **Caller-scoped encrypted connector tokens.** Connector credentials are encrypted at rest and
+  resolved only for the calling user's exact schema-bounded server operation. They never enter a
+  prompt, model/CLI environment, generic bot request, or workspace. The default encryption key is
+  derived from `SESSION_SECRET`; the implemented per-user envelope-key path is opt-in with
+  `OSHAL_ENVELOPE_CRYPTO=true` and currently falls back to the legacy key on error. See the exact
+  control status in [SECURITY-POSTURE.md](docs/security/SECURITY-POSTURE.md).
 
 **Devices & the edge**
 - **Device ownership is server-enforced.** A leaf node binds to the user who enrolled it (short-lived, revocable enrollment tokens — identity proven by token possession, never self-asserted). Dispatch is owner-scoped and **fails closed**: no identity, no device, no execution. A device list shows you only your own machines.
@@ -153,7 +170,11 @@ Security is structural, not a checklist — every boundary below is enforced in 
 - **FIPS-aligned crypto posture.** At-rest and in-transit crypto uses FIPS 140-approved primitives (AES-256-GCM, SHA-256, TLS 1.2+ with certificate verification enforced). Full FIPS-*module* enforcement and enclave deployment — air-gapped image scanning, FIPS-binary substitution, GovCloud FIPS endpoints — are documented deployment steps, not defaults; the exact posture and its known gaps live in [SECURITY-HARDENING.md](docs/security/SECURITY-HARDENING.md).
 
 **Keys & supply chain**
-- **BYOK everywhere.** Bots run on mounted vendor CLI logins (`~/.claude`, `~/.codex`, `~/.gemini`); no vendor API key is ever baked into an image or a bot's environment. Images bake **zero secrets** — operator-local files are excluded from every build context by name.
+- **Credential presence is not execution authority.** Images bake no operator credential.
+  Deployment-local OAuth files may be mounted read-only for diagnostics/local persistence, but raw
+  HTTP/Redis distribution is disabled and unattended Cline, Claude Code, Codex, and Gemini CLI work
+  fails closed. Reasoning uses hosted/BYO inference; connector credentials remain inside exact
+  deterministic server operations.
 - **Fail-closed publish gate.** Every push to this repository passes a secret/PII/internal-path gate plus a typecheck of committed HEAD; the CI gate re-runs it server-side. The image is scanned (Trivy) at CRITICAL/HIGH with findings fixed or tracked publicly in [BACKLOG](docs/BACKLOG.md).
 - **Guard-per-fix doctrine.** Every security fix ships with a regression test in the same change — route-auth inventory, token-broker scope, device ownership, log redaction, and the controller/LLM boundary all have named guards.
 
@@ -179,7 +200,10 @@ OSHAL is **multi-user by construction and tenant-isolated by deployment**:
 Bots are only useful when they can act on your real accounts — so connectors are a framework, not an afterthought:
 
 - **Three auth flavors, one rail:** partner OAuth (Google, Meta, Microsoft, …), token-paste (Finnhub, SmartThings, Jira, …), and link-handoff for services with no consumer API (orders assembled by the bot, completed on your own login — the concierge pattern).
-- **Caller-scoped, encrypted, brokered.** Connections are encrypted at rest and brokered to bots per call under the caller's identity. Per-user envelope keys are available behind `OSHAL_ENVELOPE_CRYPTO=true`; the shared-key compatibility path remains the default today.
+- **Caller-scoped, encrypted, operation-bounded.** Connections are encrypted at rest and resolved
+  under the caller's identity only inside an exact deterministic server operation. The bot/model
+  receives a normalized result, never the credential. Per-user envelope keys are available behind
+  `OSHAL_ENVELOPE_CRYPTO=true`; the shared-key compatibility path remains the default today.
 - **A catalog that grows two ways:** hand-built connectors for the flagship integrations, plus a **bulk OpenAPI importer** that turns REST specs into callable read-only connectors.
 - **No connectors to nowhere.** A connector only ships when its token drives a real, usable API — the registration steps for every partner platform are documented in [docs/partner-app-registration.md](docs/partner-app-registration.md).
 
@@ -269,16 +293,19 @@ A swarm is one machine until you add another.
 
 > Full head-to-head vs LangGraph, CrewAI, AutoGen with code-level proof: **[docs/WHY_OSHAL.md](docs/WHY_OSHAL.md)**.
 
-**OSHAL is the interop layer for agents: bring any agent from any API, and it runs on connectors you've already built and collaborates with your other bots — no re-integration, no lock-in.** The hard parts are done once and inherited by every bot you add: per-user connectors, the live injection path (describe → pack → load → running), and the mesh that lets bots hand off to each other.
+**oshal is an interop layer for accountable agents:** hosted/BYO inference and authenticated
+external agents collaborate over one mesh, while connector actions stay behind schema-bounded
+server operations. The hard parts are inherited by each bot: caller ownership, contained prompts,
+per-user connectors without credential exposure, cost attribution, and bot-to-bot handoff.
 
 **The persona IS the swarm.** There is no separate "reviewer agent" by default. Each bot's persona embeds output classification, citation rules, a structured artifact set, and an escalation packet. One bot, one ticket, reviewer-grade output — at **$1.30 per real enterprise-database RCA vs $4.05** for the same work in a 2-bot review pipeline (measured).
 
 | | OSHAL | LangGraph | CrewAI | AutoGen |
 |---|---|---|---|---|
-| Agent runtimes | **5 families** (Cline, Codex, Claude Code, Gemini, A2A) | 1 | 1 | 2 |
+| Execution interfaces | Hosted/BYO, deterministic provider intents, authenticated A2A; local CLI fail-closed | 1 | 1 | 2 |
 | Mix-mode swarm in one ticket | Yes | No | No | No |
 | Persona-as-quality-gate (no reviewer needed) | Yes | No | No | No |
-| Acts on your real accounts (per-user brokered OAuth) | Yes | DIY | DIY | DIY |
+| Acts on real accounts through caller-scoped deterministic operations | Yes | DIY | DIY | DIY |
 | Per-call cost tracking with vendor attribution | Yes | partial | No | No |
 | Multi-user isolation (RLS) + device ownership built in | Yes | DIY | DIY | DIY |
 | Runs entirely on hardware you own | Yes | Yes | Yes | Yes |

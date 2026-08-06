@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from app.js (1000-line cap decomposition): dynamic tool registration API, provisioning manager API, agent registry/deploy/expand-capability/config APIs
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: retire any-bot HTTP tool mutation so arbitrary outbound handlers cannot be registered or replaced outside the canonical controller tool plane.
  */
 
 const path = require('path');
@@ -21,29 +22,11 @@ function registerAgentAndProvisioningRoutes(application) {
     // Trigger MCP tool discovery
     // === Dynamic Tool Registration API (Layer B: Self-Expanding Capability) ===
 
-    application.app.post('/api/tools/register', async (req, res) => {
-      try {
-        if (!application.dynamicToolManager) {
-          return res.status(503).json({ error: 'DynamicToolManager not initialized' });
-        }
-        const result = await application.dynamicToolManager.registerTool(req.body);
-        res.status(result.success ? 201 : 400).json(result);
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
+    const retiredToolMutation = (_req, res) => res.status(410).json({
+      error: 'tool mutation is owned by the authenticated controller tool plane',
     });
-
-    application.app.delete('/api/tools/register/:toolName', async (req, res) => {
-      try {
-        if (!application.dynamicToolManager) {
-          return res.status(503).json({ error: 'DynamicToolManager not initialized' });
-        }
-        const removed = await application.dynamicToolManager.unregisterTool(req.params.toolName);
-        res.json({ success: removed, toolName: req.params.toolName });
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
+    application.app.post('/api/tools/register', retiredToolMutation);
+    application.app.delete('/api/tools/register/:toolName', retiredToolMutation);
 
     application.app.get('/api/tools/dynamic', async (req, res) => {
       try {

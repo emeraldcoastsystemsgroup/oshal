@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase step 2 (slice 1): pure determinism verdict for single-call no-edit replay (ADR-046)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile inline documentation after the step-4 judge shipped: this lexical comparison remains the cheap determinism prefilter, while promotion quality is independently LLM-judged and lexical-fallback grades are ineligible.
  */
 
 /**
@@ -33,7 +34,8 @@ export interface DeterminismVerdict {
  * @description Similarity at or above this Jaccard score (but not byte-exact) is graded `equivalent`
  * rather than `divergent`. The spec calls for a semantic tolerance, not byte-equality, because
  * temperature>0 / provider drift means even a faithful replay rarely reproduces bytes exactly. A
- * judge-scored quality check (ADR-046 step 4) is the eventual upgrade over this lexical proxy.
+ * separate LLM judge (ADR-046 step 4) now grades promotion quality; this lexical score remains the
+ * cheap replay/determinism prefilter and is never sufficient by itself to promote a lane.
  */
 export const EQUIVALENT_SIMILARITY_THRESHOLD = 0.85;
 

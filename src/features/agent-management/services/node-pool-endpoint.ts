@@ -3,7 +3,8 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added node-id and endpoint trust validation so Redis registry data cannot redirect credential-bearing node assignments to an arbitrary SSRF target or inject Redis key segments/prototype properties.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added node-id and endpoint trust validation so Redis registry data cannot redirect privileged node assignments to an arbitrary SSRF target or inject Redis key segments/prototype properties.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Document that assignments are now non-secret metadata; endpoint validation remains a required control-plane boundary.
  */
 
 const NODE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -39,7 +40,7 @@ export function normalizeConfiguredNodeEndpoint(nodeId: string, endpoint: string
  * @description Validates an endpoint learned from the mutable Redis node registry.
  * Its hostname must equal the node id (the Docker-DNS convention) or appear in the
  * explicit NODE_POOL_ALLOWED_HOSTS allowlist. This stops poisoned registry data from
- * receiving the provider credentials carried by POST /node/assign.
+ * receiving privileged assignment/control traffic.
  * @param nodeId - Validated node identity expected at the endpoint.
  * @param endpoint - Registry-provided endpoint URL.
  * @returns Canonical trusted endpoint origin.

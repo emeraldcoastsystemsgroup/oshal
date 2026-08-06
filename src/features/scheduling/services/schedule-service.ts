@@ -5,8 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added schedule orchestration service with Redis persistence and cron-based next-run computation
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Persisted ownerSub on create + filtered listSchedules by app queue (taskType) and caller (ownerSub, own-or-unowned)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Scope new user-owned schedule ids by exact taskType and owner so create-or-replace cannot overwrite another tenant; preserve exact-owner legacy ids in place.
  */
 
+import { createHash } from 'node:crypto';
 import { CronExpressionParser } from 'cron-parser';
 import { createChildLogger } from '@/shared/logger';
 import {
@@ -87,13 +89,41 @@ export class ScheduleService {
   async createSchedule(input: CreateScheduleInput): Promise<ScheduleRecord> {
     const parsed = CreateScheduleInputSchema.parse(input);
     await this.assertSchedulingEnabled(parsed.taskData.targetAgent, parsed.taskType);
-    const scheduleId = this.normalizeScheduleId(parsed.taskType);
-    const existing = await this.store.getSchedule(scheduleId);
+    const { scheduleId, existing } = await this.resolveCreateTarget(parsed);
     const now = new Date();
     const schedule = this.buildCreateRecord(scheduleId, parsed, existing, now);
     await this.store.saveSchedule(schedule);
     logger.info({ scheduleId, cron: schedule.cron }, 'Created or replaced schedule');
     return schedule;
+  }
+
+  /**
+   * @description Resolves the persistence key for create-or-replace without allowing two owners
+   * to share a lossy taskType-derived id. Existing records keep their legacy id only when both the
+   * exact taskType and exact owner match. New user records include a non-reversible digest of both;
+   * unowned internal/system schedules retain the stable historical id used by boot reconcilers.
+   */
+  private async resolveCreateTarget(input: CreateScheduleInput): Promise<{
+    scheduleId: string;
+    existing: ScheduleRecord | null;
+  }> {
+    const legacyId = this.normalizeScheduleId(input.taskType);
+    const legacy = await this.store.getSchedule(legacyId);
+    if (!input.ownerSub) {
+      return { scheduleId: legacyId, existing: legacy };
+    }
+    if (legacy?.ownerSub === input.ownerSub && legacy.taskType === input.taskType.trim()) {
+      return { scheduleId: legacyId, existing: legacy };
+    }
+
+    const ownerScope = createHash('sha256')
+      .update(input.ownerSub, 'utf8')
+      .update('\0', 'utf8')
+      .update(input.taskType.trim(), 'utf8')
+      .digest('hex')
+      .slice(0, 24);
+    const scheduleId = `${legacyId}--${ownerScope}`;
+    return { scheduleId, existing: await this.store.getSchedule(scheduleId) };
   }
 
   /**

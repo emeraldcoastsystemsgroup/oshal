@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial strict-CSP builder, opt-in and returning `false` (no CSP at all) by default.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | DEFAULT POSTURE FLIP: cspFromEnv now returns the strict directive set in REPORT-ONLY mode by default instead of `false`, so every response actually carries a policy and the violation collector starts learning the real allowlist without an env act. Report-only is non-blocking by construction, so no surface can break; enforcement still requires OSHAL_STRICT_CSP=on, and OSHAL_CSP=off is the kill switch that restores "no header at all". Added cspMode (the three-way posture, one place), buildStrictCsp hardening (frame-src/worker-src/manifest-src/media-src + upgrade-insecure-requests, and object-src/base-uri/form-action pinned), and shouldLogCspReport — a bounded dedupe so report-only on a cockpit full of inline scripts cannot flood the log with the same violation. Guard: tests/unit/web-hardening-csp-body.spec.ts asserts the POLICY (directives + which header), not a string.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile inline guidance with the default report-only posture: operators observe the default (or pin it explicitly) before enforcement; cspFromEnv is the full three-mode wrapper, not an off-by-default opt-in wrapper.
  */
 
 /**
@@ -24,9 +25,10 @@
  * anyone who needs it.
  *
  * MIGRATION PATH off inline scripts (incremental, safe to do over several PRs):
- *  1. Turn on REPORT-ONLY mode first (OSHAL_CSP_REPORT_ONLY=on). The browser
- *     does NOT block anything; it only reports violations to report-uri. Watch
- *     the reports to learn exactly which inline scripts/styles still exist.
+ *  1. Observe the DEFAULT report-only mode first (optionally pin it with
+ *     OSHAL_CSP_REPORT_ONLY=on during rollout). The browser does NOT block anything;
+ *     it only reports violations to report-uri. Watch the reports to learn exactly
+ *     which inline scripts/styles still exist.
  *  2. Move each inline <script>...</script> into an external .js file served from
  *     'self', OR stamp it with the per-request nonce (see nonce support below)
  *     so it is allowed under 'script-src'. Repeat until report-only is clean.
@@ -109,8 +111,8 @@ export interface StrictCspOptions {
  *
  * The returned shape is what you pass as
  *   helmet({ contentSecurityPolicy: { directives: <this> } })
- * Use {@link cspFromEnv} for the full opt-in wrapper that also honours the
- * off-by-default flag and the report-only flag.
+ * Use {@link cspFromEnv} for the full three-mode wrapper: report-only by default,
+ * explicit enforcement, and an explicit no-header kill switch.
  */
 export function buildStrictCsp(opts: StrictCspOptions = {}): Record<string, string[]> {
   const { nonce, allowInlineStyles = true, connectSrc = [], imgSrc = [], reportUri } = opts;

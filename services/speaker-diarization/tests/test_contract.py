@@ -5,6 +5,7 @@ SEQ                 | AUTHOR                                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Added checksum, dependency, Docker, and no-persistence contract tests.
 2 | maintainer@emeraldcoastsystemsgroup.com   | Pinned the optional offline ASR model alongside the two diarization models. This test did its job: adding a third model went red on the exact-set assertion rather than sliding in, which is the whole point of pinning what a private inference image is allowed to contain.
+3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the direct Starlette runtime and require the production image to install the fully hashed dependency graph.
 """
 
 from __future__ import annotations
@@ -52,6 +53,19 @@ def test_runtime_and_docker_are_fixed_to_cpu_single_thread() -> None:
     assert 'provider="cpu"' in engine
     assert "CPU_THREADS = 1" in read("speaker_service/settings.py")
     assert "sha256sum --check --strict" in dockerfile
+
+
+def test_runtime_dependencies_are_hash_locked() -> None:
+    requirements = read("requirements.txt").lower()
+    lock = read("requirements.lock").lower()
+    dockerfile = read("Dockerfile").lower()
+
+    assert "fastapi==" not in requirements
+    assert "pydantic==2.13.4" in requirements
+    assert "starlette==1.3.1" in requirements
+    assert lock.count("--hash=sha256:") >= lock.count("==")
+    assert "requirements.lock" in dockerfile
+    assert "--require-hashes" in dockerfile
 
 
 def test_service_has_no_durable_audio_or_temp_file_path() -> None:

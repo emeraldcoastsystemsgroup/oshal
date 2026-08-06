@@ -67,11 +67,21 @@ wire the noop lane as a CI gate.
 
 ### Notification preference center — `src/features/notifications`
 Per-user `topic → channel` routing (`user_notification_prefs`) over the existing transports
-(the user's own Gmail via `sendGmail`, their Twilio SMS, Telegram) with quiet hours
-(America/Chicago). `NotificationRouter.notify(userSub, topic, {...})` resolves prefs, respects
-quiet hours, and dispatches through a transport registry; sends/skips are logged and never throw
-into callers. Routes: `/api/notify/*`. The career digest consults it while keeping its own once/day
-cursor + opt-out.
+(the user's own Gmail via `sendGmail`, fixed-operation Twilio SMS, deployment Twilio SMS/voice,
+and Telegram) with quiet hours (America/Chicago). A topic-specific row wins; otherwise the
+welcome wizard's opt-in row under `DEFAULT_TOPIC` applies before the Gmail-or-none default.
+`NotificationRouter.notify(userSub, topic, {...})` resolves prefs, respects quiet hours, and
+dispatches through a transport registry; sends/skips are logged and never throw into callers.
+Routes: `/api/notify/*`. The career digest consults it while keeping its own once/day cursor +
+opt-out.
+
+The temporary tag `wip/notification-prefs-index-snapshot-20260801` was reviewed on 2026-08-05.
+Its sole commit (`15b9b813990e0e10e89d5a3713a8d16a1ce08acd`) removed the welcome notification step,
+default-topic fallback, voice channel, deployment Twilio fallback, and their regression tests; it
+contained no unique valid behavior relative to the current implementation. That rollback was
+explicitly abandoned and the local tag removed so it cannot be mistaken for pending work. The
+recorded SHA makes the disposition auditable and the tag reconstructible if historical inspection
+is ever required.
 
 ### Per-user data export/delete — `src/features/data-lifecycle`
 An exporter registry (`{store, exportRows, deleteRows}`) covering the Postgres stores.

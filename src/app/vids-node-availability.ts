@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Is the render node free? One fail-closed gate over every signal that says otherwise — an in-flight render, the nightly recap agent, a held lease, a missing signed-in browser, and the memory/stray-Chrome pressure that turned a 20-minute build into two hours on 2026-07-28.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Await durable probe enqueue and result reads under the trusted controller identity so node availability checks survive API restarts without an in-memory task fallback.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Replace the racy node-local JSON lease with the PostgreSQL token-bound resource lease shared by recap and every video-pump restart path.
  */
 /**
  * @description The render node's availability gate.
@@ -20,7 +21,7 @@
  *   - A remote task is already claimed on it, or a render is already in flight (Postgres).
  *   - We are inside the blackout window the recap owns (the recap does not announce itself).
  *   - The recap's agent is alive on the node — its pid, or a log it wrote seconds ago.
- *   - Someone holds the node lease.
+ *   - Someone holds the PostgreSQL-authoritative node lease.
  *   - The signed-in Vids browser is not running, so a render would open a login page and click into it.
  *   - Free memory or stray-Chrome count is in the range that made the 2026-07-28 build crawl.
  *
@@ -36,6 +37,7 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
+import { getActiveNodeResourceLease, vidsNodeResourceKey } from '@/app/node-resource-lease';
 
 const logger = createChildLogger({ module: 'vids-node-availability' });
 
@@ -52,10 +54,6 @@ export const nodeExe = (): string => process.env.VIDS_NODE_EXE || 'C:\\Program F
 export interface NodeProbe {
   /** The recap agent is running (its pid is alive, or it wrote its log seconds ago). */
   recapActive?: boolean;
-  /** Who holds the node lease, when one is held and unexpired. */
-  leaseOwner?: string | null;
-  /** When that lease expires (ISO). */
-  leaseExpiresAt?: string | null;
   /** chrome.exe processes in total — the stray-tab count that ate 14.5GB on 2026-07-28. */
   chromeTotal?: number;
   /** chrome.exe processes running the signed-in Vids profile. Zero means a render cannot log in. */
@@ -76,7 +74,8 @@ export interface NodeAvailability {
   available: boolean;
   /** Which check decided it — `free` when available. */
   check: 'no-worker' | 'worker-busy' | 'render-in-flight' | 'blackout' | 'probe-failed'
-  | 'recap-running' | 'leased' | 'no-browser' | 'low-memory' | 'chrome-storm' | 'free';
+  | 'lease-store-failed' | 'recap-running' | 'leased' | 'no-browser' | 'low-memory'
+  | 'chrome-storm' | 'free';
   /** One human-readable line, safe to show an operator or write to a ledger. */
   reason: string;
   /** The node's clientId when one was found. */
@@ -99,8 +98,8 @@ export interface AvailabilityOptions {
   maxCommitPct?: number;
   /** Refuse above this many chrome.exe processes. Default VIDS_NODE_MAX_CHROME or 40. */
   maxChrome?: number;
-  /** A lease held by this owner does not block us (the pump re-entering its own lease). */
-  selfLeaseOwner?: string;
+  /** One exact lease capability that does not block its own restart/dispatch path. */
+  selfLeaseId?: string;
 }
 
 /** @description One blackout window, minutes-from-midnight in the configured zone. */
@@ -234,7 +233,6 @@ function probeCommand(recapIdleMinutes: number): string {
   return [
     '$ErrorActionPreference = \'SilentlyContinue\'',
     `$pkg = '${pkg}'`,
-    '$data = if ($env:VIDS_DATA_DIR) { $env:VIDS_DATA_DIR } else { Join-Path $env:USERPROFILE \'.oshal-vids\' }',
     '$out = Join-Path $pkg \'out\'',
     // The nightly recap, detected by the markers run-daily-recap.ps1 ACTUALLY writes on the node:
     // out\build.pid (the launched agent) and out\build.log (what it is writing right now). The older
@@ -254,23 +252,14 @@ function probeCommand(recapIdleMinutes: number): string {
     '}',
     // A `claude` process on the node is the recap's agent by construction — nothing else runs one.
     'if (-not $recap -and @(Get-Process claude -ErrorAction SilentlyContinue).Count -gt 0) { $recap = $true }',
-    // The lease, when one is held.
-    '$leaseOwner = $null; $leaseExp = $null',
-    '$leaseFile = Join-Path $data \'node.lock\'',
-    'if (Test-Path $leaseFile) {',
-    '  $l = (Get-Content $leaseFile -Raw) | ConvertFrom-Json',
-    '  if ($l -and $l.expiresAt -and ([datetime]$l.expiresAt) -gt (Get-Date).ToUniversalTime()) {',
-    '    $leaseOwner = [string]$l.owner; $leaseExp = [string]$l.expiresAt',
-    '  }',
-    '}',
     // Chrome census + memory headroom.
     '$all = @(Get-Process chrome -ErrorAction SilentlyContinue)',
     '$dbg = @(Get-CimInstance Win32_Process -Filter "Name=\'chrome.exe\'" | Where-Object { $_.CommandLine -like \'*oshal-video-chrome*\' })',
     '$m = Get-CimInstance Win32_PerfRawData_PerfOS_Memory',
     '$avail = [int]$m.AvailableMBytes',
     '$commit = if ($m.CommitLimit -gt 0) { [int](100 * $m.CommittedBytes / $m.CommitLimit) } else { 0 }',
-    'Write-Output (\'NODE_STATUS \' + (@{ recapActive = $recap; leaseOwner = $leaseOwner; leaseExpiresAt = $leaseExp;'
-      + ' chromeTotal = $all.Count; chromeDebug = $dbg.Count; availableMb = $avail; commitPct = $commit } | ConvertTo-Json -Compress))',
+    'Write-Output (\'NODE_STATUS \' + (@{ recapActive = $recap; chromeTotal = $all.Count;'
+      + ' chromeDebug = $dbg.Count; availableMb = $avail; commitPct = $commit } | ConvertTo-Json -Compress))',
   ].join('; ');
 }
 
@@ -282,8 +271,6 @@ function parseProbe(stdout: string): NodeProbe | null {
     const raw = JSON.parse(line.slice('NODE_STATUS'.length).trim()) as Record<string, unknown>;
     return {
       recapActive: Boolean(raw.recapActive),
-      leaseOwner: (raw.leaseOwner as string | null) ?? null,
-      leaseExpiresAt: (raw.leaseExpiresAt as string | null) ?? null,
       chromeTotal: Number(raw.chromeTotal ?? NaN),
       chromeDebug: Number(raw.chromeDebug ?? NaN),
       availableMb: Number(raw.availableMb ?? NaN),
@@ -326,7 +313,26 @@ export async function checkVidsNodeAvailability(
     return { available: false, check: 'render-in-flight', clientId, reason: `"${t}" is still rendering on the node` };
   }
 
-  // 3. The window the nightly recap owns. It does not announce itself, so we stay out by the clock
+  // 3. PostgreSQL is the single lease authority shared with the host-side recap runner. A read
+  // failure is not evidence that the resource is free, and a holder label is never a bypass: only
+  // the exact random capability bound to the pump run may re-enter.
+  try {
+    const lease = await getActiveNodeResourceLease(pool, vidsNodeResourceKey(clientId));
+    if (lease && lease.leaseId !== opts.selfLeaseId) {
+      return {
+        available: false, check: 'leased', clientId,
+        reason: `the node is leased by ${lease.holder} until ${lease.expiresAt}`,
+      };
+    }
+  } catch (error) {
+    logger.error({ err: error, clientId }, 'render-node lease authority is unreadable');
+    return {
+      available: false, check: 'lease-store-failed', clientId,
+      reason: 'the durable node-lease authority is unavailable; refusing to assume the node is free',
+    };
+  }
+
+  // 4. The window the nightly recap owns. It does not announce itself, so we stay out by the clock
   //    as well as by the probe below.
   // `||`, not `??`: compose passes an unset variable through as an EMPTY STRING, and `??` would
   // accept that as "the operator configured no window" — silently deleting the recap's protection.
@@ -338,7 +344,7 @@ export async function checkVidsNodeAvailability(
 
   if (opts.skipProbe) return { available: true, check: 'free', clientId, reason: 'registry and schedule are clear (node probe skipped)' };
 
-  // 4. Ask the node itself.
+  // 5. Ask the node itself.
   const timeoutMs = opts.probeTimeoutMs ?? Number(process.env.VIDS_NODE_PROBE_TIMEOUT_MS || 120_000);
   const recapIdleMinutes = opts.recapIdleMinutes ?? Number(process.env.VIDS_NODE_RECAP_IDLE_MIN || 10);
   const shell = await runNodeShell(clientId, probeCommand(recapIdleMinutes), timeoutMs);
@@ -352,12 +358,6 @@ export async function checkVidsNodeAvailability(
 
   if (probe.recapActive) {
     return { available: false, check: 'recap-running', clientId, probe, reason: 'the nightly recap agent is running on the node' };
-  }
-  if (probe.leaseOwner && probe.leaseOwner !== opts.selfLeaseOwner) {
-    return {
-      available: false, check: 'leased', clientId, probe,
-      reason: `the node is leased by ${probe.leaseOwner} until ${probe.leaseExpiresAt ?? 'unknown'}`,
-    };
   }
   if (!(probe.chromeDebug && probe.chromeDebug > 0)) {
     return {
@@ -392,71 +392,4 @@ export async function checkVidsNodeAvailability(
 
   logger.info({ clientId, probe }, 'render node is free');
   return { available: true, check: 'free', clientId, probe, reason: 'the render node is idle' };
-}
-
-/**
- * @description Take the node lease so anything else that checks sees it as busy. Refuses when a
- * DIFFERENT owner holds an unexpired lease — the lease is advisory between cooperating callers, not
- * a substitute for the availability gate.
- * @param {string} clientId the node
- * @param {string} owner who is taking it (e.g. `joke-pump:<runId>`)
- * @param {number} ttlMinutes how long the lease should outlive a crash
- * @returns {Promise<{ok: boolean, error?: string}>} whether the lease is ours
- */
-export async function acquireVidsNodeLease(
-  clientId: string,
-  owner: string,
-  ttlMinutes: number,
-): Promise<{ ok: boolean; error?: string }> {
-  const safeOwner = owner.replace(/[^A-Za-z0-9:_-]/g, '');
-  const command = [
-    '$ErrorActionPreference = \'SilentlyContinue\'',
-    '$data = if ($env:VIDS_DATA_DIR) { $env:VIDS_DATA_DIR } else { Join-Path $env:USERPROFILE \'.oshal-vids\' }',
-    'New-Item -ItemType Directory -Force -Path $data | Out-Null',
-    '$leaseFile = Join-Path $data \'node.lock\'',
-    `$me = '${safeOwner}'`,
-    '$held = $null',
-    'if (Test-Path $leaseFile) {',
-    '  $l = (Get-Content $leaseFile -Raw) | ConvertFrom-Json',
-    '  if ($l -and $l.expiresAt -and ([datetime]$l.expiresAt) -gt (Get-Date).ToUniversalTime() -and $l.owner -ne $me) { $held = [string]$l.owner }',
-    '}',
-    'if ($held) { Write-Output ("LEASE_HELD " + $held) } else {',
-    `  $exp = (Get-Date).ToUniversalTime().AddMinutes(${Math.max(1, Math.round(ttlMinutes))}).ToString('o')`,
-    '  @{ owner = $me; expiresAt = $exp } | ConvertTo-Json -Compress | Set-Content -Path $leaseFile -Encoding utf8',
-    '  Write-Output ("LEASE_OK " + $exp)',
-    '}',
-  ].join('; ');
-
-  const r = await runNodeShell(clientId, command, Number(process.env.VIDS_NODE_PROBE_TIMEOUT_MS || 120_000));
-  if (!r.ok) return { ok: false, error: r.error };
-  if (r.stdout.includes('LEASE_OK')) return { ok: true };
-  const held = r.stdout.split('\n').map((l) => l.trim()).find((l) => l.startsWith('LEASE_HELD'));
-  return { ok: false, error: held ? held.replace('LEASE_HELD', 'lease held by').trim() : 'lease was neither taken nor refused' };
-}
-
-/**
- * @description Release the node lease, but only if it is still ours. A release that clears someone
- * else's lease is worse than a leaked one.
- * @param {string} clientId the node
- * @param {string} owner the owner that took it
- * @returns {Promise<{ok: boolean, error?: string}>} whether it was released
- */
-export async function releaseVidsNodeLease(clientId: string, owner: string): Promise<{ ok: boolean; error?: string }> {
-  const safeOwner = owner.replace(/[^A-Za-z0-9:_-]/g, '');
-  const command = [
-    '$ErrorActionPreference = \'SilentlyContinue\'',
-    '$data = if ($env:VIDS_DATA_DIR) { $env:VIDS_DATA_DIR } else { Join-Path $env:USERPROFILE \'.oshal-vids\' }',
-    '$leaseFile = Join-Path $data \'node.lock\'',
-    `$me = '${safeOwner}'`,
-    'if (Test-Path $leaseFile) {',
-    '  $l = (Get-Content $leaseFile -Raw) | ConvertFrom-Json',
-    '  if ($l -and $l.owner -eq $me) { Remove-Item $leaseFile -Force; Write-Output \'LEASE_RELEASED\' }',
-    '  else { Write-Output \'LEASE_NOT_MINE\' }',
-    '} else { Write-Output \'LEASE_ABSENT\' }',
-  ].join('; ');
-
-  const r = await runNodeShell(clientId, command, Number(process.env.VIDS_NODE_PROBE_TIMEOUT_MS || 120_000));
-  if (!r.ok) return { ok: false, error: r.error };
-  if (r.stdout.includes('LEASE_RELEASED') || r.stdout.includes('LEASE_ABSENT')) return { ok: true };
-  return { ok: false, error: 'the lease on the node belongs to someone else — left in place' };
 }

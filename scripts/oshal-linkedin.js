@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Social swarm (ADR-038): publish a LinkedIn post (Share on LinkedIn / w_member_social) or read the profile, using the OSHAL connector token (oshal_connections) — no separate login. Mirrors oshal-gmail.js (AES-256-GCM decrypt). The author URN uses the OIDC `sub` (stored as account_id).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Read LinkedIn credentials through the shared v2/k2/legacy connector-token codec.
  *
  *   node scripts/oshal-linkedin.js profile               # the connected LinkedIn profile
  *   node scripts/oshal-linkedin.js post "Hello world"    # publish a public post
@@ -12,16 +13,8 @@
  * Exit 2 = no LinkedIn connection (connect at /utilities). Exit 3 = post rejected.
  */
 'use strict';
-const crypto = require('crypto');
 const { Pool } = require('pg');
-
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
+const { decryptToken } = require('./lib/connector-token-crypto');
 
 /** Resolve the caller's LinkedIn connection (token + author id). Fails closed on ambiguity. */
 async function getConnection(pool) {
@@ -38,7 +31,7 @@ async function getConnection(pool) {
     row = all[0] ? (await pool.query(`SELECT * FROM oshal_connections WHERE provider='linkedin' AND account_email=$1 LIMIT 1`, [all[0].account_email])).rows[0] : undefined;
   }
   if (!row || !row.access_token) { console.error('No LinkedIn connection found. Connect LinkedIn at /utilities first.'); process.exit(2); }
-  return { token: decrypt(row.access_token), authorId: row.account_id, account: row.account_email };
+  return { token: await decryptToken(pool, row.user_sub, row.access_token), authorId: row.account_id, account: row.account_email };
 }
 
 /** GET the OIDC userinfo profile. */

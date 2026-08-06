@@ -101,7 +101,7 @@
     "dev:node": "ts-node -r tsconfig-paths/register --transpile-only scripts/dev-node.ts",
     "evidence:nightly": "node scripts/evidence/nightly-refresh.mjs",
     "provision:app-role": "node scripts/governance/provision-app-role.mjs",
-    "connectors:curation-audit": "node scripts/connectors/curation-audit.mjs",
+    "connectors:curation-audit": "tsx scripts/connectors/curation-audit.mjs",
     "connectors:curate": "ts-node -r tsconfig-paths/register --transpile-only scripts/connectors/curate-catalog.ts",
     "connectors:audit-gate": "ts-node -r tsconfig-paths/register --transpile-only scripts/connectors/audit-gate.ts",
     "validate:manifests": "ts-node -r tsconfig-paths/register --transpile-only scripts/validate-manifests.ts",

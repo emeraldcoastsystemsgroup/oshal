@@ -4,12 +4,14 @@
  * DATE         | AUTHOR                          | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Phase 0 tool-execution hardening: (1) cli command-template validation rejects shell metacharacters in static segments while accepting real production templates; (2) ToolAuthInterceptor always fails closed for exec-style unregistered tools and, under strict mode, for any unregistered tool — while preserving the default graceful-allow path.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04 closure: every unknown tool and a missing interceptor deny by default; no raw executor fallback remains.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { validateCliCommandTemplate } from '../../src/features/tool-registry/services/cli-command-validator';
 import { ToolAuthInterceptor } from '../../src/features/tool-approval/services/tool-auth-interceptor';
 import type { ApprovalWorkflowService } from '../../src/features/tool-approval/services/approval-workflow-service';
+import { TaskOrchestrator } from '../../src/features/chat-orchestration/services/task-orchestrator';
 
 describe('validateCliCommandTemplate', () => {
   // These are the real templates shipped in swarm-apps/*.yaml — must keep passing.
@@ -62,44 +64,37 @@ describe('ToolAuthInterceptor — unregistered fail-closed behavior', () => {
   const lookupNull = async () => null;
   const approvalStub = {} as unknown as ApprovalWorkflowService;
 
-  async function runTool(opts: { strict?: boolean; toolName: string }): Promise<string> {
+  async function runTool(toolName: string): Promise<string> {
     const interceptor = new ToolAuthInterceptor({
       approvalService: approvalStub,
       lookupAuthMode: lookupNull,
-      failClosedUnregistered: opts.strict ?? false,
     });
     const executor = interceptor.createInterceptedExecutor(
       async (name) => `EXECUTED:${name}`,
       'agent-1',
       'task-1',
     );
-    return executor(opts.toolName, {});
+    return executor(toolName, {});
   }
 
-  it('allows an ordinary unregistered tool in default (non-strict) mode', async () => {
-    expect(await runTool({ toolName: 'read_file' })).toBe('EXECUTED:read_file');
+  it('blocks an ordinary unregistered tool by default', async () => {
+    expect(await runTool('read_file')).toContain('[BLOCKED]');
   });
 
-  it('always blocks exec-style unregistered tools even in default mode', async () => {
+  it('blocks exec-style unregistered tools', async () => {
     for (const name of ['execute_command', 'bash', 'Shell', 'run_command', 'eval']) {
-      const out = await runTool({ toolName: name });
+      const out = await runTool(name);
       expect(out, name).toContain('[BLOCKED]');
     }
   });
 
-  it('blocks any unregistered tool in strict mode', async () => {
-    expect(await runTool({ strict: true, toolName: 'read_file' })).toContain('[BLOCKED]');
-  });
-
-  it('still allows registered-but-unrelated tools through strict mode is not triggered when lookup resolves', async () => {
-    // Sanity: when lookup returns auto, the tool runs regardless of strict mode.
+  it('allows a registered auto tool', async () => {
     const interceptor = new ToolAuthInterceptor({
       approvalService: approvalStub,
       lookupAuthMode: async (_agentId, toolName) => ({
         authMode: 'auto' as const,
         tool: { toolId: 't1', name: toolName } as never,
       }),
-      failClosedUnregistered: true,
     });
     const executor = interceptor.createInterceptedExecutor(
       async (name) => `EXECUTED:${name}`,
@@ -107,5 +102,27 @@ describe('ToolAuthInterceptor — unregistered fail-closed behavior', () => {
       'task-1',
     );
     expect(await executor('read_file', {})).toBe('EXECUTED:read_file');
+  });
+
+  it('does not expose the raw task executor when authorization wiring is missing', async () => {
+    const rawExecutor = vi.fn(async () => 'EXECUTED');
+    const orchestrator = new TaskOrchestrator({
+      taskStore: {} as never,
+      messageStore: {} as never,
+      streamManager: {} as never,
+      getProvider: () => ({}) as never,
+      getTools: async () => [],
+      executeTool: rawExecutor,
+      getSystemPrompt: async () => '',
+    });
+    const getExecutor = (
+      orchestrator as unknown as {
+        getExecutor: (taskId: string, agentId?: string, userSub?: string) =>
+          (toolName: string, toolInput: Record<string, unknown>) => Promise<string>;
+      }
+    ).getExecutor.bind(orchestrator);
+    await expect(getExecutor('task-1', 'agent-1', 'owner-1')('read_file', {}))
+      .resolves.toContain('[BLOCKED]');
+    expect(rawExecutor).not.toHaveBeenCalled();
   });
 });

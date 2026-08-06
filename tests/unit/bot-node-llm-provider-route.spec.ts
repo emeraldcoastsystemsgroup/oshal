@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 bot-node config-surface guard: PUT /api/llm-provider applies + broadcasts exactly one swarm.config-change envelope (source bot-local, shape ConfigSyncService.reconcile accepts); X-Config-Source: oshal-push applies WITHOUT broadcasting (echo-loop guard); unknown provider → 400 with NO switch and NO broadcast; broadcast failure never fails the request; service-secret gate enforced when configured; wiring assertions pin the route mounted in bot-node-server.ts and the setActiveProvider seam in bot-node-runtime.ts. Goes red if the route, the echo guard, or the broadcast disappears — i.e. if push-down 404s again or a bot-node stops reporting local changes up.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Align all route cases with the strict bot-node service-secret posture and guard credential-field rejection before runtime mutation.
  */
 
 import express from 'express';
@@ -54,7 +55,7 @@ describe('bot-node PUT /api/llm-provider (ADR-034 push-down + broadcast-up)', ()
 
   beforeEach(() => {
     savedSecret = process.env.SWARM_SERVICE_SECRET;
-    delete process.env.SWARM_SERVICE_SECRET;
+    process.env.SWARM_SERVICE_SECRET = SECRET;
     logSpies.warn.mockClear();
     logSpies.info.mockClear();
     logSpies.error.mockClear();
@@ -90,7 +91,7 @@ describe('bot-node PUT /api/llm-provider (ADR-034 push-down + broadcast-up)', ()
   const put = (url: string, body: Record<string, unknown>, headers: Record<string, string> = {}) =>
     fetch(url, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json', ...headers },
+      headers: { 'content-type': 'application/json', 'x-service-secret': SECRET, ...headers },
       body: JSON.stringify(body),
     });
 
@@ -145,6 +146,20 @@ describe('bot-node PUT /api/llm-provider (ADR-034 push-down + broadcast-up)', ()
     expect(publish).not.toHaveBeenCalled();
   });
 
+  it('rejects any credential carrier before switching or broadcasting', async () => {
+    const { url, publish, runtime } = await boot();
+    const res = await put(url, {
+      provider: 'claude-code',
+      credentials: { ANTHROPIC_API_KEY: 'sentinel-secret' },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'credential fields are not accepted on runtime configuration mutations',
+    });
+    expect(runtime.setActiveProvider).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it('still answers 200 when the broadcast fails (best-effort, logged at ERROR)', async () => {
     const { url } = await boot({ publish: async () => { throw new Error('redis down'); } });
     const res = await put(url, { provider: 'claude-code' });
@@ -156,7 +171,7 @@ describe('bot-node PUT /api/llm-provider (ADR-034 push-down + broadcast-up)', ()
   it('enforces the service secret when configured (401 without/wrong header, 200 with)', async () => {
     process.env.SWARM_SERVICE_SECRET = SECRET;
     const { url, publish } = await boot();
-    expect((await put(url, { provider: 'claude-code' })).status).toBe(401);
+    expect((await put(url, { provider: 'claude-code' }, { 'x-service-secret': '' })).status).toBe(401);
     expect((await put(url, { provider: 'claude-code' }, { 'x-service-secret': 'wrong' })).status).toBe(401);
     expect(publish).not.toHaveBeenCalled();
     expect((await put(url, { provider: 'claude-code' }, { 'x-service-secret': SECRET })).status).toBe(200);

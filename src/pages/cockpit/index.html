@@ -20,6 +20,8 @@
   14 | maintainer@emeraldcoastsystemsgroup.com   | Load the surface-bridge relay (js/surface-bridge-relay.js) — the shell-mediated postMessage relay between the focused app's surface iframe and the chat rail (the browser wiring over features/surface-bridge). Additive alongside the app-navigate + oshal-cockpit-* dialects.
   15 | maintainer@emeraldcoastsystemsgroup.com   | Leave embedded chat unloaded until an enabled profile restores it, preventing hidden task creation for immersive apps.
   16 | maintainer@emeraldcoastsystemsgroup.com   | Login double-refresh fix: the service-worker controllerchange reload also fired on the FIRST claim of a fresh page (everything had just come from the network — the reload repainted identical bytes). Now reload only when an UPDATED worker replaces one that was already controlling the page. Also: zen (full-window focus) mode — header arrows-out button + floating exit button hide all cockpit chrome so the active surface gets the whole window (Esc restores).
+  17 | maintainer@emeraldcoastsystemsgroup.com   | Stop loading the unreachable legacy workboard stylesheet so mobile layout support covers only rendered surfaces
+  18 | maintainer@emeraldcoastsystemsgroup.com   | Render the generic chat rail collapsed at first paint so its full-screen phone sheet cannot cover the primary surface during asynchronous cockpit startup
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -89,7 +91,6 @@
   <link rel="stylesheet" href="css/addressbook.css">
   <link rel="stylesheet" href="css/dashboard-view.css">
   <link rel="stylesheet" href="css/settings-view.css">
-  <link rel="stylesheet" href="css/workboard.css">
   <link rel="stylesheet" href="css/insights.css">
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/operations.css">
@@ -214,7 +215,7 @@
     <div class="panel-resize-handle" id="resizeChat"></div>
 
     <!-- CHAT PANEL (right, always visible) -->
-    <aside class="chat-panel" id="chatPanel">
+    <aside class="chat-panel collapsed" id="chatPanel">
       <button
         class="workspace-focus-resize-handle hidden"
         id="workspaceFocusResizeHandle"

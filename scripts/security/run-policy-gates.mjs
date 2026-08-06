@@ -6,6 +6,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Discover and run the SEC-06 route-auth, machine-write, migration, RLS, and workflow-contract families; zero discovery fails closed.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Include the mutation-tested active-only backlog contract in policy discovery.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Include ignored local credential-backup and redacted-export mutation guards.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Include mutation guards for active runtime subprocess credential boundaries.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Make credential-free private app-store Git transport part of the mandatory SEC-06 policy inventory.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Make direct MCP/tool authorization inventory and behavior proofs part of the blocking policy family.
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -14,6 +18,10 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const EXACT_POLICY_SPECS = [
+  'tests/unit/local-secret-hygiene.spec.ts',
+  'tests/unit/subprocess-environment-boundary.spec.ts',
+  'tests/unit/oshal-app-token-transport.spec.ts',
+  'tests/unit/mcp-tool-authorization-boundary.spec.ts',
   'tests/unit/server-route-auth-inventory.spec.ts',
   'tests/unit/manifest-route-auth.spec.ts',
   'tests/unit/machine-write-identity.spec.ts',

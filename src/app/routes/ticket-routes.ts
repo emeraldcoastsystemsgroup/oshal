@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added paused task-state mapping so cockpit fallback task-backed tickets can pause without reverting to created/backlog
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Enforced object-level authorization (IDOR fix): every by-id handler (get/patch/delete/status/state/pause/resume/cancel/chat) now checks the caller owns the ticket (or is an operator) via requireTicketAccess() and returns 404 on mismatch. The list endpoint now forces ownerSub to the caller for non-operators and ignores client-supplied ownerSub unless operator, so a user can no longer enumerate or read other tenants' tickets.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fix (DLQ mis-count): the manual cockpit status/state PUT handlers now transition via updateStatusAs with the caller's identity instead of the actor-less updateStatus (which defaulted to 'system'). The queue DLQ policy counts only 'system' escalations as poison cycles, so a deliberate operator escalation recorded as 'system' could be quarantined as an auto-escalate loop — recording the operator actor prevents the mis-count.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: cockpit ticket chat no longer grants blanket automatic tool approval; executor policy must authorize each operation.
  */
 
 import { Router } from 'express';
@@ -387,7 +388,7 @@ export function createTicketRoutes(ctx: AppContext): Router {
 
       const result = await ctx.orchestrator.processMessage(resolvedTaskId, message, {
         agenticMode: true,
-        autoApprove: true,
+        autoApprove: false,
         source: 'cockpit-ticket',
         agentId: resolvedAgentId,
         ticketId: ticketId as string,

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added adversarial bot-side HTTP delegation guards for rollout posture, exact signed bindings, replay/outage handling, local-agent enforcement, and unsigned mesh/batch prohibition.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the required independent service-secret posture whenever public-key delegation enforcement is active.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reject prompt, direct-entitlement, credential, and provider-intent mutations through the signed canonical body digest before replay consumption.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reject valid signatures carrying any method/path other than exact POST /api/swarm-execute.
  */
 
 import { generateKeyPairSync, type KeyObject } from 'node:crypto';
@@ -68,6 +69,8 @@ function token(
     principal_iss: String(overrides.principal_iss ?? PRINCIPAL_ISSUER),
     azp: String(overrides.azp ?? AGENT_ID),
     task_id: String(overrides.task_id ?? TASK_ID),
+    method: String(overrides.method ?? 'POST'),
+    path: String(overrides.path ?? '/api/swarm-execute'),
     body_sha256: String(overrides.body_sha256 ?? delegationRequestBodySha256(boundBody)),
     scope: (overrides.scope as string[] | undefined) ?? ['swarm:execute'],
   });
@@ -174,6 +177,8 @@ describe('bot-node delegation exact HTTP authorization', () => {
       principal_iss: PRINCIPAL_ISSUER,
       azp: AGENT_ID,
       task_id: TASK_ID,
+      method: 'POST',
+      path: '/api/swarm-execute',
       body_sha256: delegationRequestBodySha256(body()),
       scope: ['swarm:execute'],
     });
@@ -189,6 +194,8 @@ describe('bot-node delegation exact HTTP authorization', () => {
     ['principal issuer', body({ principalIssuer: 'https://identity.example.test/other' }), token()],
     ['token issuer', body(), token({ iss: 'urn:other:controller' })],
     ['audience', body(), token({ aud: 'urn:other:bot' })],
+    ['method', body(), token({ method: 'GET' })],
+    ['path', body(), token({ path: '/api/token-chase/replay-call' })],
     ['scope', body(), token({ scope: ['swarm:execute', 'admin'] })],
   ])('rejects the wrong %s binding before replay consumption', async (_label, requestBody, signed) => {
     const replayStore = acceptingReplayStore();

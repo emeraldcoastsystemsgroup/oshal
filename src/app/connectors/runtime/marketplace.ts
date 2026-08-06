@@ -3,9 +3,11 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Category now comes from the SPEC and is never silently invented. The entry's category was CATEGORY_BY_PROVIDER[provider] ?? inferCategory(spec), whose final branch returned 'General' — so a shelf label existed for every connector whether or not anyone had ever categorised it, and the 51 specs that DID declare metadata.category were ignored (the marketplace only read metadata.description). Both hand-maintained tables are replaced by the shared derivation in curation.ts: declared metadata.category (canonicalised) -> ordered signal rules -> 'Uncategorized' with ONE aggregated ERROR log per catalog build naming the providers. Same source of truth as scripts/connectors/curate-catalog.ts, so a file on disk and its marketplace entry cannot disagree.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add a per-user enablement OVERRIDE layer on top of the deployment-global marketplace state (BACKLOG.md:2718): optional pool + enableProviderForUser / disableProviderForUser / isEnabledForUser / enabledProviderSetForUser / userEnablementRows, delegating to user-enablement-store. NON-BREAKING — a connector is usable for a user when deployment-enabled AND NOT explicitly user-disabled; absence of a per-user row = allowed, so existing credentialed connectors never regress. Deployment routes/state untouched.
- *
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Category now comes from the SPEC and is never silently invented. The entry's category was CATEGORY_BY_PROVIDER[provider] ?? inferCategory(spec), whose final branch returned 'General' — so a shelf label existed for every connector whether or not anyone had ever categorised it, and the 51 specs that DID declare metadata.category were ignored (the marketplace only read metadata.description). Both hand-maintained tables are replaced by the shared derivation in curation.ts: declared metadata.category (canonicalised) -> ordered signal rules -> 'Uncategorized' with ONE aggregated ERROR log per catalog build naming the providers. Same source of truth as scripts/connectors/curate-catalog.ts, so a file on disk and its marketplace entry cannot disagree.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Consume the catalog audit's deterministic connector-risk derivation, include declared action-only connectors in write-capable totals, and invalidate stale cached risk values.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Keep uncategorized remediation guidance aligned with provenance-aware provider/source/signal rules.
+ * -----------------------------------------------------------------------------
  * @module marketplace
  */
 
@@ -15,7 +17,7 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { actionProfilesForSpec, type ConnectorActionProfile } from './action-safety';
 import { deriveConnectorCategory, deriveConnectorDescription } from './curation';
-import { auditSpec, type ConnectorAudit } from './catalog-audit';
+import { auditSpec, deriveConnectorRiskLevel, type ConnectorAudit } from './catalog-audit';
 import { loadConnectorSpec, type ConnectorSpec } from './spec';
 import {
   readConnectorUserEnablement,
@@ -44,7 +46,7 @@ export interface ConnectorMarketplaceState {
 }
 
 interface ConnectorMarketplaceDiskCache {
-  version: 2;
+  version: 3;
   signature: string;
   generatedAt: string;
   entries: ConnectorMarketplaceEntry[];
@@ -150,7 +152,7 @@ const DEFAULT_IMPORTED_SPEC_DIR = path.join(process.cwd(), 'output/connectors/im
 const DEFAULT_STATE_PATH = path.join(process.cwd(), 'output', 'connector-marketplace-state.json');
 const DEFAULT_CACHE_PATH = path.join(process.cwd(), 'output', 'connectors', 'marketplace-catalog-cache.json');
 const DEFAULT_CACHE_TTL_MS = 30_000;
-const MARKETPLACE_CACHE_VERSION = 2;
+const MARKETPLACE_CACHE_VERSION = 3;
 
 const SIMPLE_ICON_BY_PROVIDER: Record<string, string> = {
   airtable: 'airtable',
@@ -248,7 +250,7 @@ export class ConnectorMarketplaceService {
         removed: entries.filter((entry) => entry.installState === 'removed').length,
         blocked: entries.filter((entry) => entry.installState === 'blocked').length,
         highRisk: entries.filter((entry) => entry.riskLevel === 'high').length,
-        writeCapable: entries.filter((entry) => entry.writeCount > 0).length,
+        writeCapable: entries.filter((entry) => entry.riskLevel === 'high').length,
         actionCount: entries.reduce((sum, entry) => sum + entry.actions.length, 0),
       },
       entries,
@@ -451,12 +453,12 @@ export class ConnectorMarketplaceService {
       if (entry && !byId.has(entry.id)) byId.set(entry.id, entry);
     }
     // ONE aggregated line, at ERROR: an uncategorised connector is a curation defect with a named
-    // fix (an anchor in curation.ts / a metadata.category in the spec), not a per-entry warning to
+    // fix (reviewed evidence in curation.ts / a metadata.category in the spec), not a per-entry warning to
     // scroll past. Silence here is what let 'General' pass for a shelf label for months.
     if (uncategorised.length) {
       logger.error(
         { count: uncategorised.length, providers: uncategorised.slice(0, 20) },
-        'connector catalog: connectors with NO derivable category — shelved as Uncategorized; add a CATEGORY_RULES anchor or a metadata.category to the spec',
+        'connector catalog: connectors with NO derivable category — shelved as Uncategorized; add reviewed provider/source/signal evidence or metadata.category',
       );
     }
     return Array.from(byId.values()).sort((left, right) => left.label.localeCompare(right.label));
@@ -566,7 +568,7 @@ export class ConnectorMarketplaceService {
       },
       installState,
       enabled: installState === 'enabled',
-      riskLevel: riskLevel(spec, writeCount + destructiveCount),
+      riskLevel: deriveConnectorRiskLevel(spec),
       scopes: scopesFor(spec),
       resourceCount: spec.resources.length,
       toolCount: spec.resources.filter((resource) => Boolean(resource.tool)).length,
@@ -716,16 +718,6 @@ function declaredActionsFor(spec: ConnectorSpec): ConnectorDeclaredAction[] {
       requiredParams: Array.isArray(schema.required) ? schema.required.map(String) : [],
     };
   });
-}
-
-function riskLevel(spec: ConnectorSpec, writeCount: number): ConnectorRiskLevel {
-  if (writeCount > 0) {
-    return 'high';
-  }
-  if (spec.auth.type === 'oauth2' || spec.auth.type === 'basic') {
-    return 'medium';
-  }
-  return 'low';
 }
 
 function scopesFor(spec: ConnectorSpec): string[] {

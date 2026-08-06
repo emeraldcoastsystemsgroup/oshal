@@ -38,6 +38,9 @@ That means:
 - the internal ticket lifecycle uses a 7-phase model with complexity-based phase skipping
 - decomposition, routing, verification, and retry policy now share coarse work-intent signals
 - a real successful run currently requires Postgres and a resolvable provider configuration
+- remote bot-node execution uses ADR-034's default-on authoritative provider/model record; missing
+  authority, reconciliation failure, concurrent mismatch, or transport downgrade is refused before
+  it can become an unstamped model run (`OSHAL_PUSH_ON_DISPATCH=off` is rollback-only)
 - Redis is optional for transport durability, not a hard boot requirement
 
 ---

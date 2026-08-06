@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | OAuth start now requests scopes from FACEBOOK_SCOPES (default public_profile) and supports FACEBOOK_CONFIG_ID for Login-for-Business config-driven auth instead of a raw scope list
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Capture + unref the CSRF-state cleanup interval (2026-07-05 leak audit)
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Operator-gate every non-callback surface, bind single-use OAuth state to the exact initiating browser/operator, retire browser password/App-Secret writes and raw Redis token publication, and render fixed escaped callback HTML.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fail Facebook token persistence closed unless ENCRYPTION_KEY is configured, reject OAuth start before state/provider activity when secure storage is unavailable, and prove the deployment prerequisite in focused tests.
  */
 
 /**
@@ -19,14 +21,15 @@
  *   /disconnect → remove stored credentials
  *   /pages    → list pages the user manages (for page selection)
  *
- * Credentials are stored via the existing EncryptedConfigManager so they
- * persist across restarts and are encrypted at rest.
+ * Credentials are stored via the existing EncryptedConfigManager. This route
+ * refuses to create or read its credential store unless encryption is enabled.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import crypto from 'crypto';
 import axios from 'axios';
 import { createChildLogger } from '@/shared/logger';
+import { getCaller, requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'facebook-auth-routes' });
 
@@ -34,14 +37,23 @@ const GRAPH_API_VERSION = 'v18.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 const OAUTH_BASE = 'https://www.facebook.com';
 
-// In-memory state store for CSRF protection (short-lived, 10-minute TTL)
-const pendingStates = new Map<string, { createdAt: number; redirectUri: string }>();
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+
+interface PendingFacebookState {
+  createdAt: number;
+  redirectUri: string;
+  operatorSub: string;
+  bindingDigest: string;
+}
+
+// A state is useful once, for ten minutes, and only from the initiating operator's browser.
+const pendingStates = new Map<string, PendingFacebookState>();
 
 // Clean up expired states every 5 minutes (unref so the module-level timer never pins the process)
 const stateCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, value] of pendingStates.entries()) {
-    if (now - value.createdAt > 10 * 60 * 1000) {
+    if (now - value.createdAt > OAUTH_STATE_TTL_MS) {
       pendingStates.delete(key);
     }
   }
@@ -58,20 +70,94 @@ function buildCallbackUri(req: Request): string {
 }
 
 /**
- * Build a self-closing HTML page for the OAuth popup.
+ * Escape provider-owned display data before embedding it in callback HTML.
  */
-function buildCallbackHtml(success: boolean, error?: string | null, pageName?: string): string {
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+/**
+ * Build a fixed callback page. Provider error text is deliberately never reflected.
+ */
+function buildCallbackHtml(success: boolean, pageName?: string): string {
   const title = success ? 'Facebook Connected' : 'Facebook Connection Failed';
   const body = success
-    ? `<h2>Connected to Facebook</h2><p>Page: <strong>${pageName || 'Unknown'}</strong></p><p>You can close this window.</p>`
-    : `<h2>Connection Failed</h2><p>${error || 'Unknown error'}</p>`;
+    ? `<h2>Connected to Facebook</h2><p>Page: <strong>${escapeHtml(String(pageName || 'Unknown'))}</strong></p><p>You can close this window.</p>`
+    : '<h2>Connection Failed</h2><p>The authorization could not be completed. Close this window and start again.</p>';
 
   return `<!DOCTYPE html>
-<html><head><title>${title}</title>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
 <style>body{font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#111;color:#eee;}
 .card{text-align:center;padding:2rem;border-radius:12px;background:#222;max-width:400px;}</style></head>
-<body><div class="card">${body}</div>
-<script>setTimeout(()=>window.close(),3000)</script></body></html>`;
+<body><div class="card">${body}</div></body></html>`;
+}
+
+/** Send callback HTML with a deny-by-default document policy and no cache. */
+function sendCallbackHtml(res: Response, status: number, success: boolean, pageName?: string): void {
+  res
+    .status(status)
+    .set('Cache-Control', 'no-store')
+    .set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+    .set('X-Content-Type-Options', 'nosniff')
+    .type('html')
+    .send(buildCallbackHtml(success, pageName));
+}
+
+function stateBindingCookieName(state: string): string {
+  return `oshal_fb_oauth_${state}`;
+}
+
+/** Read a cookie with or without cookie-parser; malformed values fail closed. */
+function readCookie(req: Request, name: string): string {
+  const parsed = (req as Request & { cookies?: Record<string, unknown> }).cookies?.[name];
+  if (typeof parsed === 'string') return parsed;
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const [key, ...value] = part.trim().split('=');
+    if (key !== name) continue;
+    try {
+      return decodeURIComponent(value.join('='));
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function bindingDigest(binding: string): string {
+  return crypto.createHash('sha256').update(binding, 'utf8').digest('hex');
+}
+
+function bindingMatches(expectedDigest: string, binding: string): boolean {
+  if (!binding) return false;
+  const actual = Buffer.from(bindingDigest(binding), 'hex');
+  const expected = Buffer.from(expectedDigest, 'hex');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function isHttpsRequest(req: Request): boolean {
+  const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return req.secure || forwarded === 'https';
+}
+
+function bindingCookieOptions(req: Request): {
+  httpOnly: true;
+  sameSite: 'lax';
+  secure: boolean;
+  path: string;
+  maxAge: number;
+} {
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isHttpsRequest(req),
+    path: '/api/facebook-auth',
+    maxAge: OAUTH_STATE_TTL_MS,
+  };
 }
 
 /**
@@ -80,6 +166,11 @@ function buildCallbackHtml(success: boolean, error?: string | null, pageName?: s
 function getConfigManager(): any {
   try {
     const path = require('path');
+    const encryptionKey = process.env.ENCRYPTION_KEY?.trim();
+    if (!encryptionKey) {
+      logger.warn('Facebook credential storage unavailable: ENCRYPTION_KEY is required');
+      return null;
+    }
     // Try multiple require paths — dist/ layout differs from source layout
     let ECM: any;
     for (const tryPath of [
@@ -97,7 +188,6 @@ function getConfigManager(): any {
       return null;
     }
     const outputDir = process.env.OUTPUT_DIR || path.join(process.cwd(), 'output');
-    const encryptionKey = process.env.ENCRYPTION_KEY || null;
     return new ECM(outputDir, encryptionKey);
   } catch (err) {
     logger.error({ err }, 'Failed to load EncryptedConfigManager');
@@ -133,12 +223,11 @@ function loadRequestedScopes(): string[] {
 
 /**
  * @description Factory that builds and returns the Express router exposing the
- * Facebook integration endpoints (login, credentials, status, OAuth start/callback,
- * disconnect, page listing and page switching). Centralizing route creation in a
- * factory lets the host application inject its own authentication middleware so
- * sensitive page-management routes can be protected without hard-coding auth here.
- * @param requiresAuth Express middleware used to gate the protected routes
- * (currently /pages and /switch-page) behind the application's authentication.
+ * Facebook integration endpoints (status, OAuth start/callback, disconnect, page
+ * listing and page switching). Every route except the provider callback is guarded
+ * by both the injected authentication middleware and the shared operator allowlist.
+ * Browser password login and App-Secret writes remain registered only as stable 410s.
+ * @param requiresAuth Express middleware used before the operator gate.
  * @returns A configured Express Router ready to be mounted under the
  * facebook-auth path prefix.
  */
@@ -148,7 +237,7 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
   // ── GET /app ─────────────────────────────────────────────────────────
   // Self-contained login/settings page served as static HTML.
   // Embedded by the cockpit ribbon when the facebook-bot registers its tool UI.
-  router.get('/app', (_req: Request, res: Response) => {
+  router.get('/app', requiresAuth, requiresOperator, (_req: Request, res: Response) => {
     const path = require('path');
     const appPath = path.resolve(process.cwd(), 'any-bot/server/services/tools/facebook/facebook-app.html');
     res.sendFile(appPath, (err: any) => {
@@ -160,73 +249,26 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
   });
 
   // ── POST /login ───────────────────────────────────────────────────────
-  // Browser-based Facebook login — uses Playwright to log in, saves session.
-  // No Facebook App registration required.
-  router.post('/login', async (req: Request, res: Response) => {
-    const { email, password } = req.body || {};
-    if (!email || !password) {
-      res.status(400).json({ success: false, error: 'Email and password are required' });
-      return;
-    }
-    try {
-      const path = require('path');
-      const sessionMgr = require(path.resolve(process.cwd(), 'any-bot/server/services/tools/facebook/facebookBrowserSession'));
-      const result = await sessionMgr.login(email, password);
-      res.json(result);
-    } catch (err: any) {
-      logger.error({ err }, 'Facebook login failed');
-      res.status(500).json({ success: false, error: err.message });
-    }
+  // Retired compatibility endpoint: never reads email/password and never starts Playwright.
+  router.post('/login', requiresAuth, requiresOperator, (_req: Request, res: Response) => {
+    res.status(410).json({
+      success: false,
+      error: 'browser_password_login_disabled',
+    });
   });
 
   // ── POST /credentials ─────────────────────────────────────────────────
-  // Save Facebook App ID and App Secret from the login form.
-  router.post('/credentials', async (req: Request, res: Response) => {
-    const { appId, appSecret } = req.body || {};
-    if (!appId || !appSecret) {
-      res.status(400).json({ success: false, error: 'appId and appSecret are required' });
-      return;
-    }
-    try {
-      const mgr = getConfigManager();
-      if (!mgr) {
-        res.status(500).json({ success: false, error: 'Config manager unavailable' });
-        return;
-      }
-      const secrets = mgr.loadSecrets();
-      secrets.facebookAppId = appId;
-      secrets.facebookAppSecret = appSecret;
-      mgr.saveSecrets(secrets);
-      logger.info('Facebook App credentials saved via login form');
-      res.json({ success: true });
-    } catch (err: any) {
-      logger.error({ err }, 'Failed to save Facebook credentials');
-      res.status(500).json({ success: false, error: err.message });
-    }
+  // Retired compatibility endpoint: App credentials are deployment-managed secrets.
+  router.post('/credentials', requiresAuth, requiresOperator, (_req: Request, res: Response) => {
+    res.status(410).json({
+      success: false,
+      error: 'browser_app_secret_write_disabled',
+    });
   });
 
   // ── GET /status ──────────────────────────────────────────────────────
-  router.get('/status', async (_req: Request, res: Response) => {
+  router.get('/status', requiresAuth, requiresOperator, async (_req: Request, res: Response) => {
     try {
-      // Check browser session first (the simple login path)
-      try {
-        const path = require('path');
-        const sessionMgr = require(path.resolve(process.cwd(), 'any-bot/server/services/tools/facebook/facebookBrowserSession'));
-        const session = sessionMgr.getSessionStatus();
-        if (session.connected) {
-          res.json({
-            connected: true,
-            tokenValid: true,
-            userName: session.userName,
-            userId: session.userId,
-            pageName: session.userName,
-            pages: session.pages || [],
-            loginTime: session.loginTime,
-          });
-          return;
-        }
-      } catch { /* browser session module not available, fall through to OAuth path */ }
-
       // OAuth path — check encrypted config for page token
       const mgr = getConfigManager();
       if (!mgr) {
@@ -275,17 +317,40 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
   });
 
   // ── GET /start ───────────────────────────────────────────────────────
-  router.get('/start', async (req: Request, res: Response) => {
+  router.get('/start', requiresAuth, requiresOperator, async (req: Request, res: Response) => {
+    if (!getConfigManager()) {
+      res.status(503).json({
+        success: false,
+        error: 'facebook_encrypted_storage_required',
+      });
+      return;
+    }
     const { appId } = loadAppCredentials();
     if (!appId) {
-      res.status(400).json({ success: false, error: 'Enter your Facebook App ID and App Secret first' });
+      res.status(400).json({
+        success: false,
+        error: 'Facebook deployment credentials are not configured',
+      });
+      return;
+    }
+
+    const operatorSub = getCaller(req).sub;
+    if (!operatorSub) {
+      res.status(401).json({ success: false, error: 'Authenticated operator identity required' });
       return;
     }
 
     const state = crypto.randomBytes(32).toString('hex');
+    const binding = crypto.randomBytes(32).toString('base64url');
     const redirectUri = buildCallbackUri(req);
 
-    pendingStates.set(state, { createdAt: Date.now(), redirectUri });
+    pendingStates.set(state, {
+      createdAt: Date.now(),
+      redirectUri,
+      operatorSub,
+      bindingDigest: bindingDigest(binding),
+    });
+    res.cookie(stateBindingCookieName(state), binding, bindingCookieOptions(req));
 
     const scopes = loadRequestedScopes();
     const configId = process.env.FACEBOOK_CONFIG_ID?.trim();
@@ -306,40 +371,71 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
 
     const authUrl = `${OAUTH_BASE}/${GRAPH_API_VERSION}/dialog/oauth?${params.toString()}`;
 
-    logger.info({ redirectUri, scopes: configId ? undefined : scopes, usesConfigId: Boolean(configId) }, 'Facebook OAuth flow started');
+    logger.info({
+      redirectUri,
+      operatorSub,
+      scopes: configId ? undefined : scopes,
+      usesConfigId: Boolean(configId),
+    }, 'Facebook OAuth flow started');
     res.json({ success: true, authUrl });
   });
 
   // ── GET /callback ────────────────────────────────────────────────────
   router.get('/callback', async (req: Request, res: Response) => {
-    const code = req.query.code as string | undefined;
-    const state = req.query.state as string | undefined;
-    const errorParam = req.query.error as string | undefined;
-    const errorDescription = req.query.error_description as string | undefined;
-
-    if (errorParam) {
-      logger.warn({ errorParam, errorDescription }, 'Facebook OAuth error');
-      res.status(400).send(buildCallbackHtml(false, errorDescription || errorParam));
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    if (!/^[a-f0-9]{64}$/.test(state)) {
+      sendCallbackHtml(res, 400, false);
       return;
     }
 
-    if (!state || !code) {
-      res.status(400).send(buildCallbackHtml(false, 'Missing state or code parameter'));
-      return;
-    }
-
-    // Verify CSRF state
+    // Consume before any provider-error/code branch: every callback attempt is single use.
     const pending = pendingStates.get(state);
     if (!pending) {
-      res.status(400).send(buildCallbackHtml(false, 'Invalid or expired state token'));
+      sendCallbackHtml(res, 400, false);
       return;
     }
     pendingStates.delete(state);
 
+    const cookieName = stateBindingCookieName(state);
+    const binding = readCookie(req, cookieName);
+    const { maxAge: _maxAge, ...clearOptions } = bindingCookieOptions(req);
+    res.clearCookie(cookieName, clearOptions);
+
+    const callbackSub = getCaller(req).sub;
+    if (Date.now() - pending.createdAt > OAUTH_STATE_TTL_MS
+      || !bindingMatches(pending.bindingDigest, binding)
+      || (callbackSub !== null && callbackSub !== pending.operatorSub)) {
+      logger.warn({ operatorSub: pending.operatorSub }, 'Facebook OAuth callback browser binding rejected');
+      sendCallbackHtml(res, 400, false);
+      return;
+    }
+
+    const errorParam = typeof req.query.error === 'string' ? req.query.error : '';
+    if (errorParam) {
+      logger.warn({
+        operatorSub: pending.operatorSub,
+        providerError: errorParam.slice(0, 128),
+        hasDescription: typeof req.query.error_description === 'string',
+      }, 'Facebook OAuth provider returned an error');
+      sendCallbackHtml(res, 400, false);
+      return;
+    }
+
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code || code.length > 4096) {
+      sendCallbackHtml(res, 400, false);
+      return;
+    }
+
+    const mgr = getConfigManager();
+    if (!mgr) {
+      sendCallbackHtml(res, 503, false);
+      return;
+    }
     const { appId, appSecret } = loadAppCredentials();
 
     if (!appId || !appSecret) {
-      res.status(500).send(buildCallbackHtml(false, 'Facebook App ID and Secret not configured'));
+      sendCallbackHtml(res, 500, false);
       return;
     }
 
@@ -377,7 +473,7 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
       const pages = pagesRes.data.data || [];
 
       if (pages.length === 0) {
-        res.status(400).send(buildCallbackHtml(false, 'No Facebook pages found. You need to manage at least one Facebook page.'));
+        sendCallbackHtml(res, 400, false);
         return;
       }
 
@@ -388,12 +484,6 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
         : pages[0];
 
       // Step 4: Store credentials
-      const mgr = getConfigManager();
-      if (!mgr) {
-        res.status(500).send(buildCallbackHtml(false, 'Config manager unavailable'));
-        return;
-      }
-
       const secrets = mgr.loadSecrets();
       Object.assign(secrets, {
         facebookPageAccessToken: selectedPage.access_token,
@@ -405,36 +495,22 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
       });
       mgr.saveSecrets(secrets);
 
-      logger.info({ pageId: selectedPage.id, pageName: selectedPage.name }, 'Facebook OAuth: credentials stored');
+      logger.info({
+        operatorSub: pending.operatorSub,
+        pageId: selectedPage.id,
+        pageName: selectedPage.name,
+      }, 'Facebook OAuth: credentials stored locally without raw token publication');
 
-      // Step 5: Broadcast to bot nodes via Redis (if available)
-      try {
-        const redis = require('../../shared/redis-client');
-        if (redis?.getClient) {
-          const client = redis.getClient();
-          await client.publish('facebook.credentials.update', JSON.stringify({
-            facebookPageAccessToken: selectedPage.access_token,
-            facebookPageId: selectedPage.id,
-            facebookPageName: selectedPage.name,
-            facebookTokenExpiresAt: tokenExpiresAt,
-            facebookConnectedAt: Date.now(),
-          }));
-          logger.info('Facebook credentials broadcast via Redis pubsub');
-        }
-      } catch {
-        logger.debug('Redis broadcast skipped (not available)');
-      }
-
-      res.send(buildCallbackHtml(true, null, selectedPage.name));
+      sendCallbackHtml(res, 200, true, selectedPage.name);
     } catch (err: any) {
       const msg = err.response?.data?.error?.message || err.message || 'Unknown error';
       logger.error({ err: msg }, 'Facebook OAuth callback failed');
-      res.status(400).send(buildCallbackHtml(false, msg));
+      sendCallbackHtml(res, 400, false);
     }
   });
 
   // ── POST /disconnect ─────────────────────────────────────────────────
-  router.post('/disconnect', async (_req: Request, res: Response) => {
+  router.post('/disconnect', requiresAuth, requiresOperator, async (_req: Request, res: Response) => {
     try {
       // Clear browser session
       try {
@@ -460,16 +536,6 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
       }
       mgr.saveSecrets(secrets);
 
-      // Broadcast disconnect to bot nodes
-      try {
-        const redis = require('../../shared/redis-client');
-        if (redis?.getClient) {
-          await redis.getClient().publish('facebook.credentials.update', JSON.stringify(null));
-        }
-      } catch {
-        // Redis not available
-      }
-
       logger.info('Facebook credentials disconnected');
       res.json({ success: true, message: 'Facebook disconnected' });
     } catch (err) {
@@ -479,7 +545,7 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
   });
 
   // ── GET /pages ────────────────────────────────────────────────────────
-  router.get('/pages', requiresAuth, async (_req: Request, res: Response) => {
+  router.get('/pages', requiresAuth, requiresOperator, async (_req: Request, res: Response) => {
     try {
       const mgr = getConfigManager();
       if (!mgr) {
@@ -513,7 +579,7 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
   });
 
   // ── POST /switch-page ─────────────────────────────────────────────────
-  router.post('/switch-page', requiresAuth, async (req: Request, res: Response) => {
+  router.post('/switch-page', requiresAuth, requiresOperator, async (req: Request, res: Response) => {
     const { pageId } = req.body || {};
     if (!pageId) {
       res.status(400).json({ success: false, error: 'pageId is required' });
@@ -549,22 +615,6 @@ export function createFacebookAuthRoutes(requiresAuth: RequestHandler): Router {
       secrets.facebookPageId = page.id;
       secrets.facebookPageName = page.name;
       mgr.saveSecrets(secrets);
-
-      // Broadcast update
-      try {
-        const redis = require('../../shared/redis-client');
-        if (redis?.getClient) {
-          await redis.getClient().publish('facebook.credentials.update', JSON.stringify({
-            facebookPageAccessToken: page.access_token,
-            facebookPageId: page.id,
-            facebookPageName: page.name,
-            facebookTokenExpiresAt: secrets.facebookTokenExpiresAt,
-            facebookConnectedAt: secrets.facebookConnectedAt,
-          }));
-        }
-      } catch {
-        // Redis not available
-      }
 
       logger.info({ pageId: page.id, pageName: page.name }, 'Switched active Facebook page');
       res.json({ success: true, pageId: page.id, pageName: page.name });

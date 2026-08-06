@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Social swarm (ADR-038): publish a user-approved X/Twitter post (POST /2/tweets) or read the profile, using the OSHAL connector token (oshal_connections, provider=twitter). Mirrors oshal-linkedin.js. X OAuth 2.0 access tokens are short-lived (~2h), so unlike LinkedIn this CLI refreshes them itself — HTTP Basic (client_id:client_secret) + rotating refresh token, the same dialect the connector uses. Never auto-posts: the surface only calls `post` after explicit user approval.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Use the shared version-aware connector-token codec and persist X token rotations as caller-owned v2 envelopes.
  *
  *   node scripts/oshal-x.js profile               # the connected X profile (@handle, metrics)
  *   node scripts/oshal-x.js post "Hello world"    # publish a tweet (<=280 chars)
@@ -13,25 +14,11 @@
  * Env: DATABASE_URL, SESSION_SECRET, TWITTER_CLIENT_ID/SECRET (X_* fallback).
  */
 'use strict';
-const crypto = require('crypto');
 const { Pool } = require('pg');
+const { decryptToken, encryptToken } = require('./lib/connector-token-crypto');
 
 const CLIENT_ID = process.env.TWITTER_CLIENT_ID || process.env.X_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.TWITTER_CLIENT_SECRET || process.env.X_CLIENT_SECRET || process.env.X_CLIENT_SECRECT || '';
-
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
-function encrypt(plain) {
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', key(), iv);
-  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
-  return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
-}
 
 /** Exchange a refresh token for a fresh access token (X confidential client: HTTP Basic + rotation). */
 async function refreshToken(refresh) {
@@ -65,14 +52,14 @@ async function getConnection(pool) {
   if (!row || !row.access_token) { console.error('No X/Twitter connection found. Connect X at /utilities first.'); process.exit(2); }
   // X access tokens expire ~2h. Use the stored one if it still has headroom; else refresh + persist (rotating).
   if (row.expiry && new Date(row.expiry).getTime() - Date.now() > 60000) {
-    return { token: decrypt(row.access_token), account: row.account_email, authorId: row.account_id };
+    return { token: await decryptToken(pool, row.user_sub, row.access_token), account: row.account_email, authorId: row.account_id };
   }
-  if (!row.refresh_token) return { token: decrypt(row.access_token), account: row.account_email, authorId: row.account_id };
-  const tok = await refreshToken(decrypt(row.refresh_token));
+  if (!row.refresh_token) return { token: await decryptToken(pool, row.user_sub, row.access_token), account: row.account_email, authorId: row.account_id };
+  const tok = await refreshToken(await decryptToken(pool, row.user_sub, row.refresh_token));
   await pool.query(
     `UPDATE oshal_connections SET access_token=$3, refresh_token=COALESCE($4, refresh_token), expiry=$5, updated_at=NOW()
      WHERE provider='twitter' AND account_email=$1 AND user_sub=$2`,
-    [row.account_email, row.user_sub, encrypt(tok.access_token), tok.refresh_token ? encrypt(tok.refresh_token) : null,
+    [row.account_email, row.user_sub, await encryptToken(pool, row.user_sub, tok.access_token), tok.refresh_token ? await encryptToken(pool, row.user_sub, tok.refresh_token) : null,
       tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null],
   );
   return { token: tok.access_token, account: row.account_email, authorId: row.account_id };

@@ -9,43 +9,28 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Envelope-crypto v2 compat (same drift fixed in oshal-gmail.js 07-21 and oshal-recap-email.js 07-24/PR#28): connector tokens re-encrypt to `v2:` per-user-DEK blobs since OSHAL_ENVELOPE_CRYPTO defaulted ON (07-20), but this sibling's decrypt only knew the legacy single-KEK format, so even after the sub fix it died with "Unsupported state or unable to authenticate data". Ported the format-aware userDek/decryptToken helpers; an access-token decrypt failure now falls through to a refresh instead of aborting.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Telegram leg for every watchdog-family caller (BACKLOG "Telegram notification bot" go-live): runAlert() now sends the alert to the operator's Telegram chat FIRST (sendTelegramAlert — no-op without TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID, fixed-string errors so the token can never leak through an exception), then runs the unchanged Gmail leg. The trading/stack watchdogs, lab-report, ci-local, and earnings-gate all inherit the phone-push with zero caller changes; email exit codes are preserved.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Replace the copied v2/raw-SHA codec with the shared connector-token codec so alert delivery reads hkdf1 DEK wrappers and k2 shared blobs without drifting from the controller.
  */
 /*
  * Usage (in the api container): node oshal-send-alert.js "<subject>" "<body>"
  * Prints TG_OK/TG_SKIP/TG_FAIL for the Telegram leg, then SEND_OK / SEND_FAIL for email.
  */
 'use strict';
-const crypto = require('crypto');
 const { Pool } = require('pg');
+const connectorTokenCrypto = require('./lib/connector-token-crypto');
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function gcmDecryptRaw(k, blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', k, Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]);
-}
+const key = connectorTokenCrypto.legacyKey;
+const gcmDecryptRaw = connectorTokenCrypto.gcmDecryptRaw;
 /** Legacy single-KEK decrypt of an unprefixed `iv:tag:enc` blob. */
 function decrypt(blob) { return gcmDecryptRaw(key(), blob).toString('utf8'); }
 /** Version tag on per-user-DEK envelope blobs (mirrors connector-token-crypto.ts / oshal-recap-email.js). */
-const ENVELOPE_V2 = 'v2:';
-const _dekCache = new Map();
 /** Unwrap this user's 32-byte DEK from oshal_user_deks (wrapped_dek is an iv:tag:enc blob under the KEK). */
 async function userDek(pool, userSub) {
-  if (_dekCache.has(userSub)) return _dekCache.get(userSub);
-  const row = (await pool.query('SELECT wrapped_dek FROM oshal_user_deks WHERE user_sub=$1', [userSub])).rows[0];
-  if (!row) throw new Error(`no DEK row in oshal_user_deks for user ${userSub} (v2 blob but DEK missing)`);
-  const dek = gcmDecryptRaw(key(), String(row.wrapped_dek));
-  _dekCache.set(userSub, dek);
-  return dek;
+  return connectorTokenCrypto.userDek(pool, userSub, { createIfMissing: false });
 }
 /** Format-aware token decrypt: `v2:` = per-user-DEK envelope (default ON since 2026-07-20); else legacy KEK. */
 async function decryptToken(pool, userSub, blob) {
-  if (String(blob).startsWith(ENVELOPE_V2)) {
-    if (!userSub) throw new Error('decryptToken: v2 blob requires a userSub');
-    return gcmDecryptRaw(await userDek(pool, userSub), String(blob).slice(ENVELOPE_V2.length)).toString('utf8');
-  }
-  return decrypt(blob);
+  return connectorTokenCrypto.decryptToken(pool, userSub, blob);
 }
 function b64url(buf) { return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 

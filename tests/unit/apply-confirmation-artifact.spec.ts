@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove Apply confirmation retention accepts only bounded single-link PNG/JPEG files from the exact task workspace and copies them into the exact Career owner store.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Require the retained confirmation result to include the SHA-256 written into the Apply V2 ledger.
  */
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -79,9 +81,12 @@ describe('Apply confirmation artifact retention', () => {
 
     const retained = persistApplyConfirmationArtifact('Owner|Exact', taskId, 'confirmation.png');
 
-    expect(retained).toBe(path.join(userDir, 'applications', 'confirmations', `${taskId}.png`));
-    expect(fs.readFileSync(retained as string)).toEqual(PNG);
-    expect(fs.lstatSync(retained as string).nlink).toBe(1);
+    expect(retained).toEqual({
+      path: path.join(userDir, 'applications', 'confirmations', `${taskId}.png`),
+      sha256: createHash('sha256').update(PNG).digest('hex'),
+    });
+    expect(fs.readFileSync(retained!.path)).toEqual(PNG);
+    expect(fs.lstatSync(retained!.path).nlink).toBe(1);
   });
 
   it('refuses traversal, non-images, oversized files, and multi-link sources', () => {

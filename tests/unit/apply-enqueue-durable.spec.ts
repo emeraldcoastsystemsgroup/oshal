@@ -23,11 +23,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // the camelCase ApplyPosting shape (the bug this guards: a mismatch minted 0 tickets).
 const runApplyCliMock = vi.fn();
 const recoverUnknownApplyMock = vi.fn();
+const recoverExpiredApplyRunsMock = vi.fn();
 const reapUserApplyClaimsMock = vi.fn();
 const reconcileApplyInFlightMock = vi.fn();
 vi.mock('@/app/apply-submit', () => ({
   runApplyCli: (...a: unknown[]) => runApplyCliMock(...a),
   recoverUnknownApply: (...a: unknown[]) => recoverUnknownApplyMock(...a),
+  recoverExpiredApplyRuns: (...a: unknown[]) => recoverExpiredApplyRunsMock(...a),
   reapUserApplyClaims: (...a: unknown[]) => reapUserApplyClaimsMock(...a),
   reconcileApplyInFlight: (...a: unknown[]) => reconcileApplyInFlightMock(...a),
 }));
@@ -88,6 +90,8 @@ beforeEach(() => {
     clearInFlight(String(taskId));
     return true;
   });
+  recoverExpiredApplyRunsMock.mockReset();
+  recoverExpiredApplyRunsMock.mockResolvedValue(0);
   reapUserApplyClaimsMock.mockReset();
   reapUserApplyClaimsMock.mockResolvedValue({ released: 0 });
   reconcileApplyInFlightMock.mockReset();

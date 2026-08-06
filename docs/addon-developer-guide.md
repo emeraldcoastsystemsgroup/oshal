@@ -3,10 +3,18 @@
 This is the front door for **building an OSHAL application as a set of addons** and wiring
 them together. It is organized the way an app is actually composed:
 
-> An OSHAL app reduces to **a tool, a CLI, a connector, a bot, and a surface.**
-> (That line is copied from the top of career-hunter's manifest — now in the [oshal-applications store](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/career-hunter), ADR-085 — it is the whole mental model.)
+> An oshal app reduces to **a tool, an exact server operation, a connector, a bot, and a surface.**
+> This supersedes the earlier "a tool, a CLI, a connector, a bot, and a surface" formulation used by
+> pre-containment application manifests.
 
 You build each block, then **bind them into one application manifest** and **import** it.
+
+> **Current security boundary (2026-08-06):** unattended Cline, Claude Code, Codex, and Gemini
+> CLI execution is operationally disabled until an audited oshal-brokered sandbox exists. Mounted
+> OAuth presence is not autonomous-execution authority. Connector credentials remain inside exact,
+> schema-bounded server operations; they never enter a prompt, model/CLI environment, generic bot
+> request, or workspace. Use hosted/BYO inference for reasoning and a deterministic server provider
+> intent for a provider read/action.
 
 ## Where this fits among the existing docs
 
@@ -45,7 +53,7 @@ ADR, with the rest deferred to Phase 2 (see
 | Bots (identity, status, capabilities) | manifest `bots[]` | **Yes** — upserted into `agents` on load | `SwarmAppService.activate()` |
 | Bot **dispatch endpoint** | — | **No — rebuild** | `swarm-bot-registry-local.ts` (+ `swarm-bot-registry.ts`) |
 | Framework tools | manifest `tools[]` | **Yes** — registered into the runtime tool registry | `registerManifestTools()` |
-| Toolkit tools (CLI wrappers) | manifest `toolsDir` | **Yes** — auto-discovered from the directory | any-bot `collectToolFiles` |
+| Legacy toolkit descriptors | manifest `toolsDir` | **Discovery only** — generic connector CLI execution is disabled | any-bot `collectToolFiles` |
 | Ribbon icons | manifest `ui.static` / `ui.dynamic` | **Yes** — registered as dynamic ribbon tools | `registerUiSurfaces()` |
 | Workflow routing | manifest `ticketType` + `workflow` | **Yes** — registered with the pipeline registry | `registerWorkflow()` |
 | Schedules ("polls") | manifest `schedules[]` | **Yes** (execute only when `ENABLE_AGENT_SCHEDULER=true`) | `registerManifestSchedules()` |
@@ -129,23 +137,17 @@ and the `career_database` tool in
 > Gotcha (Vault learned it the hard way): a `cliCommand` that needs `{input}` inside a YAML block
 > scalar is fragile. Keep the command on one line and let the runtime do the substitution.
 
-### 1b. Toolkit tool — auto-discovered from `toolsDir`
+### 1b. Legacy toolkit descriptor — discovery is not execution authority
 
-A thin JS wrapper that shells the app's CLI. Auto-discovered by any-bot's `collectToolFiles` scan
-of `services/tools/`. Hot-loaded (bind-mounted).
+`toolsDir` is still scanned for compatibility and catalog discovery, but do not add a wrapper that
+shells a connector CLI or expects `OSHAL_CRED_*`/`.oshal-cred-*`. The generic connector CLI runner
+is disabled pending an audited brokered sandbox. A discovered name still needs the server-resolved
+dispatch allowlist and an exact handler; discovery never grants execution by itself.
 
-```yaml
-toolsDir: any-bot/server/services/tools/career-hunter/
-```
-
-```js
-// any-bot/server/services/tools/<bundle>/<x>ToolKit.js
-module.exports = {
-  'music-search': async (params) => runCli('oshal-spotify.js', 'search', params),
-};
-```
-
-**Copy from:** [`any-bot/server/services/tools/spotify/spotifyToolKit.js`](../any-bot/server/services/tools/spotify/spotifyToolKit.js).
+For a provider-backed capability, implement a closed deterministic provider intent or fixed server
+operation as described in [connector-backed-apps.md](connector-backed-apps.md). Call a tested client
+or imported function without a shell, resolve the minimum caller-owned credential inside that
+handler, and return only normalized/redacted data.
 
 ### Granting a tool to a bot
 
@@ -160,9 +162,9 @@ authorizations:
   bash: "ask"               # ask = require approval
 ```
 
-**Hot vs rebuild:** tool *declarations* and *toolkits* are hot. Adding a brand-new `scripts/oshal-*.js`
-CLI to a **dedicated bot's image** can be Docker-layer-cached — bind-mount `./scripts` on the bot or
-rebuild cache-busting (see connector-backed-apps "Deploy gotchas").
+**Hot vs rebuild:** declarations remain hot-loaded, but hot discovery does not relax authorization
+or the credential boundary. A new deterministic server handler is reviewed, registered, and tested
+as code; it is not smuggled in as a model-selected shell command.
 
 Deeper reference: [framework-developer-guide.md → Add A Tool](framework-developer-guide.md#add-a-tool).
 
@@ -179,7 +181,7 @@ tickets or answers chat. Cost lands under its own `agent_id`.
 |---|---|---|
 | Runs in | its own container | the `oshal-api` controller |
 | Talks via | HTTP (`BotNodeClient` → `/api/swarm-execute`) | direct `orchestrator.processMessage()` |
-| Use for | shelling out, long/sandboxed work | reason-only over already-captured data (ADR-036) |
+| Use for | isolation, long work, a dedicated store, or an audited deterministic provider intent | reason-only over already-authorized/redacted data (ADR-036) |
 | Registry `container` | the bot's own service name | `oshal-api` |
 | Example | `career-hunter` (runs the job engine) | `career-advisor`, `finance-analyst` |
 
@@ -204,13 +206,12 @@ capabilities: [job-fit-advice, application-strategy, resume-tailoring]
 
 authorizations:
   career_database: "auto"
-
-# Form A only — how the dedicated node runs:
-runtime:
-  harness: codex-cli        # codex-cli | claude-code | gemini-cli | cline | a2a | noop
-  model: gpt-5.5
-  sandbox: danger-full-access
 ```
+
+Do not copy a legacy `runtime.harness` CLI value and assume it is live. CLI harness names remain in
+the configuration schema for compatibility, but unattended execution fails closed. The request must
+carry an authorized hosted/BYO inference rail, or an exact deterministic provider intent handled
+outside the model runtime.
 
 ### The registry entry (compile-time — rebuild)
 
@@ -226,15 +227,13 @@ Every bot needs an endpoint entry in
   container: 'oshal-api',     // 'oshal-api' = Form B inline; a service name = Form A node
   role: 'career/advisor',
   capabilities: ['job-fit-advice', 'application-strategy'],
-  harnessType: 'codex-cli',   // resolves the LLM runtime; per-bot override wins over the global default
-  apiType: 'openai-codex',
 }
 ```
 
-`harnessType` + `apiType` decide the runtime: `claude-code`/`claude-code`, `codex-cli`/`openai-codex`,
-`gemini-cli`/`gemini`, etc. All harnesses support **BYOK** — per-user credentials brokered from
-`oshal_connections`, or a configured credential mounted into the container (e.g. `~/.codex`). Never
-hardcode a key; the platform supplies it (this bit the gov-contracting migration — see Lessons).
+`harnessType` + `apiType`, when present, select configured runtime precedence; they do not override
+the autonomous-CLI preflight. A mounted `~/.claude`, `~/.codex`, or `~/.gemini` file reports local
+authentication presence only. Per-user connector credentials are never brokered into a harness.
+Reasoning uses hosted/BYO inference; provider actions use exact deterministic server operations.
 
 ### Binding bots into the manifest (hot)
 
@@ -403,8 +402,9 @@ and the presentation `/guide` in the store-side AI Office package.
 
 **What it is.** Auth to an external service (Jira, Slack, Gmail, a merchant) so a bot can act on a
 user's account. **Auth and action are separate**: the connector stores a per-user token in
-`oshal_connections` (encrypted); the bot + a CLI/adapter call the provider API. The controller never
-calls the provider for reasoning (cost must land on the bot — ADR-036).
+`oshal_connections` (encrypted); an exact deterministic server operation calls the provider API and
+returns a normalized/redacted result. If reasoning is needed, hosted/BYO inference receives that
+result only—not the token.
 
 There are two ways to add one. Pick by how much custom logic you need.
 
@@ -429,18 +429,19 @@ resources:
 **Copy from:** [`swarm-apps/connectors/jira.yaml`](../swarm-apps/connectors/jira.yaml),
 [`slack.yaml`](../swarm-apps/connectors/slack.yaml). There are 400+ specs in that directory.
 
-### 5b. Hand-rolled six-piece recipe — for OAuth flows, signed requests, deep-links
+### 5b. Custom deterministic operation — for OAuth flows, signed requests, or deep links
 
-When the provider needs a custom OAuth card, a signed CLI, or a deep-link handoff, follow the full
-recipe in **[connector-backed-apps.md](connector-backed-apps.md)**: a `PROVIDERS` entry in
-`connectors-routes.ts`, a `scripts/oshal-<x>.js` CLI (broker → DB → refresh → selector → default), a
-toolkit, a codex persona, a manifest, and a bot node. That doc has the working checklist and the
-deploy gotchas.
+When the provider needs a custom OAuth card, signed request, or deep-link handoff, follow
+**[connector-backed-apps.md](connector-backed-apps.md)**: add the authenticated connector, define a
+closed versioned operation schema, bind one audited server handler, resolve the caller-owned
+credential at that boundary, call the provider without a shell, normalize/redact the response, and
+then wire the persona, manifest, and surface.
 
-Either way, per-user secrets live in `oshal_connections`; the broker (`resolveBotCreds`) hands the
-bot short-lived `.oshal-cred-<provider>` files so the bot never needs `SESSION_SECRET`. Adding a
-connector mints a new partner credential — that is a **governance decision**, recorded in
-[partner-app-registration.md](partner-app-registration.md), not an auto-approved add.
+Either way, per-user secrets live in `oshal_connections`. `resolveServerOperationCreds` may resolve
+the minimum token only for a `trusted-provider-intent` or `fixed-server-operation`; it must be
+consumed inside that handler and never attached to a bot request, model/CLI environment, or
+workspace. Adding a connector mints a new partner credential—that is a **governance decision**,
+recorded in [partner-app-registration.md](partner-app-registration.md), not an auto-approved add.
 
 ---
 
@@ -567,10 +568,11 @@ documents, and the human-gate approve/advance flow. Migrating means parity, not 
 
 **Never hardcode credentials.**
 *Symptom:* tempted to drop an API key into the route/engine to make the bot run.
-*Cause:* forgetting the platform already supplies credentials.
-*Rule:* use the **configured credential** — codex off a mounted `~/.codex` (so it never burns the
-Claude subscription), or per-user BYOK brokered from `oshal_connections`. The bot/CLI resolves the
-secret; the route never embeds one.
+*Cause:* confusing credential presence with authority to expose it to a model runtime.
+*Rule:* use hosted/BYO inference for reasoning. Resolve a per-user connector credential from
+`oshal_connections` only inside an exact deterministic server operation and discard it before any
+model call. A mounted CLI OAuth file does not authorize unattended execution, and a bot/CLI must not
+resolve, receive, or persist the secret.
 
 **Name the app what it is.**
 *Symptom:* "Federal Capture" was a generic, internal-sounding label.
@@ -633,4 +635,10 @@ Compile-time (edit + rebuild) — for a data app:
 
 Identity:
 [ ] agent_id identical across persona + registry + manifest, and collision-free (grep first)
+
+Security boundary:
+[ ] hosted/BYO inference or a schema-bounded deterministic server provider intent
+[ ] no unattended Cline/Claude Code/Codex/Gemini CLI assumption
+[ ] no creds/credentials/OSHAL_CRED_* or .oshal-cred-* model/workspace carrier
+[ ] connector credential consumed only inside an exact server operation; result normalized/redacted
 ```

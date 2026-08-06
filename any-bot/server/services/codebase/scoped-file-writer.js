@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added one fail-closed writer for every `.oshal-user-*` and `.oshal-cred-*` file: link/nonregular refusal, exclusive mode-0600 same-directory temp creation, atomic publish, and identity-bound cleanup.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Use lossless bigint device/inode metadata plus rename-stable fields for ownership; Windows birth/ctime changes and path-level birth-time retention are deliberately excluded.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: narrow the exported writer to exact identity markers; credential workspace files are no longer an approved target class.
  */
 'use strict';
 
@@ -13,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../../utils/logger');
 
-const SCOPED_FILE_PATTERN = /^(?:\.oshal-user-(?:sub|key)|\.oshal-cred-[a-z0-9][a-z0-9-]{0,63})$/;
+const SCOPED_FILE_PATTERN = /^\.oshal-user-(?:sub|key)$/;
 
 /** Stable refusal for a hostile scoped-file entry or parent. */
 class UnsafeScopedFileError extends Error {
@@ -127,12 +128,12 @@ function tempPathFor(targetPath) {
 }
 
 /**
- * @description Writes one approved scoped identity/credential file without ever opening the target
+ * @description Writes one approved scoped identity marker without ever opening the target
  * for writing. The payload goes to an exclusive 0600 temp beside the target, parents and any old
  * entry are revalidated, and rename publishes it atomically (replacing a raced symlink itself,
  * never its referent). Failure cleanup is identity-bound to the invocation-owned temp/target.
- * @param {string} filePath - Exact `.oshal-user-sub`, `.oshal-user-key`, or `.oshal-cred-*` path.
- * @param {string} value - Identity or short-lived credential payload.
+ * @param {string} filePath - Exact `.oshal-user-sub` or `.oshal-user-key` path.
+ * @param {string} value - Exact identity payload.
  * @returns {object} Published file identity for later owned cleanup.
  */
 function writeScopedFile(filePath, value) {

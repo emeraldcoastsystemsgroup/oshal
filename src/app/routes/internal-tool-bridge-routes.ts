@@ -18,6 +18,8 @@
  *                     |                             | secret-gated header is trusted), and the tool must be
  *                     |                             | ENABLED for the named agent before it is executed.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Narrow service-secret requests to their trusted user sub before grant lookup, execution, and explicit access-audit writes; a machine call without X-OSHAL-User-Sub now fails closed instead of inheriting operator-level database access.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Exclude ASK grants from unattended MCP listing and execution; only exact AUTO grants are executable without a fresh approval decision.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: require immutable request-start executor identity, deny system/unknown descriptors and missing caller context, and revalidate immediately before bridged execution.
  */
 
 /**
@@ -114,7 +116,7 @@ export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
   /** GET /api/tools/for-agent/:agentId — enabled (auth_mode != off) registry tools for the MCP tools/list. */
   router.get('/for-agent/:agentId', async (req: Request, res: Response): Promise<void> => {
     try {
-      const tools = await repo.getEnabledTools(String(req.params.agentId));
+      const tools = await repo.getAutoExecutableTools(String(req.params.agentId));
       // Only bridge swarm-app/framework tools (registered_by != 'system'). The
       // 'system' baseline tools (bash, read-file, write-file, fetch, google-search,
       // execute_command, …) are Claude Code natives or live in the base MCP config;
@@ -153,34 +155,59 @@ export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
       return;
     }
     const userSub = resolveActingSub(req);
-    let enabled: Awaited<ReturnType<AgentToolRepository['getEnabledTools']>>;
+    if (!userSub) {
+      res.status(403).json({ error: 'tool execution requires an exact caller identity' });
+      return;
+    }
+    const descriptorRegistry = ctx.dynamicToolExecutorRegistry;
+    if (!descriptorRegistry || typeof descriptorRegistry.resolve !== 'function') {
+      res.status(503).json({ error: 'tool execution authorization unavailable' });
+      return;
+    }
+    const capturedDescriptor = descriptorRegistry.resolve(String(toolName));
+    if (!capturedDescriptor) {
+      logger.warn({ agentId, toolName }, 'tool bridge refused an unknown executor descriptor');
+      void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'error');
+      res.status(403).json({ error: `Tool "${toolName}" has no registered executor` });
+      return;
+    }
+    let enabled: Awaited<ReturnType<AgentToolRepository['getAutoExecutableTools']>>;
     try {
-      enabled = await repo.getEnabledTools(String(agentId));
+      enabled = await repo.getAutoExecutableTools(String(agentId));
     } catch (err) {
       // FAIL CLOSED. An unreadable authorization list is not permission to run the tool.
       logger.error({ err, agentId, toolName }, 'tool bridge could not read the agent tool grants — refusing');
       res.status(503).json({ error: 'tool authorization unavailable' });
       return;
     }
-    if (!enabled.some((t) => t.name === String(toolName))) {
-      logger.warn({ agentId, toolName }, 'tool bridge refused a tool that is not enabled for this agent');
-      void emitToolAudit(ctx.pool, userSub ?? null, String(toolName), String(agentId), 'error');
-      res.status(403).json({ error: `Tool "${toolName}" is not enabled for agent ${agentId}` });
+    const authorizedTool = enabled.find((t) => (
+      t.name === String(toolName) && Boolean(t.registeredBy) && t.registeredBy !== 'system'
+    ));
+    if (!authorizedTool) {
+      logger.warn({ agentId, toolName }, 'tool bridge refused a tool without an exact AUTO grant');
+      void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'error');
+      res.status(403).json({ error: `Tool "${toolName}" is disabled or requires approval for agent ${agentId}` });
+      return;
+    }
+    if (descriptorRegistry.resolve(String(toolName)) !== capturedDescriptor) {
+      logger.warn({ agentId, toolName }, 'tool bridge refused a replaced executor descriptor');
+      void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'error');
+      res.status(403).json({ error: `Tool "${toolName}" changed during authorization` });
       return;
     }
     try {
       const output = await executor.executeTool(
         String(taskId || `mcp-${agentId}`),
         String(toolName),
-        input && typeof input === 'object' ? input : {},
+        input && typeof input === 'object' && !Array.isArray(input) ? input : {},
         String(agentId),
         userSub,
       );
-      void emitToolAudit(ctx.pool, userSub ?? null, String(toolName), String(agentId), 'ok');
+      void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'ok');
       res.json({ output });
     } catch (err) {
       logger.error({ err, agentId, toolName }, 'tool bridge execute failed');
-      void emitToolAudit(ctx.pool, userSub ?? null, String(toolName), String(agentId), 'error');
+      void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'error');
       res.status(500).json({ error: (err as Error).message });
     }
   });

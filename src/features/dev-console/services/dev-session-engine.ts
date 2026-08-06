@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Dev Session Engine (ADR-077 Phase 2): isolated-worktree edit governance — create -> apply -> diff -> verify -> commit-to-branch -> teardown. Never touches main or the live working tree.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening after adversarial red-team: removed the unconfined runAgent (a cwd is NOT a sandbox — needs an OS jail; deferred to the sandboxed-agent slice); teardown refuses to remove while the node_modules junction is still present (was: --force could recurse through it and delete the SHARED node_modules); safeJoin is now realpath-aware and rejects .git/.githooks/node_modules; every method validates the session (poisoned registry can't repoint the worktree); commit now requires a passing verify for the exact tree.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: isolate verify and Git child processes from controller/database/provider credentials while retaining only runtime, locale, proxy, Git author, and explicit branch-policy settings.
  */
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -95,6 +96,32 @@ const DEFAULT_VERIFY: string[] = ['node', 'node_modules/typescript/bin/tsc', '-p
 const PROTECTED_BRANCHES = new Set(['main', 'master', 'HEAD']);
 const FORBIDDEN_SEGMENTS = new Set(['.git', '.githooks', 'node_modules']);
 const BIG_BUFFER = 256 * 1024 * 1024;
+const DEV_SESSION_PROCESS_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'LANG', 'LC_ALL', 'TZ', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'CI', 'NODE_ENV', 'FORCE_COLOR',
+  'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_DATE',
+  'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_COMMITTER_DATE',
+] as const;
+const DEV_SESSION_EXTRA_ENV_KEYS = ['ALLOW_NONMAIN_COMMIT'] as const;
+
+/** Build a least-privilege environment for dev-session verification and Git subprocesses. */
+export function buildDevSessionProcessEnv(
+  extra: NodeJS.ProcessEnv = {},
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of DEV_SESSION_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  for (const key of DEV_SESSION_EXTRA_ENV_KEYS) {
+    const value = extra[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
 
 /**
  * @description Governs isolated, reviewable, verify-gated change sets applied to the OSHAL repo.
@@ -191,6 +218,7 @@ export class DevSessionEngine {
     const started = Date.now();
     const result = spawnSync(cmd, args, {
       cwd: session.worktreePath,
+      env: buildDevSessionProcessEnv(),
       encoding: 'utf8',
       timeout: 900_000,
       shell: false,
@@ -217,7 +245,11 @@ export class DevSessionEngine {
     const [cmd, ...args] = command;
     const started = Date.now();
     return new Promise((resolve) => {
-      const child = spawn(cmd, args, { cwd: session.worktreePath, windowsHide: true });
+      const child = spawn(cmd, args, {
+        cwd: session.worktreePath,
+        env: buildDevSessionProcessEnv(),
+        windowsHide: true,
+      });
       let output = '';
       const collect = (buf: Buffer): void => { if (output.length < 4_000_000) output += buf.toString('utf8'); };
       child.stdout?.on('data', collect);
@@ -257,7 +289,7 @@ export class DevSessionEngine {
     execFileSync('git', ['-C', session.worktreePath, 'commit', '-m', message], {
       encoding: 'utf8',
       maxBuffer: BIG_BUFFER,
-      env: { ...process.env, ALLOW_NONMAIN_COMMIT: '1' },
+      env: buildDevSessionProcessEnv({ ALLOW_NONMAIN_COMMIT: '1' }),
     });
     const sha = this.gitIn(session, ['rev-parse', 'HEAD']).trim();
     logger.info({ id: session.id, branch, sha }, 'dev-session committed to branch');
@@ -362,12 +394,20 @@ export class DevSessionEngine {
 
   /** Runs git in the MAIN repo (only worktree/branch management — never edits its tree/index). */
   private git(args: string[]): string {
-    return execFileSync('git', ['-C', this.repoRoot, ...args], { encoding: 'utf8', maxBuffer: BIG_BUFFER });
+    return execFileSync('git', ['-C', this.repoRoot, ...args], {
+      encoding: 'utf8',
+      env: buildDevSessionProcessEnv(),
+      maxBuffer: BIG_BUFFER,
+    });
   }
 
   /** Runs git inside the session worktree (its own isolated tree + index). */
   private gitIn(session: DevSession, args: string[]): string {
-    return execFileSync('git', ['-C', session.worktreePath, ...args], { encoding: 'utf8', maxBuffer: BIG_BUFFER });
+    return execFileSync('git', ['-C', session.worktreePath, ...args], {
+      encoding: 'utf8',
+      env: buildDevSessionProcessEnv(),
+      maxBuffer: BIG_BUFFER,
+    });
   }
 }
 

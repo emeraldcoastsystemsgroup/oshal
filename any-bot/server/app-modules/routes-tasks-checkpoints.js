@@ -4,9 +4,45 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from app.js (1000-line cap decomposition): /api/health, task CRUD/messages/tools, checkpoint create/list/get/restore/delete
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: bind every task/checkpoint object route to an authenticated exact owner, filter lists at storage, retire client-approved direct tool execution, and constrain messages to completion-only authority.
  */
 
 const logger = require('../utils/logger');
+const { trustedServiceUserSub } = require('../services/codebase/swarm-execute-auth');
+const { canonicalWorkspaceId } = require('../services/codebase/task-workspace-scope');
+const { assertUnattendedProviderSelection } = require('../services/llm/assert-cli-tool-boundary');
+
+const COMPLETION_ONLY_TOOLS = Object.freeze(['attempt_completion']);
+const COMPLETION_ONLY_SCOPES = Object.freeze(['control:attempt_completion']);
+
+function requireCallerSubject(req, res) {
+  const userSub = trustedServiceUserSub(req);
+  if (userSub) return userSub;
+  res.status(403).json({ error: 'caller_identity_required' });
+  return null;
+}
+
+async function requireOwnedTask(application, req, res, rawTaskId) {
+  const userSub = requireCallerSubject(req, res);
+  if (!userSub) return null;
+  let taskId;
+  try { taskId = canonicalWorkspaceId(rawTaskId); }
+  catch { res.status(404).json({ error: 'Task not found' }); return null; }
+  const task = await application.taskController.getTask(taskId);
+  if (!task) { res.status(404).json({ error: 'Task not found' }); return null; }
+  try { application.taskController.assertTaskOwner(task, userSub); }
+  catch { res.status(404).json({ error: 'Task not found' }); return null; }
+  return { task, taskId, userSub };
+}
+
+async function requireOwnedCheckpoint(application, req, res, checkpointId) {
+  const userSub = requireCallerSubject(req, res);
+  if (!userSub) return null;
+  const checkpoint = await application.checkpointStore.getCheckpoint(checkpointId);
+  if (!checkpoint) { res.status(404).json({ error: 'Checkpoint not found' }); return null; }
+  const owned = await requireOwnedTask(application, req, res, checkpoint.taskId);
+  return owned ? { ...owned, checkpoint } : null;
+}
 
 /**
  * @description Health check, task lifecycle (create/get/message/execute-tool/list), and checkpoint lifecycle (create/list/get/restore/delete) routes.
@@ -56,12 +92,14 @@ function registerTaskAndCheckpointRoutes(application) {
     application.app.post('/api/tasks', async (req, res) => {
       try {
         const { text, mode = 'act' } = req.body;
+        const userSub = requireCallerSubject(req, res);
+        if (!userSub) return;
 
         if (!text) {
           return res.status(400).json({ error: 'Task text is required' });
         }
 
-        const task = await application.taskController.createTask(text, mode);
+        const task = await application.taskController.createTask(text, mode, { userSub });
         // Issue #022: Associate new task with session SSE clients so events reach the dashboard
         application.streamController.associateTaskWithSession(task.id);
         application.streamController.broadcastTaskUpdate(task.id, task);
@@ -82,15 +120,11 @@ function registerTaskAndCheckpointRoutes(application) {
     application.app.get('/api/tasks/:taskId', async (req, res) => {
       try {
         const { taskId } = req.params;
-        const task = await application.taskController.getTask(taskId);
-
-        if (!task) {
-          return res.status(404).json({ error: 'Task not found' });
-        }
-
+        const owned = await requireOwnedTask(application, req, res, taskId);
+        if (!owned) return;
         res.json({
           success: true,
-          task,
+          task: owned.task,
         });
       } catch (err) {
         logger.error(`Get task failed: ${err.message}`);
@@ -104,31 +138,38 @@ function registerTaskAndCheckpointRoutes(application) {
     application.app.post('/api/tasks/:taskId/messages', async (req, res) => {
       try {
         const { taskId } = req.params;
-        const { text, images = [], files = [], autoApprove = {}, agenticMode = true, source } = req.body;
+        const { text, images = [], files = [], agenticMode = true } = req.body;
 
         if (!text) {
           return res.status(400).json({ error: 'Message text is required' });
         }
+        const owned = await requireOwnedTask(application, req, res, taskId);
+        if (!owned) return;
+        assertUnattendedProviderSelection(
+          application.currentLLMProvider || process.env.LLM_PROVIDER,
+        );
 
         // Issue #022 fix: Associate taskId with session SSE clients on every message POST.
         // This handles the case where the cockpit restores a session from sessionStorage
         // (uses existing taskId, never calls POST /api/tasks) — without this, SSE events
         // for the restored task are silently dropped because the session client's
         // knownTaskIds set never includes the taskId.
-        application.streamController.associateTaskWithSession(taskId);
+        application.streamController.associateTaskWithSession(owned.taskId);
 
-        const result = await application.taskController.processMessage(taskId, {
+        const result = await application.taskController.processMessage(owned.taskId, {
           text,
           images,
           files,
         }, {
-          autoApprove,
-          agenticMode,
-          source,  // PHASE_23: Pass 'dashboard' source for proper context filtering
+          autoApprove: {},
+          agenticMode: agenticMode === true,
+          source: 'authenticated-task-api',
+          allowedTools: COMPLETION_ONLY_TOOLS,
+          authorizedScopes: COMPLETION_ONLY_SCOPES,
         });
 
         // Broadcast to connected clients
-        application.streamController.broadcastMessage(taskId, result.message);
+        application.streamController.broadcastMessage(owned.taskId, result.message);
 
         res.json({
           success: true,
@@ -145,34 +186,14 @@ function registerTaskAndCheckpointRoutes(application) {
     // Execute tool
     application.app.post('/api/tasks/:taskId/tools/:toolName', async (req, res) => {
       try {
-        const { taskId, toolName } = req.params;
-        const { input, approved = false } = req.body;
-
-        const result = await application.taskController.executeTool(taskId, toolName, input, approved);
-
-        // Check if requires approval
-        if (result.requiresApproval) {
-          return res.json({
-            success: false,
-            requiresApproval: true,
-            tool: result.tool,
-          });
-        }
-
-        // Broadcast tool execution
-        application.streamController.broadcastToolExecution(taskId, { name: toolName }, 'success');
-
-        res.json({
-          success: true,
-          result,
+        const { taskId } = req.params;
+        const owned = await requireOwnedTask(application, req, res, taskId);
+        if (!owned) return;
+        res.status(410).json({
+          error: 'direct tool execution is retired; use the server authorization broker',
         });
       } catch (err) {
         logger.error(`Tool execution failed: ${err.message}`);
-        application.streamController.broadcastToolExecution(
-          req.params.taskId,
-          { name: req.params.toolName },
-          'error'
-        );
         res.status(500).json({
           error: err.message,
         });
@@ -182,10 +203,12 @@ function registerTaskAndCheckpointRoutes(application) {
     // List tasks
     application.app.get('/api/tasks', async (req, res) => {
       try {
-        const limit = parseInt(req.query.limit) || 50;
-        const offset = parseInt(req.query.offset) || 0;
+        const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
+        const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
 
-        const tasks = await application.taskController.listTasks(limit, offset);
+        const userSub = requireCallerSubject(req, res);
+        if (!userSub) return;
+        const tasks = await application.taskController.listTasksForOwner(userSub, limit, offset);
 
         res.json({
           success: true,
@@ -204,10 +227,12 @@ function registerTaskAndCheckpointRoutes(application) {
     application.app.post('/api/tasks/:taskId/checkpoints', async (req, res) => {
       try {
         const { taskId } = req.params;
+        const owned = await requireOwnedTask(application, req, res, taskId);
+        if (!owned) return;
 
-        const checkpoint = await application.taskController.createCheckpoint(taskId);
+        const checkpoint = await application.taskController.createCheckpoint(owned.taskId);
 
-        application.streamController.broadcastTaskUpdate(taskId, { checkpointCreated: checkpoint.id });
+        application.streamController.broadcastTaskUpdate(owned.taskId, { checkpointCreated: checkpoint.id });
 
         res.status(201).json({
           success: true,
@@ -225,8 +250,10 @@ function registerTaskAndCheckpointRoutes(application) {
     application.app.get('/api/tasks/:taskId/checkpoints', async (req, res) => {
       try {
         const { taskId } = req.params;
+        const owned = await requireOwnedTask(application, req, res, taskId);
+        if (!owned) return;
 
-        const checkpoints = await application.checkpointStore.listCheckpoints(taskId);
+        const checkpoints = await application.checkpointStore.listCheckpoints(owned.taskId);
 
         res.json({
           success: true,
@@ -246,19 +273,12 @@ function registerTaskAndCheckpointRoutes(application) {
       try {
         const { checkpointId } = req.params;
 
-        logger.info(`[DEBUG] GET /api/checkpoints/${checkpointId} - Starting retrieval`);
-
-        const checkpoint = await application.checkpointStore.getCheckpoint(checkpointId);
-
-        logger.info(`[DEBUG] GET /api/checkpoints/${checkpointId} - Result: ${checkpoint ? 'FOUND' : 'NOT FOUND'}`);
-
-        if (!checkpoint) {
-          return res.status(404).json({ error: 'Checkpoint not found' });
-        }
+        const owned = await requireOwnedCheckpoint(application, req, res, checkpointId);
+        if (!owned) return;
 
         res.json({
           success: true,
-          checkpoint,
+          checkpoint: owned.checkpoint,
         });
       } catch (err) {
         logger.error(`Get checkpoint failed: ${err.message}`);
@@ -272,6 +292,8 @@ function registerTaskAndCheckpointRoutes(application) {
     application.app.post('/api/checkpoints/:checkpointId/restore', async (req, res) => {
       try {
         const { checkpointId } = req.params;
+        const owned = await requireOwnedCheckpoint(application, req, res, checkpointId);
+        if (!owned) return;
 
         const task = await application.taskController.restoreCheckpoint(checkpointId);
 
@@ -294,6 +316,8 @@ function registerTaskAndCheckpointRoutes(application) {
     application.app.delete('/api/checkpoints/:checkpointId', async (req, res) => {
       try {
         const { checkpointId } = req.params;
+        const owned = await requireOwnedCheckpoint(application, req, res, checkpointId);
+        if (!owned) return;
 
         const deleted = await application.checkpointStore.deleteCheckpoint(checkpointId);
 

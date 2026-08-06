@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase promotion store (ADR-046 "keep the winning splice, promote it into the workflow definition, re-baseline"; BACKLOG "auto keep-winner then re-baseline"): persists a frame-scope's preferred lane in token_chase_promotions (migration 095 + the same lazy-bootstrap pattern as the corpus so a fresh boot works pre-migration). One ACTIVE promotion per (user_sub, run_id, seq) enforced by a partial unique index; promote atomically supersedes the prior active row in the same transaction and writes a token_chase_promotion_audit row (promote/auto-promote/revert) so every baseline change is traceable and reversible. The service REFUSES non-llm-judged promotions structurally — a lexical-fallback grade can never re-baseline a frame (the honesty rule). Reads are owner-scoped by user_sub, mirroring the corpus.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep the pre-migration lazy bootstrap security-identical to migration 095: enable and FORCE owner-scoped RLS on both promotion tables, and create the owner-or-operator policies idempotently. Export the immutable statement list so regression tests can prove the runtime and migration paths cannot silently diverge again.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -23,7 +24,7 @@ interface QueryablePool {
 // (mirrors the corpus-service bootstrap pattern). Resolved once per process.
 let schemaReady: Promise<void> | null = null;
 
-const SCHEMA_SQL = [
+export const TOKEN_CHASE_PROMOTION_SCHEMA_SQL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS token_chase_promotions (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_sub           TEXT NOT NULL,
@@ -60,13 +61,55 @@ const SCHEMA_SQL = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_tc_promotion_audit_user_run
      ON token_chase_promotion_audit (user_sub, run_id, created_at)`,
+  `ALTER TABLE token_chase_promotions ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE token_chase_promotions FORCE ROW LEVEL SECURITY`,
+  `ALTER TABLE token_chase_promotion_audit ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE token_chase_promotion_audit FORCE ROW LEVEL SECURITY`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_policy
+       WHERE polname = 'token_chase_promotions_owner_or_operator'
+         AND polrelid = 'token_chase_promotions'::regclass
+     ) THEN
+       CREATE POLICY token_chase_promotions_owner_or_operator ON token_chase_promotions
+         AS PERMISSIVE FOR ALL
+         USING (
+           user_sub = current_setting('oshal.current_sub', true)
+           OR current_setting('oshal.is_operator', true) = 'on'
+         )
+         WITH CHECK (
+           user_sub = current_setting('oshal.current_sub', true)
+           OR current_setting('oshal.is_operator', true) = 'on'
+         );
+     END IF;
+   END $$`,
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_policy
+       WHERE polname = 'token_chase_promotion_audit_owner_or_operator'
+         AND polrelid = 'token_chase_promotion_audit'::regclass
+     ) THEN
+       CREATE POLICY token_chase_promotion_audit_owner_or_operator ON token_chase_promotion_audit
+         AS PERMISSIVE FOR ALL
+         USING (
+           user_sub = current_setting('oshal.current_sub', true)
+           OR current_setting('oshal.is_operator', true) = 'on'
+         )
+         WITH CHECK (
+           user_sub = current_setting('oshal.current_sub', true)
+           OR current_setting('oshal.is_operator', true) = 'on'
+         );
+     END IF;
+   END $$`,
 ];
 
 /** @description Ensures both promotion tables exist (idempotent, once per process; resets on failure for retry). */
 function ensureSchema(pool: QueryablePool): Promise<void> {
   if (!schemaReady) {
     schemaReady = (async () => {
-      for (const sql of SCHEMA_SQL) await pool.query(sql);
+      for (const sql of TOKEN_CHASE_PROMOTION_SCHEMA_SQL) await pool.query(sql);
     })().catch((err) => {
       schemaReady = null; // allow a later retry
       logger.error({ err, stack: (err as Error)?.stack }, 'Failed to bootstrap Token Chase promotion tables');

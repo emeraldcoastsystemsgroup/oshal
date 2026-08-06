@@ -6,11 +6,11 @@
 
 **Operator decisions 2026-07-09:** GitHub-hosted Actions burned ~$15 on automatic runs
 (per-push at 50+ pushes/day) and was retired that morning; after the billing hold was
-paid that evening it came back **MANUAL-ONLY** (`workflow_dispatch` + PR — never a
-`push:` trigger, never a `schedule:` cron; see the header of
-[.github/workflows/ci.yml](../../.github/workflows/ci.yml)). `deploy.yml` and
-`firetv-android.yml` remain archived in
-`docs/archive/github-actions-retired/`.
+paid that evening it came back **MANUAL-ONLY** (`workflow_dispatch` only — never a
+`push:` trigger or `schedule:` cron; see the header of
+[.github/workflows/ci.yml](../../.github/workflows/ci.yml)). This trunk has no separate
+deployment workflow or retired-workflow archive. The cloud and local Compose smokes are ephemeral
+image/build validation: both tear down their test stacks and change no durable target.
 
 **The gate that runs automatically is this one:** [`scripts/ci-local.sh`](../../scripts/ci-local.sh),
 daily on the operator's machine, $0, windowless, email only on failure.

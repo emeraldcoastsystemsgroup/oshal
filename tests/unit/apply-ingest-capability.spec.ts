@@ -9,6 +9,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require the Career queue acknowledgement to
  *   echo task-bound worker provenance before a trusted completion can settle.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Require a retained link-free image before verified-submission provenance and keep missing/unsafe artifacts at worker-reported.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Require the exact Apply V2 run binding, claim-token CAS, confirmation SHA, and unknown_outcome classification for evidence-free worker reports.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove a callback retry can finish ticket/capability settlement after the exact ledger run is already terminal.
  */
 
 import type { Pool } from 'pg';
@@ -27,6 +29,32 @@ const CLAIM = {
   tokenHash: 'b'.repeat(64), userSub: ' Tenant|Exact Subject ', ticketId: 'ticket-1',
   settleTicket: true, postingId: 42, clientId: 'desktop-1', targetHost: 'jobs.example.com', generation: 3,
   expiresAt: '2026-08-05T22:00:00.000Z',
+};
+const RUN = {
+  runId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+  ticketId: CLAIM.ticketId,
+  ownerSub: CLAIM.userSub,
+  postingId: CLAIM.postingId,
+  claimToken: 'ffffffff-1111-4222-8333-444444444444',
+  taskId: CLAIM.taskId,
+  workerClientId: CLAIM.clientId,
+  state: 'queued_to_worker' as const,
+  claimedAt: '2026-08-05T21:00:00.000Z',
+  dispatchedAt: '2026-08-05T21:00:01.000Z',
+  acknowledgedAt: null,
+  lastProgressAt: '2026-08-05T21:00:01.000Z',
+  timeoutAt: '2026-08-05T22:00:00.000Z',
+  finishedAt: null,
+  result: null,
+  failureCode: null,
+  failureDetail: null,
+  confirmationPath: null,
+  confirmationSha256: null,
+  metadata: {
+    trigger: 'authenticated-single-job' as const,
+    initiatedBySub: CLAIM.userSub,
+    automationSettingsVersion: 'authenticated-single-job-v1',
+  },
 };
 const BODY = {
   taskId: CLAIM.taskId,
@@ -55,6 +83,11 @@ function fixture(overrides: Partial<ApplyCompletionRuntime> = {}) {
     }),
     removeWorkspace: vi.fn(async () => { events.push('cleanup'); }),
     persistConfirmation: vi.fn(() => null),
+    getRun: vi.fn(async () => RUN),
+    transitionRun: vi.fn(async (_pool, input) => {
+      events.push(`ledger:${input.to}`);
+      return { ...RUN, state: input.to } as never;
+    }),
     ...overrides,
   };
   const identities: unknown[] = [];
@@ -91,14 +124,21 @@ describe('Apply trusted completion', () => {
 
     const response = await post(f.runtime, f.ctx);
     expect(response).toEqual({ status: 200, body: { ok: true, result: 'applied' } });
-    expect(f.events.slice(0, 4)).toEqual(['reserve', 'queue', 'ticket', 'consume']);
+    expect(f.events.slice(0, 6)).toEqual([
+      'reserve', 'queue', 'ledger:running', 'ledger:unknown_outcome', 'ticket', 'consume',
+    ]);
     expect(f.events).toContain('cleanup');
     expect(f.identities).toEqual([{ sub: CLAIM.userSub, isOperator: false }]);
     expect(f.runtime.runCli).toHaveBeenCalledWith(CLAIM.userSub, [
       'queue', 'record', '42', 'applied', '--note', 'visible confirmation',
       '--source', 'worker-reported', '--task', CLAIM.taskId,
+      '--run-id', RUN.runId, '--claim-token', RUN.claimToken,
     ], { timeoutMs: 30000 });
-    expect(f.ticketService.updateStatus).toHaveBeenCalledWith('ticket-1', 'complete', expect.objectContaining({ taskId: CLAIM.taskId, generation: 3 }));
+    expect(f.ticketService.updateStatus).toHaveBeenCalledWith(
+      'ticket-1', 'customer_action', expect.objectContaining({
+        taskId: CLAIM.taskId, generation: 3, applyRunState: 'unknown_outcome',
+      }),
+    );
     expect(applyInFlight.has(CLAIM.taskId)).toBe(false);
   });
 
@@ -112,7 +152,9 @@ describe('Apply trusted completion', () => {
   });
 
   it('records verified provenance only when the exact artifact retention rail succeeds', async () => {
-    const retained = 'C:\\career\\owner\\confirmations\\apply-proof.png';
+    const retained = {
+      path: 'C:\\career\\owner\\confirmations\\apply-proof.png', sha256: 'a'.repeat(64),
+    };
     const persistConfirmation = vi.fn(() => retained);
     const f = fixture({ persistConfirmation });
     const response = await post(f.runtime, f.ctx, {
@@ -125,11 +167,12 @@ describe('Apply trusted completion', () => {
     expect(f.runtime.runCli).toHaveBeenCalledWith(CLAIM.userSub, [
       'queue', 'record', '42', 'applied', '--note', 'visible confirmation',
       '--source', 'verified-submission', '--task', CLAIM.taskId,
-      '--confirmation', retained,
+      '--confirmation', retained.path,
+      '--run-id', RUN.runId, '--claim-token', RUN.claimToken,
     ], { timeoutMs: 30000 });
     expect(f.ticketService.updateStatus).toHaveBeenCalledWith(
       'ticket-1', 'complete', expect.objectContaining({
-        applicationSource: 'verified-submission',
+        applicationSource: 'verified-submission', applyRunState: 'submitted_verified',
       }),
     );
   });
@@ -172,6 +215,23 @@ describe('Apply trusted completion', () => {
     expect(f.ticketService.updateStatus).not.toHaveBeenCalled();
   });
 
+  it('finishes an interrupted callback retry when the exact run is already unknown_outcome', async () => {
+    const getRun = vi.fn(async () => ({
+      ...RUN, state: 'unknown_outcome' as const, finishedAt: RUN.timeoutAt,
+    }));
+    const transitionRun = vi.fn(async () => {
+      throw new Error('terminal ledger must not transition twice');
+    });
+    const f = fixture({ getRun, transitionRun });
+    const response = await post(f.runtime, f.ctx);
+    expect(response).toEqual({ status: 200, body: { ok: true, result: 'applied' } });
+    expect(transitionRun).not.toHaveBeenCalled();
+    expect(f.ticketService.updateStatus).toHaveBeenCalledWith(
+      'ticket-1', 'customer_action', expect.objectContaining({ applyRunState: 'unknown_outcome' }),
+    );
+    expect(f.runtime.consume).toHaveBeenCalledOnce();
+  });
+
   it('rejects a queue acknowledgement that omits or changes callback provenance', async () => {
     const runCli = vi.fn(async () => ({
       ok: true, posting_id: CLAIM.postingId, status: 'applied',
@@ -204,8 +264,10 @@ describe('Apply trusted completion', () => {
   });
 
   it('does not invent a ticket transition for a direct OIDC Apply correlation id', async () => {
-    const reserve = vi.fn(async () => ({ ...CLAIM, settleTicket: false, ticketId: 'apply_42_correlation' }));
-    const f = fixture({ reserve });
+    const directClaim = { ...CLAIM, settleTicket: false, ticketId: 'apply_42_correlation' };
+    const reserve = vi.fn(async () => directClaim);
+    const getRun = vi.fn(async () => ({ ...RUN, ticketId: directClaim.ticketId }));
+    const f = fixture({ reserve, getRun });
     const response = await post(f.runtime, f.ctx);
     expect(response).toEqual({ status: 200, body: { ok: true, result: 'applied' } });
     expect(f.ticketService.updateStatus).not.toHaveBeenCalled();

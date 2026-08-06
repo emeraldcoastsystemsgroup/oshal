@@ -43,6 +43,10 @@
  *                     |                             | 20 s exclusion tripped ekf-unhealthy → SAFE mid-SLEW
  *                     |                             | and stranded the mission (SAFE is sticky by design).
  *                     |                             | Estimate trust during outage = covariance's job.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Extract the 42 star-tracker mount/convention
+ *                     |                             | mapping as pure, documented boundaries so direct and
+ *                     |                             | conjugate wire streams can be replayed against the
+ *                     |                             | anisotropic MEKF measurement covariance in unit tests.
  */
 
 import net from 'net';
@@ -84,6 +88,37 @@ export interface Nasa42ConnectOptions {
   connectTimeoutMs?: number;
   /** Max ms to wait for each In message during stepping (default 30000). */
   cycleTimeoutMs?: number;
+}
+
+/** Quaternion interpretation selected by 42's live convention calibration. */
+export type Nasa42QuaternionConvention = 'conjugate' | 'direct';
+
+/**
+ * @description Compose the table-provided star-tracker mount out of one valid NASA 42
+ * `stQn` sample. NASA 42 sends scalar-last quaternions and constructs the sample as
+ * `q_meas = qbn * q_mount`, so the body-attitude base is `q_meas * conjugate(q_mount)`.
+ * This function deliberately does not choose direct versus conjugate interpretation; the
+ * convention voter needs the un-interpreted base to make that choice from consecutive fixes.
+ * @param stQn - NASA 42 scalar-last star-tracker quaternion `[x, y, z, w]`.
+ * @param stMount - Unit star-tracker-to-body mount quaternion learned from the 42 table.
+ * @returns The mount-composed-out body-attitude base in 42's native convention.
+ */
+export function nasa42StarTrackerBodyBase(stQn: number[], stMount: Quat): Quat {
+  const qMeas = scalarLastToQuat(stQn);
+  return quatNormalize(quatMultiply(qMeas, quatConjugate(stMount)));
+}
+
+/**
+ * @description Interpret a mount-composed NASA 42 body-attitude base as the platform's
+ * body-to-inertial quaternion. Conjugation applies to the complete noisy measurement, not
+ * only its nominal attitude; therefore the tracker error and its anisotropic covariance
+ * remain attached to the same physical body axes under either wire convention.
+ * @param qbnBase - Mount-composed-out quaternion in NASA 42's native convention.
+ * @param convention - Convention selected by the calibration voter.
+ * @returns Body-to-inertial attitude consumed by the MEKF.
+ */
+export function mapNasa42BodyAttitude(qbnBase: Quat, convention: Nasa42QuaternionConvention): Quat {
+  return convention === 'conjugate' ? quatConjugate(qbnBase) : qbnBase;
 }
 
 /** What the adapter learned about the vehicle from 42's table message. */
@@ -202,7 +237,7 @@ export class Nasa42SimAdapter implements SatSimAdapter {
 
   private conventionLocked = false;
 
-  private convention: 'conjugate' | 'direct' = 'conjugate';
+  private convention: Nasa42QuaternionConvention = 'conjugate';
 
   private prevQbn: Quat | null = null;
 
@@ -331,8 +366,7 @@ export class Nasa42SimAdapter implements SatSimAdapter {
    */
   private stQbnBase(rec: Record<string, number[]>): Quat | null {
     if (this.sizes.nst < 1 || rec.stValid[0] === 0) return null;
-    const qMeas = scalarLastToQuat(rec.stQn);
-    return quatNormalize(quatMultiply(qMeas, quatConjugate(this.vehicle.stMount)));
+    return nasa42StarTrackerBodyBase(rec.stQn, this.vehicle.stMount);
   }
 
   /**
@@ -378,7 +412,7 @@ export class Nasa42SimAdapter implements SatSimAdapter {
       }
       if (qbn) {
         this.calibrateConvention(qbn, omegaRaw);
-        this.q = this.convention === 'conjugate' ? quatConjugate(qbn) : qbn;
+        this.q = mapNasa42BodyAttitude(qbn, this.convention);
         if (this.conventionLocked) {
           // seed the filter from this first locked-mapped fix (reinit branch: q̂=this.q, b̂=0)
           this.mekf.updateStarTracker(this.q, omegaRaw);
@@ -399,7 +433,7 @@ export class Nasa42SimAdapter implements SatSimAdapter {
     // ── post-lock MEKF path ────────────────────────────────────────────────
     this.mekf.propagate(omegaRaw, this.vehicle.dtSeconds);
     if (qbn) {
-      const qMap = this.convention === 'conjugate' ? quatConjugate(qbn) : qbn;
+      const qMap = mapNasa42BodyAttitude(qbn, this.convention);
       const key = rec.stQn.join(',');
       if (key !== this.lastStQnKey) {
         this.mekf.updateStarTracker(qMap, omegaRaw);

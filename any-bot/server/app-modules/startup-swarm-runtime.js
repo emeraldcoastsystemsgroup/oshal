@@ -4,17 +4,72 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from app.js (1000-line cap decomposition): queue-manager startup, agent swarm registration (PM + worker paths), roll-call/heartbeat listeners, AGENT_MCP_TOOLS registration, SelfHealingScheduler
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 migration: tombstone legacy Redis credential fields and overwrite legacy Cline provider files with non-secret provider/model metadata only.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: preserve ToolRegistry's sanitized execution context through manifest handler wrappers and default undeclared or conflicting approval policy to required.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: reuse the canonical authorization-enforcing MCP proxy for queue and dynamic-tool registration instead of constructing transport-only facades.
  */
 
 const path = require('path');
 const Redis = require('ioredis');
 const { QueueManagerService } = require('../services/queue-manager');
-const { UnifiedMCPProxy } = require('./unified-mcp-proxy');
 const logger = require('../utils/logger');
 const config = require('../utils/config');
 
 // The original code lived in any-bot/server/ — keep filesystem anchors identical.
 const SERVER_ROOT = path.join(__dirname, '..');
+
+/**
+ * @description Resolves a manifest tool's approval requirement without converting missing,
+ * malformed, or conflicting policy into autonomous authority. Either supported spelling may opt a
+ * tool out only with the exact boolean false; any explicit true or invalid value wins fail-closed.
+ * @param {object} toolDefinition - Parsed AGENT_MCP_TOOLS declaration
+ * @returns {boolean} True unless the declaration unambiguously opts out with boolean false
+ */
+function manifestToolRequiresApproval(toolDefinition) {
+  const declared = ['requiresApproval', 'requires_approval']
+    .filter((field) => Object.prototype.hasOwnProperty.call(toolDefinition || {}, field))
+    .map((field) => toolDefinition[field]);
+  if (declared.length === 0) return true;
+  return declared.some((value) => value !== false);
+}
+
+/**
+ * @description Wraps a discovered implementation for sanitized logging while retaining the exact
+ * trusted execution context ToolRegistry constructed after identity/workspace/credential checks.
+ * @param {string} toolName - Registered manifest tool name
+ * @param {Function} implementation - Discovered two-argument tool implementation
+ * @returns {Function} Context-preserving async handler
+ */
+function wrapManifestToolHandler(toolName, implementation) {
+  return async (params, trustedContext) => {
+    logger.info(`🔧 [${toolName}] REAL handler invoked`);
+    return implementation(params, trustedContext);
+  };
+}
+
+/**
+ * @description Registers one parsed manifest tool consistently in the execution registry and the
+ * optional legacy TaskController facade, preserving the same fail-closed approval policy on both.
+ * @param {object} application - Application containing toolRegistry and optional taskController
+ * @param {object} toolDefinition - Parsed manifest tool declaration
+ * @param {Function} handler - Resolved real, proxy, or inert handler
+ * @returns {{requiresApproval: boolean, timeout: number}} Applied security metadata
+ */
+function registerManifestTool(application, toolDefinition, handler) {
+  const requiresApproval = manifestToolRequiresApproval(toolDefinition);
+  const timeout = toolDefinition.timeout || 60000;
+  const common = {
+    description: toolDefinition.description || `MCP tool: ${toolDefinition.name}`,
+    requiresApproval,
+    inputSchema: toolDefinition.inputSchema || { type: 'object', properties: {} },
+    timeout,
+  };
+  application.toolRegistry.register({ name: toolDefinition.name, handler, ...common });
+  if (application.taskController) {
+    application.taskController.registerTool(toolDefinition.name, handler, common);
+  }
+  return { requiresApproval, timeout };
+}
 
 /**
  * @description Queue Manager Service startup (ENABLE_QUEUE_MANAGER path) or direct worker-agent Redis registration (ENABLE_AGENT_SWARM path), including DynamicToolManager, PeerCommunicationService, PM self-registration, provisioning, roll-call + heartbeat listeners, AGENT_MCP_TOOLS tool loading, and the SelfHealingScheduler gate. Mutates the Application instance exactly as the original initialize() body did.
@@ -49,43 +104,38 @@ async function initializeSwarmRuntime(application) {
           logger.warn('Queue Manager will be disabled without Redis');
         }
 
-        // ⭐ PHASE_62: Apply saved LLM config on startup (per-bot Redis key)
-        // ⭐ FIX: Skip if ANTHROPIC_API_KEY is set — setup-cline-auth.sh already
-        //   configured the correct Anthropic provider. Applying a stale Redis-saved
-        //   Bedrock config here would overwrite the working Anthropic credentials,
-        //   causing authentication failures (Issue: cline-cli auth failure).
-        if (process.env.ANTHROPIC_API_KEY) {
-          logger.info(`[PHASE_62] Skipping saved LLM config — ANTHROPIC_API_KEY is set (setup script handles config)`);
-        } else {
-          try {
+        // PHASE_62 / SEC-05: always migrate the per-bot record and legacy files. The
+        // replacement builders contain no credential material, including when an API key
+        // exists in the ambient process environment.
+        try {
             const agentId = process.env.AGENT_ID || 'any-bot';
             const savedConfig = await redisClient.get(`config:llm-provider:${agentId}`);
             if (savedConfig) {
               const cfg = JSON.parse(savedConfig);
+              if (cfg && typeof cfg === 'object' && Object.prototype.hasOwnProperty.call(cfg, 'credentials')) {
+                delete cfg.credentials;
+                await redisClient.set(`config:llm-provider:${agentId}`, JSON.stringify(cfg));
+                logger.warn(`[SEC-05] Removed legacy credential field from persisted LLM config for ${agentId}`);
+              }
               const registry = require('../services/llm/LLMProviderRegistry');
-              const clineConfig = registry.buildClineConfig(cfg.provider, cfg.model, cfg.credentials || {});
-              const globalState = registry.buildGlobalState(cfg.provider, cfg.model, cfg.credentials || {});
+              const clineConfig = registry.buildClineConfig(cfg.provider, cfg.model);
+              const globalState = registry.buildGlobalState(cfg.provider, cfg.model);
               if (clineConfig) {
                 const fs = require('fs');
                 const homeDir = process.env.HOME || '/home/node';
                 const clineDir = `${homeDir}/.cline`;
                 const configPath = `${clineDir}/config.json`;
                 
-                // CRITICAL FIX: Check if config.json already exists before overwriting
-                // This prevents overwriting a working Anthropic configuration with saved Bedrock config
-                if (!fs.existsSync(configPath)) {
-                  fs.mkdirSync(`${clineDir}/data`, { recursive: true });
-                  fs.writeFileSync(configPath, JSON.stringify(clineConfig, null, 2));
-                  fs.writeFileSync(`${clineDir}/data/globalState.json`, JSON.stringify(globalState, null, 2));
-                  logger.info(`[PHASE_62] ✅ Applied saved LLM config for ${agentId}: ${cfg.provider} / ${cfg.model}`);
-                } else {
-                  logger.info(`[PHASE_62] Config already exists at ${configPath}, preserving existing configuration`);
-                }
+                // Deliberately overwrite the two legacy provider files: older releases embedded
+                // API keys here. The builders now emit metadata only, so this is the tombstone.
+                fs.mkdirSync(`${clineDir}/data`, { recursive: true });
+                fs.writeFileSync(configPath, JSON.stringify(clineConfig, null, 2));
+                fs.writeFileSync(`${clineDir}/data/globalState.json`, JSON.stringify(globalState, null, 2));
+                logger.info(`[PHASE_62] Applied non-secret saved LLM metadata for ${agentId}: ${cfg.provider} / ${cfg.model}`);
               }
             }
-          } catch (startupConfigErr) {
-            logger.warn(`[PHASE_62] Failed to apply saved LLM config (non-fatal): ${startupConfigErr.message}`);
-          }
+        } catch (startupConfigErr) {
+          logger.warn(`[PHASE_62] Failed to apply saved LLM config (non-fatal): ${startupConfigErr.message}`);
         }
 
         // Initialize Queue Manager
@@ -93,7 +143,7 @@ async function initializeSwarmRuntime(application) {
           application.queueManagerService = new QueueManagerService(
             null, // Will use default Plane DB config from env
             redisClient,
-            new UnifiedMCPProxy(application.mcpService, application.mcpServiceHTTP),
+            application.mcpProxy,
             application.taskController // Pass TaskController for agent processing
           );
 
@@ -108,7 +158,7 @@ async function initializeSwarmRuntime(application) {
             // Initialize DynamicToolManager for runtime tool registration
             const DynamicToolManager = require('../services/queue-manager/DynamicToolManager');
             application.dynamicToolManager = new DynamicToolManager(
-              new UnifiedMCPProxy(application.mcpService, application.mcpServiceHTTP),
+              application.mcpProxy,
               application.toolRegistry,
               redisClient
             );
@@ -673,10 +723,7 @@ Use attempt_completion with your research report.`,
                     if (allToolHandlers[toolDef.name]) {
                       // Real implementation from a scanned tool file
                       const realImpl = allToolHandlers[toolDef.name];
-                      toolHandler = async (params) => {
-                        logger.info(`🔧 [${toolDef.name}] REAL handler invoked with params: ${JSON.stringify(params).substring(0, 200)}`);
-                        return await realImpl(params);
-                      };
+                      toolHandler = wrapManifestToolHandler(toolDef.name, realImpl);
                       logger.info(`🔧 [AGENT_MCP_TOOLS] Using REAL implementation for: ${toolDef.name}`);
                     } else if (toolDef.serverUrl) {
                       // HTTP proxy handler for tools with serverUrl
@@ -719,28 +766,7 @@ Use attempt_completion with your research report.`,
                       };
                     }
 
-                    // Long-running tools (e.g. generate-video) can specify timeout in manifest
-                    // Default 60s, but Veo video generation needs ~120s
-                    const toolTimeout = toolDef.timeout || 60000;
-
-                    application.toolRegistry.register({
-                      name: toolDef.name,
-                      description: toolDef.description || `MCP tool: ${toolDef.name}`,
-                      inputSchema: toolDef.inputSchema || { type: 'object', properties: {} },
-                      handler: toolHandler,
-                      requiresApproval: false,
-                      timeout: toolTimeout,
-                    });
-
-                    // Also register with TaskController so it's available in agentic mode
-                    if (application.taskController) {
-                      application.taskController.registerTool(toolDef.name, toolHandler, {
-                        description: toolDef.description || `MCP tool: ${toolDef.name}`,
-                        requiresApproval: false,
-                        inputSchema: toolDef.inputSchema || { type: 'object', properties: {} },
-                        timeout: toolTimeout,
-                      });
-                    }
+                    registerManifestTool(application, toolDef, toolHandler);
 
                     logger.info(`🔧 [AGENT_MCP_TOOLS] ✅ Registered tool: ${toolDef.name}`);
                   } catch (toolErr) {
@@ -901,4 +927,9 @@ Use attempt_completion with your research report.`,
       }
 }
 
-module.exports = { initializeSwarmRuntime };
+module.exports = {
+  initializeSwarmRuntime,
+  manifestToolRequiresApproval,
+  wrapManifestToolHandler,
+  registerManifestTool,
+};

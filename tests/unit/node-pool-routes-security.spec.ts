@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove the node-pool control plane is fail-closed, rejects untrusted persona paths and reserved claims, never returns credentials, restores pre-assignment files, and serializes assign/release hooks.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Split assignment scenarios into focused suites so governance-counted describe callbacks remain below fifty physical lines.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove crash recovery removes marked credential residue before a pool node can report idle.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: prove assignment credentials are rejected and generated provider files contain only non-secret, non-auto-approved metadata.
  */
 
 import fs from 'fs';
@@ -87,7 +88,6 @@ function validAssignment(personaFile?: string): Record<string, unknown> {
     agent: 'cline',
     model: 'claude-sonnet-4-6',
     provider: 'anthropic',
-    credentials: { ANTHROPIC_API_KEY: 'assignment-secret' },
   };
 }
 
@@ -145,7 +145,7 @@ describe('node-pool persona isolation', () => {
 });
 
 describe('node-pool credential lifecycle', () => {
-  it('never returns credentials and restores all pre-assignment files on release', async () => {
+  it('writes non-secret provider metadata and restores all pre-assignment files on release', async () => {
     process.env.SWARM_SERVICE_SECRET = 'node-control-secret';
     const trusted = path.join(testRoot, 'trusted');
     const personaFile = createPersona(trusted);
@@ -156,12 +156,36 @@ describe('node-pool credential lifecycle', () => {
       const assigned = await nodeRequest(server, 'assign', validAssignment(personaFile), 'node-control-secret');
       const assignedText = await assigned.text();
       expect(assigned.status).toBe(200);
-      expect(assignedText).not.toContain('assignment-secret');
-      expect(fs.readFileSync(baselines.clineConfig, 'utf8')).toContain('assignment-secret');
+      expect(assignedText).not.toMatch(/api[_-]?key|access[_-]?token|secret/i);
+      const config = JSON.parse(fs.readFileSync(baselines.clineConfig, 'utf8')) as Record<string, unknown>;
+      expect(config).toEqual({ autoApprove: false, provider: 'anthropic', model: 'claude-sonnet-4-6' });
+      const globalState = JSON.parse(fs.readFileSync(baselines.globalState, 'utf8')) as {
+        mode: string;
+        autoApprovalSettings: { enabled: boolean; actions: Record<string, boolean> };
+      };
+      expect(globalState.mode).toBe('plan');
+      expect(globalState.autoApprovalSettings.enabled).toBe(false);
+      expect(Object.values(globalState.autoApprovalSettings.actions).every((value) => value === false)).toBe(true);
       expect((await nodeRequest(server, 'release', {}, 'node-control-secret')).status).toBe(200);
       expect(fs.readFileSync(baselines.persona, 'utf8')).toBe('baseline-persona');
       expect(fs.readFileSync(baselines.clineConfig, 'utf8')).toBe('baseline-config');
       expect(fs.readFileSync(baselines.globalState, 'utf8')).toBe('baseline-state');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a legacy credential carrier before creating assignment files', async () => {
+    process.env.SWARM_SERVICE_SECRET = 'node-control-secret';
+    const server = await serveNode();
+    try {
+      const rejected = await nodeRequest(server, 'assign', {
+        ...validAssignment(),
+        credentials: { ANTHROPIC_API_KEY: 'must-not-materialize' },
+      }, 'node-control-secret');
+      expect(rejected.status).toBe(400);
+      expect(fs.existsSync(path.join(process.env.CONFIG_OUTPUT_DIR!, 'bot-persona.json'))).toBe(false);
+      expect(fs.existsSync(path.join(process.env.CLINE_CONFIG_DIR!, 'config.json'))).toBe(false);
     } finally {
       await server.close();
     }

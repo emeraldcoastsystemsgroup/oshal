@@ -1,15 +1,15 @@
 # Twilio — phone + text for the Intelligent Communication swarm
 
-Twilio gives the **communications-bot** its phone/text leg: read recent SMS/calls, send an SMS,
-or place a spoken call — on **the user's own Twilio account** (BYO, per the BACKLOG ownership
-caveat: Twilio is a *chosen* paid pipe, never a platform-owned key or a mandatory default).
+Twilio supplies bounded phone/text operations on **the user's own Twilio account**. It is a chosen
+paid pipe, never a platform-owned key or a mandatory default. Connecting an account does not grant
+a model or unattended local CLI access to its credential.
 
 Two distinct layers use it — don't conflate them:
 
 | Layer | Credential | Purpose |
 | --- | --- | --- |
 | Operator notification transports (`twilio-sms` / `twilio-voice` / `twilio-whatsapp` in [src/features/notifications/](../../src/features/notifications/)) | `TWILIO_*` env vars in `.env` | `notifyOperator()` alerts (watchdog, job failures); WhatsApp uses the same Twilio Messages API with `whatsapp:` addresses |
-| Per-user connector (this doc) | Pasted per-user secret, encrypted in `oshal_connections` | The communications-bot acting **for a user** in chat/tickets |
+| Per-user connector (this doc) | Pasted per-user secret, encrypted in `oshal_connections` | Authenticated, fixed server notification operations for that user |
 
 ## Connect (per user, ~2 minutes)
 
@@ -22,24 +22,23 @@ Two distinct layers use it — don't conflate them:
 3. Done. No partner OAuth app to register — Twilio auth is account-scoped HTTP Basic, so there is
    no `partner-app-registration.md` entry to follow.
 
-## What the bot can do
+## Bounded Twilio operations
 
-The communications-bot (persona [email-summarizer.yaml](../../ai-lab/bot-personas/email-summarizer.yaml))
-shells out to [scripts/oshal-twilio.js](../../scripts/oshal-twilio.js) in its sandbox:
+Current per-user Twilio delivery is owned by the fixed in-process server operation in
+[`twilio-sms-operation.ts`](../../src/app/routes/twilio-sms-operation.ts). Authenticated
+notification test sends and scheduled morning briefs derive the exact user subject server-side;
+the credential is decrypted inside that operation and used only for a sender-number lookup and
+one SMS request. It never enters a child environment, argv, task workspace, or model-visible tool.
 
-- **Reads** — `digest` (default), `messages --limit N`, `calls --limit N`, `numbers`, `account`.
-- **Sends** (confirm-gated: `--confirm` / `OSHAL_MESSAGE_SEND_CONFIRM=true`, real money + a real
-  phone ringing) — `sms <+E164> <text>`, `call <+E164> <spoken text>` (inline TwiML `<Say>`,
-  XML-escaped). The "from" number is `TWILIO_FROM_NUMBER` if set, else the account's first number.
+The former generic CLI is a fail-closed compatibility tombstone. General conversational or
+ticket-driven Twilio reads, SMS, and calls are not enabled under the current security boundary.
+Enabling one requires its own schema-bounded server handler with exact inputs, subject scoping,
+confirmation for paid outward actions, bounded output, and audited credential containment.
+Connector presence alone is never execution authority.
 
-Credential resolution mirrors `oshal-smartthings.js`: controller-brokered secret
-(`.oshal-cred-twilio` / `OSHAL_CRED_TWILIO`, via `resolveBotCreds` — scoped in
-[manifest-worker-connector-scope.ts](../../src/app/manifest-worker-connector-scope.ts)) → per-user
-DB decrypt → operator env pair (`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`). Exit 2 = not connected.
-Multi-account selection via `OSHAL_CONNECTION_LABEL` / `_EMAIL` / `_ID`; `accounts` lists them.
-
-The declarative catalog spec ([swarm-apps/connectors/twilio.yaml](../../swarm-apps/connectors/twilio.yaml))
-consumes the same broker secret as HTTP Basic for `/api/connectors/twilio` GET resources.
+Legacy workspace files, raw connector environment variables, direct database decryption from a
+model-invoked process, and generic HTTP credential carriers are prohibited. If the fixed operation
+cannot resolve the authenticated user's connection, it fails closed as not connected.
 
 ## US carrier reality (learned live, 2026-08-01)
 

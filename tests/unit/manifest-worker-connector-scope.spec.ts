@@ -4,7 +4,7 @@ import { connectorProvidersForManifestWorker } from '../../src/app/manifest-work
 describe('manifest-worker connector scope', () => {
   it('grants communications workers only their supported communication providers', () => {
     expect(connectorProvidersForManifestWorker('b0000000-0000-0000-0000-000000000001'))
-      .toEqual(['google', 'twitter', 'twilio']);
+      .toEqual(['google', 'twitter']);
   });
 
   it('grants home workers only SmartThings and unknown workers nothing', () => {

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add deterministic behavioral guards proving publication consumes the delivery snapshot actually verified and canonical verification hashes and parses one build-manifest byte snapshot.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Opt into the temp-scoped snapshot race seam through an explicit contract-probe operation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Keep each independent substitution boundary in a focused suite so the test-registration callbacks remain below the function-size limit.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Keep substitution fixtures valid under the completed build manifest's date, timestamp, input-digest, and ffprobe-evidence contract.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -116,11 +117,14 @@ const createBuildSwapFixture = (name: string) => {
   const inputNames = ['deck-data.json', 'deck.pptx', 'presenter-head.png', 'RECAP-BUILD-GOAL.md'];
   const inputs = inputNames.map((file) => artifact(file, join(root, file)));
   const pieceNames = ['presenter-intro.mp4', 'presenter-overview.mp4', 'presenter-close.mp4', 'deck-narrated.mp4'];
-  const pieces = pieceNames.map((file, index) => ({ name: file, bytes: 400_000 + index, sha256: String(index + 1).repeat(64) }));
+  const pieces = pieceNames.map((file, index) => ({
+    name: file, bytes: 400_000 + index, sha256: String(index + 1).repeat(64), mediaVerified: true,
+  }));
   const build = {
     schemaVersion: 1, manifestKind: 'recap-build', runId: validRunId,
-    requestedDate: date, status: 'complete', completedAt: '2026-08-05T23:20:00.000Z',
-    inputs, pieces,
+    date, requestedDate: date, status: 'complete', startedAt: '2026-08-05T22:50:00.000Z',
+    completedAt: '2026-08-05T23:20:00.000Z', deckDataSha256: inputs[0].sha256,
+    deckPptxSha256: inputs[1].sha256, inputs, pieces,
   };
   const hashedBytes = Buffer.from(JSON.stringify({ ...build, runId: 'c'.repeat(32) }));
   const readBytes = Buffer.from(JSON.stringify(build));

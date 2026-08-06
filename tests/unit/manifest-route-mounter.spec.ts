@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | D10 regression test: every package factory receives ITS OWN ctx.appPackageDir, and a factory-time capture stays correct at request time after other packages mount — the process-global env var pointed every request-time reader at whichever package mounted last.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Close the D2 mode-matrix gap: `auth: operator` shipped in buildGuards but this suite never exercised it. New cases prove the [requiresAuth, requiresOperator] chain end-to-end — authenticated non-operator session → 403, session sub on OSHAL_OPERATOR_SUBS → 200, EMPTY allowlist fail-closed → 403 even for a session, and unauthenticated → 401 from the OIDC wall BEFORE the operator gate (never a bare 403).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove package @/ alias resolution through the real tsconfig-paths hook and Node createRequire against an external temporary package; no resolver mock can mask the production seam.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2 route-boundary matrix: deny blocks every method, viewer blocks writes, editor/admin defer to package code, missing declarations preserve legacy behavior, shadow observes, resolver failure closes, and delegated request identity is evaluated.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -22,7 +23,13 @@ import {
   ManifestRouteMounterImpl,
   registerPackageFrameworkAliases,
 } from '../../src/app/composition/manifest-route-mounter';
-import type { SwarmAppRouteDeclaration } from '../../src/features/swarm-apps';
+import type {
+  AppAccessResolver,
+  ResolvedAppAccess,
+  SwarmAppAccessDeclaration,
+  SwarmAppRouteDeclaration,
+} from '../../src/features/swarm-apps';
+import { runWithRequestIdentity } from '../../src/shared/services/database/request-identity';
 
 // A minimal AppContext stand-in — the mounter only passes it through to the route factory.
 const FAKE_CTX = { marker: 'ctx-was-passed' } as unknown as import('../../src/app/composition/app-context').AppContext;
@@ -49,15 +56,26 @@ const ROUTES: SwarmAppRouteDeclaration[] = [
 ];
 
 /** Build a real express app + mounter with the flag/auth we want, listen on an ephemeral port. */
-async function bootApp(opts: { flag: boolean; requiresAuth?: RequestHandler }): Promise<{
+async function bootApp(opts: {
+  flag: boolean;
+  requiresAuth?: RequestHandler;
+  appAccess?: AppAccessResolver;
+  callerSub?: string;
+}): Promise<{
   app: Express; server: Server; base: string; mounter: ManifestRouteMounterImpl;
 }> {
   if (opts.flag) process.env.APP_PACKAGE_DYNAMIC_ROUTES = '1';
   else delete process.env.APP_PACKAGE_DYNAMIC_ROUTES;
 
   const app = express();
+  if (opts.callerSub) {
+    app.use((_req, _res, next) => runWithRequestIdentity(
+      { sub: opts.callerSub!, isOperator: false },
+      () => next(),
+    ));
+  }
   const requiresAuth: RequestHandler = opts.requiresAuth ?? ((_req, _res, next) => next());
-  const mounter = new ManifestRouteMounterImpl(app, requiresAuth, FAKE_CTX);
+  const mounter = new ManifestRouteMounterImpl(app, requiresAuth, FAKE_CTX, opts.appAccess);
   app.use((_req, res) => res.status(404).json({ notFound: true })); // terminal 404 after the dispatcher
 
   const server = createServer(app);
@@ -74,7 +92,33 @@ beforeAll(() => {
 afterAll(() => {
   rmSync(pkgDir, { recursive: true, force: true });
   delete process.env.APP_PACKAGE_DYNAMIC_ROUTES;
+  delete process.env.OSHAL_APP_ACCESS_MODE;
 });
+
+const ALL_ACCESS: SwarmAppAccessDeclaration = {
+  supported: ['deny', 'viewer', 'editor', 'admin'],
+  defaultTier: 'viewer',
+  mappings: { editor: 'internal_editor_bundle', admin: 'internal_admin_bundle' },
+};
+
+/** Build a deterministic route resolver decision for the requested tier. */
+function accessResolver(
+  tier: ResolvedAppAccess['tier'],
+  observe?: (userSub: string | null) => void,
+): AppAccessResolver {
+  return {
+    async resolve(appName, userSub, declaration) {
+      observe?.(userSub);
+      return {
+        appName,
+        userSub,
+        tier,
+        bundle: declaration.mappings?.[tier] ?? null,
+        source: 'explicit',
+      };
+    },
+  };
+}
 
 describe('ManifestRouteMounterImpl (ADR-085 P1)', () => {
   it('resolves a framework @/ import from an external package through the real Node seam', () => {
@@ -408,5 +452,112 @@ describe('manifest route auth modes (ADR-085 D2)', () => {
   it('auth: operator, unauthenticated → the OIDC wall answers first (401, not 403)', async () => {
     process.env.OSHAL_OPERATOR_SUBS = OPERATOR_SUB;
     expect(await callOperator(DENY)).toBe(401);
+  });
+});
+
+describe('manifest app access boundary (ADR-118 Phase 2)', () => {
+  async function callTier(
+    tier: ResolvedAppAccess['tier'],
+    method: string,
+  ): Promise<{ status: number; body: any }> {
+    const { server, base, mounter } = await bootApp({
+      flag: true,
+      callerSub: 'route-access-user',
+      appAccess: accessResolver(tier),
+    });
+    try {
+      await mounter.mount('pkgtest', pkgDir, ROUTES, ALL_ACCESS);
+      const res = await fetch(`${base}/api/pkgtest/ping`, { method });
+      const text = await res.text();
+      return { status: res.status, body: text ? JSON.parse(text) : null };
+    } finally {
+      server.close();
+    }
+  }
+
+  afterEach(() => { delete process.env.OSHAL_APP_ACCESS_MODE; });
+
+  it.each(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'])('deny blocks %s before package code', async (method) => {
+    const result = await callTier('deny', method);
+    expect(result.status).toBe(403);
+    if (method !== 'HEAD') {
+      expect(result.body).toMatchObject({ error: 'app_access_denied', app: 'pkgtest', tier: 'deny' });
+    }
+  });
+
+  it('viewer admits reads and rejects mutations with the stable app_readonly code', async () => {
+    expect((await callTier('viewer', 'GET')).status).toBe(200);
+    const write = await callTier('viewer', 'POST');
+    expect(write.status).toBe(403);
+    expect(write.body).toMatchObject({ error: 'app_readonly', tier: 'viewer' });
+  });
+
+  it.each(['editor', 'admin'] as const)('%s defers mutations to package capabilities', async (tier) => {
+    expect((await callTier(tier, 'POST')).status).toBe(200);
+  });
+
+  it('an omitted declaration preserves legacy behavior and never consults the resolver', async () => {
+    const resolver: AppAccessResolver = { resolve: async () => { throw new Error('must not run'); } };
+    const { server, base, mounter } = await bootApp({
+      flag: true,
+      callerSub: 'route-access-user',
+      appAccess: resolver,
+    });
+    try {
+      await mounter.mount('pkgtest', pkgDir, ROUTES);
+      expect((await fetch(`${base}/api/pkgtest/ping`, { method: 'POST' })).status).toBe(200);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('shadow mode records a would-deny decision without blocking the package', async () => {
+    process.env.OSHAL_APP_ACCESS_MODE = 'shadow';
+    const result = await callTier('deny', 'DELETE');
+    expect(result.status).toBe(200);
+  });
+
+  it('a declared app fails closed when resolution is unavailable', async () => {
+    const resolver: AppAccessResolver = { resolve: async () => { throw new Error('database unavailable'); } };
+    const { server, base, mounter } = await bootApp({
+      flag: true,
+      callerSub: 'route-access-user',
+      appAccess: resolver,
+    });
+    try {
+      await mounter.mount('pkgtest', pkgDir, ROUTES, ALL_ACCESS);
+      const res = await fetch(`${base}/api/pkgtest/ping`);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'app_access_unavailable' });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('evaluates a durable delegated request under the exact AsyncLocalStorage subject', async () => {
+    let observed: string | null = null;
+    const delegatedAuth: RequestHandler = (_req, _res, next) => {
+      runWithRequestIdentity(
+        { sub: 'delegated-user-sub', principalIssuer: 'https://issuer.example', isOperator: false },
+        () => next(),
+      );
+    };
+    const { server, base, mounter } = await bootApp({
+      flag: true,
+      requiresAuth: delegatedAuth,
+      appAccess: accessResolver('editor', (sub) => { observed = sub; }),
+    });
+    try {
+      await mounter.mount('pkgtest', pkgDir, [{
+        module: 'route.js',
+        factory: 'createTestRoutes',
+        mountPath: '/api/pkgtest',
+        auth: 'oidc',
+      }], ALL_ACCESS);
+      expect((await fetch(`${base}/api/pkgtest/ping`, { method: 'POST' })).status).toBe(200);
+      expect(observed).toBe('delegated-user-sub');
+    } finally {
+      server.close();
+    }
   });
 });

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact dynamic-CLI identity propagation, same-workspace serialization, fail-closed invalid subjects, and identity-owned cleanup under replacement races.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove dynamic CLI children receive caller identity but no controller/database secret environment.
  */
 
 import fs from 'node:fs';
@@ -16,16 +17,26 @@ import { DynamicToolExecutorRegistry } from '../../src/features/tool-registry';
 
 let root: string;
 let priorWorkspaceRoot: string | undefined;
+let priorControllerSecret: string | undefined;
+let priorDatabaseUrl: string | undefined;
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-tool-cli-scope-'));
   priorWorkspaceRoot = process.env.CLINE_WORKSPACE_ROOT;
+  priorControllerSecret = process.env.OSHAL_TEST_CONTROLLER_SECRET;
+  priorDatabaseUrl = process.env.DATABASE_URL;
   process.env.CLINE_WORKSPACE_ROOT = root;
+  process.env.OSHAL_TEST_CONTROLLER_SECRET = 'must-not-reach-tool';
+  process.env.DATABASE_URL = 'postgresql://must-not-reach-tool';
 });
 
 afterEach(() => {
   if (priorWorkspaceRoot === undefined) delete process.env.CLINE_WORKSPACE_ROOT;
   else process.env.CLINE_WORKSPACE_ROOT = priorWorkspaceRoot;
+  if (priorControllerSecret === undefined) delete process.env.OSHAL_TEST_CONTROLLER_SECRET;
+  else process.env.OSHAL_TEST_CONTROLLER_SECRET = priorControllerSecret;
+  if (priorDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL = priorDatabaseUrl;
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -64,6 +75,33 @@ function createExecutor(): ToolExecutorService {
     toolName: 'identity-probe',
     executorType: 'cli',
     cliCommand: `${quoteCommandPart(process.execPath)} ${quoteCommandPart(scriptPath)} {input.marker} {input.release}`,
+    runtimeRegistered: true,
+    registeredAt: new Date().toISOString(),
+  });
+  return new ToolExecutorService({
+    streamManager: new StreamManager(),
+    dynamicToolExecutorRegistry: registry,
+  });
+}
+
+/** Build a one-shot child that records only the environment fields relevant to this boundary. */
+function createEnvironmentProbeExecutor(): ToolExecutorService {
+  const scriptPath = path.join(root, 'environment-probe.cjs');
+  fs.writeFileSync(scriptPath, [
+    "const fs = require('fs');",
+    "const path = require('path');",
+    "fs.writeFileSync(path.join(process.cwd(), process.argv[2]), JSON.stringify({",
+    '  userSub: process.env.OSHAL_USER_SUB,',
+    '  controllerSecret: process.env.OSHAL_TEST_CONTROLLER_SECRET,',
+    '  databaseUrl: process.env.DATABASE_URL,',
+    '  hasPath: Boolean(process.env.PATH || process.env.Path),',
+    '}));',
+  ].join('\n'));
+  const registry = new DynamicToolExecutorRegistry();
+  registry.register({
+    toolName: 'environment-probe',
+    executorType: 'cli',
+    cliCommand: `${quoteCommandPart(process.execPath)} ${quoteCommandPart(scriptPath)} {input.marker}`,
     runtimeRegistered: true,
     registeredAt: new Date().toISOString(),
   });
@@ -128,5 +166,18 @@ describe('ToolExecutorService dynamic CLI identity scope', () => {
       expect(fs.existsSync(path.join(root, taskId, 'started'))).toBe(false);
       expect(fs.existsSync(path.join(root, taskId, '.oshal-user-sub'))).toBe(false);
     }
+  });
+
+  it('forwards caller identity but not controller or database secrets', async () => {
+    const executor = createEnvironmentProbeExecutor();
+    await executor.executeTool(
+      'environment-task', 'environment-probe', { marker: 'environment.json' },
+      'agent-a', ' Owner-A ',
+    );
+    const observed = JSON.parse(fs.readFileSync(
+      path.join(root, 'environment-task', 'environment.json'),
+      'utf8',
+    )) as Record<string, unknown>;
+    expect(observed).toEqual({ userSub: ' Owner-A ', hasPath: true });
   });
 });

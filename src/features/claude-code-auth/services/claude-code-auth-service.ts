@@ -11,6 +11,8 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | api_key env-var auth no longer counts as user-authenticated; buildUnavailableStatus() returns available:true so PKCE Sign In always appears
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | startLogin() accepts optional redirectUri param so /start route can pass request-derived callback URL for auto-callback OAuth flow
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Write OAuth credentials in claude CLI's native format at ~/.claude/.credentials.json (claudeAiOauth shape) so CLI subprocess auth works in containers without ANTHROPIC_API_KEY
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: disable raw Redis credential publication/subscription because unordered pub/sub cannot prevent stale credential resurrection after logout.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05: remove credential export/import APIs; only local mounted-file status and local OAuth persistence remain until an ordered versioned distribution rail exists.
  */
 
 import crypto from 'crypto';
@@ -18,7 +20,6 @@ import fs from 'fs';
 import path from 'path';
 import { execFile as execFileCallback, spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { promisify } from 'util';
-import Redis from 'ioredis';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'claude-code-auth-service' });
@@ -104,7 +105,7 @@ export interface ClaudeCodeAuthCallbackResult {
 /**
  * @description Portable credential payload used for cross-bot propagation.
  */
-export interface ClaudeCodeCredentialPayload {
+interface ClaudeCodeCredentialPayload {
   access_token: string;
   refresh_token: string | null;
   token_type: string;
@@ -210,11 +211,6 @@ export class ClaudeCodeAuthService {
       this.persistOAuthCredentials(tokenResponse);
       logger.info({ email: email || null }, 'PKCE token exchange succeeded, credentials persisted');
 
-      // Broadcast the saved key to every other bot in the swarm
-      this.broadcastCredentials().catch((err) =>
-        logger.warn({ err }, 'Credential broadcast to swarm failed (non-fatal)'),
-      );
-
       return { authenticated: true, email: email || null };
     } catch (error) {
       logger.error({ err: error }, 'PKCE token exchange failed');
@@ -278,12 +274,12 @@ export class ClaudeCodeAuthService {
   }
 
   /**
-   * @description Reads persisted OAuth credentials for cross-bot propagation.
+   * @description Reads persisted OAuth credentials only to derive local authentication status.
    * Claude CLI stores credentials on Linux as `{"claudeAiOauth":{"accessToken":...,"refreshToken":...,"expiresAt":...,"scopes":[...]}}`.
    * This method accepts both that canonical format and the legacy flat `{access_token,...}` shape.
    * @returns Credential payload when valid credentials exist; otherwise null
    */
-  getCredentials(): ClaudeCodeCredentialPayload | null {
+  private readPersistedCredentials(): ClaudeCodeCredentialPayload | null {
     const credentialsPath = this.resolveClaudeCredentialsPath();
     if (!credentialsPath || !fs.existsSync(credentialsPath)) return null;
     try {
@@ -311,92 +307,9 @@ export class ClaudeCodeAuthService {
         expires_at: expiresAt,
       };
     } catch (error) {
-      logger.warn({ err: error }, 'Failed to read Claude Code credentials for export');
+      logger.warn({ err: error }, 'Failed to read local Claude Code credential status');
       return null;
     }
-  }
-
-  /**
-   * @description Imports OAuth credentials from another bot (swarm propagation).
-   * Writes the canonical claude CLI format so the subprocess can authenticate from the file alone.
-   * @param payload - Credential payload from the source bot
-   */
-  importCredentials(payload: ClaudeCodeCredentialPayload): void {
-    const credentialsPath = this.resolveClaudeCredentialsPath();
-    if (!credentialsPath) {
-      throw new Error('Cannot resolve credentials path — HOME directory not available');
-    }
-    try {
-      fs.mkdirSync(path.dirname(credentialsPath), { recursive: true });
-      const fileContents = {
-        claudeAiOauth: {
-          accessToken: payload.access_token,
-          refreshToken: payload.refresh_token,
-          expiresAt: payload.expires_at,
-          scopes: ['user:inference', 'user:profile'],
-        },
-      };
-      fs.writeFileSync(credentialsPath, JSON.stringify(fileContents, null, 2), 'utf-8');
-      fs.chmodSync(credentialsPath, 0o600);
-      logger.info({ credentialsPath }, 'Claude Code credentials imported from swarm propagation');
-    } catch (error) {
-      logger.error({ err: error, credentialsPath }, 'Failed to import Claude Code credentials');
-      throw error;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Swarm credential broadcast (Redis pub/sub)
-  // ---------------------------------------------------------------------------
-
-  private static readonly CREDENTIAL_CHANNEL = 'swarm.credentials.update';
-
-  /**
-   * @description Publishes the saved key to Redis so every other bot picks it up.
-   */
-  private async broadcastCredentials(): Promise<void> {
-    const redisUrl = process.env.REDIS_URL;
-    if (!redisUrl || process.env.SWARM_MODE !== 'container') return;
-
-    const credentials = this.getCredentials();
-    if (!credentials) return;
-
-    const pub = new Redis(redisUrl);
-    try {
-      const receivers = await pub.publish(
-        ClaudeCodeAuthService.CREDENTIAL_CHANNEL,
-        JSON.stringify(credentials),
-      );
-      logger.info({ receivers }, 'Broadcast credentials to swarm');
-    } finally {
-      pub.disconnect();
-    }
-  }
-
-  /**
-   * @description Call once on bot startup. Subscribes to the credential broadcast channel
-   * and auto-imports any keys published by other bots.
-   */
-  static async subscribeToBroadcast(): Promise<void> {
-    const redisUrl = process.env.REDIS_URL;
-    if (!redisUrl || process.env.SWARM_MODE !== 'container') return;
-
-    const sub = new Redis(redisUrl);
-    const svc = new ClaudeCodeAuthService();
-
-    await sub.subscribe(ClaudeCodeAuthService.CREDENTIAL_CHANNEL);
-    logger.info('Subscribed to swarm credential broadcast channel');
-
-    sub.on('message', (_channel: string, message: string) => {
-      try {
-        const payload = JSON.parse(message) as ClaudeCodeCredentialPayload;
-        if (!payload.access_token) return;
-        svc.importCredentials(payload);
-        logger.info('Received credential broadcast — key saved');
-      } catch (err) {
-        logger.warn({ err }, 'Failed to process credential broadcast');
-      }
-    });
   }
 
   // ---------------------------------------------------------------------------
@@ -523,7 +436,7 @@ export class ClaudeCodeAuthService {
    * @returns Authentication status derived from stored credentials
    */
   private buildStatusFromPersistedCredentials(): ClaudeCodeAuthStatus {
-    const creds = this.getCredentials();
+    const creds = this.readPersistedCredentials();
     if (!creds) return this.buildUnavailableStatus();
     return {
       available: true, authenticated: true, authMethod: 'oauth', apiProvider: null,

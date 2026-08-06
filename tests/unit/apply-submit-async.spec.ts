@@ -9,6 +9,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove unspecified/internal dispatch is
  *   final-submit denied and only explicit server authorization reaches ApplyDispatchInput as true.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Guard raw-claim reaping and ambiguity-safe timeout/idle-worker recovery: strip submit authority, release the posting, and park the ticket for human review.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove apply helper children receive exact caller/trace scope without controller, database, or caller-injected environment values.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove dispatch creates and binds one durable Apply V2 run and sends its exact claim token through every Career queue mutation.
  */
 
 import { EventEmitter } from 'node:events';
@@ -57,7 +59,38 @@ vi.mock('@/app/apply-task-capability', () => ({
   revokeUnclaimedApplyCapability: (...args: unknown[]) => revokeCapabilityMock(...args),
 }));
 
-import { gatherAndDispatch, reconcileApplyInFlight, recoverUnknownApply, runApplyCli } from '@/app/apply-submit';
+const ledgerState = vi.hoisted(() => ({
+  run: {
+    runId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    claimToken: 'ffffffff-1111-4222-8333-444444444444',
+  },
+  expired: [] as Array<Record<string, unknown>>,
+}));
+const createRunMock = vi.fn(async (_pool: unknown, input: Record<string, unknown>) => ({
+  ...ledgerState.run,
+  ticketId: input.ticketId,
+  ownerSub: input.ownerSub,
+  postingId: input.postingId,
+  state: 'claimed',
+}));
+const transitionRunMock = vi.fn(async (_pool: unknown, input: Record<string, unknown>) => ({
+  ...ledgerState.run, state: input.to,
+}));
+vi.mock('@/app/apply-run-ledger', () => ({
+  APPLY_UNDISPATCHED_TIMEOUT_MS: 120_000,
+  createApplyRun: (...args: unknown[]) => createRunMock(...args as [unknown, Record<string, unknown>]),
+  listExpiredApplyRuns: async () => ledgerState.expired,
+  transitionApplyRun: (...args: unknown[]) => transitionRunMock(...args as [unknown, Record<string, unknown>]),
+}));
+
+import {
+  buildApplyCliProcessEnv,
+  gatherAndDispatch,
+  reconcileApplyInFlight,
+  recoverExpiredApplyRuns,
+  recoverUnknownApply,
+  runApplyCli,
+} from '@/app/apply-submit';
 import { dispatchApply, removeApplyWorkspace } from '@/app/apply-dispatch';
 import { APPLY_WORKER_ACK_TIMEOUT_MS, applyInFlight, clearInFlight } from '@/app/apply-inflight';
 import type { AppContext } from '@/app/composition/app-context';
@@ -93,7 +126,9 @@ function happyResponder(verbArgs: string[], proc: FakeProc): void {
   const verb = verbArgs.join(' ');
   if (verb.startsWith('queue next')) reply(proc, ['gathering…', JSON.stringify({ item: ITEM })]);
   else if (verb.startsWith('profile')) reply(proc, [JSON.stringify({ name: 'the operator', email: 'r@test' })]);
-  else if (verb.startsWith('queue claim')) reply(proc, [JSON.stringify({ ok: true, posting_id: ITEM.posting_id, claimed: true })]);
+  else if (verb.startsWith('queue claim')) reply(proc, [JSON.stringify({
+    ok: true, posting_id: ITEM.posting_id, claimed: true, apply_run_id: ledgerState.run.runId,
+  })]);
   else if (verb.startsWith('queue requeue')) reply(proc, [JSON.stringify({ ok: true, posting_id: ITEM.posting_id })]);
   else reply(proc, ['{}']);
 }
@@ -106,6 +141,9 @@ beforeEach(() => {
   revokeCapabilityMock.mockClear();
   revokeCapabilityMock.mockResolvedValue('revoked');
   getCompletedResultMock.mockClear();
+  createRunMock.mockClear();
+  transitionRunMock.mockClear();
+  ledgerState.expired = [];
   remoteState.client = null;
   remoteState.completed = null;
 });
@@ -116,6 +154,25 @@ afterEach(() => {
 });
 
 describe('runApplyCli — async CLI contract (no spawnSync)', () => {
+  it('builds an exact helper environment without controller or injected secrets', () => {
+    const env = buildApplyCliProcessEnv(
+      ' Owner-Exact ',
+      { APPLY_RESULT: 'assist_review', DATABASE_URL: 'caller-injected-database' },
+      {
+        PATH: 'C:\\runtime',
+        JOBHUNTER_STORE_ROOT: 'C:\\career-store',
+        DATABASE_URL: 'controller-database',
+        SESSION_SECRET: 'controller-session',
+      },
+    );
+    expect(env).toEqual({
+      PATH: 'C:\\runtime',
+      JOBHUNTER_STORE_ROOT: 'C:\\career-store',
+      OSHAL_USER_SUB: ' Owner-Exact ',
+      APPLY_RESULT: 'assist_review',
+    });
+  });
+
   it('resolves the JSON-parsed LAST stdout line (noise lines ignored)', async () => {
     responder = (_v, proc) => reply(proc, ['warming up', 'not json either', JSON.stringify({ ok: 1 })]);
     await expect(runApplyCli('u1', ['profile'])).resolves.toEqual({ ok: 1 });
@@ -149,8 +206,14 @@ describe('gatherAndDispatch — async, guarded (07-15 wedge-class conversion)', 
     expect((r.body.job as { company: string }).company).toBe('ACME');
     expect(applyInFlight.has('task-1')).toBe(true);
     expect(dispatchApply).toHaveBeenCalledWith(
-      expect.objectContaining({ finalSubmitAuthorized: false }), expect.any(Object),
+      expect.objectContaining({
+        finalSubmitAuthorized: false,
+        timeoutAt: expect.any(Date),
+      }), expect.any(Object),
     );
+    const createInput = createRunMock.mock.calls[0]?.[1] as { timeoutAt: Date };
+    expect(createInput.timeoutAt.getTime() - Date.now()).toBeGreaterThan(110_000);
+    expect(createInput.timeoutAt.getTime() - Date.now()).toBeLessThanOrEqual(120_000);
     // CLI chain ran in order: stale-claim reap -> queue next -> profile -> queue claim.
     const verbs = spawnCalls.map((c) => c.argv.slice(1, 3).join(' '));
     expect(verbs).toEqual(['queue reap', 'queue next', 'profile', 'queue claim']);
@@ -272,12 +335,15 @@ describe('gatherAndDispatch — async, guarded (07-15 wedge-class conversion)', 
     expect(ctx.ticketService.updateStatus).not.toHaveBeenCalledWith(
       'ticket-timeout', 'approved', expect.anything(),
     );
-    expect(spawnCalls.map((c) => c.argv.slice(1, 3).join(' '))).toContain('queue requeue');
+    expect(spawnCalls.map((c) => c.argv.slice(1, 3).join(' '))).toContain('queue record');
+    expect(transitionRunMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      runId: ledgerState.run.runId, to: 'unknown_outcome',
+    }));
     expect(removeApplyWorkspace).toHaveBeenCalledWith('task-1');
     expect(applyInFlight.has('task-1')).toBe(false);
   });
 
-  it('a healthy assigned worker idle after the acknowledgement window is parked for review', async () => {
+  it('a healthy assigned worker idle before acknowledgement is safely abandoned and released', async () => {
     responder = happyResponder;
     const ctx = makeCtx();
     await gatherAndDispatch(ctx, 'idle-user', 'ticket-idle');
@@ -293,10 +359,39 @@ describe('gatherAndDispatch — async, guarded (07-15 wedge-class conversion)', 
     expect(recovered).toBe(1);
     expect(getCompletedResultMock).toHaveBeenCalledWith('client-1', 'task-1');
     expect(ctx.ticketService.updateStatus).toHaveBeenCalledWith(
-      'ticket-idle', 'customer_action', expect.objectContaining({
-        reason: 'apply_worker_idle_orphan',
+      'ticket-idle', 'approved', expect.objectContaining({
+        reason: 'worker_ack_timeout_idle',
       }),
     );
+    expect(transitionRunMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      runId: ledgerState.run.runId, to: 'abandoned',
+    }));
     expect(applyInFlight.has('task-1')).toBe(false);
+  });
+
+  it('CAS-fails and releases an expired undispatched claim without waiting for ticket age', async () => {
+    responder = happyResponder;
+    ledgerState.expired = [{
+      runId: ledgerState.run.runId,
+      claimToken: ledgerState.run.claimToken,
+      ticketId: 'ticket-expired', ownerSub: 'expired-owner', postingId: 73,
+      taskId: null, workerClientId: null, state: 'claimed',
+      claimedAt: new Date(Date.now() - 121_000).toISOString(), dispatchedAt: null,
+      timeoutAt: new Date(Date.now() - 1_000).toISOString(),
+    }];
+    const ctx = makeCtx();
+    const recovered = await recoverExpiredApplyRuns(ctx);
+    expect(recovered).toBe(1);
+    expect(transitionRunMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      runId: ledgerState.run.runId,
+      from: ['claimed'], to: 'failed', failureCode: 'undispatched_claim_timeout',
+    }));
+    expect(spawnCalls.at(-1)?.argv.slice(1)).toEqual([
+      'queue', 'requeue', '73', '--run-id', ledgerState.run.runId,
+      '--claim-token', ledgerState.run.claimToken,
+    ]);
+    expect(ctx.ticketService.updateStatus).toHaveBeenCalledWith(
+      'ticket-expired', 'approved', expect.objectContaining({ careerClaimReleased: true }),
+    );
   });
 });

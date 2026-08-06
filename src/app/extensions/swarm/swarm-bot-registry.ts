@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Registry parity: codex-packer (the Bot Forge, a0…030) existed ONLY in the local registry, so SWARM_REGISTRY=full silently dropped the Forge bot while its app manifest, ribbon tab, and chat surface all stayed up. Added the same inline entry here (container oshal-api, claude-code, operator+swarm scoped per ADR-087); parity guarded by codex-packer-created-bot.spec.ts.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: removed the PHANTOM advisor-bot row (e0…200) — no persona YAML, no compose service, no manifest, no heartbeat, so it could never be personified or dispatched. Removed from BOTH registries in the same change so the two cannot drift (the mirrored-registry rule cuts both ways).
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | K2/K7 (BACKLOG kernel audit 2026-07-29): a0…0018 renamed architect-bot → system-architect — ONE name everywhere. The split was live breakage in full mode: dispatch-routing's built-in build workflow resolves BY NAME on 'system-architect', which this registry did not contain, and the oshal-engineering manifest registered the third variant. Now both registries, the manifest, the persona (system-architect.yaml), and the compose service all agree; migration 100 renames the DB row; guarded by registry-name-consistency.spec.ts. K7: scoped code-developer, code-reviewer, devops-bot, research-bot, test-engineer, tester-bot, apply-operator to operator+swarm (internal machinery, ADR-087) and general-bot to operator+swarm+jarvis (task-lane fallback KEEPS jarvis — wave-2 constraint). Kernel-set comment for a0…030 corrected to codex-packer (self-healing-bot moved to a0…056 + out of the kernel manifests — K3/K4).
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Close cross-variant registry drift: the default/local registry is the authoritative identity, capability, access, and current deployment definition; full mode is now its deterministic superset plus six full-only legacy catalog entries, while kernel remains a UUID-filtered subset. This prevents full mode from dropping promoted/default or kernel-required bots and prevents duplicate declarations from silently redefining shared UUIDs.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -246,8 +247,14 @@ export function isBotAccessibleTo(agentId: string | null | undefined, role: Swar
   return defs.every((d) => roleCanAccess(d.accessRoles, role));
 }
 
-/** @description Static compose-derived swarm bot registry used for route compatibility and identity resolution. */
-export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
+/**
+ * @description Historical full-mode catalog. This list supplies only definitions whose UUID is
+ * absent from the current default registry. Shared UUIDs remain here as migration context, but
+ * they are deliberately non-authoritative: LOCAL_BOT_REGISTRY reflects the supported compose
+ * topology and is the one source for shared identity, capability, access, and runtime metadata.
+ * SWARM_BOT_REGISTRY below performs the explicit, guarded union.
+ */
+const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
   {
     agentId: 'a0000000-0000-0000-0000-000000000001',
     name: 'project-manager',
@@ -924,6 +931,30 @@ export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     accessRoles: ['operator', 'swarm'],   // privileged; reachable only via the superadmin-gated 'oshal-dev' lane (ADR-087)
   },
 ];
+
+/**
+ * @description Full-mode registry: every current/default bot plus the older full catalog's
+ * additional identities. A deployment variant may add bots, but it may not redefine a shared
+ * UUID's name, capabilities, access policy, endpoint, or harness metadata. Building the union
+ * here makes that authority structural rather than relying on maintainers to mirror large arrays.
+ */
+const LOCAL_REGISTRY_IDENTITY_KEYS = new Set(LOCAL_BOT_REGISTRY.map(registryIdentityKey));
+export const SWARM_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
+  ...LOCAL_BOT_REGISTRY,
+  ...FULL_REGISTRY_CATALOG.filter(
+    (definition) => !LOCAL_REGISTRY_IDENTITY_KEYS.has(registryIdentityKey(definition)),
+  ),
+];
+
+/**
+ * @description Stable identity key for registry union/deduplication. Supported definitions carry
+ * a UUID; the name fallback keeps older third-party declarations deterministic until migrated.
+ * @param definition - Registry declaration to key.
+ * @returns UUID key, or a name key only when the legacy declaration has no UUID.
+ */
+function registryIdentityKey(definition: SwarmBotDefinition): string {
+  return definition.agentId?.trim() || `name:${definition.name.trim().toLowerCase()}`;
+}
 
 /**
  * @description Canonical registry for known swarm bot containers and identities.

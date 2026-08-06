@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny constrained execution before autonomous Cline CLI can bypass server tool authorization.
  */
 
 /**
@@ -26,6 +27,7 @@
 const ClineCLIWrapper = require('../codebase/ClineCLIWrapper');
 const logger = require('../../utils/logger');
 const { formatProviderFailure, isProviderRecoverableRuntimeFailure, isProviderRuntimeBanner } = require('./providerFailureClassifier');
+const { assertCliToolBoundary } = require('./assert-cli-tool-boundary');
 
 /**
  * @description LLM provider that fronts the Cline CLI so the rest of the
@@ -91,6 +93,7 @@ class ClineProvider {
    * @returns {Promise<Object>} Response object matching BedrockProvider format
    */
   async generateResponse(messages, options = {}) {
+    assertCliToolBoundary(options, 'cline-cli');
     const startTime = Date.now();
 
     // Model-gateway pre-flight (budgets/quotas/cost-aware routing). One gate for

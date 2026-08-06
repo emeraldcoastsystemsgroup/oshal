@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Isolated node-pool assignment file handling behind trusted persona roots, bounded YAML parsing, owner-only credential files, and reversible session snapshots so released nodes cannot retain the prior assignment's credentials.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add an owner-only active-session marker and fail-safe boot recovery. A process crash can no longer make a node report idle while credential files from the interrupted assignment remain reusable; managed output symlinks are rejected before writes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: remove assignment credential inputs; provider files contain non-secret metadata with autonomous approvals disabled.
  */
 
 import fs from 'fs';
@@ -15,7 +16,6 @@ import { z } from 'zod';
 import {
   buildClineConfig,
   buildClineGlobalState,
-  type CredentialBag,
 } from '@/features/llm-provider';
 
 const MAX_PERSONA_BYTES = 256 * 1024;
@@ -38,7 +38,6 @@ export interface NodeSessionInput {
   personaFile?: string;
   provider: string;
   model: string;
-  credentials: CredentialBag;
 }
 
 interface FileSnapshot {
@@ -77,7 +76,7 @@ interface SessionPaths {
 /**
  * @description Writes a fresh node session and returns the files that must be restored.
  * If any write fails, the complete pre-assignment snapshot is restored before rethrowing.
- * @param input - Validated identity, provider, model, persona, and credential data.
+ * @param input - Validated identity, provider, model, and persona metadata.
  * @returns Snapshot plus the canonical persona path retained in public assignment state.
  */
 export function applyNodeSession(input: NodeSessionInput): AppliedNodeSession {
@@ -159,11 +158,11 @@ function restoreFile(snapshot: FileSnapshot): void {
 }
 
 function writeProviderFiles(paths: SessionPaths, input: NodeSessionInput): void {
-  const config = buildClineConfig(input.provider, input.model, input.credentials);
+  const config = buildClineConfig(input.provider, input.model);
   if (config) writeProtectedJson(paths.clineConfig, config);
   else if (fs.existsSync(paths.clineConfig)) fs.unlinkSync(paths.clineConfig);
 
-  const globalState = buildClineGlobalState(input.provider, input.model, input.credentials);
+  const globalState = buildClineGlobalState(input.provider, input.model);
   writeProtectedJson(paths.globalState, globalState);
 }
 

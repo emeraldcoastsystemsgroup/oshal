@@ -25,13 +25,16 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7: GET /api/swarm/apps/catalog (marketplace.json via the store repo, OSHAL_STORE_TOKEN-aware, honest degrade) + operator-only POST /api/swarm/apps/install-remote (catalog-pinned source -> scripts/oshal-app.js install -> SwarmAppService.loadApp hot-load). Closes the "install-remote planned, not built" backlog entry.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Default the store to the PUBLIC repo. This route defaulted to the private trunk while scripts/oshal-install.sh downloaded the public snapshot — one product, two stores, and the one the cockpit asked for is unreadable without a token, so every signed-in user without OSHAL_STORE_TOKEN saw an empty Discover shelf and an honest-but-useless "not anonymously readable". The private trunk is now the OVERRIDE (set OSHAL_STORE_REPO on a box that should read it), not the default.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: isolate the catalog-pinned installer child from controller/database/session/provider credentials; forward only OS/runtime, proxy/TLS settings, non-interactive Git controls, and the exact resolved store token.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: retain only canonical audit pointers in the registry, refuse installable rows without one, and pass the fail-closed audit mode into the isolated installer.
  */
 import path from 'path';
 import { execFile } from 'child_process';
 import type { Router, Request, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, requiresOperator } from '@/shared/middleware/authz';
-import { resolveStoreToken, scrubSecret } from './update-check-cron';
+import { resolvePackageAuditMode } from '@/features/swarm-apps';
+import { installerLogTail, resolveStoreToken } from './update-check-cron';
 
 const logger = createChildLogger({ module: 'app-store-remote' });
 
@@ -48,6 +51,36 @@ const FETCH_TIMEOUT_MS = 10_000;
 const CATALOG_TTL_MS = 5 * 60 * 1000;
 /** Same slug contract as the installer + the update-apply route. */
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
+const REMOTE_INSTALL_PROCESS_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+  'GIT_SSL_CAINFO', 'GIT_SSL_CAPATH',
+] as const;
+
+/**
+ * Build the store installer's least-privilege environment.
+ *
+ * The child needs Node/Git runtime discovery, temporary storage, and optional network trust
+ * configuration. It does not need the controller database, session authority, connector keys,
+ * model-provider keys, or the operator's ambient Git credential helpers. The already resolved
+ * store token is the only credential admitted and remains absent for public-store installs.
+ */
+export function buildRemoteAppInstallerProcessEnv(
+  storeToken: string,
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of REMOTE_INSTALL_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.GIT_TERMINAL_PROMPT = '0';
+  env.GCM_INTERACTIVE = 'Never';
+  if (storeToken) env.OSHAL_STORE_TOKEN = storeToken;
+  return env;
+}
 
 /** One catalog entry, as the Discover surface renders it (never hand-typed anywhere). */
 export interface CatalogApp {
@@ -59,6 +92,8 @@ export interface CatalogApp {
   /** Store lifecycle: only 'ready' entries are installable. */
   status: string;
   source: { url: string; path: string; ref: string } | null;
+  /** APP-02 immutable attestation pointer; null means browse-only and never installable. */
+  audit: { record: string; sourceSha: string } | null;
 }
 
 /** The catalog fetch result — `available:false` is the HONEST degrade, not an error. */
@@ -104,6 +139,15 @@ export function parseCatalog(text: string): CatalogApp[] {
       src && typeof src.url === 'string' && typeof src.path === 'string'
         ? { url: src.url, path: src.path, ref: typeof src.ref === 'string' ? src.ref : 'main' }
         : null;
+    const auditValue = a.audit as Record<string, unknown> | undefined;
+    const auditKeys = auditValue && !Array.isArray(auditValue) ? Object.keys(auditValue).sort() : [];
+    const audit = auditValue
+      && auditKeys.join(',') === 'record,sourceSha'
+      && auditValue.record === `audits/${a.name}.json`
+      && typeof auditValue.sourceSha === 'string'
+      && /^[0-9a-f]{40}$/.test(auditValue.sourceSha)
+      ? { record: auditValue.record, sourceSha: auditValue.sourceSha }
+      : null;
     out.push({
       name: a.name,
       displayName: typeof a.displayName === 'string' ? a.displayName : a.name,
@@ -112,6 +156,7 @@ export function parseCatalog(text: string): CatalogApp[] {
       version: typeof a.version === 'string' || typeof a.version === 'number' ? String(a.version) : null,
       status: typeof a.status === 'string' ? a.status : 'unknown',
       source,
+      audit,
     });
   }
   return out;
@@ -199,18 +244,28 @@ export async function installRemoteApp(name: string, ownerSub: string | null, de
   if (entry.status !== 'ready') {
     return { ok: false, status: 409, error: `"${name}" is not installable — store status is "${entry.status}"` };
   }
+  if (!entry.audit) {
+    return { ok: false, status: 409, error: `"${name}" has no valid APP-02 audit binding in the catalog` };
+  }
   if (!entry.source || !/^https:\/\/github\.com\//.test(entry.source.url)) {
     return { ok: false, status: 409, error: `"${name}" has no resolvable GitHub source in the catalog` };
   }
   logger.info({ name, repo: entry.source.url, ref: entry.source.ref }, 'install-remote: installing from store');
   const token = resolveStoreToken();
-  const childEnv: NodeJS.ProcessEnv = { ...process.env };
-  if (token) childEnv.OSHAL_STORE_TOKEN = token; // env-only — never an argv the process table could show
+  const auditMode = resolvePackageAuditMode();
   const run = await new Promise<{ code: number; output: string }>((resolve) => {
     execFile(
       process.execPath,
       [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', name, '--repo', entry.source!.url, '--ref', entry.source!.ref, '--dest', DEPLOYED_APPS_DIR],
-      { cwd: process.cwd(), timeout: 180_000, maxBuffer: 1024 * 1024, env: childEnv },
+      {
+        cwd: process.cwd(),
+        timeout: 180_000,
+        maxBuffer: 1024 * 1024,
+        env: {
+          ...buildRemoteAppInstallerProcessEnv(token),
+          OSHAL_PACKAGE_AUDIT_MODE: auditMode,
+        },
+      },
       (err, stdout, stderr) => {
         const raw = err ? (err as NodeJS.ErrnoException).code : 0;
         resolve({ code: typeof raw === 'number' ? raw : (err ? 1 : 0), output: `${stdout}\n${stderr}`.trim() });
@@ -218,7 +273,7 @@ export async function installRemoteApp(name: string, ownerSub: string | null, de
     );
   });
   // Strip ANSI color + any token echo before the installer output travels as an API payload.
-  const log = scrubSecret(run.output.replace(/\[[0-9;]*m/g, ''), token).split('\n').slice(-15).join('\n');
+  const log = installerLogTail(run.output, token);
   if (run.code !== 0) {
     logger.error({ name, code: run.code, log }, 'install-remote: installer failed');
     return { ok: false, status: 502, error: 'install failed — see log', log };

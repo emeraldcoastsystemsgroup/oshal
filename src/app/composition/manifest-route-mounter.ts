@@ -10,6 +10,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | D10 fix: each package factory now receives a PER-PACKAGE context carrying ctx.appPackageDir. The process-global OSHAL_APP_PACKAGE_DIR env var stays as a load-time-only channel (set→require is synchronous) but request-time readers got whichever package mounted LAST — with 2+ apps, a reload made one app serve another's bundled assets.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D2: apply the manifest's declared route AUTH MODE (oidc | service-or-oidc | service | operator | public) instead of a single boolean. The mounter knew ONE posture (plain OIDC), which is why serviceSecretOr apps could not carve — carving one would have re-authed it and 401'd every bot node, the headless CLI and its own in-container tools. Guards are built once at mount; an omitted or unknown mode resolves to 'oidc', never anonymous. Also hands the package a resolved caller sub (oshalCallerSub) under service/service-or-oidc, where a valid secret passes WITHOUT populating req.oidc — a carved app reading getCaller() would otherwise see a null sub and mis-scope its user_sub-keyed store.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Extract the real tsconfig-paths registration seam so regression tests resolve an @/ module from an external package with Node createRequire instead of stubbing the resolver the fix depends on.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: enforce per-user app deny/viewer/editor/admin at the dynamic package-route boundary, expose the resolved tier/bundle to package capabilities, and support observable shadow rollout.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: enforce the canonical no-AI 503 before entering a manifest route that declares requiresAi.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
@@ -24,8 +26,15 @@ import {
   serviceSecretOr,
 } from '@/shared/middleware/authz';
 import { resolveRouteAuthMode, type SwarmAppRouteAuthMode } from '@/shared/route-auth';
-import type { ManifestRouteMounter, SwarmAppRouteDeclaration } from '@/features/swarm-apps';
+import { isAiDisabled, sendAiDisabled } from '@/shared/middleware/ai-availability';
+import type {
+  AppAccessResolver,
+  ManifestRouteMounter,
+  SwarmAppAccessDeclaration,
+  SwarmAppRouteDeclaration,
+} from '@/features/swarm-apps';
 import type { AppContext } from '@/app/composition/app-context';
+import { appAccessCallerSub, appAccessDenial, appAccessEnforcementMode } from '@/app/middleware/app-access-policy';
 
 const logger = createChildLogger({ module: 'manifest-route-mounter' });
 
@@ -47,6 +56,8 @@ export function registerPackageFrameworkAliases(frameworkRoot: string): () => vo
 
 /** One dynamically-mounted route belonging to an installed app package. */
 interface MountedRoute {
+  /** Owning app; part of the exact user/app assignment lookup tuple. */
+  appName: string;
   /** The URL prefix this route owns, e.g. `/api/education`. */
   mountPath: string;
   /** ADR-085 D2: the resolved auth posture for this route. */
@@ -55,6 +66,10 @@ interface MountedRoute {
   guards: RequestHandler[];
   /** The package's own router/handler (result of calling its exported factory). */
   handler: RequestHandler;
+  /** Omitted on legacy apps, which retain their current behavior unchanged. */
+  access?: SwarmAppAccessDeclaration;
+  /** Explicit manifest contract; only inference-bearing routes are unavailable on a no-AI box. */
+  requiresAi: boolean;
 }
 
 /**
@@ -86,6 +101,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
     app: Express,
     private readonly requiresAuth: RequestHandler,
     private readonly ctx: AppContext,
+    private readonly appAccess?: AppAccessResolver,
   ) {
     this.enabled = ['1', 'true', 'yes'].includes(
       (process.env.APP_PACKAGE_DYNAMIC_ROUTES || '').trim().toLowerCase(),
@@ -126,7 +142,12 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
    * called with the app context to build a router. Failures are logged and skipped so one bad
    * module cannot brick activation. No-op when the feature flag is off.
    */
-  async mount(appName: string, packageDir: string, routes: SwarmAppRouteDeclaration[]): Promise<void> {
+  async mount(
+    appName: string,
+    packageDir: string,
+    routes: SwarmAppRouteDeclaration[],
+    access?: SwarmAppAccessDeclaration,
+  ): Promise<void> {
     if (!this.enabled || !routes.length) return;
     const entries: MountedRoute[] = [];
     for (const decl of routes) {
@@ -169,7 +190,15 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
         // per route, so an unwrapped Express route IS public).
         const mode = resolveRouteAuthMode(decl);
         const guards = this.buildGuards(mode, appName, decl.mountPath);
-        entries.push({ mountPath: decl.mountPath, mode, guards, handler });
+        entries.push({
+          appName,
+          mountPath: decl.mountPath,
+          mode,
+          guards,
+          handler,
+          access,
+          requiresAi: decl.requiresAi === true,
+        });
         logger.info({ appName, mountPath: decl.mountPath, module: decl.module, auth: mode }, 'Mounted package route');
       } catch (err) {
         logger.error({ err, appName, module: decl.module }, 'Failed to mount package route (skipping)');
@@ -287,6 +316,14 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
     const originalUrl = req.url;
     const remainder = originalUrl.slice(entry.mountPath.length) || '/';
     const invoke = (): void => {
+      if (entry.requiresAi && isAiDisabled()) {
+        logger.info(
+          { appName: entry.appName, method: req.method, path: req.originalUrl || req.url },
+          'Package AI route refused by declared no-AI posture',
+        );
+        sendAiDisabled(res);
+        return;
+      }
       // ADR-085 D2: hand the package a resolved caller identity. Under `service`/`service-or-oidc`
       // a valid secret passes WITHOUT populating req.oidc, so a carved app reading getCaller(req)
       // would see a null sub and mis-scope its user_sub-keyed store — the ADR-036 failure mode.
@@ -294,14 +331,70 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
       const trusted = getTrustedServiceUserSub(req);
       if (trusted) (req as Request & { oshalCallerSub?: string }).oshalCallerSub = trusted;
 
-      req.url = remainder.startsWith('/') ? remainder : '/' + remainder;
-      entry.handler(req, res, (err?: unknown) => {
-        req.url = originalUrl; // restore for any downstream middleware
-        next(err as Parameters<NextFunction>[0]);
+      void this.authorizeAppAccess(entry, req, res, next, () => {
+        req.url = remainder.startsWith('/') ? remainder : '/' + remainder;
+        entry.handler(req, res, (err?: unknown) => {
+          req.url = originalUrl; // restore for any downstream middleware
+          next(err as Parameters<NextFunction>[0]);
+        });
       });
     };
     this.runGuards(entry.guards, 0, req, res, next, invoke);
   }
+
+  /**
+   * @description Apply the ADR-118 coarse doorway after route authentication and before package
+   * code. Deny blocks every method; viewer admits only GET/HEAD/OPTIONS; editor/admin pass through
+   * to the package's own capabilities. Database or wiring failure never opens a declared app.
+   */
+  private async authorizeAppAccess(
+    entry: MountedRoute,
+    req: Request,
+    res: Response,
+    next: NextFunction,
+    invoke: () => void,
+  ): Promise<void> {
+    if (!entry.access) {
+      invoke();
+      return;
+    }
+    if (!this.appAccess) {
+      logger.error({ appName: entry.appName }, 'Declared app access has no resolver');
+      res.status(503).json({ error: 'app_access_unavailable' });
+      return;
+    }
+    try {
+      const userSub = appAccessCallerSub(req);
+      if (!userSub) {
+        invoke();
+        return;
+      }
+      const decision = await this.appAccess.resolve(entry.appName, userSub, entry.access);
+      res.locals.oshalAppAccess = decision;
+      const denial = appAccessDenial(req.method, decision);
+      if (!denial) {
+        invoke();
+        return;
+      }
+      if (appAccessEnforcementMode() === 'shadow') {
+        logger.warn(
+          { appName: entry.appName, userSub: decision.userSub, tier: decision.tier, method: req.method, denial },
+          'App access shadow denial observed',
+        );
+        invoke();
+        return;
+      }
+      logger.info(
+        { appName: entry.appName, userSub: decision.userSub, tier: decision.tier, method: req.method, denial },
+        'App access request denied',
+      );
+      res.status(403).json({ error: denial, app: entry.appName, tier: decision.tier });
+    } catch (err) {
+      logger.error({ err, appName: entry.appName }, 'App access resolution failed closed');
+      res.status(503).json({ error: 'app_access_unavailable' });
+    }
+  }
+
 
   /**
    * @description Run a route's guard chain in order, then invoke the handler.

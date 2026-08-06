@@ -1,3 +1,14 @@
+/**
+ * SmartThings OAuth connector route contract.
+ *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documented the existing OAuth start/callback regression and pinned its storage-only fake pool to legacy connector crypto; default-on DEK behavior is covered by the dedicated crypto suite.
+ * -----------------------------------------------------------------------------
+ */
+
 import express from 'express';
 import { test, expect } from '@playwright/test';
 import { createConnectorsRoutes } from '@/app/routes/connectors-routes';
@@ -96,7 +107,9 @@ test.describe('SmartThings OAuth connector', () => {
       process.env.SMARTTHINGS_CLIENT_SECRET = 'st-client-secret';
       process.env.SMARTTHINGS_SCOPES = 'r:devices:* x:devices:* r:locations:*';
       delete process.env.SMARTTHINGS_REDIRECT_URI;
-      delete process.env.OSHAL_ENVELOPE_CRYPTO;
+      // This spec owns OAuth request/response behavior, while its fake pool intentionally has no
+      // oshal_user_deks implementation. Keep crypto posture in the dedicated crypto/DEK suites.
+      process.env.OSHAL_ENVELOPE_CRYPTO = 'false';
 
       global.fetch = async (input: URL | RequestInfo, init?: RequestInit) => {
         const url = String(input);

@@ -10,11 +10,12 @@
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the Test job Postgres + Redis service containers and wire the e2e webServer to them (DATABASE_URL/REDIS_URL/RUN_MIGRATIONS), so DB-dependent Playwright specs run instead of timing out against a DB-less server.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Per-push CI is unaffordable at this repo's push cadence (50+ pushes/day x ~45 hosted-runner job-minutes/run blew through the free private-repo minutes; operator decision 2026-07-08): run HOURLY DURING BUSINESS HOURS instead of on every push. PRs still gate. Docker-image publish conditions widened from event==push to any non-PR run on main so the scheduled run still ships images.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | Operator decision 2026-07-09: ONCE A DAY, not hourly. ~45 job-min/day (~1,350/month) fits inside the 2,000 free private-repo minutes, so daily CI costs $0 once the billing block is cleared.
-# 6 | maintainer@emeraldcoastsystemsgroup.com   | Drop the "Build bot image" step: Dockerfile.bot is the March-era slim-worker image that predates the single-image design (CLAUDE.md: Dockerfile.oshal + BOT_RUNTIME) — it COPYs vite.config.js (repo moved to .ts) so it cannot build, nothing ships it, and its only live reference is docker-compose.swarm-local.yml on the stale deploy track (BACKLOG "deploy.yml deploys to the runner"). Surfaced by run 29044270678, the first run to ever reach this job.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | Drop the "Build bot image" step: Dockerfile.bot is the March-era slim-worker image that predates the single-image design (CLAUDE.md: Dockerfile.oshal + BOT_RUNTIME) — it COPYs vite.config.js (repo moved to .ts) so it cannot build, nothing ships it, and its only live reference is docker-compose.swarm-local.yml on a retired runner-local validation sketch. Surfaced by run 29044270678, the first run to ever reach this job.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | Security Scan: free ~20GB of preinstalled runner toolchains before building — the image build + Trivy's uncompressed export overflow the ~14GB a stock runner has free (run 29045378356: "no space left on device" inside the Trivy export, not a CVE finding).
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | RE-ENABLED after the billing hold was paid (operator decision 2026-07-09), but MANUAL-ONLY: dropped the daily `schedule:` cron and never added a `push:` trigger. Automatic/per-push runs are what burned the free minutes; this repo pushes to main 50+ times/day. CI now runs ONLY on an explicit "Run workflow" (workflow_dispatch) — "run it when needed" — plus the PR gate (which effectively never fires on this trunk-based repo). Zero automatic billing.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-06: make npm audit blocking, pin the post-incident Trivy action/version, and scan both full history and the checked-out tree with digest-pinned gitleaks.
 # 10 | maintainer@emeraldcoastsystemsgroup.com  | Run the two-user and privacy live proofs in hosted CI by enabling the mock-header identity gate; CI-mode specs fail instead of skip when this explicit test-only switch is absent.
+# 11 | maintainer@emeraldcoastsystemsgroup.com  | Classify the runner-local Compose smoke as ephemeral image/build validation: it is always torn down, changes no durable target, and is not a deployment job.
 # =============================================================================
 
 name: CI
@@ -29,7 +30,8 @@ name: CI
 # │ took the account to zero.                                                 │
 # │                                                                           │
 # │ The ONE automated gate is LOCAL and free: scripts/ci-local.sh, a single   │
-# │ nightly run on the operator's machine. Builds and deploys are local too.  │
+# │ nightly run on the operator's machine. Hosted CI validates and builds;    │
+# │ durable target changes are separate, operator-controlled work.            │
 # │ Enforced by scripts/check-workflow-triggers.js (a ci-local gate + a unit  │
 # │ test), which FAILS if any workflow here regains an automatic trigger.     │
 # │                                                                           │
@@ -256,7 +258,7 @@ jobs:
       # NOTE: no "Build bot image" step. Dockerfile.bot (slim worker) predates the
       # single-image design — Dockerfile.oshal is THE image, BOT_RUNTIME picks the process
       # (CLAUDE.md "Two runtimes, one image"). It doesn't build (COPYs vite.config.js;
-      # repo has vite.config.ts) and only the stale swarm-local deploy track references it.
+      # repo has vite.config.ts) and only the retired swarm-local validation sketch references it.
 
   # ── Security Scan ──────────────────────────────────────────────────────────
   security-scan:
@@ -334,9 +336,11 @@ jobs:
             detect --source=/scan --no-git --config=/scan/.gitleaks.toml --redact --verbose
 
   # ── Quickstart Smoke ───────────────────────────────────────────────────────
-  # Proves the zero-keys quickstart (noop harness + MOCK_OIDC) actually boots and
-  # serves, the way a first-time visitor runs it. Boots only the API + its data
-  # stores (no worker bots), asserts /health, /cockpit/, and a ticket create.
+  # EPHEMERAL IMAGE/BUILD VALIDATION ONLY — this runner-local Compose stack is always
+  # torn down and changes no durable environment. It proves the zero-keys quickstart
+  # (noop harness + MOCK_OIDC) actually boots and serves, the way a first-time visitor
+  # runs it. Boots only the API + its data stores (no worker bots), then asserts
+  # /health, /cockpit/, and a ticket create.
   quickstart-smoke:
     name: Quickstart Smoke (noop + MOCK_OIDC)
     runs-on: ubuntu-latest

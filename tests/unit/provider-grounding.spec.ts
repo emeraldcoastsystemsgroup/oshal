@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Keep Codex process-behavior fixtures behind a reference-exact test capability and operation without weakening the production autonomous-CLI denial boundary.
+ */
+
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -16,20 +24,45 @@ import {
 } from '../../src/features/visual-response';
 
 const requireModule = createRequire(import.meta.url);
+const FIXTURE_OPERATION = 'test:codex-provider-record-process';
+const FIXTURE_CAPABILITY = Object.freeze({ operation: FIXTURE_OPERATION, tools: Object.freeze([]) });
 const capture = requireModule('../../any-bot/server/services/codebase/provider-record-capture.js') as {
   captureProviderRecord: (command: string, output: string) => unknown | null;
   normalizeWalmartCatalogRecord: (output: unknown, query: string, retrievedAt?: string) => unknown | null;
   stripModelProviderRecordFences: (text: string) => string;
 };
-const CodexCLIWrapper = requireModule('../../any-bot/server/services/codebase/CodexCLIWrapper.js') as new (
+type CodexWrapperConstructor = new (
   options?: Record<string, unknown>,
 ) => {
   _parse: (stdout: string) => { text: string; providerRecords: Array<Record<string, unknown>> };
   executeTask: (
     task: string,
     workspace: string,
+    options?: Record<string, unknown>,
   ) => Promise<{ success: boolean; text: string; exitCode: number; stderr: string }>;
 };
+
+/** Load the parser/process fixture with an unforgeable-in-production object-reference gate. */
+function loadFixtureCodexWrapper(): CodexWrapperConstructor {
+  const boundaryPath = requireModule.resolve('../../any-bot/server/services/llm/assert-cli-tool-boundary.js');
+  const wrapperPath = requireModule.resolve('../../any-bot/server/services/codebase/CodexCLIWrapper.js');
+  const boundary = requireModule(boundaryPath) as {
+    assertCliToolBoundary: (options: Record<string, unknown>, provider: string) => void;
+  };
+  const productionAssert = boundary.assertCliToolBoundary;
+  boundary.assertCliToolBoundary = (options, provider) => {
+    if (provider === 'openai-codex'
+      && options.capabilitySnapshot === FIXTURE_CAPABILITY
+      && options.operation === FIXTURE_OPERATION) return;
+    productionAssert(options, provider);
+  };
+  delete requireModule.cache[wrapperPath];
+  try { return requireModule(wrapperPath) as CodexWrapperConstructor; } finally {
+    boundary.assertCliToolBoundary = productionAssert;
+  }
+}
+
+const CodexCLIWrapper = loadFixtureCodexWrapper();
 
 function captureWeather(): NwsWeatherProviderRecord {
   const output = JSON.stringify({
@@ -134,7 +167,10 @@ describe('post-model provider record capture', () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-stdin-spec-'));
     try {
       const wrapper = new CodexCLIWrapper({ spawnImpl: vi.fn(() => child), timeoutMs: 1_000 });
-      const result = await wrapper.executeTask('complete prompt', workspace);
+      const result = await wrapper.executeTask('complete prompt', workspace, {
+        capabilitySnapshot: FIXTURE_CAPABILITY,
+        operation: FIXTURE_OPERATION,
+      });
       expect(child.stdin.write).not.toHaveBeenCalled();
       expect(child.stdin.end).toHaveBeenCalledWith('complete prompt');
       expect(result).toMatchObject({ success: true, text: 'OK', exitCode: 0 });
@@ -178,7 +214,10 @@ describe('post-model provider record capture', () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-jsonl-error-spec-'));
     try {
       const wrapper = new CodexCLIWrapper({ spawnImpl: vi.fn(() => child), timeoutMs: 1_000 });
-      const result = await wrapper.executeTask('quota test', workspace);
+      const result = await wrapper.executeTask('quota test', workspace, {
+        capabilitySnapshot: FIXTURE_CAPABILITY,
+        operation: FIXTURE_OPERATION,
+      });
 
       expect(result.success).toBe(false);
       expect(result.stderr).toContain('Reading prompt from stdin');

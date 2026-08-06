@@ -150,7 +150,7 @@ describe('task/message API isolation routes', () => {
     expect(response.status).toBe(404);
   });
 
-  it('brokers only the selected manifest worker connector scopes on localhost fallback', async () => {
+  it('never brokers connector credentials into localhost model fallback', async () => {
     const taskStore = new InMemoryTaskStore();
     const messageStore = new InMemoryMessageStore();
     for (const taskId of ['fallback-email', 'fallback-weather']) {
@@ -195,11 +195,8 @@ describe('task/message API isolation routes', () => {
       }),
     });
     expect(emailResponse.status).toBe(200);
-    expect(brokerMocks.resolveBotCreds).toHaveBeenCalledWith(
-      pool,
-      'auth0|user-a',
-      ['google', 'twitter', 'twilio'],
-    );
+    expect(brokerMocks.resolveBotCreds).not.toHaveBeenCalled();
+    expect(processMessage.mock.calls[0][2]).not.toHaveProperty('creds');
 
     brokerMocks.resolveBotCreds.mockClear();
     const weatherResponse = await fetch(`${baseUrl}/api/send-message`, {
@@ -215,11 +212,8 @@ describe('task/message API isolation routes', () => {
     });
     expect(weatherResponse.status).toBe(200);
     expect(brokerMocks.resolveBotCreds).not.toHaveBeenCalled();
-    expect(processMessage).toHaveBeenLastCalledWith(
-      'fallback-weather',
-      'Weather today.',
-      expect.objectContaining({ creds: {} }),
-    );
+    expect(processMessage).toHaveBeenLastCalledWith('fallback-weather', 'Weather today.', expect.any(Object));
+    expect(processMessage.mock.calls[1][2]).not.toHaveProperty('creds');
   });
 });
 

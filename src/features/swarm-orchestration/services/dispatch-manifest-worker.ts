@@ -13,6 +13,9 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Carry persisted ticket-owner principal issuer provenance into every single-owner and fan-out HTTP delegation request.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Reject localhost execution fallback when controller signing is enabled so bot-node transport or endpoint failures cannot bypass signed delegation.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Bind localhost fallback identity with the canonical base64url trusted-service subject header so exact owner case/whitespace survives transport.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove connector credentials from generic/fan-out model dispatch. Credential resolution is permitted only for a schema-bounded deterministic providerIntent executed by the trusted server handler.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Close ADR-034 push-on-dispatch enforcement: authoritative stamping defaults on, carries providerConfigRequired even when the record lookup fails, and retains an explicit off/false/0/no/disabled compatibility rollback.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Prevent authoritative remote dispatch from downgrading to the unstamped localhost path after a bot transport failure; only explicit flag-off compatibility requests may use that fallback.
  */
 
 import * as http from 'node:http';
@@ -61,20 +64,21 @@ export function stripPathLikeTokens(text: string): string {
 /**
  * @description ADR-034 gap-b feature flag: whether the controller stamps each bot-node
  * dispatch with the authoritative provider/model/configVersion record (push-on-dispatch).
- * Default OFF — an unset/false flag yields a byte-identical legacy dispatch. Accepts the
- * truthy tokens on/true/1/enabled (case-insensitive) so an operator can flip it either way.
+ * Default ON. An operator can temporarily restore the legacy rail with an explicit
+ * off/false/0/no/disabled value; every other value, including unset, keeps enforcement on.
  * @returns True when push-on-dispatch stamping is enabled.
  */
 function isPushOnDispatchEnabled(): boolean {
   const value = String(process.env.OSHAL_PUSH_ON_DISPATCH ?? '').trim().toLowerCase();
-  return value === 'on' || value === 'true' || value === '1' || value === 'enabled';
+  return !['off', 'false', '0', 'no', 'disabled'].includes(value);
 }
 
 /**
  * @description Resolves the spreadable BotNodeRequest config fields for a dispatch target,
  * gated by {@link isPushOnDispatchEnabled}. When the flag is off it short-circuits to `{}`
- * (no resolver lookup, legacy dispatch); when on it delegates to the fail-open
- * resolveDispatchConfigFields (absent resolver / no record / resolver error all → `{}`).
+ * (no resolver lookup, legacy dispatch). When on it always carries
+ * `providerConfigRequired:true`; an absent resolver, missing record, or lookup error therefore
+ * reaches the bot as an explicit unavailable-authority condition instead of silently degrading.
  * @param resolver - The optional injected runtime-params resolver.
  * @param agentId - The dispatch target's agent id.
  * @returns Fields to spread into the BotNodeRequest (empty when disabled or non-actionable).
@@ -84,7 +88,10 @@ export async function pushOnDispatchFields(
   agentId: string,
 ): Promise<DispatchConfigFields> {
   if (!isPushOnDispatchEnabled()) return {};
-  return resolveDispatchConfigFields(resolver, agentId);
+  return {
+    providerConfigRequired: true,
+    ...await resolveDispatchConfigFields(resolver, agentId),
+  };
 }
 
 /** Ticket types whose worker can modify the platform itself — dispatch is restricted to
@@ -277,9 +284,9 @@ export interface ManifestWorkerDispatchDeps {
   /** Shared controller message store read by Jarvis/cockpit ticket summarization. */
   messageStore?: IMessageStore;
   /**
-   * Resolves the ticket owner's least-privilege connector credentials for the
-   * selected dedicated worker. Values are forwarded only in the bot-node HTTP
-   * request; they are never written to ticket/message metadata.
+   * Resolves the ticket owner's least-privilege credential only for a validated,
+   * schema-bounded provider intent. Values are consumed by the trusted server-side
+   * handler and must never enter a generic model or workspace path.
    */
   resolveBotCreds?: (
     ownerSub: string,
@@ -318,8 +325,8 @@ export interface ManifestWorkerDispatchDeps {
   promoteToSwarm?: (ticket: InternalTicket) => Promise<void>;
   /** ADR-034 gap-b push-on-dispatch: resolves the target agent's authoritative
    *  provider/model/configVersion record so each BotNodeClient.execute dispatch can carry
-   *  it (gated by OSHAL_PUSH_ON_DISPATCH). Absent → no stamping (legacy dispatch), and the
-   *  resolver itself is fail-open (never throws), so this can never block a dispatch. */
+   *  it (default-on OSHAL_PUSH_ON_DISPATCH). Missing authority is carried explicitly so the
+   *  target refuses before model/task execution; explicit flag-off restores the legacy rail. */
   runtimeParamsResolver?: RuntimeParamsResolver;
 }
 
@@ -810,12 +817,9 @@ export async function dispatchManifestWorkerTicket(
       const fanOutInvocationId = randomUUID();
       const executions = await Promise.all(fanOutOwners.map(async (owner): Promise<FanOutExecutionResult> => {
         try {
-          const creds = ticket.ownerSub && deps.resolveBotCreds
-            ? await deps.resolveBotCreds(ticket.ownerSub, owner.agentId)
-            : undefined;
           const ownerWorkspaceId = `${ticketId}--${owner.agentId}--${fanOutInvocationId}`;
           // ADR-034 gap-b: stamp this owner's authoritative config so the bot self-corrects
-          // a divergent runtime before executing (no-op unless OSHAL_PUSH_ON_DISPATCH is on).
+          // a divergent runtime before executing (default-on; flag-off is compatibility only).
           const ownerConfigFields = await pushOnDispatchFields(deps.runtimeParamsResolver, owner.agentId);
           const result = await deps.botNodeClient!.execute(owner.agentId, {
             text: fanOutPrompt(text, owner, fanOutOwners),
@@ -825,7 +829,6 @@ export async function dispatchManifestWorkerTicket(
             agenticMode: true,
             userSub: ticket.ownerSub ?? undefined,
             principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
-            ...(creds && Object.keys(creds).length > 0 ? { creds } : {}),
             ...ownerConfigFields,
           });
           return {
@@ -897,15 +900,15 @@ export async function dispatchManifestWorkerTicket(
     let dispatchResult: ManifestWorkerDispatchResult;
     let botNodeResult: Awaited<ReturnType<BotNodeClient['execute']>> | null = null;
     if (deps.botNodeClient?.hasEndpoint(workerAgentId)) {
+      let authoritativeDispatch = false;
       try {
-        const creds = ticket.ownerSub && deps.resolveBotCreds
-          ? await (providerIntent
-            ? deps.resolveBotCreds(ticket.ownerSub, workerAgentId, providerIntent)
-            : deps.resolveBotCreds(ticket.ownerSub, workerAgentId))
+        const creds = providerIntent && ticket.ownerSub && deps.resolveBotCreds
+          ? await deps.resolveBotCreds(ticket.ownerSub, workerAgentId, providerIntent)
           : undefined;
         // ADR-034 gap-b push-on-dispatch: carry the worker's authoritative config record so a
-        // drifted bot self-corrects before executing (no-op unless OSHAL_PUSH_ON_DISPATCH is on).
+        // drifted bot self-corrects before executing (default-on; flag-off is compatibility only).
         const configFields = await pushOnDispatchFields(deps.runtimeParamsResolver, workerAgentId);
+        authoritativeDispatch = configFields.providerConfigRequired === true;
         const result = await deps.botNodeClient.execute(workerAgentId, {
           text,
           taskId: ticketId,
@@ -914,7 +917,7 @@ export async function dispatchManifestWorkerTicket(
           agenticMode: true,
           userSub: ticket.ownerSub ?? undefined,
           principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
-          ...(creds && Object.keys(creds).length > 0 ? { creds } : {}),
+          ...(providerIntent && creds && Object.keys(creds).length > 0 ? { creds } : {}),
           ...(providerIntent ? { providerIntent } : {}),
           ...configFields,
         });
@@ -925,7 +928,9 @@ export async function dispatchManifestWorkerTicket(
           error: result.success ? undefined : result.response || 'bot-node returned success=false',
         };
       } catch (botErr) {
-        if (providerIntent || deps.botNodeClient.isDelegationEnforced()) throw botErr;
+        if (authoritativeDispatch || providerIntent || deps.botNodeClient.isDelegationEnforced()) {
+          throw botErr;
+        }
         // Fall through to localhost when the bot-node path is unavailable
         // (e.g. resolver returned null for codex-cli harness bots).
         logger.warn(

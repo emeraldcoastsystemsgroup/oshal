@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the wedged-edge-node fix. The control-plane registry is in-memory, so an api restart drops every registration while the daemon keeps polling; register() ran once at start() and never again, so the node failed forever until a human restarted the machine. Proves both halves: the routes answer an unknown client 404 + code (not 400, which the daemon could not distinguish from a malformed call), and the daemon re-registers and recovers on that answer — deduped, floored, and never for a non-404.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | De-flake (BACKLOG "remote-client specs are flaky under full-suite parallelism"). Each of the three route tests booted its OWN express server, so each paid the one-time dynamic-import/transform of the real router graph on vitest's 5s DEFAULT — the cost the two sibling specs already document and buy 15s for, which is why they are not on the flaky list and this file was. Now one server per file in a beforeAll with an explicit 30s budget; the assertions themselves run in ms. The entry's stated cause (port contention) is disproven in place: listen(0) already binds an ephemeral port, so its "allocate ephemeral ports" done-when was already met and would have changed nothing.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the poll-in-flight mutex and currentTaskId fence so overlapping timer ticks cannot claim or execute a second task.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Prove the local MCP child cannot inherit remote-client control-plane authority or unrelated provider credentials.
  */
 
 import express, { type Request, type Response } from 'express';
@@ -17,6 +18,7 @@ import {
   RemoteClientService,
   type RemoteClientConfig,
 } from '../../src/features/remote-client';
+import { buildRemoteMcpProcessEnv } from '../../src/features/remote-client/services/remote-client-service';
 
 const ENV_KEYS = ['REMOTE_CLIENT_SHARED_SECRET', 'OSHAL_OPERATOR_SUBS'];
 let savedEnv: Record<string, string | undefined>;
@@ -36,6 +38,23 @@ afterEach(() => {
     if (savedEnv[key] === undefined) delete process.env[key];
     else process.env[key] = savedEnv[key];
   }
+});
+
+describe('remote MCP subprocess environment', () => {
+  it('keeps desktop runtime settings and drops daemon authority', () => {
+    expect(buildRemoteMcpProcessEnv({
+      Path: 'C:\\runtime',
+      USERPROFILE: 'C:\\Users\\owner',
+      DISPLAY: ':0',
+      REMOTE_CLIENT_CONTROL_PLANE_TOKEN: 'control-plane-secret',
+      DATABASE_URL: 'controller-database',
+      ANTHROPIC_API_KEY: 'provider-secret',
+    })).toEqual({
+      Path: 'C:\\runtime',
+      USERPROFILE: 'C:\\Users\\owner',
+      DISPLAY: ':0',
+    });
+  });
 });
 
 /**

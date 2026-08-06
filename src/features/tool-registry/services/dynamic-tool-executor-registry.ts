@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Track B S6: Dynamic tool executor registry — replaces hardcoded switch with runtime-extendable descriptor map
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: publish immutable executor descriptors so request-start identity checks cannot be bypassed by in-place mutation.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -63,9 +64,14 @@ export class DynamicToolExecutorRegistry {
    * @param descriptor - Execution descriptor for the tool
    */
   register(descriptor: ToolExecutorDescriptor): void {
-    this.registry.set(descriptor.toolName, descriptor);
+    const immutableDescriptor = Object.freeze({ ...descriptor });
+    this.registry.set(immutableDescriptor.toolName, immutableDescriptor);
     logger.info(
-      { toolName: descriptor.toolName, executorType: descriptor.executorType, runtimeRegistered: descriptor.runtimeRegistered },
+      {
+        toolName: immutableDescriptor.toolName,
+        executorType: immutableDescriptor.executorType,
+        runtimeRegistered: immutableDescriptor.runtimeRegistered,
+      },
       'Tool executor descriptor registered',
     );
   }

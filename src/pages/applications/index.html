@@ -11,6 +11,8 @@
   The Discover section below the installed list is the ADR-085 D7 store browse: rows come from
   the store's machine-derived marketplace.json via GET /api/swarm/apps/catalog (never hand-typed
   here), and Install (operator-only, enforced by the API) posts /api/swarm/apps/install-remote.
+  ADR-118 Phase 2 adds the framework-owned operator user-by-app access matrix below the admin bar;
+  package code cannot assign its own platform tier, and all values are HTML-escaped on render.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -98,6 +100,16 @@
       border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 0.86rem; display: inline-flex; align-items: center; gap: 6px; }
     .tb-secondary:hover { border-color: var(--teal); color: var(--teal); }
     .focus-select { padding: 7px 10px; background: var(--panel); border: 1px solid var(--line-dark); border-radius: 8px; color: var(--ink); font: inherit; font-weight: 600; font-size: 0.85rem; }
+    .access-admin { margin-top: -16px; }
+    .access-help { color: var(--ink-muted); font-size: 0.82rem; line-height: 1.45; margin: -3px 0 12px; }
+    .access-grid { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr) 120px minmax(200px, 1.6fr) auto auto; gap: 8px; align-items: center; }
+    .access-grid input, .access-grid select { min-width: 0; width: 100%; padding: 7px 10px; background: var(--panel); border: 1px solid var(--line-dark); border-radius: 8px; color: var(--ink); font: inherit; font-size: 0.84rem; }
+    .access-table-wrap { overflow-x: auto; margin-top: 12px; }
+    .access-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .access-table th, .access-table td { padding: 7px 9px; text-align: left; border-top: 1px solid var(--line); vertical-align: top; }
+    .access-table th { color: var(--ink-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .tier-pill { display: inline-block; border-radius: 999px; padding: 2px 8px; font-weight: 800; background: var(--panel); border: 1px solid var(--line-dark); }
+    .access-empty { color: var(--ink-muted); padding: 10px 0 2px; font-size: 0.82rem; }
 
     /* Suite groups + compact rows */
     .suite-section { margin-bottom: 22px; }
@@ -185,6 +197,7 @@
       .app-row { grid-template-columns: 32px minmax(0, 1fr); }
       .app-right { grid-column: 1 / -1; justify-content: flex-end; }
       .wrap { padding: 32px 16px 48px; }
+      .access-grid { grid-template-columns: 1fr; }
     }
   </style>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
@@ -228,6 +241,21 @@
       </div>
     </div>
 
+    <!-- ADR-118: operator-only, framework-owned user-by-app tier management. -->
+    <div id="accessAdmin" class="admin access-admin op-only" hidden>
+      <div class="admin-head"><span class="codicon codicon-shield"></span> User app access</div>
+      <div class="access-help">Set the coarse platform doorway. Explicit deny blocks every method; viewer is read-only; editor/admin still pass through the app&rsquo;s own capability checks.</div>
+      <div class="access-grid">
+        <input id="accessUserSub" type="text" placeholder="Exact user subject (sub)" autocomplete="off" />
+        <select id="accessApp"><option value="">Select an app</option></select>
+        <select id="accessTier"><option value="">Select tier</option></select>
+        <input id="accessReason" type="text" placeholder="Required assignment reason" autocomplete="off" />
+        <button id="accessAssignBtn">Assign</button>
+        <button id="accessClearBtn" class="danger">Use default</button>
+      </div>
+      <div id="accessMatrix" class="access-table-wrap"></div>
+    </div>
+
     <div id="errorBox"></div>
     <div id="apps" class="apps"></div>
 
@@ -248,11 +276,22 @@
     const appsEl = document.getElementById('apps');
     const errorBox = document.getElementById('errorBox');
     const focusSelect = document.getElementById('focusSelect');
+    const accessAdmin = document.getElementById('accessAdmin');
+    const accessApp = document.getElementById('accessApp');
+    const accessTier = document.getElementById('accessTier');
+    const accessMatrix = document.getElementById('accessMatrix');
+    let accessData = null;
 
     // Reveal operator chrome only for super-admins — same probe the jarvis orb uses.
     fetch('/api/dev-console/access', { credentials: 'same-origin' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d && d.superAdmin) document.body.classList.add('is-operator'); })
+      .then((d) => {
+        if (d && d.superAdmin) {
+          document.body.classList.add('is-operator');
+          accessAdmin.hidden = false;
+          fetchAccessMatrix();
+        }
+      })
       .catch(() => {});
 
     // Guest banner: show the demo notice + Sign in when this is a guest session.
@@ -325,6 +364,45 @@
       } catch (err) {
         showError('Failed to load apps: ' + err.message);
       }
+    }
+
+    async function fetchAccessMatrix() {
+      try {
+        const res = await fetch('/api/swarm/apps/access-matrix');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        accessData = await res.json();
+        const declared = (accessData.apps || []).filter((app) => app.access);
+        accessApp.innerHTML = '<option value="">Select an app</option>' + declared.map((app) =>
+          `<option value="${escapeHtml(app.name)}">${escapeHtml(app.displayName)} (default ${escapeHtml(app.access.defaultTier)})</option>`
+        ).join('');
+        renderAccessTiers();
+        renderAccessMatrix();
+      } catch (err) {
+        accessMatrix.innerHTML = `<div class="error">Failed to load access matrix: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderAccessTiers() {
+      const app = (accessData?.apps || []).find((candidate) => candidate.name === accessApp.value);
+      accessTier.innerHTML = '<option value="">Select tier</option>' + (app?.access?.supported || []).map((tier) =>
+        `<option value="${escapeHtml(tier)}">${escapeHtml(tier)}</option>`
+      ).join('');
+    }
+
+    function renderAccessMatrix() {
+      const rows = accessData?.assignments || [];
+      if (!rows.length) {
+        accessMatrix.innerHTML = '<div class="access-empty">No explicit assignments. Declared apps currently use their manifest defaults.</div>';
+        return;
+      }
+      accessMatrix.innerHTML = `<table class="access-table">
+        <thead><tr><th>User subject</th><th>App</th><th>Tier</th><th>Reason</th><th>Assigned by</th><th>Updated</th></tr></thead>
+        <tbody>${rows.map((row) => `<tr>
+          <td>${escapeHtml(row.userSub)}</td><td>${escapeHtml(row.appName)}</td>
+          <td><span class="tier-pill">${escapeHtml(row.tier)}</span></td>
+          <td>${escapeHtml(row.reason)}</td><td>${escapeHtml(row.assignedBySub)}</td>
+          <td>${escapeHtml(row.updatedAt ? new Date(row.updatedAt).toLocaleString() : '')}</td>
+        </tr>`).join('')}</tbody></table>`;
     }
 
     function render(apps) {
@@ -472,6 +550,25 @@
         throw err;
       }
     }
+
+    accessApp.addEventListener('change', renderAccessTiers);
+    document.getElementById('accessAssignBtn').addEventListener('click', async () => {
+      const userSub = document.getElementById('accessUserSub').value;
+      const appName = accessApp.value;
+      const tier = accessTier.value;
+      const reason = document.getElementById('accessReason').value.trim();
+      if (!userSub || !appName || !tier || !reason) { showError('User subject, app, tier, and reason are required.'); return; }
+      await call('PUT', `/api/swarm/apps/${encodeURIComponent(appName)}/access`, { userSub, tier, reason });
+      await fetchAccessMatrix();
+    });
+    document.getElementById('accessClearBtn').addEventListener('click', async () => {
+      const userSub = document.getElementById('accessUserSub').value;
+      const appName = accessApp.value;
+      const reason = document.getElementById('accessReason').value.trim();
+      if (!userSub || !appName || !reason) { showError('User subject, app, and reason are required to restore the default.'); return; }
+      await call('PUT', `/api/swarm/apps/${encodeURIComponent(appName)}/access`, { userSub, tier: null, reason });
+      await fetchAccessMatrix();
+    });
 
     document.getElementById('loadBtn').addEventListener('click', async () => {
       const path = document.getElementById('loadPath').value.trim();

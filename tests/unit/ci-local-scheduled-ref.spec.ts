@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove scheduled Local CI fetches and pins origin/main, interactive --head remains on HEAD, failed fetch is a labeled HEAD fallback, every committed-source consumer uses the pinned SHA, and the hidden launcher propagates the real gate exit.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Give only the real Windows cscript boundary enough startup headroom under a fully parallel suite; the production gate and exit-code assertion are unchanged.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -169,8 +170,8 @@ describe('scheduled Local CI hidden launcher', () => {
     writeFileSync(join(scripts, 'ci-local.sh'), '#!/usr/bin/env bash\nexit 37\n');
     const launcher = join(scripts, 'ci-local-hidden.vbs');
     const run = spawnSync('cscript.exe', ['//B', '//Nologo', launcher], {
-      encoding: 'utf8', timeout: 10_000,
+      encoding: 'utf8', timeout: 15_000,
     });
     expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(37);
-  });
+  }, 20_000);
 });

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The joke-shorts pump: the driver the video-series conductor never had. Rotates enrolled shows, refuses to touch a busy render node, opens a real ticket per episode, and honours the approval gate through per-show standing authorization with a daily cap instead of deleting it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Story-delivery notification hook (BACKLOG "Telegram notification bot" done-when): a run reaching `delivered` in syncPumpRuns now notifies the operator over the pluggable notify harness (notifyOperator — a no-op until a transport is configured), video-as-link when Drive returned one, honest node-only text when it did not. Injectable via opts.notify for the guard spec; best-effort so a notify failure never blocks the ledger sync.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bind every pump run to the same durable token lease as recap, renew it across stages/restarts, release only the exact capability at terminal settlement, and keep restart-time approval/failure paths from stranding the scarce node.
  */
 /**
  * @description The joke-shorts pump — what keeps the engine producing.
@@ -45,9 +46,15 @@ import type { AppContext } from '@/app/composition/app-context';
 import { SCREENPLAY_WRITER_AGENT_ID } from '@/app/series-pipeline';
 import { advanceVideoSeries, approveSeries, reconcilePendingRenders } from '@/app/series-orchestrator';
 import {
-  checkVidsNodeAvailability, acquireVidsNodeLease, releaseVidsNodeLease, findRenderNode,
-  type NodeAvailability,
+  checkVidsNodeAvailability, type NodeAvailability,
 } from '@/app/vids-node-availability';
+import {
+  acquireNodeResourceLease,
+  releaseNodeResourceLease,
+  renewNodeResourceLease,
+  vidsNodeResourceKey,
+  type NodeResourceLease,
+} from '@/app/node-resource-lease';
 import { notifyOperator, type NotificationMessage, type NotificationResult } from '@/features/notifications';
 
 const logger = createChildLogger({ module: 'series-pump' });
@@ -55,8 +62,8 @@ const logger = createChildLogger({ module: 'series-pump' });
 /** Auto-pause a show after this many consecutive failures. A show that cannot render must not keep trying. */
 const FAILURE_LIMIT = Number(process.env.VIDEO_PUMP_FAILURE_LIMIT || 3);
 
-/** How long the pump holds the node lease for one episode. */
-const LEASE_MINUTES = Number(process.env.VIDS_NODE_LEASE_MINUTES || 45);
+/** How long one heartbeat protects an episode; each pump cycle renews an active run. */
+const LEASE_TTL_MS = Number(process.env.VIDS_NODE_LEASE_MINUTES || 240) * 60_000;
 
 /** Don't write a fresh `skipped` row for the same reason more often than this. */
 const SKIP_LOG_MINUTES = Number(process.env.VIDEO_PUMP_SKIP_LOG_MIN || 60);
@@ -96,6 +103,12 @@ export interface PumpCycle {
   seriesId?: string;
   /** The ticket it opened, when it opened one. */
   ticketId?: string;
+}
+
+/** @description Exact durable resource capability associated with one pump run. */
+interface PumpNodeLease {
+  clientId: string;
+  lease: Pick<NodeResourceLease, 'resourceKey' | 'leaseId' | 'holder'>;
 }
 
 /** The calendar day in the node's own zone — a cap of "1 per day" means the node's day. */
@@ -232,16 +245,18 @@ async function recordRun(
   row: {
     userSub: string; showId: string | null; showSlug: string | null; outcome: string;
     stage?: string | null; reason?: string | null; seriesId?: string | null; ticketId?: string | null;
-    episodeTitle?: string | null; jokeSeed?: string | null;
+    episodeTitle?: string | null; jokeSeed?: string | null; nodeLease?: PumpNodeLease | null;
   },
 ): Promise<string> {
   const { rows } = await pool.query(
     `INSERT INTO video_pump_runs
        (user_sub, show_id, show_slug, outcome, outcome_stage, outcome_reason, series_id, ticket_id,
-        episode_title, joke_seed)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING run_id`,
+        episode_title, joke_seed, node_resource_key, node_client_id, node_lease_id, node_lease_holder)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING run_id`,
     [row.userSub, row.showId, row.showSlug, row.outcome, row.stage ?? null, row.reason ?? null,
-      row.seriesId ?? null, row.ticketId ?? null, row.episodeTitle ?? null, row.jokeSeed ?? null],
+      row.seriesId ?? null, row.ticketId ?? null, row.episodeTitle ?? null, row.jokeSeed ?? null,
+      row.nodeLease?.lease.resourceKey ?? null, row.nodeLease?.clientId ?? null,
+      row.nodeLease?.lease.leaseId ?? null, row.nodeLease?.lease.holder ?? null],
   );
   return String((rows[0] as { run_id: string }).run_id);
 }
@@ -336,6 +351,52 @@ async function noteFailure(
   if (pause) logger.warn({ showId: show.showId, slug: show.slug, why }, 'show auto-paused by the pump');
 }
 
+/** @description Atomically reserve the exact node selected by the availability gate. */
+async function takePumpLease(
+  pool: Pool,
+  clientId: string,
+  show: Pick<PumpShow, 'showId' | 'slug' | 'userSub'>,
+): Promise<{ binding: PumpNodeLease | null; reason?: string }> {
+  const resourceKey = vidsNodeResourceKey(clientId);
+  const result = await acquireNodeResourceLease(pool, {
+    resourceKey,
+    holder: `joke-pump:${show.slug}`,
+    purpose: 'video-pump-episode',
+    ttlMs: LEASE_TTL_MS,
+    metadata: { showId: show.showId, ownerSub: show.userSub },
+  });
+  if (!result.acquired) {
+    return {
+      binding: null,
+      reason: `lease held by ${result.lease.holder} until ${result.lease.expiresAt}`,
+    };
+  }
+  return { binding: { clientId, lease: result.lease } };
+}
+
+/** @description Refresh a pump capability before another potentially expensive stage. */
+async function renewPumpLease(pool: Pool, binding: PumpNodeLease): Promise<PumpNodeLease | null> {
+  const renewed = await renewNodeResourceLease(pool, binding.lease, LEASE_TTL_MS);
+  return renewed ? { clientId: binding.clientId, lease: renewed } : null;
+}
+
+/** @description Best-effort exact release; expiry remains the crash-only fallback. */
+async function releasePumpLease(pool: Pool, binding: PumpNodeLease | null): Promise<void> {
+  if (!binding) return;
+  const released = await releaseNodeResourceLease(pool, binding.lease);
+  if (!released) logger.warn({ resourceKey: binding.lease.resourceKey }, 'pump lease was no longer current at release');
+}
+
+/** @description Recover one exact persisted capability from a pump-run row. */
+function pumpLeaseFromRow(row: Record<string, unknown>): PumpNodeLease | null {
+  const resourceKey = String(row.node_resource_key ?? '');
+  const clientId = String(row.node_client_id ?? '');
+  const leaseId = String(row.node_lease_id ?? '');
+  const holder = String(row.node_lease_holder ?? '');
+  if (!resourceKey || !clientId || !leaseId || !holder) return null;
+  return { clientId, lease: { resourceKey, leaseId, holder } };
+}
+
 /**
  * @description Run ONE pump cycle: reconcile what finished, check the node, and start at most one
  * episode. Safe to call on a timer; every failure path is recorded rather than thrown.
@@ -365,25 +426,67 @@ export async function runPumpOnce(
   const show = await pickNextShow(pool, now);
   if (!show) return { action: 'idle', detail: 'no enrolled show is due' };
 
-  const avail = await checkVidsNodeAvailability(pool, {
-    skipProbe: opts.skipProbe, selfLeaseOwner: `joke-pump:${show.slug}`,
-  });
+  const avail = await checkVidsNodeAvailability(pool, { skipProbe: opts.skipProbe });
   if (!avail.available) {
     await recordSkip(pool, avail, show);
     return { action: 'skipped', showSlug: show.slug, stage: avail.check, detail: avail.reason };
   }
 
-  // Hold the node for the length of one episode so anything else that asks sees it as taken.
-  if (avail.clientId) {
-    const lease = await acquireVidsNodeLease(avail.clientId, `joke-pump:${show.slug}`, LEASE_MINUTES);
-    if (!lease.ok) {
-      const verdict: NodeAvailability = { available: false, check: 'leased', reason: lease.error ?? 'could not take the node lease', clientId: avail.clientId };
-      await recordSkip(pool, verdict, show);
-      return { action: 'skipped', showSlug: show.slug, stage: 'leased', detail: verdict.reason };
-    }
+  // Availability is advisory; this atomic compare-and-set is the authority that closes the race
+  // between a recap starting and a pump cycle that observed the node free milliseconds earlier.
+  if (!avail.clientId) {
+    return { action: 'skipped', showSlug: show.slug, stage: 'no-worker', detail: 'availability returned no render-node identity' };
+  }
+  const taken = await takePumpLease(pool, avail.clientId, show);
+  if (!taken.binding) {
+    const verdict: NodeAvailability = {
+      available: false, check: 'leased', reason: taken.reason ?? 'could not take the durable node lease',
+      clientId: avail.clientId,
+    };
+    await recordSkip(pool, verdict, show);
+    return { action: 'skipped', showSlug: show.slug, stage: 'leased', detail: verdict.reason };
   }
 
-  return produceEpisode(ctx, show, avail, now);
+  try {
+    return await produceEpisode(ctx, show, now, taken.binding);
+  } catch (error) {
+    await releasePumpLease(pool, taken.binding).catch((releaseError) => {
+      logger.error({ err: releaseError, resourceKey: taken.binding?.lease.resourceKey }, 'pump exception lease release failed');
+    });
+    throw error;
+  }
+}
+
+/** @description Renew a restart-bound capability, or safely reacquire only after the full gate. */
+async function ensureRunPumpLease(
+  ctx: AppContext,
+  row: Record<string, unknown>,
+): Promise<{ binding: PumpNodeLease | null; reason?: string }> {
+  const existing = pumpLeaseFromRow(row);
+  if (existing) {
+    const renewed = await renewPumpLease(ctx.pool, existing);
+    if (renewed) return { binding: renewed };
+  }
+
+  const availability = await checkVidsNodeAvailability(ctx.pool, { skipProbe: false });
+  if (!availability.available || !availability.clientId) {
+    return { binding: null, reason: availability.reason };
+  }
+  const taken = await takePumpLease(ctx.pool, availability.clientId, {
+    showId: String(row.show_id ?? row.run_id),
+    slug: String(row.show_slug ?? 'unknown'),
+    userSub: String(row.user_sub ?? 'system'),
+  });
+  if (!taken.binding) return taken;
+  await ctx.pool.query(
+    `UPDATE video_pump_runs
+        SET node_resource_key=$2, node_client_id=$3, node_lease_id=$4,
+            node_lease_holder=$5, updated_at=NOW()
+      WHERE run_id=$1 AND outcome IN ('started','rendering')`,
+    [String(row.run_id), taken.binding.lease.resourceKey, taken.binding.clientId,
+      taken.binding.lease.leaseId, taken.binding.lease.holder],
+  );
+  return taken;
 }
 
 /**
@@ -402,7 +505,9 @@ export async function runPumpOnce(
  */
 async function resumeInFlight(ctx: AppContext, now: Date): Promise<PumpCycle | null> {
   const { rows } = await ctx.pool.query(
-    `SELECT r.run_id, r.series_id, r.show_id, r.show_slug, s.status, sh.standing_authorization, sh.daily_cap
+    `SELECT r.run_id, r.series_id, r.show_id, r.show_slug, r.user_sub,
+            r.node_resource_key, r.node_client_id, r.node_lease_id, r.node_lease_holder,
+            s.status, sh.standing_authorization, sh.daily_cap
        FROM video_pump_runs r
        JOIN video_series s ON s.series_id = r.series_id
        LEFT JOIN video_pump_shows sh ON sh.show_id = r.show_id
@@ -418,24 +523,58 @@ async function resumeInFlight(ctx: AppContext, now: Date): Promise<PumpCycle | n
   const slug = String(r.show_slug ?? 'unknown');
 
   // A series parked at the gate is the one case that needs the authorization decision again — the
-  // cap included, since a day may have turned over while it sat there.
+  // cap included, since a day may have turned over while it sat there. Approval itself does not
+  // touch the node, so release any pre-restart capability before deciding and reacquire only if the
+  // series is actually allowed to cross into paid work.
   if (String(r.status) === 'awaiting_approval') {
+    await releasePumpLease(ctx.pool, pumpLeaseFromRow(r)).catch((error) => {
+      logger.error({ err: error, runId: r.run_id }, 'failed to release restart lease at approval gate');
+    });
     const decision = autoApprovalDecision(
       { standingAuthorization: Boolean(r.standing_authorization), dailyCap: Number(r.daily_cap ?? 0) },
       r.show_id ? await startedTodayCount(ctx.pool, String(r.show_id), now) : 0,
     );
     if (!decision.approve) {
+      await ctx.pool.query(
+        `UPDATE video_pump_runs SET outcome='scripted', outcome_stage='approval',
+                outcome_reason=$2, updated_at=NOW() WHERE run_id=$1`,
+        [String(r.run_id), decision.why],
+      );
       return { action: 'skipped', showSlug: slug, stage: 'approval', seriesId, detail: decision.why };
     }
     const approved = await approveSeries(ctx.pool, seriesId);
-    if (!approved.ok) return { action: 'skipped', showSlug: slug, stage: 'approval', seriesId, detail: approved.error ?? 'approval failed' };
+    if (!approved.ok) {
+      const detail = approved.error ?? 'approval failed';
+      await ctx.pool.query(
+        `UPDATE video_pump_runs SET outcome='failed', outcome_stage='approval',
+                outcome_reason=$2, updated_at=NOW() WHERE run_id=$1`,
+        [String(r.run_id), detail],
+      );
+      return { action: 'skipped', showSlug: slug, stage: 'approval', seriesId, detail };
+    }
+  }
+
+  const lease = await ensureRunPumpLease(ctx, r);
+  if (!lease.binding) {
+    return {
+      action: 'skipped', showSlug: slug, stage: 'leased', seriesId,
+      detail: lease.reason ?? 'the durable render-node lease could not be renewed',
+    };
   }
 
   const step = await advanceVideoSeries(ctx, seriesId);
   await ctx.pool.query(
-    `UPDATE video_pump_runs SET outcome_stage=$2, outcome_reason=$3, updated_at=now() WHERE run_id=$1`,
-    [String(r.run_id), step.stage, `resumed: ${step.detail}`.slice(0, 500)],
+    `UPDATE video_pump_runs
+        SET outcome=CASE WHEN $4 THEN 'failed' ELSE outcome END,
+            outcome_stage=$2, outcome_reason=$3, updated_at=now()
+      WHERE run_id=$1`,
+    [String(r.run_id), step.stage, `resumed: ${step.detail}`.slice(0, 500), step.status === 'failed'],
   );
+  if (step.status === 'failed') {
+    await releasePumpLease(ctx.pool, lease.binding).catch((error) => {
+      logger.error({ err: error, runId: r.run_id }, 'failed to release restart lease after terminal step');
+    });
+  }
   logger.info({ seriesId, slug, stage: step.stage, detail: step.detail }, 'pump resumed an in-flight episode');
   return {
     action: step.blocked ? 'skipped' : 'made',
@@ -448,15 +587,16 @@ async function resumeInFlight(ctx: AppContext, now: Date): Promise<PumpCycle | n
 async function produceEpisode(
   ctx: AppContext,
   show: PumpShow,
-  avail: NodeAvailability,
   now: Date,
+  initialLease: PumpNodeLease,
 ): Promise<PumpCycle> {
   const pool = ctx.pool;
+  let nodeLease = initialLease;
   const { seed, nextCursor } = nextJokeSeed(show);
   const { seriesId, ticketId } = await openEpisode(ctx, show, seed);
   const runId = await recordRun(pool, {
     userSub: show.userSub, showId: show.showId, showSlug: show.slug, outcome: 'started',
-    stage: 'write', seriesId, ticketId, jokeSeed: seed,
+    stage: 'write', seriesId, ticketId, jokeSeed: seed, nodeLease,
   });
   await pool.query(
     `UPDATE video_pump_shows SET seed_cursor = $2, last_started_at = $3, updated_at = now() WHERE show_id = $1`,
@@ -471,7 +611,9 @@ async function produceEpisode(
       [runId, written.detail],
     );
     await noteFailure(pool, show, written.detail);
-    if (avail.clientId) await releaseVidsNodeLease(avail.clientId, `joke-pump:${show.slug}`).catch(() => { /* the failure is what matters */ });
+    await releasePumpLease(pool, nodeLease).catch((error) => {
+      logger.error({ err: error, runId }, 'failed to release pump lease after script rejection');
+    });
     return { action: 'skipped', showSlug: show.slug, stage: 'write', detail: `script rejected: ${written.detail}`, seriesId, ticketId };
   }
 
@@ -486,7 +628,9 @@ async function produceEpisode(
               outcome_reason=$3, updated_at=now() WHERE run_id=$1`,
       [runId, title, decision.why],
     );
-    if (avail.clientId) await releaseVidsNodeLease(avail.clientId, `joke-pump:${show.slug}`).catch(() => { /* nothing is on the node */ });
+    await releasePumpLease(pool, nodeLease).catch((error) => {
+      logger.error({ err: error, runId }, 'failed to release pump lease for parked script');
+    });
     return { action: 'made', showSlug: show.slug, stage: 'approval', seriesId, ticketId, detail: `"${title}" is written and waiting for approval` };
   }
 
@@ -497,12 +641,28 @@ async function produceEpisode(
       [runId, approved.error ?? 'approval failed', title],
     );
     await noteFailure(pool, show, approved.error ?? 'approval failed');
+    await releasePumpLease(pool, nodeLease).catch((error) => {
+      logger.error({ err: error, runId }, 'failed to release pump lease after approval failure');
+    });
     return { action: 'skipped', showSlug: show.slug, stage: 'approval', detail: approved.error ?? 'approval failed', seriesId, ticketId };
   }
 
   // STORYBOARD then RENDER, as far as one call goes; the reconciler carries it the rest of the way.
   const steps: string[] = [];
   for (let i = 0; i < 8; i++) {
+    // eslint-disable-next-line no-await-in-loop
+    const renewed = await renewPumpLease(pool, nodeLease);
+    if (!renewed) {
+      const detail = 'durable render-node lease expired or was replaced before dispatch';
+      await pool.query(
+        `UPDATE video_pump_runs SET outcome='failed', outcome_stage='lease',
+                outcome_reason=$2, updated_at=NOW() WHERE run_id=$1`,
+        [runId, detail],
+      );
+      await noteFailure(pool, show, detail);
+      return { action: 'skipped', showSlug: show.slug, stage: 'lease', detail, seriesId, ticketId };
+    }
+    nodeLease = renewed;
     // eslint-disable-next-line no-await-in-loop
     const step = await advanceVideoSeries(ctx, seriesId);
     steps.push(`${step.stage}: ${step.detail}`);
@@ -557,7 +717,9 @@ export async function syncPumpRuns(
   const pool = ctx.pool;
   const notify = opts.notify ?? notifyOperator;
   const { rows } = await pool.query(
-    `SELECT r.run_id, r.show_id, r.show_slug, r.episode_title, r.created_at, e.status AS ep_status, e.drive_url, e.error
+    `SELECT r.run_id, r.show_id, r.show_slug, r.episode_title, r.created_at,
+            r.node_resource_key, r.node_client_id, r.node_lease_id, r.node_lease_holder,
+            e.status AS ep_status, e.drive_url, e.error
        FROM video_pump_runs r
        JOIN video_episodes e ON e.series_id = r.series_id
       WHERE r.outcome IN ('started','rendering') AND r.series_id IS NOT NULL`,
@@ -618,24 +780,14 @@ export async function syncPumpRuns(
       }
       changed += 1;
     }
+    if (status === 'rendered' || status === 'assembled' || status === 'failed') {
+      // eslint-disable-next-line no-await-in-loop
+      await releasePumpLease(pool, pumpLeaseFromRow(raw)).catch((error) => {
+        logger.error({ err: error, runId }, 'terminal pump lease release failed');
+      });
+    }
   }
-  if (changed) await releaseIdleLease(pool).catch(() => { /* a leaked lease expires on its own */ });
   return changed;
-}
-
-/** Give the node back once nothing of ours is rendering. A leaked lease would idle the pump for its TTL. */
-async function releaseIdleLease(pool: Pool): Promise<void> {
-  const stillRendering = await pool.query(`SELECT 1 FROM video_episodes WHERE status='rendering' LIMIT 1`);
-  if (stillRendering.rows.length) return;
-  const node = findRenderNode();
-  if (!node) return;
-  const { rows } = await pool.query(
-    `SELECT DISTINCT slug FROM video_pump_shows WHERE last_started_at > now() - INTERVAL '6 hours'`,
-  );
-  for (const r of rows as Array<{ slug: string }>) {
-    // eslint-disable-next-line no-await-in-loop
-    await releaseVidsNodeLease(node.clientId, `joke-pump:${r.slug}`).catch(() => { /* not ours */ });
-  }
 }
 
 /**

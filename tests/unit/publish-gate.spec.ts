@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | First guard for the publish gate. This repo is public with no sanitizer between a commit and the world, and scripts/publish-gate.sh is the only wall — yet it had no test, so a regression in it would be found by the leak. Proves the gate passes on this tree and goes RED on each shape it must refuse, including the binary blind spot found 2026-07-27 (every check used `git grep -I`, which skips binaries, so a screenshot of a filled-in job application passed clean). Also guards the .gitignore half of that fix: debris in a NEW artifacts subdir must be ignored without anyone having named the subdir.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards check 5, the commit-message blind spot. Checks 1-4 read the TREE via git ls-files / git grep; a commit message is not a file, so a token or a personal detail typed into `git commit -m` shipped through a gate that printed "clean" — and undoing it needs a history rewrite the main ruleset now refuses outright. Also pins the SCOPE, which is the part that decides whether the check survives: it must scan `HEAD --not --remotes` and not `--all`, because this box carries 117 commits of unpushable local history (archive/pre-scrub-main, retired worktree lanes) that would fail the gate on every push forever until somebody disabled it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | 2026-07-31 23:21:37 America/Chicago — Raises the real-repository gate assertion timeout because a full parallel unit run can spend more than Vitest's 5s default in shell/git startup before the gate reports clean.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bound each disposable Git/Bash gate process and give the two-invocation branch-scope proof explicit full-suite startup headroom.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Apply the documented full-suite startup allowance to the real-repository gate assertion itself; the child process remains independently bounded at 15 seconds.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -62,7 +64,9 @@ interface GateResult {
  */
 function runGate(cwd: string): GateResult {
   try {
-    const output = execFileSync(BASH, [GATE], { cwd, encoding: 'utf8', stdio: 'pipe' });
+    const output = execFileSync(BASH, [GATE], {
+      cwd, encoding: 'utf8', stdio: 'pipe', timeout: 15_000,
+    });
     return { code: 0, output };
   } catch (err) {
     const e = err as { status?: number; stdout?: string; stderr?: string };
@@ -162,7 +166,7 @@ describe('publish gate: the wall between this public repo and the world', () => 
     const { code, output } = runGate(REPO_ROOT);
     expect(output).toContain('Publish gate clean');
     expect(code).toBe(0);
-  }, 30_000);
+  }, 20_000);
 
   it('passes on a clean fixture checkout', () => {
     withFixture(undefined, ({ code }) => expect(code).toBe(0));
@@ -261,7 +265,7 @@ describe('publish gate: the wall between this public repo and the world', () => 
         },
       );
     });
-  });
+  }, 30_000);
 });
 
 /**
@@ -295,14 +299,14 @@ describe('commit messages, which the tree checks cannot see', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it('PASSES when unpushed commit messages are clean', () => {
     withFixture(undefined, (r) => {
       expect(r.code).toBe(0);
       expect(r.output).toMatch(/commit messages|commit messages to scan/i);
     });
-  });
+  }, 20_000);
 
   it('does NOT re-flag a bad message that is already published', () => {
     // Nothing can be done about an already-pushed message except a history rewrite, which
@@ -316,7 +320,7 @@ describe('commit messages, which the tree checks cannot see', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('ignores bad messages on OTHER local branches — the scope that keeps this usable', () => {
     // The trap this pins: `--all --not --remotes` would scan every unpushable local branch.
@@ -336,7 +340,7 @@ describe('commit messages, which the tree checks cannot see', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 describe('artifacts/ ignore rules cover pipeline debris at any depth', () => {

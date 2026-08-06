@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added real-HTTP controller guards for signed target/task/user issuer propagation, explicit system subjects, target mismatch, and partial-key startup failure.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard delegation posture reporting and service-secret authentication on provider mutation push-down.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Verify the real HTTP token binds the complete canonical request body received by the bot.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Verify controller issuance carries exact POST /api/swarm-execute method/path metadata.
  */
 
 import * as http from 'node:http';
@@ -146,6 +147,8 @@ describe('BotNodeClient HTTP delegation issuance', () => {
       principal_iss: PRINCIPAL_ISSUER,
       azp: AGENT_ID,
       task_id: 'task-http-42',
+      method: 'POST',
+      path: '/api/swarm-execute',
       body_sha256: delegationRequestBodySha256(captured.body),
       scope: ['swarm:execute'],
     });

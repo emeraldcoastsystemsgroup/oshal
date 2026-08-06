@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the Token Chase promotion store + routes (ADR-046 keep-winner → re-baseline): the store REFUSES non-llm-judged promotions structurally (nothing touches the DB), promote supersedes the prior active row and writes the 'promote'/'auto-promote' audit entry (in a real transaction when the pool hands out clients, with ROLLBACK on failure), revert only demotes the caller's own ACTIVE promotion and writes the 'revert' audit entry, the promote endpoint enforces auth/validation and answers 422 with per-candidate rejections when nothing clears the bar, applyToBotConfig refuses honestly when the ADR-034 config-sync path is absent, and the AUTO mode is DEFAULT OFF — maybeAutoPromote touches NOTHING (zero queries) unless TOKEN_CHASE_AUTO_PROMOTE=true, in which case winners persist with source 'auto'.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove the runtime lazy schema has the same fail-closed owner boundary as migration 095: both tables enable and FORCE RLS, both owner-or-operator policies carry USING and WITH CHECK clauses, and no policy is created by dropping/replacing an existing policy.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -12,9 +13,11 @@ import type { AddressInfo } from 'node:net';
 import {
   promoteFrameWinner,
   revertPromotion,
+  TOKEN_CHASE_PROMOTION_SCHEMA_SQL,
 } from '../../src/features/token-chase/services/token-chase-promotion-service';
 import {
   createTokenChasePromotionRoutes,
+  loadBaselineOverrides,
   maybeAutoPromote,
 } from '../../src/app/routes/token-chase-promotion-routes';
 import type { AppContext } from '../../src/app/composition/app-context';
@@ -103,6 +106,19 @@ const WINNER_INPUT = {
 };
 
 describe('token-chase promotion store', () => {
+  it('lazy bootstrap enables and FORCEs owner-scoped RLS on both promotion tables', () => {
+    const schema = TOKEN_CHASE_PROMOTION_SCHEMA_SQL.join('\n');
+    for (const table of ['token_chase_promotions', 'token_chase_promotion_audit']) {
+      expect(schema).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+      expect(schema).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
+      expect(schema).toContain(`CREATE POLICY ${table}_owner_or_operator ON ${table}`);
+    }
+    expect(schema.match(/current_setting\('oshal\.current_sub', true\)/g)).toHaveLength(4);
+    expect(schema.match(/current_setting\('oshal\.is_operator', true\) = 'on'/g)).toHaveLength(4);
+    expect(schema.match(/WITH CHECK/g)).toHaveLength(2);
+    expect(schema).not.toMatch(/DROP\s+POLICY/i);
+  });
+
   it('REFUSES to promote a non-llm-judged lane without touching the DB (the honesty rule)', async () => {
     const { pool, query } = fakePool();
     await expect(
@@ -168,6 +184,26 @@ describe('token-chase promotion store', () => {
     const audits = callsMatching(found.query, /INSERT INTO token_chase_promotion_audit/);
     expect(audits).toHaveLength(1);
     expect(audits[0][0]).toMatch(/'revert'/); // the action is inlined in the audit INSERT
+  });
+
+  it('loads an owner-scoped active winner as the next-run baseline override', async () => {
+    const activeRow = promotionRowFrom([
+      OWNER.sub, RUN_ID, 3, 'framework:openrouter', 'llama-3.3-70b:free', 'winning lane',
+      'harness:claude-code-cli', 'claude-sonnet-4-6', '0.10', '0.02', '0.08', 92, 'manual',
+    ]);
+    const { pool, query } = fakePool({ activePromotions: [activeRow] });
+
+    const overrides = await loadBaselineOverrides(pool, OWNER.sub, RUN_ID);
+
+    expect(overrides.get(3)).toEqual({
+      provider: 'framework:openrouter',
+      model: 'llama-3.3-70b:free',
+      costUsd: 0.02,
+      label: 'winning lane',
+    });
+    const reads = callsMatching(query, /FROM token_chase_promotions[\s\S]*status = 'active'/);
+    expect(reads).toHaveLength(1);
+    expect(reads[0][1]).toEqual([OWNER.sub, RUN_ID]);
   });
 });
 

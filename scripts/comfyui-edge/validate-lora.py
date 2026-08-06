@@ -10,7 +10,11 @@
 #
 # Usage (on the GPU box, ComfyUI running on :8188):
 #   python validate-lora.py --character oshbrainrot --version 1 --lora-name oshbrainrot_v1.safetensors \
-#       --controller http://100.64.0.1:35457 --secret $SWARM_SERVICE_SECRET
+#       --controller http://100.64.0.1:35457 --owner-sub-b64 <subject>
+# 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Bind callbacks to the initiating owner's
+# canonical base64url identity header; a fleet secret without owner attribution is insufficient.
+# 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Read the callback fleet secret only from
+# the edge process environment so it cannot leak through task payloads, argv, or shell history.
 #
 # Free-first: CLIP scoring is local ($0). The optional LLM-vision judge is a separate, metered,
 # opt-in step on the controller - never the primary score here.
@@ -149,8 +153,9 @@ def main():
     ap.add_argument("--version", type=int, required=True)
     ap.add_argument("--lora-name", required=True, help="LoRA filename as ComfyUI sees it (in models/loras)")
     ap.add_argument("--controller", default=os.environ.get("OSHAL_CONTROLLER", ""))
-    ap.add_argument("--secret", default=os.environ.get("SWARM_SERVICE_SECRET", ""))
+    ap.add_argument("--owner-sub-b64", default=os.environ.get("OSHAL_USER_SUB_B64", ""))
     a = ap.parse_args()
+    secret = os.environ.get("SWARM_SERVICE_SECRET", "")
     os.makedirs(DEST, exist_ok=True)
 
     clip = Clip()
@@ -224,10 +229,10 @@ def main():
     log("==== VALIDATION v%d: overall %.3f (id %.3f / q %.3f), %d cells, %d weak ===="
         % (a.version, overall, identity_mean, quality_mean, len(cells), len(weak)))
 
-    if a.controller and a.secret:
-        post_ingest(a.controller, a.secret, scorecard)
+    if a.controller and secret and a.owner_sub_b64:
+        post_ingest(a.controller, secret, a.owner_sub_b64, scorecard)
     else:
-        log("no --controller/--secret given; scorecard saved locally only")
+        log("no complete controller/secret/owner binding given; scorecard saved locally only")
 
 
 def write_gallery(a, sc, meta):
@@ -249,11 +254,14 @@ def write_gallery(a, sc, meta):
     open(os.path.join(DEST, "scorecard_v%d.html" % a.version), "w", encoding="utf-8").write(html)
 
 
-def post_ingest(controller, secret, scorecard):
+def post_ingest(controller, secret, owner_sub_b64, scorecard):
     url = controller.rstrip("/") + "/api/lora/ingest"
     try:
-        req = urllib.request.Request(url, data=json.dumps(scorecard).encode(),
-                                     headers={"Content-Type": "application/json", "x-service-secret": secret})
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(scorecard).encode(),
+            headers={"Content-Type": "application/json", "x-service-secret": secret,
+                     "x-oshal-user-sub-b64": owner_sub_b64})
         r = json.loads(urllib.request.urlopen(req, timeout=30).read())
         log("ingest ok: %s" % r)
     except Exception as e:

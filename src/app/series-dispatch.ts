@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Node package dir + exe resolve through vids-node-availability (the old default was a controller-side path that has never existed on the node), and the storyboarded-render dispatch now checks the node is FREE before enqueueing — the reconciler sweeps every 20s and would otherwise dispatch straight into the nightly recap's window.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: render-node selection is owner-scoped. findShellWorker/findVidsWorker picked on LIVENESS ALONE, so on a multi-user swarm one user's series rendered on whatever desktop happened to be connected — driving another person's logged-in Chrome and Google account with the requester's Drive token exported into that shell. The owner now comes from the SERIES ROW (video_series.user_sub, NOT NULL), never from the caller, and candidates run through filterUsableDevices BEFORE the preference order so a foreign VIDS_RENDER_CLIENT_ID pin resolves to null instead of executing. Guard: tests/unit/series-dispatch-device-ownership.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Await all journal-backed render, storyboarding, and assembly enqueues under trusted controller identity before persisting dispatch success.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Let a pump dispatch re-enter only the exact durable lease bound to its series while recap or another pump lease continues to fail closed.
  */
 /**
  * @description Video Series — remote-node render dispatch.
@@ -180,6 +181,23 @@ export async function isRenderInFlight(pool: Pool, seriesId: string): Promise<bo
 }
 
 /**
+ * @description Resolve only the exact active pump lease bound to this series; a holder label is
+ * deliberately insufficient to bypass another workflow's lease.
+ * @param pool database pool
+ * @param seriesId series whose pump run may already own the node
+ * @returns exact lease UUID, or null for manual/non-pump work
+ */
+async function activePumpLeaseId(pool: Pool, seriesId: string): Promise<string | null> {
+  const { rows } = await pool.query<{ node_lease_id: string }>(
+    `SELECT node_lease_id FROM video_pump_runs
+      WHERE series_id=$1 AND outcome IN ('started','rendering') AND node_lease_id IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [seriesId],
+  );
+  return rows[0]?.node_lease_id ?? null;
+}
+
+/**
  * @description The next episode to render: the lowest-ordinal one that has a script and has
  * not been rendered. Returns null when the series is fully rendered.
  * @param {Pool} pool database pool
@@ -228,7 +246,10 @@ export async function dispatchEpisode(
     return { ok: false, episodeId: episode.episodeId, error: 'episode has no script — the screenplay-writer stage has not run' };
   }
   // Same gate as the storyboarded path: nothing reaches the node while something else owns it.
-  const free = await checkVidsNodeAvailability(pool, { skipProbe: true });
+  const selfLeaseId = await activePumpLeaseId(pool, episode.seriesId);
+  const free = await checkVidsNodeAvailability(pool, {
+    skipProbe: true, selfLeaseId: selfLeaseId ?? undefined,
+  });
   if (!free.available) return { ok: false, episodeId: episode.episodeId, error: `the render node is not free: ${free.reason}` };
 
   const ownerSub = await seriesOwnerSub(pool, episode.seriesId);
@@ -335,7 +356,7 @@ export async function dispatchStoryboardedEpisode(
   opts: { driveToken: string; ticketId?: string },
 ): Promise<DispatchResult> {
   const { rows } = await pool.query(
-    `SELECT e.episode_id, e.title, e.ordinal, e.scenes, e.frame_ids, e.status,
+    `SELECT e.episode_id, e.series_id, e.title, e.ordinal, e.scenes, e.frame_ids, e.status,
             s.title AS series_title, s.cast_bible, s.orientation, s.intro_clip, s.user_sub
        FROM video_episodes e JOIN video_series s ON s.series_id = e.series_id
       WHERE e.episode_id = $1`, [episodeId],
@@ -356,7 +377,10 @@ export async function dispatchStoryboardedEpisode(
   // happily dispatch a storyboarded episode into the middle of the nightly recap. `skipProbe` keeps
   // this instant (registry + database + the clock, no round trip to the node) so a 20s sweep never
   // blocks on it; the pump's own full probe is what additionally catches a recap running LATE.
-  const free = await checkVidsNodeAvailability(pool, { skipProbe: true });
+  const selfLeaseId = await activePumpLeaseId(pool, String(e.series_id));
+  const free = await checkVidsNodeAvailability(pool, {
+    skipProbe: true, selfLeaseId: selfLeaseId ?? undefined,
+  });
   if (!free.available) return { ok: false, episodeId, error: `the render node is not free: ${free.reason}` };
 
   // The owner comes off the joined series row. This dispatch exports the caller's Drive access

@@ -18,6 +18,10 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Authenticate provider/model push-down with X-Service-Secret so the credential-bearing /api/llm-provider mutation works behind the bot-node machine gate.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Bind the complete canonical swarm-execute request body into the signed token to prevent prompt, entitlement, credential, or provider-intent mutation.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact UTF-8 delegation subjects and reject invalid supplied assertions without whitespace normalization, code-unit truncation, or ownerless fallback.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: constrain BotNodeRequest.creds to validated deterministic providerIntent execution; generic model/CLI requests may not receive connector credentials.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: remove provider credential forwarding from switchProvider; runtime config push-down now carries provider/model metadata only.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Bind controller-to-bot delegation to exact POST /api/swarm-execute route metadata in addition to the request body and task.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Make authoritative push-on-dispatch enforcement explicit in the wire contract: requests can require a provider record, and responses report the config source/action/version actually enforced.
  */
 
 import * as http from 'node:http';
@@ -33,6 +37,8 @@ import {
   CONTROLLER_SYSTEM_SUBJECT,
   DELEGATION_HTTP_HEADER,
   PLATFORM_SYSTEM_PRINCIPAL_ISSUER,
+  SWARM_EXECUTE_DELEGATION_METHOD,
+  SWARM_EXECUTE_DELEGATION_PATH,
   SWARM_EXECUTE_DELEGATION_SCOPE,
   delegationAudienceFromEnvironment,
   delegationIssuerFromEnvironment,
@@ -170,6 +176,12 @@ export interface BotNodeResponse {
   durationMs: number;
   taskId?: string;
   error?: string;
+  /** Where the effective provider/model selection came from for this execution. */
+  providerConfigSource?: 'authoritative-dispatch' | 'runtime-default' | 'byo-request' | 'deterministic-intent';
+  /** Whether the carried record already matched or required a pre-execution correction. */
+  providerConfigAction?: 'absent' | 'match' | 'corrected';
+  /** Authoritative config generation carried by the controller, when one was available. */
+  providerConfigVersion?: number | null;
   /** Post-model records captured by a trusted bot runtime; consumers must validate schemas. */
   providerRecords?: Array<Record<string, unknown>>;
 }
@@ -195,13 +207,9 @@ export interface BotNodeRequest {
    * trusted request-identity context; durable/background callers must carry the issuer persisted
    * with the owner. It is never inferred from a subject string or accepted from an HTTP header. */
   principalIssuer?: string;
-  /** Token broker (security fix): short-lived, single-user access tokens the
-   *  controller decrypted for THIS caller, as an env-key map (e.g.
-   *  { OSHAL_CRED_GOOGLE, OSHAL_CRED_TWITTER }). The bot writes these into its
-   *  per-request workspace as `.oshal-cred-<provider>` files and uses them
-   *  directly — so it never needs SESSION_SECRET to read the connections table.
-   *  Best-effort: a provider omitted here just means the bot's tool falls back to
-   *  its existing DB-decrypt path. See connector-token-broker.ts. */
+  /** Credential input for a schema-bounded deterministic `providerIntent` only.
+   * The trusted server-side handler consumes it at the operation boundary. It must
+   * never be forwarded to a generic model, CLI environment, or task workspace. */
   creds?: Record<string, string>;
   /** Bring-Your-Own-LLM: the caller's own OpenAI-compatible endpoint+key+model
    *  (resolved by getUserLlmConnection). When set, the bot runs THIS request's
@@ -227,6 +235,12 @@ export interface BotNodeRequest {
    *  fields; the bot-node compares them against its live active provider and self-corrects before
    *  executing (bot-node-dispatch-config.ts). Absent → legacy dispatch, runtime untouched. */
   configVersion?: number;
+  /**
+   * True when this dispatch is on the authoritative provider/model rail. The bot must refuse
+   * execution if the accompanying record or its reconciliation seam is unavailable; this
+   * distinguishes a failed authority lookup from an intentional legacy dispatch.
+   */
+  providerConfigRequired?: boolean;
 }
 
 /**
@@ -423,6 +437,8 @@ export class BotNodeClient {
       principal_iss: principal.issuer,
       azp: agentId,
       task_id: request.taskId,
+      method: SWARM_EXECUTE_DELEGATION_METHOD,
+      path: SWARM_EXECUTE_DELEGATION_PATH,
       body_sha256: delegationRequestBodySha256(delegatedRequest),
       scope: [...SWARM_EXECUTE_DELEGATION_SCOPE],
     });
@@ -530,13 +546,11 @@ export class BotNodeClient {
    * @param agentId - Target bot's agent ID
    * @param providerId - Provider to switch to
    * @param model - Model to use
-   * @param credentials - Optional provider-specific credentials
    */
   async switchProvider(
     agentId: string,
     providerId: string,
     model?: string,
-    credentials?: Record<string, string>,
   ): Promise<void> {
     const endpoint = this.resolveEndpoint(agentId);
     if (!endpoint) {
@@ -552,7 +566,7 @@ export class BotNodeClient {
         'X-Config-Source': 'oshal-push',
         ...serviceSecretHeaders(),
       },
-      body: JSON.stringify({ provider: providerId, model, credentials }),
+      body: JSON.stringify({ provider: providerId, model }),
     });
 
     if (!response.ok) {

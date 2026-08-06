@@ -7,11 +7,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added ChromaDB-backed healthcheck fallback for RAG tool verification when no external ingestion endpoint is configured
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Presentron verification fallback to deployable service endpoint
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the ToolType.PRESENTRON sidecar healthcheck branch + the PresentronIntegrationService import: the Presentron HTTP sidecar (presentron:8080) was retired. A presentron-typed tool now falls through to its verifyCommand / skipped path like any other tool — the presentron tool renders in-repo, there is no external sidecar to probe.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Disable execution of persisted free-form verifyCommand strings; only immutable server-owned verifier implementations may perform process/network checks.
  */
 
 import { Pool } from 'pg';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { logger } from '@/shared/logger';
 import {
   VerificationResult,
@@ -23,11 +22,9 @@ import {
 import { RagService } from '@/features/rag';
 import { RAGIngestionIntegrationService } from '@/features/tool-integrations';
 
-const execAsync = promisify(exec);
-
 /**
- * @description Service for verifying tool installations by executing verify commands
- * and recording results in the database.
+ * @description Service for verifying tool installations with immutable server-owned checks and
+ * recording results in the database. Persisted free-form shell commands are never executable.
  */
 export class ToolVerificationService {
   private readonly logger = logger.child({ service: 'ToolVerificationService' });
@@ -85,30 +82,23 @@ export class ToolVerificationService {
         return result;
       }
 
-      const verifyCommand = tool.installSpec.verifyCommand;
-      if (!verifyCommand) {
+      const legacyVerifyCommand = tool.installSpec.verifyCommand;
+      if (!legacyVerifyCommand) {
         return await this.recordSkippedVerification(tool, verifiedBy);
       }
 
-      const result = await this.executeVerifyCommand(
+      // `install_spec` is mutable catalog data. Treating its verifyCommand as a program made a
+      // catalog write equivalent to remote shell execution from both HTTP and scheduler paths.
+      // Legacy rows remain visible for migration but are explicitly non-executable.
+      this.logger.warn(
+        { toolId: tool.toolId, toolName: tool.name },
+        'Skipped legacy free-form verification command',
+      );
+      return await this.recordSkippedVerification(
         tool,
-        verifyCommand,
         verifiedBy,
-        startTime
+        'Legacy free-form verify commands are disabled; configure a reviewed verifier implementation',
       );
-      
-      await this.updateToolVerificationStatus(
-        tool.toolId,
-        result.status,
-        result.verifiedAt
-      );
-
-      this.logger.info(
-        { toolId, status: result.status, durationMs: result.durationMs },
-        'Tool verification completed'
-      );
-
-      return result;
     } catch (error) {
       this.logger.error({ toolId, err: error }, 'Tool verification failed');
       return await this.recordErrorVerification(
@@ -303,60 +293,12 @@ export class ToolVerificationService {
   }
 
   /**
-   * @description Execute verify command and return result
-   */
-  private async executeVerifyCommand(
-    tool: Tool,
-    verifyCommand: string,
-    verifiedBy: string,
-    startTime: number
-  ): Promise<VerificationResult> {
-    try {
-      const { stdout, stderr } = await execAsync(verifyCommand, {
-        timeout: 10000, // 10 second timeout
-        shell: '/bin/sh',
-      });
-
-      const durationMs = Date.now() - startTime;
-      const status = VerificationStatus.PASSED;
-
-      return await this.recordVerificationResult({
-        toolId: tool.toolId,
-        toolName: tool.name,
-        verifyCommand,
-        status,
-        exitCode: 0,
-        stdout: stdout.trim() || null,
-        stderr: stderr.trim() || null,
-        durationMs,
-        verifiedBy,
-        errorMessage: null,
-      });
-    } catch (error: any) {
-      const durationMs = Date.now() - startTime;
-      const status = VerificationStatus.FAILED;
-
-      return await this.recordVerificationResult({
-        toolId: tool.toolId,
-        toolName: tool.name,
-        verifyCommand,
-        status,
-        exitCode: error.code || null,
-        stdout: error.stdout?.trim() || null,
-        stderr: error.stderr?.trim() || null,
-        durationMs,
-        verifiedBy,
-        errorMessage: error.message,
-      });
-    }
-  }
-
-  /**
    * @description Record skipped verification (no verify command)
    */
   private async recordSkippedVerification(
     tool: Tool,
-    verifiedBy: string
+    verifiedBy: string,
+    reason = 'No reviewed verifier configured',
   ): Promise<VerificationResult> {
     return await this.recordVerificationResult({
       toolId: tool.toolId,
@@ -368,7 +310,7 @@ export class ToolVerificationService {
       stderr: null,
       durationMs: null,
       verifiedBy,
-      errorMessage: 'No verify command specified',
+      errorMessage: reason,
     });
   }
 

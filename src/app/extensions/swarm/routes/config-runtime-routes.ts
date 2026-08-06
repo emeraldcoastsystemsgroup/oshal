@@ -5,21 +5,23 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added per-agent runtime config routes - oshal-owned provider/model push-down + read (ADR-034)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Make this the authoritative provider-precedence write surface: reject pinned-provider writes, push before persistence, preserve provider-free model changes, and return explicit applied/pushed/version/effective runtime truth
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Kept signed bot bootstrap reads while restricting credential-bearing runtime mutations to exact operator browser sessions; established human principals remain authoritative when a service-secret header is also present
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject every credential field before config lookup/push and remove the raw secret carrier; provider/model mutations remain non-secret.
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { resolveEffectiveBotProvider, type EffectiveBotProvider } from '@/shared/llm-runtime';
 import type { ConfigSyncService, RuntimeParams } from '@/features/config-sync';
 import type { AgentConfigService } from '@/features/agent-management';
 import { getActiveRegistry } from '../swarm-bot-registry';
+import { hasAuthenticatedUserIdentity, hasValidServiceSecret, requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'config-runtime-routes' });
 type ConfigValues = Record<string, unknown>;
 
 interface ParsedMutation {
   params?: RuntimeParams;
-  credentials?: Record<string, string>;
   error?: string;
 }
 
@@ -31,19 +33,14 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function parseCredentials(value: unknown): Record<string, string> | undefined {
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const entries = Object.entries(value as Record<string, unknown>);
-  if (entries.some(([, item]) => typeof item !== 'string')) return undefined;
-  return Object.fromEntries(entries) as Record<string, string>;
-}
-
 function parseMutation(input: unknown): ParsedMutation {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { error: 'Request body must be an object' };
   }
   const body = input as Record<string, unknown>;
+  if (hasOwn(body, 'credentials')) {
+    return { error: 'credential fields are not accepted on runtime configuration mutations' };
+  }
   const changesProvider = hasOwn(body, 'providerId');
   const changesModel = hasOwn(body, 'modelId');
   if (!changesProvider && !changesModel) {
@@ -53,10 +50,6 @@ function parseMutation(input: unknown): ParsedMutation {
   const modelId = optionalString(body.modelId);
   if (changesProvider && !providerId) return { error: 'providerId must be a non-empty string' };
   if (changesModel && !modelId) return { error: 'modelId must be a non-empty string' };
-  const credentials = parseCredentials(body.credentials);
-  if (body.credentials !== undefined && !credentials) {
-    return { error: 'credentials must contain only string values' };
-  }
   const mode = optionalString(body.mode);
   const params: RuntimeParams = {
     ...(providerId ? { providerId } : {}),
@@ -65,7 +58,7 @@ function parseMutation(input: unknown): ParsedMutation {
     ...(typeof body.requestTimeoutMs === 'number' && Number.isFinite(body.requestTimeoutMs)
       ? { requestTimeoutMs: body.requestTimeoutMs } : {}),
   };
-  return { params, credentials };
+  return { params };
 }
 
 /**
@@ -164,13 +157,13 @@ async function applyRuntimeMutation(
   configSync: ConfigSyncService | undefined,
   agentConfig: AgentConfigService | undefined,
 ): Promise<void> {
-  if (!configSync || !agentConfig) {
-    res.status(503).json({ success: false, applied: false, error: 'Config services unavailable (no Postgres pool)' });
-    return;
-  }
   const parsed = parseMutation(req.body);
   if (!parsed.params) {
     res.status(400).json({ success: false, applied: false, error: parsed.error });
+    return;
+  }
+  if (!configSync || !agentConfig) {
+    res.status(503).json({ success: false, applied: false, error: 'Config services unavailable (no Postgres pool)' });
     return;
   }
   const before = await agentConfig.getConfig(agentId);
@@ -184,7 +177,7 @@ async function applyRuntimeMutation(
     });
     return;
   }
-  const result = await configSync.pushToBot(agentId, parsed.params, parsed.credentials);
+  const result = await configSync.pushToBot(agentId, parsed.params);
   if (result.reason) {
     res.status(502).json({
       success: false, applied: false, error: result.reason,
@@ -236,10 +229,47 @@ export function createConfigRuntimeRoutes(
   agentConfig: AgentConfigService | undefined,
 ): Router {
   const router = Router();
-  router.get('/:agentId/runtime', (req, res) => void handleRuntimeRead(req, res, agentConfig));
+  router.get(
+    '/:agentId/runtime',
+    requiresOperatorOrService,
+    (req, res) => void handleRuntimeRead(req, res, agentConfig),
+  );
   router.put(
     '/:agentId/runtime',
+    requiresOperatorBrowser,
     (req, res) => void handleRuntimeWrite(req, res, configSync, agentConfig),
   );
   return router;
+}
+
+/**
+ * @description Allows bot bootstrap reads with the exact machine secret, otherwise requires an
+ * operator identity established by the outer session-auth mount.
+ */
+function requiresOperatorOrService(req: Request, res: Response, next: NextFunction): void {
+  if (hasAuthenticatedUserIdentity(req)) {
+    requiresOperator(req, res, next);
+    return;
+  }
+  if (hasValidServiceSecret(req)) {
+    next();
+    return;
+  }
+  requiresOperator(req, res, next);
+}
+
+/**
+ * @description Runtime mutations change global non-secret provider/model state and therefore require
+ * an operator browser identity. Credential fields are rejected before any config lookup or push.
+ */
+function requiresOperatorBrowser(req: Request, res: Response, next: NextFunction): void {
+  if (hasAuthenticatedUserIdentity(req)) {
+    requiresOperator(req, res, next);
+    return;
+  }
+  if (hasValidServiceSecret(req)) {
+    res.status(403).json({ success: false, applied: false, error: 'Operator privilege required' });
+    return;
+  }
+  requiresOperator(req, res, next);
 }

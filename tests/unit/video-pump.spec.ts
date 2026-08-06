@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the joke-shorts pump: the approval gate survives automation (no standing authorization, no spend), the daily cap is re-checked at approval time as well as at selection, joke seeds rotate instead of repeating, rotation is least-recently-started, and the pump is off unless it is switched on.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard atomic shared-lease acquisition before work, persisted run binding, stage heartbeats, restart recovery, exact terminal release, and approval-gate restart cleanup before any reacquisition.
  */
 /**
  * @description The pump is an automated loop that spends money on a shared machine, so the tests here
@@ -150,9 +151,44 @@ describe('the ordering the pump depends on', () => {
 
   it('checks the node BEFORE opening any work', () => {
     const gate = src.indexOf('checkVidsNodeAvailability(pool');
-    const open = src.indexOf('return produceEpisode(');
+    const open = src.indexOf('return await produceEpisode(');
     expect(gate).toBeGreaterThan(0);
     expect(gate).toBeLessThan(open);
+  });
+});
+
+describe('the pump uses the recap lease authority', () => {
+  const src = readFileSync(join(__dirname, '..', '..', 'src', 'app', 'series-pump.ts'), 'utf8');
+
+  it('atomically acquires before opening an episode and persists the exact capability', () => {
+    const acquire = src.indexOf('const taken = await takePumpLease(');
+    const produce = src.indexOf('return await produceEpisode(');
+    expect(acquire).toBeGreaterThan(0);
+    expect(acquire).toBeLessThan(produce);
+    expect(src).toMatch(/node_resource_key, node_client_id, node_lease_id, node_lease_holder/);
+  });
+
+  it('renews at paid stages and recovers the persisted capability after restart', () => {
+    expect(src).toContain('renewPumpLease(pool, nodeLease)');
+    expect(src).toContain('ensureRunPumpLease(ctx, r)');
+    expect(src).toMatch(/r\.node_resource_key, r\.node_client_id, r\.node_lease_id, r\.node_lease_holder/);
+  });
+
+  it('releases by exact token instead of scanning mutable show names', () => {
+    expect(src).toContain('releaseNodeResourceLease(pool, binding.lease)');
+    expect(src).not.toContain('releaseIdleLease');
+    expect(src).not.toContain('releaseVidsNodeLease');
+  });
+
+  it('does not retain or reacquire the scarce node while a restarted run is parked for approval', () => {
+    const gate = src.indexOf("if (String(r.status) === 'awaiting_approval')");
+    const release = src.indexOf('releasePumpLease(ctx.pool, pumpLeaseFromRow(r))', gate);
+    const decide = src.indexOf('autoApprovalDecision(', gate);
+    const acquire = src.indexOf('const lease = await ensureRunPumpLease(ctx, r)', gate);
+    expect(release).toBeGreaterThan(gate);
+    expect(release).toBeLessThan(decide);
+    expect(acquire).toBeGreaterThan(decide);
+    expect(src.slice(gate, acquire)).toContain("outcome='scripted'");
   });
 });
 

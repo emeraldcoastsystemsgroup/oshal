@@ -4,10 +4,17 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Barrel export for RAG feature module
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the common kernel-reserved collection policy for generic write/delete boundaries.
  */
 
 export { RagService, type RagSearchResult, type RagIngestResult } from './services/rag-service';
 export { chunkText, type ChunkerConfig } from './services/chunker';
+export {
+  KERNEL_RESERVED_RAG_COLLECTIONS,
+  ReservedRagCollectionError,
+  assertGenericRagCollection,
+  isKernelReservedRagCollection,
+} from './services/reserved-rag-collections';
 export {
   applyRagPermission,
   canReadRagMetadata,

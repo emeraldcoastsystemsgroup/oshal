@@ -7,6 +7,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review findings (gap-list build 2026-07-15): (1) --body-file now fails closed (exit 1, machine-readable JSON) when the named file is missing instead of silently sending the literal path string as the email body — the positional bodyFileOrText keeps its file-or-literal duality for oshal-gmail-send.js parity; (2) body-file reads route through readBodyFile so EISDIR/EACCES print the {error, message} JSON contract instead of crashing main() with a raw stack outside the try/catch; (3) the token-persist UPDATE no longer swallows its rejection (.catch removed) — it propagates to main()'s handler like oshal-gmail.js, so a dropped rotated refresh token is diagnosable (no-swallowed-catches compliance).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Read all stored token versions through the shared codec and persist Microsoft token rotations as caller-owned v2 envelopes.
  *
  * Prints JSON for a connected Microsoft 365 (Outlook) account. The account is
  * connected by a user at /utilities (provider id: outlook). Same output contract
@@ -23,10 +24,10 @@
  * Failures print one machine-readable JSON object {error, message} on stdout.
  */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken, encryptToken } = require('./lib/connector-token-crypto');
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const LIST_SELECT = 'id,subject,from,receivedDateTime,bodyPreview,isRead,importance,flag';
@@ -62,20 +63,6 @@ function resolveProvidedToken() {
   return process.env.OSHAL_CRED_OUTLOOK || undefined;
 }
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
-function encrypt(plain) {
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', key(), iv);
-  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
-  return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
-}
-
 /** Pick THE caller's Outlook connection row. Per-user scoping mirrors oshal-gmail.js:
  *  never silently read someone else's mailbox when more than one connection exists. */
 async function findConnectionRow(pool) {
@@ -102,12 +89,12 @@ async function getAccessToken(pool) {
   const row = await findConnectionRow(pool);
   if (!row) fail(2, 'not_connected', 'No Outlook connection found. Connect Outlook at /utilities first.');
   if (row.access_token && row.expiry && new Date(row.expiry).getTime() - Date.now() > 60000) {
-    return { token: decrypt(row.access_token), account: row.account_email };
+    return { token: await decryptToken(pool, row.user_sub, row.access_token), account: row.account_email };
   }
   if (!row.refresh_token) fail(2, 'no_refresh_token', 'Connection has no refresh token; reconnect at /utilities.');
   const body = new URLSearchParams({
     client_id: CLIENT_ID, client_secret: CLIENT_SECRET, grant_type: 'refresh_token',
-    refresh_token: decrypt(row.refresh_token), scope: REFRESH_SCOPE,
+    refresh_token: await decryptToken(pool, row.user_sub, row.refresh_token), scope: REFRESH_SCOPE,
   });
   const r = await fetch(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
   if (!r.ok) fail(3, 'refresh_failed', 'Token refresh failed: ' + r.status + ' ' + (await r.text()).slice(0, 160));
@@ -119,7 +106,7 @@ async function getAccessToken(pool) {
   // which lets the identical UPDATE propagate.
   await pool.query(
     `UPDATE oshal_connections SET access_token=$3, refresh_token=COALESCE($4, refresh_token), expiry=$5, updated_at=NOW() WHERE provider='outlook' AND account_email=$1 AND user_sub=$2`,
-    [row.account_email, row.user_sub, encrypt(tok.access_token), tok.refresh_token ? encrypt(tok.refresh_token) : null, tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null],
+    [row.account_email, row.user_sub, await encryptToken(pool, row.user_sub, tok.access_token), tok.refresh_token ? await encryptToken(pool, row.user_sub, tok.refresh_token) : null, tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null],
   );
   return { token: tok.access_token, account: row.account_email };
 }

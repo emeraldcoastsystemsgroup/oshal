@@ -22,6 +22,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial update-check daemon: daily app-vs-store + core-vs-upstream version checks, GET /api/version (first runtime self-identity) + auth-gated GET /api/updates.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Completion: operator-gated POST /api/updates/apps/:name/apply (re-install from the package's own source: via scripts/oshal-app.js, then hot-reload through the injected SwarmAppService.loadApp) + notifyOperator alert when a check first finds an update (detectNewUpdates transition diff — no re-alert on every daily tick).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Private-store support (opt-in): OSHAL_STORE_TOKEN (fallback GITHUB_TOKEN) authorizes the raw/API fetches and rides to the installer as env for apply — live check found ALL 42 installed packages source from the private oshal-applications repo, so anonymous checks reported every app "unknown". Token is env-only: never in argv, scrubbed from captured installer output.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: isolate the operator-triggered update installer from controller/database/session/provider credentials; admit only OS/runtime, proxy/TLS settings, non-interactive Git controls, and the exact resolved store token.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: pass the validated package-audit posture to update installers so enforce mode re-installs only an exact evidenced SHA.
  */
 import fs from 'fs';
 import path from 'path';
@@ -31,6 +33,7 @@ import type { Express, RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, requiresOperator } from '@/shared/middleware/authz';
 import { notifyOperator } from '@/features/notifications';
+import { resolvePackageAuditMode } from '@/features/swarm-apps';
 
 const logger = createChildLogger({ module: 'update-check-cron' });
 
@@ -39,6 +42,51 @@ const DEPLOYED_APPS_DIR = path.join(WORKSPACE_ROOT, 'deployed-apps');
 const CORE_REPO = process.env.UPDATE_CHECK_CORE_REPO || 'emeraldcoastsystemsgroup/oshal';
 const CORE_BRANCH = process.env.UPDATE_CHECK_CORE_BRANCH || 'main';
 const FETCH_TIMEOUT_MS = 10_000;
+const UPDATE_INSTALL_PROCESS_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+  'GIT_SSL_CAINFO', 'GIT_SSL_CAPATH',
+] as const;
+
+/**
+ * Build the app-update installer's least-privilege environment.
+ *
+ * The install command is catalog/manifest-pinned and needs only Node/Git runtime settings plus
+ * network trust. It must not inherit controller, database, session, connector, model-provider,
+ * or ambient Git credential-helper authority. The resolved private-store token is explicit and
+ * omitted entirely for an anonymous public-store install.
+ */
+export function buildUpdateInstallerProcessEnv(
+  storeToken: string,
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of UPDATE_INSTALL_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.GIT_TERMINAL_PROMPT = '0';
+  env.GCM_INTERACTIVE = 'Never';
+  if (storeToken) env.OSHAL_STORE_TOKEN = storeToken;
+  return env;
+}
+
+/**
+ * @description Produce a bounded, secret-scrubbed installer log while retaining the APP-02
+ * NOT AUDIT-VERIFIED warning even when later validation output exceeds the normal tail.
+ * @param output - Combined installer stdout/stderr.
+ * @param storeToken - Exact store token to redact if a child unexpectedly echoed it.
+ * @returns At most sixteen lines safe for API responses and structured logs.
+ */
+export function installerLogTail(output: string, storeToken: string): string {
+  const lines = scrubSecret(output.replace(/\u001b\[[0-9;]*m/g, ''), storeToken).split('\r').join('').split('\n');
+  const tail = lines.slice(-15);
+  const warning = lines.find((line) => line.includes('NOT AUDIT-VERIFIED'));
+  if (warning && !tail.includes(warning)) tail.unshift(warning);
+  return tail.join('\n');
+}
 
 /** One installed store package's check result. */
 export interface AppUpdateStatus {
@@ -386,13 +434,20 @@ export async function applyAppUpdate(name: string, ownerSub: string | null, deps
   const ref = local.source!.ref || 'main';
   logger.info({ name, repo, ref }, 'applying app update');
   const token = resolveStoreToken();
-  const childEnv: NodeJS.ProcessEnv = { ...process.env };
-  if (token) childEnv.OSHAL_STORE_TOKEN = token; // env-only — never an argv the process table could show
+  const auditMode = resolvePackageAuditMode();
   const run = await new Promise<{ code: number; output: string }>((resolve) => {
     execFile(
       process.execPath,
       [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', name, '--repo', repo, '--ref', ref, '--dest', DEPLOYED_APPS_DIR],
-      { cwd: process.cwd(), timeout: 180_000, maxBuffer: 1024 * 1024, env: childEnv },
+      {
+        cwd: process.cwd(),
+        timeout: 180_000,
+        maxBuffer: 1024 * 1024,
+        env: {
+          ...buildUpdateInstallerProcessEnv(token),
+          OSHAL_PACKAGE_AUDIT_MODE: auditMode,
+        },
+      },
       (err, stdout, stderr) => {
         const raw = err ? (err as NodeJS.ErrnoException).code : 0;
         resolve({ code: typeof raw === 'number' ? raw : (err ? 1 : 0), output: `${stdout}\n${stderr}`.trim() });
@@ -401,7 +456,7 @@ export async function applyAppUpdate(name: string, ownerSub: string | null, deps
   });
   // Strip ANSI color + any token echo from the installer's CLI output before it travels as an
   // API payload or a log field.
-  const log = scrubSecret(run.output.replace(/\[[0-9;]*m/g, ''), token).split('\n').slice(-15).join('\n');
+  const log = installerLogTail(run.output, token);
   if (run.code !== 0) {
     logger.error({ name, code: run.code, log }, 'app update install failed');
     return { ok: false, status: 502, error: `install failed — see log`, log };

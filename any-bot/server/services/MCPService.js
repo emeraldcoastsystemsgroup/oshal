@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: make HTTP MCP transport execution private, require canonical ToolRegistry attestation plus exact caller/tool scopes, and default every remotely advertised tool to approval-required.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin the transport tool name to its registration-time primitive so a mutated discovery object cannot redirect an authorized call.
  */
 
 /**
@@ -14,6 +16,10 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
 const MCPStore = require('../stores/MCPStore');
+const {
+  assertMcpExecutionAttestation,
+  canonicalMcpToolName,
+} = require('./mcp-tool-authorization');
 
 /**
  * @description Service responsible for the lifecycle of HTTP-based MCP (Model
@@ -135,6 +141,16 @@ class MCPService {
     });
 
     logger.info(`MCP server registered: ${id} at ${host}:${port}`);
+  }
+
+  /**
+   * @description Report whether this transport owns the exact server identifier so the unified
+   * proxy can select a transport without exposing its raw execution method.
+   * @param {string} serverId - Exact configured MCP server identifier.
+   * @returns {boolean} True when this HTTP service owns the server.
+   */
+  hasServer(serverId) {
+    return this.servers.has(serverId);
   }
 
   /**
@@ -300,7 +316,8 @@ class MCPService {
    * Register a tool in ToolRegistry and MCPStore
    */
   async registerTool(serverId, tool) {
-    const toolId = `mcp_${serverId}_${tool.name}`;
+    const transportToolName = tool.name;
+    const toolId = canonicalMcpToolName(serverId, transportToolName);
     
     // Convert Google's "parameters" format to JSON Schema if needed
     let inputSchema = tool.input_schema || tool.inputSchema;
@@ -309,7 +326,8 @@ class MCPService {
     }
     inputSchema = inputSchema || {};
     
-    // Store in MCPStore - MCP tools default to auto-approve (requiresApproval: false)
+    // Remote discovery is metadata, never authorization. Every MCP operation remains
+    // approval-required until a server-owned policy explicitly resolves that decision.
     this.mcpStore.upsertTool({
       id: toolId,
       server_id: serverId,
@@ -317,23 +335,25 @@ class MCPService {
       description: tool.description || '',
       category: 'mcp',
       input_schema: inputSchema,
-      requires_approval: false // Auto-approve all MCP tools
+      requires_approval: true
     });
 
-    // Register in ToolRegistry - MCP tools default to auto-approve (requiresApproval: false)
+    // The handler is reachable only through ToolRegistry execution: the module-private
+    // attestation is checked again immediately before the transport boundary.
     this.toolRegistry.register({
       name: toolId,
       description: tool.description || `${serverId} - ${tool.name}`,
       category: 'mcp',
       inputSchema: inputSchema,
-      requiresApproval: false, // Auto-approve all MCP tools
-      handler: async (input) => {
-        return await this.executeTool(serverId, tool.name, input);
+      requiresApproval: true,
+      handler: async (input, context) => {
+        assertMcpExecutionAttestation(this.toolRegistry, context, toolId);
+        return await this.#executeTransportTool(serverId, transportToolName, input);
       },
       timeout: this.timeout
     });
 
-    logger.debug(`Tool registered: ${toolId} (auto-approve enabled)`);
+    logger.debug(`Tool registered: ${toolId} (approval required)`);
   }
   
   /**
@@ -391,7 +411,7 @@ class MCPService {
   /**
    * Execute a tool on an MCP server
    */
-  async executeTool(serverId, toolName, parameters, attempt = 1) {
+  async #executeTransportTool(serverId, toolName, parameters, attempt = 1) {
     const server = this.servers.get(serverId);
     if (!server) {
       throw new Error(`Server not found: ${serverId}`);
@@ -406,7 +426,7 @@ class MCPService {
     }
 
     try {
-      logger.info(`Executing MCP tool: ${serverId}/${toolName}`, { parameters });
+      logger.info(`Executing authorized MCP tool: ${serverId}/${toolName}`);
 
       // Try standard /tools/{toolName} endpoint
       const response = await axios.post(
@@ -421,7 +441,7 @@ class MCPService {
       );
 
       // Record execution in store
-      const toolId = `mcp_${serverId}_${toolName}`;
+      const toolId = canonicalMcpToolName(serverId, toolName);
       this.mcpStore.recordToolExecution(toolId);
 
       logger.info(`MCP tool executed successfully: ${serverId}/${toolName}`);
@@ -443,7 +463,7 @@ class MCPService {
       if (attempt < this.retryAttempts) {
         logger.info(`Retrying MCP tool execution (${attempt + 1}/${this.retryAttempts})...`);
         await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
-        return await this.executeTool(serverId, toolName, parameters, attempt + 1);
+        return await this.#executeTransportTool(serverId, toolName, parameters, attempt + 1);
       }
 
       throw new Error(`MCP tool execution failed after ${attempt} attempts: ${error.message}`);
@@ -460,15 +480,15 @@ class MCPService {
       if (server.status === 'connected' || server.status === 'healthy') {
         for (const tool of server.tools) {
           tools.push({
-            id: `mcp_${serverId}_${tool.name}`,
+            id: canonicalMcpToolName(serverId, tool.name),
             serverId: serverId,
             server: serverId,
             name: tool.name,
             description: tool.description,
             category: tool.category || 'mcp',
             inputSchema: tool.inputSchema,
-            requires_approval: tool.requires_approval !== false,
-            requiresApproval: tool.requires_approval !== false
+            requires_approval: true,
+            requiresApproval: true
           });
         }
       }
@@ -546,50 +566,12 @@ class MCPService {
   /**
    * Access a resource on an MCP server
    */
-  async accessResource(serverName, uri) {
-    const server = this.servers.get(serverName);
-    if (!server) {
-      throw new Error(`Server not found: ${serverName}`);
-    }
-
-    // Check server health first
-    if (server.status === 'offline') {
-      const isHealthy = await this.checkServerHealth(serverName);
-      if (!isHealthy) {
-        throw new Error(`Server ${serverName} is offline`);
-      }
-    }
-
-    try {
-      logger.info(`Accessing MCP resource: ${serverName}/${uri}`);
-
-      // Try to access resource endpoint
-      const response = await axios.get(
-        `${server.baseUrl}/resources/${encodeURIComponent(uri)}`,
-        {
-          timeout: this.timeout,
-          headers: {
-            'Accept': 'application/json'
-          }
-        }
-      );
-
-      logger.info(`MCP resource accessed successfully: ${serverName}/${uri}`);
-      
-      return {
-        success: true,
-        server: serverName,
-        uri: uri,
-        result: response.data,
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      logger.error(`MCP resource access failed: ${serverName}/${uri}`, {
-        error: error.message
-      });
-
-      throw new Error(`Failed to access resource: ${error.message}`);
-    }
+  async accessResource() {
+    const error = new Error(
+      'Direct MCP resource access is retired; register a scoped ToolRegistry operation.',
+    );
+    error.code = 'MCP_TOOL_AUTHORIZATION_DENIED';
+    throw error;
   }
 
   /**

@@ -1,7 +1,13 @@
 /**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Move owner-read acceptance traffic onto a verified user principal and assert the SEC-01 403 for a legacy service identity attempting another owner's visual.
+ *
  * Delayed Jarvis result acceptance test.
  *
- * This deliberately crosses the Express router, trusted-service identity boundary, durable task
+ * This deliberately crosses the Express router, authenticated-user identity boundary, durable task
  * store, summary path, real deterministic renderer/persistence service, Discussion history route,
  * and authenticated artifact route. Only the external bot/DB implementations are replaced with
  * deterministic in-memory adapters.
@@ -239,11 +245,19 @@ function headers(): Record<string, string> {
 }
 
 function headersFor(ownerSub: string): Record<string, string> {
-  return {
-    'X-Service-Secret': SERVICE_SECRET,
-    'x-oshal-user-sub': ownerSub,
-  };
+  return { 'X-Test-Authenticated-Sub': ownerSub };
 }
+
+/** Test-only user-auth rail mirroring the req.oidc shape produced by OIDC and PAT middleware. */
+const testUserAuth: RequestHandler = (req, res, next) => {
+  const sub = req.header('x-test-authenticated-sub');
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  (req as unknown as { oidc: unknown }).oidc = {
+    isAuthenticated: () => true,
+    user: { sub },
+  };
+  next();
+};
 
 function createOwnerAwareTaskStore(initial: Array<{ taskId: string; ownerSub: string }> = []) {
   const tasks = new Map(initial.map((task) => [task.taskId, { ...task }]));
@@ -352,8 +366,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
 
     const app = express();
     app.use(express.json());
-    const deny: RequestHandler = (_req, res) => { res.status(401).json({ error: 'not_authenticated' }); };
-    app.use('/api/jarvis', serviceSecretOr(deny), createJarvisRoutes(ctx as never, process.cwd()));
+    app.use('/api/jarvis', serviceSecretOr(testUserAuth), createJarvisRoutes(ctx as never, process.cwd()));
     const server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/jarvis`;
@@ -422,7 +435,8 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
       const otherOwnerVisualResponse = await fetch(visualUrl, { headers: {
         'X-Service-Secret': SERVICE_SECRET, 'x-oshal-user-sub': 'auth0|different-owner',
       } });
-      expect(otherOwnerVisualResponse.status).toBe(404);
+      expect(otherOwnerVisualResponse.status).toBe(403);
+      expect(await otherOwnerVisualResponse.json()).toEqual({ error: 'legacy_service_identity_not_allowed' });
 
       const visualResponse = await fetch(visualUrl, {
         headers: headers(),
@@ -521,8 +535,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
 
     const app = express();
     app.use(express.json());
-    const deny: RequestHandler = (_req, res) => { res.status(401).json({ error: 'not_authenticated' }); };
-    app.use('/api/jarvis', serviceSecretOr(deny), createJarvisRoutes(ctx as never, process.cwd()));
+    app.use('/api/jarvis', serviceSecretOr(testUserAuth), createJarvisRoutes(ctx as never, process.cwd()));
     const server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -630,8 +643,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
 
     const app = express();
     app.use(express.json());
-    const deny: RequestHandler = (_req, res) => { res.status(401).json({ error: 'not_authenticated' }); };
-    app.use('/api/jarvis', serviceSecretOr(deny), createJarvisRoutes(ctx as never, process.cwd()));
+    app.use('/api/jarvis', serviceSecretOr(testUserAuth), createJarvisRoutes(ctx as never, process.cwd()));
     const server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -738,8 +750,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
 
     const app = express();
     app.use(express.json());
-    const deny: RequestHandler = (_req, res) => { res.status(401).json({ error: 'not_authenticated' }); };
-    app.use('/api/jarvis', serviceSecretOr(deny), createJarvisRoutes(ctx as never, process.cwd()));
+    app.use('/api/jarvis', serviceSecretOr(testUserAuth), createJarvisRoutes(ctx as never, process.cwd()));
     const server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/jarvis`;
@@ -823,8 +834,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
 
     const app = express();
     app.use(express.json());
-    const deny: RequestHandler = (_req, res) => { res.status(401).json({ error: 'not_authenticated' }); };
-    app.use('/api/jarvis', serviceSecretOr(deny), createJarvisRoutes(ctx as never, process.cwd()));
+    app.use('/api/jarvis', serviceSecretOr(testUserAuth), createJarvisRoutes(ctx as never, process.cwd()));
     const server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -927,8 +937,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
 
     const app = express();
     app.use(express.json());
-    const deny: RequestHandler = (_req, res) => { res.status(401).json({ error: 'not_authenticated' }); };
-    app.use('/api/jarvis', serviceSecretOr(deny), createJarvisRoutes(ctx as never, process.cwd()));
+    app.use('/api/jarvis', serviceSecretOr(testUserAuth), createJarvisRoutes(ctx as never, process.cwd()));
     const server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/jarvis`;

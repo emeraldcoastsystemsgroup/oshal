@@ -84,11 +84,17 @@ automatically; you then hand-tune auth, rate-limit, and webhooks. Use
 `npm run connectors:import-openapi` for one spec, or `npm run connectors:import-openapi-catalog`
 for an APIs.guru/local-manifest bulk pass. Generated tool names are provider-prefixed, generated
 resources carry inferred action-safety hints, and the bulk importer writes an imported/skipped/failed
-JSON report so partial imports are visible. By default bulk output lands in
+ JSON report so partial imports are visible. By default bulk output lands in
 `output/connectors/imported-openapi`; the marketplace, tool loader, and spec routes include that
 directory when it exists. Set `CONNECTOR_SPEC_DIRS` to add explicit generated/private catalog dirs.
 For a real breadth run, use `--target-imports 1000 --limit 2000 --concurrency 12` so skips do not
 pretend to be imported connectors.
+
+APIs.guru documents may declare `info.x-apisguru-categories`. The importer preserves those values as
+`metadata.sourceCategories`, separate from operation `metadata.tags`, so catalog categorization keeps
+its provenance. The runtime maps only reviewed source values and exact reviewed combinations; an
+unknown value or a new cross-shelf combination remains `Uncategorized` until reviewed rather than
+falling into a plausible catch-all.
 
 After a bulk run, enrich the generated catalog icons with:
 
@@ -100,6 +106,10 @@ The enrichment pass validates Simple Icons slugs from the live Simple Icons cata
 provider favicons when no official slug exists, and writes
 `output/connectors/icon-enrichment-report.json`. Icon metadata is still presentation-only; it does not
 enable a connector or grant credentials.
+
+Run `npm run connectors:curation-audit` after import and icon enrichment. It audits the same effective
+target directories as the marketplace and reports category evidence (`declared`, `provider-rule`,
+`source-taxonomy`, or `signal-rule`) alongside icon, description, and derived-risk coverage.
 
 ## Best practices
 

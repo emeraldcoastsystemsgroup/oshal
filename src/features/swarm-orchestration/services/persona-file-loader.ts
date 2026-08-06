@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Honored absolute BOT_PERSONA_FILE paths so swarm containers can load exact runtime personas
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Search deployed-apps package personas/ dirs after the kernel dir — a runtime-injected store bot's persona was invisible here, so it silently executed on the DEFAULT profile persona (same package-dir blind spot the authorization seeder fixed in swarm-app-service seq 16)
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Preserve declared allowed_tools for the final server-owned prompt authorization binding.
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
@@ -28,6 +29,7 @@ export interface BotPersona {
   perspective: string;
   systemPrompt: string;
   capabilities: string[];
+  allowedTools: string[];
   selectorDescriptor: string;
   routingKeywords: string[];
   authorizations: Record<string, string>;
@@ -190,6 +192,7 @@ function parsePersonaYaml(raw: string): BotPersona {
     perspective: String(doc.perspective ?? ''),
     systemPrompt: String(doc.system_prompt ?? doc.systemPrompt ?? ''),
     capabilities: toStringArray(doc.capabilities),
+    allowedTools: toStringArray(doc.allowed_tools ?? doc.allowedTools),
     selectorDescriptor: String(doc.selector_descriptor ?? doc.selectorDescriptor ?? ''),
     routingKeywords: toStringArray(doc.routing_keywords ?? doc.routingKeywords),
     authorizations: toStringMap(doc.authorizations),

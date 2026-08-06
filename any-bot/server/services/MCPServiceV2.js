@@ -4,6 +4,9 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: make stdio MCP calls private behind canonical ToolRegistry attestation and exact dispatch context; direct resource reads now fail closed.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reuse the collision-safe canonical capability builder in discovery output.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pin the transport tool name to its registration-time primitive so a mutated discovery object cannot redirect an authorized call.
  */
 
 /**
@@ -14,6 +17,10 @@
 const logger = require('../utils/logger');
 const MCPServerManager = require('./MCPServerManager');
 const MCPStore = require('../stores/MCPStore');
+const {
+  assertMcpExecutionAttestation,
+  canonicalMcpToolName,
+} = require('./mcp-tool-authorization');
 
 /**
  * @description Service that manages stdio-based MCP (Model Context Protocol)
@@ -137,6 +144,16 @@ class MCPServiceV2 {
   }
 
   /**
+   * @description Report whether this stdio transport owns the exact server identifier without
+   * exposing MCPServerManager's raw call surface.
+   * @param {string} serverId - Exact configured MCP server identifier.
+   * @returns {boolean} True when the manager has a record for the server.
+   */
+  hasServer(serverId) {
+    return this.serverManager.getServerInfo(serverId) !== null;
+  }
+
+  /**
    * Handle server started event
    */
   handleServerStarted(data) {
@@ -176,7 +193,8 @@ class MCPServiceV2 {
    * Register a tool in ToolRegistry and MCPStore
    */
   registerTool(serverId, tool) {
-    const toolId = `mcp_${serverId}_${tool.name}`;
+    const transportToolName = tool.name;
+    const toolId = canonicalMcpToolName(serverId, transportToolName);
     
     // Store in MCPStore
     this.mcpStore.upsertTool({
@@ -196,8 +214,9 @@ class MCPServiceV2 {
       category: 'mcp',
       inputSchema: tool.inputSchema || {},
       requiresApproval: true,
-      handler: async (input) => {
-        return await this.executeTool(serverId, tool.name, input);
+      handler: async (input, context) => {
+        assertMcpExecutionAttestation(this.toolRegistry, context, toolId);
+        return await this.#executeTransportTool(serverId, transportToolName, input);
       },
       timeout: this.config.mcp?.timeout || 60000
     });
@@ -267,18 +286,18 @@ class MCPServiceV2 {
   /**
    * Execute a tool on an MCP server
    */
-  async executeTool(serverId, toolName, parameters) {
+  async #executeTransportTool(serverId, toolName, parameters) {
     if (!this.serverManager.isServerRunning(serverId)) {
       throw new Error(`Server ${serverId} is not running`);
     }
 
     try {
-      logger.info(`Executing MCP tool: ${serverId}/${toolName}`);
+      logger.info(`Executing authorized MCP tool: ${serverId}/${toolName}`);
 
       const result = await this.serverManager.callTool(serverId, toolName, parameters);
 
       // Record execution in store
-      const toolId = `mcp_${serverId}_${toolName}`;
+      const toolId = canonicalMcpToolName(serverId, toolName);
       this.mcpStore.recordToolExecution(toolId);
 
       // Format result for consistency
@@ -298,27 +317,12 @@ class MCPServiceV2 {
   /**
    * Access a resource on an MCP server
    */
-  async accessResource(serverId, uri) {
-    if (!this.serverManager.isServerRunning(serverId)) {
-      throw new Error(`Server ${serverId} is not running`);
-    }
-
-    try {
-      logger.info(`Accessing MCP resource: ${serverId}/${uri}`);
-
-      const result = await this.serverManager.readResource(serverId, uri);
-
-      return {
-        success: true,
-        server: serverId,
-        uri: uri,
-        result: result,
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      logger.error(`MCP resource access failed: ${serverId}/${uri}`, error);
-      throw error;
-    }
+  async accessResource() {
+    const error = new Error(
+      'Direct MCP resource access is retired; register a scoped ToolRegistry operation.',
+    );
+    error.code = 'MCP_TOOL_AUTHORIZATION_DENIED';
+    throw error;
   }
 
   /**
@@ -379,7 +383,7 @@ class MCPServiceV2 {
       if (serverInfo.status === 'connected') {
         for (const tool of serverInfo.tools) {
           tools.push({
-            id: `mcp_${serverInfo.id}_${tool.name}`,
+            id: canonicalMcpToolName(serverInfo.id, tool.name),
             serverId: serverInfo.id,
             server: serverInfo.id,
             name: tool.name,

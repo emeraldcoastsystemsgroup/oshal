@@ -20,10 +20,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SpecPagination gains `cursorOnly` →
  *            | cursor `exclusive`: Dynatrace v2 rejects nextPageKey combined with the original
  *            | query params, so follow-up pages must send only the cursor. Opt-in, additive.
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ConnectorSpec gains the optional
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ConnectorSpec gains the optional
  *            | write-capable `actions` block (connector-writes tier): declared mutations with a
  *            | paramsSchema + riskLevel, validated at load time. Additive — the 306 GET-only
  *            | connectors are untouched; execution lives in action-executor.ts, never here.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve source-catalog category vocabulary separately from operation tags so category derivation can retain provenance without treating arbitrary tag text as a reviewed taxonomy.
  * -----------------------------------------------------------------------------
  * @module connectors/runtime/spec
  */
@@ -101,6 +102,8 @@ export interface ConnectorSpec {
     website?: string;
     sourceCatalog?: string;
     sourceUrl?: string;
+    /** Category tokens declared by the source catalog, not inferred from operation names. */
+    sourceCategories?: string[];
   };
   baseUrl: string;
   auth: SpecAuth;

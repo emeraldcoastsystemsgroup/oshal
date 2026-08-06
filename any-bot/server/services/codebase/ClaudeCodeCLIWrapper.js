@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Idle-based timeouts (operator directive 2026-07-24, extends ADR-081): executeTask hard-stopped actively-working runs at the wall clock (compose set 600s — the "stops at 10 minutes" report) because batch json is silent until the final object, making silence unmeasurable. executeTask now defaults to stream-json (+ --verbose, required by print mode) so the activity tracker sees every event; defaults become 3600s runaway ceiling + 600s silence threshold. _parseJsonResult already normalized NDJSON, so result extraction is unchanged. streaming:false remains an explicit batch opt-out.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Streaming crash guard (adversarial review): a stream-json run that ends with NO final `type:"result"` event means the CLI crashed/was-killed mid-stream — _parseJsonResult tags returns with resultEventFound, and executeTask now REJECTS such a streaming run instead of resolving the raw-text fallback as success (which silently returned garbage). Batch json is unaffected. Also: killOnInactivity is disarmed for explicit batch runs (silence is only measurable under streaming).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: default-deny unbrokered autonomous CLI execution before credential setup or process spawn.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: isolate live version and authentication probes from ambient process credentials.
  */
 
 /**
@@ -27,6 +29,8 @@
 
 const { spawn } = require('child_process');
 const { acquireUserScoping } = require('./user-scoping');
+const { buildCliDiagnosticEnv } = require('./cli-diagnostic-env');
+const { assertCliToolBoundary } = require('../llm/assert-cli-tool-boundary');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../../utils/logger');
@@ -383,6 +387,7 @@ class ClaudeCodeCLIWrapper {
    * @returns {Promise<object>} Task result with response, cost, usage
    */
   async executeTask(taskDescription, workspaceDir, options = {}) {
+    assertCliToolBoundary(options, 'claude-code');
     const hardTimeoutSec = options.timeout || this.defaultTimeout;
     const inactivityTimeoutSec = options.inactivityTimeout || this.defaultInactivityTimeout;
     const configuredKillOnInactivity = options.killOnInactivity === undefined
@@ -583,6 +588,7 @@ class ClaudeCodeCLIWrapper {
    * @returns {Promise<object>} Final result
    */
   async executeTaskStreaming(taskDescription, workspaceDir, options = {}) {
+    assertCliToolBoundary(options, 'claude-code');
     const { onEvent } = options;
     const hardTimeoutSec = options.timeout || this.defaultTimeout;
     const inactivityTimeoutSec = options.inactivityTimeout || this.defaultInactivityTimeout;
@@ -738,7 +744,7 @@ class ClaudeCodeCLIWrapper {
     try {
       return await new Promise((resolve) => {
         const proc = spawn(this.claudeCommand, ['--version'], {
-          env: { ...process.env, PATH: this.getEnhancedPath() },
+          env: buildCliDiagnosticEnv({ path: this.getEnhancedPath() }),
           shell: false,
         });
 
@@ -784,7 +790,7 @@ class ClaudeCodeCLIWrapper {
     try {
       return await new Promise((resolve) => {
         const proc = spawn(this.claudeCommand, ['--version'], {
-          env: { ...process.env, PATH: this.getEnhancedPath() },
+          env: buildCliDiagnosticEnv({ path: this.getEnhancedPath() }),
           shell: false,
         });
 
@@ -829,7 +835,7 @@ class ClaudeCodeCLIWrapper {
     try {
       return await new Promise((resolve) => {
         const proc = spawn(this.claudeCommand, ['auth', 'status'], {
-          env: { ...process.env, PATH: this.getEnhancedPath() },
+          env: buildCliDiagnosticEnv({ path: this.getEnhancedPath() }),
           shell: false,
         });
 

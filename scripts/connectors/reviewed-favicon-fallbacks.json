@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "reviewedBy": "maintainer@emeraldcoastsystemsgroup.com",
+  "entries": [
+    {
+      "provider": "activecampaign",
+      "domain": "activecampaign.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "apivideo",
+      "domain": "api.video",
+      "reason": "Canonical api.video brand domain; generic API-host prefix normalization would incorrectly reduce this registrable domain."
+    },
+    {
+      "provider": "api-video",
+      "domain": "api.video",
+      "reason": "Generated APIs.guru provider alias for api.video; use the canonical brand domain instead of its websocket API host."
+    },
+    {
+      "provider": "apis-guru",
+      "domain": "apis.guru",
+      "reason": "Canonical APIs.guru brand domain; its spec website points to a GitHub documentation file and its API host is otherwise excluded as source-catalog infrastructure."
+    },
+    {
+      "provider": "chargebee",
+      "domain": "chargebee.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "docusign",
+      "domain": "docusign.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "freshdesk",
+      "domain": "freshdesk.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "gorgias",
+      "domain": "gorgias.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "healthchecks",
+      "domain": "healthchecks.io",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "liveagent",
+      "domain": "liveagent.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "loggly",
+      "domain": "loggly.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "logzio",
+      "domain": "logz.io",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "nocodb",
+      "domain": "nocodb.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "outlook",
+      "domain": "outlook.office.com",
+      "reason": "Reviewed Outlook product favicon; the API host is the generic Microsoft Graph domain."
+    },
+    {
+      "provider": "pipedrive",
+      "domain": "pipedrive.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "plivo",
+      "domain": "plivo.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "qdrant",
+      "domain": "qdrant.tech",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "reamaze",
+      "domain": "reamaze.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "servicenow",
+      "domain": "servicenow.com",
+      "reason": "Reviewed product favicon; the API host is tenant-specific and cannot identify one public domain."
+    },
+    {
+      "provider": "teamwork",
+      "domain": "teamwork.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    },
+    {
+      "provider": "workable",
+      "domain": "workable.com",
+      "reason": "Canonical public provider domain; the connector spec has no stable public host."
+    }
+  ]
+}

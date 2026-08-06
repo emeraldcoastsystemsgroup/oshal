@@ -27,6 +27,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed auditRoutes into focused literal-mount and manifest collectors so the expanded scanner remains below the repository's fifty-line function limit.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Exported one limiter-only classification rule for both the runtime scanner and CI inventory, eliminating manual allowlist entries that went stale/red on every new rate-limiter mount.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Profile Studio's public mount around its short-lived one-use dispatch capability after removing the reusable fleet service secret.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the SEC-01 delegated-user middleware as an explicit authenticated mount guard for Graph and Jarvis route scans.
  *
  * @module features/security/route-audit
  */
@@ -255,7 +256,9 @@ function auditServerMounts(mounts: readonly ServerMount[]): RawFinding[] {
 
 function isReviewedOrGuardedMount(mount: ServerMount): boolean {
   if (isPublicByDesign(mount.mountPath)) return true;
-  const hasAuth = /requiresAuth|requireAuth|ensureAuth|authMiddleware|requiresContext/.test(mount.middlewares);
+  const hasAuth = /requiresAuth|requireAuth|ensureAuth|authMiddleware|requiresContext|delegatedUserRouteAuth/.test(
+    mount.middlewares,
+  );
   if (hasAuth) return true;
   // A mount whose ONLY middleware is a rate limiter registers no handlers. The real
   // routes for that path mount separately and carry their own authorization.

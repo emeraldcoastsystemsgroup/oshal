@@ -4,6 +4,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Added a non-root, checksum-pinned, offline speaker inference image.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Added a pinned offline ASR model so a recording can be transcribed without the audio leaving the host. Moonshine, not Whisper: sherpa-onnx pads every Whisper segment to 30s, so transcribing hundreds of short speaker turns would cost a full 30-second forward pass for a two-second turn. Only the int8 weights are copied into the runtime stage; the fp32 copies and the upstream test wavs are dropped.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Install the fully resolved production graph only from the hash-pinned lock so a mutable transitive artifact cannot enter the image.
 
 FROM python:3.11.13-slim-bookworm AS models
 
@@ -66,8 +67,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --requirement requirements.txt
+COPY requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes --requirement requirements.lock
 
 COPY --from=models /models /models
 COPY speaker_service ./speaker_service

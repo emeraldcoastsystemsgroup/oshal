@@ -54,6 +54,8 @@
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com   | Bound native execution and alerting, drain redirected output, verify full process-tree termination, make recovery locking atomic and live-owner-aware, retain the lock through final health verification, confirm heartbeat failures before recovery, and expose the final watchdog result to Task Scheduler.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Git Bash through the shared bounded validator, reject System32/WSL launchers, and fail closed when no validated Bash can perform routing checks or recovery.
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Stabilize the fallback process-tree snapshot across consecutive CIM reads and kill captured descendants before the root, preventing a failed taskkill from orphaning a child that was reparented before verification.
+  4 | maintainer@emeraldcoastsystemsgroup.com   | Extend the bounded CIM union to three observations on each pre-kill pass so a newly visible descendant cannot escape the failed-taskkill fallback under host contention.
 
   Register (every 5 min, windowless - launch through oshal-stack-watchdog-hidden.vbs so a bare
   powershell action doesn't flash a console every run):
@@ -119,12 +121,18 @@ function Get-ProcessTreeIds([int]$rootProcessId) {
   [void]$ids.Add($rootProcessId)
   if ($env:OS -ne 'Windows_NT') { return @($rootProcessId) }
   # WMI is a fallback inside an already-expired native call; cap it so cleanup cannot become the
-  # next unbounded wait while Windows management instrumentation is degraded.
-  $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop | Select-Object ProcessId, ParentProcessId)
+  # next unbounded wait while Windows management instrumentation is degraded. A just-started child
+  # can be absent from one provider snapshot, so union three bounded reads before closing the tree.
+  $rowsById = @{}
+  for ($snapshot = 0; $snapshot -lt 3; $snapshot++) {
+    $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 3 -ErrorAction Stop | Select-Object ProcessId, ParentProcessId)
+    foreach ($row in $rows) { $rowsById[[int]$row.ProcessId] = $row }
+    if ($snapshot -lt 2) { Start-Sleep -Milliseconds 100 }
+  }
   $frontier = @($rootProcessId)
   while ($frontier.Count -gt 0) {
     $next = @()
-    foreach ($row in $rows) {
+    foreach ($row in $rowsById.Values) {
       if ($frontier -notcontains [int]$row.ParentProcessId) { continue }
       $childId = [int]$row.ProcessId
       if ($ids.Add($childId)) { $next += $childId }
@@ -181,7 +189,10 @@ function Stop-TimedProcessTree($process) {
     try { $treeIds = @($treeIds + @(Get-ProcessTreeIds $process.Id) | Select-Object -Unique); $treeKnown = $true }
     catch { $errors += "fallback tree enumeration failed: $(Format-ErrorText $_)" }
   }
-  foreach ($processId in @(Get-LiveProcessIds $treeIds)) {
+  # Kill captured descendants first. Killing the root first reparents them and makes a missed/stale
+  # CIM relationship impossible to recover after taskkill has already failed.
+  $killOrder = @($treeIds | Where-Object { $_ -ne $process.Id }) + @($process.Id)
+  foreach ($processId in @(Get-LiveProcessIds $killOrder)) {
     try { Stop-Process -Id $processId -Force -ErrorAction Stop }
     catch {
       if ($null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {

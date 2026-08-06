@@ -6,6 +6,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real HTTP production verification: redirects, exact bytes, oversize and truncated responses, per-artifact diagnostics, and destination-policy rejection of hostile index paths.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove the HTTP verifier applies one total deadline to a slow-drip body rather than resetting a full timeout for every byte read.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Require monotonic deadline accounting and a post-read budget check so clock changes or timer granularity cannot turn a late final read into success.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Give the redirect proof a bounded PowerShell process-startup allowance without changing the production HTTP deadline asserted by the suite.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Give the remaining real PowerShell HTTP probes explicit process-startup headroom while retaining the 200ms slow-body deadline and all fail-closed assertions.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Measure the slow-body wall clock from an explicit production-helper boundary handshake, excluding unrelated PowerShell startup starvation while retaining the 200ms HTTP deadline and a 3s fail-closed ceiling.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -99,6 +102,8 @@ try {
   } elseif ($Operation -eq 'bounded') {
     $temp = Join-Path $env:TEMP ("oshal-recap-deadline-" + [guid]::NewGuid().ToString('N'))
     try {
+      [Console]::Out.WriteLine('__OSHAL_RECAP_BOUNDARY_READY__')
+      [Console]::Out.Flush()
       [void](Save-BoundedRecapHttpResponse $Uri $temp 64 64 $TimeoutMs)
       [pscustomobject]@{ valid = $true } | ConvertTo-Json -Compress
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
@@ -122,7 +127,13 @@ try {
 }
 `, 'utf8');
 
-type ProbeResult = { status: number | null; stdout: string; stderr: string; body: Record<string, unknown> };
+type ProbeResult = {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  body: Record<string, unknown>;
+  boundaryElapsedMs: number | null;
+};
 
 /**
  * @description Runs the real PowerShell helper while the in-process HTTP fixture remains responsive.
@@ -140,13 +151,25 @@ Promise<ProbeResult> => new Promise((resolve, reject) => {
   ]);
   let stdout = '';
   let stderr = '';
-  child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+  let boundaryReadyAt: number | null = null;
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString();
+    if (boundaryReadyAt === null && stdout.includes('__OSHAL_RECAP_BOUNDARY_READY__')) {
+      boundaryReadyAt = Date.now();
+    }
+  });
   child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
   child.on('error', reject);
   child.on('close', (status) => {
     const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
     if (!line) return reject(new Error(`PowerShell probe returned no JSON: ${stderr}`));
-    resolve({ status, stdout, stderr, body: JSON.parse(line) as Record<string, unknown> });
+    resolve({
+      status,
+      stdout,
+      stderr,
+      body: JSON.parse(line) as Record<string, unknown>,
+      boundaryElapsedMs: boundaryReadyAt === null ? null : Date.now() - boundaryReadyAt,
+    });
   });
 });
 
@@ -170,7 +193,7 @@ describe('bounded recap production downloads', () => {
     const result = await runProbe('artifact', `${baseUri}/redirect`);
     expect(result.status, result.stderr).toBe(0);
     expect(result.body).toEqual({ valid: true });
-  });
+  }, 15_000);
 
   it('retains a distinct byte or hash reason for every failed artifact', async () => {
     const result = await runProbe('failures', baseUri);
@@ -182,15 +205,15 @@ describe('bounded recap production downloads', () => {
       expect.stringMatching(/^truncated: .*after \d+ of 64 (?:declared )?bytes/i),
       expect.stringMatching(/^wrong-hash: SHA-256 mismatch/i),
     ]));
-  });
+  }, 20_000);
 
   it('applies one wall-clock budget to a slow-drip response body', async () => {
-    const started = Date.now();
     const result = await runProbe('bounded', `${baseUri}/slow-drip`, 'agenticfederal', 200);
     expect(result.status).toBe(1);
     expect(String(result.body.error)).toMatch(/deadline|timed? out|timeout/i);
-    expect(Date.now() - started).toBeLessThan(3_000);
-  });
+    expect(result.boundaryElapsedMs).not.toBeNull();
+    expect(result.boundaryElapsedMs!).toBeLessThan(3_000);
+  }, 15_000);
 
   it('keeps bounded reads, redirect handling, and connect/read timeouts in the production helper', () => {
     expect(helperSource).toMatch(/AllowAutoRedirect\s*=\s*\$true/);
@@ -211,7 +234,7 @@ describe('strict production recap indexes', () => {
     const result = await runProbe('index', `${baseUri}/bad-index-${policy}`, policy);
     expect(result.status).toBe(1);
     expect(`${result.stderr}\n${String(result.body.error)}`).toMatch(/unsafe deck path/i);
-  });
+  }, 20_000);
 
   it('routes both live publishers through strict indexes and labeled artifact diagnostics', () => {
     for (const source of publisherSources) {

@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial swarm-app gate middleware — 503s manifest-owned routes when the owning app is inactive (ADR 2026-04-20 Phase 1 close)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: enforce declared per-user app tiers on hard-mounted kernel routes, sharing the same exact-subject, method, rollout, and fail-closed policy as dynamic package routes.
  */
 
 import type { Request, Response, NextFunction } from 'express';
 import { createChildLogger } from '@/shared/logger';
-import type { SwarmAppService } from '@/features/swarm-apps';
+import type { AppAccessResolver, SwarmAppService } from '@/features/swarm-apps';
+import { appAccessCallerSub, appAccessDenial, appAccessEnforcementMode } from './app-access-policy';
 
 const logger = createChildLogger({ module: 'swarm-app-gate-middleware' });
 
@@ -28,15 +30,56 @@ const logger = createChildLogger({ module: 'swarm-app-gate-middleware' });
  * @param swarmAppService - the service owning the ownership + status cache
  * @returns Express middleware
  */
-export function createSwarmAppGateMiddleware(swarmAppService: SwarmAppService) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+export function createSwarmAppGateMiddleware(
+  swarmAppService: SwarmAppService,
+  appAccess?: AppAccessResolver,
+) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const owner = swarmAppService.ownerOf(req.path);
     if (!owner) {
       next();
       return;
     }
     if (owner.status === 'active') {
-      next();
+      if (!owner.access) {
+        next();
+        return;
+      }
+      if (!appAccess) {
+        logger.error({ path: req.path, appName: owner.appName }, 'Declared app access has no resolver');
+        res.status(503).json({ error: 'app_access_unavailable' });
+        return;
+      }
+      const userSub = appAccessCallerSub(req);
+      if (!userSub) {
+        next(); // anonymous access remains the guest capability matrix's responsibility
+        return;
+      }
+      try {
+        const decision = await appAccess.resolve(owner.appName, userSub, owner.access);
+        res.locals.oshalAppAccess = decision;
+        const denial = appAccessDenial(req.method, decision);
+        if (!denial) {
+          next();
+          return;
+        }
+        if (appAccessEnforcementMode() === 'shadow') {
+          logger.warn(
+            { path: req.path, appName: owner.appName, userSub, tier: decision.tier, method: req.method, denial },
+            'Gate: app access shadow denial observed',
+          );
+          next();
+          return;
+        }
+        logger.info(
+          { path: req.path, appName: owner.appName, userSub, tier: decision.tier, method: req.method, denial },
+          'Gate: app access request denied',
+        );
+        res.status(403).json({ error: denial, app: owner.appName, tier: decision.tier });
+      } catch (err) {
+        logger.error({ err, path: req.path, appName: owner.appName }, 'Gate: app access resolution failed closed');
+        res.status(503).json({ error: 'app_access_unavailable' });
+      }
       return;
     }
     logger.info({ path: req.path, appName: owner.appName }, 'Gate: 503 — owning app is inactive');

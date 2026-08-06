@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Signed and exactly verified principal_iss independently from token iss to preserve the authenticated subject namespace across the HTTP delegation boundary.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Sign and exactly verify the canonical request-body SHA-256 so a captured token cannot authorize mutated execution inputs.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Validate delegation subjects by UTF-8 byte length without trimming so signed exact OIDC identities survive issuance, parsing, and expectation binding unchanged.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Add exact method/path claims, a receipt issuer for durable jti persistence, and a route verifier whose remaining signed identity bindings are checked by the PostgreSQL delegation authority.
  */
 
 import {
@@ -27,6 +28,7 @@ import {
   type DelegationTokenExpectations,
   type DelegationTokenGrant,
   type DelegationTokenHeader,
+  type DelegationRouteExpectations,
 } from '@/shared/types';
 
 const logger = createChildLogger({ module: 'delegation-token' });
@@ -52,6 +54,7 @@ const KID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const JTI_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
 const SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const METHOD_PATTERN = /^(?:DELETE|GET|HEAD|OPTIONS|PATCH|POST|PUT)$/;
 
 type DelegationEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -120,6 +123,24 @@ export interface DelegationTokenIssuer {
   issue(grant: DelegationTokenGrant): string;
 }
 
+/** @description Signed token plus the exact claims recorded in the durable one-time grant row. */
+export interface RecordedDelegationToken {
+  token: string;
+  claims: DelegationTokenClaims;
+}
+/** @description Per-dispatch ceiling that prevents a token from outliving its parent authority. */
+export interface DelegationTokenIssueConstraints {
+  expiresAtEpochSeconds?: number;
+}
+/** @description Controller-only issuer that exposes its signed claims for atomic durable recording. */
+export interface RecordedDelegationTokenIssuer {
+  /**
+   * @description Issues one token and returns the immutable claims that must be persisted.
+   * @param grant - Least-privilege route authority approved by deterministic controller code.
+   * @returns Compact token and a defensive copy of its exact signed claims.
+   */
+  issue(grant: DelegationTokenGrant, constraints?: DelegationTokenIssueConstraints): RecordedDelegationToken;
+}
 /** @description Bot-safe capability that can verify with public material and has no issue method. */
 export interface DelegationTokenVerifier {
   /**
@@ -129,6 +150,18 @@ export interface DelegationTokenVerifier {
    * @returns A defensive copy of the verified signed claims.
    */
   verify(token: string, expected: DelegationTokenExpectations): DelegationTokenClaims;
+}
+
+/** @description Public-key verifier for API routes backed by a durable delegation record. */
+export interface DelegationRouteTokenVerifier {
+  /**
+   * @description Verifies signature, time, and exact route bindings before the durable store
+   * validates and consumes the signed subject, workload, dispatch, and jti tuple.
+   * @param token - Compact controller-issued delegation token.
+   * @param expected - Exact issuer, audience, method, path, body digest, and scopes for this route.
+   * @returns Verified signed claims for durable authorization and one-time consumption.
+   */
+  verify(token: string, expected: DelegationRouteExpectations): DelegationTokenClaims;
 }
 
 /**
@@ -145,15 +178,29 @@ export function createDelegationTokenIssuer(
   const nowEpochSeconds = options.nowEpochSeconds ?? systemEpochSeconds;
   const generateJti = options.generateJti ?? randomUUID;
   return Object.freeze({
-    issue: (grant: DelegationTokenGrant) => executeIssue(
-      configuration,
-      grant,
-      nowEpochSeconds,
-      generateJti,
+    issue: (grant: DelegationTokenGrant) => executeIssue(configuration, grant, nowEpochSeconds, generateJti).token,
+  });
+}
+/**
+ * @description Builds a controller-only issuer that returns the exact signed claims so a durable
+ * delegation store can persist the jti and bindings before releasing the token to a workload.
+ * This is intentionally a separate capability from {@link createDelegationTokenIssuer}; bot HTTP
+ * dispatch keeps its minimal string-only issuer surface.
+ * @param options - Optional controller environment, clock, and nonce seams.
+ * @returns Frozen issuer returning one signed token receipt per call.
+ */
+export function createRecordedDelegationTokenIssuer(
+  options: DelegationTokenIssuerOptions = {},
+): RecordedDelegationTokenIssuer {
+  const configuration = loadIssuerConfiguration(options.env ?? process.env);
+  const nowEpochSeconds = options.nowEpochSeconds ?? systemEpochSeconds;
+  const generateJti = options.generateJti ?? randomUUID;
+  return Object.freeze({
+    issue: (grant: DelegationTokenGrant, constraints?: DelegationTokenIssueConstraints) => executeIssue(
+      configuration, grant, nowEpochSeconds, generateJti, constraints,
     ),
   });
 }
-
 /**
  * @description Builds a verifier from OSHAL_DELEGATION_PUBLIC_KEYS only. Bot containers need no
  * private material, and the returned object structurally cannot mint delegated user authority.
@@ -167,10 +214,25 @@ export function createDelegationTokenVerifier(
   const nowEpochSeconds = options.nowEpochSeconds ?? systemEpochSeconds;
   return Object.freeze({
     verify: (token: string, expected: DelegationTokenExpectations) => executeVerify(
-      configuration,
-      token,
-      expected,
-      nowEpochSeconds,
+      configuration, token, expected, nowEpochSeconds,
+    ),
+  });
+}
+/**
+ * @description Builds a public-only route verifier for API delegations. It verifies the exact
+ * request route before returning signed identity fields to the PostgreSQL authority, which must
+ * compare and atomically consume the complete durable tuple before execution.
+ * @param options - Optional public-key environment and clock seam.
+ * @returns Frozen public-key route verifier with no issuance capability.
+ */
+export function createDelegationRouteTokenVerifier(
+  options: DelegationTokenVerifierOptions = {},
+): DelegationRouteTokenVerifier {
+  const configuration = loadVerifierConfiguration(options.env ?? process.env);
+  const nowEpochSeconds = options.nowEpochSeconds ?? systemEpochSeconds;
+  return Object.freeze({
+    verify: (token: string, expected: DelegationRouteExpectations) => executeRouteVerify(
+      configuration, token, expected, nowEpochSeconds,
     ),
   });
 }
@@ -180,16 +242,36 @@ function executeIssue(
   grant: DelegationTokenGrant,
   nowEpochSeconds: () => number,
   generateJti: () => string,
-): string {
+  constraints?: DelegationTokenIssueConstraints,
+): RecordedDelegationToken {
   const startedAt = Date.now();
   logger.debug({ operation: 'issue' }, 'Delegation token issuance entered');
   try {
-    const token = issueToken(configuration, grant, nowEpochSeconds, generateJti);
+    const token = issueToken(configuration, grant, nowEpochSeconds, generateJti, constraints);
     logger.debug({ operation: 'issue', durationMs: Date.now() - startedAt }, 'Delegation token issuance exited');
     return token;
   } catch (error) {
     const failure = asDelegationError(error, 'configuration', 'Delegation token issuance failed');
     logSanitizedFailure('issue', failure, startedAt);
+    throw failure;
+  }
+}
+
+function executeRouteVerify(
+  configuration: DelegationVerifierConfiguration,
+  token: string,
+  expected: DelegationRouteExpectations,
+  nowEpochSeconds: () => number,
+): DelegationTokenClaims {
+  const startedAt = Date.now();
+  logger.debug({ operation: 'verify_route' }, 'Delegation route verification entered');
+  try {
+    const claims = verifyRouteToken(configuration, token, expected, nowEpochSeconds);
+    logger.debug({ operation: 'verify_route', durationMs: Date.now() - startedAt }, 'Delegation route verification exited');
+    return claims;
+  } catch (error) {
+    const failure = asDelegationError(error, 'malformed', 'Delegation route verification failed');
+    logSanitizedFailure('verify_route', failure, startedAt);
     throw failure;
   }
 }
@@ -428,14 +510,16 @@ function issueToken(
   grant: DelegationTokenGrant,
   nowEpochSeconds: () => number,
   generateJti: () => string,
-): string {
+  constraints?: DelegationTokenIssueConstraints,
+): RecordedDelegationToken {
   const normalized = normalizeGrant(grant);
   const now = readClock(nowEpochSeconds);
+  const exp = constrainedExpiry(now, configuration.ttlSeconds, constraints);
   const claims: DelegationTokenClaims = {
     ...normalized,
     iat: now,
     nbf: now,
-    exp: now + configuration.ttlSeconds,
+    exp,
     jti: validateJti(readJti(generateJti), 'configuration'),
   };
   const header: DelegationTokenHeader = {
@@ -444,7 +528,24 @@ function issueToken(
     kid: configuration.activeKid,
     v: DELEGATION_TOKEN_VERSION,
   };
-  return signToken(header, claims, configuration.privateKey);
+  return Object.freeze({
+    token: signToken(header, claims, configuration.privateKey),
+    claims: Object.freeze({ ...claims, scope: Object.freeze([...claims.scope]) }) as DelegationTokenClaims,
+  });
+}
+
+function constrainedExpiry(
+  now: number,
+  ttlSeconds: number,
+  constraints?: DelegationTokenIssueConstraints,
+): number {
+  const configuredExpiry = now + ttlSeconds;
+  if (constraints?.expiresAtEpochSeconds === undefined) return configuredExpiry;
+  const ceiling = constraints.expiresAtEpochSeconds;
+  if (!Number.isSafeInteger(ceiling) || ceiling < now + MIN_TTL_SECONDS) {
+    throw new DelegationTokenError('configuration', 'Delegation expiry ceiling is invalid');
+  }
+  return Math.min(configuredExpiry, ceiling);
 }
 
 function normalizeGrant(grant: DelegationTokenGrant): DelegationTokenGrant {
@@ -458,6 +559,8 @@ function normalizeGrant(grant: DelegationTokenGrant): DelegationTokenGrant {
     principal_iss: validateText(grant.principal_iss, 'principal_iss', 2_048),
     azp: validateText(grant.azp, 'azp', 256),
     task_id: validateText(grant.task_id, 'task_id', 256),
+    method: validateMethod(grant.method, 'malformed'),
+    path: validatePath(grant.path, 'malformed'),
     body_sha256: validateBodyDigest(grant.body_sha256, 'malformed'),
     scope: normalizeScopes(grant.scope),
   };
@@ -502,6 +605,30 @@ function verifyToken(
   expected: DelegationTokenExpectations,
   nowEpochSeconds: () => number,
 ): DelegationTokenClaims {
+  const claims = readSignedClaims(configuration, token);
+  const normalizedExpected = normalizeExpectations(expected);
+  assertBindings(claims, normalizedExpected);
+  assertTimes(claims, readClock(nowEpochSeconds), configuration.clockSkewSeconds);
+  return copyClaims(claims);
+}
+
+function verifyRouteToken(
+  configuration: DelegationVerifierConfiguration,
+  token: string,
+  expected: DelegationRouteExpectations,
+  nowEpochSeconds: () => number,
+): DelegationTokenClaims {
+  const claims = readSignedClaims(configuration, token);
+  const normalizedExpected = normalizeRouteExpectations(expected);
+  assertRouteBindings(claims, normalizedExpected);
+  assertTimes(claims, readClock(nowEpochSeconds), configuration.clockSkewSeconds);
+  return copyClaims(claims);
+}
+
+function readSignedClaims(
+  configuration: DelegationVerifierConfiguration,
+  token: string,
+): DelegationTokenClaims {
   const [encodedHeader, encodedClaims, encodedSignature] = splitToken(token);
   const header = parseHeader(encodedHeader);
   const publicKey = configuration.publicKeys.get(header.kid);
@@ -509,10 +636,10 @@ function verifyToken(
     throw new DelegationTokenError('invalid_signature', 'Delegation token signature is invalid');
   }
   verifySignature(`${encodedHeader}.${encodedClaims}`, encodedSignature, publicKey);
-  const claims = parseClaims(encodedClaims);
-  const normalizedExpected = normalizeExpectations(expected);
-  assertBindings(claims, normalizedExpected);
-  assertTimes(claims, readClock(nowEpochSeconds), configuration.clockSkewSeconds);
+  return parseClaims(encodedClaims);
+}
+
+function copyClaims(claims: DelegationTokenClaims): DelegationTokenClaims {
   return { ...claims, scope: [...claims.scope] };
 }
 
@@ -561,7 +688,8 @@ function verifySignature(signingInput: string, encoded: string, publicKey: KeyOb
 function parseClaims(encoded: string): DelegationTokenClaims {
   const value = decodeJsonSegment(encoded, MAX_CLAIMS_BYTES);
   assertExactKeys(value, [
-    'iss', 'aud', 'sub', 'principal_iss', 'azp', 'task_id', 'body_sha256', 'scope', 'iat', 'nbf', 'exp', 'jti',
+    'iss', 'aud', 'sub', 'principal_iss', 'azp', 'task_id', 'method', 'path',
+    'body_sha256', 'scope', 'iat', 'nbf', 'exp', 'jti',
   ]);
   const claims: DelegationTokenClaims = {
     iss: validateText(value.iss, 'iss', 256),
@@ -570,6 +698,8 @@ function parseClaims(encoded: string): DelegationTokenClaims {
     principal_iss: validateText(value.principal_iss, 'principal_iss', 2_048),
     azp: validateText(value.azp, 'azp', 256),
     task_id: validateText(value.task_id, 'task_id', 256),
+    method: validateMethod(value.method, 'malformed'),
+    path: validatePath(value.path, 'malformed'),
     body_sha256: validateBodyDigest(value.body_sha256, 'malformed'),
     scope: normalizeScopes(value.scope),
     iat: validateTimestamp(value.iat, 'iat'),
@@ -641,10 +771,28 @@ function normalizeExpectations(expected: DelegationTokenExpectations): Delegatio
     aud: validateText(expected.aud, 'expected aud', 256),
     azp: validateText(expected.azp, 'expected azp', 256),
     task_id: validateText(expected.task_id, 'expected task_id', 256),
+    method: validateMethod(expected.method, 'invalid_binding'),
+    path: validatePath(expected.path, 'invalid_binding'),
     body_sha256: validateBodyDigest(expected.body_sha256, 'invalid_binding'),
     scope: normalizeScopes(expected.scope),
     sub: validateDelegationSubject(expected.sub, 'expected sub'),
     principal_iss: validateText(expected.principal_iss, 'expected principal_iss', 2_048),
+  };
+}
+
+function normalizeRouteExpectations(
+  expected: DelegationRouteExpectations,
+): DelegationRouteExpectations {
+  if (!isPlainRecord(expected)) {
+    throw new DelegationTokenError('invalid_binding', 'Delegation route expectations must be an object');
+  }
+  return {
+    iss: validateText(expected.iss, 'expected iss', 256),
+    aud: validateText(expected.aud, 'expected aud', 256),
+    method: validateMethod(expected.method, 'invalid_binding'),
+    path: validatePath(expected.path, 'invalid_binding'),
+    body_sha256: validateBodyDigest(expected.body_sha256, 'invalid_binding'),
+    scope: normalizeScopes(expected.scope),
   };
 }
 
@@ -654,6 +802,8 @@ function assertBindings(claims: DelegationTokenClaims, expected: DelegationToken
     || claims.aud !== expected.aud
     || claims.azp !== expected.azp
     || claims.task_id !== expected.task_id
+    || claims.method !== expected.method
+    || claims.path !== expected.path
     || claims.body_sha256 !== expected.body_sha256
     || claims.sub !== expected.sub
     || claims.principal_iss !== expected.principal_iss
@@ -661,6 +811,43 @@ function assertBindings(claims: DelegationTokenClaims, expected: DelegationToken
   ) {
     throw new DelegationTokenError('invalid_binding', 'Delegation token dispatch binding is invalid');
   }
+}
+
+function assertRouteBindings(
+  claims: DelegationTokenClaims,
+  expected: DelegationRouteExpectations,
+): void {
+  if (
+    claims.iss !== expected.iss
+    || claims.aud !== expected.aud
+    || claims.method !== expected.method
+    || claims.path !== expected.path
+    || claims.body_sha256 !== expected.body_sha256
+    || !sameScopes(claims.scope, expected.scope)
+  ) {
+    throw new DelegationTokenError('invalid_binding', 'Delegation token route binding is invalid');
+  }
+}
+
+function validateMethod(value: unknown, code: DelegationTokenErrorCode): string {
+  if (typeof value !== 'string' || !METHOD_PATTERN.test(value)) {
+    throw new DelegationTokenError(code, 'Delegation request method is invalid');
+  }
+  return value;
+}
+
+function validatePath(value: unknown, code: DelegationTokenErrorCode): string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > 2_048
+    || value[0] !== '/'
+    || /[\u0000-\u0020\u007F?#\\]/.test(value)
+    || value.includes('//')
+  ) {
+    throw new DelegationTokenError(code, 'Delegation request path is invalid');
+  }
+  return value;
 }
 
 function validateBodyDigest(value: unknown, code: DelegationTokenErrorCode): string {
@@ -785,7 +972,7 @@ function asDelegationError(
 }
 
 function logSanitizedFailure(
-  operation: 'issue' | 'verify',
+  operation: 'issue' | 'verify' | 'verify_route',
   failure: DelegationTokenError,
   startedAt: number,
 ): void {

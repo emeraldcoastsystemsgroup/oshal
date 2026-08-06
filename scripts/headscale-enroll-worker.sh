@@ -21,7 +21,7 @@
 #
 # NOT for admin/controller machines: ephemeral nodes drop out of the mesh on disconnect.
 # Enroll those with a non-ephemeral key (scripts/headscale-setup.sh) and tag them by hand:
-#   docker exec oshal-headscale headscale nodes tag -i <id> -t tag:admin
+#   docker exec oshal-headscale headscale nodes tag -i <id> -t tag:operator
 #
 # Usage:
 #   ./scripts/headscale-enroll-worker.sh                 # user 'agentmesh', 1h expiry
@@ -68,7 +68,7 @@ echo "  User: $USER_NAME (id $USER_ID)"
 # --ephemeral : the node's record is removed when it disconnects (right for workers,
 #               wrong for admin/controller machines — see header).
 # --tags      : the joining node is born carrying tag:worker, so the hardened ACL
-#               (infra/headscale/config/policy.hardened.hujson) scopes it immediately;
+#               (infra/headscale/config/policy.hujson) scopes it immediately;
 #               no post-join `nodes tag` step, no untagged window.
 # NOT --reusable: one key, one machine, then dead.
 KEY_OUTPUT=$(docker exec "$CONTAINER" headscale preauthkeys create \

@@ -20,21 +20,42 @@
  * default. The operator directive behind commit 791286de applies here too: the platform key only
  * ever runs `:free` models. A user's own BYO OpenRouter connection is untouched.
  *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Resolve current, BYO, and compatible framework lanes for Token Chase without exposing stored credentials.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep the shared OpenRouter key on probed `:free` models and refuse it when the free quota is unavailable.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Add the aggregate `free:auto` selector backed by owner-scoped health/LRU rotation; replay-time provider walls rotate only through free lanes and otherwise fail closed.
+ *
  * @module optimizer-providers
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
+import type { VariantLaneRotation, VariantReplayLane } from '@/features/token-chase';
 import { listConfiguredProviders } from './provider-routes';
 import { getUserLlmConnection, buildAnyLlmListEntry, ANY_LLM_PROVIDER } from './byo-llm-routes';
 import { accessibleConnections } from './connector-tenancy';
-import { platformFreeConnection } from './free-tier-rotation';
+import {
+  freeTierRuntimeSnapshot,
+  listFreeTierConnections,
+  platformFreeConnection,
+  reportResolvedLlmFailure,
+  reportSuccess,
+  resolveLiveFreeTierConnection,
+  type FreeTierResolution,
+  type ResolvedUserLlmConnection,
+} from './free-tier-rotation';
 
 const logger = createChildLogger({ module: 'optimizer-providers' });
 
 const FRAMEWORK_PREFIX = 'framework:';
 const CURRENT_ID = 'current';
+/** @description Stable connection id for Token Chase's aggregate health-qualified free selector. */
+export const TOKEN_CHASE_FREE_ROTATION_ID = 'free:auto';
+const MAX_FREE_ROTATION_ATTEMPTS = 8;
 
 /** OpenAI-compatible base URL + key env vars for framework providers the bot CAN replay ephemerally. */
 const COMPAT: Record<string, { baseUrl: string; envKeys: string[] }> = {
@@ -54,14 +75,30 @@ export interface OptimizerLogin {
   connectionId: string;
   label: string;
   model: string;
-  kind: 'current' | 'byo' | 'framework';
+  kind: 'current' | 'byo' | 'framework' | 'free-rotation';
   isDefault: boolean;
+}
+
+/** @description Non-secret evidence identifying the exact free lane selected for a replay. */
+export interface OptimizerFreeSelection {
+  source: 'user-free-tier' | 'platform-free';
+  connectionId: string | null;
+  providerId: string;
+  model: string;
 }
 
 /** @description A resolved lane to replay against (carries the secret for `byo`). */
 export type OptimizerLane =
   | { kind: 'current'; label: string }
-  | { kind: 'byo'; baseUrl: string; model: string; apiKey: string; label: string };
+  | {
+      kind: 'byo';
+      baseUrl: string;
+      model: string;
+      apiKey: string;
+      label: string;
+      providerId?: string;
+      freeSelection?: OptimizerFreeSelection;
+    };
 
 /** @description Loads persisted global secrets (same store the Utilities provider panel reports from). */
 function loadPersistedSecrets(): Record<string, unknown> {
@@ -92,6 +129,69 @@ function isPlatformOpenRouterKey(apiKey: string): boolean {
 /** @description True for OpenRouter's zero-cost model ids (`…:free`). */
 function isFreeModelId(model: string): boolean {
   return model.trim().endsWith(':free');
+}
+
+/** @description Counts owner-visible free connections that rotation may currently attempt. */
+async function eligibleUserFreeCount(pool: unknown, userSub: string): Promise<number> {
+  try {
+    const statuses = await listFreeTierConnections(pool, userSub);
+    return statuses.filter((lane) => !lane.cooledDown && Boolean(lane.providerId) && Boolean(lane.model)).length;
+  } catch (err) {
+    logger.warn({ err }, 'Failed to read free-tier eligibility for Token Chase');
+    return 0;
+  }
+}
+
+/** @description Builds the aggregate selector row without exposing a key or an unhealthy lane. */
+async function buildFreeRotationLogin(pool: unknown, userSub: string): Promise<OptimizerLogin | null> {
+  const userLanes = await eligibleUserFreeCount(pool, userSub);
+  let platformLive = false;
+  try {
+    const platform = freeTierRuntimeSnapshot();
+    platformLive = platform.configured && platform.verdict === 'live' && isFreeModelId(platform.model ?? '');
+  } catch (err) {
+    logger.warn({ err }, 'Failed to read platform free-lane eligibility for Token Chase');
+  }
+  const eligible = userLanes + (platformLive ? 1 : 0);
+  if (eligible === 0) return null;
+  return {
+    connectionId: TOKEN_CHASE_FREE_ROTATION_ID,
+    label: `Free-provider rotation (${eligible} eligible lane${eligible === 1 ? '' : 's'})`,
+    model: 'health-qualified at replay time',
+    kind: 'free-rotation',
+    isDefault: false,
+  };
+}
+
+/** @description Shapes an owner-owned free resolution as a Token Chase replay lane. */
+function userFreeOptimizerLane(free: FreeTierResolution): OptimizerLane {
+  return {
+    kind: 'byo',
+    baseUrl: free.baseUrl,
+    model: free.model,
+    apiKey: free.apiKey,
+    label: `Free rotation — ${free.providerId} / ${free.model}`,
+    providerId: free.providerId,
+    freeSelection: {
+      source: 'user-free-tier', connectionId: free.connectionId,
+      providerId: free.providerId, model: free.model,
+    },
+  };
+}
+
+/** @description Resolves the next probed-live free lane, never the bot's paid/default provider. */
+async function resolveFreeOptimizerLane(pool: unknown, userSub: string): Promise<OptimizerLane | null> {
+  const free = await resolveLiveFreeTierConnection(pool, userSub);
+  if (free) return userFreeOptimizerLane(free);
+  const platform = await platformFreeConnection();
+  if (!platform || !isFreeModelId(platform.model)) return null;
+  return {
+    kind: 'byo', baseUrl: platform.baseUrl, model: platform.model, apiKey: platform.apiKey,
+    label: `Free rotation — openrouter / ${platform.model}`, providerId: 'openrouter',
+    freeSelection: {
+      source: 'platform-free', connectionId: null, providerId: 'openrouter', model: platform.model,
+    },
+  };
 }
 
 /**
@@ -139,6 +239,9 @@ export async function listOptimizerLogins(pool: unknown, userSub: string): Promi
     logger.warn({ err }, 'Failed to read framework providers for optimizer');
   }
 
+  const freeRotation = await buildFreeRotationLogin(pool, userSub);
+  if (freeRotation) logins.splice(Math.min(1, logins.length), 0, freeRotation);
+
   // 2) The caller's own Bring-Your-Own-LLM connections.
   try {
     const rows = await accessibleConnections(pool, userSub, ANY_LLM_PROVIDER);
@@ -162,6 +265,9 @@ export async function listOptimizerLogins(pool: unknown, userSub: string): Promi
  * @returns The lane, or null when the login is unknown / not runnable here.
  */
 export async function resolveOptimizerLane(pool: unknown, userSub: string, connectionId: string): Promise<OptimizerLane | null> {
+  if (connectionId === TOKEN_CHASE_FREE_ROTATION_ID) {
+    return resolveFreeOptimizerLane(pool, userSub);
+  }
   if (connectionId === CURRENT_ID) {
     const { providers, activeProvider } = listConfiguredProviders();
     const active = providers.find((p) => p.id === activeProvider);
@@ -192,4 +298,72 @@ export async function resolveOptimizerLane(pool: unknown, userSub: string, conne
   }
   const conn = await getUserLlmConnection(pool, userSub, { connectionId });
   return conn ? { kind: 'byo', baseUrl: conn.baseUrl, model: conn.model, apiKey: conn.apiKey, label: conn.model } : null;
+}
+
+/**
+ * @description Converts an optimizer lane into the credential-bearing replay shape consumed by
+ * TokenChaseOptimizeService while retaining the selected provider id for evidence.
+ * @param lane - Resolved optimizer lane.
+ * @param label - Optional caller display label; selection evidence remains server-derived.
+ * @returns The replay lane.
+ */
+export function optimizerReplayLane(lane: OptimizerLane, label?: string): VariantReplayLane {
+  const chosenLabel = label?.trim() || lane.label;
+  if (lane.kind === 'current') return { label: chosenLabel };
+  return {
+    label: chosenLabel,
+    byo: {
+      baseUrl: lane.baseUrl, apiKey: lane.apiKey, model: lane.model, providerId: lane.providerId,
+    },
+  };
+}
+
+/** @description Reconstructs the free-tier failure record without exposing it outside the server. */
+function failureConnectionOf(lane: OptimizerLane): ResolvedUserLlmConnection | undefined {
+  if (lane.kind !== 'byo' || !lane.freeSelection) return undefined;
+  return {
+    baseUrl: lane.baseUrl,
+    apiKey: lane.apiKey,
+    model: lane.model,
+    resolutionSource: lane.freeSelection.source === 'user-free-tier' ? 'free-tier' : 'platform',
+    connectionId: lane.freeSelection.connectionId ?? undefined,
+  };
+}
+
+/**
+ * @description Builds replay-time rotation callbacks for an aggregate free selector. Classified
+ * quota/provider walls cool the current free lane and select another; no callback ever returns the
+ * bot's configured lane, so exhaustion fails closed rather than spending a paid platform key.
+ * @param pool - pg pool holding owner-scoped rotation state.
+ * @param userSub - Authenticated owner subject.
+ * @param initial - First resolved free optimizer lane.
+ * @returns Rotation callbacks, or undefined for non-free selections.
+ */
+export function createOptimizerLaneRotation(
+  pool: unknown,
+  userSub: string,
+  initial: OptimizerLane,
+): VariantLaneRotation | undefined {
+  if (initial.kind !== 'byo' || !initial.freeSelection) return undefined;
+  let current: OptimizerLane = initial;
+  return {
+    maxAttempts: MAX_FREE_ROTATION_ATTEMPTS,
+    next: async () => {
+      const next = await resolveFreeOptimizerLane(pool, userSub);
+      if (!next) return null;
+      current = next;
+      return optimizerReplayLane(next);
+    },
+    onFailure: async (_lane, reason) =>
+      reportResolvedLlmFailure(pool, failureConnectionOf(current), reason),
+    onSuccess: async () => {
+      const selected = current.kind === 'byo' ? current.freeSelection : undefined;
+      if (selected?.source !== 'user-free-tier' || !selected.connectionId) return;
+      try {
+        await reportSuccess(pool, selected.connectionId);
+      } catch (err) {
+        logger.warn({ err, connectionId: selected.connectionId }, 'Failed to persist Token Chase free-lane success telemetry');
+      }
+    },
+  };
 }

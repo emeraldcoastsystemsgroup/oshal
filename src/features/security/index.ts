@@ -21,6 +21,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Exported executable contracts for helper-mounted, mixed-auth, and non-/api security-sensitive route surfaces.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exported the shared limiter-only mount classifier used by both runtime and CI route inventories.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Surface the SEC-01 legacy service-identity read guard through the feature barrel for route-layer containment without deep imports.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Surface the durable SEC-01 workload credential, PostgreSQL delegation authority, issuer, route metadata, and migration middleware.
  *
  * @module features/security
  */
@@ -57,7 +58,17 @@ export {
   RESERVED_BODY_PARSER_PREFIXES,
 } from './hardening/body-limits';
 export { shouldSkipGlobalRateLimit } from './hardening/global-rate-limit-skip';
-export { rejectLegacyServiceIdentityForUserRead } from './legacy-service-identity-containment';
+export {
+  legacyWorkloadLogContext,
+  rejectLegacyServiceIdentityForUserRead,
+  type LegacyWorkloadLogContext,
+} from './legacy-service-identity-containment';
+export * from './workload-delegation-types';
+export * from './workload-credential';
+export * from './postgres-workload-delegation-store';
+export * from './workload-delegation-issuer';
+export * from './workload-delegation-route-policy';
+export * from './workload-delegation-middleware';
 export {
   cspFromEnv,
   cspMode,

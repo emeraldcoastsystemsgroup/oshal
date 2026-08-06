@@ -1,3 +1,10 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Remove a false Simple Icons match caused by an empty normalized alias and use the reviewed api.video brand favicon.
+# -----------------------------------------------------------------------------
+
 provider: apivideo
 displayName: api.video
 version: 1.0.0
@@ -32,7 +39,6 @@ resources:
 metadata:
   description: "api.video — reads videos, video, live streams via ws.api.video. OAuth: the operator registers the provider app once, then each user connects their own account."
   category: "Media"
-  icon: xiaohongshu
-  iconTitle: Xiaohongshu
-  iconSource: simple-icons
-  iconVerified: true
+  iconSource: favicon-fallback
+  iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/api.video.ico

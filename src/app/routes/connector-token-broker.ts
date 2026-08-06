@@ -1,31 +1,25 @@
 /**
- * Connector Token Broker — controller-side, per-request short-lived token provision.
+ * Connector Token Broker — controller-side credentials for fixed server operations.
  *
- * Security model (the "token broker" fix): bots run codex with danger-full-access, so
- * a compromised/injected swarm that has SESSION_SECRET could read oshal_connections and
- * decrypt EVERY user's Gmail/X/LinkedIn tokens. To remove that capability, the bot must
- * stop needing the key. This module is the controller side of that: at dispatch time the
- * controller (which legitimately holds SESSION_SECRET + the pg pool) decrypts ONLY the
- * caller's own access token(s) and hands them to the bot as short-lived, single-user
- * values. The bot writes them into its per-request workspace as `.oshal-cred-<provider>`
- * files and uses them directly — no DB decryption, no SESSION_SECRET dependency.
- *
- * Best-effort by design: if a provider isn't connected (or can't be refreshed) we simply
- * omit that cred and the bot's tool falls back to its existing DB-decrypt path. Threaded
- * alongside OSHAL_USER_SUB through the same `creds`/`extraEnv` channel the user-scoping
- * file write already uses, so it works for both the remote any-bot path (user-scoping.js)
- * and the in-controller harness path (base-cli-harness-adapter.ts).
+ * Security model: the controller may decrypt only the authenticated owner's selected
+ * connector credential, and only for a schema-bounded provider intent or a deterministic
+ * server-side script. Returned values must be consumed at that operation boundary. They
+ * must never enter a model prompt, CLI environment, generic bot request, or task workspace.
+ * A missing/expired credential is omitted and the operation must report not-connected;
+ * there is no bot-side database-decryption fallback.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial token broker: resolveBotCreds() decrypts the caller's google/twitter access tokens (via getValidAccessToken) into an env-key map (OSHAL_CRED_GOOGLE/OSHAL_CRED_TWITTER) the bot dispatch threads to the per-request workspace as .oshal-cred-* files. Additive — bots keep the DB-decrypt fallback.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add 'twilio' → OSHAL_CRED_TWILIO: the user's pasted "SID:AuthToken" secret brokered to the communications-bot for its phone/text leg (scripts/oshal-twilio.js).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Initially added a Twilio connector credential to the communications-worker compatibility path; superseded by sequence 8.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add 'outlook' → OSHAL_CRED_OUTLOOK: the caller's Microsoft Graph access token brokered to the communications-bot for its M365 mail leg (scripts/oshal-outlook.js) — ADR-037 provider parity with Gmail, so the bot reads/sends Outlook mail without SESSION_SECRET.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add 'plaid' → OSHAL_CRED_PLAID: the caller's Plaid Link access token (now a hub connector, not the app-private oshal_finance_items store) brokered to the finance bot's ADR-083 read-only fallback (scripts/oshal-plaid.js). The Finance controller decrypts server-side directly; this covers the bot-shell-out path.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account-per-provider (ADR-113 section 4): resolveBotCreds accepts an optional per-provider ConnectionSelector so a caller/app can broker a NAMED account ("work email") instead of always getting the resolved default, and logs at WARN when a provider has several accounts and no selector was given — the ambiguity is now visible in the log instead of being decided silently by resolution order. Default behaviour with no selectors is unchanged (the marked default).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Consult per-user connector enablement (BACKLOG.md:2718): before resolving each provider's token, skip any provider the caller has EXPLICITLY disabled for themselves (oshal_connector_user_enablement, enabled=false) so a user-disabled connector is never brokered even if a credential exists. Default-allow + FAIL-OPEN — absence of an override, or any read error, leaves every provider brokerable, so no existing flow regresses.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: replace the generic bot/workspace carrier contract with an explicit fixed-server-operation or trusted-provider-intent purpose; remove all documented bot-side fallback behavior.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove Twilio from the generic credential map; per-user SMS is now an exact in-process operation and no raw Twilio credential crosses the bot boundary.
  *
  * @module connector-token-broker
  */
@@ -39,9 +33,8 @@ import { connectionCount, type ConnectionSelector } from './connector-tenancy';
 const logger = createChildLogger({ module: 'connector-token-broker' });
 
 /**
- * @description Provider → env-key the bot workspace writer maps to a `.oshal-cred-<provider>`
- * file. Keep in sync with user-scoping.js (remote path) + base-cli-harness-adapter.ts
- * (in-controller path) which read these keys, and with the tool scripts that prefer the file.
+ * @description Provider → bounded key understood by deterministic server operation handlers.
+ * These keys are never installed into a model-visible process or workspace.
  */
 const CRED_ENV_KEYS: Record<string, string> = {
   google: 'OSHAL_CRED_GOOGLE',
@@ -76,10 +69,6 @@ const CRED_ENV_KEYS: Record<string, string> = {
   // Travel: the traveller's/operator's Duffel access token brokered to the travel-concierge
   // so scripts/oshal-duffel.js can run real flight search (else the DUFFEL_ACCESS_TOKEN env).
   duffel: 'OSHAL_CRED_DUFFEL',
-  // Phone + text: the user's own Twilio "AccountSid:AuthToken" combined secret brokered to
-  // the communications-bot so scripts/oshal-twilio.js can read messages/calls and (confirm-
-  // gated) send SMS / place calls on THEIR Twilio account — BYO, never a platform key.
-  twilio: 'OSHAL_CRED_TWILIO',
   // Prediction markets: the user's Kalshi "keyId:privateKeyPem" combined secret (every Kalshi
   // request is RSA-PSS signed — there is no bearer token) for portfolio reads and, later,
   // confirm-gated order placement on THEIR Kalshi account — BYO, never a platform key.
@@ -96,17 +85,16 @@ const CRED_ENV_KEYS: Record<string, string> = {
 };
 
 /**
- * @description Resolve the caller's decrypted, refreshed-if-needed access tokens for the
- * providers a bot may use, as an env-key map to thread into the bot's per-request workspace.
- * The controller decrypts here (it holds SESSION_SECRET); the bot never needs the key.
+ * @description Resolve the caller's decrypted, refreshed-if-needed access tokens for one
+ * fixed server-side operation. The consumer must keep them outside every model/CLI boundary.
  *
- * Best-effort: a provider that isn't connected or can't be refreshed is silently skipped —
- * the bot's tool then falls back to its DB-decrypt path. Never throws; a broker failure must
- * not break the dispatch (the request still carries OSHAL_USER_SUB).
+ * A provider that is not connected or cannot be refreshed is omitted. Consumers must fail
+ * that provider operation cleanly; they may not fall back to model-side database decryption.
  *
  * @param pool - the Postgres pool (holds oshal_connections).
  * @param userSub - the authenticated caller's OIDC sub. No-op (returns {}) if absent.
- * @param providers - providers to resolve tokens for (default: google + twitter).
+ * @param providers - exact providers required by the bounded operation.
+ * @param credentialUse - explicit audited consumer class; unknown purposes fail closed.
  * @param selectors - optional per-provider account selector for the multi-account case (ADR-113
  *   section 4). A user may hold two accounts of one provider; pass `{ google: { label: 'work' } }`
  *   to broker a NAMED one. Omitted → the account the user marked default (deterministic). A
@@ -114,12 +102,18 @@ const CRED_ENV_KEYS: Record<string, string> = {
  *   rather than acting on the wrong mailbox.
  * @returns a map of env keys (OSHAL_CRED_GOOGLE/OSHAL_CRED_TWITTER) → raw access token. Empty if none resolvable.
  */
-export async function resolveBotCreds(
+export type ServerCredentialUse = 'trusted-provider-intent' | 'fixed-server-operation';
+
+export async function resolveServerOperationCreds(
   pool: unknown,
   userSub: string | undefined,
-  providers: string[] = ['google', 'twitter'],
+  providers: string[],
+  credentialUse: ServerCredentialUse,
   selectors: Record<string, ConnectionSelector> = {},
 ): Promise<Record<string, string>> {
+  if (credentialUse !== 'trusted-provider-intent' && credentialUse !== 'fixed-server-operation') {
+    throw new Error('Unsupported connector credential consumer');
+  }
   if (!userSub) return {};
   // Per-user enablement OVERRIDE (BACKLOG.md:2718): a connector the caller has EXPLICITLY disabled
   // for themselves must not be brokered even if a credential exists. Fail-open by contract — the
@@ -149,7 +143,7 @@ export async function resolveBotCreds(
         if (token) creds[envKey] = token;
       } catch (err) {
         // Best-effort: a refresh/decrypt failure for one provider must not break dispatch.
-        logger.warn({ err, provider }, 'token broker: could not resolve cred (bot falls back to DB path)');
+        logger.warn({ err, provider, credentialUse }, 'token broker: credential unavailable; bounded operation must report not-connected');
       }
     }),
   );

@@ -9,6 +9,9 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reject a one-element root array instead of allowing PowerShell pipeline enumeration to unwrap it.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exercise destination-scoped URL policy so only ECSG preserves its exact historical AgenticFederal links.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Drive the shared index-policy helper directly against legacy and arbitrary external URL fixtures.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Keep publication fixtures aligned with the fail-closed build contract's explicit date, start, input-digest, and media-verification provenance.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Give the one real successful PowerShell/Git publication boundary startup headroom under the complete parallel suite without changing publication behavior or failure budgets.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Bound policy-probe child processes and give multi-probe destination assertions explicit full-suite startup headroom.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -54,10 +57,13 @@ const createDelivery = (name: string) => {
   const inputNames = ['deck-data.json', 'deck.pptx', 'presenter-head.png', 'RECAP-BUILD-GOAL.md'];
   const inputs = inputNames.map((file) => artifact(file, join(out, file)));
   const pieceNames = ['presenter-intro.mp4', 'presenter-overview.mp4', 'presenter-close.mp4', 'deck-narrated.mp4'];
-  const pieces = pieceNames.map((file, index) => ({ file, name: file, bytes: 400_000 + index, sha256: String(index + 1).repeat(64) }));
+  const pieces = pieceNames.map((file, index) => ({
+    file, name: file, bytes: 400_000 + index, sha256: String(index + 1).repeat(64), mediaVerified: true,
+  }));
   const build = {
-    schemaVersion: 1, manifestKind: 'recap-build', runId, requestedDate: date, status: 'complete',
-    completedAt: '2026-08-05T23:20:00.000Z', inputs, pieces,
+    schemaVersion: 1, manifestKind: 'recap-build', runId, date, requestedDate: date, status: 'complete',
+    startedAt: '2026-08-05T22:50:00.000Z', completedAt: '2026-08-05T23:20:00.000Z',
+    deckDataSha256: inputs[0].sha256, deckPptxSha256: inputs[1].sha256, inputs, pieces,
   };
   const buildName = `build-artifacts-${runId}.json`;
   const buildPath = join(out, buildName);
@@ -97,7 +103,7 @@ const runPublisher = (date: string, site: string, out: string, manifest: string)
   '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', publisher,
   '-Date', date, '-SiteRepo', site, '-Out', out, '-Manifest', manifest,
   '-SkipDeploy', '-SkipMirror', '-SkipJournal',
-], { encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+], { encoding: 'utf8', timeout: 50_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
 
 const runIndexPolicy = (indexJson: string, policy: 'agenticfederal' | 'ecsg') => {
   const suffix = createHash('sha256').update(`${policy}:${indexJson}`).digest('hex').slice(0, 12);
@@ -115,7 +121,7 @@ try {
   return spawnSync(powershell, [
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', probePath,
     '-Helper', publicationHelper, '-Index', indexPath, '-Policy', policy,
-  ], { encoding: 'utf8' });
+  ], { encoding: 'utf8', timeout: 15_000 });
 };
 
 describe('recap publication safety (behavioral)', () => {
@@ -148,7 +154,7 @@ describe('recap publication safety (behavioral)', () => {
       pdfSha256: delivery.delivery.outputs[1].sha256,
       videoSha256: delivery.delivery.outputs[2].sha256,
     });
-  }, 30_000);
+  }, 60_000);
 
   it('fails closed on malformed site JSON and leaves origin/main byte-for-byte unchanged', () => {
     const delivery = createDelivery('malformed');
@@ -192,14 +198,14 @@ describe('recap publication destination URL policy', () => {
     const af = runIndexPolicy(legacy, 'agenticfederal');
     expect(af.status).toBe(1);
     expect(`${af.stdout}\n${af.stderr}`).toMatch(/unsafe deck path/i);
-  });
+  }, 25_000);
 
   it('rejects an arbitrary external origin for ECSG', () => {
     const hostile = legacy.replaceAll('agenticfederal.us', 'attacker.invalid');
     const result = runIndexPolicy(hostile, 'ecsg');
     expect(result.status).toBe(1);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/unsafe deck path/i);
-  });
+  }, 20_000);
 
   it('rejects markup in an ECSG operator note before it reaches innerHTML consumers', () => {
     const unsafeNote = JSON.stringify({ recaps: [{
@@ -209,5 +215,5 @@ describe('recap publication destination URL policy', () => {
     const result = runIndexPolicy(unsafeNote, 'ecsg');
     expect(result.status).toBe(1);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/unsafe note text/i);
-  });
+  }, 20_000);
 });

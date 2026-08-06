@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact dual-channel scoping, approved atomic 0600 writes, linked/nonregular target and parent refusal, hard-link safety, race-safe publish, and identity-owned cleanup.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: assert workspace scoping ignores credential carriers and publishes only invocation-owned identity markers.
  */
 
 import fs from 'node:fs';
@@ -51,7 +52,7 @@ function scopedTemps(directory = root): string[] {
 }
 
 describe('safe any-bot scoped-file publication', () => {
-  it('preserves exact subjects, allowlists credentials, publishes privately, and wipes only owned files', () => {
+  it('preserves exact subjects, ignores credentials, publishes privately, and wipes only owned files', () => {
     const exactSub = ' Auth0|Case-Sensitive ';
     const env = scoping.applyUserScoping(root, {
       OSHAL_USER_SUB: exactSub,
@@ -60,13 +61,12 @@ describe('safe any-bot scoped-file publication', () => {
     });
 
     expect(env.OSHAL_USER_SUB).toBe(exactSub);
-    expect(env.OSHAL_CRED_GOOGLE).toBe('short-lived-google-token');
+    expect(env).not.toHaveProperty('OSHAL_CRED_GOOGLE');
     expect(env).not.toHaveProperty('PATH');
     expect(fs.readFileSync(path.join(root, '.oshal-user-sub'), 'utf8')).toBe(exactSub);
-    expect(fs.readFileSync(path.join(root, '.oshal-cred-google'), 'utf8')).toBe('short-lived-google-token');
+    expect(fs.existsSync(path.join(root, '.oshal-cred-google'))).toBe(false);
     if (process.platform !== 'win32') {
       expect(fs.statSync(path.join(root, '.oshal-user-sub')).mode & 0o777).toBe(0o600);
-      expect(fs.statSync(path.join(root, '.oshal-cred-google')).mode & 0o777).toBe(0o600);
     }
     expect(scopedTemps()).toEqual([]);
 

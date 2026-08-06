@@ -13,6 +13,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Barrel split (TODO-BOUNDARY-FINDING 2026-07-19): removed harness runtime exports (A2AHarnessAdapter and peers) so controller imports of this barrel no longer load the harness stack; A2A cost-event types now re-export from the pure-types a2a-cost-events module. Harness consumers use the new '@/features/llm-provider/harness' entry point.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: surfaced the PURE governance/config/data members consumers were reaching via deep paths (tool-capability-scope, provider-catalog, cline-config-builder, governance gate/budget/quota/fallback-routing). Deliberately NOT re-exported here: the LLM-EXECUTION provider runtimes (GovernedProvider, ProviderFailoverService, CodexHarnessProvider, ClaudeCodeCliProvider, ClineHarnessProvider / AgentStartup* aggregate) — adding them would pull the execution stack onto this controller-graph barrel, regressing the two-runtimes split above.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export the credential-free live Codex availability probe for controller UI metadata.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Surface the dependency-free unattended-provider denial through the feature barrel for FSD-compliant controller preflight imports.
  */
 
 export {
@@ -54,6 +56,7 @@ export {
 export {
   getSwarmApiKey,
   hasSwarmApiKey,
+  hasLiveCodexAuth,
   extractOpenAiCodexAccessToken,
   resolveSeedSecretsPath,
   type SwarmCredentialProvider,
@@ -61,6 +64,7 @@ export {
 
 export { NoopProvider } from './services/noop-provider';
 export { AnthropicProvider, type AnthropicProviderConfig } from './services/anthropic-provider';
+export { assertAuditedAutonomousHarness } from './services/unattended-provider-policy';
 
 // A2A cost-event TYPES only, from the pure-types module — the harness runtime
 // itself (adapters, HarnessLLMBridge) is deliberately NOT
@@ -106,7 +110,6 @@ export {
 export {
   buildClineConfig,
   buildClineGlobalState,
-  type CredentialBag,
 } from './services/cline-config-builder';
 export { governLlmCall } from './governance';
 export { gateLlmCall, recordGateUsage, estimateProjectedCostUsd } from './governance/gate';

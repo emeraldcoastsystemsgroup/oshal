@@ -5,6 +5,8 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Harden the remote-node worker (retry/backoff, re-register when the control plane forgets us, best-effort deregister) and add content.* tools (extend-story producer + creative cycler + library/produced listing).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: bind local tool dispatch to the exact durable task caller/target and immutable registered-tool allowlist before the private executor can run.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Remove obsolete loop lint suppressions after the authorization refactor's scoped lint pass.
  */
 /**
  * @description OSHAL swarm worker — joins the swarm as a remote client so the
@@ -46,7 +48,7 @@ function cfg() {
   };
 }
 
-const TOOLS = [
+const TOOLS = Object.freeze([
   { name: 'content.produce', description: 'Animate ONE story across ~10 continuous scenes in Google Vids (Extend chain), download it, and save to the content folder + Google Drive. Args: storyId (library id) OR {title, script} OR idea; optional beats, orientation, characterImage.' },
   { name: 'content.next', description: 'Produce the NEXT unproduced story from the rotating library (fables / fairytales / famous sayings) — the creative cycler entry point. No args needed; optional beats, packOrder.' },
   { name: 'content.list', description: 'List stories already produced + stored (from their manifests). Args: limit.' },
@@ -57,7 +59,8 @@ const TOOLS = [
   { name: 'brand.graphic', description: 'Build an ON-BRAND OSHAL motion graphic (the validated electric-"oshal" look) from a short brief, in Google Vids. Returns the project URL.' },
   { name: 'brand.intro', description: 'Build the canonical OSHAL intro: electric-"oshal" Veo graphic + optional Tyra voiceover + serious evening-news music. Returns the project URL.' },
   { name: 'episode.assemble', description: 'POST-PRODUCTION (no Veo, no cost): stitch an already-rendered episode from its scene clips — optional series intro first — and save it. Args: episodeId, title, clips[] (paths on this node), optional series, introClip, tailPadSec. Fails loudly on a missing or truncated clip.' },
-];
+]);
+const TOOL_NAME_SET = new Set(TOOLS.map((tool) => tool.name));
 
 /** @description A completion/failure response signalling the client is unknown to the control plane. @param {number} status HTTP status @returns {boolean} true if we should re-register */
 function isForgotten(status) { return status === 401 || status === 403 || status === 404; }
@@ -154,7 +157,10 @@ class VidsWorker {
       else if (intent === 'mcp.list-tools') output = { tools: TOOLS };
       else if (intent === 'status.sync') output = { ok: true };
       else if (intent === 'mcp.shutdown') output = { ok: true };
-      else if (intent === 'mcp.call-tool') output = await this.callTool(input.name, input.arguments || {});
+      else if (intent === 'mcp.call-tool') {
+        const authority = this.authorizeToolTask(task);
+        output = await this.#executeAuthorizedTool(authority.toolName, authority.args);
+      }
       else throw new Error(`unsupported intent: ${intent}`);
       await this.complete(taskId, correlationId, output, input.name);
     } catch (err) {
@@ -162,7 +168,36 @@ class VidsWorker {
     }
   }
 
-  async callTool(name, args) {
+  /**
+   * @description Validate the immutable durable claim before local tool dispatch.
+   * @param {object} task Claimed remote-task envelope from this worker's authenticated queue.
+   * @returns {{taskId:string,callerId:string,targetId:string,toolName:string,args:object}} Frozen execution authority.
+   */
+  authorizeToolTask(task) {
+    const exact = (value) => typeof value === 'string' && value.length > 0 && value.length <= 512
+      && !/[\u0000-\u001f\u007f]/.test(value);
+    if (!task || task.intent !== 'mcp.call-tool' || !exact(task.taskId)
+      || !exact(task.correlationId) || !exact(task.fromAgentId) || !exact(task.toAgentId)) {
+      throw new Error('invalid durable MCP task authority');
+    }
+    const targets = [this.c.clientId, this.c.agentId].filter(exact);
+    if (!targets.includes(task.toAgentId)) throw new Error('durable MCP task targets another worker');
+    const input = task.input;
+    if (!input || typeof input !== 'object' || Array.isArray(input) || !exact(input.name)
+      || !TOOL_NAME_SET.has(input.name)) {
+      throw new Error(`MCP tool is not registered on this worker: ${String(input && input.name)}`);
+    }
+    const rawArgs = input.arguments;
+    if (rawArgs !== undefined && (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs))) {
+      throw new Error('MCP tool arguments must be an object');
+    }
+    return Object.freeze({
+      taskId: task.taskId, callerId: task.fromAgentId, targetId: task.toAgentId,
+      toolName: input.name, args: Object.freeze({ ...(rawArgs || {}) }),
+    });
+  }
+
+  async #executeAuthorizedTool(name, args) {
     const workerLog = (e) => { if (e && e.message) console.log('[content]', e.message); };
 
     // POST-PRODUCTION. Runs where the media already is: the scene clips live in this node's
@@ -288,15 +323,11 @@ class VidsWorker {
 
     while (this.running) {
       if (!this.registered) {
-        // eslint-disable-next-line no-await-in-loop
         const ok = await this.register();
         if (!ok) { this.backoffMs = Math.min(this.backoffMs * 2, this.c.backoffCapMs); await sleep(this.backoffMs); continue; }
-        // eslint-disable-next-line no-await-in-loop
         await this.heartbeat();
       }
-      // eslint-disable-next-line no-await-in-loop
       await this.pollOnce().catch((e) => console.warn('[vids-worker] poll error:', e.message || e));
-      // eslint-disable-next-line no-await-in-loop
       await sleep(this.backoffMs);
     }
   }

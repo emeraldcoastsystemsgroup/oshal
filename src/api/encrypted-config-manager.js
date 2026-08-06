@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of encrypted configuration manager
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added per-user config envelope support (userId partitioning)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Session 109: Demoted routine I/O logs from info to debug. Constructor, read/write/load/save operations no longer flood bot logs. Migration, rotation, and delete remain at info.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove plaintext secret mode, require encryption for every secret read/write/delete, write envelopes with owner-only permissions, and require one-way removal of legacy plaintext during explicit migration.
  */
 
 'use strict';
@@ -68,7 +69,12 @@ function writeJsonFile(filePath, data) {
       fs.mkdirSync(dir, { recursive: true });
       logger.debug({ dir }, 'Created output directory');
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+    // mode is applied only on creation, so also tighten files created by older releases.
+    fs.chmodSync(filePath, 0o600);
     logger.debug({ path: filePath }, 'JSON file written successfully');
   } catch (error) {
     logger.error({ err: error, path: filePath }, 'Failed to write JSON file');
@@ -83,16 +89,19 @@ function writeJsonFile(filePath, data) {
 /**
  * @description Manages encrypted persistence of API configuration secrets.
  * When an encryption key is provided, secrets are stored as AES-256-GCM
- * encrypted envelopes in `secrets.enc.json`. When no key is provided,
- * falls back to plain JSON `secrets.json` for backward compatibility.
+ * encrypted envelopes in `secrets.enc.json`. Without a key every secret
+ * operation fails closed; legacy `secrets.json` files can only be consumed by
+ * the explicit one-way migration method.
  *
  * @param {string} outputDir - Directory where config files are stored
- * @param {string|null} encryptionKey - Master encryption key from environment, or null for plain mode
+ * @param {string|null} encryptionKey - Master encryption key from the controller environment
  */
 class EncryptedConfigManager {
   constructor(outputDir, encryptionKey = null) {
     this.outputDir = outputDir;
-    this.encryptionKey = encryptionKey;
+    this.encryptionKey = typeof encryptionKey === 'string' && encryptionKey.trim().length > 0
+      ? encryptionKey
+      : null;
 
     logger.debug({
       outputDir,
@@ -101,17 +110,13 @@ class EncryptedConfigManager {
   }
 
   /**
-   * @description Returns the full file path for the secrets file. Uses the
-   * encrypted filename when an encryption key is configured, otherwise
-   * falls back to the plain JSON filename.
+   * @description Returns the encrypted secrets-envelope path. Plaintext is
+   * never selected as a live store, even when the encryption key is absent.
    *
    * @returns {string} Absolute path to the secrets file
    */
   getSecretsPath() {
-    const filename = this.encryptionKey
-      ? ENCRYPTED_SECRETS_FILE
-      : PLAIN_SECRETS_FILE;
-    return path.join(this.outputDir, filename);
+    return path.join(this.outputDir, ENCRYPTED_SECRETS_FILE);
   }
 
   /**
@@ -138,7 +143,7 @@ class EncryptedConfigManager {
    * @description Saves secrets to disk. When a userId is provided, secrets are
    * stored inside a per-user envelope keyed by userId. When encryption is
    * enabled, the entire envelope is encrypted with AES-256-GCM before writing.
-   * When disabled, writes plain JSON. Logs the operation type and outcome.
+   * Missing encryption configuration fails before any filesystem mutation.
    *
    * @param {object} secretsData - The secrets object to persist
    * @param {string|null} userId - The user identifier (JWT sub claim) for per-user storage, or null for global
@@ -146,6 +151,8 @@ class EncryptedConfigManager {
    * @throws {Error} If encryption or file write fails
    */
   saveSecrets(secretsData, userId = null) {
+    this._requireEncryptionKey('save secrets');
+    this._rejectLegacyPlaintextStore();
     const filePath = this.getSecretsPath();
 
     let dataToWrite = secretsData;
@@ -157,15 +164,10 @@ class EncryptedConfigManager {
       dataToWrite = allData;
     }
 
-    if (this.encryptionKey) {
-      logger.debug({ path: filePath, userId: userId || 'global' }, 'Saving encrypted secrets');
-      const plaintext = JSON.stringify(dataToWrite);
-      const envelope = encrypt(plaintext, this.encryptionKey);
-      writeJsonFile(filePath, envelope);
-    } else {
-      logger.debug({ path: filePath, userId: userId || 'global' }, 'Saving plain secrets (no encryption key)');
-      writeJsonFile(filePath, dataToWrite);
-    }
+    logger.debug({ path: filePath, userId: userId || 'global' }, 'Saving encrypted secrets');
+    const plaintext = JSON.stringify(dataToWrite);
+    const envelope = encrypt(plaintext, this.encryptionKey);
+    writeJsonFile(filePath, envelope);
   }
 
   /**
@@ -199,6 +201,8 @@ class EncryptedConfigManager {
    * @throws {Error} If decryption fails (wrong key or corrupted data)
    */
   _loadRawData() {
+    this._requireEncryptionKey('load secrets');
+    this._rejectLegacyPlaintextStore();
     const filePath = this.getSecretsPath();
 
     if (!fs.existsSync(filePath)) {
@@ -206,15 +210,10 @@ class EncryptedConfigManager {
       return {};
     }
 
-    if (this.encryptionKey) {
-      logger.debug({ path: filePath }, 'Loading encrypted secrets');
-      const envelope = readJsonFile(filePath);
-      const plaintext = decrypt(envelope, this.encryptionKey);
-      return JSON.parse(plaintext);
-    }
-
-    logger.debug({ path: filePath }, 'Loading plain secrets');
-    return readJsonFile(filePath);
+    logger.debug({ path: filePath }, 'Loading encrypted secrets');
+    const envelope = readJsonFile(filePath);
+    const plaintext = decrypt(envelope, this.encryptionKey);
+    return JSON.parse(plaintext);
   }
 
   /**
@@ -225,6 +224,8 @@ class EncryptedConfigManager {
    * @returns {boolean} True if the user's secrets were found and removed
    */
   deleteUserSecrets(userId) {
+    this._requireEncryptionKey('delete user secrets');
+    this._rejectLegacyPlaintextStore();
     if (!userId) {
       return this.deleteSecrets();
     }
@@ -241,13 +242,9 @@ class EncryptedConfigManager {
 
     // Re-save the envelope without this user
     const filePath = this.getSecretsPath();
-    if (this.encryptionKey) {
-      const plaintext = JSON.stringify(allData);
-      const envelope = encrypt(plaintext, this.encryptionKey);
-      writeJsonFile(filePath, envelope);
-    } else {
-      writeJsonFile(filePath, allData);
-    }
+    const plaintext = JSON.stringify(allData);
+    const envelope = encrypt(plaintext, this.encryptionKey);
+    writeJsonFile(filePath, envelope);
 
     return true;
   }
@@ -258,17 +255,18 @@ class EncryptedConfigManager {
    * and optionally removes the original plain file. Requires an encryption
    * key to be configured.
    *
-   * @param {boolean} removePlain - Whether to delete the original secrets.json after migration
+   * @param {boolean} removePlain - Must remain true; retaining plaintext is disabled
    * @returns {{ migrated: boolean, recordCount: number }} Migration result
    * @throws {Error} If no encryption key is configured or migration fails
    */
-  migrateFromPlaintext(removePlain = false) {
+  migrateFromPlaintext(removePlain = true) {
     logger.info('Starting migration from plain to encrypted secrets');
 
-    if (!this.encryptionKey) {
-      const msg = 'Cannot migrate: no encryption key configured';
-      logger.error(msg);
-      throw new Error(msg);
+    this._requireEncryptionKey('migrate plaintext secrets');
+    if (removePlain !== true) {
+      const error = new Error('Cannot migrate while retaining plaintext secrets');
+      error.code = 'PLAINTEXT_SECRET_RETENTION_DISABLED';
+      throw error;
     }
 
     const plainPath = this.getPlainSecretsPath();
@@ -278,17 +276,35 @@ class EncryptedConfigManager {
       return { migrated: false, recordCount: 0 };
     }
 
+    const encryptedPath = this.getEncryptedSecretsPath();
+    if (fs.existsSync(encryptedPath)) {
+      const error = new Error(
+        'Cannot migrate: encrypted and plaintext secret stores both exist; reconcile them offline',
+      );
+      error.code = 'SECRET_STORE_MIGRATION_CONFLICT';
+      throw error;
+    }
+
     const plainData = readJsonFile(plainPath);
     const recordCount = Object.keys(plainData).length;
 
-    this.saveSecrets(plainData);
-
-    if (removePlain) {
-      fs.unlinkSync(plainPath);
-      logger.info({ path: plainPath }, 'Removed plain secrets file after migration');
+    try {
+      const envelope = encrypt(JSON.stringify(plainData), this.encryptionKey);
+      writeJsonFile(encryptedPath, envelope);
+      // Verify the new envelope before removing the only legacy copy.
+      const verified = JSON.parse(decrypt(readJsonFile(encryptedPath), this.encryptionKey));
+      if (JSON.stringify(verified) !== JSON.stringify(plainData)) {
+        throw new Error('Encrypted secret migration verification failed');
+      }
+    } catch (error) {
+      // A partial target must not block a safe retry or masquerade as a successful migration.
+      if (fs.existsSync(encryptedPath)) fs.unlinkSync(encryptedPath);
+      throw error;
     }
+    fs.unlinkSync(plainPath);
+    logger.info({ path: plainPath }, 'Removed plain secrets file after migration');
 
-    logger.info({ recordCount, removedPlain: removePlain }, 'Migration complete');
+    logger.info({ recordCount, removedPlain: true }, 'Migration complete');
     return { migrated: true, recordCount };
   }
 
@@ -333,6 +349,8 @@ class EncryptedConfigManager {
    * @returns {boolean} True if a file was deleted, false if no file existed
    */
   deleteSecrets() {
+    this._requireEncryptionKey('delete secrets');
+    this._rejectLegacyPlaintextStore();
     const filePath = this.getSecretsPath();
 
     if (!fs.existsSync(filePath)) {
@@ -358,6 +376,35 @@ class EncryptedConfigManager {
    */
   isEncrypted() {
     return !!this.encryptionKey;
+  }
+
+  /**
+   * @description Refuses secret operations when the controller has no master key.
+   * @param {string} operation - Bounded operation name for diagnostics
+   * @returns {void}
+   * @throws {Error} With stable ENCRYPTION_KEY_REQUIRED code
+   */
+  _requireEncryptionKey(operation) {
+    if (this.encryptionKey) return;
+    const error = new Error(`ENCRYPTION_KEY is required to ${operation}`);
+    error.code = 'ENCRYPTION_KEY_REQUIRED';
+    throw error;
+  }
+
+  /**
+   * @description Prevents a legacy plaintext store from being silently ignored or overwritten.
+   * Operators must run the explicit one-way migration before normal secret operations resume.
+   * @returns {void}
+   * @throws {Error} With stable LEGACY_PLAINTEXT_SECRETS_PRESENT code
+   */
+  _rejectLegacyPlaintextStore() {
+    const plainPath = this.getPlainSecretsPath();
+    if (!fs.existsSync(plainPath)) return;
+    const error = new Error(
+      'Legacy plaintext secrets.json is present; run encrypted migration before secret operations',
+    );
+    error.code = 'LEGACY_PLAINTEXT_SECRETS_PRESENT';
+    throw error;
   }
 }
 

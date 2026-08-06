@@ -4,9 +4,19 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the welcome-wizard notification channels: the SMS sender falls back to the DEPLOYMENT's env Twilio (destination = the user's saved pref.phone) when the user has no personal Twilio connection — and the personal connection still wins; the new per-user voice channel needs only phone + env creds; neither channel is available without a saved phone; and the fallback send really carries To=pref.phone (asserted against the captured Twilio API request, not a substring).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 regression guard: prove the personal-account SMS branch delegates the caller, pool, destination, and bounded text to the fixed in-process Twilio operation while retaining deployment-fallback coverage.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const twilioOperation = vi.hoisted(() => ({
+  sendUserTwilioSms: vi.fn(),
+}));
+
+vi.mock('@/app/routes/twilio-sms-operation', () => ({
+  sendUserTwilioSms: twilioOperation.sendUserTwilioSms,
+}));
+
 import { envTwilioConfigured, smsSender, voiceSender } from '@/app/routes/notify-routes';
 import type { AppContext } from '@/app/composition/app-context';
 import type { UserNotificationPref } from '@/features/notifications';
@@ -39,6 +49,7 @@ function stubEnvCreds(present: boolean) {
 }
 
 afterEach(() => {
+  twilioOperation.sendUserTwilioSms.mockReset();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -90,6 +101,32 @@ describe('smsSender env-fallback send path', () => {
     expect(params.get('To')).toBe('+15557654321');
     expect(params.get('From')).toBe(ENV_CREDS.TWILIO_FROM_NUMBER);
     expect(params.get('Body')).toBe('ping');
+  });
+});
+
+describe('smsSender personal-account send path', () => {
+  it('delegates to the fixed per-user operation with the authenticated owner and saved phone', async () => {
+    stubEnvCreds(false);
+    twilioOperation.sendUserTwilioSms.mockResolvedValueOnce({ delivered: true, id: 'SM-personal' });
+    const pool = fakePool(true);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await smsSender(pool).send(
+      'user-1',
+      pref({ phone: '+15557654321' }),
+      { subject: 'fallback subject', body: 'long body', shortText: 'personal ping' },
+    );
+
+    expect(twilioOperation.sendUserTwilioSms).toHaveBeenCalledOnce();
+    expect(twilioOperation.sendUserTwilioSms).toHaveBeenCalledWith(
+      pool,
+      'user-1',
+      '+15557654321',
+      'personal ping',
+    );
+    expect(result).toEqual({ delivered: true, id: 'SM-personal' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

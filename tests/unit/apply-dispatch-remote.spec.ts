@@ -9,6 +9,7 @@
  *   cleanup. Callback credentials and sensitive task values must remain outside model arguments.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Model an explicitly browser-capable and browser-pilot-consented remote worker under the hardened shared selector.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Keep success, input-refusal, and rollback behavior groups below the repository function-length limit.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove the remote task binds its exact worker through the Apply V2 ledger before capability issuance and enqueue.
  */
 
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -61,6 +62,13 @@ vi.mock('@/app/apply-task-capability', () => ({
   revokeApplyCapability: async (_pool: unknown, taskId: string) => { hoisted.capabilities.revoked.push(taskId); },
 }));
 
+vi.mock('@/app/apply-run-ledger', () => ({
+  bindApplyRunDispatch: async (_pool: unknown, runId: string, taskId: string, clientId: string) => ({
+    runId, taskId, workerClientId: clientId, state: 'queued_to_worker',
+  }),
+  transitionApplyRun: async () => ({ state: 'failed' }),
+}));
+
 import { dispatchApply, removeApplyWorkspace, type ApplyDispatchInput } from '@/app/apply-dispatch';
 import { promises as fsp } from 'node:fs';
 
@@ -68,6 +76,8 @@ const DEPS = { pool: {} as Pool };
 
 function baseInput(): ApplyDispatchInput {
   return {
+    applyRunId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    timeoutAt: new Date('2030-08-06T08:30:00.000Z'),
     ticketId: '1986677e-82de-4239-a8c3-c238e727d5d5',
     settleTicket: true,
     finalSubmitAuthorized: false,

@@ -10,10 +10,15 @@ This control is independent of `X-Service-Secret`. The bot evaluates the service
 secret first, signed delegation second, and execute-time entitlement third. Production
 deployments should configure both controls; one does not replace the other.
 
+This document covers controller-to-bot execution only. For a bot or automation workload calling
+owner-scoped Graph/Jarvis routes on the controller API, see
+[workload-to-API user delegation](./workload-delegation.md); that token has a different audience,
+durable PostgreSQL authority, route/body scopes, and rollout mode.
+
 ## Wire contract
 
 The compact token travels in `X-OSHAL-Delegation-Token`. Its protected header is fixed
-to `alg=EdDSA`, `typ=OSHAL-DLG`, version `1`, and a bounded `kid`. The bot verifies every
+to `alg=EdDSA`, `typ=OSHAL-DLG`, version `2`, and a bounded `kid`. The bot verifies every
 signed claim against local policy or the JSON request body:
 
 | Claim | Required binding |
@@ -24,6 +29,7 @@ signed claim against local policy or the JSON request body:
 | `principal_iss` | Exact verified `body.principalIssuer` namespace |
 | `azp` | Local `AGENT_ID`, not a caller-selected target |
 | `task_id` | Exact `body.taskId` |
+| `method`, `path` | Exact `POST /api/swarm-execute`; the token cannot move to another endpoint |
 | `body_sha256` | SHA-256 of the complete canonical JSON request body |
 | `scope` | Exactly `swarm:execute`; extra or missing scopes fail |
 | `iat`, `nbf`, `exp` | Bounded validity window and configured clock skew |
@@ -123,6 +129,8 @@ key and active `kid`. Do not inject a shared catch-all secret bundle into both r
    unsigned controller requests.
 3. Restart the controller and every bot. Confirm controller startup has no signing
    configuration error and each bot logs that HTTP delegation is fail-closed.
+   Version 2 makes method/path mandatory, so coordinate controller and bot restarts; a mixed
+   version intentionally rejects tokens instead of accepting the older, less-bound wire shape.
 4. Submit one owned task. Confirm service-secret authentication, delegation authorization,
    entitlement, and execution occur in that order.
 5. Confirm a retry creates a new token. Re-sending the same captured request must return

@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added a fail-closed guard for patched transitive resolutions, the native-free desktop input path, Electron's supported Node floor, and the speaker runtime/test security pins so a future lock refresh cannot silently restore the audited advisories.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require Electron as an exact production dependency and retain the clean packed-consumer smoke that installs with development packages and lifecycle scripts omitted.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Split dependency areas into focused suites so every governance-counted test callback remains below fifty physical lines.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard the speaker image's complete hash-locked install graph and fail if Docker falls back to unhashed input requirements.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Guard the Electron two-package installer and real Windows capture/user32 acceptance runner so npm runtime packaging and desktop artifacts cannot drift apart.
  */
 
 import { readFileSync } from 'node:fs';
@@ -29,6 +31,7 @@ interface PackageManifest {
   devDependencies?: Record<string, string>;
   engines?: Record<string, string>;
   overrides?: Record<string, string | Record<string, string>>;
+  scripts?: Record<string, string>;
 }
 
 /** @description Reads a repository JSON file without allowing environment-dependent paths. */
@@ -81,14 +84,43 @@ describe('desktop dependency security baseline', () => {
     expect(source).toContain("resolve('@oshal/chat/package.json')");
     expect(source).toContain("resolve('electron/package.json')");
   });
+
+  it('stages installers without duplicating the npm Electron runtime', () => {
+    const manifest = readJson<PackageManifest>('packages/oshal-chat/package.json');
+    const builder = readFileSync(resolve(REPO_ROOT, 'packages/oshal-chat/scripts/build-desktop.mjs'), 'utf8');
+    const boundary = readFileSync(resolve(REPO_ROOT, 'packages/oshal-chat/src/main/windows-desktop-boundary.ts'), 'utf8');
+    const stagedManifest = builder.match(/const appManifest = \{([\s\S]*?)\n  \};/)?.[1] ?? '';
+    expect(manifest.scripts?.dist).toContain('scripts/build-desktop.mjs');
+    expect(manifest.scripts?.['test:windows-boundary']).toContain('windows-desktop-boundary.js');
+    expect(builder).toContain('projectDir: temporaryProject');
+    expect(builder).toContain('directories: { app: appRoot');
+    expect(stagedManifest).not.toContain('dependencies');
+    expect(boundary).toContain('await captureScreen(640)');
+    expect(boundary).toContain("kind: 'move'");
+    expect(boundary).toContain("coordinateSpace: 'physical'");
+  });
 });
 
 describe('speaker dependency security baseline', () => {
   it('pins the speaker runtime and test stack to audited compatible releases', () => {
     const requirements = readFileSync(resolve(REPO_ROOT, 'services/speaker-diarization/requirements.txt'), 'utf8');
     const devRequirements = readFileSync(resolve(REPO_ROOT, 'services/speaker-diarization/requirements-dev.txt'), 'utf8');
-    expect(requirements).toMatch(/^fastapi==0\.141\.1$/m);
+    expect(requirements).not.toMatch(/^fastapi==/m);
     expect(requirements).toMatch(/^starlette==1\.3\.1$/m);
     expect(devRequirements).toMatch(/^pytest==9\.0\.3$/m);
+  });
+
+  it('installs the complete production graph from hashes only', () => {
+    const lock = readFileSync(resolve(REPO_ROOT, 'services/speaker-diarization/requirements.lock'), 'utf8');
+    const dockerfile = readFileSync(resolve(REPO_ROOT, 'services/speaker-diarization/Dockerfile'), 'utf8');
+    const pins = lock.match(/^[a-z0-9][a-z0-9._-]*==[^\s\\]+/gim) ?? [];
+    const hashes = lock.match(/--hash=sha256:[a-f0-9]{64}/g) ?? [];
+    expect(pins.length).toBeGreaterThan(10);
+    expect(hashes.length).toBeGreaterThanOrEqual(pins.length);
+    expect(lock).not.toMatch(/^\s*--trusted-host\b/m);
+    expect(lock).not.toMatch(/^\s*-[^-r]\b/m);
+    expect(dockerfile).toContain('COPY requirements.lock ./');
+    expect(dockerfile).toContain('pip install --no-cache-dir --require-hashes --requirement requirements.lock');
+    expect(dockerfile).not.toContain('pip install --no-cache-dir --requirement requirements.txt');
   });
 });

@@ -1,3 +1,9 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Require the buyer console to preserve partial-mode security facts instead of presenting CSP, rate limits, token crypto, and webhook integrity as undifferentiated booleans.
+ */
+
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -45,5 +51,9 @@ describe('buyer-grade admin console surface', () => {
     expect(js).toContain('/api/llm-governance/status');
     expect(js).toContain('/api/governance/readiness');
     expect(js).toContain('/api/governance/audit/export');
+    expect(js).toContain('controls.cspMode');
+    expect(js).toContain('controls.internalRateLimit');
+    expect(js).toContain('controls.envelopeCrypto');
+    expect(js).toContain('controls.alertWebhookHmac');
   });
 });

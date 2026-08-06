@@ -7,11 +7,17 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 developer helper: the `oshal-app` CLI — `init` scaffolds a new app package, `validate` lints a package against the app-package contract (self-contained, well-formed manifest, bundled files present, agentId uniqueness, deps well-formed).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 gap-closure: `build <dir> --framework <checkout>` (compile src-routes/*.ts -> routes/*.js against a checkout, @/ preserved, self-containment verified, transient copies cleaned) + `install` now resolves dependencies.apps npm-style (installed -> core swarm-apps -> store recursive, fail-closed) and records the resolution in .oshal-install.json.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add `install <name>` — sparse git-subdir pull of a package from a store repo (default oshal-applications) into deployed-apps/, validated before landing, with a pinned-sha provenance stamp. Proven end-to-end: install hello-oshal from the external repo → route serves.
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | `install` honors OSHAL_STORE_TOKEN (fallback GITHUB_TOKEN) for private store repos: token injected into the clone URL from env only — never a flag, never printed (clean repo in all output, scrubbed from git error text). Lets the update-check apply route and headless installs reach the private oshal-applications store.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | `install` honors OSHAL_STORE_TOKEN (fallback GITHUB_TOKEN) for private store repos and scrubs authentication material from errors. The original URL transport is superseded by sequence 9.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: validate `uses:` (kernel skills) shape, and warn when an author lists the `presentations` APP as a dependency when they mean the always-present deck-generation SKILL. Skill IDs are deliberately NOT re-listed here — the authoritative fail-closed check is server-side (readManifest) + CI (check-kernel-skills.ts); a second list in this CLI would drift.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-097 store follow-up: `init` scaffold stamps `suite:` (the app's ONE primary catalog shelf) so generated packages never land unshelved; `validate` warns on a missing suite and errors on a non-string one. The suite ENUM is deliberately NOT re-listed here — the authoritative fail-closed value check is server-side (swarm-app-loader against SWARM_APP_SUITES), same no-second-source reasoning as `uses:`.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11 done-when 6: `uninstall`'s impact scan now mirrors the SERVER's tool semantics (tool-ownership.ts) — tools PROVIDED = the manifest's tools[].name only (never ui.static[].toolName, those are ribbon surface ids); other installed packages whose dependencies.tools name one are TOOL DEPENDENTS and BLOCK the uninstall exactly like app-level dependents (--force overrides). A dependent blocks, it never RETAINS the tool — under --force the tool goes with its owner, same as the server.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Default the store to the PUBLIC repo, matching scripts/oshal-install.sh. The CLI defaulted to the private trunk, so `oshal-app.js install <name>` 404'd for anyone outside the org while the shell installer — same product, same install — succeeded from the public snapshot. The trunk is now reached by naming it (--repo / OSHAL_STORE_REPO) plus OSHAL_STORE_TOKEN.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: private-store tokens now reach Git through --config-env and a one-process Authorization header environment value; clone URLs and process argv remain credential-free.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: validate the fixed app access declaration and scaffold new packages with the safe viewer default plus explicit deny support.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS CORE-05: validate executable package smoke declarations and their confined static fixtures before install.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: require structurally valid store audit bindings, warn without claiming verification in compatible mode, and install fully evidenced packages from their exact audited SHA in enforce mode.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Validate package-owned Takeout declarations before install and verify their named handler exports during route compilation.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Validate first-class manifest schedules before install, including service-route ownership/auth, named handler exports, and static bounded bodies.
  *
  * The npm-of-OSHAL-apps helper. An OSHAL app package is a folder with a definition
  * file (oshal-app.yaml — the package.json analog), personas, compiled routes, migrations,
@@ -30,6 +36,13 @@ const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const yaml = require('js-yaml');
+const { validateSmokeDeclarations } = require('./oshal-app-smoke');
+const { validateTakeoutDeclarations } = require('./oshal-app-takeout');
+const { validateScheduleDeclarations } = require('./oshal-app-schedules');
+const {
+  loadPackageAuditAssessment,
+  resolvePackageAuditMode,
+} = require('./oshal-package-audit');
 
 // The default app store: the PUBLIC store, the same one scripts/oshal-install.sh downloads and
 // the only one a deployment without OSHAL_STORE_TOKEN can read. Pointing this at the private
@@ -41,6 +54,11 @@ const DEFAULT_STORE_REPO = 'https://github.com/emeraldcoastsystemsgroup/oshal-ap
 // Registered cockpit skins a package may select via `theme:` (mirror of COCKPIT_THEMES in
 // src/pages/cockpit/js/theme-manager.js — keep in sync; a package may also ship a bundled ui/*.css).
 const COCKPIT_THEMES = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber', 'little-monsters'];
+
+// ADR-118 is deliberately a closed four-word industry ladder. Changing this is an ADR-level
+// compatibility event, so the standalone package CLI repeats it to reject bad packages BEFORE
+// install; the server loader remains the runtime authority.
+const APP_ACCESS_TIERS = ['deny', 'viewer', 'editor', 'admin'];
 
 // Framework directories a package path must NEVER reference — a package must be self-contained
 // (ADR-085): every path in the manifest resolves inside the package, never back into the monolith.
@@ -159,6 +177,9 @@ function validatePackage(dir) {
       if (r && r.requiresAuth !== undefined && typeof r.requiresAuth !== 'boolean') {
         err(`routes[${i}].requiresAuth must be a boolean`);
       }
+      if (r && r.requiresAi !== undefined && typeof r.requiresAi !== 'boolean') {
+        err(`routes[${i}].requiresAi must be a boolean`);
+      }
       if (r && (r.auth === 'public' || r.requiresAuth === false)) {
         warn(`routes[${i}] (${r.mountPath}) is ANONYMOUS-CALLABLE — confirm the router self-guards (token/HMAC) inside.`);
       }
@@ -168,6 +189,18 @@ function validatePackage(dir) {
     });
   }
 
+  // ── smoke: executable package proof (INSTALLER-GAPS CORE-05) ───────────────
+  // A separate module keeps this already-large CLI below its file-size trigger. The runtime loader
+  // repeats the contract because pre-install lint and activation are independent trust boundaries.
+  // Package-owned Takeout handlers load in-process on activation. Validate their literal archive
+  // paths and confined compiled modules before an install reaches that trust boundary.
+  const takeoutValidation = validateTakeoutDeclarations(m, dir);
+  takeoutValidation.errors.forEach(err);
+  takeoutValidation.warnings.forEach(warn);
+
+  for (const smokeError of validateSmokeDeclarations(m, dir)) err(smokeError);
+  for (const scheduleError of validateScheduleDeclarations(m)) err(scheduleError);
+
   // ── guestTier: a REQUEST, not a grant (ADR-085 D4) ─────────────────────────
   // Shape only; the authoritative value check is fail-closed server-side (readManifest). Say plainly
   // that declaring it grants nothing — an author who assumes otherwise ships an app they believe is
@@ -175,6 +208,37 @@ function validatePackage(dir) {
   if (m.guestTier !== undefined) {
     if (typeof m.guestTier !== 'string') err('guestTier must be a string');
     else warn(`guestTier: ${m.guestTier} is a REQUEST — an operator must approve it (PATCH /api/swarm/apps/${m.name || '<app>'}/guest-tier) before it affects guests. Until then guests are read-only.`);
+  }
+
+  // ── access: per-user platform doorway (ADR-118) ─────────────────────────────
+  if (m.access !== undefined) {
+    if (!m.access || typeof m.access !== 'object' || Array.isArray(m.access)) {
+      err('access must be an object');
+    } else {
+      const unknownFields = Object.keys(m.access).filter((key) => !['supported', 'defaultTier', 'mappings'].includes(key));
+      if (unknownFields.length) err(`access has unknown field(s): ${unknownFields.join(', ')}`);
+      if (!Array.isArray(m.access.supported) || m.access.supported.length === 0) {
+        err('access.supported must be a non-empty array');
+      } else {
+        const unknown = m.access.supported.filter((tier) => !APP_ACCESS_TIERS.includes(tier));
+        if (unknown.length) err(`access.supported contains unknown tier(s): ${unknown.join(', ')}`);
+        if (new Set(m.access.supported).size !== m.access.supported.length) err('access.supported must not contain duplicates');
+        if (!m.access.supported.includes('deny')) err('access.supported must include deny');
+        if (!APP_ACCESS_TIERS.includes(m.access.defaultTier)) err('access.defaultTier must be deny, viewer, editor, or admin');
+        else if (!m.access.supported.includes(m.access.defaultTier)) err('access.defaultTier must also appear in access.supported');
+      }
+      if (m.access.mappings !== undefined) {
+        if (!m.access.mappings || typeof m.access.mappings !== 'object' || Array.isArray(m.access.mappings)) {
+          err('access.mappings must be an object when present');
+        } else {
+          for (const [tier, bundle] of Object.entries(m.access.mappings)) {
+            if (!APP_ACCESS_TIERS.includes(tier)) err(`access.mappings contains unknown tier: ${tier}`);
+            else if (!Array.isArray(m.access.supported) || !m.access.supported.includes(tier)) err(`access.mappings.${tier} maps an unsupported tier`);
+            if (typeof bundle !== 'string' || !bundle.trim()) err(`access.mappings.${tier} must be a non-empty bundle id`);
+          }
+        }
+      }
+    }
   }
 
   // ── uses: kernel skills (ADR-090 D8) ───────────────────────────────────────
@@ -226,6 +290,12 @@ description: >-
 version: 1.0.0
 status: active
 scope: person
+
+# ADR-118: the platform-wide per-user doorway. Package capabilities remain authoritative
+# after editor/admin enters; omission preserves legacy behavior for older packages.
+access:
+  supported: [deny, viewer, editor, admin]
+  defaultTier: viewer
 
 source:
   type: git-subdir
@@ -314,7 +384,12 @@ function resolveDependencies(manifest, opts, seen) {
     if (fs.existsSync(path.join(opts.destAbs, dep, 'oshal-app.yaml'))) { resolution[dep] = 'installed'; continue; }
     if (fs.existsSync(path.resolve(process.cwd(), 'swarm-apps', `${dep}.yaml`))) { resolution[dep] = 'core'; continue; }
     console.log(C.dim(`  dependency "${dep}" not present — installing from the store …`));
-    const rc = installPackage(dep, { repo: opts.repo, ref: opts.ref, dest: opts.destAbs }, seen);
+    const rc = installPackage(dep, {
+      repo: opts.repo,
+      ref: opts.ref,
+      dest: opts.destAbs,
+      auditMode: opts.auditMode,
+    }, seen);
     if (rc !== 0) {
       console.error(C.red(`  unresolved dependency "${dep}" — failing closed (nothing partially enabled).`));
       return null;
@@ -325,11 +400,129 @@ function resolveDependencies(manifest, opts, seen) {
 }
 
 /**
+ * Build Git's private-store authentication transport without putting a token in a URL or argv.
+ * Git reads the scoped HTTP header from the named environment variable through --config-env.
+ */
+function buildStoreGitAuth(repo, parent = process.env) {
+  const storeToken = (parent.OSHAL_STORE_TOKEN || parent.GITHUB_TOKEN || '').trim();
+  const baseEnv = { ...parent };
+  delete baseEnv.OSHAL_STORE_TOKEN;
+  delete baseEnv.GITHUB_TOKEN;
+  delete baseEnv.OSHAL_GIT_AUTH_HEADER;
+  if (!storeToken || !/^https:\/\/github\.com\//.test(repo)) {
+    return { argsPrefix: [], baseEnv, cloneEnv: baseEnv, storeToken: '' };
+  }
+  const basic = Buffer.from(`x-access-token:${storeToken}`, 'utf8').toString('base64');
+  return {
+    argsPrefix: ['--config-env=http.https://github.com/.extraheader=OSHAL_GIT_AUTH_HEADER'],
+    baseEnv,
+    cloneEnv: { ...baseEnv, OSHAL_GIT_AUTH_HEADER: `Authorization: Basic ${basic}` },
+    storeToken,
+  };
+}
+
+/** Pin a verified package checkout to the audit SHA and prove Git landed on that exact object. */
+function pinCheckoutToAudit(git, tmp, assessment) {
+  if (!assessment.sourceSha) return;
+  const current = git(['-C', tmp, 'rev-parse', 'HEAD']);
+  if (current !== assessment.sourceSha) {
+    git(['-C', tmp, 'fetch', '--depth', '1', 'origin', assessment.sourceSha], true);
+    git(['-C', tmp, 'checkout', '--detach', assessment.sourceSha]);
+  }
+  const checkedOut = git(['-C', tmp, 'rev-parse', 'HEAD']);
+  if (checkedOut !== assessment.sourceSha) {
+    throw new Error(`audit SHA checkout mismatch: expected ${assessment.sourceSha}, got ${checkedOut}`);
+  }
+}
+
+/** Refuse a package whose checked-out manifest does not match the catalog identity under audit. */
+function packageIdentityProblems(manifest, assessment) {
+  const problems = [];
+  if (manifest.name !== assessment.entry.name) problems.push('package manifest name does not match catalog name');
+  if (String(manifest.version ?? '') !== String(assessment.entry.version ?? '')) {
+    problems.push('package manifest version does not match catalog version');
+  }
+  return problems;
+}
+
+/** Build provenance that never labels an unverified checkout as audit-pinned. */
+function auditProvenance(assessment) {
+  return {
+    mode: assessment.mode,
+    status: assessment.record.status,
+    verified: assessment.verified,
+    record: assessment.entry.audit.record,
+    sourceSha: assessment.sourceSha,
+    reasons: assessment.reasons,
+  };
+}
+
+/** Assess one cloned catalog record, report its posture, and pin a verified checkout. */
+function acceptAuditAssessment(git, tmp, name, ref, auditMode) {
+  const assessment = loadPackageAuditAssessment(tmp, name, auditMode);
+  if (!assessment.allowed) {
+    console.error(C.red(`refusing to install "${name}" — package audit denied it in ${auditMode} mode:`));
+    assessment.reasons.forEach((reason) => console.error(`  ${C.red('error')} ${reason}`));
+    return null;
+  }
+  if (assessment.verified) {
+    pinCheckoutToAudit(git, tmp, assessment);
+    console.log(C.green(`✓ audit verified ${name}`) + C.dim(`  (${assessment.sourceSha.slice(0, 12)})`));
+  } else {
+    console.error(C.yellow(`WARNING: ${name} is NOT AUDIT-VERIFIED; compatible mode uses ${ref} and grants no audited SHA pin.`));
+    assessment.reasons.forEach((reason) => console.error(`  ${C.yellow('warn')}  ${reason}`));
+  }
+  return assessment;
+}
+
+/** Validate package contents plus their exact catalog name/version identity. */
+function readValidatedManifest(src, name, repo, assessment) {
+  const manifestPath = path.join(src, 'oshal-app.yaml');
+  if (!fs.existsSync(manifestPath)) {
+    console.error(C.red(`package "${name}" not found in ${repo} (no ${name}/oshal-app.yaml)`));
+    return null;
+  }
+  const { errors, warnings } = validatePackage(src);
+  if (errors.length) {
+    console.error(C.red(`refusing to install "${name}" — it failed validation:`));
+    errors.forEach((error) => console.error(`  ${C.red('error')} ${error}`));
+    return null;
+  }
+  warnings.forEach((warning) => console.log(`  ${C.yellow('warn')}  ${warning}`));
+  const manifest = yaml.load(fs.readFileSync(manifestPath, 'utf8')) || {};
+  const identityProblems = packageIdentityProblems(manifest, assessment);
+  if (!identityProblems.length) return manifest;
+  console.error(C.red(`refusing to install "${name}" — audited catalog identity does not match the checkout:`));
+  identityProblems.forEach((problem) => console.error(`  ${C.red('error')} ${problem}`));
+  return null;
+}
+
+/** Atomically replace the package directory and stamp unambiguous source/audit provenance. */
+function landInstalledPackage(src, dest, details) {
+  const target = path.join(dest, details.name);
+  fs.mkdirSync(dest, { recursive: true });
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.cpSync(src, target, { recursive: true });
+  fs.writeFileSync(path.join(target, '.oshal-install.json'), JSON.stringify({
+    name: details.name, repo: details.repo, ref: details.ref, sha: details.sha,
+    installedAt: new Date().toISOString(),
+    dependencies: details.resolution,
+    audit: auditProvenance(details.assessment),
+  }, null, 2));
+  console.log(C.green(`✓ installed ${details.name} → ${target}`) + C.dim(`  (${details.sha.slice(0, 8)})`));
+  const depNames = Object.keys(details.resolution);
+  if (depNames.length) console.log(C.dim(`  deps: ${depNames.map((dep) => `${dep}=${details.resolution[dep]}`).join(', ')}`));
+  console.log(C.dim('  the swarm loader auto-loads deployed-apps/ on boot; or hot-load now:'));
+  console.log(C.dim(`  curl -X POST localhost:5000/api/swarm/apps/load -H 'content-type: application/json' -d '{"path":"${target.replace(/\\/g, '/')}/oshal-app.yaml"}'`));
+  return 0;
+}
+
+/**
  * Install a package by name from a git store repo (git-subdir): sparse-clone just that
  * subfolder at the given ref, validate it, RESOLVE ITS DEPENDENCIES (installing missing
  * ones from the same store — npm-style, fail-closed), and copy it into the deploy dir
- * where the swarm loader picks it up. Ad-hoc + repeatable; git auth for a private store
- * comes from the caller's normal git credentials (no token handling here).
+ * where the swarm loader picks it up. Ad-hoc + repeatable; private-store auth is transported
+ * through Git's config-env support so process arguments and the remote URL remain clean.
  */
 function installPackage(name, opts, seen) {
   if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name)) { console.error(C.red(`bad package name: ${name}`)); return 1; }
@@ -337,55 +530,33 @@ function installPackage(name, opts, seen) {
   seen.add(name);
   const repo = opts.repo || DEFAULT_STORE_REPO;
   const ref = opts.ref || 'main';
+  const auditMode = resolvePackageAuditMode(opts.auditMode);
   const dest = path.resolve(opts.dest || defaultDeployDir());
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-install-'));
-  const git = (args) => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
-  // Private-store auth (opt-in): OSHAL_STORE_TOKEN (fallback GITHUB_TOKEN) is injected into the
-  // clone URL for github.com https remotes — read from env only (never a flag), printed never
-  // (all console output uses the clean `repo`), and scrubbed from error text below in case git
-  // echoes the remote URL into a failure message.
-  const storeToken = (process.env.OSHAL_STORE_TOKEN || process.env.GITHUB_TOKEN || '').trim();
-  const cloneUrl = storeToken && /^https:\/\/github\.com\//.test(repo)
-    ? repo.replace(/^https:\/\//, `https://x-access-token:${storeToken}@`)
-    : repo;
+  const storeAuth = buildStoreGitAuth(repo);
+  const git = (args, authenticateStore = false) => execFileSync('git', [
+    ...(authenticateStore ? storeAuth.argsPrefix : []),
+    ...args,
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: authenticateStore ? storeAuth.cloneEnv : storeAuth.baseEnv,
+  }).toString().trim();
   try {
     console.log(C.dim(`fetching ${name} from ${repo}#${ref} …`));
-    git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, cloneUrl, tmp]);
-    execFileSync('git', ['-C', tmp, 'sparse-checkout', 'set', '--no-cone', name], { stdio: ['ignore', 'pipe', 'pipe'] });
+    git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], true);
+    git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', `audits/${name}.json`, name]);
+    const assessment = acceptAuditAssessment(git, tmp, name, ref, auditMode);
+    if (!assessment) return 1;
     const src = path.join(tmp, name);
-    if (!fs.existsSync(path.join(src, 'oshal-app.yaml'))) {
-      console.error(C.red(`package "${name}" not found in ${repo} (no ${name}/oshal-app.yaml)`));
-      return 1;
-    }
-    const { errors, warnings } = validatePackage(src);
-    if (errors.length) {
-      console.error(C.red(`refusing to install "${name}" — it failed validation:`));
-      errors.forEach((e) => console.error(`  ${C.red('error')} ${e}`));
-      return 1;
-    }
-    warnings.forEach((w) => console.log(`  ${C.yellow('warn')}  ${w}`));
-
-    // npm-style forward dependency resolution BEFORE this package lands (fail-closed).
-    const manifest = yaml.load(fs.readFileSync(path.join(src, 'oshal-app.yaml'), 'utf8')) || {};
-    const resolution = resolveDependencies(manifest, { repo, ref, destAbs: dest }, seen);
+    const manifest = readValidatedManifest(src, name, repo, assessment);
+    if (!manifest) return 1;
+    const resolution = resolveDependencies(manifest, { repo, ref, destAbs: dest, auditMode }, seen);
     if (resolution === null) return 1;
 
     const sha = git(['-C', tmp, 'rev-parse', 'HEAD']);
-    const target = path.join(dest, name);
-    fs.mkdirSync(dest, { recursive: true });
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.cpSync(src, target, { recursive: true });
-    fs.writeFileSync(path.join(target, '.oshal-install.json'), JSON.stringify({
-      name, repo, ref, sha, installedAt: new Date().toISOString(), dependencies: resolution,
-    }, null, 2));
-    console.log(C.green(`✓ installed ${name} → ${target}`) + C.dim(`  (${sha.slice(0, 8)})`));
-    const depNames = Object.keys(resolution);
-    if (depNames.length) console.log(C.dim(`  deps: ${depNames.map((d) => `${d}=${resolution[d]}`).join(', ')}`));
-    console.log(C.dim('  the swarm loader auto-loads deployed-apps/ on boot; or hot-load now:'));
-    console.log(C.dim(`  curl -X POST localhost:5000/api/swarm/apps/load -H 'content-type: application/json' -d '{"path":"${target.replace(/\\/g, '/')}/oshal-app.yaml"}'`));
-    return 0;
+    return landInstalledPackage(src, dest, { name, repo, ref, sha, resolution, assessment });
   } catch (e) {
-    const msg = storeToken ? e.message.split(storeToken).join('***') : e.message;
+    const msg = storeAuth.storeToken ? e.message.split(storeAuth.storeToken).join('***') : e.message;
     console.error(C.red(`install failed: ${msg.split('\n')[0]}`));
     return 1;
   } finally {
@@ -461,6 +632,29 @@ function buildPackage(pkgDirInput, opts) {
       if (!bundledBases.has(base)) continue; // module not built from src-routes
       const js = fs.readFileSync(path.join(outRoutes, `${base}.js`), 'utf8');
       if (r.factory && !js.includes(r.factory)) problems.push(`${base}.js does not export declared factory ${r.factory}`);
+    }
+    for (const declaration of manifest.takeout || []) {
+      const base = String(declaration.module || '').replace(/^routes\//, '').replace(/\.js$/, '');
+      if (!bundledBases.has(base)) continue;
+      const js = fs.readFileSync(path.join(outRoutes, `${base}.js`), 'utf8');
+      if (declaration.handler && !js.includes(declaration.handler)) {
+        problems.push(`${base}.js does not export declared Takeout handler ${declaration.handler}`);
+      }
+    }
+    for (const declaration of manifest.schedules || []) {
+      if (declaration.target !== 'service-route') continue;
+      const owner = (manifest.routes || [])
+        .filter((route) => {
+          const mount = String(route.mountPath || '').replace(/\/+$/, '');
+          return declaration.route === mount || declaration.route.startsWith(`${mount}/`);
+        })
+        .sort((a, b) => String(b.mountPath).length - String(a.mountPath).length)[0];
+      const base = String(owner && owner.module || '').replace(/^routes\//, '').replace(/\.js$/, '');
+      if (!base || !bundledBases.has(base)) continue;
+      const js = fs.readFileSync(path.join(outRoutes, `${base}.js`), 'utf8');
+      if (declaration.handler && !js.includes(declaration.handler)) {
+        problems.push(`${base}.js does not export declared schedule handler ${declaration.handler}`);
+      }
     }
     if (problems.length) {
       problems.forEach((p) => console.error(`  ${C.red('error')} ${p}`));
@@ -568,9 +762,11 @@ function usage() {
   ${C.bold('init')} <name> [--dir <parent>]        scaffold a new app package
   ${C.bold('validate')} <package-dir>               lint a package against the app-package contract
   ${C.bold('install')} <name> [--repo <url>] [--ref <ref>] [--dest <dir>]
+                                    [--audit-mode compatible|enforce]
                                     pull a package from a git store repo (git-subdir) into
                                     deployed-apps/ where the swarm loader picks it up —
-                                    resolving dependencies.apps npm-style (fail-closed)
+                                    resolving dependencies.apps npm-style and enforcing
+                                    the store audit policy (default: compatible)
   ${C.bold('build')} <package-dir> [--framework <oshal checkout>]
                                     compile the package's src-routes/*.ts → routes/*.js
                                     against a framework checkout, @/ imports preserved
@@ -605,7 +801,12 @@ function main(argv) {
     const name = rest.find((a) => !a.startsWith('--'));
     const flag = (f) => { const i = rest.indexOf(f); return i >= 0 ? rest[i + 1] : undefined; };
     if (!name) { console.error(C.red('install needs a package name')); return 1; }
-    return installPackage(name, { repo: flag('--repo'), ref: flag('--ref'), dest: flag('--dest') });
+    return installPackage(name, {
+      repo: flag('--repo'),
+      ref: flag('--ref'),
+      dest: flag('--dest'),
+      auditMode: flag('--audit-mode'),
+    });
   }
   if (cmd === 'build') {
     const dir = rest.find((a) => !a.startsWith('--'));
@@ -623,4 +824,13 @@ function main(argv) {
   return cmd && cmd !== 'help' && cmd !== '--help' ? 1 : 0;
 }
 
-process.exit(main(process.argv.slice(2)));
+if (require.main === module) {
+  try {
+    process.exit(main(process.argv.slice(2)));
+  } catch (error) {
+    console.error(C.red(error instanceof Error ? error.message : String(error)));
+    process.exit(1);
+  }
+}
+
+module.exports = { buildStoreGitAuth, installPackage };

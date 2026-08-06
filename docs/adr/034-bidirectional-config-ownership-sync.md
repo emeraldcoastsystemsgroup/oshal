@@ -50,13 +50,24 @@ default precedence record.
 ### 2. Push down (OSHAL → any-bot): API-driven, two edges
 
 - **On config change:** an OSHAL-side config update (cockpit/profile/agent-config save) calls the bot's `PUT /api/llm-provider` via `BotNodeClient.switchProvider` (previously dead code, now wired). The bot applies and persists to its derived caches.
-- **On dispatch:** every `BotNodeClient.execute` carries the authoritative `providerId`/`model` from the OSHAL record (and a `configVersion`). The bot's `/api/swarm-execute` applies them for that execution instead of dropping them. The runback in `BotNodeResponse` is **telemetry only** — OSHAL records its own intended provider/model against the task, never adopts the bot's self-resolved value as truth.
+- **On dispatch:** authoritative stamping is enabled by default. Every remote `BotNodeClient.execute`
+  carries `providerConfigRequired: true` plus the authoritative `providerId`/`model` and
+  `configVersion`. If the controller cannot resolve the record, it still sends the required marker;
+  the bot refuses before task creation. A bot also refuses a missing reconciliation seam, an
+  unavailable or incorrectly applied provider, and a concurrent request that would switch a
+  running task. The response reports the effective `providerConfigSource`, reconciliation action,
+  and version, and a model result that reports a different provider/model is not accepted as a
+  success. `OSHAL_PUSH_ON_DISPATCH=off` is the explicit compatibility rollback; an authoritative
+  transport failure cannot silently downgrade to the unstamped localhost fallback.
 
 ### 3. Broadcast up (any-bot → OSHAL): the missing trigger, over the mesh
 
 When a bot's bot-level config changes locally (its own UI hits `PUT /api/llm-provider`, or a swarm-owning bot changes a sub-bot), the bot **broadcasts a config-change envelope** on a dedicated Redis-mesh channel `swarm.config-change` (`MESH_CHANNELS.configChange`). The OSHAL controller subscribes to this channel and **reconciles** the change into the authoritative record:
 
-- **Central-wins (default):** OSHAL records the reported change, bumps `config_version`, writes an audit row, and MAY re-push the authoritative value back to the bot if it disagrees.
+- **Central-wins (default):** OSHAL records the reported change and audit exactly once, bumps
+  `config_version` once, then uses a transport-only apply to converge peer replicas without
+  recording the confirmation as a second authoritative mutation. Reconciliation propagation is
+  default-on; a peer-applied push suppresses its echo broadcast.
 - A swarm-owning any-bot pushes its sub-swarm's changes to the OSHAL swarm controller via the same channel — "if an any-bot has a swarm, it pushes its changes to the controller."
 
 The mesh is used (not the REST `POST /api/sync/override/:agentId` ADR-006 sketched) because the Redis Streams mesh is already the durable, working swarm bus, it matches the "broadcast" semantics, and it naturally carries the swarm-of-swarm case to the controller. Wire format is the existing `MeshEnvelope` JSON on `oshal:mesh:swarm.config-change`.
@@ -67,7 +78,7 @@ An any-bot runs standalone. On boot it uses its cached config (env seed + last-k
 
 ### 5. Versioning and audit
 
-The authoritative record carries an integer `config_version` (stored on the `agent_config` record) that increments on every change (push or reconciled broadcast). Every sync operation is written to the **existing `config_sync_log` audit table** (migration 001 / ADR-006): direction (`push`/`pull`), `config_version_before`/`after`, `changes`, `status`, `synced_at`. Dispatch stamps the version; the bot echoes the applied version so OSHAL can detect drift.
+The authoritative record carries an integer `config_version` (stored on the `agent_config` record) that increments on every change (push or reconciled broadcast). Every sync operation is written to the **existing `config_sync_log` audit table** (migration 001 / ADR-006): direction (`push`/`pull`), `config_version_before`/`after`, `changes`, `status`, `synced_at`. Dispatch stamps the version; the bot returns the effective config source, action, and applied version so OSHAL can detect drift without treating bot-reported identity as new authority.
 
 ## Consequences
 
@@ -81,8 +92,8 @@ The authoritative record carries an integer `config_version` (stored on the `age
   before push or persistence.
 
 ### Negative / risks
-- The legacy localhost `/api/send-message` fallback does not carry params yet — partial coverage until updated; OSHAL intent can still be dropped on that fallback route.
-- Credentials now flow through dispatch/push payloads and the mesh — must not be logged and must stay on the internal network; mesh config-change envelopes carry references/version, not raw secrets, where possible.
+- The explicit `OSHAL_PUSH_ON_DISPATCH=off` compatibility mode permits the legacy unstamped localhost fallback and therefore must remain a temporary rollback, not a steady-state posture.
+- Provider/model sync carries metadata only. Connector and platform credentials are excluded from generic model dispatch and provider push-down; schema-bounded deterministic provider operations consume request-scoped connector credentials at the trusted server boundary.
 - Demoting `ANTHROPIC_API_KEY` from steady-state authority must not regress the auth-failure fix (`app.js`) where a stale Redis Bedrock config overwrote working Anthropic creds — the OSHAL record must hold correct creds before that override is removed.
 - Central-wins re-push must surface failures explicitly, never fall back to the swallowed file rewrite, or the ownership fight returns.
 
@@ -96,3 +107,7 @@ On change to this contract, update together: `docs/architecture/swarm-processing
 4. Bot broadcasts on local config change.
 5. Wire `switchProvider` into the OSHAL config-update path; retire the behind-the-bot file rewrite.
 6. Bootstrap pull + env-as-seed. Audit reuses the existing `config_sync_log` table (ADR-006); `config_version` lives on the `agent_config` record (no new migration).
+
+## Implementation state — 2026-08-05
+
+All six local implementation steps are wired and regression-guarded. The default bot runtime has a two-replica route → mesh → controller → peer convergence test with echo suppression and single version/audit accounting. Dispatch tests cover default-on stamping, explicit rollback, missing authority, missing runtime seam, switch failure, concurrent mismatch, actual-result mismatch, config provenance, and transport fallback containment. The remaining deployed drift exercise is tracked separately in `docs/BACKLOG.md`; no live deployment claim is inferred from these local tests.

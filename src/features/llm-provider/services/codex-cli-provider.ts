@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CodexCliProvider — harness provider wrapping the OpenAI Codex CLI
  *                     |                           | Uses `codex exec --json --ephemeral` for non-interactive calls
  *                     |                           | OAuth token handled internally by the CLI
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: fail closed before runtime allocation, OAuth copy, or unattended Codex spawn pending an audited brokered sandbox.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Consume the dependency-free unattended-provider policy without importing the harness runtime contract.
  */
 
 import { spawn } from 'child_process';
@@ -13,6 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { createChildLogger } from '@/shared/logger';
+import { assertAuditedAutonomousHarness } from './unattended-provider-policy';
 
 const logger = createChildLogger({ module: 'codex-cli-provider' });
 
@@ -75,6 +78,7 @@ export class CodexHarnessProvider {
    * @returns Response text and optional usage metadata
    */
   async complete(prompt: string, systemPrompt?: string): Promise<CodexCliResponse> {
+    assertAuditedAutonomousHarness('codex-cli');
     const fullPrompt = systemPrompt
       ? `${systemPrompt}\n\n${prompt}`
       : prompt;
@@ -89,6 +93,7 @@ export class CodexHarnessProvider {
    * seeded with auth.json (+ config.toml for service_tier=fast), run with `-C workspace` and `HOME=runtimeHome`.
    */
   private makeRuntime(): { workspace: string; home: string } {
+    assertAuditedAutonomousHarness('codex-cli');
     const root = process.env.CLINE_WORKSPACE_ROOT || os.tmpdir();
     fs.mkdirSync(root, { recursive: true });
     const workspace = fs.mkdtempSync(path.join(root, 'codex-run-'));
@@ -106,6 +111,7 @@ export class CodexHarnessProvider {
    * @description Low-level execution of `codex exec` with JSONL parsing.
    */
   private exec(prompt: string): Promise<CodexCliResponse> {
+    assertAuditedAutonomousHarness('codex-cli');
     return new Promise((resolve, reject) => {
       const { workspace, home } = this.makeRuntime();
       const cleanup = (): void => { try { fs.rmSync(workspace, { recursive: true, force: true }); } catch { /* best-effort */ } };

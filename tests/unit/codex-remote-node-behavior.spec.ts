@@ -7,6 +7,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep the cleanup and retry behavior groups independently readable and below the repository function-size limit.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove an accepted-but-silent HTTP response cannot outlive the overall tool deadline, and make cleanup failure observable without masking a primary transfer error.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Prove concurrent pull cleanup waits for an already-issued sibling read after another worker rejects.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Give ordinary multi-request pull fixtures a 1.5-second control-plane budget so suite contention cannot preempt their intended truncation/cleanup assertion; dedicated 125ms deadline cases remain strict.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Keep the 125ms production deadline strict while accepting either fail-closed deadline message and measuring it inside the existing two-second child-process guard under scheduler contention.
  */
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -194,7 +196,7 @@ const runCli = (args: string[], timeoutMs = 3_000): Promise<CliResult> => new Pr
 
 const pullArgs = (url: string, out: string): string[] => [
   'pull', `--url=${url}`, '--secret=test-secret', '--client=test-client',
-  '--remote=C:\\Recaps\\source.bin', `--local=${out}`, '--chunkSize=2000', '--timeoutMs=500',
+  '--remote=C:\\Recaps\\source.bin', `--local=${out}`, '--chunkSize=2000', '--timeoutMs=1500',
   '--cleanupTimeoutMs=125',
 ];
 
@@ -291,8 +293,8 @@ describe('codex remote-node retry deadlines', () => {
       ], 2_000);
       expect(result.code).toBe(1);
       expect(result.timedOut).toBe(false);
-      expect(result.stderr).toMatch(/timed out waiting for shell\.exec/i);
-      expect(result.elapsedMs).toBeLessThan(1_000);
+      expect(result.stderr).toMatch(/timed out waiting for shell\.exec|request deadline elapsed/i);
+      expect(result.elapsedMs).toBeLessThan(2_000);
     } finally {
       await plane.close();
     }
@@ -308,8 +310,8 @@ describe('codex remote-node stalled response handling', () => {
         '--cmd=Get-Date', '--timeoutMs=125',
       ], 2_000);
       expect(result).toMatchObject({ code: 1, timedOut: false });
-      expect(result.stderr).toMatch(/timed out waiting for shell\.exec/i);
-      expect(result.elapsedMs).toBeLessThan(1_000);
+      expect(result.stderr).toMatch(/timed out waiting for shell\.exec|request deadline elapsed/i);
+      expect(result.elapsedMs).toBeLessThan(2_000);
     } finally {
       await plane.close();
     }

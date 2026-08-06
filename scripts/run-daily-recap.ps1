@@ -42,6 +42,9 @@
   13 | maintainer@emeraldcoastsystemsgroup.com  | Require object-root manifest JSON, stop before deriving paths from invalid identities, and gate the race probe to an explicit temp-scoped contract operation.
   14 | maintainer@emeraldcoastsystemsgroup.com  | Reconcile inline workflow and recovery documentation with automatic manifest-gated primary and mirror publication.
   15 | maintainer@emeraldcoastsystemsgroup.com  | Hold one host-wide mutex across the complete normal run so nightly and manual invocations cannot mix shared staging, assembly, manifest, or publication files; verifier and manifest-contract modes remain lock-free.
+  16 | maintainer@emeraldcoastsystemsgroup.com  | Acquire, heartbeat, and exact-token release the PostgreSQL render-node lease shared with the video pump before touching the node; local mutex and blackout remain defense-in-depth.
+  17 | maintainer@emeraldcoastsystemsgroup.com  | Complete the immutable build-manifest contract with explicit date/start/input digests and fail-closed ffprobe evidence for every MP4 before promotion; manifests from the former size-and-hash-only path can no longer authorize SkipBuild or ResumePull.
+  18 | maintainer@emeraldcoastsystemsgroup.com  | Let the temp-scoped run-lock test contract declare a validated bounded hold window so concurrent PowerShell probes cannot expire the lock owner under full-suite startup pressure; production mutex behavior is unchanged.
 #>
 [CmdletBinding()]
 param(
@@ -142,6 +145,62 @@ function RN([string[]]$rnArgs){
   return $out
 }
 function NodeShell($psFile,[int]$t=45000){ RN @('shell', "--client=$Node", "--timeoutMs=$t", "--cmdFile=$psFile") }
+
+# The recap and controller video pump coordinate through ONE PostgreSQL row. The CLI runs inside the
+# controller container so it uses the normal least-privilege app role; it stamps an explicit system
+# transaction and exposes only acquire/renew/release, never arbitrary SQL or a database credential.
+function Invoke-NodeLeaseCli([string[]]$LeaseArgs) {
+  $text = & docker exec oshal-local-api node /app/scripts/oshal-node-lease.js @LeaseArgs 2>&1 | Out-String
+  $status = $LASTEXITCODE
+  $record = $null
+  foreach ($line in @($text -split "`n" | Where-Object { $_.Trim().StartsWith('{') })) {
+    try { $record = $line.Trim() | ConvertFrom-Json -ErrorAction Stop } catch { }
+  }
+  return [pscustomobject]@{ status = $status; record = $record; text = $text.Trim() }
+}
+function Enter-SharedNodeLease {
+  $minutes = if ($env:OSHAL_RECAP_NODE_LEASE_MINUTES) { [int]$env:OSHAL_RECAP_NODE_LEASE_MINUTES } else { 360 }
+  if ($minutes -lt 1 -or $minutes -gt 720) { throw 'OSHAL_RECAP_NODE_LEASE_MINUTES must be between 1 and 720' }
+  $resource = "vids-render-node:$Node"
+  $holder = "daily-recap:${Date}:$([guid]::NewGuid().ToString('N'))"
+  $metadata = @{ requestedDate = $Date; nodeClientId = $Node } | ConvertTo-Json -Compress
+  $call = Invoke-NodeLeaseCli @(
+    'acquire', '--resource', $resource, '--holder', $holder, '--purpose', 'daily-recap-build-publish',
+    '--ttl-seconds', [string]($minutes * 60), '--metadata-json', $metadata
+  )
+  if ($null -eq $call.record) { throw "node-lease CLI returned no JSON (exit $($call.status)): $($call.text)" }
+  if ($call.record.message) { throw "node-lease CLI failed (exit $($call.status)): $($call.record.message)" }
+  if ($call.status -ne 0 -or -not [bool]$call.record.acquired) {
+    $who = if ($call.record.holder) { [string]$call.record.holder } else { 'another workflow' }
+    $until = if ($call.record.expires_at) { [string]$call.record.expires_at } else { 'an unknown expiry' }
+    throw "render node is already leased by $who until $until"
+  }
+  return [pscustomobject]@{
+    resourceKey = $resource; holder = $holder; leaseId = [string]$call.record.lease_id
+    ttlSeconds = ($minutes * 60); expiresAt = [string]$call.record.expires_at
+  }
+}
+function Renew-SharedNodeLease($Lease) {
+  if ($null -eq $Lease) { throw 'cannot renew a missing shared node lease' }
+  $call = Invoke-NodeLeaseCli @(
+    'renew', '--resource', $Lease.resourceKey, '--holder', $Lease.holder,
+    '--lease-id', $Lease.leaseId, '--ttl-seconds', [string]$Lease.ttlSeconds
+  )
+  if ($call.status -ne 0 -or $null -eq $call.record -or -not [bool]$call.record.renewed) {
+    throw "lost the durable render-node lease; refusing further node work: $($call.text)"
+  }
+  $Lease.expiresAt = [string]$call.record.expires_at
+  return $Lease
+}
+function Exit-SharedNodeLease($Lease) {
+  if ($null -eq $Lease) { return }
+  $call = Invoke-NodeLeaseCli @(
+    'release', '--resource', $Lease.resourceKey, '--holder', $Lease.holder, '--lease-id', $Lease.leaseId
+  )
+  if ($call.status -ne 0 -or $null -eq $call.record -or -not [bool]$call.record.released) {
+    Note "shared node lease was not released by this invocation (it may have expired/replaced): $($call.text)"
+  } else { Note "shared render-node lease released" }
+}
 # A transfer that never landed used to be INVISIBLE. RN returns its last output after exhausting
 # its retries, and both helpers piped that straight to Out-Null — so a dead transfer and a good
 # one were the same thing to every caller. On 2026-07-30 four piece pulls "succeeded" over 26
@@ -200,6 +259,7 @@ function Get-PieceManifestErrors($actual,[string[]]$requiredNames){
     if ($found.Count -ne 1) { $errors += "piece '$name' must appear exactly once"; continue }
     if ([string]$found[0].sha256 -notmatch '^[A-Fa-f0-9]{64}$') { $errors += "piece '$name' has no valid SHA-256" }
     if ([long]$found[0].bytes -lt 300KB) { $errors += "piece '$name' is partial ($($found[0].bytes) bytes)" }
+    if ($found[0].mediaVerified -isnot [bool] -or -not [bool]$found[0].mediaVerified) { $errors += "piece '$name' has no successful media verification" }
   }
   return @($errors)
 }
@@ -208,11 +268,25 @@ function Get-RecapManifestErrors($manifest,[string]$expectedDate,$expectedInputs
   if ($null -eq $manifest) { return @('manifest is missing') }
   if ([int]$manifest.schemaVersion -ne 1 -or [string]$manifest.manifestKind -cne 'recap-build') { $errors += 'build manifest schema is invalid' }
   if ([string]$manifest.runId -notmatch '^[A-Fa-f0-9]{32}$') { $errors += 'runId must be a 32-character GUID' }
+  if ([string]$manifest.date -cne $expectedDate) { $errors += "date '$($manifest.date)' does not match '$expectedDate'" }
   if ([string]$manifest.requestedDate -cne $expectedDate) { $errors += "requestedDate '$($manifest.requestedDate)' does not match '$expectedDate'" }
   if ([string]$manifest.status -cne 'complete') { $errors += "status '$($manifest.status)' is not complete" }
+  $startedAt = [datetimeoffset]::MinValue
+  $startedAtValid = [datetimeoffset]::TryParse([string]$manifest.startedAt, [ref]$startedAt)
+  if (-not $startedAtValid) { $errors += 'startedAt is missing or invalid' }
   $completedAt = [datetimeoffset]::MinValue
-  if (-not [datetimeoffset]::TryParse([string]$manifest.completedAt, [ref]$completedAt)) { $errors += 'completedAt is missing or invalid' }
+  $completedAtValid = [datetimeoffset]::TryParse([string]$manifest.completedAt, [ref]$completedAt)
+  if (-not $completedAtValid) { $errors += 'completedAt is missing or invalid' }
+  if ($startedAtValid -and $completedAtValid -and $completedAt -lt $startedAt) { $errors += 'completedAt precedes startedAt' }
   $errors += @(Get-InputManifestErrors $manifest.inputs $expectedInputs)
+  $deckData = @($manifest.inputs | Where-Object { [string]$_.name -ceq 'deck-data.json' })
+  if ([string]$manifest.deckDataSha256 -notmatch '^[A-Fa-f0-9]{64}$' -or $deckData.Count -ne 1 -or [string]$manifest.deckDataSha256 -ine [string]$deckData[0].sha256) {
+    $errors += 'deckDataSha256 does not match the deck-data.json input'
+  }
+  $deckPptx = @($manifest.inputs | Where-Object { [string]$_.name -ceq 'deck.pptx' })
+  if ([string]$manifest.deckPptxSha256 -notmatch '^[A-Fa-f0-9]{64}$' -or $deckPptx.Count -ne 1 -or [string]$manifest.deckPptxSha256 -ine [string]$deckPptx[0].sha256) {
+    $errors += 'deckPptxSha256 does not match the deck.pptx input'
+  }
   $errors += @(Get-PieceManifestErrors $manifest.pieces $requiredPieces)
   return @($errors | Where-Object { $_ })
 }
@@ -356,6 +430,15 @@ function Get-RecapRunLockTestContract {
   $contract = (Read-JsonFileSnapshot $path 'run-lock test contract').Value
   if ([string]$contract.operation -cne 'holdNormalRunLock') { throw 'run-lock test contract operation is invalid' }
   if ([string]$contract.token -notmatch '^[A-Fa-f0-9]{32}$') { throw 'run-lock test token is invalid' }
+  $holdTimeoutMs = 15000
+  if ($null -ne $contract.holdTimeoutMs) {
+    try { $holdTimeoutMs = [int]$contract.holdTimeoutMs }
+    catch { throw 'run-lock test holdTimeoutMs is invalid' }
+  }
+  if ($holdTimeoutMs -lt 1000 -or $holdTimeoutMs -gt 120000) {
+    throw 'run-lock test holdTimeoutMs must be between 1000 and 120000'
+  }
+  $contract | Add-Member -NotePropertyName validatedHoldTimeoutMs -NotePropertyValue $holdTimeoutMs -Force
   foreach ($candidate in @($path, [string]$contract.ready, [string]$contract.release)) {
     if (-not $candidate -or -not [IO.Path]::GetFullPath($candidate).StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
       throw 'run-lock test paths must remain under the temporary directory'
@@ -389,7 +472,7 @@ function Exit-RecapRunLock($Mutex) {
 function Invoke-RecapRunLockTestContract($Contract) {
   $encoding = New-Object Text.UTF8Encoding($false)
   [IO.File]::WriteAllText([string]$Contract.ready, 'entered', $encoding)
-  $deadline = [datetime]::UtcNow.AddSeconds(15)
+  $deadline = [datetime]::UtcNow.AddMilliseconds([int]$Contract.validatedHoldTimeoutMs)
   while (-not (Test-Path -LiteralPath ([string]$Contract.release) -PathType Leaf)) {
     if ([datetime]::UtcNow -ge $deadline) { throw 'run-lock test contract timed out' }
     Start-Sleep -Milliseconds 10
@@ -417,6 +500,7 @@ if ($ManifestContractProbe) {
 
 $runLockTestContract = Get-RecapRunLockTestContract
 $recapRunLock = $null
+$sharedNodeLease = $null
 try {
   $testToken = if ($null -ne $runLockTestContract) { [string]$runLockTestContract.token } else { '' }
   $recapRunLock = Enter-RecapRunLock $testToken
@@ -444,6 +528,10 @@ if (-not $apiOk) {
   if (-not (RestartApi)) { Fail 'api remained unhealthy after the guarded restart' }
 }
 Note "=== daily recap $Date on node $Node ($NodeOut) ==="
+try {
+  $sharedNodeLease = Enter-SharedNodeLease
+  Note "shared render-node lease acquired through $($sharedNodeLease.expiresAt)"
+} catch { Fail "could not acquire the shared render-node lease: $($_.Exception.Message)" }
 
 # 1) PREFLIGHT — prune stray Chrome on the node, then OPEN a Vids tab (a prior build closes its
 # tabs) and confirm it loads signed-in (no login redirect). The prune matters: 2026-07-28 the node
@@ -561,6 +649,8 @@ $inputSpecs = @(
 try { $inputRecords = @($inputSpecs | ForEach-Object { Get-ArtifactRecord $_.name $_.local }) }
 catch { Fail $_.Exception.Message }
 foreach ($spec in $inputSpecs) { NodePush $spec.local $spec.remote }
+try { $sharedNodeLease = Renew-SharedNodeLease $sharedNodeLease }
+catch { Fail "shared render-node lease heartbeat failed after staging: $($_.Exception.Message)" }
 
 # 4) BUILD — launch, cold-start retry, poll (skippable with -SkipBuild to reuse existing pieces)
 $runId = if (-not $SkipBuild) { [guid]::NewGuid().ToString('N') } else { $null }
@@ -592,6 +682,10 @@ if ((NodeShell $probe 25000) -match 'PNG=0 ') {   # cold-start hang -> relaunch 
 Note "building (poll ~45 min)…"
 $done = $false
 for ($i=0; $i -lt 135; $i++) {
+  if (($i % 15) -eq 0) {
+    try { $sharedNodeLease = Renew-SharedNodeLease $sharedNodeLease }
+    catch { Fail "shared render-node lease heartbeat failed during build: $($_.Exception.Message)" }
+  }
   Start-Sleep -Seconds 20
   $s = NodeShell $probe 25000
   if ($s -match 'DONE=True') { $done = $true; Note "BUILD.done"; break }
@@ -606,11 +700,11 @@ if (-not $done) { Fail "node build did not finish (no BUILD.done). Check $NodeOu
 $manifestPointerLocal = Join-Path $OUT 'BUILD.manifest.json'
 $manifest = $null
 if (-not $SkipBuild) {
-  $remoteSpecs = @($inputSpecs)
-  foreach ($pieceName in $pieces) { $remoteSpecs += [pscustomobject]@{ name = $pieceName; remote = "$NodeOut\$pieceName" } }
+  $remoteSpecs = @($inputSpecs | ForEach-Object { [pscustomobject]@{ name = $_.name; remote = $_.remote; media = $false } })
+  foreach ($pieceName in $pieces) { $remoteSpecs += [pscustomobject]@{ name = $pieceName; remote = "$NodeOut\$pieceName"; media = $true } }
   $remoteSpecLines = @($remoteSpecs | ForEach-Object {
-    $safeName = ([string]$_.name).Replace("'", "''"); $safePath = ([string]$_.remote).Replace("'", "''")
-    "    [pscustomobject]@{ name = '$safeName'; path = '$safePath' }"
+    $safeName = ([string]$_.name).Replace("'", "''"); $safePath = ([string]$_.remote).Replace("'", "''"); $media = if ($_.media) { '$true' } else { '$false' }
+    "    [pscustomobject]@{ name = '$safeName'; path = '$safePath'; media = $media }"
   }) -join ",`r`n"
   $artifactProbe = Join-Path $env:TEMP "recap-artifacts-$runId.ps1"
   @"
@@ -619,10 +713,30 @@ try {
   `$specs = @(
 $remoteSpecLines
   )
+  `$mediaSpecs = @(`$specs | Where-Object { `$_.media })
+  `$ffprobePath = `$null
+  if (`$mediaSpecs.Count) {
+    `$ffprobeName = if (`$env:OSHAL_FFPROBE) { `$env:OSHAL_FFPROBE } else { 'ffprobe' }
+    `$ffprobeCommand = Get-Command `$ffprobeName -ErrorAction Stop
+    `$ffprobePath = `$ffprobeCommand.Source
+  }
   `$records = foreach (`$spec in `$specs) {
     if (-not (Test-Path -LiteralPath `$spec.path -PathType Leaf)) { throw "artifact missing: `$(`$spec.name)" }
     `$item = Get-Item -LiteralPath `$spec.path
-    [pscustomobject]@{ name = `$spec.name; bytes = [long]`$item.Length; sha256 = (Get-FileHash -LiteralPath `$spec.path -Algorithm SHA256).Hash.ToLowerInvariant() }
+    `$record = [ordered]@{ name = `$spec.name; bytes = [long]`$item.Length; sha256 = (Get-FileHash -LiteralPath `$spec.path -Algorithm SHA256).Hash.ToLowerInvariant() }
+    if (`$spec.media) {
+      `$probeOutput = & `$ffprobePath -v error -select_streams 'v:0' -show_entries 'stream=codec_type:format=duration' -of json `$spec.path 2>&1
+      if (`$LASTEXITCODE -ne 0) { throw "media verification failed for `$(`$spec.name): `$(`$probeOutput -join ' ')" }
+      try { `$media = (`$probeOutput -join "`n") | ConvertFrom-Json -ErrorAction Stop }
+      catch { throw "media verification returned invalid JSON for `$(`$spec.name): `$(`$_.Exception.Message)" }
+      `$duration = 0.0
+      `$durationValid = [double]::TryParse([string]`$media.format.duration, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]`$duration)
+      if (@(`$media.streams | Where-Object { `$_.codec_type -ceq 'video' }).Count -lt 1 -or -not `$durationValid -or `$duration -le 0) {
+        throw "media verification found no playable video stream for `$(`$spec.name)"
+      }
+      `$record.mediaVerified = `$true
+    }
+    [pscustomobject]`$record
   }
   `$json = `$records | ConvertTo-Json -Depth 4 -Compress
   'ARTIFACTS_JSON_B64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(`$json))
@@ -638,9 +752,13 @@ $remoteSpecLines
   $inventoryErrors += @(Get-InputManifestErrors $remoteInputs $inputRecords)
   $inventoryErrors += @(Get-PieceManifestErrors $remotePieces $pieces)
   if ($inventoryErrors.Count) { Fail ("completed build inventory is invalid: " + ($inventoryErrors -join '; ')) }
+  $deckDataInput = @($remoteInputs | Where-Object { $_.name -ceq 'deck-data.json' })[0]
+  $deckPptxInput = @($remoteInputs | Where-Object { $_.name -ceq 'deck.pptx' })[0]
   $manifest = [ordered]@{
-    schemaVersion = 1; manifestKind = 'recap-build'; runId = $runId; requestedDate = $Date; status = 'complete'
-    completedAt = [datetimeoffset]::UtcNow.ToString('o'); inputs = $remoteInputs; pieces = $remotePieces
+    schemaVersion = 1; manifestKind = 'recap-build'; runId = $runId; date = $Date; requestedDate = $Date
+    startedAt = ([datetimeoffset]$runStart).ToUniversalTime().ToString('o'); completedAt = [datetimeoffset]::UtcNow.ToString('o')
+    deckDataSha256 = [string]$deckDataInput.sha256; deckPptxSha256 = [string]$deckPptxInput.sha256
+    status = 'complete'; inputs = $remoteInputs; pieces = $remotePieces
   }
   $buildErrors = @(Get-RecapManifestErrors $manifest $Date $inputRecords $pieces)
   if ($buildErrors.Count) { Fail ("completed build manifest is invalid: " + ($buildErrors -join '; ')) }
@@ -695,6 +813,8 @@ if (Test-Path -LiteralPath $canonicalBuildManifestLocal -PathType Leaf) {
 } else { [IO.File]::Copy($manifestPointerLocal, $canonicalBuildManifestLocal, $false) }
 $buildManifestArtifact = Get-ArtifactRecord $buildManifestName $canonicalBuildManifestLocal
 Note "build provenance verified: run $runId, date $Date, all input and piece hashes complete"
+try { $sharedNodeLease = Renew-SharedNodeLease $sharedNodeLease }
+catch { Fail "shared render-node lease heartbeat failed before collection: $($_.Exception.Message)" }
 
 # 5) COLLECT — pull the 4 pieces and COMBINE them here in the user's local space.
 # Every reused or downloaded piece must equal the immutable manifest's byte length and SHA-256.
@@ -765,6 +885,8 @@ try { & "$FINREPO\scripts\add-recap-entry.ps1" -Date $Date -Video $vid -Deck "$O
 # 8) PUBLISH - agenticfederal.us (git push + wrangler deploy + prod verify). The site pages are
 # data-driven off media/recaps/index.json, so this is files + one JSON prepend. Email/archive are
 # durable before this step, but a missed site is still a failed nightly and must reach Task Scheduler.
+try { $sharedNodeLease = Renew-SharedNodeLease $sharedNodeLease }
+catch { Fail "shared render-node lease heartbeat failed before publication: $($_.Exception.Message)" }
 Note "publishing to agenticfederal.us..."
 & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\publish-agenticfederal-recap.ps1" `
   -Date $Date -Out $OUT -Manifest $deliveryPointerLocal 2>&1 | Tee-Object -FilePath $log -Append
@@ -776,7 +898,8 @@ if ($LASTEXITCODE -ne 0) {
 } else { Note "site publish verified live" }
 Note "=== DONE: $Date recap emailed to the user (+ archived + published) ==="
 } finally {
-  # A process crash also abandons a kernel mutex safely; the explicit release keeps normal exits,
-  # Fail(), and the test boundary deterministic without leaving stale filesystem locks behind.
+  # Token release cannot clear a successor; expiry is the crash-only recovery path. The host mutex
+  # remains local defense-in-depth for shared staging files and is released after the node authority.
+  Exit-SharedNodeLease $sharedNodeLease
   Exit-RecapRunLock $recapRunLock
 }

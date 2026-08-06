@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact bot-node owner subjects and reject invalid supplied assertions instead of trimming, truncating, or collapsing them into ownerless execution.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove Twilio from bot-node credential materialization; SMS credentials are confined to fixed controller operations.
  */
 
 import crypto from 'crypto';
@@ -21,7 +22,6 @@ const SUPPORTED_BROKERED_CRED_KEYS = new Set([
   'OSHAL_CRED_SPOTIFY',
   'OSHAL_CRED_TMDB',
   'OSHAL_CRED_DUFFEL',
-  'OSHAL_CRED_TWILIO',
 ]);
 
 const CANONICAL_WORKSPACE_SEGMENT = /^[a-z0-9][a-z0-9_-]{0,127}$/;

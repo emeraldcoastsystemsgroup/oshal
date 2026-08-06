@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added per-turn usage/cost aggregation so agentic results persist model-level token and cost telemetry
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Passed agentId through provider calls so live startup manifests can resolve the active bot profile and tool context
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Routed per-turn cost through shared resolver so token-bearing zero-cost providers still contribute estimated model-level telemetry
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credentials from the model-provider loop; credentials are resolved only inside audited server-side operations.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -34,8 +35,6 @@ export interface AgenticLoopConfig {
   model?: string;
   /** Authenticated caller's OIDC sub — scopes the bot's per-user data access. */
   userSub?: string;
-  /** Token broker: caller's short-lived per-user access tokens (OSHAL_CRED_*). */
-  creds?: Record<string, string>;
 }
 
 /**
@@ -161,7 +160,6 @@ async function executeTurn(
     config.providerId,
     config.model,
     config.userSub,
-    config.creds,
   );
   const usageSummary = buildTurnUsageSummary(provider, response);
   const toolUseBlocks = extractToolUseBlocks(response.content);
@@ -214,7 +212,6 @@ async function callProvider(
   providerId?: string,
   model?: string,
   userSub?: string,
-  creds?: Record<string, string>,
 ): Promise<LLMResponse> {
   try {
     return await provider.sendRequest({
@@ -227,7 +224,6 @@ async function callProvider(
       providerId,
       model,
       userSub,
-      creds,
     });
   } catch (error) {
     logger.error({ err: error, provider: provider.getProviderName() }, 'LLM request failed');

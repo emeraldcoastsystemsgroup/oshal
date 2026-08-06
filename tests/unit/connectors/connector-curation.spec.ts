@@ -17,13 +17,16 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — every-connector-has-category-and-description over the real catalog, no-catch-all-category, declared-category-wins-and-is-canonicalised, description-derived-from-the-spec, and the marketplace entry actually carrying both.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove trusted source-taxonomy precedence/provenance and fail-closed behavior for unknown, ambiguous, or untrusted category evidence.
+ * -----------------------------------------------------------------------------
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  CANONICAL_CATEGORIES, connectorSetupLane, deriveConnectorCategory, deriveConnectorDescription,
+  CANONICAL_CATEGORIES, connectorSetupLane, deriveConnectorCategory,
+  deriveConnectorCategoryDecision, deriveConnectorDescription,
 } from '../../../src/app/connectors/runtime/curation';
 import { loadConnectorSpec, type ConnectorSpec } from '../../../src/app/connectors/runtime/spec';
 import { ConnectorMarketplaceService } from '../../../src/app/connectors/runtime/marketplace';
@@ -111,6 +114,64 @@ describe('the category derivation has no catch-all', () => {
       resources: [{ name: 'here', method: 'GET', path: '/here' }] as ConnectorSpec['resources'],
     });
     expect(deriveConnectorCategory(notMaps)).not.toBe('Location & maps');
+  });
+
+  it('maps a trusted single source category and retains its provenance', () => {
+    const imported = spec({
+      metadata: { sourceCatalog: 'apis-guru', sourceCategories: ['cloud'] },
+    });
+    expect(deriveConnectorCategoryDecision(imported)).toEqual({
+      category: 'Cloud infrastructure',
+      source: 'source-taxonomy',
+      evidence: 'apis-guru:cloud',
+    });
+  });
+
+  it('uses only reviewed cross-shelf combinations and normalizes their order', () => {
+    const imported = spec({
+      metadata: { sourceCatalog: 'apis-guru', sourceCategories: ['media', 'analytics'] },
+    });
+    expect(deriveConnectorCategory(imported)).toBe('Analytics');
+
+    const novelCombination = spec({
+      metadata: { sourceCatalog: 'apis-guru', sourceCategories: ['financial', 'cloud'] },
+    });
+    expect(deriveConnectorCategory(novelCombination)).toBeUndefined();
+  });
+
+  it('does not trust unknown source vocabulary or category claims from another catalog', () => {
+    const unknown = spec({
+      metadata: { sourceCatalog: 'apis-guru', sourceCategories: ['everything_else'] },
+    });
+    const untrusted = spec({
+      metadata: { sourceCatalog: 'vendor-manifest', sourceCategories: ['cloud'] },
+    });
+    expect(deriveConnectorCategory(unknown)).toBeUndefined();
+    expect(deriveConnectorCategory(untrusted)).toBeUndefined();
+  });
+
+  it('keeps exact provider identity above a broad source category', () => {
+    const importedSnyk = spec({
+      provider: 'snyk',
+      metadata: { sourceCatalog: 'apis-guru', sourceCategories: ['cloud'] },
+    });
+    expect(deriveConnectorCategoryDecision(importedSnyk)).toMatchObject({
+      category: 'Security',
+      source: 'provider-rule',
+    });
+  });
+
+  it('keeps reviewed source-less providers above misleading incidental operation tags', () => {
+    const increase = spec({
+      provider: 'increase-com',
+      displayName: 'Increase API',
+      metadata: { sourceCatalog: 'apis-guru', tags: ['email-validation', 'documents'] },
+    });
+    expect(deriveConnectorCategoryDecision(increase)).toEqual({
+      category: 'Finance',
+      source: 'provider-rule',
+      evidence: 'provider-review:increase-com',
+    });
   });
 });
 

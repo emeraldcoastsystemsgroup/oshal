@@ -4,13 +4,38 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard-per-fix for the 2026-07-24 idle-timeout directive (extends ADR-081): harnesses must never hard-stop an actively-working run at a short wall clock — "stuck" is 10 min of full SILENCE (measurable because claude output now streams), bounded by a 60-min runaway ceiling. Covers the TS ClaudeCodeCliHarnessAdapter (stream-json default → idleReset + ceiling; explicit batch → absolute with the raised ceiling; --verbose present exactly when streaming) AND the JS ClaudeCodeCLIWrapper twin (streaming default in executeTask args, --verbose, raised constructor defaults) so the two launch paths cannot drift apart silently. Also guards the BotNodeClient dispatch timeout outliving the bot-side ceiling.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep timeout fixtures behind an exact test-only capability object and operation while the production autonomous-CLI boundary remains fail-closed before spawn.
  */
 
+import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeCliHarnessAdapter } from '../../src/features/llm-provider/services/claude-code-cli-harness-adapter';
 import { BotNodeClient } from '../../src/features/agent-management/services/bot-node-client';
+
+const requireModule = createRequire(import.meta.url);
+const FIXTURE_OPERATION = 'test:claude-timeout-state-machine';
+const FIXTURE_CAPABILITY = Object.freeze({ operation: FIXTURE_OPERATION, tools: Object.freeze([]) });
+
+/** Load this file's JS twin with a reference-exact fixture gate; every other call still denies. */
+function loadFixtureClaudeWrapper(): typeof import('../../any-bot/server/services/codebase/ClaudeCodeCLIWrapper') {
+  const boundaryPath = requireModule.resolve('../../any-bot/server/services/llm/assert-cli-tool-boundary.js');
+  const wrapperPath = requireModule.resolve('../../any-bot/server/services/codebase/ClaudeCodeCLIWrapper.js');
+  const boundary = requireModule(boundaryPath) as {
+    assertCliToolBoundary: (options: Record<string, unknown>, provider: string) => void;
+  };
+  const productionAssert = boundary.assertCliToolBoundary;
+  boundary.assertCliToolBoundary = (options, provider) => {
+    if (provider === 'claude-code'
+      && options.capabilitySnapshot === FIXTURE_CAPABILITY
+      && options.operation === FIXTURE_OPERATION) return;
+    productionAssert(options, provider);
+  };
+  delete requireModule.cache[wrapperPath];
+  try { return requireModule(wrapperPath); } finally { boundary.assertCliToolBoundary = productionAssert; }
+}
+
 // The JS bot-node twin — same directive, second launch path.
-import ClaudeCodeCLIWrapper from '../../any-bot/server/services/codebase/ClaudeCodeCLIWrapper';
+const ClaudeCodeCLIWrapper = loadFixtureClaudeWrapper();
 
 const ENV_KEYS = [
   'CLAUDE_CODE_OUTPUT_FORMAT',
@@ -134,6 +159,8 @@ process.stdin.on('end', () => {
       const w = new ClaudeCodeCLIWrapper({ claudeCommand: process.execPath, model: 'fake-model' });
       w._buildArgs = () => [fakeCli];
       const result = await w.executeTask('stay alive while silent', tmpDir, {
+        capabilitySnapshot: FIXTURE_CAPABILITY,
+        operation: FIXTURE_OPERATION,
         streaming: false,           // explicit batch opt-out
         killOnInactivity: true,     // configured ON — must be disarmed by the batch coupling
         timeout: 5,
@@ -168,7 +195,14 @@ process.stdin.on('end', () => {
       const w = new ClaudeCodeCLIWrapper({ claudeCommand: process.execPath, model: 'fake-model' });
       w._buildArgs = () => [fakeCli];
       await expect(
-        w.executeTask('do work', tmpDir, { streaming: true, timeout: 5, inactivityTimeout: 5, inactivityCheckIntervalMs: 25 }),
+        w.executeTask('do work', tmpDir, {
+          capabilitySnapshot: FIXTURE_CAPABILITY,
+          operation: FIXTURE_OPERATION,
+          streaming: true,
+          timeout: 5,
+          inactivityTimeout: 5,
+          inactivityCheckIntervalMs: 25,
+        }),
       ).rejects.toThrow(/without a final result event/);
     } finally {
       fsm.rmSync(tmpDir, { recursive: true, force: true });

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Behavioral guard for stable AgenticFederal deployment: execute the real publisher function and checkout helper against temporary Git repos, prove origin drift triggers a retry from the descendant commit, pin deployed-HEAD equality, preserve the operator checkout, and reject rewritten main before upload.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bound the spawned PowerShell deploy probe and give the two-attempt real-Git drift scenario full-suite process-startup headroom.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -142,7 +143,7 @@ const runStableDeploy = (site: string, requiredCommit: string, log: string, mark
     '-Publisher', publisherPath, '-Helper', helperPath,
     '-SiteRepo', site, '-RequiredCommit', requiredCommit,
   ], {
-    encoding: 'utf8', windowsHide: true,
+    encoding: 'utf8', windowsHide: true, timeout: 50_000,
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: '0',
@@ -184,7 +185,7 @@ describe('stable AgenticFederal deployment (behavioral)', () => {
     expect(result.stdout).toContain(`origin/main advanced to ${originMain}`);
     expect(result.stdout).toContain(`deploying origin/main ${originMain} to Cloudflare Pages (attempt 2/3)`);
     expect(operatorState(fixture.site)).toEqual(before);
-  }, 30_000);
+  }, 60_000);
 
   it('rejects a required commit absent from rewritten main before invoking deploy', () => {
     const fixture = createSite('rewrite');

@@ -13,7 +13,7 @@
  *    'self', or script-src gains 'unsafe-inline' without a nonce;
  *  - enforce mode stops using the blocking header, or the kill switch stops working;
  *  - the global JSON body limit stops rejecting an oversized body (413), or one of
- *    the three reserved prefixes stops being reserved (which would pre-parse a signed
+ *    the four reserved prefixes stops being reserved (which would pre-parse a signed
  *    webhook's bytes and break its HMAC verifier);
  *  - the violation collector stops deduping (report-only fires on every page load
  *    from every browser; an un-deduped collector buries real faults).
@@ -23,8 +23,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the CSP default flip (report-only strict), the explicit env-tunable express.json limit, the reserved-prefix passthrough, and the report dedupe. Drives the REAL helmet + parser middleware over real HTTP.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove Alertmanager is reserved from the global parser and its route-local parser verifies a signature over the exact original JSON bytes, including insignificant whitespace.
  */
 
+import { createHmac } from 'node:crypto';
 import express from 'express';
 import helmet from 'helmet';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -39,9 +41,11 @@ import {
   resetCspReportDedupe,
   RESERVED_BODY_PARSER_PREFIXES,
   shouldLogCspReport,
+  hmacWebhookGuard,
 } from '../../src/features/security';
+import { createAlertmanagerJsonParser } from '../../src/app/routes/alertmanager-routes';
 
-const ENV_KEYS = ['OSHAL_CSP', 'OSHAL_STRICT_CSP', 'OSHAL_CSP_REPORT_ONLY', 'OSHAL_CSP_REPORT_URI', 'OSHAL_JSON_BODY_LIMIT'];
+const ENV_KEYS = ['OSHAL_CSP', 'OSHAL_STRICT_CSP', 'OSHAL_CSP_REPORT_ONLY', 'OSHAL_CSP_REPORT_URI', 'OSHAL_JSON_BODY_LIMIT', 'TEST_ALERT_HMAC'];
 const saved: Record<string, string | undefined> = {};
 const servers: Array<{ close: (cb: () => void) => void }> = [];
 
@@ -203,9 +207,10 @@ describe('global JSON body limit', () => {
     expect(jsonBodyLimit({ OSHAL_JSON_BODY_LIMIT: '  ' } as NodeJS.ProcessEnv)).toBe(DEFAULT_JSON_BODY_LIMIT);
   });
 
-  it('reserves exactly the three mounts that own their own parser', () => {
+  it('reserves exactly the four mounts that own their own parser', () => {
     expect([...RESERVED_BODY_PARSER_PREFIXES].sort())
-      .toEqual(['/api/hooks', '/api/remote-clients', '/api/vision']);
+      .toEqual(['/api/alerts/alertmanager', '/api/hooks', '/api/remote-clients', '/api/vision']);
+    expect(isReservedBodyParserPath('/api/alerts/alertmanager')).toBe(true);
     expect(isReservedBodyParserPath('/api/hooks/github/push')).toBe(true);
     expect(isReservedBodyParserPath('/api/tickets')).toBe(false);
   });
@@ -252,5 +257,42 @@ describe('global JSON body limit', () => {
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ parsed: false });
+  });
+
+  it('captures and verifies the exact Alertmanager JSON bytes after the global-parser reservation', async () => {
+    process.env.TEST_ALERT_HMAC = 'alert-hmac-test-secret';
+    const raw = '{\n  "alerts": [ { "labels": { "alertname": "ApiDown" } } ]\n}';
+    const signature = 'sha256=' + createHmac('sha256', process.env.TEST_ALERT_HMAC).update(raw, 'utf8').digest('hex');
+    const base = await boot((app) => {
+      app.use(createGlobalJsonParser());
+      app.post(
+        '/api/alerts/alertmanager',
+        createAlertmanagerJsonParser(),
+        hmacWebhookGuard({
+          secretEnv: 'TEST_ALERT_HMAC',
+          header: 'x-alert-signature-256',
+          prefix: 'sha256=',
+        }),
+        (req, res) => res.json({
+          alertname: req.body?.alerts?.[0]?.labels?.alertname,
+          raw: (req as express.Request & { rawBody?: Buffer }).rawBody?.toString('utf8'),
+        }),
+      );
+    });
+
+    const accepted = await fetch(`${base}/api/alerts/alertmanager`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alert-signature-256': signature },
+      body: raw,
+    });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toEqual({ alertname: 'ApiDown', raw });
+
+    const rejected = await fetch(`${base}/api/alerts/alertmanager`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alert-signature-256': signature },
+      body: raw.replace('ApiDown', 'ApiUp'),
+    });
+    expect(rejected.status).toBe(401);
   });
 });

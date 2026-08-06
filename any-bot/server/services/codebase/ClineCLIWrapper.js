@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: default-deny unbrokered autonomous CLI execution before credential setup or process spawn.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: keep live version probes credential-free and guard internal execution helpers against direct invocation.
  */
 
 /**
@@ -23,6 +25,8 @@
 
 const { spawn } = require('child_process');
 const { acquireUserScoping } = require('./user-scoping');
+const { buildCliDiagnosticEnv } = require('./cli-diagnostic-env');
+const { assertCliToolBoundary } = require('../llm/assert-cli-tool-boundary');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../../utils/logger');
@@ -310,6 +314,7 @@ class ClineCLIWrapper {
    * @returns {Promise<{success: boolean, messages: Array, exitCode: number, activityStats: object}>}
    */
   async executeTaskStreaming(taskDescription, workspaceDir, options = {}) {
+    assertCliToolBoundary(options, 'cline-cli');
     const userScope = await acquireUserScoping(workspaceDir, options.extraEnv);
     let slotAcquired = false;
     // ⭐ PHASE_00_SESSION_05: Acquire concurrency slot before spawning
@@ -332,6 +337,7 @@ class ClineCLIWrapper {
    * @private
    */
   async _executeTaskStreamingInternal(taskDescription, workspaceDir, options = {}) {
+    assertCliToolBoundary(options, 'cline-cli');
     const { onMessage, onError, onExit, onActivityStats } = options;
     const hardTimeoutSec = options.timeout || this.defaultTimeout;
     const inactivityTimeoutSec = options.inactivityTimeout || this.defaultInactivityTimeout;
@@ -578,6 +584,7 @@ class ClineCLIWrapper {
    * @returns {Promise<object>} Task result
    */
   async executeTask(taskDescription, workspaceDir, options = {}) {
+    assertCliToolBoundary(options, 'cline-cli');
     const userScope = await acquireUserScoping(workspaceDir, options.extraEnv);
     let slotAcquired = false;
     // ⭐ PHASE_00_SESSION_05: Acquire concurrency slot before spawning
@@ -600,6 +607,7 @@ class ClineCLIWrapper {
    * @private
    */
   async _executeTaskInternal(taskDescription, workspaceDir, options = {}) {
+    assertCliToolBoundary(options, 'cline-cli');
     const hardTimeoutSec = options.timeout || this.defaultTimeout;
     
     logger.info(`ClineCLI: Executing task in ${workspaceDir}`);
@@ -729,6 +737,7 @@ class ClineCLIWrapper {
    * @private
    */
   async _executeViaSpawn(taskDescription, workspaceDir, options) {
+    assertCliToolBoundary(options, 'cline-cli');
     const hardTimeoutSec = options.timeout || this.defaultTimeout;
     const inactivityTimeoutSec = options.inactivityTimeout || this.defaultInactivityTimeout;
     const killOnInactivity = options.killOnInactivity === undefined
@@ -1211,10 +1220,7 @@ class ClineCLIWrapper {
         // ⭐ PHASE_61: Use --version (local flag, no network) instead of 'version' subcommand
         // Hard 8s timeout — if cline doesn't respond in 8s, it's not usable
         const cline = spawn(this.clineCommand, ['--version'], {
-          env: {
-            ...process.env,
-            PATH: this.getEnhancedPath(),
-          },
+          env: buildCliDiagnosticEnv({ path: this.getEnhancedPath() }),
           shell: true,
         });
 
@@ -1271,10 +1277,7 @@ class ClineCLIWrapper {
       const result = await new Promise((resolve) => {
         // ⭐ PHASE_61: Use --version (local flag, no network)
         const cline = spawn(this.clineCommand, ['--version'], {
-          env: {
-            ...process.env,
-            PATH: this.getEnhancedPath(),
-          },
+          env: buildCliDiagnosticEnv({ path: this.getEnhancedPath() }),
           shell: true,
         });
 

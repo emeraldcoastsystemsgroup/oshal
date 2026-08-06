@@ -7,6 +7,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Audit writes to the EXISTING config_sync_log table (migration 001 / ADR-006) — resolve agent UUID for the FK, map direction to push/pull, record version before/after (docker smoke caught the table already existed)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Wrap the config-change mesh handler in runWithSystemIdentity: mesh poll callbacks carry no AsyncLocalStorage identity, so recordSyncLog's pool queries ran identity-less — under OSHAL_DB_GUC_STRICT=deny they would be stamped anonymous non-operator (denied/zero rows) the moment agents/config_sync_log gain RLS. Same shape as the remote task-result landing fix; the sentinel is the sanctioned trusted-background marker.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve independent model changes without smuggling a disabled provider through the mutation. A model-only push resolves the live bot's current provider strictly as transport context, then persists only the requested model; inability to resolve that context refuses before the authoritative record advances.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: remove the optional raw credential carrier from config synchronization; push-down transports provider/model metadata only.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Close bot-node broadcast parity: accepted bot-local changes now re-apply to the registered endpoint by default so another replica converges without restart, while a transport-only apply seam prevents that confirmation push from recording or auditing a second authoritative version.
  */
 
 import type { Pool } from 'pg';
@@ -29,8 +31,7 @@ const VERSION_KEY = 'configVersion';
 
 /**
  * @description Authoritative runtime parameters OSHAL owns for an any-bot (ADR-034).
- * Credentials are intentionally excluded from the persisted record — they are pushed
- * to the bot but never stored in the agent_config JSONB (secrets live elsewhere).
+ * Credentials are intentionally excluded from this contract and transport.
  */
 export interface RuntimeParams {
   providerId?: string;
@@ -61,6 +62,16 @@ export interface PushResult {
   newVersion?: number;
 }
 
+/** @description Internal outcome of applying config to a registered live-bot endpoint. */
+interface LiveApplyResult {
+  /** Whether a remote endpoint existed and a delivery was therefore required. */
+  attempted: boolean;
+  /** Whether the registered endpoint accepted the provider/model mutation. */
+  applied: boolean;
+  /** Stable diagnostic for a required delivery that did not apply. */
+  reason?: string;
+}
+
 /**
  * @description Construction dependencies for ConfigSyncService.
  */
@@ -71,8 +82,9 @@ export interface ConfigSyncDeps {
   /** Optional Postgres pool for the config_sync_log audit table (best-effort if absent). */
   pool?: Pool;
   /**
-   * When true, after reconciling a bot-reported change the controller re-pushes its own
-   * authoritative value if it differs (strict central-wins). Default false = accept-and-record.
+   * When true, after accepting a bot-reported change the controller applies the accepted
+   * authoritative value to the registered endpoint so another replica converges. Defaults true;
+   * false is reserved for standalone/test deployments that intentionally disable propagation.
    */
   rePushOnConflict?: boolean;
 }
@@ -88,8 +100,8 @@ export interface ConfigSyncDeps {
  *    the new authoritative value + version.
  *  - broadcast-up: {@link start} subscribes to the swarm.config-change mesh channel; when a
  *    bot reports a locally-originated change, {@link reconcile} records it into the
- *    authoritative store (accept-and-record, central-wins optional), bumps the version, and
- *    writes an audit row.
+ *    authoritative store, bumps the version, writes one audit row, and by default confirms the
+ *    accepted value through the registered endpoint so another live replica converges.
  *
  * Secrets are never persisted to the record or logged.
  */
@@ -106,7 +118,7 @@ export class ConfigSyncService {
     this.agentConfig = deps.agentConfig;
     this.botNodeClient = deps.botNodeClient;
     this.pool = deps.pool;
-    this.rePushOnConflict = deps.rePushOnConflict ?? false;
+    this.rePushOnConflict = deps.rePushOnConflict ?? true;
   }
 
   /**
@@ -139,38 +151,21 @@ export class ConfigSyncService {
    *
    * @param agentId - Target agent (UUID or bot name).
    * @param params - Runtime params OSHAL wants the bot to run with.
-   * @param credentials - Optional provider credentials forwarded to the bot (never stored/logged).
    * @returns Push result with the new authoritative version when applied.
    */
   async pushToBot(
     agentId: string,
     params: RuntimeParams,
-    credentials?: Record<string, string>,
   ): Promise<PushResult> {
     // A bot that is local to this process (e.g. the PM on the controller) has no remote
     // endpoint — record authoritatively without an HTTP push.
-    const hasEndpoint = this.botNodeClient.hasEndpoint(agentId);
-    if (hasEndpoint) {
-      const transportProvider = await this.resolveTransportProvider(agentId, params);
-      if (!transportProvider) {
-        const reason = 'Live bot provider could not be resolved for a model-only update';
-        logger.error({ agentId, model: params.modelId }, reason);
-        return { pushed: false, reason };
-      }
-      try {
-        await this.botNodeClient.switchProvider(
-          agentId,
-          transportProvider,
-          params.modelId,
-          credentials,
-        );
-      } catch (err) {
-        logger.error(
-          { err, agentId, providerId: params.providerId, model: params.modelId },
-          'Config push-down to bot failed — authoritative record NOT advanced',
-        );
-        return { pushed: false, reason: (err as Error).message };
-      }
+    const delivery = await this.applyToLiveBot(agentId, params);
+    if (delivery.attempted && !delivery.applied) {
+      logger.error(
+        { agentId, providerId: params.providerId, model: params.modelId, reason: delivery.reason },
+        'Config push-down to bot failed — authoritative record NOT advanced',
+      );
+      return { pushed: false, reason: delivery.reason };
     }
 
     const { before, after } = await this.recordAuthoritative(agentId, params, 'oshal-push');
@@ -180,13 +175,57 @@ export class ConfigSyncService {
       before,
       after,
       changes: stripUndefined(params),
-      applied: hasEndpoint,
+      applied: delivery.applied,
     });
     logger.info(
-      { agentId, providerId: params.providerId, model: params.modelId, newVersion: after, applied: hasEndpoint },
+      {
+        agentId,
+        providerId: params.providerId,
+        model: params.modelId,
+        newVersion: after,
+        applied: delivery.applied,
+      },
       'Config pushed down and recorded authoritatively',
     );
-    return { pushed: hasEndpoint, newVersion: after };
+    return { pushed: delivery.applied, newVersion: after };
+  }
+
+  /**
+   * @description Applies provider/model metadata to the registered live-bot endpoint without
+   * mutating the authoritative store or audit log. Keeping transport separate is load-bearing:
+   * reconciliation records a bot-local change exactly once, then uses this seam to make a peer
+   * replica converge without producing a second configVersion or audit entry.
+   * @param agentId - Logical agent whose registered endpoint should receive the value.
+   * @param params - Accepted or requested runtime parameters.
+   * @returns Whether delivery was required and whether it applied.
+   */
+  private async applyToLiveBot(
+    agentId: string,
+    params: RuntimeParams,
+  ): Promise<LiveApplyResult> {
+    if (!this.botNodeClient.hasEndpoint(agentId)) {
+      return { attempted: false, applied: false };
+    }
+
+    const transportProvider = await this.resolveTransportProvider(agentId, params);
+    if (!transportProvider) {
+      return {
+        attempted: true,
+        applied: false,
+        reason: 'Live bot provider could not be resolved for a model-only update',
+      };
+    }
+
+    try {
+      await this.botNodeClient.switchProvider(agentId, transportProvider, params.modelId);
+      return { attempted: true, applied: true };
+    } catch (err) {
+      return {
+        attempted: true,
+        applied: false,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   /**
@@ -217,9 +256,9 @@ export class ConfigSyncService {
 
   /**
    * @description Reconciles a bot-reported local config change into the authoritative
-   * record. Default policy is accept-and-record (OSHAL stays system-of-record by absorbing
-   * the bot's change). With rePushOnConflict, the controller re-pushes its own value when it
-   * differs from what the bot reported (strict central-wins).
+   * record. The controller stays system-of-record by accepting the bot's change once. By
+   * default it then confirms that accepted value through the registered endpoint so another
+   * replica converges; the confirmation is transport-only and cannot bump the version again.
    *
    * @param payload - The reported change.
    * @returns The new authoritative version recorded.
@@ -241,11 +280,14 @@ export class ConfigSyncService {
     );
 
     if (this.rePushOnConflict) {
-      // Strict central-wins: if the controller wants to override the bot's local change,
-      // re-push the now-authoritative value. (Same value here, so this is a confirm push.)
-      const result = await this.pushToBot(agentId, params);
-      if (!result.pushed) {
-        logger.warn({ agentId, reason: result.reason }, 'Central-wins re-push did not apply');
+      // Confirm the newly authoritative value through the registered endpoint. In a replicated
+      // service this may land on a peer; X-Config-Source: oshal-push prevents a broadcast loop.
+      const delivery = await this.applyToLiveBot(agentId, params);
+      if (delivery.attempted && !delivery.applied) {
+        logger.warn(
+          { agentId, reason: delivery.reason },
+          'Accepted config was recorded, but replica convergence push did not apply',
+        );
       }
     }
     return after;

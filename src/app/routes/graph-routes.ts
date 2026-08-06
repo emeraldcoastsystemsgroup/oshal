@@ -5,8 +5,9 @@
  * CALLER'S OWN person graph via the connector — isolation is enforced by `callerSub`, so a request
  * can only ever read/write the requester's graph. This is what the incident/capture personas
  * (rca-specialist, capture-coordinator) call in place of that retired external graph API. The
- * outer mount accepts user auth or the legacy fleet credential, but SEC-01 rejects the latter on
- * every read before any forwarded subject is resolved.
+ * outer mount accepts user auth, a durable signed workload delegation, or (during migration) the
+ * legacy fleet credential. SEC-01 rejects the latter on every read before any forwarded subject is
+ * resolved; enforce mode removes it from writes as well.
  *
  * THE TENANT TIER IS DELIBERATELY NOT REACHABLE FROM HTTP. `getTenantGraph` exists on the
  * connector and is used IN-PROCESS only (the swarm operational graph, the world tier). No route
@@ -25,13 +26,17 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Graceful-degradation sweep: RUNTIME engine failure now degrades. callerGraph awaits getPersonGraph inside a try/catch — when ARANGO_URL is SET but the engine is unreachable (connection refused / provisioning listDatabases rejects), the rejection was previously unhandled inside the async route (→ 500 / hung request). It now logs at ERROR and returns a clear 503 graph_engine_unreachable, matching the ARANGO_URL-unset 503 shape. Query-time failures after the handle resolves keep their per-route 502.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: POST /query now goes through GraphHandle.readQuery, which asks the ENGINE to plan the query and refuses a data-modifying one (400 graph_read_only). The endpoint documented itself as "run a raw AQL read" while calling rawQuery, so a REMOVE/INSERT went straight through — caller-scoped, so never a cross-tenant hole, but a contract the code contradicted, and a bot that mis-writes its own topology poisons the next investigation. Also documented WHY no route may take a tenant parameter (the tenant tier is in-process only and there is no upstream membership check), pinned by graph-route-tenant-boundary.spec.ts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-01 containment: refuse fleet-wide service-secret identity on every graph read operation, keep OIDC/PAT authoritative under mixed headers, and retain legacy machine access only for the existing write operations pending durable delegation tokens.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Derive delegated graph identity only from a verified, durable, route-bound SEC-01 claim; never from the legacy forwarded subject header.
  *
  * @module graph-routes
  */
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
-import { rejectLegacyServiceIdentityForUserRead } from '@/features/security';
+import {
+  getVerifiedWorkloadDelegation,
+  rejectLegacyServiceIdentityForUserRead,
+} from '@/features/security';
 import {
   createGraphConnector,
   GRAPH_READ_ONLY_CODE,
@@ -42,11 +47,13 @@ import {
 
 const logger = createChildLogger({ module: 'graph-routes' });
 
-/** Acting user: an independently authenticated browser/PAT identity first, else the temporarily
- * retained service-secret subject used only by graph writes during containment. */
+/** Acting user: independently authenticated browser/PAT first, then verified durable delegation,
+ * else the temporarily retained service-secret subject used only by graph writes before enforce. */
 function callerSub(req: Request): string | null {
   const u = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user;
   if (u?.sub) return String(u.sub);
+  const delegated = getVerifiedWorkloadDelegation(req);
+  if (delegated) return delegated.sub;
   return getTrustedServiceUserSub(req);
 }
 

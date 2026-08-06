@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require the independent SWARM_SERVICE_SECRET machine credential whenever public-key delegation is enabled so sibling provider-mutation and replay endpoints cannot remain fail-open.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Verify the signed canonical request-body digest before replay consumption so one valid token cannot be raced with mutated execution fields.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bind the signed delegation to the exact UTF-8 user subject, including significant whitespace, while rejecting controls and values over 512 bytes.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Require the token's exact POST /api/swarm-execute method/path metadata before replay consumption.
  */
 
 import type { Request, RequestHandler, Response } from 'express';
@@ -25,6 +26,8 @@ import {
 import {
   DELEGATION_HTTP_HEADER,
   DelegationHttpPolicyError,
+  SWARM_EXECUTE_DELEGATION_METHOD,
+  SWARM_EXECUTE_DELEGATION_PATH,
   SWARM_EXECUTE_DELEGATION_SCOPE,
   delegationAudienceFromEnvironment,
   delegationIssuerFromEnvironment,
@@ -231,6 +234,8 @@ function buildPolicy(
     iss: delegationIssuerFromEnvironment(env),
     aud: delegationAudienceFromEnvironment(env),
     azp: localAgentId,
+    method: SWARM_EXECUTE_DELEGATION_METHOD,
+    path: SWARM_EXECUTE_DELEGATION_PATH,
     scope: SWARM_EXECUTE_DELEGATION_SCOPE,
   });
 }

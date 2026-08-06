@@ -12,6 +12,8 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Prohibit unsigned localhost fallback after a bot-node failure whenever signed HTTP delegation is enforced.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Authenticate the legacy localhost message fallback with the incident ticket owner so machine dispatch cannot select identity from request content.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Carry the incident owner over the canonical base64url trusted-service subject header so case and whitespace remain exact on localhost fallback.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Align incident dispatch with promoted ADR-034 enforcement: provider stamping defaults on and missing authority reaches the bot as a fail-closed marker; explicit flag-off remains the compatibility rollback.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Keep authoritative incident dispatch fail-closed across transport errors by prohibiting downgrade to the unstamped localhost fallback unless compatibility mode was explicitly selected.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -67,7 +69,8 @@ export interface IncidentDispatchDeps {
   ticketService: TicketService;
   /** ADR-034 gap-b push-on-dispatch: resolves the target agent's authoritative
    *  provider/model/configVersion so each bot-node dispatch carries it (gated by
-   *  OSHAL_PUSH_ON_DISPATCH). Absent/off → no stamping; fail-open, never blocks. */
+   *  default-on OSHAL_PUSH_ON_DISPATCH). Missing authority is marked for refusal by the bot;
+   *  explicit flag-off restores legacy unstamped dispatch. */
   runtimeParamsResolver?: RuntimeParamsResolver;
   /** ADR-119 P4 (A2): the bounded auto-apply gate consulted on a Mode-A verdict.
    *  Absent → the unchanged Mode-A disposition (customer_action, human gate). */
@@ -203,10 +206,12 @@ export async function dispatchIncidentTicket(
   };
   const dispatchToBot = async (agentId: string, text: string, dispatchTaskId: string): Promise<{ success: boolean; response?: string }> => {
     if (botNodeClient) {
+      let authoritativeDispatch = false;
       try {
         // ADR-034 gap-b: stamp the authoritative config so a drifted RCA bot self-corrects
-        // before executing (no-op unless OSHAL_PUSH_ON_DISPATCH is on; fail-open otherwise).
+        // before executing. Default-on; missing authority is carried as a refusal marker.
         const configFields = await pushOnDispatchFields(deps.runtimeParamsResolver, agentId);
+        authoritativeDispatch = configFields.providerConfigRequired === true;
         const result = await botNodeClient.execute(agentId, {
           text,
           taskId: dispatchTaskId,
@@ -219,7 +224,7 @@ export async function dispatchIncidentTicket(
         });
         return { success: result.success, response: result.response };
       } catch (error) {
-        if (botNodeClient.isDelegationEnforced()) throw error;
+        if (authoritativeDispatch || botNodeClient.isDelegationEnforced()) throw error;
         // BotNodeClient unavailable for this agent (e.g. resolver returned null
         // because the bot's harnessType=codex-cli is not implemented in the
         // bot-node JS layer). Fall through to the legacy localhost path which

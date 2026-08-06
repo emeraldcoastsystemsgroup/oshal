@@ -22,6 +22,11 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Require and consume single-use Ed25519 delegation tokens on /api/swarm-execute when public keys are configured, bind the signed identity to the local agent/body/task, and prohibit unsigned mesh execution in that posture.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Route authorized HTTP execution through an import-safe system-identity seam so strict-RLS behavior can be exercised without importing the auto-starting server entrypoint.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Reject invalid exact caller subjects and canonicalize HTTP task/workspace identifiers before constructing an execution envelope, keeping hostile path syntax out of logs and TaskController force paths.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: bot-node startup and every execution/control route now fail closed unless SWARM_SERVICE_SECRET is configured and exactly presented.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: authenticate every non-health request before JSON parsing, gate Claude auth status/import with strict machine auth, hide credential filesystem paths, and accept connector credentials only with a validated deterministic provider intent.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | Retire bot self-registration of UI tools because a fleet-wide service secret is not bot-bound authority for dynamic controller mutations; BOT_UI_* now emits a one-time operator/manifest-registration warning.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: Token Chase replay remains tool-free and now explicitly disables auto-approval so future tool additions cannot silently inherit approval authority.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | Forward the signed providerConfigRequired authority marker into swarm execution so missing provider records are distinguishable from intentional legacy dispatches and fail closed before task creation.
  */
 
 /**
@@ -62,6 +67,7 @@ import {
 import {
   authorizeBotNodeExecutionCall,
   authorizeBotNodeInternalCall,
+  authorizeBotNodeBeforeBody,
   logBotNodeAuthPosture,
 } from './bot-node-request-auth';
 import {
@@ -71,6 +77,7 @@ import {
 import { parseTrustedProviderIntent } from './bot-node-provider-intent';
 import { registerBotNodeLlmProviderRoute } from './bot-node-llm-provider-route';
 import { registerBotNodeSelfHealRoute } from './bot-node-self-heal-route';
+import { registerBotNodeClaudeAuthRoutes } from './bot-node-claude-auth-routes';
 import {
   createBotNodeDelegationRuntime,
   getVerifiedDelegationClaims,
@@ -82,8 +89,8 @@ const logger = createChildLogger({ module: 'bot-node-server' });
 
 // Optional shared-secret gate for the bot-node's privileged LLM-execution endpoints
 // (bot-node-request-auth.ts, wrapping the shared authz middleware). Enforces
-// SWARM_SERVICE_SECRET when configured (fail-closed 401); when unconfigured it stays open
-// for stock local boots but WARNs per request + at startup (security audit 2026-06-16).
+// SWARM_SERVICE_SECRET is mandatory: missing configuration fails startup/requests closed,
+// while a missing or invalid caller credential returns 401.
 // The controller's BotNodeClient sends the matching header via serviceSecretHeaders().
 const authorizeBotNodeCall = authorizeBotNodeInternalCall;
 
@@ -94,8 +101,7 @@ async function start(): Promise<void> {
   // the restart policy hides it.
   installProcessCrashGuards('bot-node');
   logger.info('Starting bot node server...');
-  // Security posture: loud one-time log of whether the execution endpoints are
-  // fail-closed (SWARM_SERVICE_SECRET set) or warned fail-open (local-dev).
+  // Security assertion: throws before worker/network setup if service auth is unconfigured.
   logBotNodeAuthPosture();
   // Execute-time entitlement posture (BACKLOG "Bot-endpoint privilege model"):
   // warn (default — log-only denial soak) | off (explicit opt-out) | enforce,
@@ -239,6 +245,9 @@ async function start(): Promise<void> {
 
   // ── Express health server ───────────────────────────────────────
   const app = express();
+  // Authenticate privileged requests before buffering or parsing their bodies. Exact
+  // GET health/metrics probes are the only deliberate public surface.
+  app.use(authorizeBotNodeBeforeBody);
   app.use(express.json({ limit: '5mb' }));
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.get('/api/health', (_req, res) => res.json({
@@ -276,40 +285,9 @@ async function start(): Promise<void> {
   // would otherwise read as an unreachable remediation arm.
   registerBotNodeSelfHealRoute(app);
 
-  // ── Claude Code auth status + import stubs ──────────────────────
-  // The api's POST /api/swarm/config/propagate/claude-code-auth endpoint
-  // calls each bot's /api/claude-code/auth/import to push credentials.
-  // In this sandbox the OAuth file is mounted read-only at
-  // /root/.claude/.credentials.json from the host, so the import is a
-  // no-op — but the route must exist and respond with valid JSON, otherwise
-  // the propagate controller treats every bot as failed (HTML 404 = JSON
-  // parse error). These stubs report the mounted file's presence so the
-  // operator can confirm OAuth is actually available without round-tripping
-  // through the api.
-  const fs = require('fs') as typeof import('fs');
-  const oauthFilePath = '/root/.claude/.credentials.json';
-  const oauthFileExists = (): boolean => {
-    try { return fs.existsSync(oauthFilePath); } catch { return false; }
-  };
-  app.get('/api/claude-code/auth/status', (_req, res) => {
-    const present = oauthFileExists();
-    res.json({
-      success: true,
-      authenticated: present,
-      source: present ? 'mounted-oauth-file' : 'none',
-      filePath: oauthFilePath,
-      botName, agentId,
-    });
-  });
-  app.post('/api/claude-code/auth/import', (_req, res) => {
-    res.json({
-      success: true,
-      imported: false,
-      reason: 'OAuth file is mounted read-only from host — propagation is a no-op in this sandbox',
-      filePath: oauthFilePath,
-      filePresent: oauthFileExists(),
-    });
-  });
+  // Controller propagation/status targets. The import-safe registrar applies the strict
+  // machine gate on the actual routes and never returns the mounted credential path.
+  registerBotNodeClaudeAuthRoutes(app, { botName, agentId, authorize: authorizeBotNodeInternalCall });
 
   // ── /api/swarm-execute — sync HTTP dispatch from swarm controller ─────
   // The swarm controller's BotNodeClient calls this to push a pre-assembled
@@ -340,12 +318,13 @@ async function start(): Promise<void> {
       creds?: Record<string, string>;
       byoLlmConnection?: { baseUrl: string; apiKey: string; model: string };
       providerIntent?: unknown;
-      // ADR-034 gap-b push-on-dispatch: the authoritative provider/model/configVersion the
-      // controller stamped on this dispatch (BotNodeRequest). Forwarded verbatim into the
-      // envelope payload so the execution handler can reconcile the runtime before executing.
+      // ADR-034 gap-b push-on-dispatch: the authoritative provider/model/configVersion and
+      // required-authority marker the controller stamped on this dispatch (BotNodeRequest).
+      // Forwarded into the envelope so the handler reconciles or refuses before executing.
       providerId?: unknown;
       model?: unknown;
       configVersion?: unknown;
+      providerConfigRequired?: unknown;
     };
     if (!body || typeof body.text !== 'string'
       || typeof body.taskId !== 'string'
@@ -368,10 +347,15 @@ async function start(): Promise<void> {
       return;
     }
     const brokeredCreds = sanitizeBotNodeCreds(body.creds);
+    const hasCredentialCarrier = Object.prototype.hasOwnProperty.call(body, 'creds');
     const hasProviderIntent = Object.prototype.hasOwnProperty.call(body, 'providerIntent');
     const providerIntent = parseTrustedProviderIntent(body.providerIntent);
     if (hasProviderIntent && !providerIntent) {
       res.status(400).json({ success: false, error: 'Invalid trusted provider intent' });
+      return;
+    }
+    if (hasCredentialCarrier && !providerIntent) {
+      res.status(400).json({ success: false, error: 'Connector credentials require a validated deterministic provider intent' });
       return;
     }
     const correlationId = `http-${canonicalTaskId}-${Date.now()}`;
@@ -389,17 +373,17 @@ async function start(): Promise<void> {
         direct: body.direct === true,
         userSub: scopedUserSub,
         ...(verifiedDelegation ? { principalIssuer: verifiedDelegation.principal_iss } : {}),
-        // Token broker: short-lived per-user access tokens the controller decrypted for
-        // this caller (OSHAL_CRED_GOOGLE/OSHAL_CRED_TWITTER). Forwarded to the execution
-        // handler, which writes them into the task workspace as .oshal-cred-<provider> files.
-        creds: brokeredCreds,
+        // Credentials are accepted only for the schema-bounded deterministic provider
+        // handler. They never enter the generic model/CLI environment or workspace.
+        ...(providerIntent && Object.keys(brokeredCreds).length > 0 ? { creds: brokeredCreds } : {}),
         ...(providerIntent ? { providerIntent } : {}),
-        // ADR-034 gap-b push-on-dispatch: forward the carried authoritative config so the
-        // execution handler can reconcile the runtime before executing. parseCarriedDispatchConfig
-        // validates them (a blank/malformed providerId = the absent legacy path).
+        // ADR-034 gap-b: forward the carried authoritative config plus its explicit required
+        // marker. A required request with a blank/malformed providerId is refused as unavailable;
+        // only a request without both marker and record is the intentional legacy path.
         ...(typeof body.providerId === 'string' ? { providerId: body.providerId } : {}),
         ...(typeof body.model === 'string' ? { model: body.model } : {}),
         ...(typeof body.configVersion === 'number' ? { configVersion: body.configVersion } : {}),
+        ...(body.providerConfigRequired === true ? { providerConfigRequired: true } : {}),
         // Bring-Your-Own-LLM: caller's own OpenAI-compatible endpoint+key+model.
         // When present, the execution handler routes inference to it (cost tracked
         // under provider 'byo-llm') instead of the bot's configured provider.
@@ -481,7 +465,7 @@ async function start(): Promise<void> {
         workspaceDir,
         source: 'token-chase-replay',
         agentId,
-        autoApprove: true,
+        autoApprove: false,
       }) as { content?: string; usage?: { inputTokens?: number; outputTokens?: number }; cost?: number; model?: string; provider?: string };
       const latencyMs = Date.now() - startedAt;
       const usage = (response && response.usage) || {};
@@ -526,11 +510,11 @@ async function start(): Promise<void> {
     logger.info(`  Provider: ${activeLlm().provider} / ${activeLlm().model}`);
     logger.info(`  Channel: ${primaryChannel}`);
 
-    // ── Bot UI self-registration ─────────────────────────────────────
-    // If the bot declares BOT_UI_LABEL + BOT_UI_URL, register a dynamic tool
-    // with UI config on the swarm controller. The cockpit ribbon picks it up
-    // automatically. On shutdown, the tool's TTL expires and the button disappears.
-    registerBotUi(botName, agentId);
+    if (process.env.BOT_UI_LABEL || process.env.BOT_UI_URL) {
+      logger.warn(
+        'BOT_UI_* self-registration is disabled: register bot UI metadata through an operator-approved manifest',
+      );
+    }
   });
 
   // ── Graceful shutdown ───────────────────────────────────────────
@@ -544,88 +528,6 @@ async function start(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
-}
-
-/**
- * Register this bot's UI surface on the swarm controller via POST /api/tools/register.
- * Driven by environment variables — no code changes needed per bot:
- *   BOT_UI_LABEL    — sidebar button text (e.g. "Facebook")
- *   BOT_UI_URL      — page URL to embed as iframe (e.g. "/api/facebook-auth/app")
- *   BOT_UI_ICON     — codicon class (default: codicon codicon-extensions)
- *   BOT_UI_SECTION  — "top" or "bottom" (default: "top")
- *
- * The tool is registered with a 2-hour TTL. The heartbeat loop re-registers
- * periodically so it stays alive while the bot is running. When the bot stops,
- * the TTL expires and the ribbon button disappears automatically.
- */
-async function registerBotUi(botName: string, agentId: string): Promise<void> {
-  const uiLabel = process.env.BOT_UI_LABEL;
-  const uiUrl = process.env.BOT_UI_URL;
-  if (!uiLabel || !uiUrl) return; // Bot has no UI — nothing to register
-
-  const controllerBase = process.env.SWARM_CONTROLLER_URL || 'http://oshal-api:5000';
-  const toolName = `${botName}-ui`;
-  const payload = {
-    toolName,
-    serverUrl: `${controllerBase}/api/health`, // placeholder — tool UI doesn't invoke, it embeds
-    description: `${uiLabel} bot settings and management UI`,
-    registeredBy: agentId,
-    ttlMs: 7200000, // 2 hours — re-registered by heartbeat
-    ui: {
-      sidebarIcon: process.env.BOT_UI_ICON || 'codicon codicon-extensions',
-      sidebarLabel: uiLabel,
-      sidebarSection: process.env.BOT_UI_SECTION || 'top',
-      route: `tool-${toolName}`,
-      iframeUrl: uiUrl,
-    },
-  };
-
-  const register = async () => {
-    try {
-      const http = await import('http');
-      const url = new URL(`${controllerBase}/api/tools/register`);
-      const body = JSON.stringify(payload);
-      const req = http.request(
-        {
-          hostname: url.hostname,
-          port: url.port,
-          path: url.pathname,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(body),
-            // Internal service auth: the controller's serviceSecretOr() guard accepts this in
-            // lieu of an OIDC session, so the bot can register its UI without a browser login.
-            ...(process.env.SWARM_SERVICE_SECRET ? { 'x-service-secret': process.env.SWARM_SERVICE_SECRET } : {}),
-          },
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk: string) => { data += chunk; });
-          res.on('end', () => {
-            if (res.statusCode === 201 || res.statusCode === 200) {
-              logger.info({ toolName, uiLabel, uiUrl }, 'Bot UI registered on swarm controller');
-            } else if (res.statusCode === 400 && data.includes('already registered')) {
-              logger.debug({ toolName }, 'Bot UI already registered (re-registration skipped)');
-            } else {
-              logger.warn({ toolName, statusCode: res.statusCode, body: data }, 'Bot UI registration returned unexpected status');
-            }
-          });
-        },
-      );
-      req.on('error', (err: Error) => {
-        logger.debug({ toolName, err: err.message }, 'Bot UI registration failed (controller may not be ready yet)');
-      });
-      req.write(body);
-      req.end();
-    } catch (err: any) {
-      logger.debug({ toolName, err: err.message }, 'Bot UI registration attempt failed');
-    }
-  };
-
-  // Register immediately, then periodically re-register to keep the TTL alive
-  await register();
-  setInterval(register, 3600000); // Re-register every hour (TTL is 2 hours)
 }
 
 function resolveHeartbeatRole(fallbackRole: string, profile: AgentProfile | null): string {

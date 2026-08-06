@@ -13,6 +13,8 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Re-point remote-pull rails at the extracted option, staging, range-read, and cleanup helpers so the function-size refactor preserves non-vacuous linear-transfer and failure-cleanup guards.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Give the delivery-verifier behavior guard an explicit process-startup budget. It launches five real Windows PowerShell processes and can exceed Vitest's five-second default only when the full suite contends for process startup; the production verifier and its fail-closed assertions remain unchanged.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Apply the same bounded process-startup budget to artifact-reuse guards that launch two or three real PowerShell probes. Full-suite contention must not turn successful fail-closed verification into a five-second harness timeout.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Prove the completed-build contract rejects omitted timestamps, divergent top-level input digests, reversed time bounds, and pieces lacking successful ffprobe evidence.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | Give each real PowerShell manifest/delivery boundary a call-count-sized startup budget under the parallel suite; production verification rules remain unchanged.
  */
 import { afterAll, describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -110,11 +112,17 @@ const validManifest = (): Record<string, unknown> => ({
   schemaVersion: 1,
   manifestKind: 'recap-build',
   runId: 'a'.repeat(32),
+  date: '2026-08-05',
   requestedDate: '2026-08-05',
   status: 'complete',
+  startedAt: '2026-08-05T22:50:00.0000000+00:00',
   completedAt: '2026-08-05T23:20:00.0000000+00:00',
+  deckDataSha256: expectedInputs[0].sha256,
+  deckPptxSha256: expectedInputs[1].sha256,
   inputs: expectedInputs.map((item) => ({ ...item })),
-  pieces: requiredPieces.map((name, index) => ({ name, bytes: 400_000 + index, sha256: String(index + 5).repeat(64) })),
+  pieces: requiredPieces.map((name, index) => ({
+    name, bytes: 400_000 + index, sha256: String(index + 5).repeat(64), mediaVerified: true,
+  })),
 });
 
 /** @description Executes manifest validation using the canonical requested date and inputs. */
@@ -141,6 +149,7 @@ const createDeliveryFixture = () => {
   }
   const buildInputs = build.inputs as Array<{ name: string; bytes: number; sha256: string }>;
   Object.assign(buildInputs.find((item) => item.name === 'deck.pptx')!, fileArtifact('deck.pptx', join(artifactRoot, 'deck.pptx')));
+  build.deckPptxSha256 = buildInputs.find((item) => item.name === 'deck.pptx')!.sha256;
   writeFileSync(buildPath, JSON.stringify(build), 'utf8');
   const delivery = {
     schemaVersion: 1, manifestKind: 'recap-delivery', runId, deliveryId: 'b'.repeat(32),
@@ -200,16 +209,22 @@ describe('recap runner honesty rails (2026-07-28 outage fixes)', () => {
   it('runner writes ops-notes.json for the report\'s operations section', () => {
     expect(runner).toMatch(/ops-notes\.json/);
   });
+  it('runs ffprobe before recording media verification in the immutable manifest inventory', () => {
+    expect(runner).toMatch(/Get-Command `\$ffprobeName -ErrorAction Stop/);
+    expect(runner).toMatch(/-show_entries 'stream=codec_type:format=duration'/);
+    expect(runner).toMatch(/`\$record\.mediaVerified = `\$true/);
+    expect(runner.indexOf('`$record.mediaVerified = `$true')).toBeLessThan(runner.indexOf('$manifest = [ordered]@{'));
+  });
 });
 
 describe('completed-build manifest identity contract (behavioral)', () => {
-  it('accepts one complete run binding date, input hashes, and all piece hashes', () => {
+  it('accepts one complete run binding date, input hashes, and all piece hashes', { timeout: 15_000 }, () => {
     const result = validateManifest(validManifest());
     expect(result.status, result.stderr).toBe(0);
     expect(result.body).toMatchObject({ valid: true, errors: [] });
   });
 
-  it('makes SkipBuild fail closed when the manifest is missing or belongs to another date', () => {
+  it('makes SkipBuild fail closed when the manifest is missing or belongs to another date', { timeout: 30_000 }, () => {
     const missing = validateManifest(null);
     expect(missing.body).toMatchObject({ valid: false, errors: ['manifest is missing'] });
 
@@ -220,7 +235,7 @@ describe('completed-build manifest identity contract (behavioral)', () => {
     expect(result.body.errors as string[]).toContain("requestedDate '2026-08-04' does not match '2026-08-05'");
   });
 
-  it('rejects a build with the wrong manifest kind', () => {
+  it('rejects a build with the wrong manifest kind', { timeout: 15_000 }, () => {
     const manifest = validManifest();
     manifest.manifestKind = 'recap-delivery';
     const result = validateManifest(manifest);
@@ -228,7 +243,7 @@ describe('completed-build manifest identity contract (behavioral)', () => {
     expect(result.body.errors as string[]).toContain('build manifest schema is invalid');
   });
 
-  it('makes SkipBuild fail on changed inputs, an incomplete status, and partial piece inventory', () => {
+  it('makes SkipBuild fail on changed inputs, an incomplete status, and partial piece inventory', { timeout: 15_000 }, () => {
     const manifest = validManifest();
     (manifest.inputs as Array<{ sha256: string }>)[0].sha256 = 'f'.repeat(64);
     (manifest.pieces as Array<{ name: string; bytes: number }>).pop();
@@ -242,6 +257,28 @@ describe('completed-build manifest identity contract (behavioral)', () => {
       'piece count is 3, expected 4',
       "piece 'deck-narrated.mp4' must appear exactly once",
     ]));
+  });
+
+  it('rejects manifests missing explicit input digests, start provenance, or media proof', { timeout: 15_000 }, () => {
+    const manifest = validManifest();
+    delete manifest.startedAt;
+    manifest.deckDataSha256 = 'f'.repeat(64);
+    delete (manifest.pieces as Array<Record<string, unknown>>)[0].mediaVerified;
+    const result = validateManifest(manifest);
+    expect(result.body.valid).toBe(false);
+    expect(result.body.errors as string[]).toEqual(expect.arrayContaining([
+      'startedAt is missing or invalid',
+      'deckDataSha256 does not match the deck-data.json input',
+      "piece 'presenter-intro.mp4' has no successful media verification",
+    ]));
+  });
+
+  it('rejects a manifest whose completion precedes its declared start', { timeout: 15_000 }, () => {
+    const manifest = validManifest();
+    manifest.startedAt = '2026-08-05T23:21:00.000Z';
+    const result = validateManifest(manifest);
+    expect(result.body.valid).toBe(false);
+    expect(result.body.errors as string[]).toContain('completedAt precedes startedAt');
   });
 });
 
@@ -283,7 +320,7 @@ describe('delivery verifier contract (behavioral)', () => {
   // Five production PowerShell invocations are intentional: one valid delivery plus four distinct
   // tamper shapes. Full-suite process contention can make their startup alone exceed Vitest's
   // five-second default, so this test owns a bounded harness budget without relaxing any verifier.
-  it('publisher verifier binds deck, dated PDF, and final video to the same build run', { timeout: 15_000 }, () => {
+  it('publisher verifier binds deck, dated PDF, and final video to the same build run', { timeout: 45_000 }, () => {
     const fixture = createDeliveryFixture();
     const valid = runDeliveryVerifier(fixture.deliveryPath, fixture.artifactRoot);
     expect(valid.status, valid.stderr).toBe(0);

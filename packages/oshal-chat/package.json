@@ -21,8 +21,9 @@
     "prepack": "npm run build",
     "start": "npm run build && node scripts/start-electron.js .",
     "dev": "npm run build && node scripts/start-electron.js . --enable-logging",
-    "dist": "npm run build && electron-builder",
+    "dist": "npm run build && node scripts/build-desktop.mjs",
     "test:pack": "node scripts/test-packed-install.mjs",
+    "test:windows-boundary": "npm run build && node scripts/start-electron.js dist/main/windows-desktop-boundary.js",
     "test:remote": "node scripts/test-remote-control.mjs",
     "test:wake": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-background-wake.ps1"
   },

@@ -12,6 +12,8 @@
  *                     |                             | target: auto+least-privilege now emits an INFORMATIONAL note in the new
  *                     |                             | `advisories` array instead of a release blocker. Superuser + non-validate-only
  *                     |                             | remains a blocker exactly as before.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace obsolete posture flags with the runtime's actual control resolution: CSP mode follows cspMode (report-only by default), connector crypto follows SESSION_SECRET plus default-on envelope mode, the always-mounted external limiter is distinguished from opt-in internal/expensive rails, and Alertmanager HMAC configuration is surfaced explicitly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Surface the connector DEK failure policy so governance cannot present an explicit shared-HKDF break-glass as the normal deny posture.
  */
 
 /**
@@ -56,6 +58,8 @@ import {
   Permission,
   ROLE_PERMISSIONS,
 } from '@/features/governance';
+import { cspMode } from '@/features/security';
+import { envelopeDekFailureMode } from '@/app/routes/connector-token-crypto';
 
 const logger = createChildLogger({ module: 'audit-export-routes' });
 
@@ -86,10 +90,55 @@ const RLS_TABLES = [
   },
 ] as const;
 
-function envOn(name: string, dflt = false): boolean {
-  const v = process.env[name];
+function envOn(name: string, dflt = false, env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env[name];
   if (v == null || v === '') return dflt;
   return ['true', '1', 'yes', 'on'].includes(v.toLowerCase().trim());
+}
+
+/** True unless a default-on control is explicitly disabled. */
+function envDefaultOn(name: string, env: NodeJS.ProcessEnv): boolean {
+  const value = String(env[name] ?? 'true').trim().toLowerCase();
+  return !['false', '0', 'no', 'off', 'disabled'].includes(value);
+}
+
+/**
+ * @description Resolves the security-control facts shown by both governance UIs. This reads the
+ * same environment contract as the mounted middleware instead of historical aliases that no
+ * runtime code consumes. Separate mode/coverage fields prevent a report-only CSP or external-only
+ * rate limiter from being presented as fully enforced.
+ * @param env - Environment map (injectable so the posture contract is deterministic in tests).
+ * @returns Current runtime control facts; compatibility booleans remain for older clients.
+ */
+export function buildRuntimeSecurityControls(env: NodeJS.ProcessEnv = process.env) {
+  const resolvedCspMode = cspMode(env);
+  const connectorKeyConfigured = Boolean(String(env.SESSION_SECRET ?? '').trim());
+  return {
+    rbacEnforce: envOn('OSHAL_RBAC_ENFORCE', false, env),
+    legacyUnownedAllowed: envOn('OSHAL_ALLOW_LEGACY_UNOWNED', false, env),
+    cspEnabled: resolvedCspMode !== 'disabled',
+    cspMode: resolvedCspMode,
+    cryptoAtRest: connectorKeyConfigured,
+    envelopeCrypto: envDefaultOn('OSHAL_ENVELOPE_CRYPTO', env),
+    envelopeDekFailure: envelopeDekFailureMode(env),
+    // The public/XFF limiter is unconditional in server.ts. The other two rails are separately
+    // flag-gated and must not be hidden behind one optimistic boolean.
+    rateLimitEnabled: true,
+    externalRateLimit: true,
+    internalRateLimit: envOn('OSHAL_RATE_LIMIT_INTERNAL', false, env),
+    expensiveRateLimit: envOn('OSHAL_RATE_LIMIT_EXPENSIVE', false, env),
+    alertWebhookHmac: Boolean(String(env.ALERT_WEBHOOK_HMAC_SECRET ?? '').trim()),
+    mockOidc: envOn('MOCK_OIDC', false, env),
+    tlsRejectUnauthorized: (env.NODE_TLS_REJECT_UNAUTHORIZED ?? '1') !== '0',
+    operatorAllowlistConfigured: Boolean(String(env.OSHAL_OPERATOR_SUBS || env.OSHAL_OPERATOR_EMAILS || '').trim()),
+    // Governance phases 1–4 toggles (single-pane posture):
+    rlsEnforce: envOn('OSHAL_RLS_ENFORCE', false, env),
+    accessAudit: envOn('OSHAL_ACCESS_AUDIT', false, env),
+    dlpMode: (env.OSHAL_DLP_MODE ?? 'off').toLowerCase().trim() || 'off',
+    policyEnforce: envOn('OSHAL_POLICY_ENFORCE', false, env),
+    auditForwarding: Boolean(String(env.OSHAL_AUDIT_FORWARD_URL ?? '').trim()),
+    llmBudgets: envOn('OSHAL_LLM_BUDGETS', false, env),
+  };
 }
 
 function dbGucEnabled(): boolean {
@@ -449,24 +498,7 @@ export function createAuditExportRouter(ctx: AppContext, requiresAuth?: RequestH
         generatedAt: new Date().toISOString(),
         ownership: { tickets, workspaces, accessAuditLog: auditLog, chatTasks },
         rls,
-        controls: {
-          rbacEnforce: envOn('OSHAL_RBAC_ENFORCE', false),
-          legacyUnownedAllowed: envOn('OSHAL_ALLOW_LEGACY_UNOWNED', false),
-          cspEnabled: envOn('OSHAL_CSP_ENABLED', false) || envOn('HELMET_CSP', false),
-          cryptoAtRest: !!(process.env.ENCRYPTION_KEY && process.env.ENCRYPTION_KEY.length > 0),
-          rateLimitEnabled: envOn('OSHAL_RATE_LIMIT_ENABLED', false) || envOn('RATE_LIMIT_ENABLED', false),
-          mockOidc: envOn('MOCK_OIDC', false),
-          tlsRejectUnauthorized: (process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? '1') !== '0',
-          operatorAllowlistConfigured:
-            !!(process.env.OSHAL_OPERATOR_SUBS || process.env.OSHAL_OPERATOR_EMAILS),
-          // Governance phases 1–4 toggles (single-pane posture):
-          rlsEnforce: envOn('OSHAL_RLS_ENFORCE', false),
-          accessAudit: envOn('OSHAL_ACCESS_AUDIT', false),
-          dlpMode: (process.env.OSHAL_DLP_MODE ?? 'off').toLowerCase().trim() || 'off',
-          policyEnforce: envOn('OSHAL_POLICY_ENFORCE', false),
-          auditForwarding: !!(process.env.OSHAL_AUDIT_FORWARD_URL ?? '').trim(),
-          llmBudgets: envOn('OSHAL_LLM_BUDGETS', false),
-        },
+        controls: buildRuntimeSecurityControls(),
         eval: { last7dPassRate: evalRate },
       });
     } catch (err) {

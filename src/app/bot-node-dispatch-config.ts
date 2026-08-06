@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 push-on-dispatch (bot half): parseCarriedDispatchConfig reads the optional providerId/model/configVersion the controller stamped on /api/swarm-execute, and reconcileDispatchProviderConfig compares them against the live active provider — a divergent bot self-corrects via the gap-(a) setActiveProvider seam BEFORE executing, logging the correction. Absent fields = the runtime is never touched (byte-identical legacy dispatch); an unknown/unavailable carried provider FAILS OPEN to the bot's self-resolved provider (a bad record must never block execution).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Retire the fail-open authority path: unavailable switches and post-switch mismatches now refuse execution, and expose a shared exact-match guard for concurrent dispatches.
  */
 
 /**
@@ -25,8 +26,8 @@
  *  2. Divergence → self-correct via setActiveProvider and LOG the correction (WARN, with
  *     from/to and the carried configVersion) — drift is a fleet-visible signal, not noise.
  *  3. A carried provider the bot cannot switch to (unknown name, harness not initialized)
- *     FAILS OPEN: the divergence is logged and execution proceeds on the self-resolved
- *     provider. A bad record must never block real work (ADR-034 standalone semantics).
+ *     FAILS CLOSED before task/model execution. Running a different provider would violate
+ *     the controller's cost, policy, and audit decision.
  *
  * @module bot-node-dispatch-config
  */
@@ -56,11 +57,20 @@ export interface DispatchConfigReconciliation {
    * absent      — no record carried; runtime untouched (legacy dispatch).
    * match       — record carried and already matches the active provider/model.
    * corrected   — divergence detected and self-corrected via setActiveProvider.
-   * failed-open — divergence detected but the switch failed; executing self-resolved.
    */
-  action: 'absent' | 'match' | 'corrected' | 'failed-open';
+  action: 'absent' | 'match' | 'corrected';
   /** The provider/model the execution will actually run on (absent action carries none). */
   active?: ActiveBotNodeProvider;
+}
+
+/** Stable error used when a required authoritative provider/model cannot be enforced. */
+export class AuthoritativeDispatchConfigError extends Error {
+  readonly code = 'AUTHORITATIVE_PROVIDER_UNAVAILABLE';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthoritativeDispatchConfigError';
+  }
 }
 
 /**
@@ -87,10 +97,25 @@ export function parseCarriedDispatchConfig(
 }
 
 /**
+ * @description Compares a carried authoritative record with a live runtime identity. Provider
+ * aliases are normalized exactly as boot configuration is; an omitted model means the provider
+ * alone is authoritative, while a supplied model must match exactly.
+ */
+export function dispatchConfigMatchesActive(
+  carried: CarriedDispatchConfig,
+  active: ActiveBotNodeProvider,
+): boolean {
+  const providerMatches = normalizePulledProviderName(carried.providerId)
+    === normalizePulledProviderName(active.provider);
+  const modelMatches = carried.model === undefined || carried.model === active.model;
+  return providerMatches && modelMatches;
+}
+
+/**
  * @description Reconciles a carried dispatch config against the bot's live active
  * provider/model, self-correcting via setActiveProvider BEFORE execution when they
  * diverge (ADR-034 §2). See the module contract: absent → untouched, divergent →
- * corrected + logged, un-switchable → fail-open + logged.
+ * corrected + logged, un-switchable or incorrectly applied → refused + logged.
  * @param carried - The parsed record (null → legacy no-op).
  * @param runtime - The live provider accessors (bot-node-runtime seam).
  * @param context - Attribution for the correction log (taskId).
@@ -109,10 +134,7 @@ export function reconcileDispatchProviderConfig(
   }
 
   const active = runtime.getActiveProvider();
-  const normalizedCarried = normalizePulledProviderName(carried.providerId);
-  const providerDiverges = normalizedCarried !== active.provider;
-  const modelDiverges = carried.model !== undefined && carried.model !== active.model;
-  if (!providerDiverges && !modelDiverges) {
+  if (dispatchConfigMatchesActive(carried, active)) {
     log.debug(
       { taskId: context.taskId, provider: active.provider, model: active.model, configVersion: carried.configVersion },
       'ADR-034: dispatched config matches active provider — no correction needed',
@@ -120,24 +142,10 @@ export function reconcileDispatchProviderConfig(
     return { action: 'match', active };
   }
 
+  let applied: ActiveBotNodeProvider;
   try {
-    const applied = runtime.setActiveProvider(carried.providerId, carried.model);
-    log.warn(
-      {
-        taskId: context.taskId,
-        fromProvider: active.provider,
-        fromModel: active.model,
-        toProvider: applied.provider,
-        toModel: applied.model,
-        configVersion: carried.configVersion ?? null,
-      },
-      'ADR-034: dispatch carried a divergent authoritative config — self-corrected active provider before executing',
-    );
-    return { action: 'corrected', active: applied };
+    applied = runtime.setActiveProvider(carried.providerId, carried.model);
   } catch (err) {
-    // Fail OPEN: a carried provider this bot cannot run (unknown name, harness not
-    // initialized at boot) must never block execution — run self-resolved and surface
-    // the drift loudly so the controller-side record can be fixed.
     log.warn(
       {
         err,
@@ -148,8 +156,40 @@ export function reconcileDispatchProviderConfig(
         activeProvider: active.provider,
         activeModel: active.model,
       },
-      'ADR-034: dispatched config diverges but the switch failed — executing on the self-resolved provider (fail-open)',
+      'ADR-034: dispatched config diverges and the authoritative switch failed — refusing execution',
     );
-    return { action: 'failed-open', active };
+    throw new AuthoritativeDispatchConfigError(
+      `Authoritative provider config is unavailable for ${carried.providerId}`,
+    );
   }
+
+  if (!dispatchConfigMatchesActive(carried, applied)) {
+    log.warn(
+      {
+        taskId: context.taskId,
+        carriedProvider: carried.providerId,
+        carriedModel: carried.model ?? null,
+        appliedProvider: applied.provider,
+        appliedModel: applied.model,
+        configVersion: carried.configVersion ?? null,
+      },
+      'ADR-034: provider switch returned a non-authoritative identity — refusing execution',
+    );
+    throw new AuthoritativeDispatchConfigError(
+      `Authoritative provider config was not applied for ${carried.providerId}`,
+    );
+  }
+
+  log.warn(
+    {
+      taskId: context.taskId,
+      fromProvider: active.provider,
+      fromModel: active.model,
+      toProvider: applied.provider,
+      toModel: applied.model,
+      configVersion: carried.configVersion ?? null,
+    },
+    'ADR-034: dispatch carried a divergent authoritative config — self-corrected active provider before executing',
+  );
+  return { action: 'corrected', active: applied };
 }

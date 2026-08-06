@@ -5,6 +5,13 @@
  * fixture OpenAPI doc — no network, no live creds. An imported OpenAPI spec must build into a working
  * client; the catalog audit must pass the shipped specs; docs must derive from the spec.
  *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove source-catalog categories survive OpenAPI import and generated documentation as evidence distinct from operation tags.
+ * -----------------------------------------------------------------------------
+ *
  * @module tests/unit/connectors/openapi-and-catalog
  */
 import path from 'path';
@@ -20,7 +27,12 @@ function mockFetch(body: any) {
 }
 
 const OPENAPI_FIXTURE = {
-  info: { title: 'Acme API', version: '2026.1', description: 'Acme widgets and orders.' },
+  info: {
+    title: 'Acme API',
+    version: '2026.1',
+    description: 'Acme widgets and orders.',
+    'x-apisguru-categories': ['developer_tools'],
+  },
   servers: [{ url: 'https://api.acme.dev/v2' }],
   components: { securitySchemes: { key: { type: 'apiKey', in: 'header', name: 'X-Api-Key' } } },
   tags: [{ name: 'Widgets' }],
@@ -43,7 +55,10 @@ describe('specFromOpenApi', () => {
     // non-GET defaults to no auto-retry + opaque body warning
     expect(spec.resources.find((r) => r.name === 'createOrder')?.retry).toEqual({ maxRetries: 0 });
     expect(spec.resources.find((r) => r.name === 'createOrder')?.safety).toMatchObject({ action: 'write', requiresConfirmation: true });
-    expect(spec.metadata).toMatchObject({ tags: ['catalog', 'orders', 'widgets'] });
+    expect(spec.metadata).toMatchObject({
+      tags: ['catalog', 'orders', 'widgets'],
+      sourceCategories: ['developer_tools'],
+    });
     expect(warnings.some((w) => /opaque/.test(w))).toBe(true);
   });
 
@@ -63,12 +78,22 @@ describe('specFromOpenApi', () => {
     expect(warnings.length).toBeGreaterThanOrEqual(2);
     expect(spec.resources[0].name).toBe('get-x'); // name synthesized from method+path
   });
+
+  it('omits malformed source-category values and reports the loss', () => {
+    const { spec, warnings } = specFromOpenApi('bad-source-category', {
+      info: { 'x-apisguru-categories': ['cloud', 'not/a/category', 42] },
+      paths: { '/x': { get: {} } },
+    });
+    expect(spec.metadata?.sourceCategories).toEqual(['cloud']);
+    expect(warnings).toContain('x-apisguru-categories contains invalid values — invalid source categories omitted');
+  });
 });
 
 describe('specToMarkdown', () => {
   it('renders auth, resources, inputs, and tools from the spec', () => {
     const spec: ConnectorSpec = {
       provider: 'demo', displayName: 'Demo', baseUrl: 'https://x.dev', auth: { type: 'oauth2', scopes: ['read'] },
+      metadata: { sourceCatalog: 'apis-guru', sourceCategories: ['developer_tools'] },
       rateLimit: { burst: 5, perSecond: 5 },
       resources: [{ name: 'search', tool: 'demo-search', method: 'GET', path: '/search', query: { q: '{query}' } }],
     };
@@ -77,6 +102,7 @@ describe('specToMarkdown', () => {
     expect(md).toContain('OAuth2 (bearer)');
     expect(md).toContain('`demo-search`');
     expect(md).toContain('`query`');     // bound input surfaced
+    expect(md).toContain('**Source categories** | `developer_tools`');
   });
 });
 

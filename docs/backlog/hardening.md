@@ -43,11 +43,17 @@ closed. What is **genuinely still open** as security-net work:
   **Still open:** re-enrolling the nodes in the field and then flipping the switch (a live-stack act,
   see the deploy-time verification in the PR body).
 - **#15 Headscale hardened ACL** — authored, still not applied (live overlay ACL remains allow-all).
-- **#16 Headscale pre-auth key rotation** — plaintext key still in `scripts/start-local-agent.bat`.
+- **#16 Headscale pre-auth key invalidation** — the checked-in launcher is clean and enrollment now
+  mints single-use, one-hour keys; invalidating every formerly issued reusable key and proving old
+  material cannot enroll remains an external operator gate.
 - **#17 Legacy credential rotation** — provider-side hygiene, NOT a repo exposure. ⚠ Re-verified
   2026-07-24: this public repo is scan-clean (the credential patterns match zero actual secret
   values across the tree + all 81 commits/refs). The only open question is whether the 6 old creds'
   VALUES were ever rotated at their providers; operator-only.
+- **Web-control rollout** — default report-only CSP, mounted internal/cost limiters, and exact-byte
+  Alertmanager HMAC are implemented locally. Remaining: clean the CSP violation stream and canary
+  enforcement, tune/enable the two opt-in limiter rails, provision the HMAC secret/sender, and retain
+  live positive plus tamper/negative evidence. The active queue is `docs/BACKLOG.md`.
 
 ### Code-health list — re-baselined 2026-08-02 (four of six were already closed)
 
@@ -199,11 +205,12 @@ schema-race advisory lock, fail-closed webhooks, helmet + rate-limit, 127.0.0.1 
 TLS verification) are **deployed live** (see [SECURITY-HARDENING.md](../security/SECURITY-HARDENING.md));
 what remains is the Headscale/WireGuard overlay and operator credential rotation.
 
-15. **Apply the staged Headscale hardened ACL.** A deny-by-default tag policy is authored at
-    `infra/headscale/config/policy.hardened.hujson` (tag:admin full; tag:worker → tag:controller:5000
-    only) but **not yet applied** — it needs: (a) nodes tagged (`tag:admin`/`tag:worker`/`tag:controller`),
-    (b) the real controller port substituted for the `5000` placeholder, then (c) `headscale policy set`.
-    Until applied, the live ACL is still allow-all between nodes. Lower urgency because the swarm's
+15. **Apply the active Headscale hardened ACL to the live fleet.** The Docker/Kubernetes source at
+    `infra/headscale/config/policy.hujson` is now deny-by-default and defines exact
+    `tag:operator`, `tag:controller`, `tag:bot`, and `tag:worker` paths. The remaining
+    operational work is: (a) inventory/tag every live node, (b) back up the current live policy,
+    (c) apply this version, and (d) record positive controller-path and negative lateral probes.
+    Until that rollout is evidenced, the live ACL may still be allow-all between nodes. The swarm's
     own ports are already bound to `127.0.0.1` (the overlay is the optional VPN/A2A surface). The
     metrics listener was already moved off the wire (`0.0.0.0:9090` → `127.0.0.1:9090`).
     <sub>Corrected 2026-08-02: this line used to say ADRs
@@ -211,9 +218,10 @@ what remains is the Headscale/WireGuard overlay and operator credential rotation
     are "still *Proposed*". Both were reconciled to **Accepted — implemented** on 2026-07-31; the
     overlay ships under `infra/headscale/` and the k8s workspace under `ops/any-bot-k8s/`. What is
     open is this ACL *application*, not the decisions.</sub>
-16. **Rotate the plaintext Headscale pre-auth key** in `scripts/start-local-agent.bat`, and add a
-    frictionless enrollment path (web-login → ephemeral pre-auth key) so keys are short-lived, not
-    baked into a checked-in script. (Cross-refs the existing note in [BACKLOG.md](../BACKLOG.md).)
+16. **Complete Headscale pre-auth-key invalidation.** The checked-in launcher no longer contains a
+    key and `scripts/headscale-enroll-worker.sh` now mints single-use, one-hour, ephemeral
+    `tag:worker` keys. The remaining external gate is expiring every formerly issued reusable key
+    and recording that old material can no longer enroll a node.
 17. **Legacy credential rotation — provider-side hygiene, NOT a repo exposure.** ⚠ Re-verified
     2026-07-24: **this public repo is scan-clean.** A full scan of the tree AND all 81 commits/refs
     with the publish-gate credential patterns (`AKIA`/`ghp_`/`glpat-`/private-key/GCP-SA/secret-shaped)

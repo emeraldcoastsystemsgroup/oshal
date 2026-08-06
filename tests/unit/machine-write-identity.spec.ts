@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Drive Apply ingest through its model-hidden,
  *   one-use exact-task capability and prove the ticket write uses the digest-bound owner identity.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Keep the Apply ingest identity driver explicit about confirmation-artifact retention so the callback cannot imply verified submission evidence without the reviewed persistence boundary.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Keep the internal-tool identity probe on its intended grant-denial path by supplying the request-start executor descriptor now required by the fail-closed MCP boundary.
  */
 
 /**
@@ -308,7 +309,18 @@ const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
         return { rows: [], rowCount: 0 };
       },
     };
-    const router = createInternalToolBridgeRoutes({ pool } as never);
+    const dynamicToolExecutorRegistry = {
+      resolve: (toolName: string) => toolName === 'not-granted'
+        ? Object.freeze({
+          toolName,
+          executorType: 'api',
+          apiEndpoint: 'POST /api/test-only',
+          runtimeRegistered: true,
+          registeredAt: '2026-08-06T00:00:00.000Z',
+        })
+        : undefined,
+    };
+    const router = createInternalToolBridgeRoutes({ pool, dynamicToolExecutorRegistry } as never);
     const { url, close } = await serveServiceUserRoute('/api/tools', router);
     try {
       const endpoint = `${url}/api/tools/execute`;
@@ -506,6 +518,26 @@ const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
         : { ok: true },
       persistConfirmation: () => null,
       removeWorkspace: async () => undefined,
+      getRun: async () => ({
+        runId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', ticketId: claim.ticketId,
+        ownerSub: claim.userSub, postingId: claim.postingId,
+        claimToken: 'ffffffff-1111-4222-8333-444444444444', taskId: claim.taskId,
+        workerClientId: claim.clientId, state: 'queued_to_worker',
+        claimedAt: '2026-08-05T21:00:00.000Z', dispatchedAt: '2026-08-05T21:00:01.000Z',
+        acknowledgedAt: null, lastProgressAt: null, timeoutAt: claim.expiresAt,
+        finishedAt: null, result: null, failureCode: null, failureDetail: null,
+        confirmationPath: null, confirmationSha256: null,
+        metadata: {
+          trigger: 'authenticated-single-job', initiatedBySub: claim.userSub,
+          automationSettingsVersion: 'authenticated-single-job-v1',
+        },
+      }),
+      transitionRun: async (_pool, input) => ({
+        runId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', ticketId: claim.ticketId,
+        ownerSub: claim.userSub, postingId: claim.postingId,
+        claimToken: 'ffffffff-1111-4222-8333-444444444444', taskId: claim.taskId,
+        workerClientId: claim.clientId, state: input.to,
+      }) as never,
     };
     const pool = {};
     const router = createApplyIngestRoutes({ pool, ticketService } as never, runtime);

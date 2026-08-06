@@ -28,8 +28,15 @@ Boot sync on every API startup writes `harnessType`/`apiType`/`modelId` from reg
 At read time, `enrichProfileWithHarness()` in `agent-profile-controller.ts` joins registry data into profile API responses without a DB schema change — `harnessType` and `apiType` are injected at the controller layer.
 
 The active registry is selected via `SWARM_REGISTRY` environment variable:
-- `SWARM_REGISTRY=local` → `swarm-bot-registry-local.ts` (with harness/api per bot)
-- Default → `swarm-bot-registry.ts` (without harness/api — legacy)
+- unset, `local`, or any stale/unknown value → `LOCAL_BOT_REGISTRY`, the current deployment and
+  authoritative identity/capability/harness definition
+- `full` → a deterministic superset of that local authority plus the six non-colliding historical
+  catalog-only identities; a shared UUID can never redefine the local record
+- `kernel` → the UUID-filtered kernel-required subset of the same local authority
+
+Installed application packages append their dynamic bot declarations in every mode. CI guards
+unique UUID/name identity, exact local-to-full shared records, kernel parity, the six-entry full-only
+allow-list, selector fallbacks, and dynamic append behavior.
 
 The `getActiveRegistry()` function must be used everywhere (not `SWARM_BOT_REGISTRY` directly) to respect this env var.
 

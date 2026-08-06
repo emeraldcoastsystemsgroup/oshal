@@ -1,3 +1,10 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Replace contradictory unverified Simple Icons fields with the deterministic RingCentral API-host favicon fallback.
+# -----------------------------------------------------------------------------
+
 provider: ringcentral
 displayName: RingCentral
 version: 1.0.0
@@ -126,10 +133,9 @@ resources:
 metadata:
   description: "RingCentral cloud phone: live active-call state for CRM screen-pop, call log, recordings, presence, extensions, and the SMS/voicemail message store."
   category: "Communication"
-  icon: ringcentral
-  iconTitle: RingCentral
-  iconSource: simple-icons
+  iconSource: favicon-fallback
   iconVerified: false
+  iconUrl: https://icons.duckduckgo.com/ip3/platform.ringcentral.com.ico
   # `~` is RingCentral's literal "current account / current extension" token, not a placeholder —
   # leave it in the path. Registration: an app under the business account with the ReadAccounts,
   # ReadCallLog, ReadPresence and ReadMessages scopes; telephony event APIs are not on every plan

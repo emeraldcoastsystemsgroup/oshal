@@ -12,6 +12,12 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review fix: the gap-b reconcile switched the SHARED active provider unconditionally, but the any-bot AgenticController resolves the provider live per-turn, so a concurrent dispatch could switch a running task mid-loop (silent provider swap + cost mis-attribution). Added an activeExecutions in-flight counter: the reconcile now only switches when this is the sole in-flight execution; otherwise it defers (logs) and runs on the current provider.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Comment accuracy at the owner-stamping call: it claimed ADR-060's per-user path layout ("the bot writes into <root>/users/<sub>/<taskId>"), which was reverted — the dir is flat <root>/<taskId>. Restated why the stamp is load-bearing regardless: assertExistingTaskOwner has nothing to compare against on the NEXT dispatch if userSub is dropped, and TaskController's forceTaskId branch carries no owner assert of its own. Behavior unchanged; the check is now pinned by tests/unit/bot-node-workspace-owner-binding.spec.ts.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact owners and canonicalize every envelope-derived workspace identifier before TaskController lookup or forceTaskId use; security refusals cannot fall back to a different workspace.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: use the trust-separated prompt builder for direct and layered calls, with the exact server user/ticket/tool/scope binding appended last.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: bind bot-node memory retrieval to the exact non-operator user, tenant, and canonical workspace.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: keep connector credentials in deterministic server-side brokers; autonomous model execution receives only the exact caller subject.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: reject unbrokered Cline, Claude Code, and Codex providers in preflight before task lookup/creation; only deterministic intents, BYO hosted inference, or a hosted/brokered provider may accept work.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: reject every generic credential carrier, consume credentials only in validated deterministic provider intents, and finish those intents before persona/memory/task creation so no model-visible work or hidden task side effect occurs.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Enforce authoritative dispatch pins fail-closed: refuse missing records/seams and concurrent mismatches before task creation, and report the effective config source/action/version in every successful result.
  */
 
 /**
@@ -37,13 +43,15 @@ import {
   buildFilePersonaLayer,
   buildHandoverLayers,
   buildSwarmAwarenessLayer,
-  buildSwarmMemoryLayer,
+  buildSwarmMemoryLayers,
   buildFallbackProfile,
   buildPhasePersonaOverride,
+  resolvePromptAuthorityBinding,
   deriveExecutionScopeId,
   RALFHandoverManager,
   type EnvelopeExecutionResult,
   type CostRecordFn,
+  type PromptAuthorizationResolver,
 } from '@/features/swarm-orchestration';
 import type { TicketService } from '@/features/ticketing';
 import {
@@ -57,12 +65,40 @@ import {
   type TrustedProviderExecutionResult,
 } from './bot-node-provider-intent';
 import {
+  AuthoritativeDispatchConfigError,
+  dispatchConfigMatchesActive,
   parseCarriedDispatchConfig,
   reconcileDispatchProviderConfig,
+  type DispatchConfigReconciliation,
   type DispatchConfigRuntime,
 } from './bot-node-dispatch-config';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
+const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
+  'cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex',
+]);
+
+/**
+ * @description Refuse autonomous CLI harnesses before a task/workspace is accepted. These
+ * providers own an internal tool loop, can read their credential home, and cannot revalidate
+ * OSHAL's exact handler generation/scopes. A deterministic provider intent and a caller's BYO
+ * hosted endpoint bypass the local CLI entirely and are therefore admissible.
+ */
+export function assertUnattendedProviderPreflight(input: {
+  providerName: unknown;
+  deterministicIntent?: boolean;
+  byoHostedInference?: boolean;
+}): void {
+  if (input.deterministicIntent === true || input.byoHostedInference === true) return;
+  const providerName = typeof input.providerName === 'string'
+    ? input.providerName.trim().toLowerCase() : '';
+  if (!UNBROKERED_AUTONOMOUS_PROVIDERS.has(providerName)) return;
+  const error = new Error(
+    `${providerName} is an unbrokered autonomous CLI; unattended execution requires a hosted provider or audited brokered sandbox`,
+  );
+  (error as Error & { code?: string }).code = 'UNBROKERED_AUTONOMOUS_PROVIDER';
+  throw error;
+}
 
 /**
  * Count of executions currently in flight on THIS bot-node process. Read by the ADR-034 gap-b
@@ -103,6 +139,8 @@ export interface BotNodeExecutionDeps {
   personaDir?: string;
   recordCost?: CostRecordFn;
   ticketService?: TicketService;
+  /** Server-owned enabled-tool and scope resolver for the final prompt authority block. */
+  resolvePromptAuthorization?: PromptAuthorizationResolver;
   /** The active provider name from the any-bot runtime (e.g. 'cline-cli', 'claude-code') */
   providerName: string;
   /** The active model from the any-bot runtime */
@@ -112,7 +150,8 @@ export interface BotNodeExecutionDeps {
    * (bot-node-runtime's getActiveProvider/setActiveProvider). When present, a dispatch
    * that carried an authoritative provider/model record is reconciled against the active
    * provider BEFORE executing — a drifted bot self-corrects. Absent → the runtime is never
-   * touched (legacy execution); the reconciliation is otherwise fail-open.
+   * touched (legacy execution). A carried/required authority that cannot be enforced is
+   * refused before task creation.
    */
   dispatchConfigRuntime?: DispatchConfigRuntime;
   /** Test seam for the bounded, model-independent provider executor. */
@@ -136,15 +175,14 @@ export function createBotNodeExecutionHandler(
     // orchestration layers (handover / awareness / swarm-memory). A lean reasoner
     // persona correctly treats that ticket scaffolding as out-of-place noise.
     const direct = payload?.direct === true;
-    // Per-user scoping: the authenticated caller's OIDC sub. Threaded into the
-    // CLI spawn env (OSHAL_USER_SUB) so shelled-out tools (oshal-gmail.js) act
-    // ONLY for this user's own connected accounts — never another user's.
+    // Exact authenticated owner identity. This binds memory, workspaces, and audited
+    // server operations; it is not authority to place connector secrets in a CLI.
     const userSub = normalizeBotNodeUserSub(payload?.userSub);
-    // Token broker: short-lived per-user access tokens the controller decrypted for this
-    // caller (e.g. { OSHAL_CRED_GOOGLE, OSHAL_CRED_TWITTER }). Threaded through extraEnv so
-    // the workspace writer drops them as .oshal-cred-<provider> files; the bot's tool reads
-    // the file and skips DB decryption — removing its need for SESSION_SECRET.
+    const tenantId = optionalExactContextId(payload?.tenantId ?? payload?.tenant_id, 'tenantId');
+    // Credentials are parsed only for the deterministic provider-intent executor below.
+    // They are never passed to TaskController, a child environment, or a workspace.
     const creds = sanitizeBotNodeCreds(payload?.creds);
+    const hasCredentialCarrier = Boolean(payload && Object.prototype.hasOwnProperty.call(payload, 'creds'));
     const hasProviderIntent = Boolean(payload && Object.prototype.hasOwnProperty.call(payload, 'providerIntent'));
     const providerIntent = parseTrustedProviderIntent(payload?.providerIntent);
     // Bring-Your-Own-LLM: the caller's own OpenAI-compatible endpoint+key+model,
@@ -163,6 +201,16 @@ export function createBotNodeExecutionHandler(
       ?? `swarm-${envelope.correlationId}`;
     const workspaceFolderId = canonicalBotWorkspaceId(baseTaskId);
     const taskId = `${workspaceFolderId}::${agentId}`;
+    const providerConfigRequired = payload?.providerConfigRequired === true;
+    const carriedConfig = parseCarriedDispatchConfig(payload);
+    let configReconciliation: DispatchConfigReconciliation = { action: 'absent' };
+    const providerConfigSource = providerIntent
+      ? 'deterministic-intent' as const
+      : byoLlmConnection
+        ? 'byo-request' as const
+        : carriedConfig
+          ? 'authoritative-dispatch' as const
+          : 'runtime-default' as const;
 
     const reviewRound = payload?.round ? Number(payload.round) : undefined;
     const isReview = payload?.type === 'verification-request' || payload?.type === 'review-request';
@@ -178,80 +226,141 @@ export function createBotNodeExecutionHandler(
     activeExecutions += 1;
     try {
       if (hasProviderIntent && !providerIntent) throw new Error('Invalid trusted provider intent');
+      if (hasCredentialCarrier && !providerIntent) {
+        throw new Error('Connector credentials require a validated deterministic provider intent');
+      }
+      // Reconcile and preflight provider selection before persona/memory retrieval and, critically,
+      // before task lookup/creation. A denied autonomous CLI leaves no accepted work behind.
+      if (providerConfigRequired && !carriedConfig) {
+        throw new AuthoritativeDispatchConfigError(
+          'Authoritative provider config was required but no actionable record was available',
+        );
+      }
+      if (carriedConfig && !deps.dispatchConfigRuntime) {
+        throw new AuthoritativeDispatchConfigError(
+          'Authoritative provider config cannot be enforced because the runtime seam is unavailable',
+        );
+      }
+      if (carriedConfig && deps.dispatchConfigRuntime) {
+        if (activeExecutions <= 1) {
+          configReconciliation = reconcileDispatchProviderConfig(
+            carriedConfig,
+            deps.dispatchConfigRuntime,
+            { taskId },
+          );
+        } else {
+          const active = deps.dispatchConfigRuntime.getActiveProvider();
+          if (!dispatchConfigMatchesActive(carriedConfig, active)) {
+            logger.warn(
+              {
+                taskId,
+                activeExecutions,
+                carriedProvider: carriedConfig.providerId,
+                carriedModel: carriedConfig.model ?? null,
+                activeProvider: active.provider,
+                activeModel: active.model,
+              },
+              'ADR-034: concurrent dispatch requires a different provider config — refusing instead of switching a running task',
+            );
+            throw new AuthoritativeDispatchConfigError(
+              'Authoritative provider config cannot be applied while another execution is in flight',
+            );
+          }
+          configReconciliation = { action: 'match', active };
+        }
+      }
+      const selectedProvider = deps.dispatchConfigRuntime?.getActiveProvider().provider
+        ?? deps.providerName;
+      assertUnattendedProviderPreflight({
+        providerName: selectedProvider,
+        deterministicIntent: Boolean(providerIntent),
+        byoHostedInference: Boolean(byoLlmConnection),
+      });
+      if (providerIntent) {
+        // Deterministic provider reads bypass persona/memory/prompt/task construction entirely.
+        // This is both a credential boundary and a no-hidden-side-effect completion boundary.
+        const providerResult = await (deps.executeProviderIntent ?? executeTrustedProviderIntent)(
+          providerIntent,
+          { userSub, creds },
+        );
+        const durationMs = Date.now() - execStart;
+        logger.info(
+          { correlationId: envelope.correlationId, agentId, taskId, durationMs },
+          'Deterministic provider intent completed outside the model runtime',
+        );
+        return {
+          success: true,
+          output: {
+            agentId,
+            taskId,
+            content: providerResult.completion,
+            response: providerResult.completion,
+            providerRecords: providerResult.providerRecords.slice(0, 8),
+            cost: 0,
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            model: 'none',
+            provider: 'deterministic-provider',
+            providerConfigSource,
+            providerConfigAction: configReconciliation.action,
+            providerConfigVersion: carriedConfig?.configVersion ?? null,
+          },
+        };
+      }
       // ── Prompt assembly ──
       // Direct/interactive reasoning: pass ONLY the caller's text. The provider
       // loads the bot's (lean) persona itself, so we add no swarm persona layers,
       // no file-persona "read your context" scaffolding, and no phase/handover
       // execution framing — all of which a reasoner reads as out-of-place noise
       // (it flags them as a prompt injection against its real role).
-      let assembledPrompt: string;
-      let layerCount = 0;
-      if (direct) {
-        assembledPrompt = String(payload?.text ?? '');
-      } else {
-        const profile = deps.agentProfileRepository
-          ? await deps.agentProfileRepository.getAgentProfile(agentId) : null;
-        const personaLayers = await loadPersonaLayers(agentId, envelope, deps.personaLayerStore);
-
+      const profile = !direct && deps.agentProfileRepository
+        ? await deps.agentProfileRepository.getAgentProfile(agentId) : null;
+      const personaLayers = direct
+        ? []
+        : await loadPersonaLayers(agentId, envelope, deps.personaLayerStore);
+      if (!direct) {
         const agentDisplayName = profile?.name || agentId;
         const payloadType = payload?.type ? String(payload.type) : '';
         const reviewRole = payload?.role ? String(payload.role) : 'reviewer';
         const filePersonaLayer = buildPhasePersonaOverride(payloadType, agentId, agentDisplayName, reviewRole)
           ?? buildFilePersonaLayer(agentId, agentDisplayName, workspaceFolderId, deps.personaDir);
         if (filePersonaLayer) personaLayers.unshift(filePersonaLayer);
-
-        const swarmMemoryLayer = await buildSwarmMemoryLayer(envelope, deps.swarmMemoryService);
-        if (swarmMemoryLayer) personaLayers.push(swarmMemoryLayer);
-
-        const handoverLayers = buildHandoverLayers(envelope, agentId, deps.handoverManager, executionScopeId);
-        personaLayers.push(...handoverLayers);
-
+        personaLayers.push(...await buildSwarmMemoryLayers(envelope, deps.swarmMemoryService, {
+          userSub: userSub ?? '', tenantId, workspaceId: workspaceFolderId,
+          isOperator: false, allowPublic: true,
+        }));
+        personaLayers.push(...buildHandoverLayers(
+          envelope, agentId, deps.handoverManager, executionScopeId,
+        ));
         const awarenessLayer = buildSwarmAwarenessLayer(envelope, agentId);
         if (awarenessLayer) personaLayers.push(awarenessLayer);
-
-        const userMessage = buildUserMessage(envelope);
-        assembledPrompt = assemblePromptForAnyBot(personaLayers, userMessage);
-        layerCount = personaLayers.length;
       }
-
-      // ADR-090 skill-profile GENERAL carrier: the controller resolved this app's domain profile for
-      // the capability and shipped the pre-composed block as payload.pattern (the bot holds no
-      // skill-profile registry — resolution is controller-side, ADR-036). Append it to the assembled
-      // prompt in BOTH branches. The layered branch above builds from persona layers + the envelope's
-      // user message, NEVER from payload.text — so pre-composing the profile into `text` would never
-      // reach it, which is the whole reason the carrier ships the block on its own field. No-op absent.
+      const promptAuthority = await resolvePromptAuthorityBinding({
+        userSub: userSub ?? null,
+        ticketId: ticketExternalId ?? workspaceFolderId,
+        workloadId: agentId,
+        executionScope: executionScopeId,
+        layers: personaLayers,
+        resolver: deps.resolvePromptAuthorization,
+      });
       const skillProfilePattern = typeof payload?.pattern === 'string' ? payload.pattern.trim() : '';
-      if (skillProfilePattern) {
-        assembledPrompt = `${assembledPrompt}\n${skillProfilePattern}`;
-      }
+      const assembledPrompt = assemblePromptForAnyBot(
+        personaLayers,
+        direct ? String(payload?.text ?? '') : buildUserMessage(envelope),
+        promptAuthority,
+        skillProfilePattern ? [{ source: 'resolved-skill-profile', content: skillProfilePattern }] : [],
+      );
+      const layerCount = personaLayers.length;
 
       logger.info(
         { correlationId: envelope.correlationId, agentId, taskId, direct, layerCount, promptLength: assembledPrompt.length },
         'Executing envelope via any-bot provider (in-process)',
       );
-
-      // ── ADR-034 gap-b push-on-dispatch reconciliation (BEFORE any LLM work) ──
-      // The controller may have stamped this dispatch with the authoritative
-      // provider/model/configVersion (bot-node-server forwards them into the payload).
-      // Compare against the live active provider and self-correct a divergent bot before
-      // executing. No seam OR no carried config → the runtime is never touched (legacy);
-      // an un-switchable carried provider fails open (logged, executes self-resolved).
-      if (deps.dispatchConfigRuntime) {
-        const carriedConfig = parseCarriedDispatchConfig(payload);
-        if (carriedConfig) {
-          // Only reconcile when THIS is the sole in-flight execution (activeExecutions === 1, our own):
-          // switching the shared provider while another task is mid-loop would corrupt it. When busy,
-          // run on the current provider and log the deferral rather than risk a concurrent-task switch.
-          if (activeExecutions <= 1) {
-            reconcileDispatchProviderConfig(carriedConfig, deps.dispatchConfigRuntime, { taskId });
-          } else {
-            logger.warn(
-              { taskId, activeExecutions, carriedProvider: carriedConfig.providerId },
-              'ADR-034: deferring dispatch provider reconcile — another execution is in flight on this bot node',
-            );
-          }
-        }
-      }
 
       // ── LLM execution (any-bot JavaScript — in-process, no HTTP) ──
       // NOTE: the model-gateway gate is NOT here. It lives at the any-bot
@@ -285,36 +394,39 @@ export function createBotNodeExecutionHandler(
       // (e.g. summarize/draft) passes agenticMode:false to skip the tool loop —
       // which otherwise non-deterministically emits an unparseable tool call.
       const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
-      // Provider-bound Jarvis handoffs are exact read operations, not reasoning tasks. Execute the
-      // server-authored operation directly and return a deterministic completion. This removes the
-      // worker LLM (and its quota/failover state) from the trusted-record path entirely.
-      const providerResult = providerIntent
-        ? await (deps.executeProviderIntent ?? executeTrustedProviderIntent)(providerIntent, { userSub, creds })
-        : undefined;
-      const result = providerResult
-        ? {
-          messages: [{ say: 'completion_result', text: providerResult.completion }],
-          apiMetrics: { totalCost: 0, totalTokens: 0 },
-          providerRecords: providerResult.providerRecords,
-          provider: 'deterministic-provider',
-          model: 'none',
-        }
-        : await deps.anyBotTaskController.processMessage(task.id, { text: assembledPrompt }, {
+      const result = await deps.anyBotTaskController.processMessage(task.id, { text: assembledPrompt }, {
           agenticMode,
           autoApprove: { 'use_mcp_tool': true },
           source: 'swarm-dispatch',
+          allowedTools: [...promptAuthority.allowedTools],
+          authorizedScopes: [...promptAuthority.scopes],
           byoLlmConnection, // caller's own endpoint drives inference when present
-          extraEnv: (userSub || Object.keys(creds).length)
-            ? { ...creds, ...(userSub ? { OSHAL_USER_SUB: userSub } : {}) }
-            : undefined,
-        });
+          // Connector tokens remain in executeProviderIntent's deterministic server-side broker.
+          // Passing OSHAL_CRED_* here would expose them to model-readable env/workspace files.
+          extraEnv: userSub ? { OSHAL_USER_SUB: userSub } : undefined,
+      });
 
       const durationMs = Date.now() - execStart;
       // Runtime accountability is structured out-of-band data from TaskController.
       // Request payload fields and assistant text never participate in this choice.
       const runtimeIdentity = result as { provider?: unknown; model?: unknown };
-      const actualProvider = normalizeRuntimeIdentity(runtimeIdentity.provider, 128) ?? deps.providerName;
-      const actualModel = normalizeRuntimeIdentity(runtimeIdentity.model, 256) ?? deps.modelName;
+      const enforcedRuntimeIdentity = configReconciliation.active
+        ?? deps.dispatchConfigRuntime?.getActiveProvider();
+      const actualProvider = normalizeRuntimeIdentity(runtimeIdentity.provider, 128)
+        ?? enforcedRuntimeIdentity?.provider
+        ?? deps.providerName;
+      const actualModel = normalizeRuntimeIdentity(runtimeIdentity.model, 256)
+        ?? enforcedRuntimeIdentity?.model
+        ?? deps.modelName;
+      if (carriedConfig && !byoLlmConnection
+        && !dispatchConfigMatchesActive(carriedConfig, {
+          provider: actualProvider,
+          model: actualModel,
+        })) {
+        throw new AuthoritativeDispatchConfigError(
+          'Execution reported a provider/model different from the authoritative dispatch record',
+        );
+      }
 
       // Extract response — the LATEST turn's output only. A reused session task (Jarvis's continuous
       // thread) accumulates every turn's messages, and processMessage returns the FULL list; joining
@@ -395,6 +507,9 @@ export function createBotNodeExecutionHandler(
         },
         model: actualModel,
         provider: actualProvider,
+        providerConfigSource,
+        providerConfigAction: configReconciliation.action,
+        providerConfigVersion: carriedConfig?.configVersion ?? null,
       };
       const providerFailure = detectProviderFailure(content);
       if (providerFailure) {
@@ -464,6 +579,15 @@ function readOptionalWorkspaceSource(
   const value = record[key];
   if (value === undefined) return undefined;
   if (typeof value !== 'string') throw new TypeError(`${key} must be a string`);
+  return value;
+}
+
+function optionalExactContextId(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || value.length === 0 || value.length > 512
+    || /[\u0000-\u001f\u007f-\u009f]/.test(value)) {
+    throw new TypeError(`${field} must be exact, non-empty, and control-free`);
+  }
   return value;
 }
 

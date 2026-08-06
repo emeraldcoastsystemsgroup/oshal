@@ -22,8 +22,14 @@ description: >-
   Your single assistant over everything OSHAL connects to. Ask in plain language — Jarvis routes
   it to the right specialist (email, jobs, smart home, cloud, social, presentations) and answers
   as one voice, or points you to the app that needs your screen first (finance or identity).
-version: 1.0.0
+version: 1.0.1
 status: active
+
+# ADR-118: preserve current interactive assistant behavior; operators can explicitly apply
+# viewer (GET-only) or deny while Jarvis's own specialist/tool policies remain authoritative.
+access:
+  supported: [deny, viewer, editor, admin]
+  defaultTier: editor
 
 # Calm, focused assistant skin.
 theme: midnight

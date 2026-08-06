@@ -6,6 +6,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pre-OSS: rebranded legacy "Kevin" agent identity/namespace to neutral OSHAL
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Moved the inline auto-approval expression to controllers/tool-approval-policy.js and called it here. No behaviour change — the extraction exists because this is the only gate between an injected prompt and shell execution on the unattended path, it was a bare one-liner with a misleading flag name (callers pass `execute_command`, this read `commandExecution`), and this file is at the size cap so the rule could not be documented in place. The policy module carries the explanation and tests/unit/tool-approval-policy.spec.ts pins it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: enforce request-scoped tool allowlists and fence tool/error output before it returns to the model loop.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: enforce exact operation scopes over request-start handler snapshots, remove model-readable GitLab credentials, and make completion side-effect free.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: revalidate captured handler generations immediately before provider and tool execution.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: bind MCP handler attestations to the exact request user, agent, task, tool allowlist, and operation scopes already authorized at dispatch.
  */
 
 /**
@@ -17,11 +21,18 @@ const { getClineSystemPrompt, getMinimalSystemPrompt, requiresFullPrompt } = req
 const ToolUseParser = require('../services/llm/ToolUseParser');
 const PromptTokenManager = require('../services/llm/PromptTokenManager');
 const logger = require('../utils/logger');
+const { normalizeAllowedTools, wrapUntrustedContent } = require('../utils/untrusted-content');
 // Token Chase (ADR-046) per-call capture lane. Dark by default (TOKEN_CHASE_CAPTURE unset =>
 // every entry point is a no-op and this call site is byte-identical to before). See
 // services/token-chase/TokenChaseCapture.js for the zero-impact contract.
 const { tokenChase } = require('../services/token-chase/TokenChaseCapture');
 const { shouldAutoApproveTool } = require('./tool-approval-policy');
+const {
+  authorizeCapability,
+  captureDispatchCapabilities,
+  assertDispatchCapabilitiesCurrent,
+  normalizeAuthorizedScopes,
+} = require('../utils/dispatch-capabilities');
 
 function normalizeRuntimeIdentity(value, maxLength) {
   if (typeof value !== 'string') return null;
@@ -37,7 +48,7 @@ function normalizeRuntimeIdentity(value, maxLength) {
  * plain text reply). It exists to decouple the "think -> act -> observe" control flow
  * from any single LLM backend, so the same loop works across Bedrock, Cline CLI, and
  * Claude Code providers while handling persona injection, swarm-roster awareness,
- * provider fallback, streaming/broadcast of progress, and GitLab auto-persistence.
+ * provider fallback and streaming/broadcast of progress.
  */
 class AgenticController {
   /**
@@ -115,6 +126,8 @@ class AgenticController {
    */
   async processAgenticTask(taskId, userMessage, conversationHistory = [], autoApprove = {}, options = {}) {
     logger.info(`Starting agentic task processing for task ${taskId}`);
+    const dispatchAllowedTools = normalizeAllowedTools(options.allowedTools);
+    const dispatchAuthorizedScopes = normalizeAuthorizedScopes(options.authorizedScopes);
 
     // Get task object to access workspace_dir
     const task = await this.taskController.getTask(taskId);
@@ -162,28 +175,17 @@ class AgenticController {
 
     // Get available tools list with parameter schemas
     // Use full tool names to avoid collisions (ToolRegistry alias system handles lookups)
-    const availableTools = this.tools.getAll().map(tool => {
-      return {
-        name: tool.name,  // Use full name to ensure uniqueness
-        description: tool.description,
-        inputSchema: tool.inputSchema || {
-          type: 'object',
-          properties: {},
-          required: []
-        },
-      };
-    });
+    const dispatchCapabilities = captureDispatchCapabilities(
+      this.tools, dispatchAllowedTools, dispatchAuthorizedScopes,
+    );
+    const availableTools = dispatchCapabilities.definitions;
 
     // Detect if this is a simple conversation or complex task
     const needsFullPrompt = requiresFullPrompt(userMessage);
     
     // Get system prompt - use minimal for simple messages, full for complex tasks
-    const gitlabToken = process.env.GITLAB_TOKEN || '';
     
     // DEBUG: Log token configuration without exposing token material.
-    logger.info(`🔑 GitLab Token Debug:`);
-    logger.info(`   - From env: ${process.env.GITLAB_TOKEN ? 'YES' : 'NO'}`);
-    logger.info(`   - Token length: ${gitlabToken ? gitlabToken.length : 0}`);
     
     const agentId = process.env.AGENT_ID || 'Agent';
     
@@ -206,7 +208,6 @@ class AgenticController {
           currentDateTime: new Date().toISOString(),
           taskDescription: userMessage,
           availableTools: availableTools,
-          gitlabToken: gitlabToken,
           agentId: agentId,
         })
       : getMinimalSystemPrompt({
@@ -333,21 +334,6 @@ class AgenticController {
 
     logger.info(`Using ${needsFullPrompt ? 'FULL' : 'MINIMAL'} system prompt for: "${userMessage.substring(0, 50)}..."`);
     
-    // DEBUG: Verify token is in the prompt
-    if (needsFullPrompt && gitlabToken) {
-      const tokenInPrompt = systemPrompt.includes(gitlabToken);
-      const tokenSectionExists = systemPrompt.includes('Your GitLab token:');
-      logger.info(`🔍 Token in Prompt Debug:`);
-      logger.info(`   - Token appears in prompt: ${tokenInPrompt ? 'YES ✅' : 'NO ❌'}`);
-      logger.info(`   - Token section exists: ${tokenSectionExists ? 'YES ✅' : 'NO ❌'}`);
-      
-      // Extract the GitLab section to verify
-      const gitlabSection = systemPrompt.match(/\*\*When using GitLab:\*\*[\s\S]{0,500}/);
-      if (gitlabSection) {
-        logger.info(`   - GitLab section preview:\n${gitlabSection[0].substring(0, 300)}`);
-      }
-    }
-
     try {
       while (!isComplete && turnCount < this.maxTurns) {
         turnCount++;
@@ -396,6 +382,9 @@ class AgenticController {
         // ⭐ SESSION_06 BEDROCK FALLBACK: If Bedrock fails (e.g. invalid model in local dev),
         //    fall back to Cline CLI so dashboard chat still works locally.
         let response;
+        // Recheck the exact request-start handler generation immediately before the provider
+        // receives its schemas. A revoked/replaced capability invalidates the whole request.
+        assertDispatchCapabilitiesCurrent(this.tools, dispatchCapabilities);
         // Open a Token Chase frame just before the call. No-op + null when the flag is off;
         // when on, this is a microsecond shallow snapshot and the durable write runs in the
         // background during the await below — zero added latency to the LLM call.
@@ -419,7 +408,9 @@ class AgenticController {
             source: options.source || task.source || 'agentic-controller',
             agentId: dynamicAgentId,
             swarmRoster, // ⭐ Live roster for personal-assistant {{SWARM_ROSTER}} injection
-            extraEnv: options.extraEnv, // per-request user scoping (OSHAL_USER_SUB) → CLI spawn + cwd file
+            extraEnv: options.extraEnv,
+            enforceToolBoundary: true,
+            authorizedScopes: options.authorizedScopes,
           });
         } catch (llmError) {
           // If Bedrock failed for dashboard chat AND cline-cli is available, fall back
@@ -440,6 +431,8 @@ class AgenticController {
               source: 'cline-fallback', // NOT 'dashboard' — needs -y for tool auto-approval
               agentId: dynamicAgentId,
               swarmRoster, // ⭐ Live roster for personal-assistant {{SWARM_ROSTER}} injection
+              enforceToolBoundary: true,
+              authorizedScopes: options.authorizedScopes,
             });
           } else {
             throw llmError; // Re-throw for non-recoverable errors
@@ -514,6 +507,20 @@ class AgenticController {
           const { name: toolName, input: toolInput, id: toolId } = toolUse;
           logger.info(`Tool requested: ${toolName}`);
 
+          const capability = authorizeCapability(dispatchCapabilities, toolName);
+          if (!capability.allowed) {
+            logger.warn(`Denied non-allowlisted tool request for task ${taskId}`);
+            history.push({ role: 'assistant', content: responseText });
+            history.push({
+              role: 'user',
+              content: wrapUntrustedContent('unauthorized-tool-request', {
+                requestedTool: toolName,
+                error: capability.error,
+              }),
+            });
+            continue;
+          }
+
           // Extract thinking text before tool use
           const thinkingText = ToolUseParser.extractThinking(responseText);
           
@@ -538,179 +545,25 @@ class AgenticController {
             }
           }
 
-          // Check if this is attempt_completion
+          // Completion is a protocol control, not an implicit shell/git capability.
           if (toolName === 'attempt_completion') {
-            logger.info(`Task completion attempted — result length: ${(toolInput.result || '').length} chars`);
-            
-            // WORKSPACE EMPTY GUARD: Reject completion if no deliverable files were written
-            if (task && task.workspace_dir) {
-              try {
-                const fs = require('fs');
-                const workspaceFiles = fs.readdirSync(task.workspace_dir).filter(f => !f.startsWith('.'));
-                if (workspaceFiles.length === 0) {
-                  logger.warn(`⚠️ EMPTY WORKSPACE GUARD: Task ${taskId} attempted completion with ZERO files in workspace ${task.workspace_dir}`);
-                  // Reject completion and send error back to LLM to force file writing
-                  const emptyGuardError = `COMPLETION REJECTED: Your workspace directory is EMPTY — you have not written any deliverable files yet. ` +
-                    `You MUST use write_to_file to create workspace deliverables before calling attempt_completion. ` +
-                    `Organize your work into multiple well-structured files (e.g., README.md, implementation code, scripts, analysis documents). ` +
-                    `Write each file with a separate write_to_file call. Do NOT call attempt_completion until you have created at least one deliverable file.`;
-                  history.push({
-                    role: 'assistant',
-                    content: responseText,
-                  });
-                  history.push({
-                    role: 'user',
-                    content: `[attempt_completion] Result:\n${emptyGuardError}`,
-                  });
-                  continue; // Skip completion, go back to LLM loop
-                }
-                logger.info(`✅ Workspace has ${workspaceFiles.length} files: ${workspaceFiles.join(', ')}`);
-              } catch (fsErr) {
-                logger.warn(`Could not check workspace dir: ${fsErr.message}`);
-              }
-            }
-            
-            // Auto-commit and push to GitLab before completing
-            try {
-              logger.info(`Auto-committing workspace to GitLab for task ${taskId}`);
-              
-              // Execute git commands
-              const gitAddCmd = { command: 'git add .', taskWorkspace: task.workspace_dir };
-              await this.tools.execute('execute_command', gitAddCmd);
-              
-              const gitCommitCmd = { command: `git commit -m "Completed task ${taskId}" || echo "Nothing to commit"`, taskWorkspace: task.workspace_dir };
-              await this.tools.execute('execute_command', gitCommitCmd);
-              
-              const gitPushCmd = { command: 'git push origin main || echo "Push failed"', taskWorkspace: task.workspace_dir };
-              const pushResult = await this.tools.execute('execute_command', gitPushCmd);
-              
-              logger.info(`GitLab push completed for task ${taskId}`);
-              
-              // Add GitLab URL to completion result
-              const gitlabUrl = task.gitlab_url || `https://gitlab.example.com/oshal/agent-workspaces/${taskId}`;
-              const enhancedResult = `${toolInput.result || responseText}\n\n📦 All work has been automatically saved to GitLab:\n${gitlabUrl}`;
-              
-              isComplete = true;
-              finalResult = {
-                success: true,
-                result: enhancedResult,
-                command: toolInput.command,
-                gitlabUrl: gitlabUrl,
-              };
-              
-              // Broadcast completion with GitLab URL as completion_result (not text)
-              // so cockpit UI renders it with proper completion styling
-              this.stream.broadcast(taskId, 'completion_result', {
-                text: enhancedResult,
+            const completionResult = toolInput.result || responseText;
+            isComplete = true;
+            finalResult = {
+              success: true,
+              result: completionResult,
+              command: toolInput.command,
+            };
+            this.stream.broadcast(taskId, 'completion_result', { text: completionResult });
+            if (this.taskController) {
+              await this.taskController.addMessage(taskId, {
+                type: 'say', say: 'completion_result', text: completionResult, ts: Date.now(),
               });
-              
-              // ⭐ PHASE_41 FIX: Save completion_result to messageStore so /api/process-ticket can extract it
-              if (this.taskController) {
-                const completionTimestamp = Date.now();
-                await this.taskController.addMessage(taskId, {
-                  type: 'say',
-                  say: 'completion_result',
-                  text: enhancedResult,
-                  ts: completionTimestamp,
-                });
-                logger.info(`📊 PHASE_41: Saved completion_result to messageStore (${enhancedResult.length} chars)`);
-              }
-              
-              // ⭐ ISSUE #008: Auto-write task summary to workspace/task-summaries/
-              try {
-                const fs = require('fs');
-                const path = require('path');
-                const summariesDir = path.join(task.workspace_dir || '/app/workspace', 'task-summaries');
-                if (!fs.existsSync(summariesDir)) {
-                  fs.mkdirSync(summariesDir, { recursive: true });
-                }
-                const agentId = process.env.BOT_ROLE || process.env.AGENT_ID || 'unknown-agent';
-                const endTime = new Date().toISOString();
-                const summaryContent = [
-                  `# Task Summary: ${taskId}`,
-                  '',
-                  `**Agent:** ${agentId}`,
-                  `**Completed:** ${endTime}`,
-                  `**Turns:** ${turnCount}`,
-                  `**Tokens:** ${apiMetrics.totalTokens}`,
-                  `**Cost:** $${apiMetrics.totalCost.toFixed(6)}`,
-                  '',
-                  '## Result',
-                  '',
-                  (toolInput.result || '').substring(0, 2000),
-                  '',
-                  '## Files in Workspace',
-                  '',
-                ].join('\n');
-                // List workspace files
-                let fileList = '';
-                try {
-                  const wsFiles = fs.readdirSync(task.workspace_dir).filter(f => f !== 'task-summaries' && !f.startsWith('.'));
-                  fileList = wsFiles.map(f => `- ${f}`).join('\n') || '- (none)';
-                } catch (e) { fileList = '- (could not list)'; }
-                const fullSummary = summaryContent + fileList + '\n';
-                const summaryPath = path.join(summariesDir, `${taskId}-summary.md`);
-                fs.writeFileSync(summaryPath, fullSummary);
-                logger.info(`📝 ISSUE_008: Wrote task summary to ${summaryPath}`);
-              } catch (summaryErr) {
-                logger.warn(`⚠️ ISSUE_008: Failed to write task summary: ${summaryErr.message}`);
-              }
-              
-            } catch (error) {
-              logger.error(`GitLab push failed: ${error.message}`);
-              // Still complete the task even if GitLab push fails
-              isComplete = true;
-              finalResult = {
-                success: true,
-                result: `${toolInput.result || responseText}\n\n⚠️ Note: GitLab push failed: ${error.message}`,
-                command: toolInput.command,
-              };
-              
-              this.stream.broadcast(taskId, 'completion_result', {
-                text: finalResult.result,
-              });
-              
-              // ⭐ PHASE_41 FIX: Save completion_result even on GitLab push failure
-              if (this.taskController) {
-                const completionTimestamp = Date.now();
-                await this.taskController.addMessage(taskId, {
-                  type: 'say',
-                  say: 'completion_result',
-                  text: finalResult.result,
-                  ts: completionTimestamp,
-                });
-                logger.info(`📊 PHASE_41: Saved completion_result to messageStore (${finalResult.result.length} chars, GitLab push failed)`);
-              }
             }
-            
             break;
           }
-
-          // Check if tool exists
-          if (!this.tools.has(toolName)) {
-            logger.error(`Tool not found: ${toolName}`);
-            
-            // Add error to history and continue
-            const errorMsg = `Error: Tool '${toolName}' not found`;
-            history.push({
-              role: 'assistant',
-              content: responseText,
-            });
-            history.push({
-              role: 'user',
-              content: errorMsg,
-            });
-
-            this.stream.broadcast(taskId, 'error', {
-              text: errorMsg,
-            });
-            
-            continue;
-          }
-
-          // Get tool metadata
-          const toolMetadata = this.tools.getMetadata(toolName);
-          const requiresApproval = toolMetadata.requiresApproval;
+          const toolSnapshot = capability.snapshot;
+          const requiresApproval = toolSnapshot.tool.requiresApproval === true;
 
           // Check if we should auto-approve. Policy (and the reason the flag name looks wrong)
           // lives in tool-approval-policy.js — read it before changing anything here.
@@ -767,6 +620,7 @@ class AgenticController {
           let toolResult;
           try {
             logger.info(`Executing tool: ${toolName}`);
+            assertDispatchCapabilitiesCurrent(this.tools, dispatchCapabilities);
             
             // Pass task workspace to tool execution
             // Include both parameter names for compatibility with different tools
@@ -776,9 +630,14 @@ class AgenticController {
               workspace_dir: task.workspace_dir // AWS diagrams expects this parameter name
             };
             
-            toolResult = await this.tools.execute(toolName, toolInputWithWorkspace, {
+            toolResult = await this.tools.executeSnapshot(toolSnapshot, toolInputWithWorkspace, {
               approved: shouldAutoApprove,
               taskWorkspace: task.workspace_dir,
+              userSub: options.extraEnv?.OSHAL_USER_SUB,
+              agentId: dynamicAgentId,
+              taskId,
+              allowedTools: options.allowedTools,
+              authorizedScopes: options.authorizedScopes,
               // Trusted request context; ToolRegistry re-sanitizes before handlers receive it.
               extraEnv: options.extraEnv,
             });
@@ -855,7 +714,7 @@ class AgenticController {
           
           history.push({
             role: 'user',
-            content: `Tool Result:\n${JSON.stringify(toolResult, null, 2)}${workspaceReminder}`,
+            content: `${wrapUntrustedContent(`tool-result:${toolName}`, toolResult)}${workspaceReminder}`,
           });
 
           // Broadcast API request finished (marks end of this turn)

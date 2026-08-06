@@ -9,7 +9,10 @@
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-065 Phase 3. Additive.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Derive connector-wide risk from executable semantics, expose it in audit results, and reject connector/metadata risk declarations so YAML cannot become a second policy authority.
  * -----------------------------------------------------------------------------
  * @module connectors/runtime/catalog-audit
  */
@@ -18,25 +21,61 @@ import { readdirSync } from 'fs';
 import { join } from 'path';
 import { loadConnectorSpec, validateSpec, type ConnectorSpec } from './spec';
 
+/** @description One structural or policy finding emitted by the connector catalog audit. */
 export interface AuditIssue {
   level: 'error' | 'warn';
   message: string;
 }
 
+/** @description The complete structural and derived-policy audit result for one connector. */
 export interface ConnectorAudit {
   provider: string;
   source?: string;
   pass: boolean;       // true when there are no errors (warns are allowed)
   issues: AuditIssue[];
+  derivedRiskLevel?: ConnectorRiskLevel;
 }
 
-/** Grade a single spec against the catalog checklist. */
+/** @description The conservative connector-wide risk shown in the catalog. */
+export type ConnectorRiskLevel = 'low' | 'medium' | 'high';
+
+/**
+ * @description Derive the connector-wide catalog risk from executable behavior. Any declared
+ * mutation makes the aggregate high risk; read-only OAuth2/basic connectors are medium because of
+ * credential reach; all other read-only connectors are low. Per-action risk remains declared and
+ * controls its own confirmation rail.
+ * @param spec - parsed connector definition whose resources and actions are authoritative
+ * @returns the deterministic connector-wide risk shown by audit and marketplace surfaces
+ */
+export function deriveConnectorRiskLevel(spec: ConnectorSpec): ConnectorRiskLevel {
+  const resources = Array.isArray(spec.resources) ? spec.resources : [];
+  const resourceMutation = resources.some((resource) => (
+    resource.method !== 'GET'
+      || resource.safety?.action === 'write'
+      || resource.safety?.action === 'destructive'
+  ));
+  if (resourceMutation || (Array.isArray(spec.actions) && spec.actions.length > 0)) return 'high';
+  if (spec.auth?.type === 'oauth2' || spec.auth?.type === 'basic') return 'medium';
+  return 'low';
+}
+
+/**
+ * @description Grade a single connector spec against the structural and derived-policy checklist.
+ * @param spec - parsed connector definition to audit
+ * @param source - optional source path included in the structured result
+ * @returns the connector audit, including its deterministic connector-wide risk
+ */
 export function auditSpec(spec: ConnectorSpec, source?: string): ConnectorAudit {
   const issues: AuditIssue[] = [];
   const err = (message: string) => issues.push({ level: 'error', message });
   const warn = (message: string) => issues.push({ level: 'warn', message });
+  const declaredRiskLocations = connectorRiskDeclarations(spec);
 
   try { validateSpec(spec); } catch (e) { err((e as Error).message); }
+
+  if (declaredRiskLocations.length > 0) {
+    err(`connector-wide risk is derived from actions/resources/auth; remove ${declaredRiskLocations.join(' and ')}`);
+  }
 
   if (spec.auth?.type === 'none') warn('auth is none — confirm this provider truly needs no credentials');
   if (!spec.rateLimit || !spec.rateLimit.perSecond) warn('no rate limit declared — the governor is disabled for this connector');
@@ -55,10 +94,27 @@ export function auditSpec(spec: ConnectorSpec, source?: string): ConnectorAudit 
   for (const [tool, n] of toolNames) if (n > 1) err(`duplicate tool name '${tool}' (${n} resources)`);
 
   const pass = !issues.some((i) => i.level === 'error');
-  return { provider: spec.provider, source, pass, issues };
+  return { provider: spec.provider, source, pass, issues, derivedRiskLevel: deriveConnectorRiskLevel(spec) };
 }
 
-/** Load + audit every connector.yaml in a directory (default swarm-apps/connectors). */
+function connectorRiskDeclarations(spec: ConnectorSpec): string[] {
+  const raw = spec as ConnectorSpec & {
+    riskLevel?: unknown;
+    metadata?: ConnectorSpec['metadata'] & { riskLevel?: unknown };
+  };
+  const locations: string[] = [];
+  if (Object.prototype.hasOwnProperty.call(raw, 'riskLevel')) locations.push('riskLevel');
+  if (raw.metadata && Object.prototype.hasOwnProperty.call(raw.metadata, 'riskLevel')) {
+    locations.push('metadata.riskLevel');
+  }
+  return locations;
+}
+
+/**
+ * @description Load and audit every YAML connector definition in a directory.
+ * @param dir - catalog directory; defaults to the tracked connector catalog
+ * @returns one structured audit per connector file
+ */
 export function auditConnectorCatalog(dir = join(process.cwd(), 'swarm-apps/connectors')): ConnectorAudit[] {
   let files: string[] = [];
   try { files = readdirSync(dir).filter((f) => f.endsWith('.yaml') || f.endsWith('.yml')); } catch { return []; }
@@ -72,7 +128,11 @@ export function auditConnectorCatalog(dir = join(process.cwd(), 'swarm-apps/conn
   });
 }
 
-/** A one-line-per-connector summary, e.g. for a CI log. */
+/**
+ * @description Format structured connector audits as stable one-line CI summaries.
+ * @param audits - connector audit results to format
+ * @returns newline-delimited PASS/FAIL summaries
+ */
 export function formatAudit(audits: ConnectorAudit[]): string {
   return audits
     .map((a) => {

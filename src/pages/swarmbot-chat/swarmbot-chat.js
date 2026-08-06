@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Retired the Presentron studio popup (deleted upstream); the toolbar presentation button (#openAiOfficeBtn) now opens the office-suite AI Office surface. Dropped the orphaned openSharedRuntimeConfig helper (pointed at the removed Presentron config section).
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Wired the surface-bridge producer: live assistant replies run through relayReply (parses the reply's oshal:surface fence → posts validated bot→surface ops to the shell relay; the bubble shows the fence-stripped text), history replay runs stripDirectives (strip-only, no re-emit), and a relayed inbound surface→bot op (select/field_change/submit/event) is turned into a chat message and dispatched to the bot — closing the chat↔surface loop. Extracted dispatchMessage from sendMessage so the composer and inbound selections share one send path.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Import the surface-bridge producer from its new SHARED home (/shared/ui/js/, next to surface-bridge-client.js) — it moved out of this pages slice so an app surface (workflow-studio talk-to-build) can share it without a pages→pages cross-slice import. No behaviour change here; default postTarget stays the chat-rail (parent/shell-relay) path.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: render the server's honest ai_disabled state in chat instead of leaving an unhandled send error or noop-looking reply.
  */
 
 import { initializeSharedRagWorkspacePopup } from '/chat-assets/chat-rag-workspace-popup.mjs';
@@ -390,17 +391,24 @@ class SwarmBotWorkspaceApp {
     this.setTyping(true);
     this.setStatus(`Sending message through ${this.getDisplayName()}...`, 'info');
 
-    const payload = await requestJson('/api/send-message', {
-      method: 'POST',
-      body: JSON.stringify({
-        taskId: this.state.taskId,
-        text: body,
-        agenticMode: true,
-        source: 'swarmbot-chat',
-        agentId: this.state.agentId,
-      }),
-    });
-    await this.syncTaskContextFromSendResponse(payload);
+    try {
+      const payload = await requestJson('/api/send-message', {
+        method: 'POST',
+        body: JSON.stringify({
+          taskId: this.state.taskId,
+          text: body,
+          agenticMode: true,
+          source: 'swarmbot-chat',
+          agentId: this.state.agentId,
+        }),
+      });
+      await this.syncTaskContextFromSendResponse(payload);
+    } catch (error) {
+      const message = toErrorMessage(error);
+      this.setTyping(false);
+      appendMessage(this.elements.messageArea, 'assistant', 'AI unavailable', message);
+      this.setStatus(message, 'error');
+    }
   }
 
   openConfigModal() {
@@ -964,7 +972,7 @@ async function requestJson(url, options = {}) {
   });
   const payload = await parseResponseJson(response);
   if (!response.ok) {
-    const errorMessage = readString(payload?.error) || `${response.status} ${response.statusText}`;
+    const errorMessage = readString(payload?.message || payload?.error) || `${response.status} ${response.statusText}`;
     logger.warn('Swarmbot request failed', {
       url,
       method,

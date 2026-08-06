@@ -26,6 +26,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Track B S6: Pass DynamicToolExecutorRegistry through to AppContext
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Switched internal ticket/workspace persistence to resilient localhost fallbacks so MOCK_OIDC development remains usable without Postgres
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 swarm operational graph: start the ticket→graph ingestion subscription (shared ticketEvents bus → tenant graph). Engine-gated — a clean no-op per event when ARANGO_URL is unset; fire-and-forget, never back-pressures the ticket lifecycle.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable ticket ownership into swarm lifecycle memory persistence.
  */
 
 import {
@@ -169,6 +170,7 @@ export function createAppContext(): CompositionAppContext {
   );
   const verification = createVerificationComponents(pool, logger);
   const swarm = createSwarmExtensionBindings(pool, providerResolver.getProvider, { taskStore, messageStore });
+  swarm.swarmTicketProcessingService?.setTicketService(ticketService);
 
   initializeToolRegistry(
     pool,

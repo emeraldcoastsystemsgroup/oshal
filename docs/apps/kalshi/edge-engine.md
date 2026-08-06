@@ -1,10 +1,11 @@
 # Kalshi edge engine — as built
 
 `?app=kalshi` (also pinned in the default cockpit ribbon's **Money** group as "Kalshi Edge").
-Read-only in this phase: no Kalshi account is required to browse the edge scan, because Kalshi's
-market data — order books, trade tape, candlesticks, settled markets with results — is fully
-public. Only portfolio/order endpoints need credentials, and those aren't wired up yet (see
-Phase 2 below).
+No Kalshi account is required to browse the read-only edge scan, because Kalshi's market data —
+order books, trade tape, candlesticks, settled markets with results — is public. The authenticated
+portfolio and order endpoints are built and require the user's connected Kalshi account. Live
+orders remain disabled unless the deployment explicitly enables them; see the guarded operation
+contract below.
 
 ## What it does
 
@@ -36,7 +37,7 @@ shows you.** The first calibration run looked like a strong edge and was NOT —
 | Surface | `kalshi/tools/kalshi.html` in the store package (carved with the routes) | The ranked-hand table: strength badge, side, price, calibrated true probability, net edge, stake, confidence bar, risk flags, time-to-close. Filterable by category/strength/text. |
 | App manifest | `kalshi/oshal-app.yaml` in the store package (was `swarm-apps/kalshi.yaml` before the carve) | Registers `?app=kalshi` (own ribbon, midnight theme) per the eats/trading pattern. |
 | Default-ribbon pin | [config-seed/profiles/oshal-framework.json](../../../config-seed/profiles/oshal-framework.json) | `tool-kalshi-home` in the `Money` group, so the tile is visible on plain `/cockpit/` without `?app=`. |
-| Connector card | [connectors-routes.ts](../../../src/app/routes/connectors-routes.ts) / [connector-account-lookup.ts](../../../src/app/routes/connector-account-lookup.ts) | Two-value paste on `/utilities`: API Key ID + the downloaded RSA private-key PEM, stored `keyId:PEM`. Validated by RSA-PSS-signing a real `GET /portfolio/balance` call (there is no bearer token to check against — every Kalshi request is signed). Broker key `OSHAL_CRED_KALSHI`. |
+| Connector card | [connectors-routes.ts](../../../src/app/routes/connectors-routes.ts) / [connector-account-lookup.ts](../../../src/app/routes/connector-account-lookup.ts) | Two-value paste on `/utilities`: API Key ID + the downloaded RSA private-key PEM, stored `keyId:PEM`. Validated by RSA-PSS-signing a real `GET /portfolio/balance` call (there is no bearer token to check against — every Kalshi request is signed). The fixed server operation resolves that secret only for the authenticated subject and consumes it inside the server adapter. |
 | Scripts | [oshal-kalshi-calibration.ts](../../../scripts/oshal-kalshi-calibration.ts) / [oshal-kalshi-scan.ts](../../../scripts/oshal-kalshi-scan.ts) | Run the calibration study (writes `config-seed/kalshi-calibration.json` + a dated evidence doc) and the live scan (writes a dated snapshot for later grading against settlements). |
 | Tests | [kalshi-edge-engine.spec.ts](../../../tests/unit/kalshi-edge-engine.spec.ts) | 9 unit specs pinning the fee ceiling/multiplier, calibration shrinkage (incl. the no-history-⇒-price-back case), Kelly sizing, risk-flag discounts, event dedup. |
 
@@ -54,7 +55,12 @@ The flat `/markets` feed is >99% auto-generated multivariate parlay legs with em
 the calibration study and the scan walk/filter the feed rather than paging it blind
 (`listMarketsFiltered` / per-series `listSeries` discovery in the public client).
 
-## Phase 2 (BUILT): portfolio + confirm-gated orders
+## Authenticated portfolio + confirm-gated orders (built)
+
+Connecting a Kalshi key proves that the server can sign requests for that account; it does not
+authorize a model or unattended local CLI to receive or use the key. Portfolio reads and order
+actions are fixed, authenticated server operations. The `keyId:PEM` value must not enter a model
+prompt, bot request, CLI environment, or task workspace.
 
 Connect an account on `/utilities` (kalshi.com → Settings → API keys; a paper account lives at
 demo.kalshi.co) and the surface gains an account strip (balance, open positions, resting orders

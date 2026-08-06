@@ -35,6 +35,7 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Wired SwarmMetricsCollector into all processOneTicket exit paths — recordTicketMetrics now called on every ticket completion/escalation/planning-only finish
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Session 19: Imported enforceHandoverGate for handover enforcement hardening — gate checks now available on multi-round phase transitions
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
+ * 33 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: propagate the durable TicketService authority to lifecycle memory persistence.
  */
 
 import { randomUUID } from 'crypto';
@@ -260,6 +261,7 @@ export class SwarmTicketProcessingService {
    */
   setTicketService(service: TicketService): void {
     this.ticketService = service;
+    this.executionLifecycleService.setTicketService(service);
     logger.info('TicketService wired into SwarmTicketProcessingService');
   }
 

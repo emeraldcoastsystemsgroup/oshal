@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One shared resolver for the SWARM's own provider credentials. Extracted from cline-runtime-config-sync-service's private buildCredentialBag so features stop inventing their own env-var reads.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: resolve Codex OAuth only from the live vendor auth source and fail closed when it is absent; never revive a static config-seed token copy.
  */
 /**
  * @description The swarm's own provider credentials — one source of truth.
@@ -99,6 +100,12 @@ export function resolveGlobalConfigPath(): string {
  * @returns {string | null} the access token, or null
  */
 export function extractOpenAiCodexAccessToken(envelope: Record<string, unknown>): string | null {
+  const direct = (envelope.access_token ?? envelope.accessToken) as string | undefined;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  const rootTokens = envelope.tokens as Record<string, unknown> | undefined;
+  const rootNested = rootTokens?.access_token as string | undefined;
+  if (typeof rootNested === 'string' && rootNested.trim()) return rootNested.trim();
+
   for (const key of ['openAiCodexOauthCredentials', 'openai-codex-oauth-credentials']) {
     const blob = envelope[key];
     let parsed: Record<string, unknown> | null = null;
@@ -126,11 +133,22 @@ export function extractOpenAiCodexAccessToken(envelope: Record<string, unknown>)
 }
 
 /**
+ * @description Reports whether the live Codex vendor auth source contains usable OAuth material.
+ * Static config-seed copies are deliberately ignored because they do not rotate and can resurrect
+ * a revoked or expired platform credential.
+ * @returns True only for a readable live auth.json with an access token
+ */
+export function hasLiveCodexAuth(): boolean {
+  const liveAuthPath = resolveCodexAuthSourcePath();
+  return !!liveAuthPath && !!extractOpenAiCodexAccessToken(readJsonObject(liveAuthPath));
+}
+
+/**
  * @description Resolve the swarm's own credential for a provider.
  *
- * Order: `global-config.json` → `secrets.json` → (for openai) the Codex OAuth access token. Env vars
- * are consulted **last and only as an operator override**, never as the primary path — so a
- * credential the operator never configured cannot silently become the one in use.
+ * Named hosted-provider keys use global config/secret settings. Codex OAuth is different: it is
+ * accepted only from the live vendor auth source, with an explicit environment API key as the
+ * non-OAuth fallback. Static config-seed OAuth copies are never executable credentials.
  *
  * @param {SwarmCredentialProvider} provider which vendor
  * @returns {string} the credential, or '' when the swarm holds none
@@ -154,10 +172,9 @@ export function getSwarmApiKey(provider: SwarmCredentialProvider): string {
         || pick(secrets, ['openAiApiKey', 'openAiNativeApiKey']);
       if (named) return named;
 
-      // The swarm's OpenAI identity is the Codex ChatGPT login. Read the LIVE source FIRST — the
-      // codex harness rotates the token there and (since the token-stranding fix) writes it back.
-      // The secrets.json copy is a seed and is never rotated, so preferring it would pin us to an
-      // expired token even while codex auth is healthy.
+      // The swarm's Codex identity is the live vendor auth source. The harness rotates the token
+      // there and writes it back. A config-seed copy is neither live nor revocation-aware and is
+      // therefore never accepted as a runtime fallback.
       const liveAuthPath = resolveCodexAuthSourcePath();
       if (liveAuthPath) {
         const live = readJsonObject(liveAuthPath);
@@ -166,11 +183,6 @@ export function getSwarmApiKey(provider: SwarmCredentialProvider): string {
         if (fromLive) return fromLive;
       }
 
-      const seeded = extractOpenAiCodexAccessToken(secrets) || extractOpenAiCodexAccessToken(config);
-      if (seeded) {
-        logger.warn('using the SEEDED codex credential (config-seed) — the live ~/.codex/auth.json was unreadable; this token is not rotated and may be expired');
-        return seeded;
-      }
       return (process.env.OPENAI_API_KEY || '').trim();
     }
     case 'google':

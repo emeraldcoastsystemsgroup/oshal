@@ -7,10 +7,13 @@
  *                     |                           | Uses `claude -p --output-format json` for non-interactive calls
  *                     |                           | Auth handled via ANTHROPIC_API_KEY or Claude Code OAuth
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | config.extraEnv — per-provider env for the spawned CLI. Built for the world classify path: MAX_THINKING_TOKENS=0 there cut one measured 8-item haiku classify from 39.3s / 4,277 output tokens to 5.1s / 414 (the classification was in the FINAL 350 tokens all along; the rest was interleaved thinking a batch-JSON task doesn't need).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: fail closed before command construction, credential environment access, or unattended Claude Code spawn pending an audited brokered sandbox.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Consume the dependency-free unattended-provider policy without importing the harness runtime contract.
  */
 
 import { spawn } from 'child_process';
 import { createChildLogger } from '@/shared/logger';
+import { assertAuditedAutonomousHarness } from './unattended-provider-policy';
 
 const logger = createChildLogger({ module: 'claude-code-cli-provider' });
 
@@ -82,6 +85,7 @@ export class ClaudeCodeCliProvider {
    * @returns Response text and optional metadata
    */
   async complete(prompt: string, systemPrompt?: string): Promise<ClaudeCodeCliResponse> {
+    assertAuditedAutonomousHarness('claude-code');
     return this.exec(prompt, systemPrompt);
   }
 
@@ -89,6 +93,7 @@ export class ClaudeCodeCliProvider {
    * @description Low-level execution of `claude -p --output-format json`.
    */
   private exec(prompt: string, systemPrompt?: string): Promise<ClaudeCodeCliResponse> {
+    assertAuditedAutonomousHarness('claude-code');
     return new Promise((resolve, reject) => {
       // Pipe the prompt via stdin to avoid shell escaping issues on Windows.
       // Build the command as a string so --tools "" is preserved correctly on Windows cmd.exe.

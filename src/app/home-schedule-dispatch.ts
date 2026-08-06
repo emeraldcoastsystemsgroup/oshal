@@ -2,7 +2,7 @@
  * Home schedule dispatch — the home-control branch of the shared scheduler.
  *
  * When a smart-home schedule fires, the system has NO user session, so this module
- * (a) brokers the schedule owner's SmartThings token, (b) dispatches the saved
+ * (a) establishes the schedule owner's exact request identity, (b) dispatches the saved
  * prompt to the home-bot via the fast loop (the user chose bot-LLM execution), and
  * (c) logs a `home-control` ticket owned by that user — so the home Tickets queue
  * becomes their smart-home activity history. Solar (sunrise/sunset) schedules also
@@ -18,6 +18,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — home-control dispatch (broker token → home-bot fast loop → log home-control ticket), solar re-arm, and the per-user daily solar replanner. ScheduleService handle injected to avoid a cycle with schedule-runtime.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Scoped the per-user home action (fireHomeAction) to the OWNER's request identity, overriding the schedule-runtime SYSTEM wrap for that branch — the owner's connector-token read + home-control ticket write are the owner's own rows, exactly as the interactive /chat path runs. replanSolar stays SYSTEM (cross-user sweep). Deny-by-default safe either way.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove SmartThings credentials from the model dispatch; owner-bound home tools must resolve credentials inside their audited server-side operation boundary.
  *
  * @module home-schedule-dispatch
  */
@@ -26,7 +27,6 @@ import type { AppContext } from './composition-root';
 import type { ScheduleRecord, ScheduleDispatchResult, ScheduleService } from '@/features/scheduling';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
-import { resolveBotCreds } from './routes/connector-token-broker';
 import { nextSunEvent, type SunEvent } from '@/shared/utils/sun-times';
 import { createChildLogger } from '@/shared/logger';
 import { executeBotOrInline } from './routes/inline-bot-execution';
@@ -67,7 +67,7 @@ export async function dispatchHomeSchedule(ctx: AppContext, schedule: ScheduleRe
   return fireHomeAction(ctx, schedule);
 }
 
-/** Broker the owner's token, run the saved prompt on the home-bot, log a ticket, re-arm solar. */
+/** Run the saved prompt under the owner identity, log a ticket, and re-arm solar. */
 async function fireHomeAction(ctx: AppContext, schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
   const td = schedule.taskData as Record<string, unknown>;
   const userSub = String(td.userSub || '');
@@ -78,17 +78,16 @@ async function fireHomeAction(ctx: AppContext, schedule: ScheduleRecord): Promis
 
   // Per-user home action: run under the OWNER's request identity, mirroring the interactive path
   // (a user triggering the same action via /chat runs under their own request identity). Scopes the
-  // owner's connector-token read + the home-control ticket write to the owner, and stays visible
+    // owner-bound server operations + the home-control ticket write to the owner, and stays visible
   // under OSHAL_DB_GUC_STRICT=deny (the schedule-runtime SYSTEM wrap around this call is overridden
   // by this nested owner identity for the home branch only).
   return runWithRequestIdentity({ sub: userSub, isOperator: false }, async (): Promise<ScheduleDispatchResult> => {
     let success = true;
     let error: string | undefined;
     try {
-      const creds = await resolveBotCreds(ctx.pool, userSub, ['smartthings']);
       await executeBotOrInline(ctx, botClient, HOME_BOT_AGENT_ID, {
         text: prompt, taskId, workspaceFolderId: `home-${userSub}`, agentId: HOME_BOT_AGENT_ID,
-        agenticMode: true, direct: true, userSub, creds,
+        agenticMode: true, direct: true, userSub,
       });
     } catch (e) { success = false; error = (e as Error).message; }
 

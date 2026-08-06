@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Cline default timeout 600000→3600000 (60-min ceiling, operator idle-timeout directive 2026-07-24): batch output can't do idle semantics, but the duration bound must not kill long actively-working runs. CLINE_TIMEOUT_MS overrides.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 push-down seam: the boot-resolved provider/model are now MUTABLE — buildLlmStack closes getCurrentProvider over a `let`, and the runtime exposes getActiveProvider/setActiveProvider. setActiveProvider validates against the built provider map (unknown/unavailable → UnknownBotNodeProviderError, no switch), updates the TaskController toggle, and overlays FORCE_LLM_PROVIDER/FORCE_LLM_MODEL(+CODEX_MODEL/CLAUDE_CODE_MODEL) via the SAME applyPulledBotConfigToEnv the boot pull uses, so every downstream env resolver agrees. The execution handler's cost-attribution fallbacks read the LIVE values through property getters. In-flight executions keep their already-selected provider (same semantics as any-bot).
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING: pass the mutable provider seam (getActiveProvider/setActiveProvider) into the execution handler as dispatchConfigRuntime, so a dispatch carrying an authoritative provider/model/configVersion is reconciled against the active provider before executing (bot self-corrects on drift). Additive — the seam already existed; this just hands it to the handler.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable provenance-aware swarm memory and the persisted enabled-tool resolver into bot-node prompt containment.
  */
 
 /**
@@ -29,16 +30,19 @@ import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
 import type { MeshEnvelope } from '@/features/agent-management';
-import { PersonaLayerStore } from '@/features/agent-management';
+import { PersonaLayerStore, SwarmMemoryService } from '@/features/agent-management';
+import { RagService } from '@/features/rag';
 import { RALFHandoverManager, type EnvelopeExecutionResult } from '@/features/swarm-orchestration';
 import { SwarmBotRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
 import { AgentProfileRepository } from '@/entities/agent';
+import { AgentToolRepository } from '@/entities/tool';
 import { WorkItemRepository } from '@/entities/work-item';
 import { TicketService, PostgresTicketStore } from '@/features/ticketing';
 import { CostTrackingService } from '@/features/operational-intelligence';
 import { createBotNodeExecutionHandler } from './bot-node-execution-handler';
 import { applyPulledBotConfigToEnv, runBootConfigBootstrap } from './bot-node-config-bootstrap';
 import { UnknownBotNodeProviderError, type ActiveBotNodeProvider } from './bot-node-llm-provider-route';
+import { createPromptAuthorizationResolver } from './prompt-authorization-resolver';
 
 const logger = createChildLogger({ module: 'bot-node-runtime' });
 
@@ -92,7 +96,9 @@ export async function createBotNodeRuntime(): Promise<BotNodeRuntime> {
   const pool = await connectPool();
 
   const agentProfileRepository = pool ? new AgentProfileRepository(pool) : undefined;
+  const agentToolRepository = pool ? new AgentToolRepository(pool) : undefined;
   const personaLayerStore = pool ? new PersonaLayerStore(pool) : undefined;
+  const swarmMemoryService = new SwarmMemoryService(new RagService(), pool ?? undefined);
   const workItemRepository = pool ? new WorkItemRepository(pool) : undefined;
   const costTrackingService = new CostTrackingService(pool);
   const ticketStore = pool ? new PostgresTicketStore(pool) : undefined;
@@ -112,7 +118,9 @@ export async function createBotNodeRuntime(): Promise<BotNodeRuntime> {
     anyBotTaskController: taskController,
     agentProfileRepository,
     personaLayerStore,
+    swarmMemoryService,
     handoverManager: new RALFHandoverManager(),
+    resolvePromptAuthorization: createPromptAuthorizationResolver(agentToolRepository),
     recordCost: (event: Parameters<typeof costTrackingService.recordCost>[0]) => costTrackingService.recordCost(event),
     ticketService,
     // ADR-034 gap-b push-on-dispatch (bot half): the live provider seam so the handler can

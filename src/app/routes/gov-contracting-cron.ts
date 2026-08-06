@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 capture ingestion: each promoted lead the draft-enqueue seam processes is mirrored into the shared tenant graph (opportunity ↔ agency ↔ NAICS + the tracking ticket edge) via the graph feature's ingestion service. Fire-and-forget and engine-gated — a clean no-op without ARANGO_URL, never blocks or fails the cron.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Ran the gov-contracting cron tick under runWithSystemIdentity — a cross-owner background sweep over per-user opportunity/ticket rows; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Resolve exact OIDC subjects through bound digest directories, enumerate canonical markers or unambiguous legacy entries, and reject linked/escaped CRM databases, SQLite sidecars, capture folders, and economy files before use.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: run the app-owned Python scan with an explicit runtime/SAM environment and owner-bound paths instead of inheriting controller, database, connector, and provider credentials.
  */
 
 /**
@@ -66,6 +67,40 @@ interface GovContractingUserStore extends ExactSubjectStoreDirectory {
 }
 
 type SqliteDatabase = InstanceType<typeof Database>;
+export interface GovContractingScanPaths {
+  CRM_DB: string;
+  CRM_CAPTURE_DIR: string;
+  CRM_ECON_FILE: string;
+}
+
+const GOVCON_PROCESS_ENV_KEYS = [
+  'PATH', 'Path', 'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE',
+  'SAM_API_KEY', 'GOVCON_PROMOTE_MIN',
+] as const;
+
+/** Build the scan child's least-privilege environment for one already validated owner store. */
+export function buildGovContractingProcessEnv(
+  userSub: string,
+  paths: GovContractingScanPaths,
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of GOVCON_PROCESS_ENV_KEYS) {
+    const value = parent[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return {
+    ...env,
+    PYTHONNOUSERSITE: '1',
+    OSHAL_USER_SUB: userSub,
+    CRM_DB: paths.CRM_DB,
+    CRM_CAPTURE_DIR: paths.CRM_CAPTURE_DIR,
+    CRM_ECON_FILE: paths.CRM_ECON_FILE,
+  };
+}
 
 /** Return every exact owner store with a verified existing CRM database. */
 function listStoreUsers(): GovContractingUserStore[] {
@@ -81,7 +116,7 @@ function resolveUserStore(userSub: string): GovContractingUserStore | null {
 }
 
 /** Prepare link-free writable scan paths beneath one already verified owner directory. */
-function scanPaths(store: GovContractingUserStore): Record<string, string> {
+function scanPaths(store: GovContractingUserStore): GovContractingScanPaths {
   const capture = ensureLinkFreeStoreSubdirectory(store.subjectDir, 'capture');
   const opportunities = ensureLinkFreeStoreSubdirectory(capture, 'opportunities');
   assertLinkFreeSqliteDatabase(store.subjectDir, 'crm.db');
@@ -112,7 +147,7 @@ function runScan(ctx: AppContext, store: GovContractingUserStore): void {
   }
   const proc = spawn(PYTHON, ['scan.py', '--quiet', '--no-econ'], {
     cwd: ENGINE_DIR,
-    env: { ...process.env, OSHAL_USER_SUB: store.subject, ...scanPaths(rebound) },
+    env: buildGovContractingProcessEnv(store.subject, scanPaths(rebound)),
     stdio: 'ignore',
     detached: false,
   });

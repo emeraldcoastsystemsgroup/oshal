@@ -247,10 +247,11 @@ export function trustedServiceUserHeaders(userSub: string): Record<string, strin
  * @description Middleware wrapper that allows an internal service call carrying a valid
  * `X-Service-Secret` header (matching SWARM_SERVICE_SECRET, constant-time compared) to pass,
  * and otherwise delegates to `fallback` (normally the OIDC `requiresAuth`). This is how internal
- * bots authenticate to the controller (e.g. POST /api/tools/register) without an OIDC session —
- * the same session-OR-shared-secret pattern used for remote clients. External callers, having no
- * secret, still go through the normal auth wall. No secret configured => always falls through to
- * `fallback` (fail-safe: the bypass simply doesn't exist).
+ * bots authenticate to reviewed controller bootstrap/read protocols without an OIDC session —
+ * the same session-OR-shared-secret pattern used for remote clients. Process-global mutation
+ * surfaces still need their own identity/ownership authorization after this authentication step.
+ * External callers, having no secret, still go through the normal auth wall. No secret configured
+ * => always falls through to `fallback` (fail-safe: the bypass simply doesn't exist).
  */
 export function serviceSecretOr(fallback: RequestHandler): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {

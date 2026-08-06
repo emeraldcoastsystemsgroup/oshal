@@ -8,6 +8,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bot-owned SCENES: scene-save/scene-run/scene-del/myscenes verbs over scenes.json. SmartThings can't create vendor scenes via API, so the bot owns its own — a named step list ([{device:<canonical key>,cmd:on|off|set,...}]) replayed through the control commands; steps reference devices by index key (hub-agnostic, survives id churn). Surfaced cheaply at GET /api/home/scenes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Read SmartThings PATs through the shared v2/k2/legacy connector-token codec instead of a private legacy-only decryptor.
  *
  *   node scripts/oshal-smartthings.js                      # JSON digest (devices+state, scenes)
  *   node scripts/oshal-smartthings.js index                # build+persist the deduped device index (store)
@@ -27,11 +28,11 @@
  * Exit 2 = no SmartThings connection (or ambiguous — connect at /utilities / name a label).
  */
 'use strict';
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const { resolveExactUserSubject } = require('./lib/exact-user-subject');
+const { decryptToken } = require('./lib/connector-token-crypto');
 
 const API = 'https://api.smartthings.com/v1';
 
@@ -93,14 +94,6 @@ function resolveProvidedToken() {
   return process.env.OSHAL_CRED_SMARTTHINGS || undefined;
 }
 
-function key() { return crypto.createHash('sha256').update(process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET is required - the hardcoded dev-key fallback was removed (docs/security/SECURITY-HARDENING.md 3.1/9); a well-known key is no key at all'); })()).digest(); }
-function decrypt(blob) {
-  const [iv, tag, enc] = String(blob).split(':');
-  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64'));
-  d.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
-}
-
 /** The connection the bot/user named: a label ("lake house"), an account email, or a
  *  connection id. The home-bot tools set these from the user's request. */
 function resolveSelector() {
@@ -141,17 +134,17 @@ async function tokenFromDb(pool, sel) {
   const named = !!(sel.label || sel.email || sel.connectionId);
   if (!userSub) {
     // No identity: auto-pick only when exactly one connection exists (single-operator).
-    const all = (await pool.query(`SELECT access_token, label FROM oshal_connections WHERE provider='smartthings' ORDER BY updated_at DESC`)).rows;
+    const all = (await pool.query(`SELECT user_sub, access_token, label FROM oshal_connections WHERE provider='smartthings' ORDER BY updated_at DESC`)).rows;
     if (all.length > 1 && !named) { console.error(`Refusing to guess: ${all.length} SmartThings connections exist. Set OSHAL_USER_SUB or a connection label.`); process.exit(2); }
     if (!all[0]) { console.error('No SmartThings connection found. Connect at /utilities first.'); process.exit(2); }
-    return decrypt(all[0].access_token);
+    return decryptToken(pool, all[0].user_sub, all[0].access_token);
   }
   const { where, params } = accessibleWhere(userSub);
   let sql = where;
   if (sel.connectionId) { params.push(sel.connectionId); sql += ` AND connection_id=$${params.length}`; }
   else if (sel.label) { params.push(sel.label); sql += ` AND lower(label)=lower($${params.length})`; }
   else if (sel.email) { params.push(sel.email); sql += ` AND lower(account_email)=lower($${params.length})`; }
-  const rows = (await pool.query(`SELECT access_token, label, account_email FROM oshal_connections WHERE ${sql} ORDER BY is_default DESC, updated_at DESC`, params)).rows;
+  const rows = (await pool.query(`SELECT user_sub, access_token, label, account_email FROM oshal_connections WHERE ${sql} ORDER BY is_default DESC, updated_at DESC`, params)).rows;
   if (!rows.length) {
     console.error(named ? `No SmartThings connection matches that account for user ${userSub}.`
       : `No SmartThings connection for user ${userSub}. Connect at /utilities first.`);
@@ -161,7 +154,7 @@ async function tokenFromDb(pool, sel) {
   // is_default one, else the most-recent). Never errors on "multiple" — the bot may still
   // call `accounts` and ask, but the system always has a working default (backwards-compatible
   // with the single-account era). Rows are already ordered is_default DESC, updated_at DESC.
-  return decrypt(rows[0].access_token);
+  return decryptToken(pool, rows[0].user_sub, rows[0].access_token);
 }
 
 /** Authorized SmartThings API call → parsed JSON (throws on non-2xx with a short body). */

@@ -21,8 +21,8 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** one dated drill records correct transitions and audit fields for all four legs, with no restart, privilege widening, or unapproved mutation. See [ADR-119](adr/119-autonomous-health-ticket-processing.md).
 
 ### Strategy Studio and Bot Forge conversational parity
-- **Remaining:** run a real Studio design/refine/apply/revert cycle; add edit-in-place for an existing Forge pack if commissioned; reconcile the `codex-packer`/`self-healing-bot` agent-name drift.
-- **Done when:** two refinements update one strategy row through a live LLM session, Forge re-emits the same pack rather than a duplicate, and registry/DB integrity reports no unexplained name mismatch.
+- **Remaining:** run a real Studio design/refine/apply/revert cycle; add edit-in-place for an existing Forge pack only if that follow-up is commissioned.
+- **Done when:** two refinements update one strategy row through a live LLM session and the applied strategy reverts cleanly; if Forge edit-in-place is commissioned, it re-emits the same pack rather than a duplicate.
 
 ### Nightly tasks still launched from the ADR-115 archive
 - **Remaining:** make keepalive, recap, Kalshi, and signal launchers self-locating, repoint their actual Task Scheduler actions to this trunk, and explicitly retain or relocate the private Evidence-Nightly job.
@@ -31,10 +31,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ### Scheduled Local CI unattended proof
 - **Remaining:** inspect an unprompted 23:30 scheduler run; do not substitute a manual launch.
 - **Done when:** its log names `archive-ref=origin/main`, records the exact fetched SHA, and Task Scheduler's result equals the completed gate's exit code. See [ADR-090](adr/090-github-actions-to-local-ci.md).
-
-### `deploy.yml` persistent-target disposition
-- **Remaining:** replace runner-local "deployment" with a real persistent target, or rename the workflow to image/build validation and remove deployment claims.
-- **Done when:** a successful deploy job changes a durable environment and passes a post-deploy health/parity check, or no workflow/documentation describes ephemeral-runner validation as deployment.
 
 ### CI Playwright red-baseline retirement
 - **Remaining:** root-cause the specs outside the current green ratchet and separate product defects, fixture/auth defects, and intentionally unsupported cases.
@@ -69,8 +65,8 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** `oshal-install.sh` reaches a signed-in cockpit, required services heartbeat, and one ticket round-trips without a source checkout; expected missing developer-only assets are documented.
 
 ### Installer runtime-proof gaps
-- **Remaining:** add manifest-declared per-app smoke, explicit `OSHAL_NO_AI=true` UI states, and an opt-in PAT-backed `oshal-verify.sh --live` generation check.
-- **Done when:** a deliberately broken package fails by name, every surface class renders an honest no-AI state, and a configured deployment returns a non-stub live response.
+- **Remaining:** run the source-complete CORE-05 verifier against the exact release candidate: execute every active package's manifest-declared smoke, inspect the no-AI state in each surface class, and run the opt-in PAT-backed live generation/cost probe. Brand Graphics and YouTube Kids remain inactive and must be activated deliberately before their otherwise-valid smokes can run; Pumpkin remains outside the current 46-package rollout until its unrelated work is reconciled.
+- **Done when:** the installed candidate fails a deliberately broken package by name, every surface class renders an honest `OSHAL_NO_AI=true` state, and `oshal-verify.sh --live` performs exactly one non-stub generation with owner-scoped cost attribution. Source and fixture results alone are not release evidence.
 
 ### Public prebuilt-image fast path
 - **Remaining:** at launch, publish versioned images, make the installer pull them by default with a local-build fallback, and reduce the image where practical.
@@ -85,7 +81,7 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** exact pre/post disk figures are recorded, the intended orphan only is removed, and all active swarm volumes and databases pass health checks afterward.
 
 ### Real-boundary regression doctrine
-- **Remaining:** finish the open SEC-05 audit disposition by exercising migration 117's corrected provenance ledger through a real/wrapped Pool with two owners and an operator; pool-less route/service tests are not closure evidence for RLS.
+- **Remaining:** run the existing migration-117 disposable-PostgreSQL proof through the protected promotion job and retain its result. The corrected provenance ledger, connection-scoped broker, two-owner/operator fixture, and real-Pool live spec are implemented locally, but an unexecuted live spec is not RLS evidence.
 - **Done when:** the durable-memory ledger has the same real-boundary evidence already recorded for ticket/store gateways, aliased module resolution, and built-image artifacts, and the audit contains no unresolved local boundary.
 
 ### Legacy product-name archival disposition
@@ -93,6 +89,18 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** current docs/evidence use sanctioned naming and every retained legacy occurrence is clearly marked historical.
 
 ## Security, tenancy, and trust boundaries
+
+### Web-control enforcement rollout
+- **Remaining:** promote the exact-byte Alertmanager parser/HMAC guard and corrected posture API; collect and classify the default report-only CSP stream, externalize or nonce remaining inline scripts, canary `OSHAL_STRICT_CSP=on`, tune/enable `OSHAL_RATE_LIMIT_INTERNAL` and `OSHAL_RATE_LIMIT_EXPENSIVE`, and provision a distinct `ALERT_WEBHOOK_HMAC_SECRET` on both receiver and sender.
+- **Done when:** a seven-day browser canary has no unexplained CSP violations, enforcement blocks a sanctioned inline-injection fixture without breaking supported surfaces, direct-origin and Jarvis/intake burst probes receive the intended 429s without throttling normal swarm traffic, and exact-body Alertmanager delivery passes while missing/tampered signatures fail before landing a row.
+
+### Fine-grained RBAC and verifiable audit export
+- **Remaining:** map production IdP claims/operator allowlists, run restricted/operator/admin route probes, enable `OSHAL_RBAC_ENFORCE`, and add a signed or hash-chained export artifact plus retention and independent verification guidance to the existing JSON/CSV audit endpoints.
+- **Done when:** the three deployed roles have least-privilege evidence across every RBAC-gated route, a non-admin cannot export another caller's trail, an authorized export verifies offline against an operator-controlled key/hash chain, and tampering or truncation is detected.
+
+### Connector-token KEK and DEK-fallback hardening
+- **Remaining:** promote the completed local `hkdf1:`/`k2:` migration with mixed legacy/v2/current live-database fixtures; add operator rotation/recovery tooling; move production master-key custody from `SESSION_SECRET` to a KMS/HSM-backed, key-id-aware rail; and exercise the explicit `shared-hkdf` incident break-glass against real connector refreshes before immediately returning to deny mode.
+- **Done when:** a live migration proves owner isolation across legacy/v2/current rows, key rotation and recovery do not strand users, all supported providers refresh through the shared codec, the default forced DEK-store failure denies without a write, the explicit break-glass is observable and reversible, and production can revoke a KEK generation without retaining an application-readable master secret indefinitely.
 
 ### ADR-087 access-role deferred layers
 - **Remaining:** add per-user Jarvis visibility overrides, sandbox enforcement for restricted tools, manifest declarations, and the small cleanup items listed in [ADR-087](adr/087-access-roles-jarvis-visibility-scoping.md).
@@ -115,11 +123,11 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** two-user adversarial tests prevent cross-user credential/process access, a real privileged task uses only a brokered short-TTL credential, and teardown leaves no reusable secret. See [ADR-040](adr/040-devops-vault-swarm.md).
 
 ### App access tiers Phase 2
-- **Remaining:** implement `oshal_app_access`, explicit-deny-wins resolution, operator assignment UI/API, route-boundary method enforcement, and manifest validation.
-- **Done when:** deny returns 403 on every method, viewer writes fail, editor/admin defer to package capabilities, unknown tiers fail load, and ten kernel manifests plus intelligent-sales declare access. See [ADR-118](adr/118-app-access-tiers.md).
+- **Remaining:** promote the implemented Phase 2 through a protected branch, apply migration 121, observe `OSHAL_APP_ACCESS_MODE=shadow`, seed explicit assignments, and canary `enforce` against the exact deployed SHA. The ten kernel manifests are declared; the historical intelligent-sales package is absent from both repositories and must be recovered rather than fabricated.
+- **Done when:** deployed deny returns 403 on every method, viewer writes fail, editor/admin defer to package capabilities, unknown tiers fail load, the operator matrix persists assignments through the forced-RLS store, and the canary records no unexplained shadow/enforce drift. See [ADR-118](adr/118-app-access-tiers.md).
 
 ### Kernel-versus-app bot boundary
-- **Remaining:** define kernel membership by agent ID, deploy migration 099's least-privilege `oshal_bot` role, rotate the shared-box password, and operationalize `OSHAL_OPERATOR_SUBS` denial review.
+- **Remaining:** promote the implemented agent-ID kernel registry and bot-role posture, apply migration 099, rotate the shared-box `oshal_bot` password, run the deployed two-user bot-DSN RLS probe, and operationalize `OSHAL_OPERATOR_SUBS` denial review.
 - **Done when:** kernel boot cannot dispatch to an unregistered app agent, a real bot DSN has neither superuser nor RLS-bypass, two-user RLS passes, and legitimate operator/queue paths remain allowed.
 
 ### Inline controller bot isolation
@@ -127,7 +135,7 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** no controller-resident bot can read platform credentials or another user's tokens, and all required work runs through a dedicated least-privilege runtime.
 
 ### Bot-endpoint delegated identity
-- **Remaining:** make the initiating principal authoritative across every bot/tool hop. Persist owner/tenant authority for agent-tool grants and dynamic ribbon definitions, then issue a short-lived signed delegation bound to `user_sub`, `agent_id`, task/request ID, exact tool and version, normalized input digest, audience/scopes, and expiry. A fleet/service secret may authenticate the transport but must never assert or upgrade that principal. ASK approvals need a durable one-time compare-and-set consume/recheck path; legacy unowned grants and ribbon definitions remain operator-only.
+- **Remaining:** promote migration 119 and the implemented hash-only workload credential, signed HTTP delegation, exact route/body/scope binding, and one-time durable replay denial. Extend that authority through the still-unowned agent-tool grants and dynamic ribbon definitions with exact tool/version binding and durable ASK consume/recheck; in enforce mode a fleet/service secret may authenticate transport but must never assert or upgrade the initiating principal.
 - **Done when:** a two-owner real-boundary route/database proof shows the exact owner can approve and consume one matching request once, while fleet-secret-only, cross-owner, wrong-agent/tool/task/version/digest, replayed, expired, and revoked attempts fail before ticket/model/tool execution or ribbon mutation. The audit record contains the full delegation tuple, and the deployed restricted-user Jarvis path remains denied while an entitled path succeeds without inheriting operator authority.
 
 ### Reviewed non-NONE tool provisioning and attestation
@@ -168,10 +176,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** make BYO and platform-free connections participate in the accountable agentic tool loop, or explicitly restrict them to chat-only with honest UI capability labels.
 - **Done when:** a free/BYO bot completes a guarded tool task with caller identity and cost metadata, or every surface prevents selecting that lane for tool-required work.
 
-### Token Chase free-provider lanes
-- **Remaining:** feed health-qualified free-provider rotation into Token Chase's variant selector instead of relying on manual provider coercion.
-- **Done when:** only currently eligible lanes are offered, the chosen provider/model is recorded, and a provider failure rotates or fails closed without silently spending on a paid platform key.
-
 ### All-local Ollama profile
 - **Remaining:** recreate Compose services with a reachable `OLLAMA_HOST`, register a Cline-harness Ollama bot, add the `oshal-model` Kubernetes Service, and benchmark a real ticket.
 - **Done when:** Compose and Kubernetes both resolve the local endpoint and evidence records a successful ticket, latency/throughput, and zero available cloud credentials. See [ADR-078](adr/078-kubernetes-argo-batch-and-multi-tenant-proofout.md).
@@ -192,17 +196,9 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** expose node MCP tools to eligible bots, route bot tool calls to the selected node, add per-action confirmation, and introduce a live scoped mount only before parallel same-folder writers are enabled.
 - **Done when:** a user asks the orb to open Word and return a screenshot, an accountable swarm bot drives the node, the result renders inline, and shared-task artifacts remain available to the next round. See [ADR-114](adr/114-user-owned-remote-nodes.md).
 
-### `bot-node` config broadcast parity
-- **Remaining:** port the any-bot broadcast-up behavior into the default `bot-node` runtime.
-- **Done when:** a default worker changes local config, the authoritative record reconciles it, and another subscribed instance receives the update without a restart. See [ADR-034](adr/034-bidirectional-config-ownership-sync.md).
-
-### Push-on-dispatch provider/model enforcement
-- **Remaining:** make execution honor the authoritative provider/model carried on the task envelope rather than re-resolving a different local default.
-- **Done when:** a deliberately mismatched worker executes the dispatched provider/model, refuses unavailable authority, and records the effective source in its result.
-
-### Bot bootstrap pull
-- **Remaining:** on startup, pull the authoritative bot record when OSHAL is reachable and treat environment values only as first-boot seeds.
-- **Done when:** stale local caches are overwritten by the current record, offline startup has a documented bounded fallback, and secrets never flow back through config broadcast.
+### Push-on-dispatch deployed mismatch proof
+- **Remaining:** after promotion, run a deliberately drifted worker through the default-on guarded path and retain the controller/bot result as deployment evidence.
+- **Done when:** the deployed worker self-corrects to the dispatched provider/model, a missing authoritative record is refused before task creation, and the returned result records `providerConfigSource: "authoritative-dispatch"` with the config version.
 
 ### Bot runtime consolidation
 - **Remaining:** choose one canonical implementation across `app.js`, `swarm-node.js`, and `bot-node-server.ts`; remove or explicitly demote the others.
@@ -212,27 +208,11 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** model provider-native embedded tools beside framework-registry and harness-native tools with per-agent policy and audit semantics.
 - **Done when:** an agent can enable/disable a named embedded tool, denied use fails at execution, and the run trace identifies the tier and provider operation.
 
-### Bot-registry cross-variant consistency
-- **Remaining:** reconcile the local-only promoted concierge registrations with the canonical registry, or document and guard an intentional authoritative split.
-- **Done when:** every supported deployment variant resolves identical UUID/capability data for required bots and CI fails on unexplained drift.
-
 ## Connectors, channels, and external systems
 
 ### Connector marketplace live brokered reads
 - **Remaining:** run at least five distinct credentialed connectors through caller-scoped broker resolution; loopback/captured-fetch fixtures do not qualify.
 - **Done when:** five owning-user live reads succeed, cross-user credential substitution is denied, and audit evidence names caller, connector, action, and redacted outcome.
-
-### Connector marketplace lazy route gating
-- **Remaining:** replace eager boot mounting with a stable provider delegate/gate that reflects enable/disable changes safely under Express.
-- **Done when:** a disabled route is 404 before and after an enable/disable cycle, enabling requires no process restart, and a 200-plus catalog adds no active execution footprint. See [ADR-067](adr/067-connector-marketplace-and-dynamic-tool-loading.md).
-
-### Connector catalog curation
-- **Remaining:** verify target-catalog icons and decide whether `riskLevel` is derived from action semantics or declared and audited in YAML.
-- **Done when:** the curation report has no unreviewed favicon fallback for the target set and one documented risk rule is enforced by the catalog audit.
-
-### `connectors-routes.ts` decomposition
-- **Remaining:** mechanically split provider registry/credentials, OAuth ceremony, account operations, and response helpers without changing route behavior.
-- **Done when:** each module stays below the repository threshold, route/auth/RLS tests remain green, and no provider acquires a new environment-global credential path.
 
 ### Email providers beyond Gmail
 - **Remaining:** live-test Outlook/Microsoft 365 and Yahoo/IMAP through caller-owned connections and finish any provider-specific auth or pagination repair.
@@ -328,10 +308,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** keep Rides map/quote-first, Eats delivery/menu/cart-first, and Shopping address/search/cart-first while connecting each concierge through the shared state bridge.
 - **Done when:** each package supports browse/search/scroll, chat-driven state, deterministic totals, confirmation-gated outward action, and a real mobile-width browser smoke. Track package UI in [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides), [`eats`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/eats), and [`purchasing`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/purchasing).
 
-### Mobile pinned-header and single-scroll-child audit
-- **Remaining:** apply the corrected flex/overflow pattern to calendar, workboard, settings, and any reported clipping surface; add a real narrow-viewport regression.
-- **Done when:** primary controls stay visible, exactly the intended child scrolls at supported mobile widths, and the browser test catches the prior clipping shape.
-
 ### Jarvis hand-off experience
 - **Remaining:** send task-complete email, verify hard-refresh focus, and replace the slow agentic decision turn with a lightweight tool-less decision that preserves exactly-once build dispatch.
 - **Done when:** email and focus checks pass live and a build request is acknowledged within 20 seconds with one swarm execution and no abandoned duplicate turn.
@@ -362,10 +338,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** build the task-class/query-type corpus and ship a lookup/heuristic before considering a trained selector.
 - **Done when:** preselection beats always-baseline cost on held-out workflows at equal quality, with a reproducible comparison and safe fallback.
 
-### Keep-winner/rebaseline and judge budget
-- **Remaining:** allow a qualifying cheaper variant to become the next baseline and enforce a per-run judge-cost ceiling.
-- **Done when:** promotion is explicit/audited, the next run uses the winner, quality regression rolls back safely, and judge calls stop at the configured budget.
-
 ## Career and job application
 
 ### Career scoring/tailoring bot-node migration
@@ -383,6 +355,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ### Apply pipeline live repair/provenance proof
 - **Remaining:** deploy package migrations 100/101 and kernel migration 116; record reaper/provenance pre/post counts; run one healthy final submit and one CAPTCHA/2FA pause through a real worker.
 - **Done when:** the bounded reaper releases the historical raw claims, all 164 historical rows have explicit provenance with the 28 evidence-free rows still `unverified`, worker/state transitions are visible, and only retained confirmation-backed submission renders verified.
+
+### Career Hunter PostgreSQL backend cutover
+- **Remaining:** the package now has exact engine/driver pins, fail-closed store selection, shared SQLite/PostgreSQL contracts, idempotent loaders, stable interview source identity, a bounded convergence reporter, and a staged cutover runbook. Keep SQLite authoritative until the protected-branch disposable-PostgreSQL job actually runs, the reverse projector is implemented, and a real backup/final sync/read-only smoke/write cutover/rollback drill succeeds. The complete provider/title/enqueue nightly chain also remains a kernel/provider integration proof, not a package-contract result.
+- **Done when:** the PostgreSQL half proves posting/company upserts, refresh/deactivation, types, sequences, application lifecycle, ATS ingest, RLS, counts, checksums, and key-query convergence; reverse synchronization prevents stale rollback; the live cutover and rollback are rehearsed; then seven days of freshness, latency, RLS, count, and nightly-marker telemetry remain inside stated bounds. See the package's `BACKEND-CUTOVER.md` and `JOBHUNTER-CONFUSION.md` records.
 
 ## Finance
 
@@ -488,17 +464,13 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** add GoPro BLE AP/COHN provisioning, pinned self-signed CA handling, browser-playable preview transcoding, one second-brand adapter, and package the camera node; deploy/install the current package for a browser smoke.
 - **Done when:** a real GoPro provisions and previews without disabling TLS verification, a Canon CCAPI or ONVIF device uses the same provider contract, and [`camera`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/camera) drives both without controller/surface changes.
 
-### Sat-ops conjugate-convention covariance
-- **Remaining:** build a synthetic direct-versus-conjugate 42-stream test for the MEKF anisotropic star-tracker covariance and correct the rotation if it is not convention invariant.
-- **Done when:** both conventions place the 2/2/20-arcsec covariance on the same body axes and a forced-conjugate replay/live run has acceptance rates comparable to direct. See [ADR-102](adr/102-sat-ops-satellites-as-swarm-nodes.md).
+### Sat-ops forced-conjugate referee evidence
+- **Remaining:** replay a captured NASA 42 stream or run the referee with its convention lock forced to `conjugate`, retaining direct-run comparison evidence.
+- **Done when:** the captured/live conjugate branch has MEKF acceptance, rejection, reinitialization, and attitude-error rates comparable to the direct branch. See [ADR-102](adr/102-sat-ops-satellites-as-swarm-nodes.md).
 
 ### Spaces live reconstruction and capture expansion
 - **Remaining:** deploy `spatial-recon-edge`, reconstruct a real room, add GoPro/personalized and commissioned WebRTC/pose guidance, ingest drone scans with sector patterns, and choose durable storage for 100MB-plus assets.
 - **Done when:** one owner's real scan reaches a rendered reconstruction, capture actions are auditable, another user cannot access it, and large-binary retention has an implemented target. See [ADR-111](adr/111-spatial-mapping-3d-reconstruction.md).
-
-### Spaces post-carve cleanup and documentation
-- **Remaining:** delete dead core `src/api/spaces*.html` files and their Compose binds when uncontended, and remove the obsolete "re-sync from core" instructions in the [`spaces` README](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/spaces/README.md); the package is already active/ready.
-- **Done when:** no core Spaces surface/route source or bind remains, the installed package still loads and imports scans, and its README describes the actual package-owned source of truth.
 
 ### Native iOS Spaces scanner
 - **Remaining:** generate the Xcode project, sign with a real Apple team/bundle ID, run on LiDAR hardware, and pair/upload PLY plus poses with a scoped token.
@@ -513,7 +485,7 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** killing a real OSHAL container triggers the ADR-119 signal on every supported deployment class and a healthy container cannot be missed because its metric name differs.
 
 ### Bot-recreate thundering herd
-- **Remaining:** jitter bot runtime-config pulls or size/protect the API database pool for simultaneous deploy recreation.
+- **Remaining:** deploy the default-on bounded bootstrap-pull jitter, recreate the full bot fleet against the production-sized API database pool, and tune the window only from observed startup/config-convergence results.
 - **Done when:** recreating the full bot fleet causes no pool exhaustion, each bot receives config within a bounded window, and boot authentication/rate limits remain enforced.
 
 ### Operations and SecOps swarms
@@ -523,11 +495,21 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ## Application-package follow-ups
 
 ### SEC-06 application-store route, ownership, and CI closure
-- **Remaining:** in [`oshal-applications`](https://github.com/emeraldcoastsystemsgroup/oshal-applications), make `src-routes` authoritative and regenerate LoRA/Vids routes only after porting the Vids generated-only theme/mobile behavior so the rebuild cannot regress it; retain LoRA's sanitized rejection handling and Vids' rejection-state/non-overlapping polling. Replace the indentation/order-sensitive YAML route inventory with fail-closed document parsing that maps each actual endpoint to its auth middleware, owner predicate, and migration policy. Enforce LoRA `owner_sub` and Vids `user_sub` in queries and RLS, and lock security-tool dependencies, fixture-specific secret allowlists, and CI actions to reviewed immutable references.
-- **Done when:** the canonical rebuild leaves zero source/generated drift and a mobile browser guard preserves the Vids UI; factory-before-module, alternate-indentation, missing-auth, missing-owner-predicate, and missing-policy mutations all fail inventory; two owners using the real Postgres schema and enforcing application role cannot list/read/update/delete each other's LoRA or Vids jobs; and deliberate dependency-unlock, secret-allowlist widening, or mutable-action-ref changes fail blocking CI while documented immutable annotated-tag objects retain their verified peeled commit.
+- **Remaining:** promote the completed route/source, ownership/RLS, dependency-lock, secret-allowlist, immutable-action, and blocking-workflow changes through the protected application branch, then retain the first remote workflow evidence for each blocking gate. Re-run the LoRA, Vids, D&D, and Little Monsters disposable-PostgreSQL jobs against the promoted SHA; local source and CI-definition tests do not prove that branch protection actually requires them.
+- **Done when:** protected-branch rules require the security workflow, the promoted workflow records green source/generated drift, route-inventory mutation, two-owner forced-RLS, dependency/action immutability, and secret-scan jobs, and a sanctioned fail-then-pass fixture proves each remote gate is blocking rather than advisory.
 
-### Kid Lens Takeout package registration
-- **Remaining:** let an installed package contribute a Takeout slice without app literals in the kernel; move/confirm real-data, Dropbox, harvest privacy, YouTube scope, additional-lens, and multi-kid product work in the [`youtube-kids` README](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/youtube-kids/README.md).
+### Store catalog parity and SHA-bound package audits
+- **Remaining:** catalog/manifest/README parity, the immutable audit schema, 47 version-bound structural records, CI validation, and compatible/enforce installer plumbing are implemented. Replace each all-zero `pending` source sentinel with a substantive immutable review bound to the exact package SHA, starting with child, money/trading, communications, physical-device, and external-publishing packages; only then move installations from compatible warnings to enforce rejection.
+- **Done when:** all 47 records are `passed`, current, source-SHA exact, and reproduce hashes for manifest, authz, RLS, dependencies, install lifecycle, surface, and one app-specific golden path; a source/version/evidence change without re-audit fails installation, and the exact-SHA installer gate runs in enforce mode on the promoted catalog.
+
+### Venture rebaseline scheduler activation
+- **Remaining:** Venture Plan owns its default-off/dry-run policy, service-authenticated tick, UTC slot idempotency, and measured per-run cost gate. Add a first-class kernel schedule target that can invoke that deterministic package worker; do not substitute the generic prompt-dispatching `schedules:` path or imply that the local service route is already unattended.
+- **Done when:** an installed schedule calls the tick under service identity; disabled and either dry-run gate produce no run or `chat_tasks`; one opted-in owner produces exactly one rebaseline run per UTC slot; a second owner remains isolated; stored integer-micro cost evidence stops every later call after exhaustion, overshoot, or capture failure; and dated live PostgreSQL/provider evidence records the result.
+
+### Aero Lab real-drive and physical certification
+- **Remaining:** keep [`aero-lab/BACKLOG.md`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/aero-lab/BACKLOG.md) authoritative while closing its red real-drive gate: use the vendored engine by default, derive BEMT and buoyant-trim tolerances from convergence, attribute structured aero refusals, step PackEcm exactly once per accepted mission timestep, run the four verification anchors, add browser/server numerical parity and mesh self-intersection checks, then rerun the pinned 30k sweep. Physical certification still needs vent/ballonet design, verified barrier film and helium purity, and a weighed propulsion/power ledger reconciled with BOM/CAD.
+- **Done when:** all four reference designs pass or fail for an explicit structured validity reason on the fingerprinted real engine; the f=0.2–0.8 trim sweep, cold-night thermal/heater ledger, four anchors, browser parity, mesh, and deterministic sweep gates pass; and no build is certified until the physical pressure/material/purity/mass evidence reconciles to the exported design.
+
 - **Done when:** installing the package registers its YouTube slice, uninstalling removes it, whole-archive upload routes correctly with owner isolation, and the package README is the canonical per-item product queue.
 
 ### Game Show core dependencies
@@ -575,7 +557,3 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.
 - **Done when:** `zsh -n` and real tab completion pass for top-level commands, completion shells, token actions, and `--context`; append evidence to the existing 2026-07-12 proof or delete the unsupported script.
-
-### Notification-preferences index-only work disposition
-- **Remaining:** compare the preserved `wip/notification-prefs-20260801` tag to current notification/welcome code and either land only unique valid changes or explicitly abandon it.
-- **Done when:** the decision is recorded, any retained behavior has tests/docs, and the temporary tag is deleted so it cannot be mistaken for pending work.

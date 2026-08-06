@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pre-OSS: rebranded legacy "Kevin" agent identity/namespace to neutral OSHAL
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: remove GitLab credentials and credential previews from model context; document completion as side-effect free.
  */
 
 /**
@@ -58,12 +59,8 @@ const getClineSystemPrompt = (options = {}) => {
     currentDateTime = '',
     currentWorkingDirectory = '/app/workspace',
     availableTools = [],
-    gitlabToken = '',
     agentId = process.env.AGENT_ID || 'Agent',
   } = options;
-
-  // DEBUG: Log received token
-  logger.info(`📝 ClineSystemPrompt received token: ${gitlabToken ? `${gitlabToken.substring(0, 10)}...` : 'EMPTY'}`);
 
   // Generate tools list for prompt with parameter information
   const toolsList = availableTools.length > 0 
@@ -166,26 +163,18 @@ kubectl, terraform, ansible, aws, az, gcloud, argocd, helm, vault, git, jq, yq, 
 **When using GitLab:**
 - Instance URL: $GITLAB_URL (if configured)
 - Your task workspace project: oshal/agent-workspaces/${taskId}
-- **GitLab project is ALREADY CREATED** for this task
-- **Your GitLab token**: ${gitlabToken}
-- For presentation tools requiring gitlab_token parameter, use this exact value: ${gitlabToken}
-- DO NOT ask user for GitLab token - use the value above
+- Credentials are held by server-side brokers and are never available in the prompt or workspace
+- Use only an explicitly advertised and authorized GitLab tool; never request, print, or discover tokens
 
 CRITICAL RULES:
 1. EVERY FILE you create must be in ${currentWorkingDirectory}/ or its subdirectories
 2. EVERY COMMAND you run should be aware of ${currentWorkingDirectory}
 3. NEVER work in /app/workspace or any other directory
 
-# GITLAB AUTO-SAVE
+# COMPLETION CONTROL
 
-Your workspace is backed by GitLab and AUTOMATICALLY saved when you use attempt_completion.
-
-**What happens when you use attempt_completion**:
-1. System AUTOMATICALLY runs: git add . && git commit && git push
-2. System AUTOMATICALLY adds the GitLab URL to your result
-3. User receives the GitLab link automatically
-
-**CRITICAL**: Files won't be saved to GitLab unless you use attempt_completion!
+attempt_completion only returns your final result. It does not run shell, Git, deployment,
+or persistence operations. Perform any required write through separately authorized tools first.
 
 **You MUST**:
 - Use attempt_completion when task is done
@@ -395,8 +384,8 @@ This iterative approach allows you to:
 MANDATORY: After creating files or completing work:
 - ALWAYS use attempt_completion tool
 - NEVER just respond with "I created the file"
-- Auto-commit ONLY happens with attempt_completion
-- Files won't be in GitLab unless you use attempt_completion
+- attempt_completion only returns the final result; it never commits, pushes, uploads, or deploys
+- Commit, upload, and deployment operations require their own explicitly authorized tool capability
 
 # INFORMATION RETRIEVAL PRIORITIES
 
@@ -509,23 +498,10 @@ Progress: 2/4 steps complete (50%)
 - Act autonomously
 - Execute tools directly
 - **Check knowledge base BEFORE Google search**
-- **ALWAYS use attempt_completion to finish and save to GitLab**
+- **ALWAYS use attempt_completion to return the final result**
 ${toolsList}
 
 Current task: ${taskDescription}`;
-
-  // DEBUG: Verify token is in final prompt
-  const tokenInPrompt = prompt.includes(gitlabToken);
-  const tokenSectionExists = prompt.includes('Your GitLab token:');
-  logger.info(`📋 ClineSystemPrompt final check:`);
-  logger.info(`   - Token in final prompt: ${tokenInPrompt ? 'YES ✅' : 'NO ❌'}`);
-  logger.info(`   - Token section exists: ${tokenSectionExists ? 'YES ✅' : 'NO ❌'}`);
-  
-  if (gitlabToken && !tokenInPrompt) {
-    logger.error(`⚠️ CRITICAL: Token was provided but NOT found in prompt!`);
-    logger.error(`   - Token value: ${gitlabToken.substring(0, 15)}...`);
-    logger.error(`   - Searching for pattern: "Your GitLab token: ${gitlabToken.substring(0, 15)}"`);
-  }
 
   return prompt;
 };

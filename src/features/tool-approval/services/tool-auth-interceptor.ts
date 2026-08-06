@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of tool auth interceptor
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: unknown or missing-registry tools always deny; remove the environment-controlled graceful raw-executor fallback.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -11,34 +12,6 @@ import type { AuthMode, AuthorizationResult, Tool } from '@/shared/types/tool';
 import type { ApprovalWorkflowService } from './approval-workflow-service';
 
 const logger = createChildLogger({ module: 'tool-auth-interceptor' });
-
-/**
- * Tool names that are ALWAYS fail-closed when not present in the auth registry,
- * regardless of strict mode. These run shell commands or evaluate code, so an
- * unregistered (therefore un-reviewed) invocation must never fall through to the
- * graceful-allow path. Matched case-insensitively against the bare tool name.
- */
-const FAIL_CLOSED_UNREGISTERED_TOOLS = new Set([
-  'execute_command',
-  'run_command',
-  'shell',
-  'bash',
-  'sh',
-  'exec',
-  'eval',
-  'spawn',
-]);
-
-/**
- * @description Whether unregistered tools are denied by default (strict mode).
- * Additive + off-by-default: when unset/false, unregistered tools keep the
- * existing graceful-allow behavior (except the always-fail-closed set above);
- * when `true`, ANY tool missing from the auth registry is denied. Recommended
- * ON for hardened / multi-tenant deployments. Read once at module load.
- */
-function readStrictDefault(): boolean {
-  return process.env.OSHAL_TOOL_AUTH_STRICT === 'true';
-}
 
 /**
  * @description Callback type for the original tool execution function.
@@ -63,11 +36,6 @@ export type AuthModeLookup = (
 export interface ToolAuthInterceptorDeps {
   approvalService: ApprovalWorkflowService;
   lookupAuthMode: AuthModeLookup;
-  /**
-   * When true, deny any tool not found in the auth registry (full fail-closed).
-   * Defaults to the OSHAL_TOOL_AUTH_STRICT env flag. Explicit for testability.
-   */
-  failClosedUnregistered?: boolean;
 }
 
 /**
@@ -76,21 +44,16 @@ export interface ToolAuthInterceptorDeps {
  * - auto → execute immediately
  * - ask → trigger approval workflow, wait for decision
  * - off → reject execution
- * - not in registry → fallback to original executor (graceful degradation)
+ * - not in registry / registry unavailable → reject execution
  */
 export class ToolAuthInterceptor {
   private readonly approvalService: ApprovalWorkflowService;
   private readonly lookupAuthMode: AuthModeLookup;
-  private readonly failClosedUnregistered: boolean;
 
   constructor(deps: ToolAuthInterceptorDeps) {
     this.approvalService = deps.approvalService;
     this.lookupAuthMode = deps.lookupAuthMode;
-    this.failClosedUnregistered = deps.failClosedUnregistered ?? readStrictDefault();
-    logger.info(
-      { failClosedUnregistered: this.failClosedUnregistered },
-      'ToolAuthInterceptor initialized',
-    );
+    logger.info('ToolAuthInterceptor initialized (unknown tools fail closed)');
   }
 
   /**
@@ -173,26 +136,12 @@ export class ToolAuthInterceptor {
   }
 
   /**
-   * @description Handles tools not found in the registry — graceful fallback.
+   * @description Handles tools not found in the registry — deterministic denial.
    */
   private handleUnregisteredTool(toolName: string): AuthorizationResult {
-    if (FAIL_CLOSED_UNREGISTERED_TOOLS.has(toolName.toLowerCase())) {
-      const reason = `Tool '${toolName}' is not registered in the auth framework and cannot execute.`;
-      logger.warn({ toolName }, reason);
-      return { authorized: false, authMode: 'off' as AuthMode, reason };
-    }
-
-    if (this.failClosedUnregistered) {
-      const reason = `Tool '${toolName}' is not registered in the auth framework (strict mode) and cannot execute.`;
-      logger.warn({ toolName }, reason);
-      return { authorized: false, authMode: 'off' as AuthMode, reason };
-    }
-
-    logger.debug(
-      { toolName },
-      'Tool not in registry — allowing execution (graceful fallback)',
-    );
-    return { authorized: true, authMode: 'auto' as AuthMode };
+    const reason = `Tool '${toolName}' is not registered in the auth framework and cannot execute.`;
+    logger.warn({ toolName }, reason);
+    return { authorized: false, authMode: 'off' as AuthMode, reason };
   }
 
   /**

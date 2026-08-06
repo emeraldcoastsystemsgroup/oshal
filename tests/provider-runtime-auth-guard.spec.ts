@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added shared-seed OpenAI Codex credential sync regression coverage for Docker worker runtime refresh
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Updated Anthropic expectations to match ADR-005 Cline-only provider routing instead of removed direct Anthropic provider behavior
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Shared-seed sync spec updated for the live-first resolution chain (619eb60, 2026-07-24): pin CODEX_AUTH_SOURCE_PATH to a nonexistent path so the seed-fallback leg is genuinely exercised — on an operator box the live ~/.codex/auth.json correctly wins and the fixture was never read (spec failed every run since; masked by the dead failure-alert email, fixed 2026-07-25).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: prove the retired shared-seed-to-Cline method returns false and tombstones legacy runtime secrets without consuming or copying the server seed.
  */
 
 import fs from 'fs';
@@ -78,21 +79,21 @@ test.describe('provider-runtime auth guard', () => {
     }
   });
 
-  test('syncs OpenAI Codex credentials from the shared swarm seed when local secrets are absent', async () => {
+  test('does not materialize OpenAI Codex credentials from the shared server seed', async () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-provider-runtime-shared-seed-runtime-'));
     const outputRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-provider-runtime-shared-seed-output-'));
     const sharedSeedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-provider-runtime-shared-seed-root-'));
     const sharedSeedPath = path.join(sharedSeedDir, 'secrets.json');
     const previousSharedSeedPath = process.env.OPENAI_CODEX_SHARED_SEED_PATH;
-    // The resolution chain is LIVE-FIRST since 2026-07-24 (619eb60): the real ~/.codex/auth.json
-    // wins over the seed by design, so on an operator box with healthy codex auth this scenario
-    // would resolve the LIVE credential and never touch the fixture (that is the behavior the
-    // change exists to guarantee). Pin the live source to a nonexistent path so the seed-fallback
-    // leg — what this spec guards — is genuinely exercised.
     const previousCodexAuthSourcePath = process.env.CODEX_AUTH_SOURCE_PATH;
     process.env.CODEX_AUTH_SOURCE_PATH = path.join(sharedSeedDir, 'no-live-auth', 'auth.json');
 
     fs.mkdirSync(path.join(runtimeRoot, 'data'), { recursive: true });
+    fs.writeFileSync(
+      path.join(runtimeRoot, 'data', 'secrets.json'),
+      JSON.stringify({ 'openai-codex-oauth-credentials': 'legacy-runtime-token' }),
+      'utf8',
+    );
     fs.writeFileSync(
       path.join(outputRoot, 'global-config.json'),
       JSON.stringify({
@@ -121,9 +122,10 @@ test.describe('provider-runtime auth guard', () => {
       const runtimeSecretsPath = path.join(runtimeRoot, 'data', 'secrets.json');
       const runtimeSecrets = JSON.parse(fs.readFileSync(runtimeSecretsPath, 'utf8')) as Record<string, string>;
 
-      expect(synced).toBe(true);
-      expect(runtimeSecrets['openai-codex-oauth-credentials']).toContain('shared-access-token');
-      expect(runtimeSecrets['openai-codex-oauth-credentials']).toContain('shared-refresh-token');
+      expect(synced).toBe(false);
+      expect(runtimeSecrets).toEqual({});
+      expect(fs.readFileSync(sharedSeedPath, 'utf8')).toContain('shared-access-token');
+      expect(fs.readFileSync(sharedSeedPath, 'utf8')).not.toContain('legacy-runtime-token');
     } finally {
       if (previousSharedSeedPath === undefined) {
         delete process.env.OPENAI_CODEX_SHARED_SEED_PATH;

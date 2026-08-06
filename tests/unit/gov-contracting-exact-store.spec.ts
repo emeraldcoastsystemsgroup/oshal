@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Exercise the real Gov-Contracting enqueue seam against digest-keyed and safe legacy CRM stores, proving exact owner propagation and fail-closed linked-database handling.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove the app-owned Python scanner receives only exact owner paths, documented SAM settings, and runtime values rather than controller/database credentials.
  */
 
 import fs from 'fs';
@@ -57,6 +58,32 @@ afterEach(() => {
 });
 
 describe('Gov-Contracting exact owner stores', () => {
+  it('builds a least-privilege scanner environment', async () => {
+    const root = fixtureRoot();
+    const { buildGovContractingProcessEnv } = await enqueueModule(root);
+    const env = buildGovContractingProcessEnv(' Owner-Exact ', {
+      CRM_DB: 'C:\\owner\\crm.db',
+      CRM_CAPTURE_DIR: 'C:\\owner\\capture',
+      CRM_ECON_FILE: 'C:\\owner\\econ.json',
+    }, {
+      PATH: 'C:\\runtime',
+      SAM_API_KEY: 'intended-sam-key',
+      GOVCON_PROMOTE_MIN: '55',
+      DATABASE_URL: 'controller-database',
+      SESSION_SECRET: 'controller-session',
+    });
+    expect(env).toEqual({
+      PATH: 'C:\\runtime',
+      SAM_API_KEY: 'intended-sam-key',
+      GOVCON_PROMOTE_MIN: '55',
+      PYTHONNOUSERSITE: '1',
+      OSHAL_USER_SUB: ' Owner-Exact ',
+      CRM_DB: 'C:\\owner\\crm.db',
+      CRM_CAPTURE_DIR: 'C:\\owner\\capture',
+      CRM_ECON_FILE: 'C:\\owner\\econ.json',
+    });
+  });
+
   it('reads a separator-bearing exact owner from its canonical digest directory', async () => {
     const root = fixtureRoot();
     const userSub = ' oidc/Exact\\Owner ';

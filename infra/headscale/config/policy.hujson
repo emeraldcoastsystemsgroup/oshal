@@ -1,21 +1,43 @@
 // =============================================================================
-// OSHAL Headscale Starter ACL Policy
+// OSHAL Headscale active ACL policy — deny by default, role tagged
 // =============================================================================
 // CHANGE LOG
 // -----------------------------------------------------------------------------
-// SEQ                 | AUTHOR                      | DESCRIPTION
+// SEQ                 | AUTHOR                                      | DESCRIPTION
 // -----------------------------------------------------------------------------
-// 1 | maintainer@emeraldcoastsystemsgroup.com   | Added permissive starter ACL policy for local Headscale lab setup
+// 1 | maintainer@emeraldcoastsystemsgroup.com   | Added permissive starter ACL policy for local Headscale lab setup.
+// 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: replace the active allow-all policy with explicit controller, bot, worker, and operator paths; all lateral bot/worker traffic is implicitly denied.
 // =============================================================================
 
 {
-  // This policy is intentionally permissive so the first lab can come up with
-  // fewer moving parts. Tighten this before production.
+  "tagOwners": {
+    "tag:controller": ["agentmesh@"],
+    "tag:bot":        ["agentmesh@"],
+    "tag:worker":     ["agentmesh@"],
+    "tag:operator":   ["agentmesh@"],
+  },
+
   "acls": [
-    {
-      "action": "accept",
-      "src": ["*"],
-      "dst": ["*:*"],
-    },
+    // Operators use the controller's authenticated public API; they do not receive tailnet-wide
+    // access merely because their device joined the mesh.
+    { "action": "accept", "src": ["tag:operator"], "dst": ["tag:controller:35457"] },
+
+    // Remote bots use the controller API and Redis mesh only. No bot-to-bot path is granted.
+    { "action": "accept", "src": ["tag:bot"], "dst": ["tag:controller:35457"] },
+    { "action": "accept", "src": ["tag:bot"], "dst": ["tag:controller:6379"] },
+
+    // Workers use the controller API. The current edge-agent launcher also reaches these three
+    // data services directly; remove the last three rules when that client becomes API-only.
+    { "action": "accept", "src": ["tag:worker"], "dst": ["tag:controller:35457"] },
+    { "action": "accept", "src": ["tag:worker"], "dst": ["tag:controller:6379"] },
+    { "action": "accept", "src": ["tag:worker"], "dst": ["tag:controller:5432"] },
+    { "action": "accept", "src": ["tag:worker"], "dst": ["tag:controller:8000"] },
+
+    // The controller may dispatch to the two supported remote runtime listeners.
+    { "action": "accept", "src": ["tag:controller"], "dst": ["tag:bot:5000"] },
+    { "action": "accept", "src": ["tag:controller"], "dst": ["tag:worker:3099"] },
   ],
+
+  // Tailnet SSH remains disabled. Add a narrowly scoped rule only with a reviewed use case.
+  "ssh": [],
 }
