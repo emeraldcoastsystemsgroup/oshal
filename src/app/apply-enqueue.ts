@@ -41,6 +41,14 @@
  *   recovery path for a browser that submitted before its callback was lost (ADR-101), i.e. the
  *   wedged-node case it exists for. Cast rather than re-typing the column: the ledger's TEXT
  *   ticket_id is deliberate and the table was still empty, so a cast is the whole fix.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Entry 9 fixed ONE of the two joins. The boot-time
+ *   rehydrate carried the identical uncast comparison and threw once per api start — so in-flight
+ *   apply work was never restored across a restart, which is the single thing this module's header
+ *   promises. Caught only because the post-deploy log still showed one `text = uuid` line, 3ms
+ *   BEFORE 'apply reaper started', proving it came from a different caller. Both sweeps now share
+ *   the exported-SQL + guard treatment, and the guard asserts the pair so a third copy cannot be
+ *   added uncast. The lesson is the fix method: grep every occurrence of the pattern, never patch
+ *   the one the stack trace named.
  *
  * @module app/apply-enqueue
  */
@@ -260,19 +268,7 @@ export async function rehydrateApplyInFlight(ctx: AppContext): Promise<number> {
     // Cross-owner boot sweep over the owner-RLS'd tickets table: SYSTEM identity, or
     // OSHAL_DB_GUC_STRICT=deny rejects the identity-less query and this silently restores nothing.
     const { rows } = await runWithSystemIdentity(() => ctx.pool!.query(
-      `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
-              EXTRACT(EPOCH FROM (now() - t.updated_at)) * 1000 AS age_ms,
-              run.run_id, run.claim_token, run.task_id, run.worker_client_id AS client_id
-         FROM tickets t
-         LEFT JOIN LATERAL (
-           SELECT run_id, claim_token, task_id, worker_client_id FROM apply_runs
-            WHERE ticket_id=t.ticket_id
-              AND state IN ('claimed','queued_to_worker','acknowledged','running')
-            ORDER BY claimed_at DESC LIMIT 1
-         ) run ON TRUE
-        WHERE t.metadata->>'source' = 'apply-enqueue'
-          AND t.status = 'in_process_build'
-          AND t.updated_at > now() - ($1::int * interval '1 millisecond')`,
+      REHYDRATE_APPLY_TICKETS_SQL,
       [REHYDRATE_WITHIN_MS],
     ));
     let restored = 0;
@@ -356,6 +352,21 @@ async function reapKnownRawClaims(ctx: AppContext): Promise<number> {
  * `tickets.ticket_id` is UUID, and Postgres has no `text = uuid` operator. Uncast, the sweep throws
  * on every tick, gets caught below, and reports zero reaped — a silent no-op, not a visible failure.
  */
+export const REHYDRATE_APPLY_TICKETS_SQL =
+  `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
+          EXTRACT(EPOCH FROM (now() - t.updated_at)) * 1000 AS age_ms,
+          run.run_id, run.claim_token, run.task_id, run.worker_client_id AS client_id
+     FROM tickets t
+     LEFT JOIN LATERAL (
+       SELECT run_id, claim_token, task_id, worker_client_id FROM apply_runs
+        WHERE ticket_id=t.ticket_id::text
+          AND state IN ('claimed','queued_to_worker','acknowledged','running')
+        ORDER BY claimed_at DESC LIMIT 1
+     ) run ON TRUE
+    WHERE t.metadata->>'source' = 'apply-enqueue'
+      AND t.status = 'in_process_build'
+      AND t.updated_at > now() - ($1::int * interval '1 millisecond')`;
+
 export const STALE_APPLY_TICKETS_SQL =
   `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
           run.run_id, run.claim_token, run.task_id, run.worker_client_id AS client_id
