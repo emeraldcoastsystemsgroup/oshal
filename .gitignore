@@ -152,6 +152,16 @@ docs/_screenshots/
 scripts/release/secret-replacements.txt
 scripts/release/authors.vault.json
 
+# The three internal-only trees ADR-115/Rule 0b keeps OUT of this public-track trunk: session
+# briefs, evidence artifacts, and the release toolchain. publish-gate.sh already refuses them at
+# push time and stays the wall — this is the belt. Ignoring them matters because Rule 0a's
+# "a blocked commit means RE-STAGE EVERYTHING" makes a broad re-`git add` the normal recovery
+# move, and an internal tree that reaches a commit is far more work to unwind than one that was
+# never stageable. Same lesson as authors.vault.json above, applied to the directories.
+ralf/
+docs/evidence/
+scripts/release/
+
 # Walmart I/O signing key (private)
 config-seed/walmart/
 
