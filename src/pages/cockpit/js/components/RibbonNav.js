@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add 'tool-global-search' (Search) — the caller-scoped global search surface (/api/search/ui) rides along on every cockpit like Optimizer/Workflow Studio, since search over the caller's own data isn't owned by any one app.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add 'tool-run-trace' (Run Trace) — the caller-scoped run-trace waterfall surface (/api/trace/app) rides along on every cockpit, since tracing a ticket's execution timeline isn't owned by any one app.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add the four read surfaces for the shared platform services that shipped headless — Budgets (enforced spend caps), Notifications (per-topic routing prefs), Dead Letters (queue quarantine, operator-only), and My Data (export/delete). They are static pages under src/pages/cockpit/tools/, so they need no Express route. Added _loadOperatorState() (GET /api/cli-tokens/whoami) so the operator-only Dead Letters entry is not pinned into a basic user's rail — the routes self-gate server-side regardless, this only avoids offering a tool that can only answer 403.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Rail pin (operator request 2026-08-06): a pin toggle in the top-right corner holds the rail expanded; unpinned restores hover-expand. The preference is a UI setting and persists in localStorage (the ?app= URL contract forbids caching the PROFILE there, not this). State lives on the instance, not the DOM — render() rebuilds innerHTML on every profile/tool change, so the class and handler re-apply per render. Hidden on the mobile drawer, which is always full-width.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -143,6 +144,11 @@ export class RibbonNav {
     this.profile = null;
     this.views = [];
     this.activeView = null;
+    // Pin preference: pinned = the rail stays expanded; unpinned = hover-expand. A UI
+    // preference, so localStorage is the right store (the ?app= URL contract forbids caching
+    // the PROFILE there, not this). try/catch: storage can be unavailable in a sandboxed frame.
+    this.pinned = false;
+    try { this.pinned = localStorage.getItem('oshal-ribbon-pinned') === '1'; } catch (_) { /* default unpinned */ }
     // Child-safe student/kiosk rail — hides the bottom platform tray + operator tools.
     this.studentMode = resolveStudentMode();
     // Expose init as a promise so the cockpit shell can wait for the profile
@@ -659,7 +665,12 @@ export class RibbonNav {
     });
 
     this.container.innerHTML = `
-      <nav class="ribbon-nav" id="ribbonNavInner">
+      <nav class="ribbon-nav${this.pinned ? ' ribbon-pinned' : ''}" id="ribbonNavInner">
+        <button class="ribbon-pin" type="button" id="ribbonPinBtn"
+                title="${this.pinned ? 'Unpin — collapse to icons' : 'Pin the rail open'}"
+                aria-pressed="${this.pinned ? 'true' : 'false'}" aria-label="Pin the navigation rail open">
+          <i class="ph ph-push-pin"></i>
+        </button>
         ${homeViews.length ? `<div class="ribbon-home">${homeViews.map(v => this._btn(v)).join('')}</div>` : ''}
         <div class="ribbon-scroll">
           ${this._renderGroups(topViews)}
@@ -674,6 +685,21 @@ export class RibbonNav {
         this.setActive(btn.dataset.view);
       });
     });
+
+    // render() rebuilds the DOM on every profile/tool change, so the pin re-wires here — the
+    // state itself lives on the instance + localStorage, never in the discarded DOM.
+    const pinBtn = this.container.querySelector('#ribbonPinBtn');
+    if (pinBtn) {
+      pinBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.pinned = !this.pinned;
+        try { localStorage.setItem('oshal-ribbon-pinned', this.pinned ? '1' : '0'); } catch (_) { /* session-only */ }
+        const nav = this.container.querySelector('#ribbonNavInner');
+        if (nav) nav.classList.toggle('ribbon-pinned', this.pinned);
+        pinBtn.setAttribute('aria-pressed', this.pinned ? 'true' : 'false');
+        pinBtn.setAttribute('title', this.pinned ? 'Unpin — collapse to icons' : 'Pin the rail open');
+      });
+    }
   }
 
   /**
