@@ -19,6 +19,7 @@
  *   pulls      {entity, days?}                  -> pull-rate accounting
  *   entities   {limit?}                         -> known world subjects (what's been ingested)
  *   ingest     {q, entity, label?, sources?, limit?} -> fetch+classify+ingest news (token-guarded)
+ * 2026-08-05 ... | maintainer@emeraldcoastsystemsgroup.com | Retired query-string credentials: write verbs now send WORLD_INGEST_TOKEN only in Authorization, so URLs, referrers, and access logs cannot retain it
  */
 'use strict';
 
@@ -36,12 +37,23 @@ async function getJson(url) {
   const r = await fetch(url);
   return r.json();
 }
-async function postJson(url) {
-  const r = await fetch(url, { method: 'POST' });
+
+/** Build write-only authentication headers without ever placing the token in a URL. */
+function buildWorldWriteHeaders(token = TOKEN) {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function postJson(url, authenticated = false) {
+  const headers = authenticated ? buildWorldWriteHeaders() : {};
+  const r = await fetch(url, { method: 'POST', headers });
   return r.json();
 }
-async function postJsonBody(url, body) {
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+async function postJsonBody(url, body, authenticated = false) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(authenticated ? buildWorldWriteHeaders() : {}),
+  };
+  const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   return r.json();
 }
 
@@ -73,17 +85,14 @@ async function run(verb, input) {
       const sources = Array.isArray(input.sources) ? input.sources.join(',') : (input.sources || '');
       let url = `${BASE}/ingest-news?q=${enc(input.q)}&entity=${enc(input.entity)}&label=${enc(label)}&limit=${input.limit || 10}`;
       if (sources) url += `&sources=${enc(sources)}`;
-      if (TOKEN) url += `&token=${enc(TOKEN)}`;
-      return postJson(url);
+      return postJson(url, true);
     }
     case 'contribute': {
       // WORLD KNOWLEDGE inbound — push structured knowledge into the shared world graph. The universal
       // "everyone sends their data here" entry. input = WorldContribution {source, entities[], edges?, facts?}.
       if (!input.source || !Array.isArray(input.entities)) throw new Error('contribute needs {source, entities[]}');
       const body = { ingestedAt: new Date().toISOString(), edges: [], facts: [], ...input };
-      let url = `${BASE}/contribute`;
-      if (TOKEN) url += `?token=${enc(TOKEN)}`;
-      return postJsonBody(url, body);
+      return postJsonBody(`${BASE}/contribute`, body, true);
     }
     default:
       return { error: `unknown verb "${verb}"`, verbs: ['sentiment', 'metric', 'neighbors', 'pulls', 'entities', 'ingest', 'contribute'] };
@@ -97,4 +106,8 @@ async function main() {
   process.stdout.write(JSON.stringify(out));
 }
 
-main().catch((e) => { console.error(String((e && e.message) || e)); process.exit(1); });
+if (require.main === module) {
+  main().catch((e) => { console.error(String((e && e.message) || e)); process.exit(1); });
+}
+
+module.exports = { buildWorldWriteHeaders, run };
