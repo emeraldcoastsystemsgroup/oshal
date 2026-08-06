@@ -7,16 +7,21 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Regression tests for dispatch chaining: several modules on ONE mountPath must all be reachable (the little-monsters shape — only the first was dispatched before), and a more-specific mount must win over a shorter one still falling through.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | D10 regression test: every package factory receives ITS OWN ctx.appPackageDir, and a factory-time capture stays correct at request time after other packages mount — the process-global env var pointed every request-time reader at whichever package mounted last.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Close the D2 mode-matrix gap: `auth: operator` shipped in buildGuards but this suite never exercised it. New cases prove the [requiresAuth, requiresOperator] chain end-to-end — authenticated non-operator session → 403, session sub on OSHAL_OPERATOR_SUBS → 200, EMPTY allowlist fail-closed → 403 even for a session, and unauthenticated → 401 from the OIDC wall BEFORE the operator gate (never a bare 403).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove package @/ alias resolution through the real tsconfig-paths hook and Node createRequire against an external temporary package; no resolver mock can mask the production seam.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import express, { type Express, type RequestHandler } from 'express';
 import { createServer, type Server } from 'http';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { createRequire } from 'module';
 import type { AddressInfo } from 'net';
-import { ManifestRouteMounterImpl } from '../../src/app/composition/manifest-route-mounter';
+import {
+  ManifestRouteMounterImpl,
+  registerPackageFrameworkAliases,
+} from '../../src/app/composition/manifest-route-mounter';
 import type { SwarmAppRouteDeclaration } from '../../src/features/swarm-apps';
 
 // A minimal AppContext stand-in — the mounter only passes it through to the route factory.
@@ -72,6 +77,31 @@ afterAll(() => {
 });
 
 describe('ManifestRouteMounterImpl (ADR-085 P1)', () => {
+  it('resolves a framework @/ import from an external package through the real Node seam', () => {
+    const frameworkRoot = mkdtempSync(join(tmpdir(), 'oshal-framework-alias-'));
+    const externalPackage = mkdtempSync(join(tmpdir(), 'oshal-external-package-'));
+    const sharedDir = join(frameworkRoot, 'shared');
+    const frameworkModule = join(sharedDir, 'boundary-probe.js');
+    const packageModule = join(externalPackage, 'route.js');
+    mkdirSync(sharedDir, { recursive: true });
+    writeFileSync(frameworkModule, "module.exports = { marker: 'real-framework-module' };\n", 'utf8');
+    writeFileSync(
+      packageModule,
+      "module.exports = require('@/shared/boundary-probe');\n",
+      'utf8',
+    );
+
+    const unregister = registerPackageFrameworkAliases(frameworkRoot);
+    try {
+      const requireFromPackage = createRequire(packageModule);
+      expect(requireFromPackage(packageModule)).toEqual({ marker: 'real-framework-module' });
+    } finally {
+      unregister();
+      rmSync(frameworkRoot, { recursive: true, force: true });
+      rmSync(externalPackage, { recursive: true, force: true });
+    }
+  });
+
   it('mounts a package route and serves it (path-stripped, ctx passed)', async () => {
     const { server, base, mounter } = await bootApp({ flag: true });
     try {

@@ -85,8 +85,8 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** exact pre/post disk figures are recorded, the intended orphan only is removed, and all active swarm volumes and databases pass health checks afterward.
 
 ### Real-boundary regression doctrine
-- **Remaining:** add the integration-boundary corollary to `CLAUDE.md` and audit specs that stub the same database, resolver, image config, or gateway whose failure they claim to prevent.
-- **Done when:** each identified boundary fix has at least one guard using the real seam, beginning with ticket/store gateways and aliased module resolution, and the audit has explicit dispositions.
+- **Remaining:** finish the open SEC-05 audit disposition by exercising migration 117's corrected provenance ledger through a real/wrapped Pool with two owners and an operator; pool-less route/service tests are not closure evidence for RLS.
+- **Done when:** the durable-memory ledger has the same real-boundary evidence already recorded for ticket/store gateways, aliased module resolution, and built-image artifacts, and the audit contains no unresolved local boundary.
 
 ### Legacy product-name archival disposition
 - **Remaining:** classify old names under `docs/archive`, top-level `archive`, and release collateral as intentionally historical or rewrite them; regenerate current evidence still using retired names.

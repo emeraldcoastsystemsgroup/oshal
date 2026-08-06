@@ -384,6 +384,17 @@ it). Two corollaries: a spec that SKIPS in CI is a guard that doesn't exist (fai
 gate env is missing instead), and a red gate nobody acts on trains everyone to ignore red — fix it
 or explicitly quarantine it with a BACKLOG entry the same day.
 
+**Integration-boundary corollary:** a regression guard must cross the boundary whose failure the
+fix claims to prevent. A test may double collaborators outside that boundary, but it must not mock
+the database/RLS role, resolver, built image, filesystem, protocol adapter, or gateway behavior that
+caused the defect and then claim that boundary is protected. Database fixes need a real store/query
+against the enforcing role and schema; module-resolution fixes need the real resolver from an
+external package; image/config fixes need an artifact/image probe; gateway fixes need at least a
+real local protocol seam, with live-provider acceptance retained when the claim itself is live.
+Record scoped doubles and their real companion in
+[the real-boundary audit](docs/governance/real-boundary-regression-audit.md). A mock-only test is
+still useful for branch logic, but it is not closure evidence for the mocked boundary.
+
 ### Human testability gate
 
 At any handover point the system must be operable by a human from `localhost` without unavailable external services. OIDC is required in prod, but local dev must work with `MOCK_OIDC=true`. Don't mark a task complete unless a human can log in and exercise the feature in a browser.

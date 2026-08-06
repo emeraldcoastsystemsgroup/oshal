@@ -19,6 +19,7 @@ const EXACT_POLICY_SPECS = [
   'tests/unit/machine-write-identity.spec.ts',
   'tests/unit/security-ci-contract.spec.ts',
   'tests/unit/backlog-active-only.spec.ts',
+  'tests/unit/real-boundary-doctrine.spec.ts',
 ];
 
 /** @description Recursively enumerate files below a directory in stable order. */

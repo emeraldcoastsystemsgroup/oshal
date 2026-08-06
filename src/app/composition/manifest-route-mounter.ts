@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | dispatch() now CHAINS every matching package router (most-specific mount first, declaration order within a mount) instead of running a single "best" one — little-monsters declares 3 modules at /api/education and only the first was reachable, 404ing the calendar + voice modules (silent TTS).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | D10 fix: each package factory now receives a PER-PACKAGE context carrying ctx.appPackageDir. The process-global OSHAL_APP_PACKAGE_DIR env var stays as a load-time-only channel (set→require is synchronous) but request-time readers got whichever package mounted LAST — with 2+ apps, a reload made one app serve another's bundled assets.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D2: apply the manifest's declared route AUTH MODE (oidc | service-or-oidc | service | operator | public) instead of a single boolean. The mounter knew ONE posture (plain OIDC), which is why serviceSecretOr apps could not carve — carving one would have re-authed it and 401'd every bot node, the headless CLI and its own in-container tools. Guards are built once at mount; an omitted or unknown mode resolves to 'oidc', never anonymous. Also hands the package a resolved caller sub (oshalCallerSub) under service/service-or-oidc, where a valid secret passes WITHOUT populating req.oidc — a carved app reading getCaller() would otherwise see a null sub and mis-scope its user_sub-keyed store.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Extract the real tsconfig-paths registration seam so regression tests resolve an @/ module from an external package with Node createRequire instead of stubbing the resolver the fix depends on.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
@@ -32,6 +33,17 @@ const logger = createChildLogger({ module: 'manifest-route-mounter' });
 // modules by absolute path. createRequire is robust under bundlers/test runners that would
 // otherwise shim the ambient `require`, and exposes `.resolve` + `.cache` for reloads.
 const nodeRequire = createRequire(__filename);
+
+/**
+ * @description Register the package-facing `@/` alias against one concrete framework root.
+ * Keeping this as an executable seam lets tests prove Node can resolve an external package's
+ * framework import; a mocked resolver would stay green if tsconfig-paths wiring regressed.
+ * @param frameworkRoot - Absolute `src/` or `dist/` root exposed to installed package routes.
+ * @returns A cleanup callback that restores the previous Node resolver hook.
+ */
+export function registerPackageFrameworkAliases(frameworkRoot: string): () => void {
+  return tsconfigPaths.register({ baseUrl: frameworkRoot, paths: { '@/*': ['*'] } });
+}
 
 /** One dynamically-mounted route belonging to an installed app package. */
 interface MountedRoute {
@@ -101,7 +113,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
     if (process.env.VITEST) return;
     try {
       const frameworkRoot = resolvePath(__dirname, '..', '..'); // dist/ (prod) or src/ (dev)
-      tsconfigPaths.register({ baseUrl: frameworkRoot, paths: { '@/*': ['*'] } });
+      registerPackageFrameworkAliases(frameworkRoot);
       logger.info({ frameworkRoot }, 'Registered @/ runtime alias resolution for package routes');
     } catch (err) {
       logger.error({ err }, 'Failed to register @/ alias resolution — package routes with framework imports may fail to load');
