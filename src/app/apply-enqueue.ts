@@ -33,6 +33,14 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Rehydrate exact durable task/worker bindings and recover stale tickets into assist review, never blind auto-resubmission; periodic sweeps also reconcile raw claims and healthy-idle workers.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Rehydrate and reap from the Apply V2 run ledger, including the exact Career claim token, rather than reconstructing authority from callback capability rows.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Sweep durable timeout_at deadlines every thirty seconds so two-minute undispatched claims remain two-minute claims across restarts.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Cast the run-ledger join to text. Migration 118
+ *   declares apply_runs.ticket_id TEXT while tickets.ticket_id is UUID, so the LATERAL join raised
+ *   `operator does not exist: text = uuid` — the reaper sweep threw on EVERY tick, was caught and
+ *   logged, and returned 0, so orphan recovery never ran once. Deploy 2026-08-06 surfaced it
+ *   sixty seconds apart in the api log the moment migration 118 first applied. This is the
+ *   recovery path for a browser that submitted before its callback was lost (ADR-101), i.e. the
+ *   wedged-node case it exists for. Cast rather than re-typing the column: the ledger's TEXT
+ *   ticket_id is deliberate and the table was still empty, so a cast is the whole fix.
  *
  * @module app/apply-enqueue
  */
@@ -340,6 +348,27 @@ async function reapKnownRawClaims(ctx: AppContext): Promise<number> {
 }
 
 /**
+ * Stale-apply sweep, exported so its regression guard executes THIS string rather than a copy.
+ * A guard holding its own transcription of a query proves the transcription works, which is how a
+ * broken production query keeps a green test.
+ *
+ * `t.ticket_id::text` is load-bearing: migration 118 declares `apply_runs.ticket_id` TEXT while
+ * `tickets.ticket_id` is UUID, and Postgres has no `text = uuid` operator. Uncast, the sweep throws
+ * on every tick, gets caught below, and reports zero reaped — a silent no-op, not a visible failure.
+ */
+export const STALE_APPLY_TICKETS_SQL =
+  `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
+          run.run_id, run.claim_token, run.task_id, run.worker_client_id AS client_id
+     FROM tickets t
+     LEFT JOIN LATERAL (
+       SELECT run_id, claim_token, task_id, worker_client_id FROM apply_runs
+        WHERE ticket_id=t.ticket_id::text ORDER BY claimed_at DESC LIMIT 1
+     ) run ON TRUE
+    WHERE t.metadata->>'source' = 'apply-enqueue'
+      AND t.status = 'in_process_build'
+      AND t.updated_at < now() - ($1::int * interval '1 millisecond')`;
+
+/**
  * @description Recover stale Apply tickets into human confirmation, never `approved`. A browser may
  * have clicked Submit before its callback was lost, so blind re-dispatch is forbidden by ADR-101.
  * Also releases legacy/expired raw SQLite claims for every known exact owner.
@@ -350,16 +379,7 @@ export async function reapOrphanedApplyTickets(ctx: AppContext): Promise<number>
     // Cross-owner background sweep over the owner-RLS'd tickets table: SYSTEM identity, or
     // OSHAL_DB_GUC_STRICT=deny rejects the identity-less query and nothing is ever reaped.
     const { rows } = await runWithSystemIdentity(() => ctx.pool!.query(
-      `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
-              run.run_id, run.claim_token, run.task_id, run.worker_client_id AS client_id
-         FROM tickets t
-         LEFT JOIN LATERAL (
-           SELECT run_id, claim_token, task_id, worker_client_id FROM apply_runs
-            WHERE ticket_id=t.ticket_id ORDER BY claimed_at DESC LIMIT 1
-         ) run ON TRUE
-        WHERE t.metadata->>'source' = 'apply-enqueue'
-          AND t.status = 'in_process_build'
-          AND t.updated_at < now() - ($1::int * interval '1 millisecond')`,
+      STALE_APPLY_TICKETS_SQL,
       [ORPHAN_AFTER_MS],
     ));
     let reaped = 0;
