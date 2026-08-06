@@ -45,8 +45,8 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** the full unit suite passes 20 consecutive runs with no remote-client timeout; any serialization is local and documented, not a global concurrency reduction.
 
 ### Tree-walk guard stability
-- **Remaining:** complete two additional fully provisioned unit runs after the local timeout fix; environmental database/harness failures do not count.
-- **Done when:** `npm run test:unit` is green three consecutive times with both repository-separation and no-dev-secret-fallback guards enabled and no global timeout increase.
+- **Remaining:** the timeout half is done — `topology-traversal` and `alert-incident-reopen` now carry explicit 45s describe budgets (2026-08-06), and the suite went from 4 failed assertions to **0 failed / 6263 passed**. What is left is contention, not time: three specs still fail at FILE level intermittently, and a different one each run. `alert-incident-cutover`, `alert-incident-reopen` and `topology-traversal` drive the same live Postgres while 650 other files run in parallel, so they collide on connections and revisions (`revision contention unresolved after 2 attempts`). All three pass in isolation. The fix is structural — live-database specs need their own serial project/pool rather than sitting in the parallel `tests/unit/**` sweep — and deliberately is NOT a retry count, which would mask a real regression in exactly the incident path these guards protect.
+- **Done when:** `npm run test:unit` is green three consecutive times, file-level included, with repository-separation and no-dev-secret-fallback enabled and no global timeout increase — and the live-DB specs are provably serialized rather than passing by luck of scheduling.
 
 ### CI secret-scanner remote mutation proof
 - **Remaining:** use a disposable branch to plant the scanner's sanctioned test secret, observe the remote failure, remove it, and rerun.

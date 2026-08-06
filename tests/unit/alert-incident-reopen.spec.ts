@@ -159,7 +159,9 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe('IncidentStore.consolidate — the three-arm reopen rule', () => {
+// Drives a REAL Postgres through the three-arm reopen rule; connection acquisition under
+// full-suite contention can exceed Vitest's five-second default. Bounded budget, no assertion relaxed.
+describe('IncidentStore.consolidate — the three-arm reopen rule', { timeout: 45_000 }, () => {
   it('arm A: a refire of a live incident advances the counters and touches neither state nor ticket', async () => {
     const key = nextKey('arm-a');
     const first = await store.consolidate(makeEvent(key), BASE_OPTIONS);
@@ -310,7 +312,7 @@ describe('IncidentStore.consolidate — the three-arm reopen rule', () => {
   });
 });
 
-describe('IncidentStore — membership, listing and optimistic concurrency', () => {
+describe('IncidentStore — membership, listing and optimistic concurrency', { timeout: 45_000 }, () => {
   it('resolution is provable only from recorded members with no overflow', async () => {
     const key = nextKey('members');
     const { incident } = await store.consolidate(makeEvent(key), BASE_OPTIONS);

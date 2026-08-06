@@ -154,7 +154,9 @@ afterAll(async () => {
   await pool.end();
 }, 60000);
 
-describe('TopologyStore traversal', () => {
+// Graph traversal over a seeded store; under full-suite contention the fixture build alone can
+// exceed Vitest's five-second default. Bounded budget, no assertion relaxed.
+describe('TopologyStore traversal', { timeout: 45_000 }, () => {
   it('(a) terminates on a cyclic topology and returns each node once at its minimum hops', async () => {
     const hops = await store.neighbors(k('cyc-a'), MAX_TRAVERSAL_DEPTH);
     const keys = hops.map((hop) => hop.nodeKey);
@@ -243,7 +245,7 @@ describe('TopologyStore traversal', () => {
   });
 });
 
-describe('TopologyStore sweep brake', () => {
+describe('TopologyStore sweep brake', { timeout: 45_000 }, () => {
   it('(e) refuses a sweep that would take half the slice, and permits one that takes a small fraction', async () => {
     const sliceCount = async (): Promise<number> => {
       const result = await pool.query<{ count: string }>(
@@ -287,7 +289,7 @@ describe('TopologyStore sweep brake', () => {
   });
 });
 
-describe('TopologyStore loader provenance', () => {
+describe('TopologyStore loader provenance', { timeout: 45_000 }, () => {
   it('records one durable run row per loader pass, including the refusal', async () => {
     await store.recordLoaderRun({
       loaderTag: 'discovery',
@@ -362,7 +364,7 @@ describe('TopologyStore loader provenance', () => {
   });
 });
 
-describe('TopologyStore transit gating', () => {
+describe('TopologyStore transit gating', { timeout: 45_000 }, () => {
   // A star: two peers that depend on one shared hub, exactly the shape a control plane or a
   // message bus produces. Two hops through the hub connects every peer to every other peer, so
   // without a transit gate one failure correlates an entire estate into a single component.
