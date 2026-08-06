@@ -19,9 +19,10 @@
  * The public symbols those siblings own are RE-EXPORTED from here so existing importers and the unit
  * tests keep resolving them from `jarvis-routes` unchanged.
  *
- * Every route is auth-gated at mount (auth is opt-in per route, CLAUDE.md): an OIDC session
- * (browser surface) OR the trusted-service secret + x-oshal-user-sub (headless swarm CLI /
- * internal bots) — the same serviceSecretOr pattern as the message routes and /api/graph.
+ * Every route is auth-gated at mount (auth is opt-in per route, CLAUDE.md). Browser OIDC and PAT
+ * sessions remain authoritative. During SEC-01 containment, owner-scoped reads refuse machine-only
+ * fleet-secret identity; the compatibility secret remains only on Jarvis actions until scoped
+ * delegation replaces it.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -34,6 +35,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted the three jarvis-ambient decomposition siblings (core/ui/recognition) in JARVIS_CLIENT_ASSETS so the load-ordered classic scripts serve from /assets like the existing jarvis-speakers siblings. jarvis-ambient.js itself was over the 1000-code-line cap; behavior is unchanged.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Multi-app planner residuals: the dispatch ack now SHOWS the compiled plan (describePlan — which apps, in what order, which step pauses for approval) instead of only "I've lined up N steps", and a work item whose ticket ended escalated/cancelled reports an honest failure line instead of status 'error' with a null message. Both are honesty properties of the planner, not cosmetics.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Narrow valid service-secret calls to their trusted user sub before any Jarvis owner-scoped read/write; a machine credential without X-OSHAL-User-Sub now fails closed instead of retaining the global cross-tenant operator database stamp.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-01 containment: preflight every owner-scoped Jarvis read before legacy subject resolution, return the stable 403 refusal for fleet-secret callers, and preserve independently authenticated OIDC/PAT access under mixed headers.
  *
  * @module jarvis-routes
  */
@@ -44,6 +46,7 @@ import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
+import { rejectLegacyServiceIdentityForUserRead } from '@/features/security';
 import type { AppContext } from '@/app/composition/app-context';
 import type { InternalTicket } from '@/entities/ticket';
 import {
@@ -133,6 +136,22 @@ export {
 export { maskPendingComplexSummaries, JARVIS_AGENT_ID } from './jarvis-orchestrator';
 
 const logger = createChildLogger({ module: 'jarvis-routes' });
+
+const USER_SCOPED_JARVIS_READS = [
+  ['/history', '/api/jarvis/history'],
+  ['/tasks', '/api/jarvis/tasks'],
+  ['/overview', '/api/jarvis/overview'],
+  ['/ask/result', '/api/jarvis/ask/result'],
+  ['/ask/jobs', '/api/jarvis/ask/jobs'],
+  ['/visuals/:artifactId', '/api/jarvis/visuals/:artifactId'],
+] as const;
+
+/** Install read refusals before the compatibility middleware can resolve a forwarded subject. */
+function registerLegacyReadContainment(router: Router): void {
+  for (const [pathTemplate, routeTemplate] of USER_SCOPED_JARVIS_READS) {
+    router.get(pathTemplate, rejectLegacyServiceIdentityForUserRead(routeTemplate));
+  }
+}
 
 /** The ticketType for a hand-off (ADR-083): platform-dev work is EXPLICIT — Jarvis marks
  *  the directive `"platform": true` and it rides the superadmin-gated 'oshal-dev' queue
@@ -404,6 +423,7 @@ function storedJarvisSourceId(value: unknown): string | undefined {
  */
 export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
   const router = Router();
+  registerLegacyReadContainment(router);
   // serviceSecretOr authenticates the machine at the outer mount. Jarvis is user-bound, so replace
   // that broad operator stamp with the asserted owner before any sub-router or detached turn runs.
   router.use(requireTrustedServiceUserIdentity);

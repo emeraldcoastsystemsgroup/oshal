@@ -20,6 +20,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: surfaced the hardening middleware presets (webhook HMAC guard, rate-limit presets, global-skip predicate, CSP builder) consumers were deep-importing from ./hardening/*.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Exported executable contracts for helper-mounted, mixed-auth, and non-/api security-sensitive route surfaces.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exported the shared limiter-only mount classifier used by both runtime and CI route inventories.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Surface the SEC-01 legacy service-identity read guard through the feature barrel for route-layer containment without deep imports.
  *
  * @module features/security
  */
@@ -56,6 +57,7 @@ export {
   RESERVED_BODY_PARSER_PREFIXES,
 } from './hardening/body-limits';
 export { shouldSkipGlobalRateLimit } from './hardening/global-rate-limit-skip';
+export { rejectLegacyServiceIdentityForUserRead } from './legacy-service-identity-containment';
 export {
   cspFromEnv,
   cspMode,

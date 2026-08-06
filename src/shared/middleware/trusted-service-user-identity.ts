@@ -5,10 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added a fail-closed middleware that replaces the broad service-secret operator database stamp with the specifically asserted user identity before a user-bound router reads or writes owner-scoped data.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Document canonical X-Oshal-User-Sub-B64 attribution; the shared resolver retains a non-normalizing legacy plain-header rollout path.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Keep an independently authenticated browser or PAT principal authoritative even when a stale or injected legacy service-secret header is also present.
  */
 
 import type { NextFunction, Request, Response } from 'express';
-import { getTrustedServiceUserSub, hasValidServiceSecret } from './authz';
+import {
+  getTrustedServiceUserSub,
+  hasAuthenticatedUserIdentity,
+  hasValidServiceSecret,
+} from './authz';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 
 /**
@@ -34,6 +39,10 @@ export function requireTrustedServiceUserIdentity(
   res: Response,
   next: NextFunction,
 ): void {
+  if (hasAuthenticatedUserIdentity(req)) {
+    next();
+    return;
+  }
   if (!hasValidServiceSecret(req)) {
     next();
     return;

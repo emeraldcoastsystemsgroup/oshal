@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | requiresOperator: middleware-shaped operator gate for whole mounts (requireOperator is handler-shaped and can't be listed in app.use). First consumer: /api/security — the Security Center exposes the platform's own weak points and redacted secret previews, so it must never be reachable by basic users.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added requireServiceSecret for privileged machine-only control planes. Unlike the compatibility-only requireServiceSecretWhenConfigured helper, the strict gate fails closed when SWARM_SERVICE_SECRET is absent and never falls back to a human session.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve OIDC subjects as exact case-sensitive identifiers in operator checks, and add a canonical base64url trusted-service subject header so whitespace/case survive HTTP transport without aliasing. Legacy plain headers remain readable during rollout but are never normalized.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Expose an independently authenticated user predicate so legacy service credentials can never override an established browser or PAT principal on user-scoped routes.
  */
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
@@ -24,6 +25,11 @@ interface OidcUserShape {
   preferred_username?: string;
 }
 
+interface AuthenticatedOidcShape {
+  isAuthenticated?: () => boolean;
+  user?: OidcUserShape;
+}
+
 /**
  * @description Extracts the caller's identity from the validated OIDC session.
  * Never trusts request body/query for identity — only req.oidc.user (set by the
@@ -35,6 +41,21 @@ export function getCaller(req: Request): CallerIdentity {
   const rawEmail = user?.email || user?.preferred_username || '';
   const email = rawEmail ? String(rawEmail).toLowerCase() : null;
   return { sub, email };
+}
+
+/**
+ * @description Confirms that the request already carries an independently authenticated user
+ * principal established by the OIDC, PAT, TV-token, local-auth, or guest middleware. A populated
+ * `user` object alone is insufficient: the owning authentication rail must also report success.
+ * This predicate lets compatibility machine credentials defer to a real user instead of
+ * replacing that user's request identity with an attacker-controlled forwarded subject.
+ * @param req - Express request after the global user-authentication middleware.
+ * @returns True only for an authenticated request with a non-empty exact subject.
+ */
+export function hasAuthenticatedUserIdentity(req: Request): boolean {
+  const oidc = (req as { oidc?: AuthenticatedOidcShape }).oidc;
+  if (oidc?.isAuthenticated?.() !== true) return false;
+  return typeof oidc.user?.sub === 'string' && oidc.user.sub.length > 0;
 }
 
 function parseSubjectAllowlist(value: string | undefined): Set<string> {
