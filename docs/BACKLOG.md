@@ -130,10 +130,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** carry the initiating signed identity and entitlement through bot-to-bot calls; service-secret re-entry must not upgrade user work.
 - **Done when:** a deployed restricted-user Jarvis call is denied before ticket/model/tool execution while an authorized operator path succeeds with an attributable audit trail.
 
-### Own-data live database evidence
-- **Remaining:** move the real export/delete and two-user isolation specs into the nightly evidence path using provisioned Postgres rather than loopback stores.
-- **Done when:** competitive own-data gates link current database-backed pass evidence and fail when ownership/RLS mutations are introduced.
-
 ### Connector tenant-isolation documentation sync
 - **Remaining:** update [connector tenant isolation](architecture/connectors-tenant-isolation.md) to describe the current caller identity, broker routing, and cross-user guards rather than the retired pre-implementation state.
 - **Done when:** documentation matches executable behavior and links the current isolation tests without claiming runtime work remains.

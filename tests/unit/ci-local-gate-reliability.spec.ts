@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                     | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for two env-delta classes that redded the first trunk ci-local --head run (2026-07-23) on a healthy tree — a gate that reds without a real defect trains everyone to ignore red. (1) CRLF: the pre-recreation repo's committed blobs carried CRLF while working trees were LF, so the one multi-line toContain in app-immersive-chrome.spec.ts passed in the repo and failed in the git-archive export; b8e43f8 pinned `* text=auto eol=lf` in .gitattributes and this spec keeps the pin AND the actual bytes honest. (2) ::1 loopback: Playwright clients resolving localhost→::1 hit the stale-wslrelay squatter and died ECONNREFUSED ::1:3456 (258 hits) while the webServer served IPv4; the harness now pins http://127.0.0.1 and this spec goes red if the ::1-prone hostname default returns (the origin helpers are pinned by test-origins.spec.ts).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require hosted CI to enable the explicit mock-header identity switch so its database-backed two-user privacy/isolation proofs execute rather than fail at their anti-skip guard.
  */
 
 import { readFileSync } from 'fs';
@@ -66,5 +67,18 @@ describe('ci-local gate reliability — e2e loopback host (wslrelay ::1 class)',
       const src = readFileSync(resolve(REPO_ROOT, relPath), 'utf8');
       expect(src, `${relPath} templates a localhost base URL — the ::1-prone hostname (wslrelay wedge class)`).not.toMatch(/http:\/\/localhost:\$\{/);
     }
+  });
+});
+
+describe('hosted CI own-data evidence identity gate', () => {
+  it('runs the two-user live specs with explicit mock-header identities over provisioned Postgres', () => {
+    const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8');
+    const greenSuite = readFileSync(resolve(REPO_ROOT, 'tests/e2e-green-suite.txt'), 'utf8');
+
+    expect(greenSuite).toContain('tests/live/privacy-export-delete.live.spec.ts');
+    expect(greenSuite).toContain('tests/live/two-user-isolation.live.spec.ts');
+    expect(workflow).toMatch(/MOCK_OIDC:\s*["']?true["']?/);
+    expect(workflow).toMatch(/MOCK_OIDC_ALLOW_HEADER:\s*["']?true["']?/);
+    expect(workflow).toContain('DATABASE_URL: postgresql://oshal:oshal@localhost:5432/oshal');
   });
 });

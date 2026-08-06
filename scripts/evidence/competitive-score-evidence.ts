@@ -341,8 +341,8 @@ export function getCategorySpecs(): CategorySpec[] {
         // release-compliant; requiring the old literal would fail the corrected, current evidence.
         evidenceFile('app-role-runtime', 'Runtime runs under a least-privilege (non-superuser, non-BYPASSRLS) app role', 'app-role-runtime-and-watchdog-', [/oshal_app/i, /rolsuper.*false/i, /rolbypassrls.*false/i, /least-privilege/i], true),
         evidenceFile('legacy-owner-disposition', 'Legacy unowned rows are backfilled or operator-only quarantined', 'legacy-owner-backfill-quarantine-', [/operator_only/i, /linkedChatTasksFromTickets/i], true),
-        evidenceFile('live-two-user', 'Live DB-enforced two-user RLS isolation proof exists', 'live-two-user-isolation-', [/user A/i, /user B/i, /cannot read/i], true),
-        evidenceFile('export-delete', 'Export/delete path is proven for a user', 'data-export-delete-', [/export/i, /delete/i], true),
+        evidenceFile('live-two-user', 'Live DB-enforced two-user RLS isolation proof exists', 'live-two-user-isolation-', [/user A/i, /user B/i, /cannot read/i, /signed-in route/i, /Postgres/i], true),
+        evidenceFile('export-delete', 'Export/delete path is proven for a user', 'data-export-delete-', [/export/i, /delete/i, /Postgres/i, /oshal_app/i], true),
       ],
     },
     {

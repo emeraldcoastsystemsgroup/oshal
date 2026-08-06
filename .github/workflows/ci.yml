@@ -14,6 +14,7 @@
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | Security Scan: free ~20GB of preinstalled runner toolchains before building — the image build + Trivy's uncompressed export overflow the ~14GB a stock runner has free (run 29045378356: "no space left on device" inside the Trivy export, not a CVE finding).
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | RE-ENABLED after the billing hold was paid (operator decision 2026-07-09), but MANUAL-ONLY: dropped the daily `schedule:` cron and never added a `push:` trigger. Automatic/per-push runs are what burned the free minutes; this repo pushes to main 50+ times/day. CI now runs ONLY on an explicit "Run workflow" (workflow_dispatch) — "run it when needed" — plus the PR gate (which effectively never fires on this trunk-based repo). Zero automatic billing.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-06: make npm audit blocking, pin the post-incident Trivy action/version, and scan both full history and the checked-out tree with digest-pinned gitleaks.
+# 10 | maintainer@emeraldcoastsystemsgroup.com  | Run the two-user and privacy live proofs in hosted CI by enabling the mock-header identity gate; CI-mode specs fail instead of skip when this explicit test-only switch is absent.
 # =============================================================================
 
 name: CI
@@ -183,6 +184,10 @@ jobs:
         run: npm run test:e2e:green -- --retries=1
         env:
           MOCK_OIDC: "true"
+          # These two green-ratchet specs exercise distinct caller identities over the real
+          # provisioned Postgres service. MOCK_OIDC alone supplies one default identity; the
+          # separate, test-only header switch is required for their user-A/user-B assertions.
+          MOCK_OIDC_ALLOW_HEADER: "true"
           CI: "true"
           DATABASE_URL: postgresql://oshal:oshal@localhost:5432/oshal
           REDIS_URL: redis://localhost:6379

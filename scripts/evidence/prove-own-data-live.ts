@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add Change Log header; docs/ path references updated in the 2026-07-04 docs consolidation
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Stop hardcoding the evidence date: DATE now derives from the run date so the own-data proofs (wave1/app-role/legacy/two-user/export) get correctly-dated filenames instead of always emitting *-2026-07-04.md — the "filename date lag" the competitive audit flagged, which trips freshness checks keyed on the filename and mis-sorts newest-by-name globs.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Privacy-delete stub: add pool.connect() no-op transactional client so the export/delete proof survives the delete route's new ambient/speaker-data cleanup transaction (clean-account user has no ambient rows -> no-op). Was failing "confirmed delete expected 200, got 500: pool.connect is not a function".
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Replace loopback stores with the real mock-OIDC route specs on the live app-role database; consume their structured Playwright attachments and refuse evidence when Postgres/RLS proof is absent.
  */
 /**
  * Headless, self-healing competitive-evidence generator for the OSHAL "own-data"
@@ -18,10 +19,10 @@
  *                                    api runs as a non-superuser, non-BYPASSRLS role.
  *   - legacy-owner-backfill-quarantine -> runs the real backfill script in DRY-RUN
  *                                    (BEGIN/ROLLBACK, no writes) and captures disposition counts.
- *   - live-two-user-isolation    -> derives the two-user visibility proof from the same
- *                                    verify:rls run (user A cannot read user B's rows).
- *   - data-export-delete         -> loopback-mounts the REAL privacy route module behind a
- *                                    fakeAuth middleware and exercises export + delete.
+ *   - live-two-user-isolation    -> combines verify:rls with the real signed-in route spec;
+ *                                    both synthetic owners must reach Postgres and remain isolated.
+ *   - data-export-delete         -> runs the real privacy HTTP route spec on that app-role
+ *                                    database and proves user B's rows survive user A deletion.
  *
  * On ANY failed assertion the generator prints failures, sets exit code 1, and writes
  * NO evidence docs. Nothing is hardcoded to pass.
@@ -30,19 +31,16 @@
  *   npx ts-node -r tsconfig-paths/register --transpile-only scripts/evidence/prove-own-data-live.ts
  */
 
-import express, { type NextFunction, type Request, type Response } from 'express';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { AddressInfo } from 'node:net';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createPrivacyRoutes, PRIVACY_DELETE_CONFIRMATION } from '@/app/routes/privacy-routes';
 
 // Derive the evidence date from the run date (dateStamp is a hoisted function declaration).
 // Previously hardcoded to 2026-07-04, which made every nightly run emit stale-named files.
 const DATE = dateStamp(new Date());
 const OUT_DIR = path.join(process.cwd(), 'docs', 'evidence');
-const USER_A = 'own-data-proof-user-a-2026-07-04';
-const USER_B = 'own-data-proof-user-b-2026-07-04';
 
 // ---------------------------------------------------------------------------
 // Date/time helpers (copied EXACTLY from the canonical evidence templates).
@@ -69,11 +67,11 @@ function formatTimestamp(date: Date): string {
 
 type CmdResult = { status: number; stdout: string; stderr: string };
 
-function runArgs(cmd: string, args: string[], env?: NodeJS.ProcessEnv, useShell = false): CmdResult {
+function runArgs(cmd: string, args: string[], env?: NodeJS.ProcessEnv): CmdResult {
   const res = spawnSync(cmd, args, {
     cwd: process.cwd(),
     encoding: 'utf8',
-    shell: useShell,
+    shell: false,
     env: env ? { ...process.env, ...env } : process.env,
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -94,11 +92,15 @@ function assert(condition: unknown, message: string): void {
 // Live-stack connection helpers.
 // ---------------------------------------------------------------------------
 
-function dbHostPort(): string {
-  const out = runArgs('docker', ['port', 'oshal-local-db', '5432/tcp']).stdout.trim();
+function dockerHostPort(container: string, containerPort: number): string {
+  const out = runArgs('docker', ['port', container, `${containerPort}/tcp`]).stdout.trim();
   const match = out.match(/(\d+\.\d+\.\d+\.\d+):(\d+)/);
-  if (!match) throw new Error(`could not read host port from: ${out}`);
+  if (!match) throw new Error(`could not read ${container}:${containerPort} host port from: ${out}`);
   return `${match[1] === '0.0.0.0' ? '127.0.0.1' : match[1]}:${match[2]}`;
+}
+
+function dbHostPort(): string {
+  return dockerHostPort('oshal-local-db', 5432);
 }
 
 function containerEnv(name: string): string {
@@ -131,7 +133,7 @@ type RlsProof = {
 };
 
 function runVerifyRls(appRoleUrl: string): RlsProof {
-  const res = runArgs('npm', ['run', 'verify:rls'], { DATABASE_URL: appRoleUrl }, true);
+  const res = runArgs(process.execPath, ['scripts/governance/verify-rls-isolation.mjs'], { DATABASE_URL: appRoleUrl });
   const report = parseJsonTail(res.stdout);
   assert(report.ok === true, `verify:rls not ok: ${JSON.stringify(report.summary ?? report.error)}`);
   assert(report.mode === 'enforce', `verify:rls mode expected enforce, got ${report.mode}`);
@@ -217,7 +219,7 @@ type LegacyProof = {
 };
 
 function proveLegacyDisposition(ownerUrl: string): LegacyProof {
-  const res = runArgs('node', ['scripts/governance/backfill-owner-sub.mjs'], { DATABASE_URL: ownerUrl });
+  const res = runArgs(process.execPath, ['scripts/governance/backfill-owner-sub.mjs'], { DATABASE_URL: ownerUrl });
   assert(res.status === 0, `backfill dry-run exited ${res.status}: ${res.stderr.slice(0, 300)}`);
   const report = parseJsonTail(res.stdout);
   assert(report.dryRun === true, 'backfill did not run in dry-run mode (would mutate live data)');
@@ -237,136 +239,151 @@ function proveLegacyDisposition(ownerUrl: string): LegacyProof {
 }
 
 // ---------------------------------------------------------------------------
-// Proof 5: data export / delete (loopback of the REAL privacy route module).
+// Proof 4 + 5: real signed-in route specs over the live app-role database.
 // ---------------------------------------------------------------------------
 
-type ExportDeleteProof = {
-  exportBeforeA: { tasks: number; tickets: number };
-  leakedUserBRows: number;
-  deleteNoConfirmStatus: number;
-  deleteConfirmStatus: number;
-  deletedCounts: { tasks: number; messages: number; tickets: number };
-  exportAfterA: { tasks: number; tickets: number };
-  userBRowsRemaining: number;
-};
-
-type TaskRow = { taskId: string; title: string; ownerSub: string };
-type TicketRow = { ticketId: string; title: string; ownerSub: string };
-
-function seedStores() {
-  const tasks: TaskRow[] = [
-    { taskId: 'own-data-a-task', title: 'User A private task', ownerSub: USER_A },
-    { taskId: 'own-data-b-task', title: 'User B private task', ownerSub: USER_B },
-  ];
-  const tickets: TicketRow[] = [
-    { ticketId: 'own-data-a-ticket', title: 'User A private ticket', ownerSub: USER_A },
-    { ticketId: 'own-data-b-ticket', title: 'User B private ticket', ownerSub: USER_B },
-  ];
-  const messages: Record<string, Array<{ role: string; content: string }>> = {
-    'own-data-a-task': [{ role: 'user', content: 'A message' }],
-    'own-data-b-task': [{ role: 'user', content: 'B message' }],
-  };
-  return { tasks, tickets, messages };
+interface PlaywrightAttachment {
+  name: string;
+  body?: string;
+  contentType: string;
 }
 
-function buildPrivacyCtx(store: ReturnType<typeof seedStores>) {
-  const scope = <T extends { ownerSub: string }>(rows: T[], ownerSub: string) => rows.filter((r) => r.ownerSub === ownerSub);
-  return {
-    pool: {
-      async query() { return { rows: [], rowCount: 0 }; },
-      // The delete route serializes ambient/speaker erasure behind an advisory-lock lease
-      // (acquireAmbientOwnerLock) and then opens a transaction to purge the rows. A clean-account
-      // proof user has no ambient data and no concurrent audio work, so the stub client must (a)
-      // report pg_try_advisory_lock AS locked=true so the lease is granted, and (b) return empty
-      // rows for everything else — to_regclass then reads no table and the DELETE is a no-op.
-      async connect() {
-        return {
-          async query(sql: unknown) {
-            if (typeof sql === 'string' && /pg_try_advisory_lock/i.test(sql)) return { rows: [{ locked: true }], rowCount: 1 };
-            return { rows: [], rowCount: 0 };
-          },
-          release() { /* no-op */ },
-        };
-      },
-    },
-    taskStore: {
-      async list({ ownerSub }: { ownerSub: string; limit?: number }) { return scope(store.tasks, ownerSub); },
-      async delete(taskId: string) { store.tasks = store.tasks.filter((t) => t.taskId !== taskId); },
-    },
-    ticketService: {
-      async listTickets({ ownerSub }: { ownerSub: string; limit?: number }) { return scope(store.tickets, ownerSub); },
-      async deleteTicket(ticketId: string) { store.tickets = store.tickets.filter((t) => t.ticketId !== ticketId); },
-    },
-    messageStore: {
-      async getByTask(taskId: string) { return store.messages[taskId] ?? []; },
-      async deleteByTask(taskId: string) { delete store.messages[taskId]; },
-    },
-  };
+interface PlaywrightResult {
+  status?: string;
+  attachments: PlaywrightAttachment[];
 }
 
-function fakeAuth(sub: string) {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    (req as Request & { oidc?: unknown }).oidc = {
-      isAuthenticated: () => true,
-      user: { sub, oid: sub, email: `${sub}@example.test`, name: sub },
-    };
-    next();
-  };
+interface PlaywrightSpec {
+  title: string;
+  file: string;
+  ok: boolean;
+  tests: Array<{ status: string; results: PlaywrightResult[] }>;
 }
 
-async function httpJson(baseUrl: string, method: string, pathName: string, body?: unknown) {
-  const res = await fetch(`${baseUrl}${pathName}`, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+interface PlaywrightSuite {
+  specs: PlaywrightSpec[];
+  suites?: PlaywrightSuite[];
+}
+
+interface PlaywrightReport {
+  suites: PlaywrightSuite[];
+  errors: Array<{ message?: string }>;
+  stats: { startTime: string; duration: number; expected: number; unexpected: number; flaky: number; skipped: number };
+}
+
+interface LiveOwnDataRouteProof {
+  databaseRole: 'oshal_app';
+  databaseUrl: string;
+  stats: PlaywrightReport['stats'];
+  twoUser: Record<string, any>;
+  exportDelete: Record<string, any>;
+}
+
+/** @description Reserves an unused loopback port for Playwright's isolated evidence server. */
+async function availableLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
   });
-  const text = await res.text();
-  let json: Record<string, any> = {};
-  try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text.slice(0, 200) }; }
-  return { status: res.status, json, raw: text };
+  const address = server.address() as AddressInfo;
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  return address.port;
 }
 
-async function proveExportDelete(): Promise<ExportDeleteProof> {
-  const store = seedStores();
-  const ctx = buildPrivacyCtx(store);
-  const app = express();
-  app.use(express.json({ limit: '1mb' }));
-  app.use(fakeAuth(USER_A));
-  app.use('/api/privacy', createPrivacyRoutes(ctx as any));
-  const server = app.listen(0);
-  await new Promise<void>((resolve) => server.once('listening', resolve));
-  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+function collectPlaywrightSpecs(suites: PlaywrightSuite[]): PlaywrightSpec[] {
+  return suites.flatMap((suite) => [
+    ...suite.specs,
+    ...collectPlaywrightSpecs(suite.suites ?? []),
+  ]);
+}
+
+/** @description Decodes one structured attachment only after its exact spec passed without skip. */
+function proofAttachment(
+  report: PlaywrightReport,
+  fileSuffix: string,
+  attachmentName: string,
+): Record<string, any> {
+  const normalizedSuffix = fileSuffix.replace(/\\/g, '/');
+  const specs = collectPlaywrightSpecs(report.suites);
+  const spec = specs.find((candidate) => {
+    const file = candidate.file.replace(/\\/g, '/');
+    return file.endsWith(normalizedSuffix)
+      || normalizedSuffix.endsWith(`/${file}`)
+      || path.posix.basename(file) === path.posix.basename(normalizedSuffix);
+  });
+  assert(spec, `Playwright report omitted ${fileSuffix}; reported: ${specs.map((candidate) => candidate.file).join(', ')}`);
+  assert(spec.ok, `${fileSuffix} did not pass: ${spec.title}`);
+  assert(spec.tests.length === 1 && spec.tests[0].status === 'expected', `${fileSuffix} was skipped/flaky/unexpected`);
+  const finalResult = spec.tests[0].results.at(-1);
+  assert(finalResult?.status === 'passed', `${fileSuffix} final result was ${finalResult?.status ?? 'missing'}`);
+  const attachment = finalResult.attachments.find((candidate) => candidate.name === attachmentName);
+  assert(attachment?.body, `${fileSuffix} did not attach ${attachmentName}`);
+  const decoded = Buffer.from(attachment.body, 'base64').toString('utf8');
+  const proof = JSON.parse(decoded) as Record<string, any>;
+  assert(proof.databaseEvidence, `${fileSuffix} did not prove its fixtures reached Postgres`);
+  return proof;
+}
+
+/**
+ * @description Runs both real route specs against the live app-role DSN. The specs opt into direct
+ * database assertions, so optional in-memory fallback cannot produce a passing evidence artifact.
+ */
+async function proveLiveOwnDataRoutes(appRoleUrl: string, redisUrl: string): Promise<LiveOwnDataRouteProof> {
+  const port = await availableLoopbackPort();
+  const reportDir = mkdtempSync(path.join(tmpdir(), 'oshal-own-data-playwright-'));
+  const reportPath = path.join(reportDir, 'report.json');
   try {
-    const exp1 = await httpJson(baseUrl, 'GET', '/api/privacy/export');
-    assert(exp1.status === 200, `export expected 200, got ${exp1.status}`);
-    assert(exp1.json.counts?.tasks === 1 && exp1.json.counts?.tickets === 1, `export should contain 1 task + 1 ticket for user A, got ${JSON.stringify(exp1.json.counts)}`);
-    const leaked = (exp1.raw.match(/own-data-b-/g) ?? []).length;
-    assert(leaked === 0, `user A export leaked ${leaked} user B rows`);
+    const res = runArgs(process.execPath, [
+      'node_modules/playwright/cli.js', 'test',
+      'tests/live/privacy-export-delete.live.spec.ts',
+      'tests/live/two-user-isolation.live.spec.ts',
+      '--reporter=json', '--workers=1', '--retries=0',
+    ], {
+      CI: 'true',
+      NODE_ENV: 'test',
+      MOCK_OIDC: 'true',
+      MOCK_OIDC_ALLOW_HEADER: 'true',
+      OSHAL_OWN_DATA_DATABASE_EVIDENCE: 'true',
+      DATABASE_URL: appRoleUrl,
+      REDIS_URL: redisUrl,
+      RUN_MIGRATIONS: 'false',
+      OSHAL_SCHEMA_BOOTSTRAP: 'validate-only',
+      FORCE_LLM_PROVIDER: 'noop',
+      PLAYWRIGHT_PORT: String(port),
+      PLAYWRIGHT_REUSE_SERVER: 'false',
+      PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath,
+      SESSION_SECRET: 'own-data-evidence-ephemeral-session-secret',
+      SWARM_SERVICE_SECRET: 'own-data-evidence-ephemeral-service-secret',
+      TRADING_LIVE_ENABLED: 'false',
+      TRADING_AUTOPILOT_ENABLED: 'false',
+      TRADING_AUTOPILOT_LIVE: 'false',
+      TRADING_HALT: 'true',
+    });
+    assert(res.status === 0, `own-data Playwright proofs exited ${res.status}: ${(res.stderr || res.stdout).slice(-2000)}`);
+    const report = JSON.parse(readFileSync(reportPath, 'utf8')) as PlaywrightReport;
+    assert(report.errors.length === 0, `Playwright reporter errors: ${JSON.stringify(report.errors)}`);
+    assert(report.stats.expected === 2, `expected exactly 2 own-data specs, got ${JSON.stringify(report.stats)}`);
+    assert(report.stats.unexpected === 0 && report.stats.flaky === 0 && report.stats.skipped === 0,
+      `own-data specs were not clean passes: ${JSON.stringify(report.stats)}`);
 
-    const del400 = await httpJson(baseUrl, 'DELETE', '/api/privacy/me', { confirm: 'nope' });
-    assert(del400.status === 400, `delete without confirmation expected 400, got ${del400.status}`);
-
-    const del = await httpJson(baseUrl, 'DELETE', '/api/privacy/me', { confirm: PRIVACY_DELETE_CONFIRMATION });
-    assert(del.status === 200 && del.json.success === true, `confirmed delete expected 200/success, got ${del.status}`);
-    assert(del.json.deleted?.tasks === 1 && del.json.deleted?.tickets === 1, 'confirmed delete did not remove user A task+ticket');
-
-    const exp2 = await httpJson(baseUrl, 'GET', '/api/privacy/export');
-    assert(exp2.json.counts?.tasks === 0 && exp2.json.counts?.tickets === 0, 'user A data still present after delete');
-
-    const userBRemaining = store.tasks.filter((t) => t.ownerSub === USER_B).length + store.tickets.filter((t) => t.ownerSub === USER_B).length;
-    assert(userBRemaining === 2, `user B rows should be untouched (2), got ${userBRemaining}`);
-
+    const twoUser = proofAttachment(
+      report, 'tests/live/two-user-isolation.live.spec.ts', 'two-user-isolation-proof.json',
+    );
+    const exportDelete = proofAttachment(
+      report, 'tests/live/privacy-export-delete.live.spec.ts', 'privacy-export-delete-proof.json',
+    );
+    assert(twoUser.databaseEvidence?.userA?.role === 'oshal_app', 'two-user proof did not use oshal_app');
+    assert(exportDelete.databaseEvidence?.before?.userA?.role === 'oshal_app', 'export/delete proof did not use oshal_app');
     return {
-      exportBeforeA: { tasks: exp1.json.counts.tasks, tickets: exp1.json.counts.tickets },
-      leakedUserBRows: leaked,
-      deleteNoConfirmStatus: del400.status,
-      deleteConfirmStatus: del.status,
-      deletedCounts: del.json.deleted,
-      exportAfterA: { tasks: exp2.json.counts.tasks, tickets: exp2.json.counts.tickets },
-      userBRowsRemaining: userBRemaining,
+      databaseRole: 'oshal_app',
+      databaseUrl: maskUrl(appRoleUrl),
+      stats: report.stats,
+      twoUser,
+      exportDelete,
     };
   } finally {
-    await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+    rmSync(reportDir, { recursive: true, force: true });
   }
 }
 
@@ -487,9 +504,11 @@ function renderLegacy(legacy: LegacyProof, at: Date): string {
   ].join('\n');
 }
 
-function renderTwoUser(rls: RlsProof, at: Date): string {
+function renderTwoUser(rls: RlsProof, routes: LiveOwnDataRouteProof, at: Date): string {
+  const route = routes.twoUser;
+  const database = route.databaseEvidence as Record<string, any>;
   return [
-    ...head('Live Two-User Isolation', 'genuine live-stack DB run — two synthetic identities checked for cross-tenant visibility under enforce-stage RLS.', at),
+    ...head('Live Two-User Isolation', 'genuine live-stack DB + signed-in HTTP run — two synthetic identities checked at both route and enforce-stage RLS boundaries.', at),
     '## Scope',
     '',
     'This proof frames the live `verify:rls` visibility matrix as two distinct signed-in identities, user A and user B, under the app-role runtime posture (`oshal_app`, GUC on, enforce-stage RLS). It shows that user A cannot read user B\'s rows and user B cannot read user A\'s rows across `tickets`, `workspaces`, `access_audit_log`, and `chat_tasks`.',
@@ -508,16 +527,29 @@ function renderTwoUser(rls: RlsProof, at: Date): string {
     '',
     'The same run confirms each user CAN read their own rows (user A sees only user A rows; user B sees only user B rows), proving isolation does not over-block. Full visibility matrix is in the Wave 1 Trust Gate evidence for the same run.',
     '',
+    '## Signed-In Route And Database Proof',
+    '',
+    `The nightly generator re-ran tests/live/two-user-isolation.live.spec.ts against an isolated mock-OIDC server connected as ${routes.databaseRole}. Playwright passed ${routes.stats.expected} own-data specs with zero skipped, flaky, or unexpected results in ${routes.stats.duration} ms.`,
+    '',
+    '| Caller | Own task persisted in Postgres | Foreign task visible through Postgres/RLS |',
+    '|---|---|---|',
+    `| user A (${route.userA.sub}) | ${database.userA.tasks[0].taskId} | no |`,
+    `| user B (${route.userB.sub}) | ${database.userB.tasks[0].taskId} | no |`,
+    '',
+    'The same two identities then exercised task list/get and task-message HTTP routes; every own read returned 200 and every cross-owner object read returned 404.',
+    '',
     '## Limits',
     '',
-    'Live: real synthetic user A / user B rows are inserted and read back under enforce-stage RLS against the running database, then rolled back. The two identities are simulated by stamping the app GUC (`oshal.current_sub`) exactly as request middleware does — no external IdP session is created. A complementary signed-in HTTP two-user route proof (`tests/live/two-user-isolation.live.spec.ts`) exists in the repo and is not re-run by this generator.',
+    'Live: `verify:rls` inserts synthetic rows inside a rolled-back transaction, while the signed-in route spec creates uniquely named task rows through the real HTTP API, proves them directly through the app-role/GUC database connection, and deletes them in cleanup. Mock OIDC supplies the two test identities; no external identity provider is contacted.',
     '',
   ].join('\n');
 }
 
-function renderExportDelete(proof: ExportDeleteProof, at: Date): string {
+function renderExportDelete(routes: LiveOwnDataRouteProof, at: Date): string {
+  const proof = routes.exportDelete;
+  const database = proof.databaseEvidence as Record<string, any>;
   return [
-    ...head('Data Export And Delete', 'loopback-integration — the real privacy route module mounted behind a fakeAuth middleware and driven over HTTP.', at),
+    ...head('Data Export And Delete', 'genuine live-stack route/database run — the real privacy endpoints exercised with two mock-OIDC identities over app-role Postgres.', at),
     '## Result',
     '',
     'A user can export their scoped OSHAL data and delete it with explicit confirmation, and the delete does not remove another user\'s data.',
@@ -526,22 +558,21 @@ function renderExportDelete(proof: ExportDeleteProof, at: Date): string {
     '',
     '| Check | Result |',
     '|---|---|',
-    `| user A GET /api/privacy/export returns own data | pass: ${proof.exportBeforeA.tasks} task, ${proof.exportBeforeA.tickets} ticket |`,
-    `| user A export excludes user B rows | pass: ${proof.leakedUserBRows} user B rows leaked |`,
-    `| DELETE /api/privacy/me without exact confirmation | pass: HTTP ${proof.deleteNoConfirmStatus} |`,
-    `| DELETE /api/privacy/me with "${PRIVACY_DELETE_CONFIRMATION}" | pass: HTTP ${proof.deleteConfirmStatus}, deleted ${proof.deletedCounts.tasks} task / ${proof.deletedCounts.messages} messages / ${proof.deletedCounts.tickets} ticket |`,
-    `| user A export after delete is empty | pass: ${proof.exportAfterA.tasks} tasks, ${proof.exportAfterA.tickets} tickets |`,
-    `| user B data remains after user A delete | pass: ${proof.userBRowsRemaining} user B rows remain |`,
+    `| user A fixtures reached Postgres as ${routes.databaseRole} | pass: task ${proof.userA.deletedTask}, ticket ${proof.userA.deletedTicket} |`,
+    `| user A export excludes user B rows | pass: user B task/ticket absent from user A response |`,
+    `| DELETE /api/privacy/me without exact confirmation | pass: HTTP 400 |`,
+    `| confirmed user A delete removes app-role database rows | pass: ${database.after.userA.tasks.length} tasks and ${database.after.userA.tickets.length} tickets remain |`,
+    `| user B data remains after user A delete | pass: task ${database.after.userB.tasks[0].taskId}, ticket ${database.after.userB.tickets[0].ticketId} |`,
     '',
     '## Route Behavior Proven',
     '',
     '- `GET /api/privacy/export` scopes every store read to `req.oidc.user.sub` and returns tasks, messages, tickets, plus retained audit events.',
-    '- `DELETE /api/privacy/me` requires the exact confirmation string `' + PRIVACY_DELETE_CONFIRMATION + '`; a wrong/absent confirm returns HTTP 400 and deletes nothing.',
+    '- `DELETE /api/privacy/me` requires the route\'s exact confirmation constant; a wrong/absent confirm returns HTTP 400 and deletes nothing.',
     '- On confirmed delete the route removes the caller\'s tasks, their messages, and their tickets, and returns a receipt while retaining compliance audit events separately.',
     '',
     '## Limits',
     '',
-    'Loopback-integration tier: the REAL `createPrivacyRoutes` module and its real confirmation-gate + per-subject scoping logic execute over a real HTTP listener, but the `taskStore` / `messageStore` / `ticketService` / `pool` are in-memory stubs seeded with two users, and auth is a fakeAuth middleware (MOCK_OIDC is false on the live container, so a direct authed call is impossible; loopback is the accepted pattern). The end-to-end live database export/delete is covered by the repo\'s `tests/live/privacy-export-delete.live.spec.ts`, not re-run here.',
+    'Live application boundary: `tests/live/privacy-export-delete.live.spec.ts` is re-run by this generator over HTTP with mock-OIDC identities and the live `oshal_app` DSN. Its direct database assertions reject superuser/BYPASSRLS roles and reject the optional in-memory fallback. Synthetic operational rows are deleted; compliance audit events remain by design. No external identity provider is contacted.',
     '',
   ].join('\n');
 }
@@ -563,13 +594,14 @@ async function main(): Promise<void> {
   const hostPort = dbHostPort();
   const appRoleUrl = toHostUrl(containerEnv('DATABASE_URL'), hostPort);
   const ownerUrl = toHostUrl(containerEnv('BOOTSTRAP_DATABASE_URL') || 'postgresql://oshal:oshal@oshal-db:5432/oshal', hostPort);
+  const redisUrl = `redis://${dockerHostPort('oshal-local-redis', 6379)}`;
   assert(/oshal_app:/.test(appRoleUrl), `expected app-role DATABASE_URL, got ${maskUrl(appRoleUrl)}`);
 
   // Run every proof BEFORE writing anything; any thrown assertion aborts with no doc written.
   const rls = runVerifyRls(appRoleUrl);
   const appRole = proveAppRole();
   const legacy = proveLegacyDisposition(ownerUrl);
-  const exportDelete = await proveExportDelete();
+  const routeProof = await proveLiveOwnDataRoutes(appRoleUrl, redisUrl);
 
   const at = new Date();
   const written: Record<string, unknown> = {};
@@ -582,12 +614,13 @@ async function main(): Promise<void> {
   written.legacy = writeDoc('legacy-owner-backfill-quarantine', renderLegacy(legacy, at), {
     proofTier: 'live', category: 'own-data', generatedAt: at.toISOString(), legacy,
   });
-  written.twoUser = writeDoc('live-two-user-isolation', renderTwoUser(rls, at), {
+  written.twoUser = writeDoc('live-two-user-isolation', renderTwoUser(rls, routeProof, at), {
     proofTier: 'live', category: 'own-data', generatedAt: at.toISOString(),
-    crossUserExclusion: rls.crossUserExclusion, checks: rls.checks,
+    crossUserExclusion: rls.crossUserExclusion, checks: rls.checks, routeProof: routeProof.twoUser,
   });
-  written.exportDelete = writeDoc('data-export-delete', renderExportDelete(exportDelete, at), {
-    proofTier: 'loopback-integration', category: 'own-data', generatedAt: at.toISOString(), exportDelete,
+  written.exportDelete = writeDoc('data-export-delete', renderExportDelete(routeProof, at), {
+    proofTier: 'live', category: 'own-data', generatedAt: at.toISOString(), exportDelete: routeProof.exportDelete,
+    playwright: routeProof.stats, databaseRole: routeProof.databaseRole,
   });
 
   console.log(JSON.stringify({ ok: true, written }, null, 2));

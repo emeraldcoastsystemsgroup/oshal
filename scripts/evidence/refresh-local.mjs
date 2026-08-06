@@ -8,10 +8,11 @@
  * The operator's own foreground, signed-in Chrome — which cannot run unattended (cron,
  * CI, headless box). So the board decayed to the floor every 48h with no way to self-heal.
  *
- * This runner instead executes every headless `scripts/evidence/prove-*-live.ts` generator.
- * Each generator exercises real route code (loopback-mounted Express modules) or the live
- * stack (health, RLS via `npm run verify:rls`, pg backup/restore) and writes a dated
- * `Proof-Tier: live` doc ONLY on genuine pass. No browser, no operator interaction.
+ * This runner instead executes every unattended `scripts/evidence/prove-*-live.ts` generator.
+ * Each generator exercises real route code or the live stack (health, RLS via
+ * `npm run verify:rls`, pg backup/restore) and writes a dated `Proof-Tier: live` doc ONLY on
+ * genuine pass. The own-data generator uses isolated headless Playwright plus app-role Postgres;
+ * none of these generators attaches to the operator's browser or requires operator interaction.
  *
  * A single generator failure is reported but does not abort the rest, so one flaky proof
  * never blocks the others or the score regeneration.
@@ -34,7 +35,7 @@ const skipScore = args.has('--no-score');
 
 const log = (msg) => process.stdout.write(`[refresh-local] ${msg}\n`);
 
-/** Every headless generator: scripts/evidence/prove-*-live.ts, run in a stable order. */
+/** Every unattended generator: scripts/evidence/prove-*-live.ts, run in a stable order. */
 const generators = readdirSync(here)
   .filter((name) => /^prove-.*-live\.ts$/.test(name))
   .sort();
@@ -44,7 +45,7 @@ if (!generators.length) {
   process.exit(1);
 }
 
-log(`${dryRun ? 'DRY RUN — ' : ''}${generators.length} headless generators discovered`);
+log(`${dryRun ? 'DRY RUN — ' : ''}${generators.length} unattended generators discovered`);
 
 const tsNode = ['ts-node', '-r', 'tsconfig-paths/register', '--transpile-only'];
 const results = [];

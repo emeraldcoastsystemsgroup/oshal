@@ -137,9 +137,10 @@ export function getReadinessTrackSpecs(): ReadinessTrackSpec[] {
           'Two-user isolation is live-proved under app-role RLS/GUC posture',
           'live-two-user-isolation-',
           3,
-          // Markers reflect what the real prove-own-data-live proof produces: a cross-user
-          // exclusion matrix over enforce-stage RLS where a viewer cannot read the other user's rows.
-          [/cannot read/i, /cross-user/i],
+          // Require both layers from prove-own-data-live: the RLS exclusion matrix and the
+          // signed-in route fixture directly observed in Postgres. An old loopback/RLS-only
+          // document must not satisfy procurement evidence.
+          [/cannot read/i, /cross-user/i, /signed-in route/i, /Postgres/i],
           'A procurement reviewer cannot trust multi-user or tenant safety.',
           'Keep the proof fresh and extend it to connector records, artifacts, workflows, and admin views.',
         ),
@@ -194,7 +195,7 @@ export function getReadinessTrackSpecs(): ReadinessTrackSpec[] {
           'Data export/delete path is live-proved',
           'data-export-delete-',
           1.5,
-          [/export/i, /delete/i],
+          [/export/i, /delete/i, /Postgres/i, /oshal_app/i],
           'Privacy and deletion promises are not demonstrable.',
           'Expose export/delete in admin and user settings with audit receipts.',
         ),

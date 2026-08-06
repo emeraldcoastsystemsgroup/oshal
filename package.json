@@ -95,6 +95,7 @@
     "verify:runtime-schema": "ts-node --project tsconfig.json -r tsconfig-paths/register scripts/governance/verify-runtime-schema-validate-only.ts",
     "evidence:competitive": "ts-node -r tsconfig-paths/register --transpile-only scripts/evidence/competitive-score-evidence.ts",
     "evidence:procurement-saas": "ts-node -r tsconfig-paths/register --transpile-only scripts/evidence/procurement-saas-readiness.ts",
+    "evidence:own-data-live": "ts-node -r tsconfig-paths/register --transpile-only scripts/evidence/prove-own-data-live.ts",
     "evidence:refresh-local": "node scripts/evidence/refresh-local.mjs",
     "dev:session": "ts-node -r tsconfig-paths/register --transpile-only scripts/dev-session.ts",
     "dev:node": "ts-node -r tsconfig-paths/register --transpile-only scripts/dev-node.ts",
