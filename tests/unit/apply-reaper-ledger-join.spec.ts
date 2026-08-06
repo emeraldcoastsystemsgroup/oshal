@@ -8,7 +8,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
-import { STALE_APPLY_TICKETS_SQL } from '@/app/apply-enqueue';
+import { REHYDRATE_APPLY_TICKETS_SQL, STALE_APPLY_TICKETS_SQL } from '@/app/apply-enqueue';
 
 const DSN =
   process.env.APPLY_LEDGER_TEST_DSN ??
@@ -22,8 +22,18 @@ function safeDsn(dsn: string): string {
 
 let pool: Pool;
 
-/** Bound parameter the production sweep passes: ORPHAN_AFTER_MS. Any positive value resolves types. */
+/** Bound parameter the production sweeps pass. Any positive value resolves types. */
 const ORPHAN_MS = 2_100_000;
+
+/**
+ * BOTH apply_runs joins, because fixing only the one a stack trace named is how this shipped twice:
+ * the reaper was patched, the boot-time rehydrate kept the identical uncast comparison, and it took
+ * a second deploy's log to notice. Any third join belongs here the day it is written.
+ */
+const LEDGER_JOINS: ReadonlyArray<readonly [string, string]> = [
+  ['reaper sweep (STALE_APPLY_TICKETS_SQL)', STALE_APPLY_TICKETS_SQL],
+  ['boot rehydrate (REHYDRATE_APPLY_TICKETS_SQL)', REHYDRATE_APPLY_TICKETS_SQL],
+];
 
 describe('apply reaper run-ledger join', () => {
   beforeAll(async () => {
@@ -54,17 +64,28 @@ describe('apply reaper run-ledger join', () => {
     expect(rows).toHaveLength(2);
   });
 
-  it('executes the PRODUCTION sweep SQL without a type-resolution error', async () => {
-    // The imported string is the one the reaper runs. Remove the cast in apply-enqueue.ts and this
+  it.each(LEDGER_JOINS)('%s executes against the real schema', async (_name, sql) => {
+    // The imported string is the one production runs. Remove the cast in apply-enqueue.ts and this
     // goes red — which a test carrying its own copy of the query would not.
-    await expect(pool.query(STALE_APPLY_TICKETS_SQL, [ORPHAN_MS])).resolves.toBeDefined();
+    await expect(pool.query(sql, [ORPHAN_MS])).resolves.toBeDefined();
   });
 
-  it('would throw 42883 uncast — the failure the sweep swallowed on every tick', async () => {
+  it.each(LEDGER_JOINS)('%s would throw 42883 uncast', async (_name, sql) => {
     // Pins the production failure mode, so this file proves what it claims rather than asserting
-    // that some SQL, somewhere, runs.
-    const uncast = STALE_APPLY_TICKETS_SQL.replace('t.ticket_id::text', 't.ticket_id');
-    expect(uncast, 'cast missing from the production SQL').not.toEqual(STALE_APPLY_TICKETS_SQL);
+    // that some SQL, somewhere, runs. Both sweeps swallow their error and report zero, so an
+    // uncast join is invisible in every signal except a raw log line.
+    const uncast = sql.replace('t.ticket_id::text', 't.ticket_id');
+    expect(uncast, 'cast missing from the production SQL').not.toEqual(sql);
     await expect(pool.query(uncast, [ORPHAN_MS])).rejects.toMatchObject({ code: '42883' });
+  });
+
+  it('holds every apply_runs join in apply-enqueue.ts, so a third cannot be added uncast', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync('src/app/apply-enqueue.ts', 'utf8');
+    // Count the joins the module actually issues against the ledger, and require this file to
+    // cover each one. A new sweep added without a cast fails here rather than in a deploy log.
+    const joins = source.match(/FROM apply_runs\s*\n?\s*WHERE ticket_id/g) ?? [];
+    expect(joins, 'a new apply_runs join exists — add it to LEDGER_JOINS').toHaveLength(LEDGER_JOINS.length);
+    expect(source.match(/WHERE ticket_id=t\.ticket_id(?!::text)/g), 'uncast join in production source').toBeNull();
   });
 });
