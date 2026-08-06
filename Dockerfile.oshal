@@ -249,6 +249,12 @@ COPY scripts/routability-critical-bots.txt ./scripts/
 # plaid, trading, …) — baked so app search/booking survives a container recreate.
 # Glob picks up new oshal-*.js automatically (allowlisted in .dockerignore).
 COPY scripts/oshal-*.js ./scripts/
+# Their shared helpers. 36 require('./lib/…') sites across the CLIs above resolve here; without
+# this COPY every one of them dies at load ("Cannot find module './lib/exact-user-subject'"),
+# and the in-process bridge (provider-operation-clients) takes the eats/purchasing/rides/travel
+# route mounts down with it — found live 2026-08-06, the first deploy after the lib/ extraction.
+# *.js only, matching the .dockerignore allowlist. Guard: tests/unit/image-ships-cli-lib-deps.spec.ts.
+COPY scripts/lib/*.js ./scripts/lib/
 # Headless swarm CLI (terminal→Jarvis; docs/runbooks/headless-swarm-cli.md) — a real,
 # zero-dependency npm package. Installed GLOBALLY so `docker exec <container> swarm-cli …`
 # just works. Deliberately NOT named oshal-*.js: Jarvis's tool-catalog scan globs
