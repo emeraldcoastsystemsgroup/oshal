@@ -78,6 +78,18 @@ and `notifications` was pruned outright. Nothing failed at compile time either t
   every declared skill is (a) anchored in source and (b) actually present **inside the built
   image**. A prune now fails CI instead of a customer's app.
 
+## Narrow first-party runtime pins
+
+A first-party package can exceptionally depend on a framework module that is deliberately not a
+public skill. These dependencies do not belong in manifest `uses:`: publishing a privileged
+control-plane route or node-only capability as a general skill would widen the package API.
+
+The current exception is Spaces, which imports the drone simulator and CLI-token issuer. Their
+source anchors and exact built artifacts are declared in `PACKAGE_RUNTIME_PINS` inside the same
+guard. The store scan confirms Spaces still imports them, and the build/image phases fail if either
+`dist/features/drone/index.js` or `dist/app/routes/cli-token-routes.js` is pruned. New exceptions
+require an ADR rationale and a mutation test; this list is not an alternate general-purpose barrel.
+
 ## Running the guard
 
 ```bash

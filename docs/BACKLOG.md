@@ -142,10 +142,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** update [connector tenant isolation](architecture/connectors-tenant-isolation.md) to describe the current caller identity, broker routing, and cross-user guards rather than the retired pre-implementation state.
 - **Done when:** documentation matches executable behavior and links the current isolation tests without claiming runtime work remains.
 
-### Spaces package dependency guard
-- **Remaining:** protect the published Spaces package's undeclared imports of `@/features/drone` and `@/app/routes/cli-token-routes`, either through general package-dependency validation or targeted built-image assertions.
-- **Done when:** CI fails before release if a required framework module would be pruned, and [ADR-090](adr/090-skills-as-first-class-packages.md) records the chosen contract.
-
 ### Biometric privileged-access module
 - **Remaining:** if commissioned, define pluggable face/voice enrollment and challenge providers whose signed result can satisfy a high-privilege endpoint condition, with a non-biometric fallback.
 - **Done when:** an enrolled user can unlock one protected bot/app, replay and cross-user challenges fail, and devices without camera/mic have a documented safe path.

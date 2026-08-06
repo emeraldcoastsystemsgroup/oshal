@@ -31,9 +31,17 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
+import { KERNEL_SKILLS } from '@/shared/kernel-skills';
+
+// CHANGE LOG ADDENDUM
+// 3 | maintainer@emeraldcoastsystemsgroup.com | Mutation-test the Spaces non-skill runtime pins: a build missing drone or CLI-token issuance must fail before release.
 
 const REPO_ROOT = resolve(__dirname, '../..');
 const GUARD = 'scripts/check-kernel-skills.ts';
+const PACKAGE_PIN_ARTIFACTS = [
+  'dist/features/drone/index.js',
+  'dist/app/routes/cli-token-routes.js',
+] as const;
 
 const fixtures: string[] = [];
 afterEach(() => {
@@ -80,7 +88,7 @@ interface GateResult { code: number; out: string }
  * involved (a shell would concatenate unescaped fixture paths, and `npx.cmd` resolution differs
  * between the Windows shells this repo is driven from).
  */
-function runGate(store: string | null): GateResult {
+function runGate(store: string | null, extraArgs: string[] = []): GateResult {
   const args = [
     '-r',
     'ts-node/register/transpile-only',
@@ -89,6 +97,7 @@ function runGate(store: string | null): GateResult {
     GUARD,
   ];
   if (store) args.push('--store', store);
+  args.push(...extraArgs);
   try {
     const out = execFileSync(process.execPath, args, {
       cwd: REPO_ROOT,
@@ -101,6 +110,19 @@ function runGate(store: string | null): GateResult {
   } catch (err) {
     const e = err as { status?: number; stdout?: string; stderr?: string };
     return { code: e.status ?? 1, out: `${e.stdout ?? ''}${e.stderr ?? ''}` };
+  }
+}
+
+/** Populate the complete artifact contract so one removed file is the only mutation under test. */
+function writeCompleteArtifactFixture(root: string): void {
+  const artifacts = [
+    ...KERNEL_SKILLS.flatMap((skill) => skill.modules.map((module) => module.distFile)),
+    ...PACKAGE_PIN_ARTIFACTS,
+  ];
+  for (const relative of artifacts) {
+    const full = join(root, relative);
+    mkdirSync(resolve(full, '..'), { recursive: true });
+    writeFileSync(full, '', 'utf8');
   }
 }
 
@@ -176,6 +198,25 @@ describe('kernel-skills Phase 3 — a store package must declare the skills it i
     expect(res.code).toBe(0);
     expect(res.out).not.toContain('self-contained-app');
   });
+
+  it('FAILS when either non-skill Spaces dependency is pruned from the built framework', () => {
+    const store = newStore();
+    const build = newStore();
+    writeCompleteArtifactFixture(build);
+
+    rmSync(join(build, PACKAGE_PIN_ARTIFACTS[0]));
+    const noDrone = runGate(store, ['--dist', build]);
+    expect(noDrone.code).toBe(1);
+    expect(noDrone.out).toContain("package runtime pin 'spaces'");
+    expect(noDrone.out).toContain(PACKAGE_PIN_ARTIFACTS[0]);
+
+    writeCompleteArtifactFixture(build);
+    rmSync(join(build, PACKAGE_PIN_ARTIFACTS[1]));
+    const noTokenIssuer = runGate(store, ['--dist', build]);
+    expect(noTokenIssuer.code).toBe(1);
+    expect(noTokenIssuer.out).toContain("package runtime pin 'spaces'");
+    expect(noTokenIssuer.out).toContain(PACKAGE_PIN_ARTIFACTS[1]);
+  }, 30_000);
 
   it('with NO store checkout the phase SKIPS LOUDLY — it never passes silently on an unchecked half', () => {
     const empty = newStore();

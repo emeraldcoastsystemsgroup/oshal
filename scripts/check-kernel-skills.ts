@@ -43,6 +43,9 @@ import yaml from 'js-yaml';
 
 import { KERNEL_SKILLS, type KernelSkillModule } from '@/shared/kernel-skills';
 
+// CHANGE LOG ADDENDUM
+// 3 | maintainer@emeraldcoastsystemsgroup.com | Guard first-party package runtime pins that are intentionally not public kernel skills. Spaces imports the drone simulator and CLI-token issuer from the running framework; source anchors and built-image artifacts are mandatory so a future carve cannot prune either dependency silently.
+
 const REPO_ROOT = path.resolve(__dirname, '..');
 const ANCHOR_REL = 'src/app/composition/kernel-skills.ts';
 /** Where the image's build root lives — the Dockerfile's WORKDIR. */
@@ -55,6 +58,29 @@ const imageTag = readFlag('--image');
 const storeFlag = readFlag('--store');
 
 const failures: string[] = [];
+
+/**
+ * First-party package imports that must remain in the shipped framework but must not be promoted
+ * into the public `uses:` vocabulary. Drone is a kernel-owned node capability, while CLI-token
+ * issuance is a privileged control-plane API; describing either as a generally callable skill
+ * would widen the package contract. These narrow pins make the actual Spaces dependency explicit.
+ */
+const PACKAGE_RUNTIME_PINS = [
+  {
+    consumer: 'spaces',
+    specifier: '@/features/drone',
+    anchorRel: 'src/app/drone-node-server.ts',
+    anchorSpecifier: '@/features/drone',
+    distFile: 'dist/features/drone/index.js',
+  },
+  {
+    consumer: 'spaces',
+    specifier: '@/app/routes/cli-token-routes',
+    anchorRel: 'src/app/server.ts',
+    anchorSpecifier: './routes/cli-token-routes',
+    distFile: 'dist/app/routes/cli-token-routes.js',
+  },
+] as const;
 
 /**
  * @description Read a `--flag value` pair from argv.
@@ -178,10 +204,13 @@ function checkStorePackages(storeDir: string): void {
     scanned += 1;
 
     const imported = new Map<string, string>(); // skill id → the file that proves it
+    const runtimeSpecifiers = new Set<string>();
     for (const file of packageJsFiles(pkgDir)) {
       const src = fs.readFileSync(file, 'utf8');
       for (const m of src.matchAll(SPECIFIER_RE)) {
-        const skill = skillForSpecifier(m[1] ?? m[2] ?? '');
+        const specifier = m[1] ?? m[2] ?? '';
+        runtimeSpecifiers.add(specifier);
+        const skill = skillForSpecifier(specifier);
         if (skill && !imported.has(skill)) imported.set(skill, path.relative(storeDir, file));
       }
     }
@@ -196,6 +225,19 @@ function checkStorePackages(storeDir: string): void {
           `"declare what your code actually imports". An undeclared import is invisible to the ` +
           `prune guard, so the first carve that drops the skill breaks this app at MOUNT time.`,
       );
+    }
+
+    for (const pin of PACKAGE_RUNTIME_PINS.filter((candidate) => candidate.consumer === entry.name)) {
+      const importedPin = [...runtimeSpecifiers].some(
+        (specifier) => specifier === pin.specifier || specifier.startsWith(`${pin.specifier}/`),
+      );
+      if (!importedPin) {
+        failures.push(
+          `store package '${entry.name}': expected pinned runtime import ${pin.specifier} was not ` +
+            `found in compiled JavaScript. Remove or update its PACKAGE_RUNTIME_PINS contract ` +
+            `instead of leaving a stale build promise.`,
+        );
+      }
     }
   }
   say(`kernel-skills: scanned ${scanned} store package(s) in ${storeDir} for undeclared kernel imports`);
@@ -233,6 +275,29 @@ for (const m of allModules) {
 }
 say(`kernel-skills: ${KERNEL_SKILLS.length} skills / ${allModules.length} modules declared`);
 
+for (const pin of PACKAGE_RUNTIME_PINS) {
+  if (!resolveSource(pin.specifier)) {
+    failures.push(
+      `package runtime pin '${pin.consumer}': ${pin.specifier} has no source module. Update the ` +
+        `package and its explicit pin together.`,
+    );
+    continue;
+  }
+  const packageAnchorPath = path.join(REPO_ROOT, pin.anchorRel);
+  const packageAnchorSource = fs.existsSync(packageAnchorPath)
+    ? fs.readFileSync(packageAnchorPath, 'utf8')
+    : '';
+  const importsPin = packageAnchorSource.includes(`from '${pin.anchorSpecifier}'`)
+    || packageAnchorSource.includes(`from "${pin.anchorSpecifier}"`);
+  if (!importsPin) {
+    failures.push(
+      `package runtime pin '${pin.consumer}': ${pin.anchorRel} no longer imports ${pin.specifier}; ` +
+        `the server build can prune ${pin.distFile}.`,
+    );
+  }
+}
+say(`kernel-skills: ${PACKAGE_RUNTIME_PINS.length} first-party package runtime pin(s) declared`);
+
 // ── Phase 2: the built artifact ─────────────────────────────────────────────
 if (distRoot) {
   const root = path.resolve(REPO_ROOT, distRoot);
@@ -244,13 +309,24 @@ if (distRoot) {
       );
     }
   }
+  for (const pin of PACKAGE_RUNTIME_PINS) {
+    if (!fs.existsSync(path.join(root, pin.distFile))) {
+      failures.push(
+        `package runtime pin '${pin.consumer}': ${pin.distFile} MISSING from the build at ${root} - ` +
+          `${pin.specifier} was pruned and the installed package would fail at mount.`,
+      );
+    }
+  }
   say(`kernel-skills: checked build root ${root}`);
 }
 
 if (imageTag) {
   // One exec, one shell: print every distFile that is NOT present inside the image.
-  const probe = allModules
-    .map((m) => `[ -f "${IMAGE_ROOT}/${m.distFile}" ] || echo "${m.skill}|${m.distFile}"`)
+  const probe = [
+    ...allModules.map((m) => ({ label: `skill:${m.skill}`, distFile: m.distFile })),
+    ...PACKAGE_RUNTIME_PINS.map((pin) => ({ label: `package:${pin.consumer}`, distFile: pin.distFile })),
+  ]
+    .map((artifact) => `[ -f "${IMAGE_ROOT}/${artifact.distFile}" ] || echo "${artifact.label}|${artifact.distFile}"`)
     .join('; ');
   let missing = '';
   try {
@@ -266,10 +342,10 @@ if (imageTag) {
     );
   }
   for (const line of missing.split('\n').filter(Boolean)) {
-    const [skill, distFile] = line.split('|');
+    const [label, distFile] = line.split('|');
     failures.push(
-      `skill '${skill}': ${distFile} MISSING from image '${imageTag}' — it was pruned from the ` +
-        `build. Any installed package importing this skill fails at mount on this image.`,
+      `${label}: ${distFile} MISSING from image '${imageTag}' - it was pruned from the build. ` +
+        `An installed package importing this module fails at mount on this image.`,
     );
   }
   say(`kernel-skills: probed image ${imageTag}`);

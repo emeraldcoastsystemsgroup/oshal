@@ -435,6 +435,29 @@ The original questions are preserved below for the reasoning record.
 
 ---
 
+## Addendum 2026-08-05 — non-skill package runtime pins (built)
+
+Not every first-party package import should become a public kernel skill. The Spaces package uses
+`@/features/drone` for its simulator and `@/app/routes/cli-token-routes` for phone pairing, but the
+former is a kernel-owned node capability and the latter is a privileged credential issuer. Adding
+either to the manifest `uses:` vocabulary would promise third-party packages a broader API than the
+platform intends to support.
+
+The selected contract is an explicit, narrow package runtime pin in
+`scripts/check-kernel-skills.ts`. For each pin the guard verifies three independent facts:
+
+1. the framework source module still exists and an included `src/app/**` entry point imports it;
+2. the named store package still imports the module from compiled JavaScript, so the promise cannot
+   become stale silently; and
+3. local-build and image probes require the exact compiled artifact before release.
+
+`tests/unit/kernel-uses-declaration.spec.ts` mutation-tests both Spaces artifacts by removing each
+from an otherwise complete build fixture and requiring the real guard to fail. This keeps the
+general `uses:` contract small while protecting the two actual non-skill dependencies from the
+same silent-prune failure that motivated D8.
+
+---
+
 ## Addendum 2026-07-17 — Skill profiles (BUILT, first slice)
 
 The operator's design direction (2026-07-17, during the app-suites conversation): a default capability
