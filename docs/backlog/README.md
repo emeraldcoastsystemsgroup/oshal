@@ -1,7 +1,9 @@
 # Backlog (per-area open work)
 
-Focused open-work and handover backlogs for specific areas. The cross-cutting engineering
-backlog is [../BACKLOG.md](../BACKLOG.md) — every entry there has done-when criteria.
+Focused active-work and handover backlogs for specific areas. The cross-cutting engineering
+queue is [../BACKLOG.md](../BACKLOG.md). Active entries state only reproducible residual work and
+its done-when evidence; resolved history is preserved in the [archive](./archive/README.md), the
+relevant ADR or feature documentation, release notes, and git history.
 
 - [hardening.md](./hardening.md) — security hardening backlog.
 - [test-lab.md](./test-lab.md) — AI Test Lab backlog (ADR-063).
@@ -22,3 +24,5 @@ backlog is [../BACKLOG.md](../BACKLOG.md) — every entry there has done-when cr
 - [lm-feature-backlog.md](./lm-feature-backlog.md) — Little Monsters feature backlog.
 - [non-human-checklist.md](./non-human-checklist.md) — machine-doable burn-down tracker with
   done-when criteria and human-only exclusions.
+- [archive/](./archive/README.md) — dated snapshots of verified-resolved queue entries; these are
+  searchable implementation history, not active work.
