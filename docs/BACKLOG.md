@@ -134,10 +134,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** move the real export/delete and two-user isolation specs into the nightly evidence path using provisioned Postgres rather than loopback stores.
 - **Done when:** competitive own-data gates link current database-backed pass evidence and fail when ownership/RLS mutations are introduced.
 
-### Strict database identity (`OSHAL_DB_GUC_STRICT`)
-- **Remaining:** inspect the remaining warn-mode audit sites, wrap intentional system work explicitly, then remove the Compose `warn` pin.
-- **Done when:** the live stack runs `deny`, all normal flows pass, identity-less queries fail closed, and break-glass `off` remains documented but unused.
-
 ### Connector tenant-isolation documentation sync
 - **Remaining:** update [connector tenant isolation](architecture/connectors-tenant-isolation.md) to describe the current caller identity, broker routing, and cross-user guards rather than the retired pre-implementation state.
 - **Done when:** documentation matches executable behavior and links the current isolation tests without claiming runtime work remains.
