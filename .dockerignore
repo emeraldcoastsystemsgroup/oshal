@@ -41,6 +41,14 @@ scripts/
 # context so every app (walmart, uber, spotify, duffel, …) survives a container
 # recreate. New oshal-*.js CLIs are included automatically.
 !scripts/oshal-*.js
+# The CLIs' shared helpers (exact-user-subject, connector-token-crypto) were extracted to
+# scripts/lib/ on 2026-08-05 and 36 require() sites now point there — but this allowlist never
+# learned that, so every image built after the extraction shipped CLIs that die at require()
+# ("Cannot find module './lib/exact-user-subject'"), which took down the eats/purchasing/rides/
+# travel route mounts on 2026-08-06. Top-level *.js ONLY — the .ts tooling, gha/, and
+# google-workspace/ under lib/ are not required by any shipped CLI and stay out of the image.
+# Guard: tests/unit/image-ships-cli-lib-deps.spec.ts.
+!scripts/lib/*.js
 # (the swarm CLI moved to packages/swarm-cli — a real npm package, installed globally in the
 #  image; packages/ is not excluded, so it needs no allowlist entry here.)
 !scripts/migrations/
