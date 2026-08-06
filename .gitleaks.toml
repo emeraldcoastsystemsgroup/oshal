@@ -44,6 +44,12 @@ regexes = [
   # generic-api-key fires on (2026-07-19 nightly). Shape-anchored so a real credential pasted
   # into that file still fails: rank-or-ira prefix + tNN/cadNN dial + optional -cNN core pct.
   '''^(gravity|momentum|ensemble|ira)(-[a-z]+)*-(t\d+|cad\d+)(-c\d+)?$''',
+  # generic-api-key fires on the ENGLISH PHRASE "unknown/duplicate" in a CHANGE LOG sentence
+  # ("fail manifest load on malformed access blocks, unknown/duplicate tiers, missing deny...",
+  # swarm-app-loader.ts entry 9) — slash-joined prose reads as a high-entropy token (3.69).
+  # Anchored on the exact phrase, not the file, so a real credential in that same comment block
+  # still fails. Deliberately not a broad "skip comment lines" rule: that would be a real hole.
+  '''^unknown/duplicate$''',
 ]
 
 # Tests remain scanned. Only exact public/synthetic values at their reviewed fixture locations are

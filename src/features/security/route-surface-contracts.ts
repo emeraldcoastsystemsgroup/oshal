@@ -51,14 +51,23 @@ export const ROUTE_SURFACE_CONTRACTS: readonly RouteSurfaceContract[] = [
     route: '/auth/facebook/data-deletion',
     registrationMarker: "app.post('/auth/facebook/data-deletion'",
     posture: 'Meta HMAC signed_request verification precedes one bounded system-identity delete.',
-    requirements: [{
-      file: 'src/app/routes/connectors-routes.ts',
-      markers: [
-        'crypto.timingSafeEqual(sig, expected)',
-        'if (!data || !data.user_id)',
-        'runWithSystemIdentity(() => ctx.pool.query(',
-      ],
-    }],
+    // Two files since the 2026-08-06 connectors-routes decomposition: signed_request verification
+    // moved to connector-oauth-ceremony.ts while the handler and its single delete stayed put. The
+    // constant-time compare is asserted where it now lives rather than dropped — a contract that
+    // silently stops finding its marker is a contract that stops protecting the route.
+    requirements: [
+      {
+        file: 'src/app/routes/connector-oauth-ceremony.ts',
+        markers: ['crypto.timingSafeEqual(sig, expected)'],
+      },
+      {
+        file: 'src/app/routes/connectors-routes.ts',
+        markers: [
+          'if (!data || !data.user_id)',
+          'runWithSystemIdentity(() => ctx.pool.query(',
+        ],
+      },
+    ],
   },
   {
     id: 'telegram-channel-webhook',

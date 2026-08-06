@@ -132,12 +132,21 @@ describe('the string-hash distance is gone and must not come back', () => {
     expect(source).not.toMatch(/pseudoKm/);
   });
 
-  it('hashes nothing but the session secret', () => {
-    // createHash survives exactly once in code — deriving the AES key from SESSION_SECRET. A
-    // second occurrence means something is being hashed again, and last time that was the fare.
-    const hashCalls = source.match(/createHash\(/g) || [];
-    expect(hashCalls.length).toBe(1);
-    expect(source).toMatch(/createHash\('sha256'\)\.update\(process\.env\.SESSION_SECRET/);
+  it('hashes nothing itself — key derivation lives in the one shared codec', () => {
+    // Originally: createHash survives exactly ONCE here, deriving the AES key from SESSION_SECRET;
+    // a second occurrence means something is being hashed again, and last time that was the fare.
+    // The CLI now delegates to scripts/lib/connector-token-crypto, so the correct count HERE is
+    // zero and the property is asserted where the derivation actually lives. Keeping the old
+    // count would have pinned the copy this refactor deliberately removed.
+    expect(source.match(/createHash\(/g) ?? []).toEqual([]);
+    expect(source).toMatch(/require\(['"]\.\/lib\/connector-token-crypto['"]\)/);
+
+    const shared = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'scripts', 'lib', 'connector-token-crypto.js'),
+      'utf8',
+    );
+    expect(shared.match(/createHash\(/g) ?? []).toHaveLength(1);
+    expect(shared).toMatch(/createHash\('sha256'\)\.update\(sessionSecret\(env\)\)/);
   });
 
   it('geocodes both endpoints in the estimate path, not only in the link builder', () => {

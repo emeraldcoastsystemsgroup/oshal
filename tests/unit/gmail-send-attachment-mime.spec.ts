@@ -151,7 +151,12 @@ describe('oshal-gmail-send envelope-crypto reuse (EXISTENCE)', () => {
   const source = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
   it('imports the shared format-aware decryptToken instead of carrying a copy', () => {
-    expect(source).toMatch(/require\(['"]\.\/oshal-gmail['"]\)/);
+    // The rule is "no fourth copy of the decrypt", not "import it from oshal-gmail". The codec
+    // has since moved out of that sibling into scripts/lib/connector-token-crypto, which is the
+    // same consolidation this guard exists to protect — so assert the shared module, and assert
+    // no local decipher, which is the part that actually catches a regression.
+    expect(source).toMatch(/require\(['"]\.\/lib\/connector-token-crypto['"]\)/);
+    expect(source).not.toMatch(/createDecipheriv|createCipheriv/);
     expect(source).toMatch(/decryptToken\(client, row\.user_sub, row\.access_token\)/);
     expect(source).toMatch(/decryptToken\(client, row\.user_sub, row\.refresh_token\)/);
   });
