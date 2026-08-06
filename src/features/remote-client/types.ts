@@ -5,9 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added remote-client runtime contracts and configuration schema
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added remote-client chat request/accept schemas for the conversational A2A bridge
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reject a blank trusted machine-chat subject without transforming valid exact identity bytes.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reject control-bearing and over-512-byte machine-chat subjects while retaining every valid identity byte.
  */
 
 import { z } from 'zod';
+import { isExactUserSubject } from '@/shared/security/exact-user-subject';
 import {
   A2ATransportSchema,
   RemoteClientPlatformSchema,
@@ -216,7 +219,10 @@ export const RemoteClientChatRequestSchema = z.object({
   agentId: z.string().min(1).optional(),
   taskId: z.string().min(1).optional(),
   correlationId: z.string().min(1).optional(),
-  userSub: z.string().min(1).optional(),
+  userSub: z.string().min(1)
+    .refine((value) => value.trim().length > 0, 'userSub must be nonblank')
+    .refine(isExactUserSubject, 'userSub must be exact UTF-8, control-free, and at most 512 bytes')
+    .optional(),
 });
 
 /**

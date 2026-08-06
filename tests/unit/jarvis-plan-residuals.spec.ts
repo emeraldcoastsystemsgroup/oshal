@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the multi-app planner's honesty residuals: plan-decomposes-and-orders (the compiled node order matches the plan, and the user is SHOWN that order including which step pauses for approval), step-failure-does-not-fabricate-synthesis (an escalated plan reports a failure and is never handed to the completed-task summarizer), and chain-cost-lands-on-the-bot (each step is dispatched to the accountable bot node as a full task run, never answered in the controller).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard persisted owner/issuer propagation, trusted-service localhost headers, and the prohibition on unsigned fallback while bot delegation is enforced.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact owner propagation through the canonical base64url trusted-service identity header on workflow localhost fallback.
  */
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
@@ -39,6 +40,7 @@ const plan: MultiAppPlan = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe('plan-decomposes-and-orders', () => {
@@ -212,6 +214,7 @@ describe('chain-cost-lands-on-the-bot', () => {
   });
 
   it('binds a compatibility localhost fallback to the persisted ticket owner', async () => {
+    vi.stubEnv('SWARM_SERVICE_SECRET', 'plan-residual-service-placeholder');
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
       JSON.stringify({ success: true, response: 'legacy response' }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -227,6 +230,7 @@ describe('chain-cost-lands-on-the-bot', () => {
     });
     const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
     expect(result.response).toBe('legacy response');
-    expect(headers['x-oshal-user-sub']).toBe('auth0|owner-1');
+    expect(headers['x-oshal-user-sub']).toBeUndefined();
+    expect(Buffer.from(headers['X-Oshal-User-Sub-B64'], 'base64url').toString('utf8')).toBe('auth0|owner-1');
   });
 });

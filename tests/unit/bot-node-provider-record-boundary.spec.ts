@@ -1,3 +1,12 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard structured provider evidence and request-scoped credential boundaries.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact owner preservation and fail-closed malformed-subject handling at the bot-node request boundary.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 import { createBotNodeExecutionHandler } from '../../src/app/bot-node-execution-handler';
 import { buildBotNodeHttpResponse } from '../../src/app/bot-node-http-response';
@@ -242,7 +251,8 @@ describe('bot-node structured provider evidence boundary', () => {
       OSHAL_CRED_DUFFEL: 'duffel-token',
       OSHAL_CRED_TWILIO: 'twilio-token',
     });
-    expect(normalizeBotNodeUserSub('  owner-123  ')).toBe('owner-123');
-    expect(normalizeBotNodeUserSub({ sub: 'owner-123' })).toBeUndefined();
+    expect(normalizeBotNodeUserSub('  owner-123  ')).toBe('  owner-123  ');
+    expect(() => normalizeBotNodeUserSub({ sub: 'owner-123' })).toThrow(/exact UTF-8/);
+    expect(() => normalizeBotNodeUserSub('owner\u007falias')).toThrow(/control-free/);
   });
 });

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact durable task owners and reject invalid owner assertions on save/load/list instead of collapsing empty or malformed database values into anonymous ownership.
  */
 
 /**
@@ -17,6 +18,12 @@ const logger = require('../utils/logger');
 const config = require('../utils/config');
 const path = require('path');
 const fs = require('fs');
+const { optionalExactUserSubject } = require('../services/codebase/exact-user-subject');
+
+/** Validate a durable owner while preserving genuine nullish anonymous ownership. */
+function durableTaskOwner(value) {
+  return optionalExactUserSubject(value, 'durable task owner') ?? null;
+}
 
 /**
  * @description Encapsulates durable storage of task records so the swarm can
@@ -158,7 +165,7 @@ class TaskStore {
       task.text,
       task.status,
       task.mode || 'act',
-      task.userSub || null,
+      durableTaskOwner(task.userSub),
       task.workspace_dir || null,
       task.gitlab_url || null,
       task.ts || Date.now(),
@@ -203,7 +210,7 @@ class TaskStore {
         text: row.text,
         status: row.status,
         mode: row.mode,
-        userSub: row.owner_sub || null,
+        userSub: durableTaskOwner(row.owner_sub),
         workspace_dir: row.workspace_dir,
         gitlab_url: row.gitlab_url,
         ts: row.created_at,
@@ -240,7 +247,7 @@ class TaskStore {
         text: row.text,
         status: row.status,
         mode: row.mode,
-        userSub: row.owner_sub || null,
+        userSub: durableTaskOwner(row.owner_sub),
         workspace_dir: row.workspace_dir,
         ts: row.created_at,
         updatedAt: row.updated_at,

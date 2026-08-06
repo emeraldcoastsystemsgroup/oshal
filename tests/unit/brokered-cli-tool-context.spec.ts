@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Explicit 20s timeout on the extraEnv round-trip test: it executes REAL connector CLIs through ToolRegistry (node child processes), and vitest's default 5s is borderline on this loaded shared workstation — it passed the 044a396 full-gate run, then timed out on the 06de7a2 run 40 minutes later (1/3681), with the afterEach EPERM on the temp dir as cascade from the orphaned child. Same machine-load reality the e2e gate already institutionalized retries for; the timeout was never a chosen assertion.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact owner propagation through ToolRegistry and fail-closed invalid subject or uncontained task cwd handling.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,7 +34,7 @@ describe('brokered connector tool execution context', () => {
     vi.restoreAllMocks();
   });
 
-  it('passes handlers only normalized identity and allowlisted broker credentials', async () => {
+  it('passes handlers only the exact identity and allowlisted broker credentials', async () => {
     const registry = new ToolRegistry();
     const handler = vi.fn(async (_input: unknown, context: unknown) => context);
     registry.register({ name: 'capture-context', handler, requiresApproval: false });
@@ -51,12 +52,25 @@ describe('brokered connector tool execution context', () => {
     expect(result).toMatchObject({
       taskWorkspace: root,
       extraEnv: {
-        OSHAL_USER_SUB: 'owner-123',
+        OSHAL_USER_SUB: '  owner-123  ',
         OSHAL_CRED_WALMART: 'walmart-token',
       },
     });
     expect((result as { extraEnv: Record<string, string> }).extraEnv).not.toHaveProperty('PATH');
     expect((result as { extraEnv: Record<string, string> }).extraEnv).not.toHaveProperty('OSHAL_CRED_UNKNOWN');
+  });
+
+  it('rejects malformed identities and task workspaces outside the configured roots', async () => {
+    const registry = new ToolRegistry();
+    registry.register({ name: 'capture-boundary', handler: async () => 'unexpected', requiresApproval: false });
+    await expect(registry.execute('capture-boundary', {}, {
+      taskWorkspace: root,
+      extraEnv: { OSHAL_USER_SUB: 'owner\u0000alias' },
+    })).rejects.toMatchObject({ code: 'INVALID_USER_SUBJECT' });
+    await expect(registry.execute('capture-boundary', {}, {
+      taskWorkspace: path.parse(root).root,
+      extraEnv: { OSHAL_USER_SUB: 'owner-123' },
+    })).rejects.toMatchObject({ code: 'UNSAFE_TASK_WORKSPACE' });
   });
 
   it('carries request credentials through ToolRegistry extraEnv after wrapper files are gone', { timeout: 20_000 }, async () => {

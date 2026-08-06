@@ -5,129 +5,348 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted task explorer workspace browsing and file preview logic into a dedicated service to satisfy the Session 68 decomposition gate
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Aligned workspace root discovery with shared swarm task-folder paths so cockpit artifact browsing resolves real ticket workspaces
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound every filesystem lookup to an exact task/workspace owner or operator, removed guessed-folder discovery, rejected link escapes, bounded trees/previews, and removed absolute paths from payloads.
  */
 
-import fsSync from 'node:fs';
-import type { Dirent } from 'node:fs';
+import { constants as fsConstants, type Dirent, type Stats } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITaskStore } from '@/entities/task';
-import { createChildLogger } from '@/shared/logger';
-import type { StoredTask } from '@/shared/types';
+import type { InternalWorkspace } from '@/entities/workspace';
 import type { WorkspaceService } from '@/features/ticketing';
+import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'task-explorer-workspace-service' });
-const FILE_READ_LIMIT_BYTES = 256 * 1024;
+const FILE_PREVIEW_LIMIT_BYTES = 256 * 1024;
+const TREE_MAX_DEPTH = 8;
+const TREE_MAX_FILES = 500;
+const TREE_MAX_ENTRIES = 1_000;
+const TREE_MAX_FILE_BYTES = 32 * 1024 * 1024;
+const WORKSPACE_BROWSE_LIMIT = 200;
+const SAFE_TASK_FOLDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/;
 const IGNORED_WORKSPACE_ENTRIES = new Set(['.git', '.oshal', 'node_modules']);
 const TEXT_FILE_EXTENSIONS = new Set([
-  'css', 'csv', 'html', 'js', 'json', 'jsx', 'log', 'md', 'mjs', 'sql', 'svg', 'sh', 'text', 'ts', 'tsx', 'txt', 'xml', 'yaml', 'yml',
+  'css', 'csv', 'html', 'js', 'json', 'jsx', 'log', 'md', 'mjs', 'sql', 'svg', 'sh',
+  'text', 'ts', 'tsx', 'txt', 'xml', 'yaml', 'yml',
 ]);
 
+interface WorkspacePrincipal {
+  sub: string;
+  operator: boolean;
+}
+
+interface WorkspaceLocation {
+  absolutePath: string;
+  displayPath: string;
+  exists: boolean;
+}
+
+interface InspectedDirectory {
+  absolutePath: string;
+  exists: boolean;
+}
+
+interface WorkspaceEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  extension: string;
+  size?: number;
+  sizeFormatted?: string;
+  modified?: string;
+  truncated?: boolean;
+  children?: WorkspaceEntry[];
+}
+
+interface TreeBudget {
+  entries: number;
+  files: number;
+  fileBytes: number;
+  truncated: boolean;
+}
+
+interface WorkspaceSummary {
+  name: string;
+  path: string;
+  fileCount: number;
+  modified: string;
+  truncated: boolean;
+}
+
 /**
- * @description Builds workspace trees, folder browse payloads, and file previews
- * for the OSHAL-native task explorer.
+ * @description Builds owner-scoped, bounded workspace trees and text previews without
+ * exposing host paths or following filesystem links.
  */
 export class TaskExplorerWorkspaceService {
   private readonly workspaceRoot: string;
 
   /**
-   * @description Creates a workspace-oriented task explorer service.
-   *
-   * @param taskStore - Task persistence boundary
-   * @param workspaceService - Optional workspace service for DB-backed path resolution
+   * @description Creates a task-explorer workspace boundary over task and workspace records.
+   * @param taskStore - Task persistence boundary used to establish exact ownership.
+   * @param workspaceService - Optional DB-backed workspace and ticket-link resolver.
    */
   constructor(
     private readonly taskStore: ITaskStore,
     private readonly workspaceService?: WorkspaceService,
   ) {
-    this.workspaceRoot = this.resolveWorkspaceRoot();
+    this.workspaceRoot = resolveSharedWorkspaceRoot();
   }
 
   /**
-   * @description Resolves the file tree for one task workspace or direct workspace folder.
-   *
-   * @param ticketId - Task identifier or workspace folder name
-   * @returns Workspace existence and tree payload
+   * @description Resolves a bounded file tree only after exact owner/operator authorization.
+   * @param ticketId - Persisted task, ticket, or workspace identifier.
+   * @param callerSub - Exact authenticated OIDC subject.
+   * @param operator - Whether the caller is explicitly operator-authorized.
+   * @returns Logical workspace path, existence, bounded children, and truncation metrics.
    */
-  async getWorkspaceFiles(ticketId: string): Promise<Record<string, unknown>> {
+  async getWorkspaceFiles(
+    ticketId: string,
+    callerSub: string,
+    operator = false,
+  ): Promise<Record<string, unknown>> {
     return this.measure('getWorkspaceFiles', async () => {
-      const workspace = await this.resolveWorkspace(ticketId);
-      if (!workspace.exists) {
-        return {
-          path: workspace.displayPath,
-          absolutePath: workspace.absolutePath,
-          exists: false,
-          children: [],
-        };
-      }
+      const workspace = await this.resolveWorkspace(ticketId, principal(callerSub, operator));
+      if (!workspace.exists) return missingWorkspacePayload(workspace.displayPath);
 
-      const children = await this.readWorkspaceEntries(workspace.absolutePath, workspace.absolutePath);
+      const budget = newTreeBudget();
+      const children = await this.readWorkspaceEntries(workspace.absolutePath, workspace.absolutePath, 0, budget);
       return {
         path: workspace.displayPath,
-        absolutePath: workspace.absolutePath,
         exists: true,
         children,
+        truncated: budget.truncated,
+        scanned: { entries: budget.entries, files: budget.files, fileBytes: budget.fileBytes },
       };
     }, { ticketId });
   }
 
   /**
-   * @description Lists available workspace directories for fallback browsing.
-   *
-   * @returns Workspace folder summaries sorted by last modification time
+   * @description Lists only DB-recorded workspaces visible to the exact caller; ordinary
+   * users never enumerate filesystem-global folder names.
+   * @param callerSub - Exact authenticated OIDC subject.
+   * @param operator - Whether the caller may view all recorded workspaces.
+   * @returns Bounded logical workspace summaries.
    */
-  async browseWorkspaces(): Promise<{
+  async browseWorkspaces(callerSub: string, operator = false): Promise<{
     basePath: string;
-    workspaces: Array<{ name: string; path: string; fileCount: number; modified: string }>;
+    workspaces: WorkspaceSummary[];
     total: number;
   }> {
     return this.measure('browseWorkspaces', async () => {
-      const workspaces = await this.listWorkspaceFolders(this.workspaceRoot);
-      return {
-        basePath: this.workspaceRoot,
-        workspaces,
-        total: workspaces.length,
-      };
+      const identity = principal(callerSub, operator);
+      const workspaces = await this.listAuthorizedWorkspaces(identity);
+      return { basePath: 'workspace', workspaces, total: workspaces.length };
     });
   }
 
   /**
-   * @description Reads one workspace file as text for the explorer file viewer.
-   *
-   * @param ticketId - Task identifier or workspace folder name
-   * @param relativePath - Relative file path within the workspace
-   * @returns File metadata and bounded text content
+   * @description Reads at most the preview byte budget from a contained regular text file.
+   * @param ticketId - Persisted task, ticket, or workspace identifier.
+   * @param relativePath - Relative path within the authorized workspace.
+   * @param callerSub - Exact authenticated OIDC subject.
+   * @param operator - Whether the caller is explicitly operator-authorized.
+   * @returns Logical metadata and bounded UTF-8 preview content.
    */
-  async getWorkspaceFileContent(ticketId: string, relativePath: string): Promise<Record<string, unknown>> {
+  async getWorkspaceFileContent(
+    ticketId: string,
+    relativePath: string,
+    callerSub: string,
+    operator = false,
+  ): Promise<Record<string, unknown>> {
     return this.measure('getWorkspaceFileContent', async () => {
-      const workspace = await this.resolveWorkspace(ticketId);
-      if (!workspace.exists) {
+      const workspace = await this.resolveWorkspace(ticketId, principal(callerSub, operator));
+      if (!workspace.exists) throw new Error('Workspace not found');
+      const filePath = await resolveContainedRegularFile(workspace.absolutePath, relativePath);
+      return this.readFilePreview(workspace.absolutePath, filePath);
+    }, { ticketId, relativePath });
+  }
+
+  private async resolveWorkspace(ticketId: string, identity: WorkspacePrincipal): Promise<WorkspaceLocation> {
+    if (!ticketId) throw new Error('Workspace not found');
+    const task = await this.taskStore.get(ticketId);
+    const linkedOwner = task?.ownerSub ?? await this.workspaceService?.resolveTaskOwner(ticketId) ?? null;
+    if (task || linkedOwner) {
+      if (!identity.operator && linkedOwner !== identity.sub) throw new Error('Workspace not found');
+      return this.resolveTaskWorkspace(ticketId, identity);
+    }
+
+    const workspace = await this.workspaceService?.getWorkspace(ticketId) ?? null;
+    if (!workspace || !canAccessWorkspace(identity, workspace)) throw new Error('Workspace not found');
+    return this.locationFromRecord(workspace);
+  }
+
+  private async resolveTaskWorkspace(ticketId: string, identity: WorkspacePrincipal): Promise<WorkspaceLocation> {
+    const linked = await this.workspaceService?.resolveTaskWorkspaceRecord(ticketId, ticketId) ?? null;
+    if (linked) {
+      if (linked.ownerSub && !identity.operator && linked.ownerSub !== identity.sub) {
         throw new Error('Workspace not found');
       }
+      return this.locationFromRecord(linked);
+    }
+    if (!SAFE_TASK_FOLDER_ID.test(ticketId) || ticketId === '.' || ticketId === '..') {
+      throw new Error('Workspace not found');
+    }
+    return this.locationFromPath(path.join(this.workspaceRoot, ticketId), ticketId);
+  }
 
-      const filePath = this.resolveWorkspaceChild(workspace.absolutePath, relativePath);
-      const stat = await fs.stat(filePath);
-      if (!stat.isFile()) {
-        throw new Error('Requested path is not a file');
-      }
+  private async locationFromRecord(workspace: InternalWorkspace): Promise<WorkspaceLocation> {
+    return this.locationFromPath(workspace.path, workspace.workspaceId);
+  }
 
-      const extension = this.readExtension(filePath);
-      if (!TEXT_FILE_EXTENSIONS.has(extension)) {
-        throw new Error('Binary file preview is not supported');
-      }
+  private async locationFromPath(candidatePath: string, displayId: string): Promise<WorkspaceLocation> {
+    const inspected = await inspectLinkFreeDirectory(this.workspaceRoot, candidatePath);
+    return {
+      absolutePath: inspected.absolutePath,
+      displayPath: `workspace/${displayId}`,
+      exists: inspected.exists,
+    };
+  }
 
-      const buffer = await fs.readFile(filePath);
-      const truncated = buffer.subarray(0, FILE_READ_LIMIT_BYTES);
+  private async listAuthorizedWorkspaces(identity: WorkspacePrincipal): Promise<WorkspaceSummary[]> {
+    if (!this.workspaceService) return [];
+    const options = identity.operator
+      ? { limit: WORKSPACE_BROWSE_LIMIT }
+      : { ownerSub: identity.sub, limit: WORKSPACE_BROWSE_LIMIT };
+    const records = await this.workspaceService.listWorkspaces(options);
+    const summaries: WorkspaceSummary[] = [];
+
+    for (const workspace of records) {
+      if (!canAccessWorkspace(identity, workspace)) continue;
+      const summary = await this.tryBuildSummary(workspace);
+      if (summary) summaries.push(summary);
+    }
+    return summaries.sort((left, right) => right.modified.localeCompare(left.modified));
+  }
+
+  private async tryBuildSummary(workspace: InternalWorkspace): Promise<WorkspaceSummary | null> {
+    try {
+      const location = await this.locationFromRecord(workspace);
+      if (!location.exists) return null;
+      const stat = await fs.lstat(location.absolutePath);
+      const scan = await countTopLevelFiles(location.absolutePath);
       return {
-        path: path.relative(workspace.absolutePath, filePath) || path.basename(filePath),
-        absolutePath: filePath,
-        content: truncated.toString('utf8'),
+        name: workspace.name,
+        path: workspace.workspaceId,
+        fileCount: scan.fileCount,
+        modified: stat.mtime.toISOString(),
+        truncated: scan.truncated,
+      };
+    } catch (error) {
+      logger.error({ err: error, workspaceId: workspace.workspaceId }, 'Skipping unsafe workspace browse record');
+      return null;
+    }
+  }
+
+  private async readWorkspaceEntries(
+    directoryPath: string,
+    rootPath: string,
+    depth: number,
+    budget: TreeBudget,
+  ): Promise<WorkspaceEntry[]> {
+    const results: WorkspaceEntry[] = [];
+    await assertPlainDirectory(directoryPath);
+    await assertRealpathContained(rootPath, directoryPath);
+    const directory = await fs.opendir(directoryPath);
+    for await (const entry of directory) {
+      if (IGNORED_WORKSPACE_ENTRIES.has(entry.name)) continue;
+      if (budget.entries >= TREE_MAX_ENTRIES) {
+        budget.truncated = true;
+        break;
+      }
+      const built = await this.buildWorkspaceEntry(directoryPath, rootPath, entry, depth, budget);
+      if (built) results.push(built);
+      if (budget.truncated) break;
+    }
+    return results.sort((left, right) => this.sortWorkspaceEntries(left, right));
+  }
+
+  private async buildWorkspaceEntry(
+    directoryPath: string,
+    rootPath: string,
+    entry: Dirent,
+    depth: number,
+    budget: TreeBudget,
+  ): Promise<WorkspaceEntry | null> {
+    const absolutePath = path.join(directoryPath, entry.name);
+    const stat = await fs.lstat(absolutePath);
+    if (entry.isSymbolicLink() || stat.isSymbolicLink()) throw new Error('Workspace links are not supported');
+    if (!stat.isFile() && !stat.isDirectory()) return null;
+    await assertRealpathContained(rootPath, absolutePath);
+    budget.entries += 1;
+
+    if (stat.isDirectory()) return this.buildDirectoryEntry(absolutePath, rootPath, entry.name, stat, depth, budget);
+    if (!reserveFileBudget(stat.size, budget)) return null;
+    return this.buildFileEntry(rootPath, absolutePath, entry.name, stat);
+  }
+
+  private async buildDirectoryEntry(
+    absolutePath: string,
+    rootPath: string,
+    name: string,
+    stat: Stats,
+    depth: number,
+    budget: TreeBudget,
+  ): Promise<WorkspaceEntry> {
+    const atDepthLimit = depth >= TREE_MAX_DEPTH;
+    if (atDepthLimit) budget.truncated = true;
+    const children = atDepthLimit
+      ? []
+      : await this.readWorkspaceEntries(absolutePath, rootPath, depth + 1, budget);
+    return {
+      name,
+      path: path.relative(rootPath, absolutePath),
+      type: 'directory',
+      extension: '',
+      modified: stat.mtime.toISOString(),
+      truncated: atDepthLimit,
+      children,
+    };
+  }
+
+  private buildFileEntry(
+    rootPath: string,
+    absolutePath: string,
+    name: string,
+    stat: Stats,
+  ): WorkspaceEntry {
+    return {
+      name,
+      path: path.relative(rootPath, absolutePath),
+      type: 'file',
+      extension: readExtension(name),
+      size: stat.size,
+      sizeFormatted: formatFileSize(stat.size),
+      modified: stat.mtime.toISOString(),
+    };
+  }
+
+  private async readFilePreview(workspacePath: string, filePath: string): Promise<Record<string, unknown>> {
+    const extension = readExtension(filePath);
+    if (!TEXT_FILE_EXTENSIONS.has(extension)) throw new Error('Binary file preview is not supported');
+    const handle = await fs.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile()) throw new Error('Requested path is not a file');
+      const buffer = Buffer.alloc(FILE_PREVIEW_LIMIT_BYTES + 1);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      const previewLength = Math.min(bytesRead, FILE_PREVIEW_LIMIT_BYTES);
+      return {
+        path: path.relative(workspacePath, filePath) || path.basename(filePath),
+        content: buffer.subarray(0, previewLength).toString('utf8'),
         size: stat.size,
         language: extension || 'text',
         modified: stat.mtime.toISOString(),
-        truncated: buffer.length > truncated.length,
+        truncated: bytesRead > previewLength || stat.size > FILE_PREVIEW_LIMIT_BYTES,
       };
-    }, { ticketId, relativePath });
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private sortWorkspaceEntries(left: WorkspaceEntry, right: WorkspaceEntry): number {
+    if (left.type !== right.type) return left.type === 'directory' ? -1 : 1;
+    return left.name.localeCompare(right.name);
   }
 
   private async measure<T>(
@@ -137,7 +356,6 @@ export class TaskExplorerWorkspaceService {
   ): Promise<T> {
     const startedAt = Date.now();
     logger.info({ method, ...metadata }, 'Task explorer workspace service entry');
-
     try {
       const result = await operation();
       logger.info({ method, durationMs: Date.now() - startedAt, ...metadata }, 'Task explorer workspace service exit');
@@ -147,247 +365,137 @@ export class TaskExplorerWorkspaceService {
       throw error;
     }
   }
+}
 
-  private async resolveWorkspace(ticketId: string): Promise<{
-    absolutePath: string;
-    displayPath: string;
-    exists: boolean;
-  }> {
-    const task = await this.taskStore.get(ticketId);
-    const directPath = this.readWorkspacePath(task);
-    const fallbackPath = path.join(this.workspaceRoot, this.normalizeWorkspaceId(ticketId));
-    const absolutePath = this.sanitizeWorkspacePath(this.workspaceRoot, directPath) ?? fallbackPath;
-
-    if (await this.pathExists(absolutePath)) {
-      return {
-        absolutePath,
-        displayPath: this.buildWorkspaceDisplayPath(absolutePath),
-        exists: true,
-      };
-    }
-
-    // Direct path missing — try workspace DB lookup via ticket link (handles parent/execution UUID mismatch)
-    if (this.workspaceService) {
-      try {
-        // First: check workspace links on this ticket directly
-        const dbPath = await this.workspaceService.resolveTaskWorkspace(ticketId, ticketId);
-        if (dbPath) {
-          const sanitized = this.sanitizeWorkspacePath(this.workspaceRoot, dbPath);
-          if (sanitized && await this.pathExists(sanitized)) {
-            logger.info({ ticketId, dbPath: sanitized }, 'Workspace resolved via DB ticket link');
-            return {
-              absolutePath: sanitized,
-              displayPath: this.buildWorkspaceDisplayPath(sanitized),
-              exists: true,
-            };
-          }
-        }
-
-        // Second: scan all workspaces for one whose path ends with this ticketId
-        // (covers cases where workspace is linked to a child execution ticket, not the parent)
-        const allWorkspaces = await this.workspaceService.listWorkspaces({ limit: 500 });
-        const normalizedId = this.normalizeWorkspaceId(ticketId);
-        const match = allWorkspaces.find((w) => {
-          const name = path.basename(w.path);
-          return name === ticketId || name === normalizedId;
-        });
-        if (match?.path) {
-          const sanitized = this.sanitizeWorkspacePath(this.workspaceRoot, match.path);
-          if (sanitized && await this.pathExists(sanitized)) {
-            logger.info({ ticketId, dbPath: sanitized, workspaceName: match.name }, 'Workspace resolved via DB path scan');
-            return {
-              absolutePath: sanitized,
-              displayPath: this.buildWorkspaceDisplayPath(sanitized),
-              exists: true,
-            };
-          }
-        }
-      } catch (error) {
-        logger.warn({ err: error, ticketId }, 'DB workspace lookup failed — returning not-found');
-      }
-    }
-
-    return {
-      absolutePath,
-      displayPath: this.buildWorkspaceDisplayPath(absolutePath),
-      exists: false,
-    };
+function principal(callerSub: string, operator: boolean): WorkspacePrincipal {
+  if (!callerSub || callerSub.trim().length === 0 || callerSub.includes('\0')) {
+    throw new Error('Workspace not found');
   }
+  return { sub: callerSub, operator };
+}
 
-  private async listWorkspaceFolders(workspaceRoot: string): Promise<Array<{ name: string; path: string; fileCount: number; modified: string }>> {
-    if (!(await this.pathExists(workspaceRoot))) {
-      return [];
-    }
+function canAccessWorkspace(identity: WorkspacePrincipal, workspace: InternalWorkspace): boolean {
+  return identity.operator || (workspace.ownerSub !== null && workspace.ownerSub === identity.sub);
+}
 
-    const entries = await fs.readdir(workspaceRoot, { withFileTypes: true });
-    const directories = entries.filter((entry) => entry.isDirectory() && !IGNORED_WORKSPACE_ENTRIES.has(entry.name));
-    const summaries = await Promise.all(directories.map((entry) => this.buildWorkspaceFolderSummary(workspaceRoot, entry.name)));
-    return summaries.sort((left, right) => right.modified.localeCompare(left.modified));
+function missingWorkspacePayload(displayPath: string): Record<string, unknown> {
+  return { path: displayPath, exists: false, children: [], truncated: false };
+}
+
+function newTreeBudget(): TreeBudget {
+  return { entries: 0, files: 0, fileBytes: 0, truncated: false };
+}
+
+function reserveFileBudget(size: number, budget: TreeBudget): boolean {
+  if (budget.files >= TREE_MAX_FILES || budget.fileBytes + size > TREE_MAX_FILE_BYTES) {
+    budget.truncated = true;
+    return false;
   }
+  budget.files += 1;
+  budget.fileBytes += size;
+  return true;
+}
 
-  private async buildWorkspaceFolderSummary(
-    workspaceRoot: string,
-    folderName: string,
-  ): Promise<{ name: string; path: string; fileCount: number; modified: string }> {
-    const absolutePath = path.join(workspaceRoot, folderName);
-    const stat = await fs.stat(absolutePath);
-    const children = await fs.readdir(absolutePath, { withFileTypes: true });
-    return {
-      name: folderName,
-      path: folderName,
-      fileCount: children.filter((entry) => entry.isFile()).length,
-      modified: stat.mtime.toISOString(),
-    };
+async function countTopLevelFiles(directoryPath: string): Promise<{ fileCount: number; truncated: boolean }> {
+  let count = 0;
+  let entries = 0;
+  const directory = await fs.opendir(directoryPath);
+  for await (const entry of directory) {
+    if (entries >= TREE_MAX_ENTRIES) return { fileCount: count, truncated: true };
+    entries += 1;
+    const childPath = path.join(directoryPath, entry.name);
+    const stat = await fs.lstat(childPath);
+    if (entry.isSymbolicLink() || stat.isSymbolicLink()) throw new Error('Workspace links are not supported');
+    await assertRealpathContained(directoryPath, childPath);
+    if (stat.isFile()) count += 1;
+    if (count >= TREE_MAX_FILES) return { fileCount: TREE_MAX_FILES, truncated: true };
   }
+  return { fileCount: count, truncated: false };
+}
 
-  private async readWorkspaceEntries(
-    directoryPath: string,
-    rootPath: string,
-  ): Promise<Array<{
-    name: string;
-    path: string;
-    type: 'file' | 'directory';
-    extension: string;
-    size?: number;
-    sizeFormatted?: string;
-    modified?: string;
-    children?: Array<Record<string, unknown>>;
-  }>> {
-    const entries = await fs.readdir(directoryPath, { withFileTypes: true });
-    const visibleEntries = entries.filter((entry) => !IGNORED_WORKSPACE_ENTRIES.has(entry.name));
-    const workspaceEntries = await Promise.all(visibleEntries.map((entry) => this.buildWorkspaceEntry(directoryPath, rootPath, entry)));
-    return workspaceEntries.sort((left, right) => this.sortWorkspaceEntries(left, right));
+async function resolveContainedRegularFile(workspacePath: string, relativePath: string): Promise<string> {
+  if (!relativePath || relativePath.includes('\0')) throw new Error('Requested path is invalid');
+  await assertPlainDirectory(workspacePath);
+  const absolutePath = path.resolve(workspacePath, relativePath);
+  assertChildPath(workspacePath, absolutePath);
+  const parts = path.relative(workspacePath, absolutePath).split(path.sep).filter(Boolean);
+  let current = workspacePath;
+
+  for (const part of parts) {
+    current = path.join(current, part);
+    const stat = await fs.lstat(current);
+    if (stat.isSymbolicLink()) throw new Error('Workspace links are not supported');
+    await assertRealpathContained(workspacePath, current);
   }
+  const stat = await fs.lstat(absolutePath);
+  if (!stat.isFile()) throw new Error('Requested path is not a file');
+  return absolutePath;
+}
 
-  private async buildWorkspaceEntry(
-    directoryPath: string,
-    rootPath: string,
-    entry: Dirent,
-  ): Promise<{
-    name: string;
-    path: string;
-    type: 'file' | 'directory';
-    extension: string;
-    size?: number;
-    sizeFormatted?: string;
-    modified?: string;
-    children?: Array<Record<string, unknown>>;
-  }> {
-    const absolutePath = path.join(directoryPath, entry.name);
-    const relativePath = path.relative(rootPath, absolutePath) || entry.name;
-    const stat = await fs.stat(absolutePath);
-    if (entry.isDirectory()) {
-      return {
-        name: entry.name,
-        path: relativePath,
-        type: 'directory',
-        extension: '',
-        modified: stat.mtime.toISOString(),
-        children: await this.readWorkspaceEntries(absolutePath, rootPath),
-      };
-    }
-
-    return {
-      name: entry.name,
-      path: relativePath,
-      type: 'file',
-      extension: this.readExtension(entry.name),
-      size: stat.size,
-      sizeFormatted: this.formatFileSize(stat.size),
-      modified: stat.mtime.toISOString(),
-    };
+function assertChildPath(workspacePath: string, targetPath: string): void {
+  const relative = path.relative(path.resolve(workspacePath), path.resolve(targetPath));
+  if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error('Requested path escapes workspace root');
   }
+}
 
-  private sortWorkspaceEntries(
-    left: { type: 'file' | 'directory'; name: string },
-    right: { type: 'file' | 'directory'; name: string },
-  ): number {
-    if (left.type !== right.type) {
-      return left.type === 'directory' ? -1 : 1;
-    }
-    return left.name.localeCompare(right.name);
+async function inspectLinkFreeDirectory(workspaceRoot: string, candidatePath: string): Promise<InspectedDirectory> {
+  const absolutePath = resolveContainedPath(workspaceRoot, candidatePath);
+  if (!(await pathExists(workspaceRoot))) return { absolutePath, exists: false };
+  await assertPlainDirectory(workspaceRoot);
+  const parts = path.relative(path.resolve(workspaceRoot), absolutePath).split(path.sep).filter(Boolean);
+  let current = path.resolve(workspaceRoot);
+
+  for (const part of parts) {
+    current = path.join(current, part);
+    if (!(await pathExists(current))) return { absolutePath, exists: false };
+    await assertPlainDirectory(current);
+    await assertRealpathContained(workspaceRoot, current);
   }
+  return { absolutePath, exists: true };
+}
 
-  private resolveWorkspaceChild(workspacePath: string, relativePath: string): string {
-    const decodedPath = decodeURIComponent(relativePath);
-    const absolutePath = path.resolve(workspacePath, decodedPath);
-    if (!absolutePath.startsWith(`${workspacePath}${path.sep}`) && absolutePath !== workspacePath) {
-      throw new Error('Requested path escapes workspace root');
-    }
-    return absolutePath;
+function resolveContainedPath(workspaceRoot: string, candidatePath: string): string {
+  const root = path.resolve(workspaceRoot);
+  const absolutePath = path.isAbsolute(candidatePath)
+    ? path.resolve(candidatePath)
+    : path.resolve(root, candidatePath);
+  const relative = path.relative(root, absolutePath);
+  if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error('Workspace path escapes configured root');
   }
+  return absolutePath;
+}
 
-  private sanitizeWorkspacePath(workspaceRoot: string, workspacePath?: string | null): string | null {
-    if (!workspacePath) {
-      return null;
-    }
+async function assertPlainDirectory(targetPath: string): Promise<void> {
+  const stat = await fs.lstat(targetPath);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Workspace links are not supported');
+}
 
-    const absolutePath = path.isAbsolute(workspacePath)
-      ? path.resolve(workspacePath)
-      : path.resolve(workspaceRoot, workspacePath);
-
-    // Anchor the prefix check to the workspace ROOT directory, not the
-    // bare string. Without `path.sep`, a sibling like `workspace-shared-backup`
-    // would satisfy startsWith('workspace-shared') and let the task explorer
-    // read files outside the intended root. Same safe pattern is already
-    // used a few lines above this function.
-    const normalizedRoot = path.resolve(workspaceRoot);
-    if (absolutePath !== normalizedRoot && !absolutePath.startsWith(`${normalizedRoot}${path.sep}`)) {
-      return null;
-    }
-
-    return absolutePath;
+async function assertRealpathContained(rootPath: string, targetPath: string): Promise<void> {
+  const [realRoot, realTarget] = await Promise.all([fs.realpath(rootPath), fs.realpath(targetPath)]);
+  const relative = path.relative(realRoot, realTarget);
+  if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error('Workspace path escapes configured root');
   }
+}
 
-  private buildWorkspaceDisplayPath(absolutePath: string): string {
-    return `workspace/${path.basename(absolutePath)}`;
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.lstat(targetPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    throw error;
   }
+}
 
-  private resolveWorkspaceRoot(): string {
-    const configuredRoot = process.env.SHARED_WORKSPACE_ROOT
-      || process.env.CLINE_WORKSPACE_ROOT
-      || process.env.WORKSPACE_ROOT;
-    return configuredRoot && configuredRoot.trim().length > 0
-      ? path.resolve(configuredRoot)
-      : fsSync.existsSync('/app/workspace')
-        ? '/app/workspace'
-        : path.resolve(process.cwd(), 'workspace-shared');
-  }
+function formatFileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
 
-  private normalizeWorkspaceId(ticketId: string): string {
-    return ticketId.trim().replaceAll(/[^a-zA-Z0-9-_]/g, '_');
-  }
-
-  private readWorkspacePath(task: StoredTask | null): string | null {
-    if (!task) {
-      return null;
-    }
-    const metadata = task.metadata || {};
-    const value = metadata.workspacePath;
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-  }
-
-  private formatFileSize(size: number): string {
-    if (size < 1024) {
-      return `${size} B`;
-    }
-    if (size < 1024 * 1024) {
-      return `${(size / 1024).toFixed(1)} KB`;
-    }
-    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  private readExtension(fileName: string): string {
-    return path.extname(fileName).replace('.', '').toLowerCase();
-  }
-
-  private async pathExists(targetPath: string): Promise<boolean> {
-    try {
-      await fs.access(targetPath);
-      return true;
-    } catch (error) {
-      logger.debug({ err: error, targetPath }, 'Workspace path not accessible');
-      return false;
-    }
-  }
+function readExtension(fileName: string): string {
+  return path.extname(fileName).replace('.', '').toLowerCase();
 }

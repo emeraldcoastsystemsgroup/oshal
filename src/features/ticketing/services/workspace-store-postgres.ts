@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial PostgresWorkspaceStore with full CRUD for named persistent workspaces
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added lazy schema bootstrap via ensureWorkspaceSchema on first query
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Made create-on-name-conflict read-only so a competing caller cannot rewrite an existing workspace's immutable path or mutable metadata before owner validation.
  */
 
 import type { Pool, QueryResult } from 'pg';
@@ -41,19 +42,12 @@ export class PostgresWorkspaceStore implements IWorkspaceStore {
     const now = new Date().toISOString();
     logger.info({ workspaceId, name: input.name, path: input.path }, 'Creating workspace');
 
-    // owner_sub is set on first insert; the ON CONFLICT reuse path deliberately
-    // does NOT overwrite it, so a name-reuse cannot silently re-own a workspace.
+    // Name reuse is a lookup, never an update. The service validates the returned
+    // record's exact owner/path before treating it as the caller's workspace.
     const sql = `
       INSERT INTO workspaces (workspace_id, name, path, project_name, owner_sub, metadata, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (name) DO UPDATE
-      SET
-        path = EXCLUDED.path,
-        project_name = COALESCE(EXCLUDED.project_name, workspaces.project_name),
-        metadata = CASE
-          WHEN EXCLUDED.metadata = '{}'::jsonb THEN workspaces.metadata
-          ELSE EXCLUDED.metadata
-        END
+      ON CONFLICT (name) DO NOTHING
       RETURNING *
     `;
 
@@ -67,7 +61,12 @@ export class PostgresWorkspaceStore implements IWorkspaceStore {
       now,
     ]);
 
-    const workspace = this.mapRow(result.rows[0]);
+    const row = result.rows[0] ?? (await this.pool.query(
+      'SELECT * FROM workspaces WHERE name = $1',
+      [input.name],
+    )).rows[0];
+    if (!row) throw new Error('Workspace creation conflicted with an inaccessible record');
+    const workspace = this.mapRow(row);
     logger.info({ workspaceId: workspace.workspaceId, name: workspace.name }, 'Workspace created or reused');
     return workspace;
   }

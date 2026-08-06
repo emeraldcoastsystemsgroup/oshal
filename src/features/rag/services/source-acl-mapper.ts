@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Source-ACL sync mapper (ADR-069 / permission-aware RAG): translate a source system's NATIVE per-document permissions (Google Drive share list, Slack channel membership, GitHub repo visibility+collaborators) into the RAG ACL metadata the retrieval permission filter enforces, so ingested chunks carry the source's own access rules. Fail-closed: an identity we cannot express never grants. Pure + testable; no live credentials required to unit-prove the mapping.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the OSHAL owner subject exactly while retaining cleanup for source-system emails/groups/domains; identity case/whitespace must not be normalized into another owner.
  */
 
 /**
@@ -57,7 +58,7 @@ function emptyAcl(): RagSourceAcl {
  */
 export function serializeSourceAcl(acl: RagSourceAcl): Record<string, string> {
   const out: Record<string, string> = {};
-  const owner = clean(acl.ownerSub);
+  const owner = exactOwnerSub(acl.ownerSub);
   if (owner) out.owner_sub = owner;
 
   const users = dedupe(acl.users.map(clean).filter(Boolean));
@@ -217,8 +218,16 @@ export function sourceAclToRagAcl(
       acl = normalizeGenericAcl(native);
       break;
   }
-  if (ownerSub && clean(ownerSub)) acl.ownerSub = clean(ownerSub);
+  const exactOwner = exactOwnerSub(ownerSub);
+  if (exactOwner) acl.ownerSub = exactOwner;
   return serializeSourceAcl(acl);
+}
+
+/** Return a present OSHAL subject byte-for-byte; source identities use separate cleanup rules. */
+function exactOwnerSub(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) return '';
+  if (!value.trim()) throw new Error('RAG source owner subject must be nonblank');
+  return value;
 }
 
 function normalizeGenericAcl(native: unknown): RagSourceAcl {

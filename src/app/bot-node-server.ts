@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | LIVE FIX (ADR-119 A2 drill, 2026-08-02): mounted POST /api/self-heal/apply. The endpoint was registered only from any-bot/server/app.js (BOT_RUNTIME=any-bot, which nothing in compose runs), so on the real self-healing node the controller's A2 remediation seam hit an HTML 404 and every unattended apply would have escalated apply-failed. Same registrar, second host — never a re-typed copy of a container-restarting endpoint.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Require and consume single-use Ed25519 delegation tokens on /api/swarm-execute when public keys are configured, bind the signed identity to the local agent/body/task, and prohibit unsigned mesh execution in that posture.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Route authorized HTTP execution through an import-safe system-identity seam so strict-RLS behavior can be exercised without importing the auto-starting server entrypoint.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Reject invalid exact caller subjects and canonicalize HTTP task/workspace identifiers before constructing an execution envelope, keeping hostile path syntax out of logs and TaskController force paths.
  */
 
 /**
@@ -53,7 +54,11 @@ import { seedAgentProfile } from '@/app/extensions/swarm/agent-profile-boot-seed
 import { type AgentProfile } from '@/entities/agent';
 import { createBotNodeRuntime } from './bot-node-runtime';
 import { buildBotNodeHttpResponse } from './bot-node-http-response';
-import { normalizeBotNodeUserSub, sanitizeBotNodeCreds } from './bot-node-request-scope';
+import {
+  canonicalBotWorkspaceId,
+  normalizeBotNodeUserSub,
+  sanitizeBotNodeCreds,
+} from './bot-node-request-scope';
 import {
   authorizeBotNodeExecutionCall,
   authorizeBotNodeInternalCall,
@@ -342,13 +347,26 @@ async function start(): Promise<void> {
       model?: unknown;
       configVersion?: unknown;
     };
-    if (!body || typeof body.text !== 'string' || !body.taskId || !body.workspaceFolderId) {
+    if (!body || typeof body.text !== 'string'
+      || typeof body.taskId !== 'string'
+      || typeof body.workspaceFolderId !== 'string') {
       res.status(400).json({ success: false, error: 'Missing text/taskId/workspaceFolderId' });
       return;
     }
     const targetAgentId = body.agentId || agentId;
     const verifiedDelegation = getVerifiedDelegationClaims(res);
-    const scopedUserSub = normalizeBotNodeUserSub(verifiedDelegation?.sub ?? body.userSub);
+    let scopedUserSub: string | undefined;
+    let canonicalTaskId: string;
+    let workspaceScopeId: string;
+    try {
+      scopedUserSub = normalizeBotNodeUserSub(verifiedDelegation?.sub ?? body.userSub);
+      canonicalTaskId = canonicalBotWorkspaceId(body.taskId);
+      workspaceScopeId = canonicalBotWorkspaceId(body.workspaceFolderId);
+    } catch (error) {
+      logger.warn({ err: error }, 'Rejected invalid swarm-execute identity or workspace scope');
+      res.status(400).json({ success: false, error: 'invalid_execution_scope' });
+      return;
+    }
     const brokeredCreds = sanitizeBotNodeCreds(body.creds);
     const hasProviderIntent = Object.prototype.hasOwnProperty.call(body, 'providerIntent');
     const providerIntent = parseTrustedProviderIntent(body.providerIntent);
@@ -356,7 +374,7 @@ async function start(): Promise<void> {
       res.status(400).json({ success: false, error: 'Invalid trusted provider intent' });
       return;
     }
-    const correlationId = `http-${body.taskId}-${Date.now()}`;
+    const correlationId = `http-${canonicalTaskId}-${Date.now()}`;
     const envelope = {
       correlationId,
       fromAgentId: 'swarm-controller',
@@ -364,8 +382,8 @@ async function start(): Promise<void> {
       channel: MESH_CHANNELS.agentDirect(targetAgentId),
       payload: {
         text: body.text,
-        workspaceTaskId: body.taskId,
-        workspaceFolderId: body.workspaceFolderId,
+        workspaceTaskId: workspaceScopeId,
+        workspaceFolderId: workspaceScopeId,
         externalId: body.taskId,
         agenticMode: body.agenticMode ?? true,
         direct: body.direct === true,

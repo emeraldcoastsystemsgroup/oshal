@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replaced symmetric delegation with Ed25519 controller-only issuance and structurally separate public-key verification so a compromised bot cannot mint user authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Signed and exactly verified principal_iss independently from token iss to preserve the authenticated subject namespace across the HTTP delegation boundary.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Sign and exactly verify the canonical request-body SHA-256 so a captured token cannot authorize mutated execution inputs.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Validate delegation subjects by UTF-8 byte length without trimming so signed exact OIDC identities survive issuance, parsing, and expectation binding unchanged.
  */
 
 import {
@@ -19,6 +20,7 @@ import {
   type KeyObject,
 } from 'crypto';
 import { createChildLogger } from '@/shared/logger';
+import { isExactUserSubject } from './exact-user-subject';
 import {
   DELEGATION_TOKEN_VERSION,
   type DelegationTokenClaims,
@@ -452,7 +454,7 @@ function normalizeGrant(grant: DelegationTokenGrant): DelegationTokenGrant {
   return {
     iss: validateText(grant.iss, 'iss', 256),
     aud: validateText(grant.aud, 'aud', 256),
-    sub: validateText(grant.sub, 'sub', 512),
+    sub: validateDelegationSubject(grant.sub, 'sub'),
     principal_iss: validateText(grant.principal_iss, 'principal_iss', 2_048),
     azp: validateText(grant.azp, 'azp', 256),
     task_id: validateText(grant.task_id, 'task_id', 256),
@@ -564,7 +566,7 @@ function parseClaims(encoded: string): DelegationTokenClaims {
   const claims: DelegationTokenClaims = {
     iss: validateText(value.iss, 'iss', 256),
     aud: validateText(value.aud, 'aud', 256),
-    sub: validateText(value.sub, 'sub', 512),
+    sub: validateDelegationSubject(value.sub, 'sub'),
     principal_iss: validateText(value.principal_iss, 'principal_iss', 2_048),
     azp: validateText(value.azp, 'azp', 256),
     task_id: validateText(value.task_id, 'task_id', 256),
@@ -641,7 +643,7 @@ function normalizeExpectations(expected: DelegationTokenExpectations): Delegatio
     task_id: validateText(expected.task_id, 'expected task_id', 256),
     body_sha256: validateBodyDigest(expected.body_sha256, 'invalid_binding'),
     scope: normalizeScopes(expected.scope),
-    sub: validateText(expected.sub, 'expected sub', 512),
+    sub: validateDelegationSubject(expected.sub, 'expected sub'),
     principal_iss: validateText(expected.principal_iss, 'expected principal_iss', 2_048),
   };
 }
@@ -726,6 +728,11 @@ function validateText(value: unknown, name: string, maxLength: number): string {
     throw new DelegationTokenError('malformed', `Delegation token ${name} is invalid`);
   }
   return value;
+}
+
+function validateDelegationSubject(value: unknown, name: string): string {
+  if (typeof value === 'string' && isExactUserSubject(value)) return value;
+  throw new DelegationTokenError('malformed', `Delegation token ${name} is invalid`);
 }
 
 function validateJti(value: unknown, code: DelegationTokenErrorCode): string {

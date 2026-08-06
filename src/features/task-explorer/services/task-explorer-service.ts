@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Rebuilt task explorer service as a thin facade over decomposed project, activity, and workspace services for Session 68
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Tightened facade method signatures to preserve concrete payload types after service decomposition
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Threaded exact authenticated subjects and explicit operator authority into every workspace filesystem operation.
  */
 
 import type { IMessageStore } from '@/entities/message';
@@ -81,36 +82,55 @@ export class TaskExplorerService {
   /**
    * @description Resolves the workspace tree for one ticket or direct workspace folder.
    *
-   * @param ticketId - Task identifier or workspace folder name
+   * @param ticketId - Persisted task, ticket, or workspace identifier
+   * @param callerSub - Exact authenticated OIDC subject
+   * @param operator - Whether the caller is explicitly operator-authorized
    * @returns Workspace tree payload
    */
-  async getWorkspaceFiles(ticketId: string): ReturnType<TaskExplorerWorkspaceService['getWorkspaceFiles']> {
-    return this.measure('getWorkspaceFiles', () => this.workspaceService.getWorkspaceFiles(ticketId), { ticketId });
+  async getWorkspaceFiles(
+    ticketId: string,
+    callerSub: string,
+    operator = false,
+  ): ReturnType<TaskExplorerWorkspaceService['getWorkspaceFiles']> {
+    return this.measure(
+      'getWorkspaceFiles',
+      () => this.workspaceService.getWorkspaceFiles(ticketId, callerSub, operator),
+      { ticketId },
+    );
   }
 
   /**
    * @description Lists workspace folders for fallback browsing.
    *
-   * @returns Workspace folder summaries
+   * @param callerSub - Exact authenticated OIDC subject
+   * @param operator - Whether the caller is explicitly operator-authorized
+   * @returns Owner-scoped workspace summaries
    */
-  async browseWorkspaces(): ReturnType<TaskExplorerWorkspaceService['browseWorkspaces']> {
-    return this.measure('browseWorkspaces', () => this.workspaceService.browseWorkspaces());
+  async browseWorkspaces(
+    callerSub: string,
+    operator = false,
+  ): ReturnType<TaskExplorerWorkspaceService['browseWorkspaces']> {
+    return this.measure('browseWorkspaces', () => this.workspaceService.browseWorkspaces(callerSub, operator));
   }
 
   /**
    * @description Reads one workspace file preview as bounded text.
    *
-   * @param ticketId - Task identifier or workspace folder name
+   * @param ticketId - Persisted task, ticket, or workspace identifier
    * @param relativePath - Relative file path inside the workspace
+   * @param callerSub - Exact authenticated OIDC subject
+   * @param operator - Whether the caller is explicitly operator-authorized
    * @returns File preview payload
    */
   async getWorkspaceFileContent(
     ticketId: string,
     relativePath: string,
+    callerSub: string,
+    operator = false,
   ): ReturnType<TaskExplorerWorkspaceService['getWorkspaceFileContent']> {
     return this.measure(
       'getWorkspaceFileContent',
-      () => this.workspaceService.getWorkspaceFileContent(ticketId, relativePath),
+      () => this.workspaceService.getWorkspaceFileContent(ticketId, relativePath, callerSub, operator),
       { ticketId, relativePath },
     );
   }

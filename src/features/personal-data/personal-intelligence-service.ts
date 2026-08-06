@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-058 scaffold: Personal-Intelligence Service (private swarm service, not a registered bot)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact ownerSub identity through personal-vault resolution and every store call; nonblank validation and empty fallback remain fail-closed, while valid case/whitespace variants no longer collapse into another user's vault namespace.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Apply the shared exact-subject contract before vault resolution: nullish absence alone may use the configured default, while empty, malformed, control-bearing, and oversized assertions fail closed and all valid whitespace/case variants remain distinct.
  */
 
 /**
@@ -28,6 +30,7 @@ import {
   type FactContribution,
   DEFAULT_CONTRIBUTION_FLOOR,
 } from './schema-contribution';
+import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
 
 /** Start-parameter config. The service does not read a manifest — it boots from these. */
 export interface PersonalIntelligenceConfig {
@@ -74,9 +77,11 @@ export class PersonalIntelligenceService {
 
   /** No ownerSub + no default = refuse. Prevents the "everything lands in the operator's vault" footgun (ADR-058 risk 3). */
   private requireOwner(ownerSub?: string): string {
-    const sub = (ownerSub || this.config.defaultOwnerSub || '').trim();
-    if (!sub) throw new Error('PIS: no ownerSub and no default owner — refusing unscoped write');
-    return sub;
+    const candidate = ownerSub ?? this.config.defaultOwnerSub;
+    if (candidate === null || candidate === undefined) {
+      throw new Error('PIS: no ownerSub and no default owner — refusing unscoped write');
+    }
+    return requireExactUserSubject(candidate, 'PIS ownerSub');
   }
 
   /**

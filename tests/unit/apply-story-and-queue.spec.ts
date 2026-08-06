@@ -12,6 +12,8 @@
  *   but has STOPPED CLAIMING as wedged-and-unavailable, because that is the failure this queue
  *   actually has and it previously rendered as an ordinary empty queue. Also pins the narration
  *   instruction into the dispatch prompt — drop it and every run goes silent again with no test red.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep queue reachability aligned with hardened browser dispatch: only exact browser_control plus browser_pilot_consent markers enter the worker picker.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Keep target-selection behavior groups below the repository function-length limit.
  */
 
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,7 +27,11 @@ const hoisted = vi.hoisted(() => {
   const path = require('node:path');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'apply-story-spec-'));
   process.env.SHARED_WORKSPACE_ROOT = root;
-  const state = { depth: 0, status: 'online', healthy: true, capabilities: ['codex.exec'] as string[], extra: [] as Array<Record<string, unknown>> };
+  const state = {
+    depth: 0, status: 'online', healthy: true,
+    capabilities: ['codex.exec', 'browser_control'] as string[],
+    tags: ['browser_pilot_consent'] as string[], extra: [] as Array<Record<string, unknown>>,
+  };
   return { root, state };
 });
 
@@ -37,6 +43,7 @@ vi.mock('@/app/routes/remote-client-routes', () => ({
       status: hoisted.state.status,
       healthy: hoisted.state.healthy,
       capabilities: hoisted.state.capabilities,
+      tags: hoisted.state.tags,
       taskQueueDepth: hoisted.state.depth,
       lastSeenAt: '2026-07-23T16:00:00.000Z',
     }, ...hoisted.state.extra],
@@ -59,7 +66,8 @@ beforeEach(() => {
   hoisted.state.depth = 0;
   hoisted.state.status = 'online';
   hoisted.state.healthy = true;
-  hoisted.state.capabilities = ['codex.exec'];
+  hoisted.state.capabilities = ['codex.exec', 'browser_control'];
+  hoisted.state.tags = ['browser_pilot_consent'];
   hoisted.state.extra = [];
 });
 
@@ -144,7 +152,15 @@ describe('apply queue — desktop worker reachability', () => {
     expect(w.connected).toBe(false);
     expect(w.available).toBe(false);
     expect(w.detail).toMatch(/leaf client/i);
-    expect(w.detail).toMatch(/screen control/i);
+    expect(w.detail).toMatch(/authorized browser-control worker/i);
+    expect(w.detail).toMatch(/browser-pilot consent/i);
+  });
+
+  it('does not list a browser-capable node until browser-pilot consent is explicit', () => {
+    hoisted.state.tags = [];
+    const status = describeApplyWorker(undefined, PLATFORM);
+    expect(status.connected).toBe(false);
+    expect(listApplyWorkers(PLATFORM).workers).toEqual([]);
   });
 
   it('treats an offline or unhealthy worker as unavailable but still connected', () => {
@@ -168,7 +184,8 @@ describe('apply target-computer picker — choosing the leaf node', () => {
   it('lists BOTH the desktop and a remote leaf node, defaulting to the preferred host', () => {
     hoisted.state.extra = [{
       clientId: 'oshal-chat-remote', tailnetHostname: 'remote-render-box',
-      status: 'online', healthy: true, capabilities: ['codex.exec'], taskQueueDepth: 0,
+      status: 'online', healthy: true, capabilities: ['codex.exec', 'browser_control'],
+      tags: ['browser_pilot_consent'], taskQueueDepth: 0,
     }];
     const { workers, defaultClientId } = listApplyWorkers(PLATFORM);
     expect(workers.map((w) => w.hostname).sort()).toEqual(['edge-node-1', 'remote-render-box']);
@@ -176,11 +193,14 @@ describe('apply target-computer picker — choosing the leaf node', () => {
     expect(defaultClientId).toBe('oshal-chat-test');
     expect(workers.find((w) => w.clientId === 'oshal-chat-remote')!.isDefault).toBe(false);
   });
+});
 
-  it('a node without codex/shell (no screen control) is NOT a candidate', () => {
+describe('apply target-computer picker — refusal and selected-node behavior', () => {
+  it('a browser-authorized node without codex/shell execution is NOT a candidate', () => {
     hoisted.state.extra = [{
       clientId: 'oshal-chat-noexec', tailnetHostname: 'viewer-only',
-      status: 'online', healthy: true, capabilities: ['chat'], taskQueueDepth: 0,
+      status: 'online', healthy: true, capabilities: ['chat', 'browser_control'],
+      tags: ['browser_pilot_consent'], taskQueueDepth: 0,
     }];
     expect(listApplyWorkers(PLATFORM).workers.map((w) => w.clientId)).toEqual(['oshal-chat-test']);
   });
@@ -188,7 +208,8 @@ describe('apply target-computer picker — choosing the leaf node', () => {
   it('describeApplyWorker reports the SELECTED node, not just the default', () => {
     hoisted.state.extra = [{
       clientId: 'oshal-chat-remote', tailnetHostname: 'remote-render-box',
-      status: 'online', healthy: true, capabilities: ['codex.exec'], taskQueueDepth: 3, // wedged
+      status: 'online', healthy: true, capabilities: ['codex.exec', 'browser_control'],
+      tags: ['browser_pilot_consent'], taskQueueDepth: 3, // wedged
     }];
     const chosen = describeApplyWorker('oshal-chat-remote', PLATFORM);
     expect(chosen.hostname).toBe('remote-render-box');

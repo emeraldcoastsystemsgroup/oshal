@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native task explorer API routes for hierarchy, metrics, activity, and workspace browsing
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Normalized wildcard route parameter handling after Session 68 task-explorer service decomposition
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | CM-3: Added /explorer/tickets/:ticketId/status-history endpoint for Process tab
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Passed exact authenticated identity and explicit operator authority into workspace browse, tree, and preview handlers before filesystem resolution.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { TaskExplorerService } from '@/features/task-explorer';
 import { createChildLogger } from '@/shared/logger';
+import { getCaller, isOperator } from '@/shared/middleware/authz';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'task-explorer-routes' });
@@ -120,12 +122,14 @@ function createMetricsHandler(service: TaskExplorerService) {
 }
 
 function createBrowseHandler(service: TaskExplorerService) {
-  return async (_req: Request, res: Response): Promise<void> => {
+  return async (req: Request, res: Response): Promise<void> => {
     const startedAt = Date.now();
     logger.info('GET /api/v1/workspace/browse');
+    const principal = requireExplorerPrincipal(req, res);
+    if (!principal) return;
 
     try {
-      const data = await service.browseWorkspaces();
+      const data = await service.browseWorkspaces(principal.sub, principal.operator);
       logger.info({ total: data.total, durationMs: Date.now() - startedAt }, 'GET /api/v1/workspace/browse complete');
       res.json({ success: true, data });
     } catch (error) {
@@ -140,14 +144,20 @@ function createWorkspaceTreeHandler(service: TaskExplorerService) {
     const startedAt = Date.now();
     const { ticketId } = req.params;
     logger.info({ ticketId }, 'GET /api/v1/workspace/:ticketId/files');
+    const principal = requireExplorerPrincipal(req, res);
+    if (!principal) return;
 
     try {
-      const data = await service.getWorkspaceFiles(ticketId as string);
+      const data = await service.getWorkspaceFiles(ticketId as string, principal.sub, principal.operator);
       logger.info({ ticketId, exists: data.exists, durationMs: Date.now() - startedAt }, 'GET /api/v1/workspace/:ticketId/files complete');
       res.json({ success: true, data });
     } catch (error) {
       logger.error({ err: error, ticketId, durationMs: Date.now() - startedAt }, 'GET /api/v1/workspace/:ticketId/files failed');
-      res.status(500).json({ success: false, error: 'Failed to load workspace files' });
+      const status = error instanceof Error && error.message === 'Workspace not found' ? 404 : 400;
+      res.status(status).json({
+        success: false,
+        error: status === 404 ? 'Workspace not found' : 'Failed to load workspace files',
+      });
     }
   };
 }
@@ -158,14 +168,17 @@ function createWorkspaceFileHandler(service: TaskExplorerService) {
     const ticketId = readRouteParam(req.params.ticketId);
     const filePath = readWildcardParam(req.params.filePath);
     logger.info({ ticketId, filePath }, 'GET /api/v1/workspace/:ticketId/files/:filePath');
+    const principal = requireExplorerPrincipal(req, res);
+    if (!principal) return;
 
     try {
-      const data = await service.getWorkspaceFileContent(ticketId, filePath);
+      const data = await service.getWorkspaceFileContent(ticketId, filePath, principal.sub, principal.operator);
       logger.info({ ticketId, filePath, durationMs: Date.now() - startedAt }, 'GET /api/v1/workspace/:ticketId/files/:filePath complete');
       res.json({ success: true, data });
     } catch (error) {
       logger.error({ err: error, ticketId, filePath, durationMs: Date.now() - startedAt }, 'GET /api/v1/workspace/:ticketId/files/:filePath failed');
-      res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Failed to load file preview' });
+      const status = error instanceof Error && error.message === 'Workspace not found' ? 404 : 400;
+      res.status(status).json({ success: false, error: status === 404 ? 'Workspace not found' : 'Failed to load file preview' });
     }
   };
 }
@@ -182,6 +195,18 @@ function readWildcardParam(value: string | string[] | undefined): string {
     return value.join('/');
   }
   return value ?? '';
+}
+
+function requireExplorerPrincipal(
+  req: Request,
+  res: Response,
+): { sub: string; operator: boolean } | null {
+  const { sub } = getCaller(req);
+  if (!sub || sub.trim().length === 0 || sub.includes('\0')) {
+    res.status(401).json({ success: false, error: 'Authentication required' });
+    return null;
+  }
+  return { sub, operator: isOperator(req) };
 }
 
 /**

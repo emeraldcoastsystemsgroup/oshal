@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-057/058: real per-user SQLite VaultStore — entity resolution + non-destructive dedup
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | At-rest encryption (ADR-057 "encrypt the file"): PII content fields (entity/edge label + attrs) are AES-256-GCM encrypted and the natural-key resolver index is stored as a keyed HMAC (lookup-preserving, irreversible), via vault-crypto.ts (per-user HKDF key from SESSION_SECRET, never stored in the file). Existing plaintext rows are migrated on first open (user_version guard). A leaked vault DB/volume/backup is now opaque without SESSION_SECRET — required for the internet-facing deployment.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Re-verify the exact owner binding, link-free private vault directory, main SQLite file, and implicit journal/WAL sidecars immediately before and after every database open.
  */
 
 /**
@@ -25,25 +26,42 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import path from 'path';
-import fs from 'fs';
 import type { Provenance } from './ontology';
 import { makeEntityId, isInUserScope } from './ontology';
 import type { VaultLayout } from './vault';
 import type { EntityContribution, EdgeContribution, FactContribution } from './schema-contribution';
 import type { VaultStore } from './personal-intelligence-service';
 import { encryptField, decryptField, indexKey, isEncrypted, isIndexKey } from './vault-crypto';
+import {
+  assertLinkFreeSqliteDatabase,
+  ensureExactSubjectStoreDirectory,
+  ensureLinkFreeStoreSubdirectory,
+  UnsafeExactSubjectStoreError,
+} from '@/shared/security/exact-subject-store';
+import { createChildLogger } from '@/shared/logger';
 
 interface DbHandle { db: InstanceType<typeof Database>; }
+const logger = createChildLogger({ module: 'sqlite-vault-store' });
 
+/** @description SQLite-backed, exact-owner Personal Data Vault implementation. */
 export class SqliteVaultStore implements VaultStore {
   private readonly handles = new Map<string, DbHandle>();
 
   /** Open (and lazily create + migrate) the vault DB for a user. One file per user = portable vault. */
-  private open(layout: VaultLayout): InstanceType<typeof Database> {
+  private open(layout: VaultLayout, ownerSub: string): InstanceType<typeof Database> {
+    const subjectStore = ensureExactSubjectStoreDirectory(layout.storeRoot, layout.tenant, ownerSub);
+    if (subjectStore.subjectDir !== layout.subjectDir) {
+      throw new UnsafeExactSubjectStoreError('vault layout changed before database open');
+    }
+    const vaultDir = ensureLinkFreeStoreSubdirectory(subjectStore.subjectDir, 'vault');
+    if (vaultDir !== layout.vaultDir) {
+      throw new UnsafeExactSubjectStoreError('vault leaf changed before database open');
+    }
+    assertLinkFreeSqliteDatabase(vaultDir, 'vault.db');
     const cached = this.handles.get(layout.vaultDir);
     if (cached) return cached.db;
-    fs.mkdirSync(layout.vaultDir, { recursive: true });
-    const db = new Database(path.join(layout.vaultDir, 'vault.db'));
+    const db = new Database(path.join(vaultDir, 'vault.db'));
+    assertLinkFreeSqliteDatabase(vaultDir, 'vault.db');
     db.pragma('journal_mode = WAL');
     db.exec(`
       CREATE TABLE IF NOT EXISTS entities (
@@ -114,7 +132,7 @@ export class SqliteVaultStore implements VaultStore {
   }
 
   async resolveEntity(layout: VaultLayout, ownerSub: string, type: string, match: Record<string, string>): Promise<string | null> {
-    const db = this.open(layout);
+    const db = this.open(layout, ownerSub);
     for (const key of this.keysFor(type, match)) {
       const row = db.prepare('SELECT entity_id FROM resolver_index WHERE owner_sub=? AND match_key=?').get(ownerSub, indexKey(ownerSub, key)) as { entity_id?: string } | undefined;
       if (row?.entity_id) return row.entity_id;
@@ -123,7 +141,7 @@ export class SqliteVaultStore implements VaultStore {
   }
 
   async upsertEntity(layout: VaultLayout, ownerSub: string, c: EntityContribution, prov: Provenance): Promise<{ id: string; merged: boolean }> {
-    const db = this.open(layout);
+    const db = this.open(layout, ownerSub);
     const keys = this.keysFor(c.type, c.match);
     const existingId = await this.resolveEntity(layout, ownerSub, c.type, c.match);
 
@@ -156,7 +174,7 @@ export class SqliteVaultStore implements VaultStore {
     if (!isInUserScope(fromId, ownerSub) || !isInUserScope(toId, ownerSub)) {
       throw new Error(`PIS vault: edge crosses scope (from=${fromId} to=${toId} owner=${ownerSub})`);
     }
-    const db = this.open(layout);
+    const db = this.open(layout, ownerSub);
     const id = `user:${ownerSub}:edge:${randomUUID().slice(0, 8)}`;
     db.prepare('INSERT OR IGNORE INTO edges (id, owner_sub, type, from_id, to_id, attrs, source, ingested_at, confidence) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(id, ownerSub, c.type, fromId, toId, encryptField(ownerSub, JSON.stringify(c.attrs)), prov.source, prov.ingestedAt, c.confidence);
@@ -165,7 +183,7 @@ export class SqliteVaultStore implements VaultStore {
   }
 
   async writeFact(layout: VaultLayout, ownerSub: string, entityId: string, c: FactContribution, prov: Provenance): Promise<void> {
-    const db = this.open(layout);
+    const db = this.open(layout, ownerSub);
     db.prepare('INSERT OR REPLACE INTO facts (owner_sub, entity_id, metric, value, at, source, confidence) VALUES (?,?,?,?,?,?,?)')
       .run(ownerSub, entityId, c.metric, c.value, c.at, prov.source, c.confidence);
   }
@@ -173,7 +191,7 @@ export class SqliteVaultStore implements VaultStore {
   // ── Read side (the deterministic broker reads — ADR-056 — and verification) ────────────────────
 
   getEntities(layout: VaultLayout, ownerSub: string, type?: string): Array<{ id: string; type: string; label: string; attrs: Record<string, unknown>; worldRef: string | null }> {
-    const db = this.open(layout);
+    const db = this.open(layout, ownerSub);
     const rows = (type
       ? db.prepare('SELECT id,type,label,attrs,world_ref FROM entities WHERE owner_sub=? AND type=?').all(ownerSub, type)
       : db.prepare('SELECT id,type,label,attrs,world_ref FROM entities WHERE owner_sub=?').all(ownerSub)) as Array<{ id: string; type: string; label: string; attrs: string; world_ref: string | null }>;
@@ -181,13 +199,13 @@ export class SqliteVaultStore implements VaultStore {
   }
 
   getEdges(layout: VaultLayout, ownerSub: string): Array<{ id: string; type: string; from: string; to: string }> {
-    const db = this.open(layout);
+    const db = this.open(layout, ownerSub);
     const rows = db.prepare('SELECT id,type,from_id,to_id FROM edges WHERE owner_sub=?').all(ownerSub) as Array<{ id: string; type: string; from_id: string; to_id: string }>;
     return rows.map((r) => ({ id: r.id, type: r.type, from: r.from_id, to: r.to_id }));
   }
 
   getFacts(layout: VaultLayout, ownerSub: string, entityId?: string): Array<{ entityId: string; metric: string; value: number; at: string }> {
-    const db = this.open(layout);
+    const db = this.open(layout, ownerSub);
     const rows = (entityId
       ? db.prepare('SELECT entity_id,metric,value,at FROM facts WHERE owner_sub=? AND entity_id=?').all(ownerSub, entityId)
       : db.prepare('SELECT entity_id,metric,value,at FROM facts WHERE owner_sub=?').all(ownerSub)) as Array<{ entity_id: string; metric: string; value: number; at: string }>;
@@ -196,7 +214,7 @@ export class SqliteVaultStore implements VaultStore {
 
   /** "Relate two datasets" demo (the whole point): join holdings → securities → sector edges. */
   relateHoldingsToSectors(layout: VaultLayout, ownerSub: string): Array<{ holding: string; security: string; worldRef: string | null; sector: string | null }> {
-    const db = this.open(layout);
+    const db = this.open(layout, ownerSub);
     const rows = db.prepare(`
       SELECT h.id AS holding, s.label AS security, s.world_ref AS worldRef, sec.to_id AS sector
       FROM entities h
@@ -208,5 +226,12 @@ export class SqliteVaultStore implements VaultStore {
     return rows.map((r) => ({ ...r, security: (decryptField(ownerSub, r.security) ?? '') as string }));
   }
 
-  close(): void { for (const { db } of this.handles.values()) { try { db.close(); } catch { /* */ } } this.handles.clear(); }
+  /** @description Closes every cached owner database and logs any handle that refuses cleanup. */
+  close(): void {
+    for (const { db } of this.handles.values()) {
+      try { db.close(); }
+      catch (err) { logger.error({ err }, 'personal-data vault close failed'); }
+    }
+    this.handles.clear();
+  }
 }

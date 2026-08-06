@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact tool caller subjects and resolve the trusted task cwd through the shared link-free workspace boundary before any handler receives it.
  */
 
 /**
@@ -12,7 +13,24 @@
  */
 
 const logger = require('../utils/logger');
+const path = require('path');
 const { sanitizeBrokeredCreds } = require('./codebase/user-scoping');
+const { optionalExactUserSubject } = require('./codebase/exact-user-subject');
+const { resolveExistingTaskWorkspace } = require('./codebase/task-workspace-scope');
+
+/** Workspace roots from which a trusted per-task tool cwd may be selected. */
+function toolWorkspaceRoots() {
+  const appRoot = path.resolve(__dirname, '../../..');
+  return [
+    process.env.WORKSPACE_DIR,
+    process.env.SHARED_WORKSPACE_ROOT,
+    process.env.CLINE_SHARED_WORKSPACE_ROOT,
+    process.env.WORKSPACE_ROOT,
+    path.join(appRoot, 'workspace'),
+    path.join(appRoot, 'workspace-shared'),
+    path.join(path.dirname(process.env.WORKSPACE_DIR || path.join(appRoot, 'workspace')), 'swarm-workspace'),
+  ].filter(Boolean);
+}
 
 /**
  * @description Central in-memory registry that holds every tool the agent can
@@ -268,16 +286,19 @@ class ToolRegistry {
       throw new Error(`Tool '${toolName}' requires approval before execution.`);
     }
 
-    const scopedUserSub = typeof options.extraEnv?.OSHAL_USER_SUB === 'string'
-      && options.extraEnv.OSHAL_USER_SUB.trim()
-      ? options.extraEnv.OSHAL_USER_SUB.trim().slice(0, 512)
-      : undefined;
+    const scopedUserSub = optionalExactUserSubject(
+      options.extraEnv?.OSHAL_USER_SUB,
+      'tool userSub',
+    );
+    const taskWorkspace = options.taskWorkspace === undefined
+      ? undefined
+      : resolveExistingTaskWorkspace(options.taskWorkspace, toolWorkspaceRoots());
     const trustedContext = {
       ...options,
-      taskWorkspace: typeof options.taskWorkspace === 'string' ? options.taskWorkspace : undefined,
+      taskWorkspace,
       extraEnv: {
         ...sanitizeBrokeredCreds(options.extraEnv),
-        ...(scopedUserSub ? { OSHAL_USER_SUB: scopedUserSub } : {}),
+        ...(scopedUserSub === undefined ? {} : { OSHAL_USER_SUB: scopedUserSub }),
       },
     };
 

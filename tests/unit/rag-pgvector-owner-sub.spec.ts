@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the rag_chunks owner_sub fix (BACKLOG security burn-down): migration 070's RLS policies compare the owner_sub COLUMN to the identity GUCs, but the pgvector engine wrote every chunk with the column NULL (ACL only in metadata JSONB) through a private UNWRAPPED pool — so the database-layer backstop was inert for every engine-written row. This spec drives the REAL engine against an injected pool and asserts the two halves that make RLS bite: (1) addChunks lifts metadata.owner_sub into the owner_sub INSERT column (and leaves shared-corpus chunks NULL); (2) the engine pool is GUC-wrapped — a user-identity ingest stamps oshal.current_sub on the SAME connection BEFORE the INSERT and resets it after, and a SYSTEM-sentinel (background sweep) ingest stamps operator. Remove the column population or unwrap the pool and this file goes red exactly the way the live WITH CHECK / read policies would.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove every valid owner_sub is copied with exact case/surrounding whitespace while the existing whitespace-only validation remains unchanged.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -64,9 +65,9 @@ describe('pgvector rag engine: owner_sub reaches the COLUMN and identity reaches
     await runWithRequestIdentity({ sub: 'user-a', isOperator: false }, () =>
       engine.addChunks(
         'notes',
-        ['c1', 'c2', 'c3'],
-        ['private doc', 'shared doc', 'blank-owner doc'],
-        [{ owner_sub: 'user-a' }, {}, { owner_sub: '   ' }],
+        ['c1', 'c2', 'c3', 'c4'],
+        ['private doc', 'shared doc', 'whitespace-owner doc', 'padded-owner doc'],
+        [{ owner_sub: 'user-a' }, {}, { owner_sub: '   ' }, { owner_sub: ' Auth0|Exact ' }],
         null,
       ));
 
@@ -85,10 +86,11 @@ describe('pgvector rag engine: owner_sub reaches the COLUMN and identity reaches
     const insert = calls[insertIdx];
     expect(insert.sql).toContain('owner_sub');
     // 6 params per chunk: chunk_id, collection, document, metadata, embedding, owner_sub.
-    expect(insert.params.length).toBe(18);
+    expect(insert.params.length).toBe(24);
     expect(insert.params[5]).toBe('user-a'); // metadata.owner_sub → column
     expect(insert.params[11]).toBeNull();    // no ACL → shared corpus (NULL)
-    expect(insert.params[17]).toBeNull();    // whitespace ACL → NULL, never an empty-string owner
+    expect(insert.params[17]).toBeNull();    // whitespace-only owner remains invalid/shared
+    expect(insert.params[23]).toBe(' Auth0|Exact '); // case/whitespace survive byte-for-byte
     // The metadata JSONB still carries the ACL for the app-side permission filter.
     expect(String(insert.params[3])).toContain('"owner_sub":"user-a"');
   });

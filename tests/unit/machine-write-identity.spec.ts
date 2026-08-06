@@ -8,6 +8,10 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Closed the final behavioral-proof debt with real HTTP/auth-boundary drivers for A2A ticket creation, remote-client cost settlement, bot-node execution, pre-identity CLI-token lookup, and local-auth bootstrap; each captures the actual request identity at its owner-scoped operation. Extracted those focused implementations to tests/helpers/machine-write-identity-drivers.ts so this class gate remains below the repository decomposition cap.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed alert fixtures and suite registration into named, documented helpers so every function remains below the 50-line governance limit without weakening the class assertions.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Use the explicitly named service credential placeholder exported by the HTTP driver helper so fixture values remain distinguishable from deployable secrets at the commit gate.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Drive Profile Studio through its one-use exact-dispatch capability instead of the retired fleet-secret callback.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Drive Apply ingest through its model-hidden,
+ *   one-use exact-task capability and prove the ticket write uses the digest-bound owner identity.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Keep the Apply ingest identity driver explicit about confirmation-artifact retention so the callback cannot imply verified submission evidence without the reviewed persistence boundary.
  */
 
 /**
@@ -62,7 +66,7 @@ import {
 import type { GitHubTicketWebhookTicketService } from '@/app/routes/github-ticket-webhook-sync';
 import { createAlertmanagerRoutes } from '@/app/routes/alertmanager-routes';
 import { createProfileStudioIngestRoutes } from '@/app/routes/profile-studio-ingest-routes';
-import { createApplyIngestRoutes } from '@/app/routes/apply-ingest-routes';
+import { createApplyIngestRoutes, type ApplyCompletionRuntime } from '@/app/routes/apply-ingest-routes';
 import { createFacebookDataDeletionRoute } from '@/app/routes/connectors-routes';
 import { createJarvisRoutes } from '@/app/routes/jarvis-routes';
 import { createTestLabGoldenRoutes } from '@/app/routes/test-lab-golden';
@@ -112,6 +116,7 @@ const MACHINE_AUTH_MARKERS: readonly RegExp[] = [
   /OSHAL_INTERNAL_TOKEN/,
   /[A-Z_]*WEBHOOK_TOKEN/,
   /[A-Z_]*INGEST_TOKEN/,
+  /x-oshal-callback-capability/i,
 ];
 
 /** Where a machine entry point can live: routers, the webhook framework, and the node processes. */
@@ -451,15 +456,21 @@ const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
   /** POST /api/profile-studio/ingest — the desktop-worker plan callback. */
   'profile-studio-ingest': async () => {
     const observations: WriteObservation[] = [];
-    const secret = 'profile-studio-gate-secret';
-    vi.stubEnv('SWARM_SERVICE_SECRET', secret);
+    const capability = `pscap_${'a'.repeat(43)}`;
     const pool = capturingPool(observations, () => ({ rows: [], rowCount: 1 }), /UPDATE linkedin_profile_plans/i, 0);
     const { url, close } = await serve('/api/profile-studio', createProfileStudioIngestRoutes({ pool } as never));
     try {
       await fetch(`${url}/api/profile-studio/ingest`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-service-secret': secret },
-        body: JSON.stringify({ userSub: 'auth0|plan-owner', result: 'applied', note: 'ok' }),
+        headers: { 'content-type': 'application/json', 'x-oshal-callback-capability': capability },
+        body: JSON.stringify({
+          taskId: 'liprofile-7-capability-proof',
+          context: {
+            userSub: 'auth0|plan-owner', generation: 1, clientId: 'desktop-proof',
+            operation: 'resolve-profile-plan',
+          },
+          result: { result: 'applied', note: 'ok' },
+        }),
       });
     } finally {
       await close();
@@ -470,22 +481,43 @@ const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
   /** POST /api/apply/ingest — the desktop-worker outcome callback resolving the user's ticket. */
   'apply-ingest': async () => {
     const observations: WriteObservation[] = [];
-    const secret = 'apply-ingest-gate-secret';
-    vi.stubEnv('SWARM_SERVICE_SECRET', secret);
+    const capability = 'a'.repeat(43);
+    const claim = {
+      taskId: 'apply-11111111-2222-4333-8444-555555555555', tokenHash: 'b'.repeat(64),
+      userSub: 'auth0|applicant', ticketId: 'tk-apply-1', settleTicket: true, postingId: 77,
+      clientId: 'desktop-proof', targetHost: 'jobs.example.test', generation: 1,
+      expiresAt: '2026-08-05T22:00:00.000Z',
+    };
     const ticketService = {
       updateStatus: async () => {
         observations.push({ identity: getRequestIdentity(), ownerValue: null, label: 'ticketService.updateStatus' });
       },
     };
-    const pool = { query: async () => ({ rows: [], rowCount: 0 }) };
-    const { url, close } = await serve('/api/apply', createApplyIngestRoutes({ pool, ticketService } as never));
+    const runtime: ApplyCompletionRuntime = {
+      reserve: async () => claim,
+      consume: async () => true,
+      release: async () => undefined,
+      runCli: async (_sub, args) => args[0] === 'queue'
+        ? {
+          ok: true, posting_id: claim.postingId, status: args[3],
+          application_source: 'worker-reported', application_task_id: claim.taskId,
+          confirmation_verified: false,
+        }
+        : { ok: true },
+      persistConfirmation: () => null,
+      removeWorkspace: async () => undefined,
+    };
+    const pool = {};
+    const router = createApplyIngestRoutes({ pool, ticketService } as never, runtime);
+    const { url, close } = await serve('/api/apply', router);
     try {
       await fetch(`${url}/api/apply/ingest`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-service-secret': secret },
-        // No postingId on purpose: that branch shells out to the apply CLI, which this gate has no
-        // business running. The ticket resolve below is the write under test.
-        body: JSON.stringify({ ticketId: 'tk-apply-1', userSub: 'auth0|applicant', result: 'applied' }),
+        headers: { 'content-type': 'application/json', 'x-oshal-callback-capability': capability },
+        body: JSON.stringify({
+          taskId: claim.taskId, context: { workflow: 'apply', generation: claim.generation },
+          result: { result: 'applied', note: 'visible confirmation' },
+        }),
       });
     } finally {
       await close();

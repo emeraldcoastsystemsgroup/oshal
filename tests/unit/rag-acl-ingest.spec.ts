@@ -1,3 +1,11 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard ACL ingest/retrieval behavior and exact connector owner-subject propagation and authorization.
+ */
+
 import { describe, expect, it } from 'vitest';
 import { ragAclFromBody, ragAclFromConnection, tenantGroup } from '../../src/app/routes/rag-routes';
 import { permissionBasisForRagMetadata } from '../../src/features/rag/services/permission-filter';
@@ -56,6 +64,20 @@ describe('ragAclFromConnection (connector-source ACL sync)', () => {
   it('a personal connection grants to its owner (connected_by wins, else user_sub)', () => {
     expect(ragAclFromConnection({ user_sub: 'u1' })).toEqual({ owner_sub: 'u1' });
     expect(ragAclFromConnection({ tenant_id: null, connected_by_sub: 'grantor', user_sub: 'u1' })).toEqual({ owner_sub: 'grantor' });
+  });
+
+  it('preserves an exact owner and denies normalized case/whitespace aliases', () => {
+    const exactOwner = ' Auth0|Case-Owner ';
+    const md = ragAclFromConnection({ connected_by_sub: exactOwner, user_sub: 'fallback-owner' });
+
+    expect(md).toEqual({ owner_sub: exactOwner });
+    expect(permissionBasisForRagMetadata(md, { userSub: exactOwner })).toBe('owner');
+    expect(permissionBasisForRagMetadata(md, { userSub: 'Auth0|Case-Owner' })).toBeNull();
+    expect(permissionBasisForRagMetadata(md, { userSub: ' auth0|case-owner ' })).toBeNull();
+    expect(ragAclFromConnection({ connected_by_sub: '', user_sub: ' Fallback|Exact ' }))
+      .toEqual({ owner_sub: ' Fallback|Exact ' });
+    expect(() => ragAclFromConnection({ connected_by_sub: '   ', user_sub: 'fallback-owner' }))
+      .toThrow('owner subject must be nonblank');
   });
 
   it('an ownerless, tenantless connection yields no ACL (public corpus behavior)', () => {

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Security-audit: shared-secret gate for the any-bot runtime's /api/swarm-execute — sensitive execution payloads (userSub/creds/byoLlmConnection/providerIntent) fail closed; anonymous legacy calls stay compatible until SWARM_SERVICE_SECRET is configured.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Backfilled the missing change-log header. Loud fail-open posture (security audit 2026-06-16 backlog item): an anonymous allow while SWARM_SERVICE_SECRET is unset now logs a per-request WARN naming the backlog item — same posture as the TS bot-node gate (src/app/bot-node-request-auth.ts) so neither runtime is silently open.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Treat every supplied userSub property as scoped execution data so malformed, empty, whitespace, and non-string assertions cannot use the anonymous fail-open posture.
  */
 
 'use strict';
@@ -40,7 +41,7 @@ function validServiceSecret(req) {
  */
 function carriesSensitiveExecutionData(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
-  const hasUserSub = typeof body.userSub === 'string' && body.userSub.trim().length > 0;
+  const hasUserSub = Object.prototype.hasOwnProperty.call(body, 'userSub');
   const hasCreds = body.creds && typeof body.creds === 'object' && Object.keys(body.creds).length > 0;
   const hasByo = body.byoLlmConnection && typeof body.byoLlmConnection === 'object'
     && Object.keys(body.byoLlmConnection).length > 0;

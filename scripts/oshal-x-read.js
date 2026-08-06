@@ -5,6 +5,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | X/Twitter reader for the social swarm: reads the connected account's OWN home timeline (reverse_chronological = tweets from accounts you follow) and the list of accounts you follow, via the per-user connector token (oshal_connections). This is the keyless path — follow accounts (e.g. @realDonaldTrump) from your logged-in X account and they stream into your home timeline; no paid search tier needed. Refreshes the OAuth2 token (confidential client, HTTP Basic) when expired. The social bot uses this to sense signals for other swarm bots (e.g. notify the trading bot on a market-moving tweet).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: PREFER a controller-provided access token (.oshal-cred-twitter in cwd, or OSHAL_CRED_TWITTER env) — use it directly and skip ALL DB/SESSION_SECRET decryption. Falls back to the existing per-user DB-decrypt+refresh path when no cred is provided.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *
  *   OSHAL_USER_SUB=... node scripts/oshal-x-read.js              # home timeline (default)
  *   X_MODE=following OSHAL_USER_SUB=... node scripts/oshal-x-read.js   # who I follow
@@ -16,13 +17,12 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 /** Codex may not forward OSHAL_USER_SUB to shelled commands; the wrapper also drops
  *  it as a cwd-relative file. Read whichever is present. */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 /** Token broker: a short-lived X access token the controller decrypted for THIS user and

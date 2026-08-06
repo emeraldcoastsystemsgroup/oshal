@@ -1,7 +1,16 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Enforce the shared exact-subject contract for trusted provider execution without trimming or collapsing an invalid assertion into an ownerless request.
+ */
+
 import {
   parseVisualResponseProviderRecord,
   type VisualResponseProviderRecord,
 } from '@/features/visual-response';
+import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
 
 /** Server-authored read-only provider operations a bot node may execute without model mediation. */
 export type TrustedProviderIntent =
@@ -128,7 +137,7 @@ export async function executeTrustedProviderIntent(
 ): Promise<TrustedProviderExecutionResult> {
   const intent = parseTrustedProviderIntent(input);
   if (!intent) throw new Error('Invalid trusted provider intent');
-  if (!context.userSub?.trim()) throw new Error('Trusted provider intent requires an authenticated owner');
+  requireExactUserSubject(context.userSub, 'trusted provider owner');
 
   if (intent.kind === 'weather') {
     const result = await deps.formatWeather(intent.location) as { success?: unknown; data?: unknown; error?: unknown };

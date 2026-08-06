@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Security-audit: proves the bot-node privileged endpoints (/api/swarm-execute, /api/token-chase/replay-call) enforce SWARM_SERVICE_SECRET when it is set (401 on missing/wrong X-Service-Secret, pass on correct) and are a NO-OP (fail-open, existing dispatch unaffected) when it is unset. Drives the real Express handler + the shared hasValidServiceSecret helper.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Loud fail-open posture: fail-open allows now WARN per request (backlog item named) and logBotNodeAuthPosture() WARNs at startup when the secret is unset / INFOs when set — asserted via a mocked @/shared/logger. New authorizeBotNodeInternalCall (mounted on /api/token-chase/replay-call) covered: warned fail-open when unconfigured, 401 on missing/wrong secret when configured, pass on correct.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin property-presence fail-closed handling so empty, whitespace, null, object, and otherwise malformed userSub assertions cannot enter the anonymous no-secret posture in either runtime.
  */
 
 import express from 'express';
@@ -95,7 +96,9 @@ describe('bot-node /api/swarm-execute shared-secret gate', () => {
 
   it('fails closed for identity or credential-bearing work when no secret is configured', async () => {
     const url = await boot();
-    expect((await post(url, {}, { userSub: 'owner-123' })).status).toBe(401);
+    for (const userSub of ['owner-123', '', '   ', null, { sub: 'owner-123' }]) {
+      expect((await post(url, {}, { userSub })).status, JSON.stringify(userSub)).toBe(401);
+    }
     expect((await post(url, {}, { creds: { OSHAL_CRED_GOOGLE: 'token' } })).status).toBe(401);
     expect((await post(url, {}, {
       byoLlmConnection: { baseUrl: 'https://example.test/v1', apiKey: 'key', model: 'model' },
@@ -126,6 +129,9 @@ describe('bot-node /api/swarm-execute shared-secret gate', () => {
   it('applies the same fail-closed sensitive-payload policy on the canonical any-bot runtime', async () => {
     const url = await boot(authorizeAnyBotCall);
     expect((await post(url)).status).toBe(200);
+    for (const userSub of ['', '   ', null, { sub: 'owner-123' }]) {
+      expect((await post(url, {}, { userSub })).status, JSON.stringify(userSub)).toBe(401);
+    }
     expect((await post(url, {}, {
       byoLlmConnection: { baseUrl: 'https://example.test/v1', apiKey: 'key', model: 'model' },
     })).status).toBe(401);

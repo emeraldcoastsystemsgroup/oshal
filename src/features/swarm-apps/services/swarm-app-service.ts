@@ -25,6 +25,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | toSummary now surfaces an `icon` (first static ribbon-tile codicon, else assistant icon, else null) via firstAppIcon() so the /applications console can render a real per-app icon instead of a first-initial placeholder.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Forward the manifest-owned hideAssistant policy so immersive app surfaces can suppress redundant global assistant chrome.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Status-flip gap (BACKLOG, surfaced by the skill-profiles adversarial review): loadApp on a record whose resulting status is 'inactive' now calls deactivate() — a manifest edit flipping active→inactive used to call NEITHER activate nor deactivate, so the app read status='inactive' while its bots/workflow/tools/schedules/guest-tier/skill-profiles stayed live until a real toggle-off. deactivate() is idempotent, so the boot auto-load of an already-inactive app stays a safe no-op.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile tools removed by an app manifest update before upsert: retire sole-owner executors fail-loud, delete only the app's prior/incoming declared-bot grants for retired names, retain another active app's same-named executor, and fail closed on activation rollback so stale grants cannot reappear when a tool name is later enabled.
  */
 
 import type { Pool } from 'pg';
@@ -59,10 +60,10 @@ import {
   assertToolDependenciesResolvable,
   computeToolDependents,
   dependedToolNames,
-  otherProvidersOf,
   providedToolNames,
   type ToolDependent,
 } from './tool-ownership';
+import { deleteManifestBotToolGrants, deregisterOwnedManifestTools, failClosedManifestActivation, prepareManifestToolUpdate, rollbackNewManifestToolGrants } from './manifest-tool-reconciliation';
 import { SwarmAppRepository, type SwarmAppScopeMeta } from './swarm-app-repository';
 import type {
   SwarmAppManifest,
@@ -313,11 +314,35 @@ export class SwarmAppService {
    */
   async loadApp(manifestPath: string, scopeMeta?: SwarmAppScopeMeta): Promise<SwarmApplicationRecord> {
     const manifest = readManifest(manifestPath);
+    // Read the stored revision BEFORE upsert. Once overwritten, names removed from the new
+    // manifest are otherwise unknowable and their persisted executor/grants survive forever.
+    const previous = await this.repo.findByName(manifest.name);
     await this.assertToolOwnership(manifest);
+    const prepared = await prepareManifestToolUpdate(this.pool, previous, manifest,
+      (retiredManifest) => this.deregisterManifestTools(retiredManifest, true),
+    );
     const toolNames = staticToolNames(manifest);
     const record = await this.repo.upsert(manifest, manifestPath, toolNames, scopeMeta);
     if (record.status === 'active') {
-      await this.activate(record);
+      try {
+        await this.activate(record);
+        // Persona seeding happens during activation. Re-apply the exact retired-name tombstone so
+        // a stale persona file cannot resurrect an app-bot grant during this update transaction.
+        await deleteManifestBotToolGrants(
+          this.pool, prepared.retired.agentIds, prepared.retired.toolNames,
+        );
+      } catch (error) {
+        this.appStatusCache.set(record.name, 'inactive');
+        await failClosedManifestActivation(record.name, error, [
+          () => this.deactivate(record),
+          () => this.deregisterManifestTools(record.manifest, true),
+          () => rollbackNewManifestToolGrants(this.pool, record.manifest, prepared.priorGrants),
+          async () => {
+            const inactive = await this.repo.updateStatus(record.name, 'inactive');
+            if (!inactive) throw new Error(`Failed to persist inactive status for ${record.name}`);
+          },
+        ]);
+      }
     } else {
       // Status-flip gap (BACKLOG / ADR-090-addendum adversarial review): a manifest edit that
       // flips an app to `status: inactive` re-runs loadApp, and this branch used to do NOTHING —
@@ -879,9 +904,12 @@ export class SwarmAppService {
     await this.setBotStatuses(record.agentIds, 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
+    // Dynamic UI discovery is the last activation step that may throw directly. Complete it
+    // before enabling model tools or seeding grants, then keep only non-throwing/caught steps
+    // after the privilege boundary. loadApp still compensates if an unexpected later error escapes.
+    await this.registerUiSurfaces(record.manifest, record.name);
     await this.registerManifestTools(record.manifest, dirname(record.manifestPath));
     await this.seedBotAuthorizations(record.manifest, dirname(record.manifestPath));
-    await this.registerUiSurfaces(record.manifest, record.name);
     this.registerWorkflow(record.manifest);
     await this.registerManifestSchedules(record.manifest);
     await this.mountManifestRoutes(record);
@@ -1466,29 +1494,20 @@ export class SwarmAppService {
    * ever be torn down.
    *
    * @param manifest - The departing app's manifest.
+   * @param failLoud - Throw after attempting every teardown; used before an update overwrites history.
    */
-  private async deregisterManifestTools(manifest: SwarmAppManifest): Promise<void> {
-    if (!manifest.tools?.length || !this.runtimeToolRegistrationService) return;
-
+  private async deregisterManifestTools(manifest: SwarmAppManifest, failLoud = false): Promise<void> {
+    if (!manifest.tools?.length) return;
+    if (!this.runtimeToolRegistrationService && !failLoud) return;
     const others = (await this.repo.list()).filter(
       (r) => r.status === 'active' && r.name !== manifest.name,
     );
-
-    for (const tool of manifest.tools) {
-      const retainers = otherProvidersOf(tool.name, others);
-      if (retainers.length > 0) {
-        logger.info(
-          { appName: manifest.name, toolName: tool.name, retainedBy: retainers },
-          'Manifest tool RETAINED — another active app provides it',
-        );
-        continue;
-      }
-      try {
-        await this.runtimeToolRegistrationService.deregisterRuntimeTool(tool.name, true);
-      } catch (err) {
-        logger.error({ err, appName: manifest.name, toolName: tool.name }, 'Manifest tool deregistration failed');
-      }
-    }
+    await deregisterOwnedManifestTools(
+      manifest,
+      others,
+      this.runtimeToolRegistrationService,
+      failLoud,
+    );
   }
 
   private async registerDynamicRowUis(dyn: SwarmAppDynamicUi, appName: string): Promise<void> {

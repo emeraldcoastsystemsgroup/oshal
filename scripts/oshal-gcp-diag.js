@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | PRIVATE GCP cost + health diagnostics CLI for cloud-ops-bot. 20 read-only check verbs over the Cloud REST APIs (no gcloud), authed by the per-user GCP connector token (brokered .oshal-cred-gcp / OSHAL_CRED_GCP, DB-decrypt fallback) — identical token plumbing to scripts/oshal-gcp.js. This is a PRIVATE tool (bot-internal, invoked via bash, NOT registered in gcpToolKit.js / cloud.yaml — by design). Each check returns structured JSON {check, findings[], ...}; `summary` aggregates a curated set into health (0-100) + monthly $ savings scores. Every API call is defensive (apiSafe) so a disabled API / missing permission on one check degrades to a finding instead of crashing the diagnostic.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *
  *   node scripts/oshal-gcp-diag.js summary [projectId]      # health score + cost savings rollup
  *   node scripts/oshal-gcp-diag.js list                     # all 20 checks
@@ -19,6 +20,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 const CRM = 'https://cloudresourcemanager.googleapis.com/v1';
 const SU = 'https://serviceusage.googleapis.com/v1';
@@ -31,8 +33,7 @@ const SQL = 'https://sqladmin.googleapis.com/v1';
 
 // ── identity + token plumbing (mirrors scripts/oshal-gcp.js) ──────────────────
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); } catch { return undefined; }
+  return resolveExactUserSubject();
 }
 function resolveSelector() {
   return { label: process.env.OSHAL_CONNECTION_LABEL || undefined, email: process.env.OSHAL_CONNECTION_EMAIL || undefined, connectionId: process.env.OSHAL_CONNECTION_ID || undefined };

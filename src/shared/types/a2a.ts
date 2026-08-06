@@ -5,9 +5,18 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added shared A2A and remote-client contracts for OSHAL remote endpoint agents
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added ownerSub to the registration contract — per-user device ownership binding (repo-audit 2026-07-05 finding: any authenticated user could enqueue shell-exec-class tasks to, and read results from, ANY registered device). The owning user's OIDC sub is recorded at registration; route-level enforcement lives in remote-client-routes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reject blank remote-client owner subjects without transforming valid case/whitespace identity bytes.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bound remote task/chat owner subjects to the exact control-free 512-byte identity contract without applying transforms.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Carry a bounded one-use HTTP completion capability outside model-visible tool arguments so trusted remote runtime code can report browser-task results without exposing a reusable fleet secret.
  */
 
 import { z } from 'zod';
+import { isExactUserSubject } from '@/shared/security/exact-user-subject';
+
+const ExactUserSubjectSchema = z.string().refine(
+  isExactUserSubject,
+  'user subject must be exact UTF-8, control-free, and at most 512 bytes',
+);
 
 /**
  * @description Supported transport families for A2A-style remote agents.
@@ -83,7 +92,9 @@ export const RemoteClientRegistrationSchema = z.object({
    * defaults it to the session sub. Absent = unowned → fail-closed to
    * operator-only for session callers (see canAccessResource).
    */
-  ownerSub: z.string().min(1).optional(),
+  ownerSub: ExactUserSubjectSchema
+    .refine((value) => value.trim().length > 0, 'ownerSub must be nonblank')
+    .optional(),
   name: z.string().min(1),
   description: z.string().optional().default(''),
   transport: A2ATransportSchema,
@@ -149,6 +160,27 @@ export const A2ATaskIntentSchema = z.enum([
  */
 export type A2ATaskIntent = z.infer<typeof A2ATaskIntentSchema>;
 
+const A2ACallbackContextValueSchema = z.union([
+  z.string().max(512),
+  z.number().int().safe(),
+  z.boolean(),
+]);
+
+/**
+ * @description Trusted remote-runtime metadata for one bounded JSON result callback. The
+ * capability is deliberately top-level on the task and must never be copied into tool arguments.
+ */
+export const A2ATaskCompletionCallbackSchema = z.object({
+  kind: z.literal('trusted-http-json-v1'),
+  url: z.string().url().max(2048),
+  capability: z.string().min(32).max(256).regex(/^[A-Za-z0-9_-]+$/),
+  context: z.record(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,31}$/), A2ACallbackContextValueSchema)
+    .refine((value) => Object.keys(value).length <= 8, 'callback context has too many fields'),
+}).strict();
+
+/** @description Trusted completion callback metadata inferred from the shared wire schema. */
+export type A2ATaskCompletionCallback = z.infer<typeof A2ATaskCompletionCallbackSchema>;
+
 /**
  * @description A2A task envelope used for bot-to-bot and control-plane-to-client dispatch.
  */
@@ -162,9 +194,10 @@ export const A2ATaskEnvelopeSchema = z.object({
   artifacts: z.array(A2AArtifactSchema).optional().default([]),
   workspacePath: z.string().optional(),
   replyTo: z.string().optional(),
+  completionCallback: A2ATaskCompletionCallbackSchema.optional(),
   // The end-user OIDC sub the task is on behalf of — carried so leaf-node cost capture
   // (handleCompleteTask → recordCost) can attribute spend per-owner for budget caps.
-  userSub: z.string().optional(),
+  userSub: ExactUserSubjectSchema.optional(),
   createdAt: z.string().datetime(),
   status: z.enum(['queued', 'claimed', 'running', 'completed', 'failed']).optional().default('queued'),
 });

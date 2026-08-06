@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Extract held-task workspace synchronization into a focused route module, retaining machine-vs-session RLS identity and logging every filesystem catch while keeping this route factory within code-line governance.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Inject the work-item repository into the durable settlement publisher so landing persistence is acknowledged by the journal outbox rather than by the lossy compatibility mesh consumer.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Extract mesh task validation and owner-scoped injection checks into a focused module, keeping this route file below the 1,000-physical-line governance limit.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact device owner and trusted machine-chat subjects during reassignment, node-token rotation, and detached chat identity; empty still clears/falls back, but case and whitespace no longer rebind work or credentials to another principal.
  */
 
 import { randomUUID } from 'crypto';
@@ -395,7 +396,7 @@ async function handleSetOwner(req: Request, res: Response): Promise<void> {
 
   const clientId = normalizeParam(req.params.clientId);
   const body = (req.body ?? {}) as { ownerSub?: unknown };
-  const ownerSub = typeof body.ownerSub === 'string' ? body.ownerSub.trim() : '';
+  const ownerSub = typeof body.ownerSub === 'string' && body.ownerSub.trim() ? body.ownerSub : '';
 
   try {
     const client = await runAuthorizedMachineIdentity(
@@ -449,7 +450,7 @@ async function handleRotateNodeToken(
   // Rotate FOR the device's owner, not for whoever asked: an operator rotating someone's node
   // must not silently re-own its credential. An unowned device (operator-only by
   // requireDeviceAccess) binds to the operator performing the enrolment.
-  const ownerSub = (client?.ownerSub ?? '').trim() || (sub ?? '').trim();
+  const ownerSub = client?.ownerSub?.trim() ? (client.ownerSub ?? '') : sub?.trim() ? sub : '';
   if (!ownerSub) {
     res.status(400).json({ error: 'device_has_no_owner', message: 'Bind an owner (POST /:clientId/owner) before issuing a per-node token.' });
     return;
@@ -728,7 +729,7 @@ async function handleChatTurn(req: Request, res: Response, context: RemoteClient
     // caller always runs under their own session sub — otherwise any user could
     // run bot turns (and land chat_tasks rows) under another user's identity.
     const userSub = isMachineCaller(req)
-      ? (payload.userSub?.trim() || '')
+      ? (payload.userSub || '')
       : (getCaller(req).sub ?? '');
     const runTurn = () => runRemoteChatTurn(orchestrator, {
       clientId,

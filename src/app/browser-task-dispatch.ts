@@ -33,13 +33,21 @@
  *   OSHAL_ALLOW_LEGACY_UNOWNED escape) unowned devices are unchanged, so the operator's own
  *   single-node setup keeps working. Guard: tests/unit/browser-task-dispatch.spec.ts.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Await PostgreSQL-authoritative task enqueue and cross into system identity only for explicitly platform-originated dispatches; user work retains its request identity for owner RLS.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Carry optional one-use completion capability metadata at the task envelope level so trusted remote runtime code can report strict results without exposing tokens, callback URLs, subjects, or operations to codex arguments.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add async post-selection callback preparation with a matching enqueue-failure rollback hook, allowing callers to bind capabilities to the exact chosen client without weakening the generic rail.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: require the shared exact browser-worker capability and per-node pilot-consent gate before owner-scoped selection; generic codex/shell devices and marker aliases now fail closed behind one non-enumerating refusal.
  *
  * @module app/browser-task-dispatch
  */
 
 import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import type { A2ATaskCompletionCallback } from '@/shared/types';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
+import {
+  isAuthorizedBrowserWorker,
+  NO_AUTHORIZED_BROWSER_WORKER_ERROR,
+} from '@/app/browser-worker-eligibility';
 import { filterUsableDevices, type DeviceRequester, type RemoteClientRecord } from '@/features/remote-client';
 
 const logger = createChildLogger({ module: 'browser-task-dispatch' });
@@ -51,9 +59,22 @@ const CONTROLLER_URL = (process.env.APPLY_CONTROLLER_URL || process.env.LORA_CON
 /** The dispatch outcome returned to a route/caller. */
 export interface DispatchResult { ok: boolean; clientId?: string; taskId?: string; error?: string; }
 
+/** @description Exact selected-node context supplied to prompt and capability preparation callbacks. */
+export interface BrowserTaskSelectionContext {
+  controllerUrl: string;
+  client: RemoteClientRecord;
+}
+
+/** @description Trusted metadata prepared after selection plus rollback for a rejected enqueue. */
+export interface BrowserTaskCompletionPreparation {
+  completionCallback: A2ATaskCompletionCallback;
+  onEnqueueFailure?: () => Promise<void>;
+}
+
 /**
  * @description Pick the desktop/remote leaf node to drive — a REAL browser-capable worker
- * (advertises `codex.exec`/`shell.exec` and is draining its queue), never the controller's own node.
+ * (advertises an execution tool, exact `browser_control`, and exact `browser_pilot_consent`, while
+ * draining its queue), never the controller's own node.
  * Order: explicit override → `APPLY_EDGE_CLIENT_ID` → hostname match (`APPLY_EDGE_HOSTNAME`) → any
  * online remote box → first online worker.
  *
@@ -83,7 +104,7 @@ export function pickApplyClient(preferredClientId: string | undefined, requester
   const draining = (c: RemoteClientRecord): boolean => Number((c as { taskQueueDepth?: number }).taskQueueDepth ?? 0) === 0;
   const online = filterUsableDevices(requester, clients.filter((c) =>
     (c.status ?? 'online') === 'online' && (c.healthy ?? true) && draining(c) &&
-    ((c.capabilities ?? []).includes('codex.exec') || (c.capabilities ?? []).includes('shell.exec'))));
+    isAuthorizedBrowserWorker(c)));
   if (preferredId) return online.find((c) => c.clientId === preferredId) ?? null;
   const match = online.find((c) => host(c) === preferredHost);
   if (match) return match;
@@ -106,13 +127,21 @@ export interface BrowserTaskInput {
   fromAgentId: string;
   /** The browser instructions. A function form receives the chosen worker's callback URL, for prompts
    *  that must embed the exact control-plane URL the box will POST results back to. */
-  prompt: string | ((ctx: { controllerUrl: string; client: RemoteClientRecord }) => string);
+  prompt: string | ((ctx: BrowserTaskSelectionContext) => string);
   /** codex sandbox level (OS input needs danger-full-access). */
   sandbox?: string;
   /** Optional codex model override. */
   model?: string;
   /** Set when the caller pre-staged a packet into the task's workspace folder (the node syncs it). */
   workspacePath?: string;
+  /** One-use callback metadata consumed only by trusted remote runtime code. Never copied into
+   *  `input.arguments`, logs, workspace files, or the model-visible prompt. */
+  completionCallback?: A2ATaskCompletionCallback;
+  /** Optional async mint/bind hook invoked only after exact node selection. It must roll back any
+   *  partial state itself when it throws; a returned rollback runs if durable enqueue then fails. */
+  prepareCompletionCallback?: (
+    ctx: BrowserTaskSelectionContext,
+  ) => Promise<BrowserTaskCompletionPreparation>;
   /** The operator's chosen leaf node; omitted → auto-pick. */
   preferredClientId?: string;
   /** The end-user OIDC sub this task is on behalf of. Two jobs: the leaf-node cost-capture hook
@@ -138,30 +167,15 @@ export async function dispatchBrowserTask(input: BrowserTaskInput): Promise<Disp
   const requester: DeviceRequester = input.system ? { system: true } : { sub: input.userSub ?? null };
   const client = pickApplyClient(input.preferredClientId, requester);
   if (!client) {
-    return { ok: false, error: 'No online desktop worker (oshal-chat with codex.exec) — the box is not connected.' };
+    return { ok: false, error: NO_AUTHORIZED_BROWSER_WORKER_ERROR };
   }
   const controllerUrl = callbackControllerUrl(client);
-  const prompt = typeof input.prompt === 'function' ? input.prompt({ controllerUrl, client }) : input.prompt;
-  const envelope = {
-    taskId: input.taskId,
-    correlationId: input.correlationId || input.taskId,
-    fromAgentId: input.fromAgentId,
-    toAgentId: client.agentId || client.clientId,
-    intent: 'mcp.call-tool' as const,
-    input: {
-      name: 'codex.exec',
-      arguments: {
-        prompt,
-        sandbox: input.sandbox ?? 'danger-full-access',
-        ...(input.model ? { model: input.model } : {}),
-      },
-    },
-    // The node pulls ONLY this folder into codex's cwd, so a staged packet lands next to the run.
-    ...(input.workspacePath ? { workspacePath: input.workspacePath } : {}),
-    ...(input.userSub ? { userSub: input.userSub } : {}),
-    createdAt: new Date().toISOString(),
-  };
+  const selection = { controllerUrl, client };
+  let preparation: BrowserTaskCompletionPreparation | undefined;
   try {
+    const prompt = typeof input.prompt === 'function' ? input.prompt(selection) : input.prompt;
+    preparation = await prepareCompletion(input, selection);
+    const envelope = browserTaskEnvelope(input, client, prompt, preparation?.completionCallback);
     const enqueue = () => remoteClientRegistry.enqueueTask(client.clientId, envelope);
     const task = input.system ? await runWithSystemIdentity(enqueue) : await enqueue();
     logger.info(
@@ -170,8 +184,55 @@ export async function dispatchBrowserTask(input: BrowserTaskInput): Promise<Disp
     );
     return { ok: true, clientId: client.clientId, taskId: task.taskId };
   } catch (err) {
+    await rollbackCompletionPreparation(preparation, input.taskId);
     const error = err instanceof Error ? err.message : 'enqueue failed';
     logger.error({ err, clientId: client.clientId }, 'browser task dispatch failed');
     return { ok: false, error };
   }
+}
+
+/** @description Resolves exactly one direct or post-selection callback descriptor. */
+async function prepareCompletion(
+  input: BrowserTaskInput,
+  selection: BrowserTaskSelectionContext,
+): Promise<BrowserTaskCompletionPreparation | undefined> {
+  if (input.completionCallback && input.prepareCompletionCallback) {
+    throw new Error('Browser task cannot supply both callback preparation forms');
+  }
+  if (input.prepareCompletionCallback) return input.prepareCompletionCallback(selection);
+  return input.completionCallback ? { completionCallback: input.completionCallback } : undefined;
+}
+
+/** @description Builds an envelope whose trusted callback is a sibling, never a tool argument. */
+function browserTaskEnvelope(
+  input: BrowserTaskInput,
+  client: RemoteClientRecord,
+  prompt: string,
+  completionCallback?: A2ATaskCompletionCallback,
+): Record<string, unknown> {
+  return {
+    taskId: input.taskId,
+    correlationId: input.correlationId || input.taskId,
+    fromAgentId: input.fromAgentId,
+    toAgentId: client.agentId || client.clientId,
+    intent: 'mcp.call-tool' as const,
+    input: {
+      name: 'codex.exec',
+      arguments: { prompt, sandbox: input.sandbox ?? 'danger-full-access', ...(input.model ? { model: input.model } : {}) },
+    },
+    ...(input.workspacePath ? { workspacePath: input.workspacePath } : {}),
+    ...(completionCallback ? { completionCallback } : {}),
+    ...(input.userSub ? { userSub: input.userSub } : {}),
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/** @description Runs caller rollback after enqueue refusal and logs rollback failures without secrets. */
+async function rollbackCompletionPreparation(
+  preparation: BrowserTaskCompletionPreparation | undefined,
+  taskId: string,
+): Promise<void> {
+  if (!preparation?.onEnqueueFailure) return;
+  try { await preparation.onEnqueueFailure(); }
+  catch (error) { logger.error({ err: error, taskId }, 'browser task callback rollback failed'); }
 }

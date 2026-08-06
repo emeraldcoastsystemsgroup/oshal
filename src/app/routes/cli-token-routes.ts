@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Closed the bootstrap-mint escalation. POST / previously accepted the x-oshal-user-sub assertion for ANY sub and minted a NON-EXPIRING PAT, so any holder of the fleet-wide SWARM_SERVICE_SECRET (every bot container carries it) could mint a permanent credential for an arbitrary user and then authenticate as them on every requiresAuth route — including /api/content and /api/linkedin-assistant, which the service secret alone cannot reach. That turned a per-request impersonation into persistent account takeover, which matters because a prompt-injected bot is an untrusted principal holding that secret. Header-asserted (session-less) mints are now (a) operator-only via isOperatorIdentity — fail-closed on an empty allowlist — and (b) time-boxed by OSHAL_CLI_TOKEN_BOOTSTRAP_TTL_DAYS (default 30) using the existing expires_at column, so even the operator bootstrap is no longer a permanent credential. Session-authenticated mints (the cockpit path) are unchanged and still non-expiring. swarm-cli's service-secret login keeps working for the operator. Guard: tests/unit/cli-token-auth.spec.ts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | PER-NODE WORKER-PLANE TOKENS (docs/backlog/hardening.md #7 - retire the swarm-wide REMOTE_CLIENT_SHARED_SECRET). A token may now be BOUND to one device (node_client_id; migration 102 plus the lazy-DDL ALTER): the auth middleware admits such a token ONLY on the paths decideNodeTokenScope allows (its own /api/remote-clients/<clientId> plane plus the two enrollment-handshake paths) and stamps the binding on the request, so a credential lifted off an edge machine is NOT the account credential an unbound PAT is - it cannot reach /api/content, cannot mint tokens, and cannot touch a sibling device. rotateNodeToken revokes every live token for a device and mints its successor in ONE call (the rotation a compose-file secret structurally cannot offer). Unbound PATs behave identically. Guard: tests/unit/remote-client-node-token.spec.ts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the verified principal issuer on newly minted PATs and rotated node credentials. Bearer authentication now replays the original (issuer, subject) namespace; legacy rows remain usable by core routes but carry no invented issuer, so issuer-bound applications fail closed instead of rebinding an old token to a newly configured IdP.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact owner subjects during node-token rotation. The required non-empty validation remains, but subject case/whitespace is no longer trimmed before owner-scoped revocation and successor minting.
  */
 import { Router, type RequestHandler, type Request, type Response } from 'express';
 import crypto from 'crypto';
@@ -344,8 +345,8 @@ export async function rotateNodeToken(
   },
 ): Promise<MintedCliToken & { revokedCount: number }> {
   const clientId = String(input.clientId ?? '').trim();
-  const ownerSub = String(input.ownerSub ?? '').trim();
-  if (clientId.length === 0 || ownerSub.length === 0) {
+  const ownerSub = String(input.ownerSub ?? '');
+  if (clientId.length === 0 || ownerSub.trim().length === 0) {
     throw new Error('rotateNodeToken requires both clientId and ownerSub');
   }
   const revoked = await pool.query(

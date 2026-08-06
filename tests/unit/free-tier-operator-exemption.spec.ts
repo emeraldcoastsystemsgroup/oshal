@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | New — pins the 2026-07-10 free-tier fixes: platformFreeConnection returns null (never an unprobed dead model) when every candidate is walled and caches the verdict so probes stop burning the shared key's daily quota; resolveUserLlmConnection skips the free-tier legs for the operator (ambient identity + OSHAL_OPERATOR_SUBS) so their turns stay on the bot's configured provider.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Runtime discovery era: fetch fake now speaks BOTH OpenRouter endpoints (GET /models + POST /chat/completions) since candidates come from live discovery, probe counts assert on completion calls only, and new tests pin: catalog-sourced candidates (no hardcoded ids), the zero-pricing+:free double filter, 200-but-empty (reasoning-model) rotation, and discovery-failure → null without burning probes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact operator-subject exemption semantics: configuration delimiter whitespace remains accepted, while case and caller-whitespace aliases use the free-tier lane instead of inheriting paid-provider privilege.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -182,7 +183,7 @@ describe('platformFreeConnection — walled-key behavior (2026-07-10 live incide
 describe('resolveUserLlmConnection — operator exemption from the free-tier legs', () => {
   it('skips the free-tier legs for an allowlisted sub (background/scheduled work)', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-or-test-not-real';
-    process.env.OSHAL_OPERATOR_SUBS = 'op-sub-123';
+    process.env.OSHAL_OPERATOR_SUBS = ' op-sub-123 ';
     const fetchMock = openRouterFetch();
     vi.stubGlobal('fetch', fetchMock);
     const { rotation } = await loadFresh();
@@ -190,6 +191,19 @@ describe('resolveUserLlmConnection — operator exemption from the free-tier leg
     // Operator → undefined (bot's configured provider runs); no discovery, no probe.
     expect(await rotation.resolveUserLlmConnection(emptyPool, 'op-sub-123')).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not exempt case or caller-whitespace aliases of the operator subject', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-or-test-not-real';
+    process.env.OSHAL_OPERATOR_SUBS = 'op-sub-123';
+    const fetchMock = openRouterFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    const { rotation } = await loadFresh();
+
+    for (const alias of ['OP-SUB-123', ' op-sub-123', 'op-sub-123 ']) {
+      expect((await rotation.resolveUserLlmConnection(emptyPool, alias))?.resolutionSource).toBe('platform');
+    }
+    expect(fetchMock).toHaveBeenCalled();
   });
 
   it('skips the free-tier legs when the ambient request identity is an operator', async () => {

@@ -9,11 +9,14 @@
  *   prompt (no app vocabulary of its own), passes the chosen worker's callback URL to a prompt-builder
  *   form, honors an explicit node pick, treats a wedged (non-draining) worker as unavailable, and
  *   returns a clean error (never throws) when no browser-capable node is connected.
- * 2 | maintainer@emeraldcoastsystemsgroup.com | 2026-07-30 23:04:00 | Isolated
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Isolated
  *   device-ownership environment variables around the generic browser-task dispatch tests so the
  *   owner-scoped picker contract is deterministic after suites that exercise operator or legacy
  *   unowned-device compatibility flags.
- * 3 | maintainer@emeraldcoastsystemsgroup.com | Await the durable journal enqueue now that browser dispatch is asynchronous and does not acknowledge work before PostgreSQL accepts it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Await the durable journal enqueue now that browser dispatch is asynchronous and does not acknowledge work before PostgreSQL accepts it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Prove async callback preparation runs after exact client selection, remains top-level/outside model arguments, and invokes its rollback hook on enqueue refusal.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Require exact browser_control capability and browser_pilot_consent markers in addition to an execution tool; reject aliases, case variants, substrings, and generic codex/shell nodes without disclosing whether an inaccessible device exists.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Keep transport, callback, and eligibility behavior groups below the repository function-length limit.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,6 +25,7 @@ const hoisted = vi.hoisted(() => {
   const enqueued: Array<{ clientId: string; env: any }> = [];
   const state = {
     clients: [] as Array<Record<string, unknown>>,
+    enqueueError: false,
   };
   return { enqueued, state };
 });
@@ -29,7 +33,11 @@ const hoisted = vi.hoisted(() => {
 vi.mock('@/app/routes/remote-client-routes', () => ({
   remoteClientRegistry: {
     listClients: () => hoisted.state.clients,
-    enqueueTask: (clientId: string, env: any) => { hoisted.enqueued.push({ clientId, env }); return { taskId: env.taskId }; },
+    enqueueTask: (clientId: string, env: any) => {
+      if (hoisted.state.enqueueError) throw new Error('journal unavailable');
+      hoisted.enqueued.push({ clientId, env });
+      return { taskId: env.taskId };
+    },
   },
   taskWorkspaceFolder: (id: string) => `/tmp/${id}`,
 }));
@@ -45,7 +53,8 @@ const savedEnv: Record<string, string | undefined> = {};
 
 const NODE_A = {
   clientId: 'node-a', tailnetHostname: 'edge-node-1', status: 'online', healthy: true, ownerSub: OWNER,
-  capabilities: ['codex.exec'], taskQueueDepth: 0, agentId: 'agent-a', controlPlaneUrl: 'http://box.lan:35457',
+  capabilities: ['codex.exec', 'browser_control'], tags: ['browser_pilot_consent'],
+  taskQueueDepth: 0, agentId: 'agent-a', controlPlaneUrl: 'http://box.lan:35457',
 };
 
 beforeEach(() => {
@@ -56,6 +65,7 @@ beforeEach(() => {
   delete process.env.APPLY_EDGE_CLIENT_ID;
   process.env.APPLY_EDGE_HOSTNAME = 'edge-node-1';
   hoisted.enqueued.length = 0;
+  hoisted.state.enqueueError = false;
   hoisted.state.clients = [structuredClone(NODE_A)];
 });
 
@@ -96,7 +106,43 @@ describe('dispatchBrowserTask — the generic browser-task rail', () => {
     expect(env.input.arguments.model).toBe('gpt-5.5-codex'); // included when requested
     expect(env.workspacePath).toBe('t2');                    // staged folder carried
   });
+});
 
+describe('dispatchBrowserTask — trusted callback preparation', () => {
+  it('prepares trusted callback metadata after selection and rolls it back on enqueue refusal', async () => {
+    const rollback = vi.fn(async () => undefined);
+    const prepare = vi.fn(async ({ controllerUrl, client }) => ({
+      completionCallback: {
+        kind: 'trusted-http-json-v1' as const,
+        url: `${controllerUrl}/api/profile-studio/ingest`,
+        capability: `pscap_${'d'.repeat(43)}`,
+        context: { userSub: OWNER, generation: 9, clientId: client.clientId, operation: 'resolve-profile-plan' },
+      },
+      onEnqueueFailure: rollback,
+    }));
+    const accepted = await dispatchBrowserTask({
+      taskId: 't-callback-ok', userSub: OWNER, fromAgentId: 'b', prompt: 'return strict json',
+      prepareCompletionCallback: prepare,
+    });
+    expect(accepted.ok).toBe(true);
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ controllerUrl: 'http://box.lan:35457' }));
+    const envelope = hoisted.enqueued[0].env;
+    expect(envelope.completionCallback.context.clientId).toBe('node-a');
+    expect(JSON.stringify(envelope.input.arguments)).not.toContain('pscap_');
+    expect(JSON.stringify(envelope.input.arguments)).not.toContain(OWNER);
+    expect(rollback).not.toHaveBeenCalled();
+
+    hoisted.state.enqueueError = true;
+    const refused = await dispatchBrowserTask({
+      taskId: 't-callback-fail', userSub: OWNER, fromAgentId: 'b', prompt: 'return strict json',
+      prepareCompletionCallback: prepare,
+    });
+    expect(refused.ok).toBe(false);
+    expect(rollback).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('dispatchBrowserTask — worker selection and authorization', () => {
   it('honors an explicit node pick, and errors when that pick is not available', async () => {
     hoisted.state.clients = [structuredClone(NODE_A), {
       ...structuredClone(NODE_A), clientId: 'node-b', tailnetHostname: 'render-box', agentId: 'agent-b',
@@ -105,21 +151,53 @@ describe('dispatchBrowserTask — the generic browser-task rail', () => {
     // A pinned node that isn't connected → clean no-worker error, not a wrong-node dispatch.
     const r = await dispatchBrowserTask({ taskId: 't4', userSub: OWNER, fromAgentId: 'b', prompt: 'x', preferredClientId: 'node-ghost' });
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/No online desktop worker/i);
+    expect(r.error).toBe('No authorized browser-control worker is available.');
+  });
+
+  it('does not fall back when an explicit pin names an unauthorized execution-only node', async () => {
+    hoisted.state.clients = [structuredClone(NODE_A), {
+      ...structuredClone(NODE_A), clientId: 'generic-node', capabilities: ['codex.exec'], tags: [],
+    }];
+    const result = await dispatchBrowserTask({
+      taskId: 't-pinned-denied', userSub: OWNER, fromAgentId: 'b', prompt: 'x', preferredClientId: 'generic-node',
+    });
+    expect(result).toEqual({ ok: false, error: 'No authorized browser-control worker is available.' });
+    expect(hoisted.enqueued).toHaveLength(0);
   });
 
   it('treats a wedged (non-draining) worker as unavailable', async () => {
     hoisted.state.clients = [{ ...structuredClone(NODE_A), taskQueueDepth: 2 }];
     const r = await dispatchBrowserTask({ taskId: 't5', userSub: OWNER, fromAgentId: 'b', prompt: 'x' });
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/No online desktop worker/i);
+    expect(r.error).toBe('No authorized browser-control worker is available.');
     expect(hoisted.enqueued).toHaveLength(0);                // nothing dispatched onto a wedged box
   });
+});
 
-  it('returns a clean error (never throws) when no browser-capable node is connected', async () => {
+describe('dispatchBrowserTask — exact browser authorization markers', () => {
+  it.each([
+    ['codex only', ['codex.exec'], ['browser_pilot_consent']],
+    ['shell only', ['shell.exec'], ['browser_pilot_consent']],
+    ['capability absent consent', ['codex.exec', 'browser_control'], []],
+    ['capability hyphen alias', ['codex.exec', 'browser-control'], ['browser_pilot_consent']],
+    ['capability case alias', ['codex.exec', 'BROWSER_CONTROL'], ['browser_pilot_consent']],
+    ['capability whitespace alias', ['codex.exec', 'browser_control '], ['browser_pilot_consent']],
+    ['capability substring', ['codex.exec', 'browser_control_extra'], ['browser_pilot_consent']],
+    ['consent hyphen alias', ['codex.exec', 'browser_control'], ['browser-pilot-consent']],
+    ['consent case alias', ['codex.exec', 'browser_control'], ['BROWSER_PILOT_CONSENT']],
+    ['consent whitespace alias', ['codex.exec', 'browser_control'], ['browser_pilot_consent ']],
+    ['consent substring', ['codex.exec', 'browser_control'], ['browser_pilot_consent_pending']],
+  ])('rejects %s as an unauthorized browser worker', async (_label, capabilities, tags) => {
+    hoisted.state.clients = [{ ...structuredClone(NODE_A), capabilities, tags }];
+    const result = await dispatchBrowserTask({ taskId: 't-gated', userSub: OWNER, fromAgentId: 'b', prompt: 'x' });
+    expect(result).toEqual({ ok: false, error: 'No authorized browser-control worker is available.' });
+    expect(hoisted.enqueued).toHaveLength(0);
+  });
+
+  it('returns a clean non-enumerating error when no authorized browser worker is available', async () => {
     hoisted.state.clients = [];
     const r = await dispatchBrowserTask({ taskId: 't6', userSub: OWNER, fromAgentId: 'b', prompt: 'x' });
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/box is not connected/i);
+    expect(r.error).toBe('No authorized browser-control worker is available.');
   });
 });

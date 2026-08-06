@@ -4,10 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from app.js (1000-line cap decomposition): POST /api/process-ticket (QM HTTP dispatch) + the PHASE_48 enhanced ticket path helper
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve shared parent workspaces through the canonical task-ID contract and reject controller mismatches instead of restoring a raw forceTaskId onto the task object.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Canonicalize the value passed to forceTaskId itself and treat a supplied invalid parent workspace ID as a refusal instead of silently generating an unrelated workspace.
  */
 
 const path = require('path');
 const logger = require('../utils/logger');
+const { canonicalWorkspaceId } = require('../services/codebase/task-workspace-scope');
 
 /**
  * @description POST /api/process-ticket — Queue Manager HTTP dispatch entrypoint: persona/README/swarm-awareness prompt assembly, shared-workspace handling (PHASE_44B), legacy TaskController path, aggressive response extraction, and PHASE_66 cost metrics.
@@ -54,8 +57,9 @@ function registerProcessTicketRoute(application) {
         
         // ⭐ SHARED WORKSPACE: If parentWorkspaceTaskId provided, reuse parent's workspace folder
         let task;
-        if (parentWorkspaceTaskId) {
-          task = await taskController.getTask(parentWorkspaceTaskId);
+        if (Object.prototype.hasOwnProperty.call(req.body, 'parentWorkspaceTaskId')) {
+          const parentScopeId = canonicalWorkspaceId(parentWorkspaceTaskId);
+          task = await taskController.getTask(parentScopeId);
           if (!task) {
             // ⭐ PHASE_44B FIX: Task doesn't exist on THIS agent container (was created on project-manager)
             // Create a new task but FORCE it to use the parent's workspace directory
@@ -63,12 +67,10 @@ function registerProcessTicketRoute(application) {
             logger.info(`📂 PHASE_44B: Parent task ${parentWorkspaceTaskId} not in local store — creating local task with SAME workspace dir`);
             task = await taskController.createTask(
               `Agent ${agentId} processing ticket ${ticket.id} (shared workspace)`, 'act',
-              { forceTaskId: parentWorkspaceTaskId }
+              { forceTaskId: parentScopeId }
             );
-            if (task.id !== parentWorkspaceTaskId) {
-              // createTask didn't honor forceTaskId — manually fix the workspace reference
-              logger.warn(`⚠️ PHASE_44B: createTask didn't honor forceTaskId, task.id=${task.id}, expected=${parentWorkspaceTaskId}. Patching task.id.`);
-              task.id = parentWorkspaceTaskId;
+            if (task.id !== parentScopeId) {
+              throw new Error('TaskController returned a non-canonical parent workspace id');
             }
             logger.info(`📂 PHASE_44B: Local task created → workspace ${task.id} (shared with project-manager)`);
           } else {

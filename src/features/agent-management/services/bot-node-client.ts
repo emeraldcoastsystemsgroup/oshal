@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Expose delegation enforcement state so orchestrators can prohibit unsigned localhost fallback, and split execute transport handling into a bounded helper without changing the signed request contract.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Authenticate provider/model push-down with X-Service-Secret so the credential-bearing /api/llm-provider mutation works behind the bot-node machine gate.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Bind the complete canonical swarm-execute request body into the signed token to prevent prompt, entitlement, credential, or provider-intent mutation.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact UTF-8 delegation subjects and reject invalid supplied assertions without whitespace normalization, code-unit truncation, or ownerless fallback.
  */
 
 import * as http from 'node:http';
@@ -39,6 +40,7 @@ import {
   isExplicitSystemSubject,
 } from '@/shared/security/delegation-http-policy';
 import { delegationRequestBodySha256 } from '@/shared/security/delegation-request-binding';
+import { optionalExactUserSubject } from '@/shared/security/exact-user-subject';
 import {
   getRequestIdentity,
   isSystemIdentity,
@@ -630,14 +632,7 @@ function resolveSystemPrincipal(
 }
 
 function normalizeDelegationSubject(value: string | undefined): string | null {
-  if (
-    typeof value !== 'string'
-    || value.length === 0
-    || value.length > 512
-    || value.trim() !== value
-    || /[\u0000-\u001F\u007F]/.test(value)
-  ) return null;
-  return value;
+  return optionalExactUserSubject(value, 'delegation subject') ?? null;
 }
 
 function assertTargetBinding(trustedAgentId: string, requestAgentId: string): void {

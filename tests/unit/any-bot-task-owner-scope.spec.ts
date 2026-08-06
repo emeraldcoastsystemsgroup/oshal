@@ -1,3 +1,12 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard durable owner binding, exact owner identity semantics, ticket-workspace reuse, and SQLite persistence.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace legacy trim/collapse expectations with exact padding and whitespace identity coverage plus fail-closed empty, control, malformed UTF-8, and over-512-byte assertions.
+ */
+
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -47,14 +56,21 @@ function expectOwnerMismatch(taskUserSub: unknown, requestedUserSub?: unknown): 
 }
 
 describe('any-bot durable task owner binding', () => {
-  it('allows only the same normalized owner, including anonymous legacy task reuse', () => {
+  it('allows only the same exact owner, including anonymous legacy task reuse', () => {
     const owned = { userSub: ' owner-a ' };
-    expect(TaskController.assertTaskOwnerBinding(owned, 'owner-a')).toBe(owned);
+    expect(TaskController.assertTaskOwnerBinding(owned, ' owner-a ')).toBe(owned);
+    expectOwnerMismatch(' owner-a ', 'owner-a');
 
     const anonymousLegacy = { userSub: null };
     expect(TaskController.assertTaskOwnerBinding(anonymousLegacy, undefined)).toBe(anonymousLegacy);
-    expect(TaskController.normalizeTaskOwner('  owner-a  ')).toBe('owner-a');
-    expect(TaskController.normalizeTaskOwner('   ')).toBeNull();
+    expect(TaskController.normalizeTaskOwner('  owner-a  ')).toBe('  owner-a  ');
+    expect(TaskController.normalizeTaskOwner('   ')).toBe('   ');
+  });
+
+  it('rejects invalid asserted owners instead of collapsing them into anonymous reuse', () => {
+    for (const invalid of ['', 'owner\0alias', 'owner\u0085alias', 'a'.repeat(513), '\ud800', 42]) {
+      expect(() => TaskController.normalizeTaskOwner(invalid), String(invalid)).toThrow(/exact UTF-8/);
+    }
   });
 
   it('fails closed across owned, ownerless, and anonymous identity boundaries', () => {
@@ -122,11 +138,26 @@ describe('any-bot durable task owner binding', () => {
         userSub: 'owner-a',
         ts: 1,
       });
+      store.saveTask({
+        id: 'padded-owner-task',
+        text: 'Exact owner',
+        status: 'created',
+        mode: 'act',
+        userSub: ' owner-a ',
+        ts: 1,
+      });
+      expect(() => store.saveTask({
+        id: 'invalid-owner-task',
+        text: 'Invalid owner',
+        status: 'created',
+        userSub: '',
+      })).toThrow(/exact UTF-8/);
       store.close();
 
       store = new TaskStore(dbPath);
       store.init();
       expect(store.loadTask('owned-task')).toMatchObject({ userSub: 'owner-a' });
+      expect(store.loadTask('padded-owner-task')).toMatchObject({ userSub: ' owner-a ' });
       expect(store.loadTask('legacy-task')).toMatchObject({ userSub: null });
       expect(store.listTasks()).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'owned-task', userSub: 'owner-a' }),

@@ -15,6 +15,8 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Re-pointed the presentron tool at the in-repo deck engine (BACKLOG "Re-point the presentron chat tool at the real deck renderer"): handlePresentron now renders a real themed .pptx via @/features/presentation-generation renderPptx into the task workspace instead of POSTing to the retired Presentron sidecar; dropped the PresentronIntegrationService/readPresentronRuntimeSettings/endpoint-resolution plumbing from this executor.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Change-log accuracy: entry 2 above claims the ADR-060 per-user namespace is in force here, but that layout was REVERTED (see the note in ensureWorkspacePath) — this file writes the flat <root>/<taskId> and the orphaned userScopedWorkspacePath helper it was to call has been deleted. Entry 2 stands as history; this entry is the correction. No behavior change.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: model-supplied `headers` in a route-backed api tool's input could OVERRIDE the framework's own trust headers. They were spread LAST over X-Service-Secret and X-OSHAL-User-Sub, and toolInput is the raw tool_use block from the LLM (agentic-loop passes block.input straight through, unvalidated against inputSchema) — so a prompt injection could pick which user the service-secret call acted for. buildDynamicApiHeaders now spreads the model's record FIRST and strips every trust header from it case-insensitively; identity and the service secret are never the model's to set. Guarded by tests/unit/tool-executor-api-route.spec.ts.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Send framework-owned user identity through the canonical base64url trusted-service header and strip that header from model input too, preserving exact subject case/whitespace without reopening header override.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Replace the dynamic CLI's best-effort identity write with the shared exact-subject, link-safe atomic writer; serialize same-workspace invocations and remove only the identity file each invocation still owns.
  */
 
 import fs from 'fs';
@@ -35,7 +37,8 @@ import {
 import type { WorkspaceService } from '@/features/ticketing';
 import type { AgentConfigService } from '@/features/agent-management';
 import type { DynamicToolExecutorRegistry, ToolExecutorDescriptor } from '@/features/tool-registry';
-import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middleware/authz';
+import { acquireScopedSubjectLease } from '@/shared/security/scoped-subject-lease';
 import { FollowupQuestionSignal } from './followup-question-signal';
 import { guardTemplateValue } from './runtime-template-guard';
 
@@ -48,10 +51,10 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 /**
  * Headers that carry TRUST and are therefore owned exclusively by the framework, never by tool
  * input. Lowercased because HTTP header names are case-insensitive: a model writing
- * `x-oshal-user-sub` must not be able to sit beside the framework's `X-OSHAL-User-Sub` and win on
- * insertion order. Keep this list in sync with `serviceSecretHeaders()` + `getTrustedServiceUserSub()`.
+ * Plain or encoded user-sub headers must not sit beside the framework's canonical header and win
+ * on insertion order. Keep this list in sync with the shared trusted-service header helpers.
  */
-const TRUST_HEADER_NAMES = new Set(['x-service-secret', 'x-oshal-user-sub']);
+const TRUST_HEADER_NAMES = new Set(['x-service-secret', 'x-oshal-user-sub', 'x-oshal-user-sub-b64']);
 const DEFAULT_OUTPUT_LIMIT = 12_000;
 const DEFAULT_READ_LIMIT_BYTES = 256 * 1024;
 const DEFAULT_BOT_RUNTIME_ROOT = path.resolve(process.cwd(), 'output', 'bot-runtime');
@@ -267,21 +270,16 @@ export class ToolExecutorService {
     const timeoutMs = this.readPositiveInteger(toolInput.timeoutMs) || DEFAULT_COMMAND_TIMEOUT_MS;
     const workspacePath = await this.ensureWorkspacePath(taskId);
     const command = this.renderRuntimeTemplate(descriptor.cliCommand, toolInput, taskId, agentId);
-    // Per-user scoping for cli tools (career DB, gmail, …): dual-channel like the harness
-    // wrappers — OSHAL_USER_SUB in the env AND a .oshal-user-sub file in the workspace cwd,
-    // so the tool reads whichever it supports. No-op for system dispatches (no userSub).
-    const env = userSub ? { ...process.env, OSHAL_USER_SUB: userSub } : process.env;
-    if (userSub) {
-      try { fs.writeFileSync(path.join(workspacePath, '.oshal-user-sub'), userSub, 'utf8'); } catch { /* best-effort */ }
-    }
+    // Dual-channel identity is visible only while this invocation owns the workspace lease.
+    const scope = await acquireScopedSubjectLease(workspacePath, userSub, 'dynamic CLI userSub');
 
     try {
       const { stdout, stderr } = await execAsync(command, {
-        cwd: workspacePath,
+        cwd: scope.directory,
         timeout: timeoutMs,
         maxBuffer: 4 * 1024 * 1024,
         encoding: 'utf8',
-        env,
+        env: scope.userSub === undefined ? process.env : { ...process.env, OSHAL_USER_SUB: scope.userSub },
       });
 
       return this.limitOutput(this.formatCommandResult(command, String(stdout), String(stderr), 0));
@@ -304,6 +302,8 @@ export class ToolExecutorService {
           ),
         ),
       );
+    } finally {
+      scope.release();
     }
   }
 
@@ -356,8 +356,8 @@ export class ToolExecutorService {
    * so a block carrying `{"headers":{"X-OSHAL-User-Sub":"<somebody else>"}}` chose which user the
    * service-secret call acted for — an identity swap on an internal route that trusts that header
    * absolutely (getTrustedServiceUserSub). Spreading first fixes precedence; stripping is what
-   * makes it hold under HTTP's case-insensitive header names, where `x-oshal-user-sub` would
-   * otherwise sit alongside the framework's `X-OSHAL-User-Sub` and win by insertion order.
+   * makes it hold under HTTP's case-insensitive header names. Both the legacy plain subject header
+   * and canonical base64url subject header are reserved exclusively for framework attribution.
    * @param toolInput - The raw, untrusted tool input from the model.
    * @param userSub - The accountable owner resolved by the framework, if any.
    * @returns The header record actually sent, with trust headers owned by the framework.
@@ -379,8 +379,7 @@ export class ToolExecutorService {
     return {
       'Content-Type': 'application/json',
       ...safe,
-      ...serviceSecretHeaders(),
-      ...(userSub ? { 'X-OSHAL-User-Sub': userSub } : {}),
+      ...(userSub === undefined ? serviceSecretHeaders() : trustedServiceUserHeaders(userSub)),
     };
   }
 

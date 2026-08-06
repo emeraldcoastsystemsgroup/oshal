@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081: isSuperAdminSub (fail-closed sub allowlist) + the privileged 'oshal-dev' dispatch gate — non-superadmin owners escalate with superadmin_required BEFORE any bot resolution; allowlisted owners pass the gate; non-privileged ticket types are untouched.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Update the queue-side guard to require exact case-sensitive subjects and reject case/whitespace aliases.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isSuperAdminSub } from '../../src/shared/middleware/superadmin';
@@ -19,9 +20,12 @@ afterEach(() => {
 });
 
 describe('isSuperAdminSub (queue-side allowlist)', () => {
-  it('accepts allowlisted subs case-insensitively', () => {
+  it('accepts only exact allowlisted subjects', () => {
     expect(isSuperAdminSub('admin-sub-1')).toBe(true);
-    expect(isSuperAdminSub('ADMIN-SUB-2')).toBe(true);
+    expect(isSuperAdminSub('Admin-Sub-2')).toBe(true);
+    expect(isSuperAdminSub('ADMIN-SUB-2')).toBe(false);
+    expect(isSuperAdminSub(' admin-sub-1')).toBe(false);
+    expect(isSuperAdminSub('admin-sub-1 ')).toBe(false);
   });
 
   it('fails closed: unknown, null, empty, and empty-allowlist all deny', () => {

@@ -14,6 +14,7 @@
  *   foreign pin dispatches NOTHING, the picker never enumerates another user's box, and the operator +
  *   legacy-unowned compat paths (the live single-node setup) still work.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Await journal-backed browser dispatch so every ownership assertion observes the committed enqueue result.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Model only explicitly browser-capable, browser-pilot-consented devices and prove a fully eligible foreign device receives the same non-enumerating refusal as an absent worker.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,7 +51,8 @@ const node = (clientId: string, ownerSub?: string) => ({
   tailnetHostname: `${clientId}-host`,
   status: 'online',
   healthy: true,
-  capabilities: ['codex.exec'],
+  capabilities: ['codex.exec', 'browser_control'],
+  tags: ['browser_pilot_consent'],
   taskQueueDepth: 0,
   controlPlaneUrl: 'http://box.lan:35457',
   ...(ownerSub ? { ownerSub } : {}),
@@ -87,6 +89,7 @@ describe('owner-scoped dispatch — a leaf node is somebody\'s real computer', (
       prompt: 'drive the browser', preferredClientId: 'node-bob',
     });
     expect(r.ok).toBe(false);
+    expect(r.error).toBe('No authorized browser-control worker is available.');
     expect(hoisted.enqueued).toHaveLength(0);   // nothing reached Bob's desktop
   });
 
@@ -102,7 +105,7 @@ describe('owner-scoped dispatch — a leaf node is somebody\'s real computer', (
     hoisted.state.clients = [node('node-bob', BOB)];
     const r = await dispatchBrowserTask({ taskId: 'apply-3', fromAgentId: 'career-bot', userSub: ALICE, prompt: 'x' });
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/not connected/i);
+    expect(r.error).toBe('No authorized browser-control worker is available.');
     expect(hoisted.enqueued).toHaveLength(0);
   });
 

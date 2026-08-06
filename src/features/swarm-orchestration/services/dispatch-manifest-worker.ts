@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING (controller half): when OSHAL_PUSH_ON_DISPATCH is on, stamp each BotNodeClient.execute dispatch (single-owner + multi-bid fan-out) with the target agent's authoritative provider/model/configVersion via resolveDispatchConfigFields(deps.runtimeParamsResolver, agentId). Fail-open by contract (absent resolver / no record / resolver error → {}), and the env flag defaults OFF → the dispatched request is byte-identical to the legacy shape. The bot half self-corrects a divergent runtime before executing (bot-node-dispatch-config.ts).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Carry persisted ticket-owner principal issuer provenance into every single-owner and fan-out HTTP delegation request.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Reject localhost execution fallback when controller signing is enabled so bot-node transport or endpoint failures cannot bypass signed delegation.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Bind localhost fallback identity with the canonical base64url trusted-service subject header so exact owner case/whitespace survives transport.
  */
 
 import * as http from 'node:http';
@@ -28,7 +29,7 @@ import {
   type DispatchConfigFields,
 } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
-import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middleware/authz';
 import { isSuperAdminSub } from '@/shared/middleware/superadmin';
 import { resolveSkillProfileByTicketType, composeSkillProfilePrompt } from '@/shared/skill-profiles';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
@@ -766,8 +767,7 @@ export async function dispatchManifestWorkerTicket(
     // timeout) — see postSendMessageNoTimeout: a full draft can exceed undici's 5-min headersTimeout.
     const reqHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...serviceSecretHeaders(),
-      ...(ticket.ownerSub ? { 'x-oshal-user-sub': ticket.ownerSub } : {}),
+      ...(ticket.ownerSub ? trustedServiceUserHeaders(ticket.ownerSub) : serviceSecretHeaders()),
     };
     const response = await postSendMessageNoTimeout(port, reqHeaders, JSON.stringify({
       taskId: ticketId,

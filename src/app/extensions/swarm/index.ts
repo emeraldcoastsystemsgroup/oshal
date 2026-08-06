@@ -54,6 +54,9 @@
  * 49 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the boot registry→profile sync Promise.all (syncProviderModel per bot) in runWithSystemIdentity — the detached boot sync ran identity-less; under OSHAL_DB_GUC_STRICT=deny that scoped the agents-table writes to nothing (guc warn-audit: named syncProviderModel + an all-internal non-stitched sibling of the same Promise.all).
  * 50 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 51 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): wired the SelfHealAutoApplyEngine into QueueManagerService (setAutoApplyGate, project-manager only, next to setBudgetService — the sanctioned hook shape) over the app-layer self-heal remediation executor (the deterministic HTTP seam to the self-healing bot node's docker socket). Kill switch SELF_HEAL_AUTO_APPLY stays the runtime gate (default OFF), so wiring this changes nothing until a deployment opts in.
+ * 52 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the durable Apply ticket owner exactly
+ *   when requesting internal dispatch. The endpoint reloads ticket-bound submit authorization,
+ *   posting, owner, and target server-side instead of trusting asserted request fields.
  */
 
 import type { Pool } from 'pg';
@@ -851,7 +854,7 @@ export function createSwarmExtensionBindings(
           },
         }),
         dispatchJobApplicationTask: async (ticket) => {
-          const userSub = String(ticket.ownerSub || '').trim();
+          const userSub = typeof ticket.ownerSub === 'string' ? ticket.ownerSub : '';
           if (!userSub) return { handled: true, accepted: false, error: 'Application ticket has no owner identity' };
           // A durable per-résumé job-apply ticket carries its posting in metadata.postingId so THAT
           // specific packet is applied (not just "newest generated first"). Absent → legacy behaviour.

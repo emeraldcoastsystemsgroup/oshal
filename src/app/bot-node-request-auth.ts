@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Security-audit: authorizeBotNodeExecutionCall fails CLOSED for identity/credential-bearing payloads (userSub/creds/byoLlmConnection/providerIntent) even when SWARM_SERVICE_SECRET is unset; anonymous legacy calls stay compatible via requireServiceSecretWhenConfigured.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Backfilled the missing change-log header. Loud fail-open posture (security audit 2026-06-16 backlog item): when SWARM_SERVICE_SECRET is unset the gate still allows local-dev traffic, but now logs a per-request WARN naming the backlog item; logBotNodeAuthPosture() gives the matching one-time startup WARN. Added authorizeBotNodeInternalCall so sibling execution endpoints (/api/token-chase/replay-call) share the same warned gate instead of the silent shared middleware.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Treat every supplied userSub property as scoped execution data so empty, whitespace, malformed, and non-string identity assertions cannot bypass the fail-closed service-secret gate.
  */
 
 import type { Request, RequestHandler } from 'express';
@@ -20,7 +21,7 @@ const BACKLOG_ITEM =
 function carriesScopedExecutionData(body: unknown): boolean {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
   const record = body as Record<string, unknown>;
-  const hasUserSub = typeof record.userSub === 'string' && record.userSub.trim().length > 0;
+  const hasUserSub = Object.prototype.hasOwnProperty.call(record, 'userSub');
   const creds = record.creds;
   const hasCreds = Boolean(creds && typeof creds === 'object' && Object.keys(creds).length > 0);
   const byo = record.byoLlmConnection;

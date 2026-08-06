@@ -3,7 +3,7 @@
 Tracking items deferred from the OSHAL build session. Each item has the
 deferral reason and the "done" condition so future work isn't ambiguous.
 
-## config-admin's provider picker is precedence-blind ⬜ NOT STARTED
+## config-admin's provider picker is precedence-blind ✅ RESOLVED 2026-08-05
 
 **Context.** Per-bot provider/model configuration was duplicated onto `/utilities` (the account
 connection screen) and has been removed from there — that page is login authorization, and the
@@ -28,6 +28,16 @@ The precedence RULE remains fully guarded by the resolver tests in
 `precedenceNote` verbatim rather than a paraphrase, and its save reports a bot-side refusal instead
 of recording a change that did not land — with a mutation-tested guard pointed at
 config-admin-agent-panel.js restoring the coverage retired in this change.
+
+**Resolved 2026-08-05.** Config Admin now renders the API-resolved effective provider, disables
+the provider and model controls independently from `providerOverridable` / `modelOverridable`, and
+prints the API's `precedenceNote` unchanged. Changed provider/model values are pushed through the
+authoritative `/api/agents/:agentId/runtime` route before the profile write; a bot-side refusal
+therefore performs zero profile writes and explicitly reports that nothing was recorded. A pinned
+provider's disabled DOM value never enters either payload; model-only updates carry the resolved
+effective provider required by the live bot switch endpoint. The profile update response is also
+re-enriched so the rendered policy cannot go stale after a successful save. Guarded by executable
+rendering/refusal cases in `tests/unit/bot-provider-precedence.spec.ts`.
 
 ## Rides map — follow-ups after the 2026-08-01 map/fare fix (core PR #102, store PR #40)
 
@@ -492,7 +502,7 @@ is the only trustworthy source for which checkout a task runs. The task NAME, th
 same-named script in the trunk, and the BACKLOG all agreed with each other and were all wrong about
 Evidence-Nightly until the action itself was read.
 
-### Sub-item: `bash` under a scheduled task is WSL, not Git Bash ⬜ NOT STARTED
+### Sub-item: `bash` under a scheduled task is WSL, not Git Bash ✅ RESOLVED 2026-08-05
 
 Found 2026-08-02 while test-running the new store-publish wrapper, which failed on its first run:
 
@@ -506,22 +516,22 @@ scheduled task that shells out to a bare `bash` gets that, not Git Bash (5.2.37)
 a different filesystem view (`/mnt/c`), so it is the wrong interpreter for scripts that drive
 docker and git on the Windows side regardless of health.
 
-`scripts/publish-store-nightly.ps1` resolves Git Bash by absolute path, **proves** it by checking
-`$BASH_VERSION` is non-empty, and aborts rather than falling back.
+**Resolved 2026-08-05.** `scripts/lib/windows-git-bash.ps1` is now the single PowerShell 5.1-
+compatible resolver. It derives Git Bash from `git.exe` and known Git for Windows roots, explicitly
+rejects System32/Sysnative/WSL-shaped launchers (including resolved targets), and selects nothing
+unless a finite native-process probe exits zero with a non-empty `$BASH_VERSION`. A timed-out MSYS
+process tree gets bounded `/T /F` termination before the resolver returns `$null`; file-backed
+probe output prevents an inherited pipe from extending the deadline.
 
-**The trap is still live elsewhere.** `Get-BashExe` in `scripts/oshal-stack-watchdog.ps1` checks the
-two Git paths first (so it wins today) but then falls back to `Get-Command bash.exe` -- i.e. to WSL
-bash -- with no validation. If Git ever moves or is upgraded to a different path, stack *recovery*
-silently starts running its commands under a broken WSL shell, which is the worst possible time to
-discover this. `scripts/publish-lab-report.ps1` hardcodes the Git path with no fallback at all, so
-it fails loudly instead, which is better but still brittle.
+The stack watchdog resolves that shell once and exits 2 if it cannot, so missing Bash can never be
+reported as routable or enter a recovery attempt. Store publish also exits 2, and lab publish uses
+its existing failure-alert path and exits 1. Neither wrapper has a copied resolver or a hardcoded
+Git install path. `tests/unit/windows-git-bash-resolver.spec.ts` executes valid, empty-version,
+hung, and System32/WSL rejection cases; the focused resolver plus watchdog suites pass 21/21.
+The resolver plus deploy-rollback harness passes 24/24, including the former bare-`bash`
+System32/WSL ambiguity.
 
-**Done when:** `Get-BashExe` validates its choice (non-empty `$BASH_VERSION`) and returns `$null`
-rather than a WSL fallback, callers handle `$null` by failing loudly, and the helper lives in ONE
-place both wrappers use instead of being copied a third time. Not done tonight on purpose: it is
-live stack-recovery code and deserves a test-run, not an unattended edit.
-
-## The scheduled Local CI gate judges local HEAD, which on this box lags main ⬜ NOT STARTED
+## The scheduled Local CI gate judges local HEAD, which on this box lags main 🟨 CODE-COMPLETE 2026-08-05 — next scheduled run is the final live proof
 
 **Found 2026-08-02** while checking whether the nightly gate would confirm the brace-expansion
 lockfile change. It would not have.
@@ -562,10 +572,19 @@ what I committed".
 `origin/main` at run time, and a commit merged to main since the last tree re-sync is demonstrably
 covered by the next nightly.
 
-**Deliberately not done 2026-08-02:** this is the live gate that emails failure alerts, the change
-was found ~15 minutes before its 23:30 run, and there was no time to exercise a full pass first.
-An untested edit to an unattended alerting gate is how you get a 2am false alarm nobody trusts --
-same reasoning as the `Get-BashExe` sub-item above.
+**Code completed and executable behavior proved 2026-08-05.** Scheduled mode now fetches
+`refs/heads/main` into `refs/remotes/origin/main`, resolves it once to an immutable SHA, and uses
+that exact SHA for all three committed-source consumers (node export, secret scan, image build),
+the start log, and failure alert. Interactive `--head` remains local HEAD. Fetch failure is an
+explicit `DEGRADED_FETCH_FAILED_HEAD_FALLBACK`, never a silent stale-remote pass. The hidden VBS
+launcher now waits and propagates the gate exit, fixing the adjacent state where the 2026-08-04
+log showed three failed gates while Task Scheduler reported `LastTaskResult=0`.
+
+Guard: `tests/unit/ci-local-scheduled-ref.spec.ts` runs the production resolver against disposable
+Git origins for scheduled-main, interactive-HEAD, and fetch-failure cases; pins every archive site
+to the same variable; and executes a copied VBS launcher with an exit-37 gate. **Remaining live
+stamp only:** confirm the next 23:30 run logs `archive-ref=origin/main`, its SHA equals the fetched
+remote ref, and Task Scheduler's result matches the completed gate.
 
 ## brace-expansion CVE-2026-14257 quarantine (trivy gate) ✅ RETIRED 2026-08-02
 
@@ -1094,7 +1113,7 @@ the one-line note; the conductor remains the live path. Guards: `tests/unit/vide
 ### career-hunter: move per-posting scoring off the api (swarm-controller) onto a bot-node ⬜ NOT STARTED (long-term)
 - **Why:** career-hunter's `score`/`match`/`tailor` engine runs a **per-posting `codex exec` fan-out
   inside the `oshal-local-api` container** (the swarm controller) — it shells out via
-  `scripts/oshal-jobhunter.js` → `python -m jobhunter`. This violates the CLAUDE.md invariant "the
+  the package's `bin/oshal-jobhunter.js` → `python -m jobhunter`. This violates the CLAUDE.md invariant "the
   **controller never calls an LLM**; bot nodes own all LLM execution." It also means cost is not
   captured in `chat_tasks`, and per-bot harness/model settings don't apply — the ADR-036
   "bot owns its domain" rails are bypassed.
@@ -1104,9 +1123,15 @@ the one-line note; the conductor remains the live path. Guards: `tests/unit/vide
   for ~76 min. Now async + awaited (event loop stays free), guarded by per-user+verb single-flight
   (409) and a global ceiling `CAREER_HUNTER_MAX_RUNS` (default 3 → 429). This **bounds** the blast
   radius; it does not move the LLM work off the controller.
-- **Also latent (same file):** `/companies-admin/seturl`, `/strengthen`, `/strengthen/:key/status`,
-  `/applications/:id/approve` still call the blocking `runCli` (spawnSync). Bounded/admin/quick today,
-  but move any that can grow to a multi-second LLM run to the async `runCliAwait`.
+- **Interim process boundary completed 2026-08-05:** every mounted Career command now enters one
+  brokered asynchronous runner with finite deadlines, bounded output, process-tree termination,
+  a per-user single-writer lease, and a cross-user shared-corpus lease. Controller-wide provider
+  and kernel secrets are stripped from child environments; only the authenticated caller's
+  decrypted Career credentials are staged. Upload routes reserve before durable writes and roll
+  back exact prior bytes when brokerage or process start fails. Package guards forbid synchronous
+  child-process APIs in both source and compiled mounted routes. This closes the latent blocking
+  callers and credential-spill risks; it deliberately does not claim the long-term bot-node and
+  `chat_tasks` done-when below.
 - **Done-when:** career-hunter scoring/tailoring runs on a real career bot-node (own container +
   registry + persona, heartbeating) reached via `BotNodeClient.execute` (interactive) or a dedicated
   `ticketType`+workflow (scheduled), per [ADR-036](adr/036-bot-owned-application-architecture.md);
@@ -1117,6 +1142,12 @@ the one-line note; the conductor remains the live path. Guards: `tests/unit/vide
 **Verified 2026-07-19:** OPEN — jobhunter score still spawnSync's Python on the api; latent spawnSync callers also in apply-submit.ts + apply-ingest-routes.ts.
 
 **Verified 2026-07-19 (completion-day):** the **event-loop wedge CLASS is closed** by `555fc679` — supersedes the OPEN stamp's spawnSync clause. Every remaining latent sync child_process on the api process was moved async: `apply-submit.ts` (`runApply` spawnSync → async `runApplyCli`, single-flight per user + `APPLY_MAX_DISPATCHES` ceiling), `apply-ingest-routes.ts` (`/ingest` record+trace), the security `dependency-scanner`/`trivy-scanner` (execFileSync `npm audit` / 15-min image scan → async), and `trading-strategy-lab-ops` `buildSha`. Guard `tests/unit/no-sync-spawn-on-api.spec.ts` statically forbids sync child_process in `src/**` outside a justified allowlist (dev-console dev-node runtime + the ~100ms bounded secret-scanner walk). The original career-hunter `/run/score` offender was separately **carved to the oshal-applications store** (ADR-085 Wave 3 carve #1 — `/api/career-hunter` unmounted from `server.ts`), so it no longer spawns on the kernel api; the deeper done-when (career-hunter LLM work on a real bot-node with cost in `chat_tasks`) now belongs to the store package per ADR-093.
+
+**Verified 2026-08-05:** the store package no longer contains a mounted synchronous engine path;
+the shared runner/credential broker and transaction guards cover manual runs, cron, approvals,
+studios, artifacts, and guide actions. Keep this item OPEN: the package is still mounted into the
+controller process and its Python engine may perform LLM work there, so execution cost still does
+not satisfy the real bot-node/`chat_tasks` done-when.
 
 ### career-hunter apply automation: "learn the 5 patterns" recipe-runner (native + swarm) ⬜ IN PROGRESS (native quick wins done 2026-07-16)
 - **Problem (operator):** auto-apply is slow — an LLM agent drives the browser one screenshot-and-decision at a time. The same ~5 ATS patterns (Greenhouse/Ashby automated; Workday/Lever/embedded/custom parked) get re-derived per application instead of replayed.
@@ -2173,7 +2204,7 @@ experience, and it drops the RAM/disk/CPU build requirements too.
 
 **Verified 2026-07-19:** PARTIAL — GHCR push scaffolding exists in the manual-only ci.yml; the default is still a local build; publish remains gated on launch.
 
-## Job-application autofill — the surface never appeared + the pipeline is too fragile to rely on 🟨 BUILT-BUT-UNUSABLE
+## Job-application autofill — the surface never appeared + the pipeline is too fragile to rely on 🟨 CODE-COMPLETE 2026-08-05 — real offline browser smoke pending
 
 **Operator report (2026-07-08):** *"we already worked on one but the autofill button never surfaced,
 and the system is up and down so much I had to use a side project to apply to jobs."* The operator is
@@ -2226,7 +2257,19 @@ worker, is the concrete pattern the `apply-operator` bot + `career-hunter.yaml` 
 once the cockpit surface / dependency-fragility issues above are fixed — it is a stronger contract than
 "one long-running worker session drives the whole queue."
 
-**Verified 2026-07-19:** OPEN on both done-when clauses (bookmarklet + rendered Apply affordance); effort has pivoted to the desktop-worker autoapply lane (apply-operator/apply-ingest routes).
+**Code completed 2026-08-05.** The Career board now renders an explicit offline-autofill setup and
+PII warning. Its caller-scoped, private/no-store endpoint reads only bounded regular single-link
+profile files from the exact user store and returns a self-contained bookmarklet without placing raw
+profile values in the URL. The runtime refuses unknown and lookalike hosts before decoding PII,
+supports the reviewed Greenhouse/Ashby shapes, fills only visible empty allowlisted fields, preserves
+existing answers, ignores upload/submit/hidden/honeypot controls, performs no network operation, and
+never clicks Submit. Legal/eligibility answers exist only when the user explicitly stored them.
+
+Dependency-free behavior and real compiled-route guards are green. **Remaining done-when proof is
+operator/browser-only:** with the stack stopped, copy the helper from Career Hunter and fill one real
+Ashby and one real Greenhouse form in an already authenticated browser tab; verify existing answers,
+demographic fields, file inputs, and Submit remain untouched. Record that smoke before changing this
+item to RESOLVED. Desktop final-submit reliability remains tracked by the Apply pipeline item.
 
 ## HUMAN-IN-THE-LOOP — needs operator decision / credentials / review
 
@@ -3967,6 +4010,25 @@ ROADMAP + framework-developer-guide reconciled in the same 2026-07-24 change.
   JSDoc standard. The already-headered files were audited for JSDoc coverage.
 - **Done when:** every tracked source file carries the Change Log header and exported members
   carry `@description` (+ `@param`/`@returns` where applicable). Track any residual gaps here.
+
+### Public store-app encryption fallbacks exposed recoverable data ✅ RESOLVED 2026-08-05
+
+**Context.** Career Hunter, Email Summarizer, Finance, and YouTube Kids each had a literal fallback
+used as AES key material when `SESSION_SECRET` was absent. Once those packages became public, the
+fallback made any blob written in that posture decryptable from repository contents.
+
+**Resolved store-side (`ec7b0df`).** All four packages now fail closed when real deployment key
+material is missing, distinguish encrypted envelopes structurally from genuine legacy plaintext,
+and never forward kernel `v2:` ciphertext as a provider token. The store CI scans every package for
+public secret/key fallbacks, and its mutation-tested guard proves a reintroduced literal is caught.
+Career mounted routes now resolve current `v2:` Anthropic/Firecrawl credentials through the kernel
+token broker and stage only the authenticated caller's plaintext in the child environment.
+
+Fallback-key ciphertext is intentionally not recoverable with a newly provisioned secret. Operator
+recovery is data-specific: reconnect Career providers, rerun **Summarize my day** for Email's cached
+digest, relink each Plaid institution for Finance, and re-upload the original YouTube
+`watch-history.json`. Existing non-secret aggregates remain intact. Never paste old ciphertext into
+a credential field or restore the retired fallback.
 
 ### Harden inline controller bots (token-broker rollout, phase 2) 🟨 LARGELY CLOSED 2026-08-01
 - **What:** The per-app chat bots `social-writer`/`storage-assistant`/`deck-builder` — and the
@@ -6974,7 +7036,7 @@ config the image reads), at least one guard must exercise the REAL boundary — 
 specs that currently stub their own subject (start with anything stubbing a ticket/store gateway or
 an aliased `require`).
 
-## Apply pipeline — claims leak, in-flight runs die silently, and "applied" carries no provenance ⬜ OPEN
+## Apply pipeline — claims leak, in-flight runs die silently, and "applied" carries no provenance 🟨 CODE-COMPLETE 2026-08-05 — live cleanup/backfill proof pending
 
 **Operator report (2026-08-01):** *"i didnt see any computer screen do the submit of jobs .. though it
 seems there was an update on if i applied.. can you tell me and verify if the application was real"* —
@@ -7026,15 +7088,36 @@ irreversibly** once invoked, and about the record afterwards being unfalsifiable
   a hand-marked row can never be read as a machine-verified one. Backfill the existing 164 from the
   evidence classes above; the 28 evidence-free rows are labelled `unverified`, not silently promoted.
 
-**Related open question (same session, not yet diagnosed):** ~20 packets auto-drafted 22:56–23:19 on
-2026-08-01 that the operator did not pick. The 2026-07-24 directive + `career_automation_settings`
-default-deny gate (migration 091) was supposed to make auto-generation opt-in and absent-row = OFF.
-Either the gate regressed, or a different caller bypasses `enqueueForUser`'s trigger check. **Done
-when:** the drafting burst is traced to its caller and either the gate is repaired with a guard that
-goes red on an automated draft with no opt-in row, or the caller is shown to be an explicit human
-action.
+**Code completed 2026-08-05.** Claims now carry an epoch-millisecond lease and are acquired
+atomically. The controller reaps only legacy/expired claims absent from its exact live-posting set;
+restart recovery reconstructs the exact task, owner, client, and one-use completion capability.
+Dispatch acknowledgement and worker-idle divergence both have finite ceilings. An outcome that may
+have reached an employer is never silently retried or promoted: authority is stripped, the posting
+is released, and the ticket is parked visibly in `customer_action` / `assist_review`.
 
-## Two guard specs red at random in the full unit run — a tree walk against a 5s default timeout
+The process-global in-flight endpoint is retired. Mobile and Submissions read the durable
+owner-scoped queue and distinguish queued, assigned worker, working, failed, review-required, and
+completed states. Manual marks, worker reports, confirmation-backed submissions, and historical
+unverified rows have four explicit provenance values rendered without task IDs or private paths.
+Provenance writes are monotonic across SQLite, Postgres, the Python storage chokepoint, and replaying
+the SQLite-to-Postgres loader. A callback becomes `verified-submission` only after a bounded PNG/JPEG
+is retained through the exact user's link-free store; otherwise it remains `worker-reported`.
+
+The adjacent unsolicited-draft path is also closed in code: an absent automation-consent row exits
+before candidate reads, ticket creation, or database writes; mobile startup and automatic refresh
+are read-only, and only the explicit **Pull more** action can top up drafts. Behavioral guards cover
+the zero-write no-consent path and the browser surface. Historical logs may no longer identify which
+caller produced the 2026-08-01 burst, but that caller can no longer bypass the shared gate.
+
+**Remaining live proof only — do not close this item from unit results.** Deploy package migrations
+100/101 and kernel migration 116, record exact pre/post counts while the bounded reaper releases the
+539 historical raw claims, and record the four-way provenance counts for all 164 historical applied
+rows. Then run one real final-submit task through a healthy worker and one CAPTCHA/2FA pause, verify
+the owner queue names the exact worker and terminal state, and confirm only the retained
+confirmation-backed task renders as verified. The 28 evidence-free historical rows must remain
+`unverified` throughout.
+
+## Two guard specs red at random in the full unit run — tree-walk timeout ✅ CODE-COMPLETE 2026-08-05
 
 **Context.** `npm run test:unit` (535 files, ~157s) reports one failed test per run, and **which**
 spec fails changes between runs: `tests/unit/no-dev-secret-fallback.spec.ts` on one run,
@@ -7056,3 +7139,12 @@ per-test timeout on the scanning specs (or a single shared/cached tree walk reus
 **not** `it.skip`, `--no-threads`, and not a raised GLOBAL `testTimeout`, which would slacken the
 budget for all 5392 tests to paper over two. A regression guard is not required here: the specs
 already exist; what is missing is that they finish.
+
+**Code completed 2026-08-05 (`1a1fc72`).** Both disk-heavy guards now carry a local 30-second
+per-test budget; the global Vitest timeout and scheduling remain unchanged. Their focused suites
+pass 11/11 with ESLint clean. One post-change full run completed 568 test files and 5,668 tests
+green; its remaining failures were three suites requiring an unavailable live Postgres instance
+and the Windows bare-`bash` harness subsequently fixed by `fb991e4` + `78419f9`. The original
+random tree-walk failure did not recur. The historical done-when remains intentionally open until
+three fully provisioned unit runs are green; do not describe the environmental failures as proof
+of those final three passes.

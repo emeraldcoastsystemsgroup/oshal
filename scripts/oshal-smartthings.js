@@ -7,6 +7,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bot-owned store (ADR-036): new `index` verb builds the unified, DEDUPED device index (canonical-name join across hubs, prior user renames preserved) and persists it to the per-user store at $OSHAL_HOME_DATA_DIR/<sub>/devices.json (shared `home-data` volume, home-bot :rw / api :ro). The cheap read-model the Smart Home surface renders without an LLM call (GET /api/home/devices). Store helpers (readStore/writeStore/slug) added; foundation for bot-owned scenes/prefs/history next.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bot-owned SCENES: scene-save/scene-run/scene-del/myscenes verbs over scenes.json. SmartThings can't create vendor scenes via API, so the bot owns its own — a named step list ([{device:<canonical key>,cmd:on|off|set,...}]) replayed through the control commands; steps reference devices by index key (hub-agnostic, survives id churn). Surfaced cheaply at GET /api/home/scenes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *
  *   node scripts/oshal-smartthings.js                      # JSON digest (devices+state, scenes)
  *   node scripts/oshal-smartthings.js index                # build+persist the deduped device index (store)
@@ -30,6 +31,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 const API = 'https://api.smartthings.com/v1';
 
@@ -54,9 +56,7 @@ function writeStore(sub, file, obj) {
 /** The codex sandbox may not forward OSHAL_USER_SUB to shelled commands, so the
  *  wrapper also drops it as a cwd-relative file. Read whichever is present. */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 function truthyEnv(name) {

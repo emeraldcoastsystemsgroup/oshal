@@ -1,6 +1,7 @@
 /**
  * Apply-prompt bridge — resolves the job-application browser prompt from the INSTALLED career-hunter
- * package at runtime, instead of compiling it into the swarm controller.
+ * package at runtime, instead of compiling it into the swarm controller. Applicant/job values are
+ * staged as bounded data files; callback capability and coordinates remain outside prompt arguments.
  *
  * The prompt (ATS rules, résumé vocabulary, self-ID grounding) is the career app's DOMAIN content;
  * per ADR-036 it lives with the app (career-hunter/lib/apply-prompt.js in the store package), not in
@@ -22,6 +23,8 @@
  *   buildApplyPrompt from the installed career-hunter package (volume / dev sibling / explicit
  *   override), degrade to null when absent so dispatchApply defers rather than dispatching a
  *   fabricated prompt. Mirrors the career-brief-bridge runtime-resolution pattern (ADR-085 Wave 3).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Document the hardened bridge contract: raw
+ *   task/applicant data and trusted callback metadata never enter model-visible instructions.
  *
  * @module app/apply-prompt-bridge
  */

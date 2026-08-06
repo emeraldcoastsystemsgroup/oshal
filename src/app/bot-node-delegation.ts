@@ -6,10 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added fail-closed Ed25519 verification, local-agent/body binding, shared single-use replay enforcement, and explicit mesh/batch bypass prohibition for bot-node HTTP execution.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require the independent SWARM_SERVICE_SECRET machine credential whenever public-key delegation is enabled so sibling provider-mutation and replay endpoints cannot remain fail-open.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Verify the signed canonical request-body digest before replay consumption so one valid token cannot be raced with mutated execution fields.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bind the signed delegation to the exact UTF-8 user subject, including significant whitespace, while rejecting controls and values over 512 bytes.
  */
 
 import type { Request, RequestHandler, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { isExactUserSubject } from '@/shared/security/exact-user-subject';
 import {
   createDelegationTokenVerifier,
   DelegationTokenError,
@@ -216,7 +218,7 @@ function expectedBindings(
     ...policy,
     task_id: requireBodyText(body.taskId, 'taskId', 256),
     body_sha256: delegationRequestBodySha256(body),
-    sub: requireBodyText(body.userSub, 'userSub', 512),
+    sub: requireBodyUserSub(body.userSub),
     principal_iss: requireBodyText(body.principalIssuer, 'principalIssuer', 2_048),
   };
 }
@@ -293,6 +295,11 @@ function requireBodyText(value: unknown, label: string, maxLength: number): stri
     throw new DelegationTokenError('invalid_binding', `Delegation ${label} binding is invalid`);
   }
   return value;
+}
+
+function requireBodyUserSub(value: unknown): string {
+  if (typeof value === 'string' && isExactUserSubject(value)) return value;
+  throw new DelegationTokenError('invalid_binding', 'Delegation userSub binding is invalid');
 }
 
 function requireLocalAgentId(value: string): string {

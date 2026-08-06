@@ -30,6 +30,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | platformFreeConnection: hard free-only guard — drop any non-:free candidate (incl. a misconfigured OPENROUTER_FREE_MODEL override). The shared account now carries the one-time $10 (1,000 :free req/day unlocked), so a paid model id would actually spend; operator directive: the platform key only ever runs :free models.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Runtime free-model discovery (BACKLOG "Free-tier model rot"): the platform candidate list now comes from OpenRouter GET /models (filter :free + zero pricing, family/context ranking, 30-min cache) instead of the hardcoded PLATFORM_FREE_MODELS array that kept 404ing as the catalog churned. Platform probes now also reject 200-but-empty completions (reasoning models eat a tiny-max_tokens probe) so the pick demonstrably answers; last-live model is tried first to cut probe burn. User-connection probe semantics unchanged.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Made rotation OBSERVABLE (ADR-064 Plan-B step 3, the last open clause). FreeTierStatus gains lastUsedAt - without the LRU position a lane the rotation has silently stopped picking is indistinguishable from a healthy idle one. New freeTierRuntimeSnapshot(): a NON-PROBING read of the module-level platform-lane state (platformVerdict / freeCatalog / lastLivePlatformModel), which was readable from nowhere. Non-probing is the whole point - calling platformFreeConnection() from a cockpit poll spends up to MAX_PLATFORM_PROBES real completions of the shared key's daily quota, so the surface would burn the resource it reports on. The key never leaves this module, and the snapshot labels itself per-process (one verdict cache per replica).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Make the background operator exemption case-sensitive and exact for OIDC subjects. Configuration delimiters remain trim-tolerant, but case/whitespace variants no longer inherit the operator's paid-provider privilege.
  *
  * @module free-tier-rotation
  */
@@ -599,8 +600,8 @@ function isOperatorCaller(userSub: string): boolean {
   const ambient = getRequestIdentity();
   if (ambient && ambient.sub === userSub) return ambient.isOperator;
   const subs = (process.env.OSHAL_OPERATOR_SUBS || '')
-    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-  return subs.includes(userSub.toLowerCase());
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  return subs.includes(userSub);
 }
 
 /**

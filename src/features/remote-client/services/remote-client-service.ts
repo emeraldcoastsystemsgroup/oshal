@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added remote-client runtime service for local MCP execution and control-plane sync
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Self-heal a lost registration instead of wedging. register() ran ONCE in start() and never again, while the control-plane registry is in-memory — so any api restart orphaned the node and every later poll/heartbeat failed forever until a human restarted the machine (the documented #1 failure of the remote-execution path; 188 errors from one client in 24h). Poll and heartbeat now re-register on an unregistered response and retry, sharing one in-flight attempt and floored to one per heartbeat interval so two timers cannot flood. Also fixed the heartbeat timer callbacks: `void p` does not handle a rejection, so a failing heartbeat became an unhandled rejection that Node terminates the process on by default.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Serialize overlapping poll ticks with one in-flight promise and refuse to claim while currentTaskId is set, preventing duplicate claim/execution when a slow task outlives the polling interval.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Deliver one-use browser-task callbacks from trusted daemon metadata after execution; capability, subject, URL, and operation never enter MCP arguments or model context.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Separate execution/result-parse failure from callback transport failure: validate before journal completion, retry the identical valid result, and never replace a completed result with a contradictory failed callback.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -17,6 +19,11 @@ import {
 } from '@/shared/types';
 import { McpStdioClient } from './mcp-stdio-client';
 import { ControlPlaneHttpError, RemoteClientControlPlaneClient } from './remote-client-control-plane-client';
+import {
+  deliverTaskCompletionCallback,
+  parseBrowserTaskCallbackResult,
+  type BrowserTaskCallbackResult,
+} from './remote-task-completion-callback';
 import {
   type RemoteClientConfig,
   type RemoteClientTask,
@@ -309,101 +316,132 @@ export class RemoteClientService {
     const parsedTask = RemoteClientTaskSchema.parse(task);
     this.currentTaskId = parsedTask.taskId;
     await this.sendHeartbeat('online', parsedTask.taskId);
-
+    let result: A2ATaskResult;
+    let callbackResult: BrowserTaskCallbackResult | undefined;
     try {
-      let result: A2ATaskResult;
-
-      switch (parsedTask.intent) {
-        case 'mcp.initialize': {
-          result = A2ATaskResultSchema.parse({
-            taskId: parsedTask.taskId,
-            correlationId: parsedTask.correlationId,
-            clientId: this.config.clientId,
-            status: 'completed',
-            output: { ready: this.mcpClient.isReady() },
-            completedAt: new Date().toISOString(),
-          });
-          break;
-        }
-        case 'mcp.list-tools': {
-          const tools = await this.mcpClient.listTools();
-          this.lastKnownToolCount = this.extractToolNames(tools).length;
-          result = A2ATaskResultSchema.parse({
-            taskId: parsedTask.taskId,
-            correlationId: parsedTask.correlationId,
-            clientId: this.config.clientId,
-            status: 'completed',
-            output: tools,
-            completedAt: new Date().toISOString(),
-          });
-          break;
-        }
-        case 'mcp.call-tool': {
-          const toolName = this.readString(parsedTask.input.toolName) || this.readString(parsedTask.input.name);
-          if (!toolName) {
-            throw new Error('Remote task missing toolName');
-          }
-          const toolArgs = this.readRecord(parsedTask.input.arguments ?? parsedTask.input.params ?? parsedTask.input.input);
-          const output = await this.mcpClient.callTool(toolName, toolArgs);
-          result = A2ATaskResultSchema.parse({
-            taskId: parsedTask.taskId,
-            correlationId: parsedTask.correlationId,
-            clientId: this.config.clientId,
-            status: 'completed',
-            output,
-            completedAt: new Date().toISOString(),
-          });
-          break;
-        }
-        case 'mcp.shutdown': {
-          await this.stop();
-          result = A2ATaskResultSchema.parse({
-            taskId: parsedTask.taskId,
-            correlationId: parsedTask.correlationId,
-            clientId: this.config.clientId,
-            status: 'completed',
-            output: { stopped: true },
-            completedAt: new Date().toISOString(),
-          });
-          break;
-        }
-        case 'status.sync':
-        default: {
-          result = A2ATaskResultSchema.parse({
-            taskId: parsedTask.taskId,
-            correlationId: parsedTask.correlationId,
-            clientId: this.config.clientId,
-            status: 'completed',
-            output: {
-              clientId: this.config.clientId,
-              platform: this.config.platform,
-              toolCount: this.lastKnownToolCount,
-              mcpReady: this.mcpClient.isReady(),
-              controlPlaneUrl: this.config.controlPlaneUrl,
-            },
-            completedAt: new Date().toISOString(),
-          });
-          break;
-        }
-      }
-
-      await this.controlPlane.completeTask(result);
-      this.currentTaskId = null;
-      await this.sendHeartbeat('online', null);
+      result = await this.executeTaskIntent(parsedTask);
+      callbackResult = this.validateCompletionCallback(parsedTask, result.output);
     } catch (error) {
-      const completion = RemoteClientTaskCompletionSchema.parse({
-        taskId: parsedTask.taskId,
-        correlationId: parsedTask.correlationId,
-        clientId: this.config.clientId,
-        status: 'failed',
-        error: error instanceof Error ? error.message : 'Remote task failed',
-        completedAt: new Date().toISOString(),
-      });
-
-      await this.controlPlane.failTask(completion);
+      await this.failTask(parsedTask, error);
+      return;
+    }
+    try {
+      await this.controlPlane.completeTask(result);
+    } catch (error) {
+      logger.error({ err: error, taskId: parsedTask.taskId }, 'Remote task completion settlement failed');
       this.currentTaskId = null;
       await this.sendHeartbeat('degraded', null);
-      logger.error({ err: error, taskId: parsedTask.taskId }, 'Remote task execution failed');
+      return;
+    }
+    const delivered = await this.deliverCompletionCallback(parsedTask, callbackResult);
+    this.currentTaskId = null;
+    await this.sendHeartbeat(delivered ? 'online' : 'degraded', null);
+  }
+
+  /** @description Executes one validated task intent and returns its canonical terminal result. */
+  private async executeTaskIntent(task: RemoteClientTask): Promise<A2ATaskResult> {
+    if (task.intent === 'mcp.initialize') {
+      return this.completedResult(task, { ready: this.mcpClient.isReady() });
+    }
+    if (task.intent === 'mcp.list-tools') {
+      const tools = await this.mcpClient.listTools();
+      this.lastKnownToolCount = this.extractToolNames(tools).length;
+      return this.completedResult(task, tools);
+    }
+    if (task.intent === 'mcp.call-tool') {
+      const toolName = this.readString(task.input.toolName) || this.readString(task.input.name);
+      if (!toolName) throw new Error('Remote task missing toolName');
+      const args = this.readRecord(task.input.arguments ?? task.input.params ?? task.input.input);
+      return this.completedResult(task, await this.mcpClient.callTool(toolName, args));
+    }
+    if (task.intent === 'mcp.shutdown') {
+      await this.stop();
+      return this.completedResult(task, { stopped: true });
+    }
+    return this.completedResult(task, this.statusOutput());
+  }
+
+  /** @description Builds a canonical successful task result without duplicating wire fields. */
+  private completedResult(task: RemoteClientTask, output: unknown): A2ATaskResult {
+    return A2ATaskResultSchema.parse({
+      taskId: task.taskId,
+      correlationId: task.correlationId,
+      clientId: this.config.clientId,
+      status: 'completed',
+      output,
+      completedAt: new Date().toISOString(),
+    });
+  }
+
+  /** @description Returns the status-sync payload for the local remote runtime. */
+  private statusOutput(): Record<string, unknown> {
+    return {
+      clientId: this.config.clientId,
+      platform: this.config.platform,
+      toolCount: this.lastKnownToolCount,
+      mcpReady: this.mcpClient.isReady(),
+      controlPlaneUrl: this.config.controlPlaneUrl,
+    };
+  }
+
+  /** @description Strictly parses model output before the generic task can be journal-completed. */
+  private validateCompletionCallback(
+    task: RemoteClientTask,
+    output: unknown,
+  ): BrowserTaskCallbackResult | undefined {
+    return task.completionCallback ? parseBrowserTaskCallbackResult(output) : undefined;
+  }
+
+  /** @description Retries one immutable result and degrades without inventing a different outcome. */
+  private async deliverCompletionCallback(
+    task: RemoteClientTask,
+    result: BrowserTaskCallbackResult | undefined,
+  ): Promise<boolean> {
+    if (!task.completionCallback || !result) return true;
+    try {
+      await deliverTaskCompletionCallback(
+        task.completionCallback,
+        task.taskId,
+        result,
+        this.config.controlPlaneUrl,
+      );
+      return true;
+    } catch (error) {
+      logger.error({ err: error, taskId: task.taskId }, 'Remote task completion callback exhausted retries');
+      return false;
+    }
+  }
+
+  /** @description Settles only execution/strict-parse failure and reports one consistent failure. */
+  private async failTask(task: RemoteClientTask, error: unknown): Promise<void> {
+    const completion = RemoteClientTaskCompletionSchema.parse({
+      taskId: task.taskId,
+      correlationId: task.correlationId,
+      clientId: this.config.clientId,
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'Remote task failed',
+      completedAt: new Date().toISOString(),
+    });
+    try { await this.controlPlane.failTask(completion); }
+    catch (settleError) {
+      logger.error({ err: settleError, taskId: task.taskId }, 'Remote task failure settlement failed');
+    }
+    await this.deliverFailureCallback(task);
+    this.currentTaskId = null;
+    await this.sendHeartbeat('degraded', null);
+    logger.error({ err: error, taskId: task.taskId }, 'Remote task execution failed');
+  }
+
+  /** @description Resolves a scoped browser plan as failed when execution cannot yield valid JSON. */
+  private async deliverFailureCallback(task: RemoteClientTask): Promise<void> {
+    if (!task.completionCallback) return;
+    try {
+      await deliverTaskCompletionCallback(task.completionCallback, task.taskId, {
+        result: 'failed',
+        note: 'Remote browser task failed before returning a valid result.',
+      }, this.config.controlPlaneUrl);
+    } catch (error) {
+      logger.error({ err: error, taskId: task.taskId }, 'Remote task failure callback was not accepted');
     }
   }
 

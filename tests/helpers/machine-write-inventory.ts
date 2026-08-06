@@ -6,6 +6,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The machine-write identity inventory (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE, not just reads"). Sibling of unguarded-route-allowlist.ts: that list answers "may this mount be anonymous?", this one answers the question that actually took production down twice — "when this MACHINE caller writes an owner-scoped row, whose identity is on the connection?". a2a-routes hit it in July (anonymous sub '' vs the FORCE RLS WITH CHECK on tickets) and the ADR-119 alert intake in August (PR #99, same failure, found by a container-kill drill and not by any of its 32 green unit guards). Enforced by tests/unit/machine-write-identity.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Closed all four ambient service-secret operator residuals with trusted caller-scoped identities and behavioral drivers; added the strictly machine-authenticated, node-local-only node-pool control surface to discovery coverage and lowered both debt ratchets.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added the final five real HTTP/auth-boundary identity drivers and reduced the unproven-entry ratchet to zero; every owner-scoped machine surface in this inventory is now behaviorally observed at its database/cost write seam.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Profile Studio result ingest as one-use capability authentication bound to exact callback context instead of a reusable fleet service secret.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Apply result ingest as a one-use
+ *   exact-task capability and remove the residual body-asserted/unscoped ticket path.
  */
 
 /**
@@ -26,6 +29,8 @@ export type MachineAuthMechanism =
   | 'shared-bearer'
   /** A per-credential token the swarm minted and can revoke (A2A agent token, `oshal_pat_…`). */
   | 'per-credential-bearer'
+  /** A short-lived single-operation token whose digest is atomically consumed with its bound row. */
+  | 'one-use-capability'
   /** The provider signs the delivery: HMAC, Twilio signature, Facebook signed_request, secret-token header. */
   | 'provider-signature'
   /** A real OIDC/local session — a human, not a machine. Present so mixed routers can be described. */
@@ -203,29 +208,28 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
     id: 'profile-studio-ingest',
     entryPoint: 'POST /api/profile-studio/ingest',
     file: 'src/app/routes/profile-studio-ingest-routes.ts',
-    auth: 'service-secret',
+    auth: 'one-use-capability',
     ownerScopedTables: ['linkedin_profile_plans'],
-    identity: { kind: 'caller-scoped', via: 'runWithRequestIdentity({ sub: body.userSub, isOperator:false })' },
+    identity: { kind: 'caller-scoped', via: 'runWithRequestIdentity({ sub: callback.context.userSub, isOperator:false })' },
     behaviorallyProven: true,
     note:
-      'Documented itself as mirroring /api/apply/ingest and mirrored everything except the identity '
-      + 're-entry, so a desktop-worker callback mutated a user-owned row from an OPERATOR connection. '
-      + 'linkedin_profile_plans has no policy yet (migration 087 adds none), which is why nothing '
-      + 'surfaced it — the latent shape, fixed before the policy lands rather than after.',
+      'The trusted desktop runtime presents a short-lived random capability whose hash is bound to '
+      + 'the exact owner, generation, task, client, and resolve operation. The route re-enters that '
+      + 'exact opaque owner with isOperator:false, and the same UPDATE atomically consumes the token.',
   },
   {
     id: 'apply-ingest',
-    entryPoint: 'POST /api/apply/{ingest,dispatch,enqueue,site-cred,email-code,shot,…}',
+    entryPoint: 'POST /api/apply/ingest',
     file: 'src/app/routes/apply-ingest-routes.ts',
-    auth: 'service-secret',
-    ownerScopedTables: ['ats_site_credentials', 'tickets'],
-    identity: { kind: 'caller-scoped', via: 'runWithRequestIdentity({ sub: userSub, isOperator:false }) per handler' },
+    auth: 'one-use-capability',
+    ownerScopedTables: ['tickets'],
+    identity: { kind: 'caller-scoped', via: 'runWithRequestIdentity({ sub: claim.userSub, isOperator:false }) after durable capability lookup' },
     behaviorallyProven: true,
     note:
-      'The site-cred / email-code / enqueue handlers were already caller-scoped; POST /ingest was not, '
-      + 'so a caller-supplied ticketId became an operator-privileged UPDATE with no owner check. Now '
-      + 'scoped to the asserted userSub, which makes RLS itself refuse a ticket that user does not own. '
-      + 'RESIDUAL: a callback that omits userSub keeps the legacy unscoped path and logs a WARN.',
+      'The remote daemon presents a short-lived random capability carried outside model arguments. '
+      + 'Its PostgreSQL digest supplies the exact owner, ticket, posting, task, client, generation, and '
+      + 'expiry; the body cannot select identity. Queue recording must acknowledge those exact facts '
+      + 'before the route enters the opaque owner identity and settles the ticket. No unscoped fallback.',
   },
   {
     id: 'remote-client-plane',

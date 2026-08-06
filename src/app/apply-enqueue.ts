@@ -22,15 +22,43 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Optional targetRemoteClientId on
  *   ApplyPosting → stored in ticket metadata so the dispatcher pins the submission to the operator's
  *   chosen leaf node; enqueueApplyQueue applies one chosen node to the whole bulk mint.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve persisted owner_sub exactly while rehydrating/reaping apply work. Recovery no longer trims case-sensitive identities into another user's scope.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Carry strict final-submit authorization on each
+ *   ticket. Authenticated single-job enqueue may authorize one task; shared bulk enqueue reads the
+ *   installed Career app's exact-user setting under the existing request identity and mints nothing
+ *   on absent/false settings, identity mismatch, app absence, or query failure.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Seal authorized ticket metadata against exact
+ *   ticket/owner/posting/source, holding new tickets in backlog until the seal is durable so generic
+ *   metadata writes and queue races cannot counterfeit or observe half-authorized work.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Rehydrate exact durable task/worker bindings and recover stale tickets into assist review, never blind auto-resubmission; periodic sweeps also reconcile raw claims and healthy-idle workers.
  *
  * @module app/apply-enqueue
  */
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
-import { CreateInternalTicketSchema } from '@/entities/ticket';
-import { runApplyCli } from '@/app/apply-submit';
-import { applyInFlight } from '@/app/apply-inflight';
-import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { CreateInternalTicketSchema, type InternalTicket } from '@/entities/ticket';
+import {
+  reapUserApplyClaims,
+  reconcileApplyInFlight,
+  recoverUnknownApply,
+  runApplyCli,
+} from '@/app/apply-submit';
+import { applyInFlight, findByTicket } from '@/app/apply-inflight';
+import {
+  getRequestIdentity,
+  runWithRequestIdentity,
+  runWithSystemIdentity,
+} from '@/shared/services/database/request-identity';
+import { readCareerAutoSubmitAuthorization } from '@/app/apply-authorization-bridge';
+import {
+  applySubmitAuthorizationFromMetadata,
+  applySubmitAuthorizationMetadata,
+  CAREER_AUTO_SUBMIT_SETTING,
+  FINAL_SUBMIT_DENIED,
+  isApplyFinalSubmitAuthorized,
+  requireApplySubmitAuthorizationSealing,
+  type ApplySubmitAuthorization,
+} from '@/app/apply-submit-authorization';
 
 const logger = createChildLogger({ module: 'apply-enqueue' });
 
@@ -46,7 +74,23 @@ export interface ApplyPosting {
 }
 
 export interface EnqueueOneResult { ok: boolean; ticketId?: string; deduped?: boolean; error?: string; }
-export interface EnqueueQueueResult { ok: boolean; created: number; deduped: number; ticketIds: string[]; note?: string; }
+export type EnqueueQueueDenialReason =
+  | 'authenticated-user-required'
+  | 'auto-submit-disabled'
+  | 'authorization-unavailable';
+
+export interface EnqueueQueueResult {
+  ok: boolean;
+  created: number;
+  deduped: number;
+  ticketIds: string[];
+  note?: string;
+  denialReason?: EnqueueQueueDenialReason;
+}
+
+const BULK_IDENTITY_NOTE = 'bulk auto-submit requires the exact authenticated user';
+const BULK_DISABLED_NOTE = 'Career auto-submit is disabled for this user';
+const BULK_UNAVAILABLE_NOTE = 'Career auto-submit authorization is unavailable';
 
 /** Build the ticket title/description so the manifest-worker apply-intent regex matches (noun+verb)
  *  and the posting is unmistakable to a human reading the queue. */
@@ -66,6 +110,79 @@ function applyTicketFields(p: ApplyPosting): { title: string; description: strin
   };
 }
 
+/** @description Upgrade one de-duplicated ticket without ever downgrading valid authorization. */
+async function reuseApplyTicket(
+  ctx: AppContext,
+  existing: InternalTicket,
+  userSub: string,
+  postingId: number,
+  authorization: ApplySubmitAuthorization,
+): Promise<EnqueueOneResult> {
+  const binding = { ticketId: existing.ticketId, userSub, postingId };
+  const current = applySubmitAuthorizationFromMetadata(existing.metadata, binding);
+  const requested = isApplyFinalSubmitAuthorized(authorization);
+  if (requested && !isApplyFinalSubmitAuthorized(current)) {
+    await ctx.ticketService.updateTicket(existing.ticketId, {
+      metadata: { ...existing.metadata, ...applySubmitAuthorizationMetadata(authorization, binding) },
+    });
+  }
+  if (existing.status === 'backlog' &&
+      (isApplyFinalSubmitAuthorized(current) || requested)) {
+    await ctx.ticketService.updateStatus(existing.ticketId, 'approved', {
+      source: 'apply-enqueue', reason: 'final-submit authorization sealed',
+    });
+  }
+  logger.info({ userSub, postingId, ticketId: existing.ticketId }, 'apply enqueue: deduped to existing open ticket');
+  return { ok: true, ticketId: existing.ticketId, deduped: true };
+}
+
+/** @description Seal an authorized new ticket before making it visible to the queue manager. */
+async function sealAndApproveApplyTicket(
+  ctx: AppContext,
+  ticket: Pick<InternalTicket, 'ticketId' | 'metadata'>,
+  userSub: string,
+  postingId: number,
+  authorization: ApplySubmitAuthorization,
+): Promise<void> {
+  await ctx.ticketService.updateTicket(ticket.ticketId, {
+    metadata: {
+      ...ticket.metadata,
+      ...applySubmitAuthorizationMetadata(authorization, { ticketId: ticket.ticketId, userSub, postingId }),
+    },
+  });
+  await ctx.ticketService.updateStatus(ticket.ticketId, 'approved', {
+    source: 'apply-enqueue', reason: 'final-submit authorization sealed',
+  });
+}
+
+/** @description Create one durable ticket, sealing authorization before queue eligibility. */
+async function createApplyTicket(
+  ctx: AppContext,
+  userSub: string,
+  posting: ApplyPosting,
+  fields: { title: string; description: string },
+  authorization: ApplySubmitAuthorization,
+): Promise<EnqueueOneResult> {
+  const postingId = Number(posting.postingId);
+  const authorized = isApplyFinalSubmitAuthorized(authorization);
+  const ticket = await ctx.ticketService.createTicket(CreateInternalTicketSchema.parse({
+    ...fields, ticketType: 'task', priority: 'medium', ownerSub: userSub,
+    // Authorized tickets remain undispatchable until their ticket-id-bound seal is durable.
+    status: authorized ? 'backlog' : 'approved',
+    metadata: {
+      source: 'apply-enqueue', postingId, applyPostingId: String(postingId),
+      company: posting.company || null, jobUrl: posting.url || null,
+      ...applySubmitAuthorizationMetadata(FINAL_SUBMIT_DENIED),
+      ...(posting.targetRemoteClientId ? { targetRemoteClientId: posting.targetRemoteClientId } : {}),
+    },
+  }));
+  if (authorized) {
+    await sealAndApproveApplyTicket(ctx, ticket, userSub, postingId, authorization);
+  }
+  logger.info({ userSub, postingId, ticketId: ticket.ticketId }, 'apply enqueue: filed durable job-apply ticket');
+  return { ok: true, ticketId: ticket.ticketId };
+}
+
 /**
  * @description File ONE durable `task` apply ticket for a specific packet-ready posting (the "auto
  * submit" button's action). Idempotent per posting: if a non-cancelled apply ticket already exists
@@ -75,40 +192,24 @@ function applyTicketFields(p: ApplyPosting): { title: string; description: strin
  * @param posting - The posting to apply to (postingId required; company/title/url for readability).
  * @returns The created (or existing) ticketId, or an error.
  */
-export async function enqueueApplyTicket(ctx: AppContext, userSub: string, posting: ApplyPosting): Promise<EnqueueOneResult> {
+export async function enqueueApplyTicket(
+  ctx: AppContext,
+  userSub: string,
+  posting: ApplyPosting,
+  authorization: ApplySubmitAuthorization = FINAL_SUBMIT_DENIED,
+): Promise<EnqueueOneResult> {
   const postingId = Number(posting.postingId);
   if (!userSub) return { ok: false, error: 'userSub required' };
   if (!Number.isFinite(postingId) || postingId <= 0) return { ok: false, error: 'a valid postingId is required' };
   const { title, description } = applyTicketFields(posting);
   try {
+    if (isApplyFinalSubmitAuthorized(authorization)) requireApplySubmitAuthorizationSealing();
     return await runWithRequestIdentity({ sub: userSub, isOperator: false }, async () => {
       const existing = await ctx.ticketService.findActiveTicketByMetadataKey('applyPostingId', String(postingId));
       if (existing) {
-        logger.info({ userSub, postingId, ticketId: existing.ticketId }, 'apply enqueue: deduped to existing open ticket');
-        return { ok: true, ticketId: existing.ticketId, deduped: true };
+        return reuseApplyTicket(ctx, existing, userSub, postingId, authorization);
       }
-      // .parse() fills the schema defaults (labels/externalId/…) so the object satisfies the
-      // post-default CreateInternalTicketInput type — cleaner + validated vs. the `as never` idiom.
-      const ticket = await ctx.ticketService.createTicket(CreateInternalTicketSchema.parse({
-        title,
-        description,
-        ticketType: 'task',
-        status: 'approved',            // skip the manual backlog gate — the queue works it directly
-        priority: 'medium',
-        ownerSub: userSub,
-        metadata: {
-          source: 'apply-enqueue',
-          postingId,                   // number — dispatchJobApplicationTask reads this to pick the packet
-          applyPostingId: String(postingId),  // string — dedup key (metadata ->> 'applyPostingId')
-          company: posting.company || null,
-          jobUrl: posting.url || null,
-          // Optional pinned leaf node — dispatchJobApplicationTask forwards it so THIS box drives the browser.
-          ...(posting.targetRemoteClientId ? { targetRemoteClientId: posting.targetRemoteClientId } : {}),
-        },
-      }));
-      const ticketId = (ticket as { ticketId?: string; id?: string }).ticketId ?? (ticket as { id?: string }).id;
-      logger.info({ userSub, postingId, ticketId }, 'apply enqueue: filed durable job-apply ticket');
-      return { ok: true, ticketId };
+      return createApplyTicket(ctx, userSub, posting, { title, description }, authorization);
     });
   } catch (err) {
     logger.error({ err, userSub, postingId }, 'apply enqueue: failed to file ticket');
@@ -124,6 +225,7 @@ export async function enqueueApplyTicket(ctx: AppContext, userSub: string, posti
  */
 const ORPHAN_AFTER_MS = 35 * 60 * 1000;
 const REAP_EVERY_MS = 10 * 60 * 1000;
+const RECONCILE_EVERY_MS = 30 * 1000;
 
 /** A submission dispatched within this window may still be live on the desktop, so it must keep
  *  holding the per-user in-flight slot after a controller restart. Matches APPLY_SUBMISSION_TIMEOUT. */
@@ -146,19 +248,28 @@ export async function rehydrateApplyInFlight(ctx: AppContext): Promise<number> {
     // Cross-owner boot sweep over the owner-RLS'd tickets table: SYSTEM identity, or
     // OSHAL_DB_GUC_STRICT=deny rejects the identity-less query and this silently restores nothing.
     const { rows } = await runWithSystemIdentity(() => ctx.pool!.query(
-      `SELECT ticket_id, owner_sub, metadata->>'applyPostingId' AS posting_id,
-              EXTRACT(EPOCH FROM (now() - updated_at)) * 1000 AS age_ms
-         FROM tickets
-        WHERE metadata->>'source' = 'apply-enqueue'
-          AND status = 'in_process_build'
-          AND updated_at > now() - ($1::int * interval '1 millisecond')`,
+      `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
+              EXTRACT(EPOCH FROM (now() - t.updated_at)) * 1000 AS age_ms,
+              cap.task_id, cap.client_id
+         FROM tickets t
+         LEFT JOIN LATERAL (
+           SELECT task_id, client_id FROM apply_task_capabilities
+            WHERE ticket_id=t.ticket_id AND state IN ('active','processing')
+            ORDER BY generation DESC LIMIT 1
+         ) cap ON TRUE
+        WHERE t.metadata->>'source' = 'apply-enqueue'
+          AND t.status = 'in_process_build'
+          AND t.updated_at > now() - ($1::int * interval '1 millisecond')`,
       [REHYDRATE_WITHIN_MS],
     ));
     let restored = 0;
-    for (const row of rows as Array<{ ticket_id: string; owner_sub: string | null; posting_id: string | null; age_ms: string }>) {
-      const userSub = String(row.owner_sub || '').trim();
-      if (!userSub) continue;
-      const taskId = `rehydrated:${row.ticket_id}`;
+    for (const row of rows as Array<{
+      ticket_id: string; owner_sub: string | null; posting_id: string | null;
+      age_ms: string; task_id: string | null; client_id: string | null;
+    }>) {
+      const userSub = typeof row.owner_sub === 'string' ? row.owner_sub : '';
+      if (userSub.length === 0) continue;
+      const taskId = row.task_id || `rehydrated:${row.ticket_id}`;
       if (applyInFlight.has(taskId)) continue;
       const remaining = Math.max(60 * 1000, REHYDRATE_WITHIN_MS - Number(row.age_ms || 0));
       // Release the slot when the window lapses. Recovery is the reaper's job, not this timer's.
@@ -166,7 +277,8 @@ export async function rehydrateApplyInFlight(ctx: AppContext): Promise<number> {
       if (typeof timer.unref === 'function') timer.unref();
       applyInFlight.set(taskId, {
         taskId, ticketId: row.ticket_id, postingId: Number(row.posting_id) || 0,
-        userSub, timer, startedAt: Date.now() - Number(row.age_ms || 0),
+        userSub, clientId: row.client_id || undefined,
+        timer, startedAt: Date.now() - Number(row.age_ms || 0),
       });
       restored += 1;
     }
@@ -178,18 +290,49 @@ export async function rehydrateApplyInFlight(ctx: AppContext): Promise<number> {
   }
 }
 
+interface StaleApplyRow {
+  ticket_id: string;
+  owner_sub: string | null;
+  posting_id: string | null;
+  task_id: string | null;
+  client_id: string | null;
+}
+
+/** Seed one exact stale run so the shared ambiguity-safe recovery path can settle it. */
+function seedStaleApplyRun(row: StaleApplyRow): string | null {
+  const userSub = typeof row.owner_sub === 'string' ? row.owner_sub : '';
+  if (!userSub) return null;
+  const current = findByTicket(row.ticket_id);
+  if (current) return current.taskId;
+  const taskId = row.task_id || `rehydrated:${row.ticket_id}`;
+  const timer = setTimeout(() => undefined, ORPHAN_AFTER_MS);
+  if (typeof timer.unref === 'function') timer.unref();
+  applyInFlight.set(taskId, {
+    taskId, ticketId: row.ticket_id, postingId: Number(row.posting_id) || 0,
+    userSub, clientId: row.client_id || undefined, timer,
+    startedAt: Date.now() - ORPHAN_AFTER_MS,
+  });
+  return taskId;
+}
+
+/** Release raw legacy/expired claims for every owner known to the durable Apply ticket rail. */
+async function reapKnownRawClaims(ctx: AppContext): Promise<number> {
+  const result = await runWithSystemIdentity(() => ctx.pool!.query(
+    `SELECT DISTINCT owner_sub FROM tickets
+      WHERE metadata->>'source'='apply-enqueue' AND owner_sub IS NOT NULL`,
+  ));
+  let released = 0;
+  for (const row of result.rows as Array<{ owner_sub: string }>) {
+    const outcome = await reapUserApplyClaims(row.owner_sub);
+    released += Number(outcome?.released || 0);
+  }
+  return released;
+}
+
 /**
- * @description Recover apply tickets orphaned in `in_process_build`. The in-flight registry + its
- * 30-minute watchdog live in PROCESS MEMORY, so an api restart (deploy, crash, the stack watchdog
- * recreating containers) loses them: the ticket is stuck in_process_build forever because the queue
- * manager only ever dispatches `approved`. This returns sufficiently-stale ones to the queue and
- * rolls their posting's claim back, so an overnight drain genuinely survives restarts.
- *
- * Safety: only tickets older than ORPHAN_AFTER_MS (> the watchdog window) are touched, and the
- * `queue requeue` CLI hard-refuses any posting with applied_at set — a submitted application is never
- * resurrected into a duplicate.
- * @param ctx - App context (ticketService + pool).
- * @returns How many tickets were returned to the queue.
+ * @description Recover stale Apply tickets into human confirmation, never `approved`. A browser may
+ * have clicked Submit before its callback was lost, so blind re-dispatch is forbidden by ADR-101.
+ * Also releases legacy/expired raw SQLite claims for every known exact owner.
  */
 export async function reapOrphanedApplyTickets(ctx: AppContext): Promise<number> {
   if (!ctx.pool) return 0;
@@ -197,35 +340,47 @@ export async function reapOrphanedApplyTickets(ctx: AppContext): Promise<number>
     // Cross-owner background sweep over the owner-RLS'd tickets table: SYSTEM identity, or
     // OSHAL_DB_GUC_STRICT=deny rejects the identity-less query and nothing is ever reaped.
     const { rows } = await runWithSystemIdentity(() => ctx.pool!.query(
-      `SELECT ticket_id, owner_sub, metadata->>'applyPostingId' AS posting_id
-         FROM tickets
-        WHERE metadata->>'source' = 'apply-enqueue'
-          AND status = 'in_process_build'
-          AND updated_at < now() - ($1::int * interval '1 millisecond')`,
+      `SELECT t.ticket_id, t.owner_sub, t.metadata->>'applyPostingId' AS posting_id,
+              cap.task_id, cap.client_id
+         FROM tickets t
+         LEFT JOIN LATERAL (
+           SELECT task_id, client_id FROM apply_task_capabilities
+            WHERE ticket_id=t.ticket_id ORDER BY generation DESC LIMIT 1
+         ) cap ON TRUE
+        WHERE t.metadata->>'source' = 'apply-enqueue'
+          AND t.status = 'in_process_build'
+          AND t.updated_at < now() - ($1::int * interval '1 millisecond')`,
       [ORPHAN_AFTER_MS],
     ));
     let reaped = 0;
-    for (const row of rows as Array<{ ticket_id: string; owner_sub: string | null; posting_id: string | null }>) {
-      const userSub = String(row.owner_sub || '').trim();
-      if (!userSub) continue;
-      // Roll the claim back first so the re-queued ticket can actually find its posting again.
-      if (row.posting_id) await runApplyCli(userSub, ['queue', 'requeue', String(row.posting_id)]);
-      try {
-        await runWithRequestIdentity({ sub: userSub, isOperator: false }, () =>
-          ctx.ticketService.updateStatus(row.ticket_id, 'approved', {
-            source: 'apply-reaper',
-            reason: 'orphaned_in_flight_recovered',
-            message: 'The submission was in flight when the controller restarted and never reported back; returned to the queue.',
-          }));
+    for (const row of rows as StaleApplyRow[]) {
+      const taskId = seedStaleApplyRun(row);
+      if (taskId && await recoverUnknownApply(ctx, taskId, 'apply_controller_restart_orphan')) {
         reaped += 1;
-      } catch (err) { logger.warn({ err, ticketId: row.ticket_id }, 'apply reaper: ticket requeue failed'); }
+      }
     }
-    if (reaped) logger.info({ reaped }, 'apply reaper: returned orphaned in-flight apply tickets to the queue');
+    const rawClaims = await reapKnownRawClaims(ctx);
+    if (reaped || rawClaims) logger.info({ reaped, rawClaims }, 'apply reaper: parked orphaned runs and released raw claims');
     return reaped;
   } catch (err) {
     logger.error({ err }, 'apply reaper: sweep failed');
     return 0;
   }
+}
+
+let recoverySweepRunning = false;
+
+/** Reconcile live worker truth before the slower stale-ticket/raw-claim sweep. */
+async function runApplyRecoverySweep(ctx: AppContext): Promise<void> {
+  if (recoverySweepRunning) return;
+  recoverySweepRunning = true;
+  try {
+    const live = await reconcileApplyInFlight(ctx);
+    const stale = await reapOrphanedApplyTickets(ctx);
+    if (live || stale) logger.warn({ live, stale }, 'apply recovery sweep settled orphaned work');
+  } catch (err) {
+    logger.error({ err }, 'apply recovery sweep failed');
+  } finally { recoverySweepRunning = false; }
 }
 
 /**
@@ -234,11 +389,14 @@ export async function reapOrphanedApplyTickets(ctx: AppContext): Promise<number>
  * @param ctx - App context.
  */
 export function startApplyReaper(ctx: AppContext): void {
-  const kick = setTimeout(() => { void reapOrphanedApplyTickets(ctx); }, 60 * 1000);
-  const timer = setInterval(() => { void reapOrphanedApplyTickets(ctx); }, REAP_EVERY_MS);
+  const kick = setTimeout(() => { void runApplyRecoverySweep(ctx); }, 60 * 1000);
+  const timer = setInterval(() => { void runApplyRecoverySweep(ctx); }, REAP_EVERY_MS);
+  const reconcile = setInterval(() => { void reconcileApplyInFlight(ctx); }, RECONCILE_EVERY_MS);
   if (typeof kick.unref === 'function') kick.unref();
   if (typeof timer.unref === 'function') timer.unref();
-  logger.info({ orphanAfterMs: ORPHAN_AFTER_MS, everyMs: REAP_EVERY_MS }, 'apply reaper started');
+  if (typeof reconcile.unref === 'function') reconcile.unref();
+  logger.info({ orphanAfterMs: ORPHAN_AFTER_MS, everyMs: REAP_EVERY_MS,
+    reconcileEveryMs: RECONCILE_EVERY_MS }, 'apply reaper started');
 }
 
 /**
@@ -254,6 +412,29 @@ export function startApplyReaper(ctx: AppContext): void {
  */
 export async function enqueueApplyQueue(ctx: AppContext, userSub: string, limit = 200, targetRemoteClientId?: string): Promise<EnqueueQueueResult> {
   if (!userSub) return { ok: false, created: 0, deduped: 0, ticketIds: [], note: 'userSub required' };
+  const identity = getRequestIdentity();
+  if (!identity || identity.system === true || identity.sub !== userSub) {
+    return {
+      ok: false, created: 0, deduped: 0, ticketIds: [],
+      denialReason: 'authenticated-user-required', note: BULK_IDENTITY_NOTE,
+    };
+  }
+  const decision = await readCareerAutoSubmitAuthorization(ctx.pool, userSub);
+  if (!decision.authorized) {
+    const unavailable = decision.reason === 'unavailable';
+    return {
+      ok: false, created: 0, deduped: 0, ticketIds: [],
+      denialReason: unavailable ? 'authorization-unavailable' : 'auto-submit-disabled',
+      note: unavailable ? BULK_UNAVAILABLE_NOTE : BULK_DISABLED_NOTE,
+    };
+  }
+  try { requireApplySubmitAuthorizationSealing(); }
+  catch {
+    return {
+      ok: false, created: 0, deduped: 0, ticketIds: [],
+      denialReason: 'authorization-unavailable', note: BULK_UNAVAILABLE_NOTE,
+    };
+  }
   const cap = Math.max(1, Math.min(500, limit));
   // The CLI emits snake_case rows (posting_id) — the sqlite/DB convention. Normalize to the
   // camelCase ApplyPosting shape enqueueApplyTicket expects (postingId), or every row fails the
@@ -272,7 +453,7 @@ export async function enqueueApplyQueue(ctx: AppContext, userSub: string, limit 
   const ticketIds: string[] = [];
   let deduped = 0;
   for (const item of items) {
-    const r = await enqueueApplyTicket(ctx, userSub, item);
+    const r = await enqueueApplyTicket(ctx, userSub, item, CAREER_AUTO_SUBMIT_SETTING);
     if (r.ok && r.ticketId) { if (r.deduped) deduped += 1; else ticketIds.push(r.ticketId); }
   }
   logger.info({ userSub, created: ticketIds.length, deduped, listed: items.length }, 'apply enqueue: bulk mint complete');

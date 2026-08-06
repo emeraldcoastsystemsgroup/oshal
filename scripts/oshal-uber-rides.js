@@ -14,6 +14,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Uber Rides (transportation) CLI.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | REAL distance, and the coordinates the map needs.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *   The estimate was a fake: pseudoKm() SHA-256-hashed the pickup+dropoff STRINGS into a 2-19.9 km
  *   pseudo-distance and every fare/ETA derived from it — so "1 Main St" and "1 Main Street" quoted
  *   different trips, and neither number meant anything. Meanwhile buildRideLinks() already geocoded
@@ -51,12 +52,11 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 // ── Identity ────────────────────────────────────────────────────────────────
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 // ── Credential resolution: brokered first, then DB ──────────────────────────

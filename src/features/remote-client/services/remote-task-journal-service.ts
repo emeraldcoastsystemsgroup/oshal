@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add durable client-owner binding and owner-aware claims so API restart registration and polling cannot bypass the fixed task owner.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Stamp an omitted task userSub from the durable owner after rejecting mismatches, making replayed billing attribution authoritative rather than caller-optional.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Serialize outbox replay passes with a service-level single flight so a burst of settlements cannot pin every pool connection while publishers need the same pool for cost and work-item writes.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Keep durable owner subjects exact while retaining nonblank validation; client/task identifiers still use their existing text normalization, but case/whitespace in OIDC subjects no longer rebinds durable ownership.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -225,9 +226,11 @@ function requireIdentity(value: string, field: string): string {
   return normalized;
 }
 
-/** @description Normalizes nullable ownership while rejecting ambiguous whitespace-only values. */
+/** @description Preserves nullable ownership exactly while rejecting ambiguous whitespace-only values. */
 function optionalIdentity(value: string | null, field: string): string | null {
-  return value === null ? null : requireIdentity(value, field);
+  if (value === null) return null;
+  if (!value.trim()) throw new Error(`${field} must be a non-empty string`);
+  return value;
 }
 
 /** @description Forces caller-supplied lifecycle state back to queued at the persistence boundary. */

@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Phone + text CLI for the communications-bot (Intelligent Communication swarm, ADR-037 pattern: connector + oshal-<provider>.js, never a new app). Reads the per-user Twilio credential ("AccountSid:AuthToken" combined secret, provider='twilio') from the OSHAL connector store — connected at /utilities. Mirrors scripts/oshal-smartthings.js resolution: prefer the controller-brokered secret (.oshal-cred-twilio / OSHAL_CRED_TWILIO), else decrypt the per-user secret from the DB, else the operator env pair (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN). Read verbs: digest (default), account, numbers, messages, calls, accounts. Send verbs (sms, call) are OUTWARD-FACING and confirm-gated: OSHAL_MESSAGE_SEND_CONFIRM=true or --confirm, else exit with no send. The auth token is never printed.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *
  *   node scripts/oshal-twilio.js                       # JSON digest (account, numbers, recent messages + calls)
  *   node scripts/oshal-twilio.js account               # account info (friendly name, status, type)
@@ -24,15 +25,14 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 const API = 'https://api.twilio.com/2010-04-01';
 
 /** The codex sandbox may not forward OSHAL_USER_SUB to shelled commands, so the
  *  wrapper also drops it as a cwd-relative file. Read whichever is present. */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 function truthyEnv(name) {

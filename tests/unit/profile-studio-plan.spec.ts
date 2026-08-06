@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit tests for LinkedIn Profile Studio: the pure plan state machine (edits only in draft, dispatch only from approved, worker resolves dispatched, a dispatched plan can never silently reset) and the desktop dispatch prompt contract (plan fields present verbatim, assets docker-cp'd, service-secret callback, the never-notify-network guardrail, and absent fields omitted so the operator bot is never asked to touch an unplanned section).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Lock the secretless callback contract: only relative staged assets and strict result JSON enter the prompt; fleet secret, URL, subject, generated shell, and absolute source paths stay out.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -24,6 +25,7 @@ function plan(overrides: Partial<LinkedInProfilePlan> = {}): LinkedInProfilePlan
     state: 'approved',
     dispatchTaskId: null,
     dispatchClientId: null,
+    dispatchGeneration: 0,
     resultNote: null,
     createdAt: '2026-07-17T00:00:00Z',
     updatedAt: '2026-07-17T00:00:00Z',
@@ -63,9 +65,14 @@ describe('profile plan state machine', () => {
 });
 
 describe('buildProfilePrompt', () => {
-  it('carries every planned field, the assets, and the service-secret callback', () => {
-    process.env.SWARM_SERVICE_SECRET = 'test-secret';
-    const p = buildProfilePrompt(plan());
+  it('carries planned fields and relative staged assets without callback authority', () => {
+    const previousSecret = process.env.SWARM_SERVICE_SECRET;
+    process.env.SWARM_SERVICE_SECRET = 'fleet-secret-must-not-appear';
+    const p = buildProfilePrompt(plan({ userSub: `hostile'; Write-Output $env:SWARM_SERVICE_SECRET; #` }), {
+      photo: 'profile-photo.png', background: 'background.png', resume: 'featured-resume.pdf',
+    });
+    if (previousSecret === undefined) delete process.env.SWARM_SERVICE_SECRET;
+    else process.env.SWARM_SERVICE_SECRET = previousSecret;
     expect(p).toContain('"Platform engineering leader"');
     expect(p).toContain('"I lead teams that ship."');
     expect(p).toContain('"Kubernetes"');
@@ -73,11 +80,13 @@ describe('buildProfilePrompt', () => {
     expect(p).toContain('background.png');
     expect(p).toContain('photo.png');
     expect(p).toContain('PROFILE PHOTO');
-    expect(p).toContain('Featured_Resume.pdf');
-    expect(p).toContain('docker cp');
-    expect(p).toContain('/api/profile-studio/ingest');
-    expect(p).toContain('test-secret');
-    expect(p).toContain(`userSub = '${plan().userSub}'`);
+    expect(p).toContain('./featured-resume.pdf');
+    expect(p).toContain('"result":"applied"');
+    expect(p).not.toContain('docker cp');
+    expect(p).not.toContain('Invoke-RestMethod');
+    expect(p).not.toContain('/api/profile-studio/ingest');
+    expect(p).not.toContain('fleet-secret-must-not-appear');
+    expect(p).not.toContain('hostile');
   });
 
   it('enforces the account-safety guardrails in every prompt', () => {
@@ -91,7 +100,7 @@ describe('buildProfilePrompt', () => {
   it('omits sections the plan does not include', () => {
     const p = buildProfilePrompt(plan({
       about: '', skills: [], customUrl: '', backgroundImagePath: null, photoPath: null, resumePath: null,
-    }));
+    }), {});
     expect(p).toContain('HEADLINE');
     expect(p).not.toContain('PROFILE PHOTO');
     expect(p).not.toContain('ABOUT (');
@@ -99,6 +108,6 @@ describe('buildProfilePrompt', () => {
     expect(p).not.toContain('CUSTOM URL');
     expect(p).not.toContain('BACKGROUND PHOTO');
     expect(p).not.toContain('FEATURED RESUME');
-    expect(p).not.toContain('docker cp');
+    expect(p).not.toContain('TRUSTED STAGED ASSETS');
   });
 });

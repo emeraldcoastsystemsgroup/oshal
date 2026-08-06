@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-058 live wiring: /api/personal — contribute + relate over the Personal-Intelligence Service
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve and validate the authenticated exact OIDC subject before any vault resolution, rejecting malformed assertions as unauthorized without logging their value.
  */
 
 /**
@@ -25,15 +26,27 @@ import {
   resolveVault,
   SchemaContributionSchema,
 } from '@/features/personal-data';
+import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
 
 const logger = createChildLogger({ module: 'personal-routes' });
 
 /** OIDC subject of the signed-in user — the vault owner + the broker's scope handle. */
 function callerSub(req: Request): string | null {
   const u = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user;
-  return u?.sub ? String(u.sub) : null;
+  if (u?.sub === undefined) return null;
+  try {
+    return requireExactUserSubject(u.sub, 'OIDC sub');
+  } catch (err) {
+    logger.error({ err }, 'personal route rejected an invalid OIDC subject');
+    return null;
+  }
 }
 
+/**
+ * @description Builds the exact-owner Personal Intelligence HTTP surface; authentication is
+ * applied by the composition root and every filesystem scope comes from the validated session.
+ * @returns Router containing the contribute and deterministic read endpoints.
+ */
 export function createPersonalRoutes(): Router {
   const router = Router();
   const config = readPersonalIntelligenceConfig();          // null when ENABLE_PERSONAL_INTELLIGENCE !== 'true'

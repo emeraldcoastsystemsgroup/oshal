@@ -22,6 +22,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the per-node token work: the pure scope matrix, the REAL createCliTokenAuthMiddleware confining a bound token over HTTP, the REAL remote-client router enforcing the register-body binding, rotation over a fake pool, and both halves of the shared-secret retirement switch.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extend the token-store model and rotation proof to preserve an owner's verified issuer namespace in successor node credentials.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Inject the explicit test-only task journal so token-store pool fixtures do not masquerade as the production journal database.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact device-owner subjects through owner-scoped revocation, successor minting, and the HTTP rotation surface; case/whitespace variants remain separate principals.
  */
 
 import crypto from 'crypto';
@@ -345,6 +346,21 @@ describe('rotateNodeToken', () => {
   });
 });
 
+describe('rotateNodeToken exact owner identity', () => {
+  it('revokes and mints only for the byte-exact subject', async () => {
+    const pool = new FakeTokenPool();
+    const exactOwner = ' Auth0|Case-Owner ';
+    pool.seed({ sub: exactOwner, nodeClientId: MINE });
+    const normalizedAlias = pool.seed({ sub: 'Auth0|Case-Owner', nodeClientId: MINE });
+
+    const rotated = await rotateNodeToken(pool.asPool(), { clientId: MINE, ownerSub: exactOwner });
+
+    expect(rotated.revokedCount).toBe(1);
+    expect(pool.rows.find((row) => row.id === rotated.id)?.user_sub).toBe(exactOwner);
+    expect(pool.rows.find((row) => row.token_hash === hashCliToken(normalizedAlias))?.revoked_at).toBeNull();
+  });
+});
+
 // ── The router: retirement switch + register-body binding + rotate route ──────────
 
 describe('remote-client router — shared-secret retirement and the rotate surface', () => {
@@ -487,5 +503,29 @@ describe('remote-client router — shared-secret retirement and the rotate surfa
       headers: { 'content-type': 'application/json', 'x-test-sub': 'auth0|intruder' },
     });
     expect(intruder.status).toBe(403);
+  }, 20_000);
+
+  it('operator rotation preserves the device exact owner in the response and token row', async () => {
+    const pool = new FakeTokenPool();
+    const device = 'rotate-exact-owner-device';
+    const exactOwner = ' Auth0|Exact-Owner ';
+    process.env.REMOTE_CLIENT_SHARED_SECRET = SECRET;
+    process.env.OSHAL_OPERATOR_SUBS = OWNER;
+    const base = await bootRouter(pool);
+
+    const registered = await fetch(`${base}/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-remote-client-key': SECRET },
+      body: JSON.stringify({ ...registrationBody(device), ownerSub: exactOwner }),
+    });
+    expect(registered.status).toBe(201);
+
+    const rotated = await fetch(`${base}/${device}/token/rotate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-sub': OWNER },
+    });
+    expect(rotated.status).toBe(201);
+    expect(((await rotated.json()) as { ownerSub: string }).ownerSub).toBe(exactOwner);
+    expect(pool.rows.find((row) => row.node_client_id === device)?.user_sub).toBe(exactOwner);
   }, 20_000);
 });

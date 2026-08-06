@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-091: DELETE /api/rag/collections/:name — engine-agnostic collection drop for reseeds (the LM demo seeder used raw Chroma REST, which the pgvector engine has no equivalent for); auth rides the /api/rag mount
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Stamp ownerSub on catalog records for private ingest; add permission-aware GET /api/rag/knowledge (operator sees all; a user sees shared swarm + per-bot + their own private) powering the Settings RAG visibility surface. Owner sub exposed to operators only
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Multi-user regression fix (adversarial review of migration 094): a non-operator's DEFAULT (non-private) ingest stamped owner_sub NULL, which the new FORCE-RLS WITH CHECK rejects (500 after Chroma already ingested — orphan chunks). ownerSubForIngest now returns NULL only for an OPERATOR's shared-corpus write; every non-operator ingest is owned-by-caller, so it passes the owner arm AND stops polluting the shared corpus everyone's bots read. Explicit private:true still owns the row.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact connector owner subjects in RAG ACL metadata. Case/whitespace variants remain distinct principals instead of being trimmed into another owner's private corpus; only an empty subject falls through to the legacy owner/public behavior.
  */
 
 import { Router, type Request } from 'express';
@@ -137,7 +138,8 @@ export function ragAclFromConnection(
   source?: { provider: string; nativePermissions: unknown } | null,
 ): Record<string, string> {
   const tenantId = connection.tenant_id ? String(connection.tenant_id).trim() : '';
-  const owner = String(connection.connected_by_sub || connection.user_sub || '').trim();
+  const owner = exactNonEmptySubject(connection.connected_by_sub)
+    || exactNonEmptySubject(connection.user_sub);
   const base: Record<string, string> = tenantId
     ? { allowed_groups: tenantGroup(tenantId) }
     : owner
@@ -149,6 +151,13 @@ export function ragAclFromConnection(
   // so the chunk inherits the source system's real access rules, not just who connected the account.
   const sourceAcl = sourceAclToRagAcl(source.provider, source.nativePermissions, tenantId ? null : owner);
   return mergeAclRecords(base, sourceAcl);
+}
+
+/** Return an exact subject when present; unlike display text, identity bytes are never normalized. */
+function exactNonEmptySubject(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) return '';
+  if (!value.trim()) throw new Error('RAG connection owner subject must be nonblank');
+  return value;
 }
 
 /** @description Union two chunk ACL records — owner_sub from either, allowed_users/allowed_groups merged as de-duped comma lists. */

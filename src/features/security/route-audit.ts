@@ -26,6 +26,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Closed the remaining module/mixed/non-/api blind spot with executable route-surface contracts. Security Center now verifies the internal fail-closed guards for /api/hooks, /auth/facebook/data-deletion, /api/channels/telegram/webhook, and /node/* instead of silently omitting or over-classifying them.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed auditRoutes into focused literal-mount and manifest collectors so the expanded scanner remains below the repository's fifty-line function limit.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Exported one limiter-only classification rule for both the runtime scanner and CI inventory, eliminating manual allowlist entries that went stale/red on every new rate-limiter mount.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Profile Studio's public mount around its short-lived one-use dispatch capability after removing the reusable fleet service secret.
  *
  * @module features/security/route-audit
  */
@@ -58,9 +59,8 @@ export const PUBLIC_BY_DESIGN: readonly string[] = [
                          // token is unset, 403 on a bad/missing signature — never open by omission
   '/api/remote-clients', // router-level authorizeRemoteClient (OIDC session OR shared-secret header)
   '/api/apply',          // box callback ingest — every route requires the service secret (serviceSecretOk)
-  '/api/profile-studio', // LinkedIn profile-plan box callback — POST /ingest 401s without the service
-                         // secret (serviceSecretOk at profile-studio-ingest-routes.ts:43, fail-closed
-                         // when SWARM_SERVICE_SECRET is unset; mirrors /api/apply)
+  '/api/profile-studio', // desktop result callback — one-use capability bound to exact owner,
+                         // dispatch generation, task, client, operation, and expiry; atomic consume
   // Self-guarded PACKAGE mounts (ADR-085 D2 `auth: public` declarations, reviewed 2026-07-24):
   // the store package's router self-guards, so the anonymous mount is deliberate. Only NEW
   // public package routes should fire.

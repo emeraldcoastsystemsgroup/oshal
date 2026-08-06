@@ -7,6 +7,9 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix (coverage + honesty gaps): buildAllExporters is now async and appends the information_schema-discovered exporters (discovered-exporters.ts) so EVERY remaining user_sub/owner_sub/actor_sub-keyed public table — ambient transcripts, per-app profiles/conversations, trading rows, personal graph, user-model facts, channel links, and any table added later — participates in export AND delete instead of silently falling out. Added KNOWN_EXPORT_GAPS: the non-Postgres per-user stores this surface still does not cover, declared in the manifest and delete responses instead of only in builder notes.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Closed the two engine gaps (BACKLOG "/api/me export gaps"): buildAllExporters now appends the ChromaDB exporter (owner_sub-metadata-scoped docs across every collection; absent-engine no-op — chroma-exporter.ts) and the ArangoDB person-graph exporter (dump + drop the isolated per-sub database via GraphConnector; no-ARANGO_URL no-op — arango-person-graph-exporter.ts). KNOWN_EXPORT_GAPS shrinks accordingly: chromadb_collections + arangodb_person_graph removed as covered, and the honest residual (non-attributed Chroma content in agent/swarm collections) is now declared explicitly. rag_chunks (RAG_ENGINE=pgvector) needs no new exporter — its owner_sub column means the information_schema-discovered exporters already export/delete it.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The 09:20 entry above described appends that were never in the return array (partial land): imports + gap-list trim shipped, the registry didn't. buildAllExporters now actually appends buildChromaExporter() + buildArangoPersonGraphExporter(); registry-membership guard added in data-lifecycle.spec.ts so a promised-but-unregistered exporter can never pass CI again.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Career export/delete through the installed package's exact read-only mapper and never follow symlink inventory entries.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Personal Data Vault export/delete from the exact OIDC subject, retain digest/legacy binding checks, and reject linked/nonregular SQLite main, journal, WAL, shm, or manifest entries before direct reads or deletion.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Split the unchanged declarative Postgres exporter inventory into bounded helpers so every touched function remains below the repository's physical-line limit.
  */
 
 /**
@@ -24,7 +27,19 @@ import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { createChildLogger } from '@/shared/logger';
-import { SqliteVaultStore, resolveVault, readPersonalIntelligenceConfig } from '@/features/personal-data';
+import { findCareerUserStoreLayout } from '@/shared/career-user-store-path';
+import {
+  SqliteVaultStore,
+  resolveVault,
+  readPersonalIntelligenceConfig,
+  type VaultLayout,
+} from '@/features/personal-data';
+import {
+  assertLinkFreeSqliteDatabase,
+  assertLinkFreeStoreFile,
+  UnsafeExactSubjectStoreError,
+} from '@/shared/security/exact-subject-store';
+import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
 import type { DataExporter, KnownDataGap } from './exporter-registry';
 import { discoverSubKeyedExporters } from './discovered-exporters';
 import { buildChromaExporter } from './chroma-exporter';
@@ -73,21 +88,8 @@ function pgExporter(pool: PgLike, def: PgExporterDef): DataExporter {
   };
 }
 
-/**
- * @description Guard for the file-backed exporters: an OIDC sub is used as a directory name,
- * so refuse anything that could traverse (defense-in-depth; real subs are opaque ids).
- * @param userSub - The sub about to become a path segment.
- * @returns The same sub, validated.
- */
-function safePathSub(userSub: string): string {
-  if (!userSub || /[/\\]|\.\./.test(userSub)) {
-    throw new Error('user sub is not a safe path segment');
-  }
-  return userSub;
-}
-
-/** Declarative table defs — the single place the sanitized column sets live. */
-function pgExporterDefs(): PgExporterDef[] {
+/** Connection, ticket, and chat definitions whose ordering preserves delete dependencies. */
+function communicationPgExporterDefs(): PgExporterDef[] {
   return [
     {
       store: 'oshal_connections',
@@ -120,6 +122,12 @@ function pgExporterDefs(): PgExporterDef[] {
       exportSql: 'SELECT * FROM chat_tasks WHERE owner_sub=$1 ORDER BY created_at',
       deleteSql: 'DELETE FROM chat_tasks WHERE owner_sub=$1',
     },
+  ];
+}
+
+/** User preferences, budgets, audit, and generated-artifact definitions. */
+function userStatePgExporterDefs(): PgExporterDef[] {
+  return [
     {
       store: 'user_notification_prefs',
       describe: 'Your per-topic notification routing preferences (channel, quiet hours, destinations).',
@@ -160,6 +168,11 @@ function pgExporterDefs(): PgExporterDef[] {
   ];
 }
 
+/** Declarative table defs — the single place the sanitized column sets live. */
+function pgExporterDefs(): PgExporterDef[] {
+  return [...communicationPgExporterDefs(), ...userStatePgExporterDefs()];
+}
+
 /**
  * @description The Postgres-backed exporters, in delete-safe order (children before parents:
  * chat_messages precedes chat_tasks).
@@ -168,6 +181,45 @@ function pgExporterDefs(): PgExporterDef[] {
  */
 export function buildPgExporters(pool: PgLike): DataExporter[] {
   return pgExporterDefs().map((def) => pgExporter(pool, def));
+}
+
+/** Return whether a resolved vault has an ordinary link-free SQLite database. */
+function vaultDatabaseExists(layout: VaultLayout): boolean {
+  const stat = fs.lstatSync(layout.vaultDir, { throwIfNoEntry: false });
+  if (!stat) return false;
+  return assertLinkFreeSqliteDatabase(layout.vaultDir, 'vault.db');
+}
+
+/** Re-resolve an exact subject so a stale layout can never redirect a direct delete. */
+function assertVaultLayoutBound(layout: VaultLayout, userSub: string): void {
+  const rebound = resolveVault(layout.storeRoot, layout.tenant, userSub);
+  if (rebound.subjectDir !== layout.subjectDir || rebound.vaultDir !== layout.vaultDir) {
+    throw new UnsafeExactSubjectStoreError('vault layout changed before direct lifecycle access');
+  }
+}
+
+/** Delete exact-owner rows through a database whose main file and sidecars stay link-free. */
+function deleteVaultContents(layout: VaultLayout, userSub: string): number {
+  assertVaultLayoutBound(layout, userSub);
+  const manifestExists = assertLinkFreeStoreFile(layout.vaultDir, 'vault.manifest.json');
+  assertLinkFreeSqliteDatabase(layout.vaultDir, 'vault.db');
+  const db = new Database(path.join(layout.vaultDir, 'vault.db'));
+  let deleted = 0;
+  try {
+    assertLinkFreeSqliteDatabase(layout.vaultDir, 'vault.db');
+    for (const table of ['facts', 'edges', 'resolver_index', 'entities']) {
+      deleted += db.prepare(`DELETE FROM ${table} WHERE owner_sub=?`).run(userSub).changes;
+    }
+  } finally {
+    db.close();
+  }
+  assertVaultLayoutBound(layout, userSub);
+  assertLinkFreeSqliteDatabase(layout.vaultDir, 'vault.db');
+  if (manifestExists) {
+    assertLinkFreeStoreFile(layout.vaultDir, 'vault.manifest.json');
+    fs.rmSync(layout.manifestPath, { force: true });
+  }
+  return deleted;
 }
 
 /**
@@ -187,56 +239,41 @@ export function buildVaultExporter(): DataExporter {
       'Personal-data vault (entities, edges, facts) — decrypted for the owner. Empty when the Personal-Intelligence Service is disabled or the vault was never created.',
     deletable: true,
     async exportRows(userSub: string): Promise<unknown[]> {
+      const exactSub = requireExactUserSubject(userSub, 'vault export userSub');
       const config = readPersonalIntelligenceConfig();
       if (!config || !config.storeRoot) {
-        logger.info({ userSub }, 'vault export: personal intelligence disabled — empty section');
+        logger.info({ userSub: exactSub }, 'vault export: personal intelligence disabled — empty section');
         return [];
       }
-      const layout = resolveVault(config.storeRoot, config.tenant, safePathSub(userSub));
-      if (!fs.existsSync(path.join(layout.vaultDir, 'vault.db'))) return [];
+      const layout = resolveVault(config.storeRoot, config.tenant, exactSub);
+      if (!vaultDatabaseExists(layout)) return [];
       const store = new SqliteVaultStore();
       try {
         return [
-          ...store.getEntities(layout, userSub).map((e) => ({ kind: 'entity', ...e })),
-          ...store.getEdges(layout, userSub).map((e) => ({ kind: 'edge', ...e })),
-          ...store.getFacts(layout, userSub).map((f) => ({ kind: 'fact', ...f })),
+          ...store.getEntities(layout, exactSub).map((e) => ({ kind: 'entity', ...e })),
+          ...store.getEdges(layout, exactSub).map((e) => ({ kind: 'edge', ...e })),
+          ...store.getFacts(layout, exactSub).map((f) => ({ kind: 'fact', ...f })),
         ];
       } finally {
         store.close();
       }
     },
     async deleteRows(userSub: string): Promise<number> {
+      const exactSub = requireExactUserSubject(userSub, 'vault delete userSub');
       const config = readPersonalIntelligenceConfig();
       if (!config || !config.storeRoot) return 0;
-      const layout = resolveVault(config.storeRoot, config.tenant, safePathSub(userSub));
-      const dbPath = path.join(layout.vaultDir, 'vault.db');
-      if (!fs.existsSync(dbPath)) return 0;
-      const db = new Database(dbPath);
-      try {
-        let deleted = 0;
-        for (const table of ['facts', 'edges', 'resolver_index', 'entities']) {
-          deleted += db.prepare(`DELETE FROM ${table} WHERE owner_sub=?`).run(userSub).changes;
-        }
-        if (fs.existsSync(layout.manifestPath)) fs.rmSync(layout.manifestPath, { force: true });
-        return deleted;
-      } finally {
-        db.close();
-      }
+      const layout = resolveVault(config.storeRoot, config.tenant, exactSub);
+      if (!vaultDatabaseExists(layout)) return 0;
+      return deleteVaultContents(layout, exactSub);
     },
   };
-}
-
-/** Career-hunter per-user store root — same resolution as career-hunter-routes (env-keyed). */
-function careerStoreUserDir(userSub: string): string {
-  const storeRoot = process.env.JOBHUNTER_STORE_ROOT || path.resolve(process.cwd(), 'output', 'career-hunter-data');
-  // Single-tenant today — career-hunter-routes hardcodes TENANT='default'; match it exactly.
-  return path.join(storeRoot, 'default', safePathSub(userSub));
 }
 
 /** Recursively list files under a dir as export-relative entries. */
 function walkFiles(root: string, dir: string, out: Array<{ file: string; bytes: number }>): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) walkFiles(root, full, out);
     else out.push({ file: path.relative(root, full).replace(/\\/g, '/'), bytes: fs.statSync(full).size });
   }
@@ -268,8 +305,8 @@ function dumpUserSqlite(dbPath: string): unknown[] {
 
 /**
  * @description Exporter for the career-hunter per-user store: the directory keyed
- * `<JOBHUNTER_STORE_ROOT>/<tenant>/<sub>/` holding the user's signals SQLite DB
- * (`user-<sub>.db`) plus their uploaded files (resumes). Export = a full dump of every table
+ * `<JOBHUNTER_STORE_ROOT>/<tenant>/<mapped-sub>/` holding the user's signals SQLite DB
+ * plus their uploaded files (resumes). Export = a full dump of every table
  * in the user DB + a file inventory. Delete removes the WHOLE user directory; the shared
  * corpus DB lives at the tenant level and is never touched. Clean no-op when the user has no
  * career-hunter data.
@@ -282,21 +319,22 @@ export function buildCareerHunterExporter(): DataExporter {
       'Career-hunter per-user store: every table of your signals database (scores, statuses, resume state) plus an inventory of your uploaded files. Empty when you never used career-hunter.',
     deletable: true,
     async exportRows(userSub: string): Promise<unknown[]> {
-      const userDir = careerStoreUserDir(userSub);
-      if (!fs.existsSync(userDir)) return [];
+      const layout = findCareerUserStoreLayout(userSub);
+      if (!layout) return [];
+      const { userDir, userDb } = layout;
       const rows: unknown[] = [];
       const files: Array<{ file: string; bytes: number }> = [];
       walkFiles(userDir, userDir, files);
       for (const f of files) rows.push({ kind: 'file', ...f });
-      const dbPath = path.join(userDir, `user-${userSub}.db`);
-      if (fs.existsSync(dbPath)) {
-        for (const r of dumpUserSqlite(dbPath)) rows.push({ kind: 'db-row', ...(r as Record<string, unknown>) });
+      if (fs.existsSync(userDb)) {
+        for (const r of dumpUserSqlite(userDb)) rows.push({ kind: 'db-row', ...(r as Record<string, unknown>) });
       }
       return rows;
     },
     async deleteRows(userSub: string): Promise<number> {
-      const userDir = careerStoreUserDir(userSub);
-      if (!fs.existsSync(userDir)) return 0;
+      const layout = findCareerUserStoreLayout(userSub);
+      if (!layout) return 0;
+      const { userDir } = layout;
       const files: Array<{ file: string; bytes: number }> = [];
       walkFiles(userDir, userDir, files);
       fs.rmSync(userDir, { recursive: true, force: true });

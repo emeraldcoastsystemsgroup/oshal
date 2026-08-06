@@ -328,7 +328,6 @@ x-bot-env: &bot-env
   SWARM_SERVICE_SECRET: ${SWARM_SERVICE_SECRET:-}
   APPLY_EDGE_CLIENT_ID: ${APPLY_EDGE_CLIENT_ID:-oshal-chat-0ce849b6-8b95-4cf5-9223-ce22d638f1c9}
   APPLY_EDGE_HOSTNAME: ${APPLY_EDGE_HOSTNAME:-render-node-1}
-  APPLY_FINAL_SUBMIT_AUTHORIZED: ${APPLY_FINAL_SUBMIT_AUTHORIZED:-true}
   ENABLE_AGENT_SCHEDULER: "false"
   SCHEDULER_POLL_INTERVAL_MS: "60000"
   # Queue-manager poll cadence (queue-manager-service.ts). Higher = fewer idle DB polls.

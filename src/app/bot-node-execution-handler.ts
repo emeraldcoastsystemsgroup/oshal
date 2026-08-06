@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING (bot half): BEFORE executing, parse the optional provider/model/configVersion the controller stamped on this dispatch (parseCarriedDispatchConfig) and reconcile it against the live active provider (reconcileDispatchProviderConfig) through the injected dispatchConfigRuntime seam (bot-node-runtime's getActiveProvider/setActiveProvider). A drifted bot self-corrects before running; an un-switchable carried provider fails open. Absent seam OR absent carried config = the runtime is never touched (byte-identical legacy execution).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review fix: the gap-b reconcile switched the SHARED active provider unconditionally, but the any-bot AgenticController resolves the provider live per-turn, so a concurrent dispatch could switch a running task mid-loop (silent provider swap + cost mis-attribution). Added an activeExecutions in-flight counter: the reconcile now only switches when this is the sole in-flight execution; otherwise it defers (logs) and runs on the current provider.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Comment accuracy at the owner-stamping call: it claimed ADR-060's per-user path layout ("the bot writes into <root>/users/<sub>/<taskId>"), which was reverted — the dir is flat <root>/<taskId>. Restated why the stamp is load-bearing regardless: assertExistingTaskOwner has nothing to compare against on the NEXT dispatch if userSub is dropped, and TaskController's forceTaskId branch carries no owner assert of its own. Behavior unchanged; the check is now pinned by tests/unit/bot-node-workspace-owner-binding.spec.ts.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact owners and canonicalize every envelope-derived workspace identifier before TaskController lookup or forceTaskId use; security refusals cannot fall back to a different workspace.
  */
 
 /**
@@ -45,7 +46,11 @@ import {
   type CostRecordFn,
 } from '@/features/swarm-orchestration';
 import type { TicketService } from '@/features/ticketing';
-import { normalizeBotNodeUserSub, sanitizeBotNodeCreds } from './bot-node-request-scope';
+import {
+  canonicalBotWorkspaceId,
+  normalizeBotNodeUserSub,
+  sanitizeBotNodeCreds,
+} from './bot-node-request-scope';
 import {
   executeTrustedProviderIntent,
   parseTrustedProviderIntent,
@@ -148,15 +153,16 @@ export function createBotNodeExecutionHandler(
     // an OpenAIProvider) instead of the bot's configured provider.
     const byoLlmConnection = (payload?.byoLlmConnection && typeof payload.byoLlmConnection === 'object')
       ? (payload.byoLlmConnection as { baseUrl: string; apiKey: string; model: string }) : undefined;
-    const workspaceTaskId = payload?.workspaceTaskId ? String(payload.workspaceTaskId) : undefined;
+    const workspaceTaskId = readOptionalWorkspaceSource(payload, 'workspaceTaskId');
     const originalTicket = typeof payload?.originalTicket === 'object' && payload?.originalTicket !== null
       ? payload.originalTicket as Record<string, unknown> : undefined;
-    const ticketExternalId = payload?.externalId ? String(payload.externalId) : undefined;
-    const originalExternalId = typeof originalTicket?.externalId === 'string' ? originalTicket.externalId : undefined;
-    const parentExternalId = typeof originalTicket?.parentExternalId === 'string' ? originalTicket.parentExternalId : undefined;
-    const baseTaskId = workspaceTaskId || originalExternalId || ticketExternalId || `swarm-${envelope.correlationId}`;
-    const taskId = `${baseTaskId}::${agentId}`;
-    const workspaceFolderId = baseTaskId;
+    const ticketExternalId = readOptionalWorkspaceSource(payload, 'externalId');
+    const originalExternalId = readOptionalWorkspaceSource(originalTicket, 'externalId');
+    const parentExternalId = readOptionalWorkspaceSource(originalTicket, 'parentExternalId');
+    const baseTaskId = workspaceTaskId ?? originalExternalId ?? ticketExternalId
+      ?? `swarm-${envelope.correlationId}`;
+    const workspaceFolderId = canonicalBotWorkspaceId(baseTaskId);
+    const taskId = `${workspaceFolderId}::${agentId}`;
 
     const reviewRound = payload?.round ? Number(payload.round) : undefined;
     const isReview = payload?.type === 'verification-request' || payload?.type === 'review-request';
@@ -253,7 +259,7 @@ export function createBotNodeExecutionHandler(
       // /api/llm-governance/check), so it covers EVERY any-bot LLM path (this
       // handler, the AgenticController loop, and the app.js one-shot ticket path)
       // at one chokepoint — and gating here too would double-count quota.
-      const effectiveTaskId = workspaceFolderId || taskId;
+      const effectiveTaskId = workspaceFolderId;
       let task: { id: string };
       try {
         const existing = await deps.anyBotTaskController.getTask(effectiveTaskId);
@@ -268,10 +274,10 @@ export function createBotNodeExecutionHandler(
           // here. TaskController's forceTaskId branch has no owner assert of its own.
           // Pinned by tests/unit/bot-node-workspace-owner-binding.spec.ts.
           task = await deps.anyBotTaskController.createTask(`Swarm execution for ${agentId}`, 'act', { forceTaskId: effectiveTaskId, userSub });
-          if (task.id !== effectiveTaskId) task.id = effectiveTaskId;
+          if (task.id !== effectiveTaskId) throw taskWorkspaceMismatchError();
         }
       } catch (error) {
-        if (isTaskOwnerMismatch(error)) throw error;
+        if (isTaskSecurityBoundaryError(error)) throw error;
         task = await deps.anyBotTaskController.createTask(`Swarm execution for ${agentId}`, 'act', { userSub });
       }
 
@@ -437,9 +443,28 @@ function normalizeRuntimeIdentity(value: unknown, maxLength: number): string | u
   return normalized;
 }
 
-function isTaskOwnerMismatch(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object'
-    && (error as { code?: unknown }).code === 'TASK_OWNER_MISMATCH');
+function isTaskSecurityBoundaryError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  return ['TASK_OWNER_MISMATCH', 'UNSAFE_TASK_WORKSPACE', 'INVALID_USER_SUBJECT'].includes(
+    String((error as { code?: unknown }).code ?? ''),
+  );
+}
+
+function taskWorkspaceMismatchError(): Error {
+  const error = new Error('TaskController returned a non-canonical workspace id') as Error & { code?: string };
+  error.code = 'UNSAFE_TASK_WORKSPACE';
+  return error;
+}
+
+function readOptionalWorkspaceSource(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  if (!record || !Object.prototype.hasOwnProperty.call(record, key)) return undefined;
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') throw new TypeError(`${key} must be a string`);
+  return value;
 }
 
 function detectProviderFailure(content: string): string | undefined {

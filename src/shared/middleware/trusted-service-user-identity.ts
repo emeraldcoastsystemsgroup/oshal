@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added a fail-closed middleware that replaces the broad service-secret operator database stamp with the specifically asserted user identity before a user-bound router reads or writes owner-scoped data.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Document canonical X-Oshal-User-Sub-B64 attribution; the shared resolver retains a non-normalizing legacy plain-header rollout path.
  */
 
 import type { NextFunction, Request, Response } from 'express';
@@ -11,8 +12,10 @@ import { getTrustedServiceUserSub, hasValidServiceSecret } from './authz';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 
 /**
- * @description Narrows a valid service-secret request to its trusted `X-OSHAL-User-Sub` before
- * downstream owner-scoped work begins. The global request middleware deliberately treats the
+ * @description Narrows a valid service-secret request to its trusted user-sub header before
+ * downstream owner-scoped work begins. Kernel callers use canonical `X-Oshal-User-Sub-B64` so
+ * subject case and whitespace survive HTTP exactly; the shared resolver temporarily accepts a
+ * constrained legacy `X-Oshal-User-Sub` during rollout. The global request middleware treats the
  * shared secret as operator-level system traffic for compatibility; leaving that ambient stamp in
  * place lets one machine caller cross every tenant boundary. User-bound routers mount this helper
  * first so their database calls instead carry `{ sub, isOperator: false }`.

@@ -6,6 +6,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted UNGUARDED_ALLOWLIST out of tests/unit/server-route-auth-inventory.spec.ts so a SECOND spec can import it. The backlog's done-when for the route-audit allowlist gap asks for a programmatic cross-check between this reviewed list and src/features/security/route-audit.ts's PUBLIC_BY_DESIGN; until now the two referenced each other only in prose comments and could diverge silently forever (they had — '/api/security/csp-report' and '/api/branding' lived here and nowhere in PUBLIC_BY_DESIGN). Importing a spec file from another spec would re-register its suites, so the shared data moves to this plain module instead. Content is unchanged from the spec's version; the reviewed reasons ARE the artifact.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the '/api/jarvis' limiter-only entry (+ LIMITER_ONLY_PATHS). The web-hardening close-out mounted expensiveOpLimiter on /api/jarvis, which registers no handlers, but the CI-side inventory classifies limiter-only mounts by ALLOWLIST while the runtime scanner skips them BY RULE - so the gate went red on main the moment that mount landed, on a path whose every real router is guarded (serviceSecretOr(requiresAuth) + two requiresAuth mounts). Mirrors the /api/intake entry exactly. The asymmetry itself is the real defect and is named in the entry's reason: the parser should learn the scanner's Limiter rule so the next such mount does not repeat this.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed limiter-only mounts from the reviewed anonymous-route allowlist. The CI inventory now applies the runtime scanner's shared isLimiterOnlyMiddleware rule, so a limiter registration is derived as handler-less rather than manually waived.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Re-review Profile Studio's non-OIDC callback as short-lived, one-use, exact-dispatch capability authenticated after removal of the reusable fleet secret.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Re-review Apply ingest as a hashed one-use
+ *   exact-task capability; internal queue controls retain constant-time service authentication and
+ *   the former interactive secret-bearing callbacks are terminally retired.
  */
 
 /**
@@ -64,16 +68,17 @@ export const UNGUARDED_ALLOWLIST: readonly UnguardedRouteEntry[] = [
   {
     path: '/api/apply',
     reason:
-      'Desktop-worker box callback — every route 401s without the service secret: serviceSecretOk() at ' +
-      'src/app/routes/apply-ingest-routes.ts L35 (/dispatch) + L44 (/ingest); fail-closed when ' +
-      'SWARM_SERVICE_SECRET is unset. Wrapping in requiresAuth would break the non-OIDC box.',
+      'Apply machine plane — internal dispatch/enqueue/batch routes use constant-time serviceSecretOk; ' +
+      'POST /ingest requires a syntactically valid x-oshal-callback-capability whose SHA-256 digest is ' +
+      'atomically reserved/consumed only for its exact task, owner, ticket, posting, client, generation, ' +
+      'operation, and expiry. Email/vault/shot callbacks return 410. OIDC would break the leaf daemon.',
   },
   {
     path: '/api/profile-studio',
     reason:
-      'LinkedIn profile-plan box callback — POST /ingest 401s without the service secret: ' +
-      'serviceSecretOk() at src/app/routes/profile-studio-ingest-routes.ts L43; fail-closed when ' +
-      'SWARM_SERVICE_SECRET is unset (mirrors /api/apply).',
+      'LinkedIn profile-plan desktop callback — POST /ingest 401s without a syntactically valid ' +
+      'x-oshal-callback-capability, then atomically consumes its hash only when exact owner, generation, ' +
+      'task, client, operation, and expiry match. Replays and stale ABA callbacks return 409.',
   },
   // ('/api/trading-charts' removed: the trading surface carved to the app store, ADR-085
   //  Wave 3 — server.ts no longer mounts the path (the stale-entry guard demands removal).

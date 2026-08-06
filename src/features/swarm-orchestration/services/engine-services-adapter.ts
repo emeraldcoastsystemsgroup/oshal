@@ -14,13 +14,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | dispatchAgentPrompt: the multi-app planner's plan-step primitive — resolve the step's bot, send its substituted prompt as a full task run, and return the reply for data-passing. Generalized the private dispatchPrompt with a chatOnly flag (default true; plan steps run full). Structural method (not on EngineServices) so the workflow-studio interface stays unwidened.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prohibit the unsigned localhost execution fallback whenever the bot client reports that signed HTTP delegation is enforced.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Thread the persisted workflow-ticket owner and principal issuer through bot delegation, and authenticate every localhost machine fallback with that owner.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve workflow owner subjects exactly and use the canonical base64url trusted-service identity header on localhost fallbacks.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
 import type { TicketService } from '@/features/ticketing';
 import type { BotNodeClient } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
-import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middleware/authz';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import type {
   EngineServices,
@@ -56,7 +57,7 @@ interface EngineDispatchIdentity {
 
 function resolveEngineDispatchIdentity(ticket: EngineTicketContext): EngineDispatchIdentity {
   const raw = ticket.raw as Partial<InternalTicket> | undefined;
-  const userSub = typeof raw?.ownerSub === 'string' ? raw.ownerSub.trim() : '';
+  const userSub = typeof raw?.ownerSub === 'string' ? raw.ownerSub : '';
   const principalIssuer = readOwnerPrincipalIssuer(raw?.metadata);
   return {
     ...(userSub ? { userSub } : {}),
@@ -139,8 +140,9 @@ export class EngineServicesAdapter implements EngineServices {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...serviceSecretHeaders(),
-          ...(dispatchIdentity.userSub ? { 'x-oshal-user-sub': dispatchIdentity.userSub } : {}),
+          ...(dispatchIdentity.userSub
+            ? trustedServiceUserHeaders(dispatchIdentity.userSub)
+            : serviceSecretHeaders()),
         },
         body: JSON.stringify({
           taskId: ticketId,
@@ -388,8 +390,9 @@ export class EngineServicesAdapter implements EngineServices {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...serviceSecretHeaders(),
-        ...(dispatchIdentity.userSub ? { 'x-oshal-user-sub': dispatchIdentity.userSub } : {}),
+        ...(dispatchIdentity.userSub
+          ? trustedServiceUserHeaders(dispatchIdentity.userSub)
+          : serviceSecretHeaders()),
       },
       body: JSON.stringify({
         taskId: ticketId,

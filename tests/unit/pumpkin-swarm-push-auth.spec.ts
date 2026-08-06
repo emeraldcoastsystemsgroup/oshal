@@ -11,11 +11,22 @@
  * Every case sets and restores SWARM_SERVICE_SECRET itself. Nothing here is allowed to skip when an
  * env var is absent — a guard that skips is not a guard, and "unset" is one of the cases that matters
  * most (the bypass must not exist at all when the secret is not configured).
+ *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the service-secret seam and canonical encoded owner binding used by trusted swarm calls.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Request } from 'express';
 
-import { getTrustedServiceUserSub, hasValidServiceSecret, serviceSecretHeaders } from '@/shared/middleware/authz';
+import {
+  getTrustedServiceUserSub,
+  hasValidServiceSecret,
+  serviceSecretHeaders,
+  trustedServiceUserHeaders,
+} from '@/shared/middleware/authz';
 
 const SECRET = 'pumpkin-guard-secret-abcdefghijklmnop';
 const OWNER = 'google-oauth2|1234567890';
@@ -83,14 +94,14 @@ describe('pumpkin swarm door: the service-secret seam', () => {
     expect(getTrustedServiceUserSub(req({}))).toBeNull();
   });
 
-  it('the outbound header the tool executor stamps is exactly what the door verifies', () => {
+  it('the outbound encoded headers the tool executor stamps are exactly what the door verifies', () => {
     // This is the round trip the pumpkin-speak tool actually performs: ToolExecutorService stamps
-    // serviceSecretHeaders() and the pumpkin route verifies it. If these two ever disagree the tool
+    // trustedServiceUserHeaders() and the pumpkin route verifies it. If these two ever disagree the tool
     // silently 403s and the operator is told the prop is broken.
-    const stamped = serviceSecretHeaders();
+    const stamped = trustedServiceUserHeaders(OWNER);
     expect(stamped['X-Service-Secret']).toBe(SECRET);
     const forwarded = Object.fromEntries(Object.entries(stamped).map(([k, v]) => [k.toLowerCase(), v]));
-    expect(hasValidServiceSecret(req({ ...forwarded, 'x-oshal-user-sub': OWNER }))).toBe(true);
-    expect(getTrustedServiceUserSub(req({ ...forwarded, 'x-oshal-user-sub': OWNER }))).toBe(OWNER);
+    expect(hasValidServiceSecret(req(forwarded))).toBe(true);
+    expect(getTrustedServiceUserSub(req(forwarded))).toBe(OWNER);
   });
 });

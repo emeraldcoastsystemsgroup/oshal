@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Postgres store for LinkedIn Profile Studio plans (linkedin_profile_plans). ONE live plan per user (UNIQUE user_sub) and EVERY read/write pinned to user_sub in the WHERE clause — a profile plan is personal content, so cross-user rows are impossible by construction (mirrors ContentDraftStore). State moves go through casState (compare-and-swap pinning the expected from-state, legality checked against canTransition) so approve/dispatch/callback can never double-fire or race a reset. Idempotent CREATE TABLE IF NOT EXISTS; canonical DDL in scripts/migrations/087-linkedin-profile-plans.sql.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add photo_path (profile photo/headshot). ensureSchema gains a trailing ADD COLUMN IF NOT EXISTS so tables created by today's earlier build upgrade in place; 087 stays the canonical DDL.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bind each dispatch to a monotonic generation, exact task/client, short-lived capability hash, and operation; atomically consume callbacks once and revoke grants on failure or other terminal transitions.
  */
 
 import type { Pool } from 'pg';
@@ -27,6 +28,7 @@ interface PlanRow {
   state: string;
   dispatch_task_id: string | null;
   dispatch_client_id: string | null;
+  dispatch_generation: string | number;
   result_note: string | null;
   created_at: string;
   updated_at: string;
@@ -53,6 +55,7 @@ function mapRow(row: PlanRow): LinkedInProfilePlan {
     state: (PLAN_STATES as readonly string[]).includes(row.state) ? (row.state as PlanState) : 'draft',
     dispatchTaskId: row.dispatch_task_id,
     dispatchClientId: row.dispatch_client_id,
+    dispatchGeneration: Number(row.dispatch_generation ?? 0),
     resultNote: row.result_note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -60,7 +63,7 @@ function mapRow(row: PlanRow): LinkedInProfilePlan {
 }
 
 const SELECT_COLS =
-  'id, user_sub, headline, about, skills, custom_url, background_image_path, photo_path, resume_path, state, dispatch_task_id, dispatch_client_id, result_note, created_at, updated_at';
+  'id, user_sub, headline, about, skills, custom_url, background_image_path, photo_path, resume_path, state, dispatch_task_id, dispatch_client_id, dispatch_generation, result_note, created_at, updated_at';
 
 /**
  * @description Per-user Postgres store for LinkedIn profile plans. Owns table creation and
@@ -101,12 +104,22 @@ export class ProfilePlanStore {
              state                 TEXT NOT NULL DEFAULT 'draft',
              dispatch_task_id      TEXT,
              dispatch_client_id    TEXT,
+             dispatch_generation   BIGINT NOT NULL DEFAULT 0,
+             callback_capability_hash TEXT,
+             callback_capability_expires_at TIMESTAMPTZ,
+             callback_capability_operation TEXT,
+             callback_capability_used_at TIMESTAMPTZ,
              result_note           TEXT,
              created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
              updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
            );
            CREATE INDEX IF NOT EXISTS idx_linkedin_profile_plans_state ON linkedin_profile_plans (state);
-           ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS photo_path TEXT;`,
+           ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS photo_path TEXT;
+           ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS dispatch_generation BIGINT NOT NULL DEFAULT 0;
+           ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS callback_capability_hash TEXT;
+           ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS callback_capability_expires_at TIMESTAMPTZ;
+           ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS callback_capability_operation TEXT;
+           ALTER TABLE linkedin_profile_plans ADD COLUMN IF NOT EXISTS callback_capability_used_at TIMESTAMPTZ;`,
         )
         .then(() => undefined)
         .catch((err) => {
@@ -186,6 +199,106 @@ export class ProfilePlanStore {
   }
 
   /**
+   * @description Atomically freezes one approved plan into a new immutable dispatch generation and
+   * binds its one-use result capability to the exact task, client, operation, owner, and expiry.
+   * @param userSub - Exact owning OIDC subject.
+   * @param planId - Immutable plan row id observed before staging.
+   * @param taskId - Unique remote task id for this generation.
+   * @param clientId - Exact selected remote client id.
+   * @param capabilityHash - Domain-separated SHA-256 capability digest.
+   * @param expiresAt - Short capability expiry.
+   * @returns New monotonic generation, or null when the approved CAS lost.
+   */
+  async beginDispatch(
+    userSub: string,
+    planId: number,
+    taskId: string,
+    clientId: string,
+    capabilityHash: string,
+    expiresAt: Date,
+  ): Promise<number | null> {
+    assertDispatchBinding(taskId, clientId, capabilityHash, expiresAt);
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `UPDATE linkedin_profile_plans SET state = 'dispatched',
+         dispatch_task_id = $3, dispatch_client_id = $4,
+         dispatch_generation = dispatch_generation + 1,
+         callback_capability_hash = $5, callback_capability_expires_at = $6,
+         callback_capability_operation = 'resolve-profile-plan',
+         callback_capability_used_at = NULL, result_note = NULL, updated_at = now()
+       WHERE user_sub = $1 AND id = $2 AND state = 'approved'
+       RETURNING dispatch_generation`,
+      [userSub, planId, taskId, clientId, capabilityHash, expiresAt],
+    );
+    return result.rows.length ? Number(result.rows[0].dispatch_generation) : null;
+  }
+
+  /**
+   * @description Atomically consumes a live capability and resolves only its exact dispatch
+   * generation. The same token, an older generation, or another task/client can never win twice.
+   * @param userSub - Exact owning OIDC subject from trusted callback context.
+   * @param generation - Immutable dispatch generation.
+   * @param taskId - Exact remote task id.
+   * @param clientId - Exact remote client id.
+   * @param operation - Least-privilege operation bound at issuance.
+   * @param capabilityHash - Digest of the presented one-use token.
+   * @param resultState - Strict terminal result.
+   * @param note - Bounded per-field outcome.
+   * @returns True only for the first live, fully matching callback.
+   */
+  async consumeDispatchCallback(
+    userSub: string,
+    generation: number,
+    taskId: string,
+    clientId: string,
+    operation: string,
+    capabilityHash: string,
+    resultState: 'applied' | 'failed',
+    note: string,
+  ): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `UPDATE linkedin_profile_plans SET state = $7, result_note = $8,
+         callback_capability_hash = NULL, callback_capability_expires_at = NULL,
+         callback_capability_operation = NULL, callback_capability_used_at = now(), updated_at = now()
+       WHERE user_sub = $1 AND state = 'dispatched' AND dispatch_generation = $2
+         AND dispatch_task_id = $3 AND dispatch_client_id = $4
+         AND callback_capability_operation = $5 AND callback_capability_hash = $6
+         AND callback_capability_used_at IS NULL AND callback_capability_expires_at > now()`,
+      [userSub, generation, taskId, clientId, operation, capabilityHash, resultState, note],
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  /**
+   * @description Revokes one exact generation after enqueue failure without touching a successor.
+   * @param userSub - Exact owning OIDC subject.
+   * @param generation - Dispatch generation to fail.
+   * @param taskId - Exact remote task id.
+   * @param clientId - Exact selected client id.
+   * @param note - Bounded failure reason.
+   * @returns True when this generation moved to failed.
+   */
+  async failDispatch(
+    userSub: string,
+    generation: number,
+    taskId: string,
+    clientId: string,
+    note: string,
+  ): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      `UPDATE linkedin_profile_plans SET state = 'failed', result_note = $5,
+         callback_capability_hash = NULL, callback_capability_expires_at = NULL,
+         callback_capability_operation = NULL, callback_capability_used_at = now(), updated_at = now()
+       WHERE user_sub = $1 AND state = 'dispatched' AND dispatch_generation = $2
+         AND dispatch_task_id = $3 AND dispatch_client_id = $4`,
+      [userSub, generation, taskId, clientId, note],
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  /**
    * @description Compare-and-swap state move: pins BOTH the user and the expected
    * from-state in the WHERE clause, so two concurrent movers can never both win (the
    * dispatch/callback race guard). Refuses illegal moves per {@link canTransition}.
@@ -212,10 +325,23 @@ export class ProfilePlanStore {
          dispatch_task_id = COALESCE($4, dispatch_task_id),
          dispatch_client_id = COALESCE($5, dispatch_client_id),
          result_note = COALESCE($6, result_note),
+         callback_capability_hash = CASE WHEN $3 = 'dispatched' THEN callback_capability_hash ELSE NULL END,
+         callback_capability_expires_at = CASE WHEN $3 = 'dispatched' THEN callback_capability_expires_at ELSE NULL END,
+         callback_capability_operation = CASE WHEN $3 = 'dispatched' THEN callback_capability_operation ELSE NULL END,
          updated_at = now()
        WHERE user_sub = $1 AND state = $2`,
       [userSub, from, to, extras.dispatchTaskId ?? null, extras.dispatchClientId ?? null, extras.resultNote ?? null],
     );
     return (r.rowCount ?? 0) > 0;
+  }
+}
+
+/** @description Rejects malformed dispatch identifiers before they reach dynamic lifecycle state. */
+function assertDispatchBinding(taskId: string, clientId: string, hash: string, expiresAt: Date): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(taskId)) throw new Error('invalid dispatch task id');
+  if (!clientId || clientId.length > 200) throw new Error('invalid dispatch client id');
+  if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error('invalid dispatch capability hash');
+  if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+    throw new Error('invalid dispatch capability expiry');
   }
 }

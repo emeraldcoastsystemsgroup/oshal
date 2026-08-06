@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pin production composition for service-secret-first signed HTTP authorization, verified identity forwarding, replay shutdown, key-role separation, and unsigned runtime/fallback prohibition.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin canonical encoded trusted-user headers on unsigned compatibility fallbacks.
  */
 
 import { readFileSync } from 'node:fs';
@@ -64,6 +65,8 @@ describe('bot-node delegation production wiring', () => {
     expect(manifest).toContain('deps.botNodeClient.isDelegationEnforced()');
     expect(incident).toContain('botNodeClient.isDelegationEnforced()');
     expect(engine.match(/isDelegationEnforced\(\)/g)).toHaveLength(2);
-    expect(incident).toContain("'x-oshal-user-sub': ticket.ownerSub");
+    expect(manifest).toContain('trustedServiceUserHeaders(ticket.ownerSub)');
+    expect(incident).toContain('trustedServiceUserHeaders(ticket.ownerSub)');
+    expect(engine.match(/trustedServiceUserHeaders\(dispatchIdentity\.userSub\)/g)).toHaveLength(2);
   });
 });

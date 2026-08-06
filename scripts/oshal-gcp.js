@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Smart-cloud (devops bundle) GCP control CLI — the API-based replacement for `gcloud` so a REMOTE web user (not just the host operator) can drive Google Cloud through a bot. Reads the per-user GCP token from the OSHAL connector store (oshal_connections, provider='gcp') — connected at /utilities via web OAuth (cloud-platform scope), NO interactive CLI login. Mirrors scripts/oshal-gmail.js (Google refresh-token flow) + scripts/oshal-smartthings.js (account selector + personal∪shared). gcloud is just a wrapper over the Cloud REST APIs, so this calls them directly. Verbs: accounts, projects, project <id>, services <projectId>, instances <projectId>.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *
  *   node scripts/oshal-gcp.js projects                 # list the user's GCP projects
  *   node scripts/oshal-gcp.js project <projectId>      # one project's detail
@@ -20,6 +21,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 const CRM = 'https://cloudresourcemanager.googleapis.com/v1';
 const SU = 'https://serviceusage.googleapis.com/v1';
@@ -27,8 +29,7 @@ const GCE = 'https://compute.googleapis.com/compute/v1';
 
 /** Caller identity (env or the wrapper-dropped cwd file). */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return (fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined); } catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 /** Which connection the bot/user named (multi-account). */

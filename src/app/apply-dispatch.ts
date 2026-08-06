@@ -8,9 +8,9 @@
  * the task's shared workspace folder so a NON-co-located remote box can pull it into codex's working
  * directory (the workspace-sync rail — a truly-remote node has no `oshal-local-api` container to
  * `docker cp` from), builds the apply prompt, and enqueues it as an `mcp.call-tool` → `codex.exec`
- * task at `danger-full-access` (OS input needs it). The box drives Chrome and POSTs the outcome back
- * to /api/apply/ingest (over the LAN control-plane URL it registered with) with the service secret,
- * which resolves the ticket pass/fail.
+ * task at `danger-full-access` (OS input needs it). The trusted remote daemon, not the model, POSTs
+ * one strict JSON outcome to /api/apply/ingest with an expiring task-bound capability. Callback URL,
+ * capability, identity, and ticket coordinates remain top-level envelope metadata outside tool args.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -50,16 +50,26 @@
  *   the queue/worker privilege rule is grounded in ADR-085 — flagged by ADR-101's numbering note).
  *   No code change.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Await the durable PostgreSQL browser-task enqueue before reporting a job-application dispatch as accepted.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Stage bounded regular files plus separate
+ *   job.json/profile.json data, validate public HTTP(S) targets, use collision-resistant task ids,
+ *   and remove sensitive staging on failed or terminal runs. Raw applicant/job values and callback
+ *   credentials no longer enter the model-visible prompt.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Require strict server-derived final-submit state
+ *   on every dispatch input and carry it unchanged to the installed Career prompt builder.
  *
  * @module app/apply-dispatch
  */
 
-import { promises as fsp } from 'fs';
-import { resolve as pathResolve } from 'path';
+import { randomUUID } from 'crypto';
+import { constants, promises as fsp } from 'fs';
+import { basename, resolve as pathResolve } from 'path';
+import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { taskWorkspaceFolder } from '@/app/routes/remote-client-routes';
 import { dispatchBrowserTask, type DispatchResult } from '@/app/browser-task-dispatch';
 import { resolveApplyPromptBuilder } from '@/app/apply-prompt-bridge';
+import { assertPublicHttpUrl } from '@/shared/security/ssrf-guard';
+import { issueApplyCapability, revokeApplyCapability } from '@/app/apply-task-capability';
 
 // The generic browser-task rail moved to browser-task-dispatch. Re-exported so existing importers
 // (apply-submit's DispatchResult, tests) keep resolving the same names from here.
@@ -74,9 +84,16 @@ const CAREER_HUNTER_AGENT_ID = 'cb000000-0000-0000-0000-000000000001';
  *  form-filling is the hardest agentic step). Empty = the node's own default (gpt-5.5). Set
  *  APPLY_CODEX_MODEL to the top available codex model to put it on this. */
 const APPLY_CODEX_MODEL = (process.env.APPLY_CODEX_MODEL || '').trim();
+const MAX_PACKET_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_AUTOFILL_BYTES = 2 * 1024 * 1024;
+const MAX_JSON_BYTES = 512 * 1024;
 
 export interface ApplyDispatchInput {
   ticketId: string;
+  /** True only when ticketId names a real durable ticket that terminal ingest must settle. */
+  settleTicket: boolean;
+  /** Strict controller decision for this task; absent/string/model-derived values are never accepted. */
+  finalSubmitAuthorized: boolean;
   userSub: string;
   postingId: number;
   job: { title?: string; company?: string; url?: string; location?: string };
@@ -84,6 +101,79 @@ export interface ApplyDispatchInput {
   packet: { resumePdf?: string | null; coverPdf?: string | null; workdayAutofill?: string | null };
   /** Optional exact worker to run on. Defaults to APPLY_EDGE_CLIENT_ID / hostname match. */
   targetRemoteClientId?: string;
+}
+
+/** Controller dependencies kept outside app-domain data and model-visible prompt construction. */
+export interface ApplyDispatchDependencies { pool: Pool; }
+
+/** @description Copy one bounded regular source file into a new private task workspace. */
+async function stageRegularFile(src: string | null | undefined, dest: string, maxBytes: number): Promise<boolean> {
+  if (!src) return false;
+  try {
+    const info = await fsp.lstat(src);
+    if (!info.isFile() || info.size > maxBytes) return false;
+    await fsp.copyFile(src, dest, constants.COPYFILE_EXCL);
+    await fsp.chmod(dest, 0o600);
+    return true;
+  } catch (err) {
+    logger.warn({ err, src, dest }, 'apply packet stage: bounded regular-file copy failed');
+    return false;
+  }
+}
+
+/** @description Write one bounded JSON data file without overwriting an existing path. */
+async function stageJson(dest: string, value: unknown): Promise<boolean> {
+  try {
+    const raw = JSON.stringify(value ?? {}, null, 2);
+    if (Buffer.byteLength(raw, 'utf8') > MAX_JSON_BYTES) return false;
+    await fsp.writeFile(dest, raw, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    return true;
+  } catch (err) {
+    logger.warn({ err, dest }, 'apply packet stage: bounded JSON write failed');
+    return false;
+  }
+}
+
+/** @description Validate and bound untrusted job reference data before staging it for the worker. */
+async function validatedJob(job: ApplyDispatchInput['job']): Promise<ApplyDispatchInput['job'] | null> {
+  const rawUrl = String(job.url || '').trim();
+  if (!rawUrl || rawUrl.length > 4096) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.username || parsed.password) return null;
+    await assertPublicHttpUrl(parsed.toString());
+    const text = (value: unknown): string => String(value || '').slice(0, 1000);
+    return { title: text(job.title), company: text(job.company), location: text(job.location), url: parsed.toString() };
+  } catch (err) {
+    logger.warn({ err }, 'apply dispatch rejected unsafe job URL');
+    return null;
+  }
+}
+
+/** @description Build the post-selection issuer that keeps callback coordinates outside tool args. */
+function prepareApplyCompletion(
+  deps: ApplyDispatchDependencies,
+  input: ApplyDispatchInput,
+  taskId: string,
+  job: ApplyDispatchInput['job'],
+) {
+  return async ({ controllerUrl, client }: { controllerUrl: string; client: { clientId: string } }) => {
+    const targetHost = new URL(String(job.url)).hostname.toLowerCase();
+    const issued = await issueApplyCapability(deps.pool, {
+      taskId, userSub: input.userSub, ticketId: input.ticketId, settleTicket: input.settleTicket,
+      postingId: input.postingId,
+      clientId: client.clientId, targetHost,
+    });
+    return {
+      completionCallback: {
+        kind: 'trusted-http-json-v1' as const,
+        url: `${controllerUrl}/api/apply/ingest`,
+        capability: issued.token,
+        context: { workflow: 'apply', generation: issued.generation },
+      },
+      onEnqueueFailure: () => revokeApplyCapability(deps.pool, taskId),
+    };
+  };
 }
 
 /**
@@ -94,12 +184,14 @@ export interface ApplyDispatchInput {
  * @param folderId - The task's workspace folder id (the taskId).
  * @param packet - Absolute source paths on the controller's disk.
  * @param profile - Canonical form values, written as profile.json for the node to read.
+ * @param job - Validated public job reference data, written separately as untrusted job.json data.
  * @returns The staged relative filenames (includes 'Resume_ATS.pdf' on success), or null if unstageable.
  */
 async function stagePacketToWorkspace(
   folderId: string,
   packet: ApplyDispatchInput['packet'],
   profile: unknown,
+  job: ApplyDispatchInput['job'],
 ): Promise<string[] | null> {
   const folder = taskWorkspaceFolder(folderId);
   if (!folder) { logger.error({ folderId }, 'apply packet stage: unsafe workspace folder id'); return null; }
@@ -110,25 +202,23 @@ async function stagePacketToWorkspace(
     return null;
   }
   const staged: string[] = [];
-  const copy = async (src: string | null | undefined, dest: string): Promise<void> => {
-    if (!src) return;
-    try {
-      await fsp.copyFile(src, pathResolve(folder, dest));
-      staged.push(dest);
-    } catch (err) {
-      logger.warn({ err, src, dest }, 'apply packet stage: copy failed');
-    }
-  };
-  await copy(packet.resumePdf, 'Resume_ATS.pdf');
-  await copy(packet.coverPdf, 'CoverLetter.pdf');
-  await copy(packet.workdayAutofill, 'Resume_Workday_Autofill.txt');
-  try {
-    await fsp.writeFile(pathResolve(folder, 'profile.json'), JSON.stringify(profile ?? {}, null, 2), 'utf8');
-    staged.push('profile.json');
-  } catch (err) {
-    logger.warn({ err, folder }, 'apply packet stage: profile.json write failed');
-  }
+  if (await stageRegularFile(packet.resumePdf, pathResolve(folder, 'Resume_ATS.pdf'), MAX_PACKET_FILE_BYTES)) staged.push('Resume_ATS.pdf');
+  if (await stageRegularFile(packet.coverPdf, pathResolve(folder, 'CoverLetter.pdf'), MAX_PACKET_FILE_BYTES)) staged.push('CoverLetter.pdf');
+  if (await stageRegularFile(packet.workdayAutofill, pathResolve(folder, 'Resume_Workday_Autofill.txt'), MAX_AUTOFILL_BYTES)) staged.push('Resume_Workday_Autofill.txt');
+  if (await stageJson(pathResolve(folder, 'profile.json'), profile)) staged.push('profile.json');
+  if (await stageJson(pathResolve(folder, 'job.json'), job)) staged.push('job.json');
   return staged;
+}
+
+/**
+ * @description Remove the exact random Apply task workspace after failure or terminal completion.
+ * Basename and prefix checks are a second guard around taskWorkspaceFolder before recursive delete.
+ */
+export async function removeApplyWorkspace(taskId: string): Promise<void> {
+  const folder = taskWorkspaceFolder(taskId);
+  if (!folder || basename(folder) !== taskId || !/^apply-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(taskId)) return;
+  try { await fsp.rm(folder, { recursive: true, force: true }); }
+  catch (err) { logger.warn({ err, taskId }, 'apply workspace cleanup failed'); }
 }
 
 // The job-application prompt (ATS rules, résumé vocabulary, self-ID grounding) is the career-hunter
@@ -142,16 +232,19 @@ async function stagePacketToWorkspace(
  * Stages the packet into the task's shared workspace folder FIRST (so a non-co-located box can pull
  * the resume), then enqueues with `workspacePath` set. Never throws — a missing/offline box or an
  * unstageable resume returns `{ ok:false, error }` so the caller surfaces a clean message. Results
- * flow back asynchronously via /api/apply/ingest.
+ * flow back asynchronously through the trusted, model-hidden /api/apply/ingest callback.
  */
-export async function dispatchApply(input: ApplyDispatchInput): Promise<DispatchResult> {
-  const taskId = `apply-${input.postingId}-${Date.now()}`;
+export async function dispatchApply(input: ApplyDispatchInput, deps: ApplyDispatchDependencies): Promise<DispatchResult> {
+  const taskId = `apply-${randomUUID()}`;
+  const job = await validatedJob(input.job);
+  if (!job) return { ok: false, error: 'The job URL must be a resolvable public HTTP(S) address.' };
 
   // Career-specific step: stage the résumé packet and REFUSE without a résumé — this must never run a
   // form with no résumé. The generic rail knows nothing about packets; the résumé gate stays here.
-  const staged = await stagePacketToWorkspace(taskId, input.packet, input.profile);
-  if (!staged || !staged.includes('Resume_ATS.pdf')) {
+  const staged = await stagePacketToWorkspace(taskId, input.packet, input.profile, job);
+  if (!staged || !['Resume_ATS.pdf', 'profile.json', 'job.json'].every((name) => staged.includes(name))) {
     logger.error({ taskId, postingId: input.postingId, resumePdf: input.packet.resumePdf }, 'apply dispatch aborted — resume packet not stageable');
+    await removeApplyWorkspace(taskId);
     return { ok: false, error: 'Could not stage the resume into the shared workspace — the resume PDF was not found on the controller. Generate the packet first.' };
   }
 
@@ -160,19 +253,21 @@ export async function dispatchApply(input: ApplyDispatchInput): Promise<Dispatch
   const buildApplyPrompt = resolveApplyPromptBuilder();
   if (!buildApplyPrompt) {
     logger.error({ taskId, postingId: input.postingId }, 'apply dispatch aborted — career-hunter apply-prompt module not installed');
+    await removeApplyWorkspace(taskId);
     return { ok: false, error: 'The career-hunter apply module is not installed — cannot build the application prompt.' };
   }
 
-  // Hand the generic rail the career identity + prompt (built with the chosen worker's callback URL)
-  // + the pre-staged workspace. The rail picks the node, builds the envelope, and enqueues.
+  // Hand the generic rail the career identity, data-free prompt, staged workspace, and post-selection
+  // capability issuer. The rail keeps callback metadata beside (never inside) model tool arguments.
   const result = await dispatchBrowserTask({
     taskId,
     correlationId: input.ticketId || taskId,
     fromAgentId: CAREER_HUNTER_AGENT_ID,
     userSub: input.userSub,               // so the leaf-node cost lands attributed to this owner
-    prompt: ({ controllerUrl }) => buildApplyPrompt(input, { controllerUrl, hasCover: staged.includes('CoverLetter.pdf') }),
+    prompt: ({ controllerUrl }) => buildApplyPrompt({ ...input, job }, { controllerUrl, hasCover: staged.includes('CoverLetter.pdf') }),
     model: APPLY_CODEX_MODEL || undefined,
     workspacePath: taskId,
+    prepareCompletionCallback: prepareApplyCompletion(deps, input, taskId, job),
     preferredClientId: input.targetRemoteClientId,
   });
   if (result.ok) {
@@ -181,5 +276,6 @@ export async function dispatchApply(input: ApplyDispatchInput): Promise<Dispatch
       'apply dispatched to desktop worker (packet staged to workspace)',
     );
   }
+  if (!result.ok) await removeApplyWorkspace(taskId);
   return result;
 }

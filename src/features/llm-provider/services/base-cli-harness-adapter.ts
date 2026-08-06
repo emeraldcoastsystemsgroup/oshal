@@ -8,13 +8,20 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | applyUserScoping also emits OSHAL_USER_KEY (sha256(sub)[:32]) + a .oshal-user-key workspace file — the FS-safe per-user key for per-user file space. codex-packer writes packs to packs/<OSHAL_USER_KEY>/<slug>/ so they land where the per-user-isolated swarm-pack routes read them.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | BROKERED_CRED_FILES += OSHAL_CRED_OUTLOOK → .oshal-cred-outlook (ADR-037 Outlook provider parity): the caller's Microsoft Graph token reaches shelled tools (scripts/oshal-outlook.js) on the in-controller harness path too; kept in sync with connector-token-broker.ts, bot-node-request-scope.ts, and any-bot user-scoping.js.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Inactivity-based timeout (ADR-081): the one-shot absolute timer killed ACTIVELY-WORKING runs (live incident 2026-07-06: two codex dev runs killed mid-typecheck at 600s while streaming events). Adapters may opt into idleReset — child stdout/stderr refreshes the timer, so timeoutMs means "max silence" and only silent-stuck processes die; a separate maxDurationMs one-shot cap backstops runaways. Absolute semantics remain the default (claude/gemini batch modes are legitimately silent until their final JSON — docs/evidence/claude-inactivity-timeout-honesty-2026-06-22.md). Also added SIGTERM→SIGKILL escalation (10s) on timeout kills.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve userSub exactly across CLI env/file/hash scoping. Invalid UTF-8 or subjects over 512 bytes now fail before spawn instead of silently trimming/truncating into another identity; whitespace remains an explicit isolated subject.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Route every inline `.oshal-user-*` and `.oshal-cred-*` write through the safe scoped-file writer and fail closed on linked parents, linked/nonregular targets, or partial publication; cleanup now removes only invocation-owned entries.
  */
 
 import { spawn, type ChildProcess } from 'child_process';
 import crypto from 'crypto';
-import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { optionalExactUserSubject } from '@/shared/security/exact-user-subject';
+import {
+  removeOwnedScopedFile,
+  writeScopedFile,
+  type ScopedFileIdentity,
+} from '@/shared/security/scoped-file-writer';
 import type { HarnessAdapter, HarnessTask, HarnessResult, HarnessType } from './harness-adapter';
 import type { TokenUsage } from './llm-service';
 
@@ -26,14 +33,6 @@ export interface CliExecResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
-}
-
-interface ScopedFileIdentity {
-  filePath: string;
-  dev: number;
-  ino: number;
-  mtimeMs: number;
-  size: number;
 }
 
 /**
@@ -181,9 +180,7 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
     // worker plane, so it SKIPS per-device ownership and would let an injected inline bot
     // enqueue a shell task on any user's desktop.
     for (const k of this.extraSecretEnvKeys) delete env[k];
-    const normalizedUserSub = typeof userSub === 'string' && userSub.trim()
-      ? userSub.trim().slice(0, 512)
-      : undefined;
+    const exactUserSub = optionalExactUserSubject(userSub, 'CLI userSub');
     const credEntries = creds ? Object.entries(creds).filter(([key, value]) => (
       Object.prototype.hasOwnProperty.call(BaseCliHarnessAdapter.BROKERED_CRED_FILES, key)
       && typeof value === 'string'
@@ -191,81 +188,37 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
       && value.length <= 32_768
     )) : [];
     const ownedFiles: ScopedFileIdentity[] = [];
-    if (!normalizedUserSub && credEntries.length === 0) return ownedFiles;
-    try {
-      fs.mkdirSync(workspacePath, { recursive: true });
-    } catch (err) {
-      this.logger.warn({ err, workspacePath }, 'applyUserScoping: failed to mkdir workspace (env channel still set)');
-    }
-    if (normalizedUserSub) {
-      env.OSHAL_USER_SUB = normalizedUserSub;
+    if (exactUserSub === undefined && credEntries.length === 0) return ownedFiles;
+    const writes: Array<[string, string]> = [];
+    if (exactUserSub !== undefined) {
       // FS-safe per-user key (sha256 of the sub) — the channel for per-user file space.
       // Must match userKey() in swarm-pack-routes.ts so codex-packer writes packs where
       // the routes read them: packs/<OSHAL_USER_KEY>/<slug>/. Subs aren't path-safe.
-      const userKey = crypto.createHash('sha256').update(normalizedUserSub).digest('hex').slice(0, 32);
-      env.OSHAL_USER_KEY = userKey;
-      try {
-        ownedFiles.push(this.writePrivateScopedFile(
-          path.join(workspacePath, '.oshal-user-sub'),
-          normalizedUserSub,
-        ));
-        ownedFiles.push(this.writePrivateScopedFile(
-          path.join(workspacePath, '.oshal-user-key'),
-          userKey,
-        ));
-      } catch (err) {
-        this.logger.warn({ err, workspacePath }, 'applyUserScoping: failed to write .oshal-user-sub/.oshal-user-key (env channel still set)');
-      }
+      const userKey = crypto.createHash('sha256').update(exactUserSub).digest('hex').slice(0, 32);
+      writes.push(['.oshal-user-sub', exactUserSub], ['.oshal-user-key', userKey]);
     }
-    // Token broker: env key -> cwd file the shelled tool prefers (skips DB decryption).
     for (const [envKey, value] of credEntries) {
-      env[envKey] = String(value);
-      const fileName = BaseCliHarnessAdapter.BROKERED_CRED_FILES[envKey];
-      try {
-        ownedFiles.push(this.writePrivateScopedFile(
-          path.join(workspacePath, fileName),
-          String(value),
-        ));
-      } catch (err) {
-        this.logger.warn({ err, workspacePath, envKey }, 'applyUserScoping: failed to write cred file (env channel still set)');
-      }
+      writes.push([BaseCliHarnessAdapter.BROKERED_CRED_FILES[envKey], value]);
     }
+    try {
+      for (const [fileName, value] of writes) {
+        ownedFiles.push(writeScopedFile(path.join(workspacePath, fileName), value));
+      }
+    } catch (error) {
+      for (const owned of ownedFiles.reverse()) removeOwnedScopedFile(owned);
+      this.logger.error({ err: error, workspacePath }, 'applyUserScoping: safe scoped-file publication failed');
+      throw error;
+    }
+    if (exactUserSub !== undefined) {
+      env.OSHAL_USER_SUB = exactUserSub;
+      env.OSHAL_USER_KEY = crypto.createHash('sha256').update(exactUserSub).digest('hex').slice(0, 32);
+    }
+    for (const [envKey, value] of credEntries) env[envKey] = value;
     return ownedFiles;
   }
 
-  private writePrivateScopedFile(filePath: string, value: string): ScopedFileIdentity {
-    fs.writeFileSync(filePath, value, { encoding: 'utf8', mode: 0o600 });
-    // mode applies only when creating a file; chmod constrains an existing file too.
-    fs.chmodSync(filePath, 0o600);
-    const stat = fs.statSync(filePath);
-    return {
-      filePath,
-      dev: stat.dev,
-      ino: stat.ino,
-      mtimeMs: stat.mtimeMs,
-      size: stat.size,
-    };
-  }
-
   private wipeOwnedUserScoping(ownedFiles: ScopedFileIdentity[]): void {
-    for (const owned of ownedFiles) {
-      try {
-        const stat = fs.statSync(owned.filePath);
-        if (stat.dev === owned.dev
-          && stat.ino === owned.ino
-          && stat.mtimeMs === owned.mtimeMs
-          && stat.size === owned.size) {
-          fs.unlinkSync(owned.filePath);
-        }
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-          this.logger.warn(
-            { err, file: owned.filePath },
-            'releaseUserScoping: failed to remove an invocation-owned scoping file',
-          );
-        }
-      }
-    }
+    for (const owned of ownedFiles) removeOwnedScopedFile(owned);
   }
 
   /**
@@ -308,30 +261,6 @@ export abstract class BaseCliHarnessAdapter implements HarnessAdapter {
         BaseCliHarnessAdapter.USER_SCOPE_TAILS.delete(key);
       }
     };
-  }
-
-  /** Per-request scoping files written to the task workspace by applyUserScoping. */
-  protected static readonly SCOPING_FILES: readonly string[] = [
-    ...Object.values(BaseCliHarnessAdapter.BROKERED_CRED_FILES),
-    '.oshal-user-sub', '.oshal-user-key',
-  ];
-
-  /**
-   * @description Wipe the per-request credential/scoping files from the task workspace.
-   * Privileged-runtime hygiene (ADR-040): a provided short-lived token must not LINGER in the
-   * workspace after the task — "issue → use → wipe". Call from each adapter's run() in a
-   * `finally` so it runs on success AND failure. Best-effort; never throws.
-   * @param workspacePath - the task workspace applyUserScoping wrote into.
-   */
-  protected wipeUserScoping(workspacePath: string): void {
-    for (const f of BaseCliHarnessAdapter.SCOPING_FILES) {
-      try {
-        const p = path.join(workspacePath, f);
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      } catch (err) {
-        this.logger.warn({ err, workspacePath, file: f }, 'wipeUserScoping: failed to remove a scoping file');
-      }
-    }
   }
 
   /**

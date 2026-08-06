@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Isolate the mesh-to-remote-task execution boundary with device-owner injection checks and validated embedded, swarm.exec, and explicit-intent conversions.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Canonicalize every mesh-derived remote workspace identifier so traversal, drive, UNC, separator, and case-collision syntax never reaches downstream workspace routes.
  */
 
 import { randomUUID } from 'crypto';
@@ -11,6 +12,7 @@ import { createChildLogger } from '@/shared/logger';
 import { A2ATaskEnvelopeSchema, type A2ATaskEnvelope } from '@/shared/types';
 import type { MeshEnvelope } from '@/features/agent-management';
 import { canUseDevice, type RemoteClientRegistryService } from '@/features/remote-client';
+import { canonicalBotWorkspaceId } from '../bot-node-request-scope';
 
 const logger = createChildLogger({ module: 'remote-client-mesh-task' });
 
@@ -66,6 +68,7 @@ function parseEmbeddedTask(
       toAgentId: readString(task.toAgentId) ?? remoteAgentId,
       createdAt: readString(task.createdAt) ?? new Date().toISOString(),
       status: 'queued',
+      workspacePath: readWorkspaceSource(task, 'workspacePath'),
     });
   } catch (error) {
     logger.warn(
@@ -85,7 +88,8 @@ function parseSwarmExecutionTask(
   const text = readString(payload.text);
   if (!text || readString(payload.type)) return null;
   try {
-    const folder = readString(payload.workspaceFolderId) ?? readString(payload.workspaceTaskId);
+    const folder = readWorkspaceSource(payload, 'workspaceFolderId')
+      ?? readWorkspaceSource(payload, 'workspaceTaskId');
     return A2ATaskEnvelopeSchema.parse({
       taskId: readString(payload.workspaceTaskId) ?? readString(payload.taskId) ?? randomUUID(),
       correlationId: readString(payload.correlationId)
@@ -121,7 +125,7 @@ function parseIntentTask(
       intent,
       input: toRecord(payload.input) ?? {},
       artifacts: Array.isArray(payload.artifacts) ? payload.artifacts : [],
-      workspacePath: readString(payload.workspacePath),
+      workspacePath: readWorkspaceSource(payload, 'workspacePath'),
       replyTo: readString(payload.replyTo),
       createdAt: readString(payload.createdAt) ?? new Date().toISOString(),
       status: 'queued',
@@ -145,4 +149,13 @@ function toRecord(value: unknown): Record<string, unknown> | null {
 /** @description Returns one non-empty string. */
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/** @description Canonicalizes a supplied workspace source while preserving true absence. */
+function readWorkspaceSource(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(record, key) || record[key] === undefined) return undefined;
+  return canonicalBotWorkspaceId(record[key]);
 }

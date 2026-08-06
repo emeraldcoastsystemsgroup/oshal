@@ -1,3 +1,12 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard trusted provider schemas, least-privilege credentials, deterministic execution, and structured evidence.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact authenticated-owner validation and fail-closed empty, control, malformed, non-string, and oversized identity handling before provider access.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import {
@@ -208,13 +217,22 @@ describe('trusted provider intent schema and direct execution', () => {
     )).rejects.toThrow('Walmart catalog provider lookup failed');
   });
 
-  it('fails before provider access without an authenticated owner or on provider failure', async () => {
+  it('fails before provider access without an exact authenticated owner or on provider failure', async () => {
     const executionDeps = deps({ formatWeather: vi.fn(async () => ({ error: 'offline' })) });
     await expect(executeTrustedProviderIntent(
       WEATHER_INTENT,
       { creds: {} },
       executionDeps,
-    )).rejects.toThrow('authenticated owner');
+    )).rejects.toThrow('trusted provider owner must be exact UTF-8');
+    expect(executionDeps.formatWeather).not.toHaveBeenCalled();
+
+    for (const userSub of ['', 'bad\u0000owner', 'bad\u0085owner', 'x'.repeat(513), '\ud800']) {
+      await expect(executeTrustedProviderIntent(
+        WEATHER_INTENT,
+        { userSub, creds: {} },
+        executionDeps,
+      )).rejects.toThrow('trusted provider owner must be exact UTF-8');
+    }
     expect(executionDeps.formatWeather).not.toHaveBeenCalled();
 
     await expect(executeTrustedProviderIntent(

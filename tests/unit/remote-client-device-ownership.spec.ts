@@ -8,10 +8,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | First test gets the sibling 15s budget: it pays the one-time router-graph import/transform, which exceeds the 5s default on a cold vite cache (fresh npm ci) — surfaced by the trunk cutover's fresh install
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | First test timeout raised 15s → 30s after the full unit suite showed the same import-heavy route graph can exceed 15s under parallel load while passing alone in ~9s.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Inject and await the explicit test-only task journal so ownership tests exercise the PostgreSQL-authoritative async route contract without a production memory fallback.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact owner-subject persistence through the operator reassignment route and durable journal instead of trimming the binding to another principal.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiOrigin } from '../helpers';
 import { RemoteTaskJournalService } from '@/features/remote-client';
 import { InMemoryRemoteTaskJournalFixture } from '../helpers/in-memory-remote-task-journal';
@@ -30,6 +31,14 @@ const SECRET = 'test-remote-secret';
 const OWNER = 'auth0|device-owner';
 const INTRUDER = 'auth0|other-user';
 const OPERATOR = 'auth0|the-operator';
+
+interface TestChatOrchestrator {
+  processMessage(
+    taskId: string,
+    text: string,
+    options: { agenticMode: boolean; autoApprove: boolean; source: string; agentId?: string; userSub?: string },
+  ): Promise<{ success: boolean; response?: string; usageSummary?: unknown }>;
+}
 
 beforeEach(() => {
   savedEnv = {};
@@ -61,7 +70,7 @@ describe('remote-client device ownership binding', () => {
    * switches the simulated signed-in user per request via the x-test-sub header,
    * so one app serves the owner, the intruder, and the operator.
    */
-  async function bootApp(): Promise<string> {
+  async function bootApp(orchestrator?: TestChatOrchestrator): Promise<string> {
     // Import fresh so the module-level registry is shared within one app but the
     // route wiring picks up this test's env.
     const { createRemoteClientRoutes, remoteClientRegistry } = await import('../../src/app/routes/remote-client-routes');
@@ -70,6 +79,7 @@ describe('remote-client device ownership binding', () => {
     app.use(headerDrivenOidc());
     app.use('/api/remote-clients', createRemoteClientRoutes({
       taskJournalService: new RemoteTaskJournalService(new InMemoryRemoteTaskJournalFixture()),
+      orchestrator,
     }));
     await waitForJournal(remoteClientRegistry);
     const server = app.listen(0);
@@ -345,6 +355,50 @@ describe('remote-client device ownership binding', () => {
       body: JSON.stringify(taskBody('task-old-owner')),
     });
     expect(oldOwnerEnqueue.status).toBe(403);
+  });
+
+  it('operator reassignment preserves the exact durable owner subject', async () => {
+    const base = await bootApp();
+    const clientId = 'device-exact-owner';
+    const exactOwner = ' Auth0|Case-Owner ';
+    await registerDevice(base, clientId, OWNER);
+
+    const reassigned = await fetch(`${base}/${clientId}/owner`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-sub': OPERATOR },
+      body: JSON.stringify({ ownerSub: exactOwner }),
+    });
+    expect(reassigned.status).toBe(200);
+    expect(((await reassigned.json()) as { client: { ownerSub?: string } }).client.ownerSub).toBe(exactOwner);
+  });
+
+  it('machine chat preserves its trusted exact user subject in detached work', async () => {
+    const processMessage = vi.fn(async () => ({ success: true, response: 'ok' }));
+    const base = await bootApp({ processMessage });
+    const clientId = 'device-exact-chat-owner';
+    const exactOwner = ' Auth0|Chat-Owner ';
+    await registerDevice(base, clientId, exactOwner);
+
+    const accepted = await fetch(`${base}/${clientId}/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-remote-client-key': SECRET },
+      body: JSON.stringify({ text: 'hello', userSub: exactOwner }),
+    });
+    expect(accepted.status).toBe(202);
+    await vi.waitFor(() => expect(processMessage).toHaveBeenCalledOnce());
+    expect(processMessage).toHaveBeenCalledWith(
+      expect.any(String),
+      'hello',
+      expect.objectContaining({ userSub: exactOwner }),
+    );
+
+    const rejectedBlank = await fetch(`${base}/${clientId}/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-remote-client-key': SECRET },
+      body: JSON.stringify({ text: 'do not run', userSub: '   ' }),
+    });
+    expect(rejectedBlank.status).toBe(400);
+    expect(processMessage).toHaveBeenCalledTimes(1);
   });
 });
 

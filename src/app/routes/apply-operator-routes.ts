@@ -3,8 +3,8 @@
  *
  *   POST /submit    -> gather the next ready job + profile + packet, dispatch the browser submission
  *                      to the desktop worker, arm the 30-min watchdog (shared gatherAndDispatch).
- *   POST /complete  -> (legacy) taskId-keyed completion; the box normally uses /api/apply/ingest.
- *   GET  /inflight  -> current watchdogs (debug/status).
+ *   POST /complete  -> retired; trusted one-use capability callback is the only completion rail.
+ *   GET  /inflight  -> retired; owner-scoped /queue is the only status rail.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -24,6 +24,10 @@
  *   /workers lists the selectable leaf nodes (+ default); /enqueue, /enqueue-queue and /submit accept
  *   targetRemoteClientId to pin which node drives the browser; /queue takes ?clientId to report that
  *   node's reachability.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Remove every body/query identity fallback.
+ *   Authenticated single-job submit/enqueue actions carry explicit per-task final-submit authority;
+ *   bulk routes use the shared exact-user Career setting gate and return a stable denial.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Retire task-id completion and process-global in-flight enumeration; both are superseded by capability-bound ingest and owner-scoped queue snapshots.
  *
  * @module apply-operator-routes
  */
@@ -32,14 +36,23 @@ import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import { callerSub } from './caller-sub';
 import { gatherAndDispatch } from '@/app/apply-submit';
-import { applyInFlight, clearInFlight } from '@/app/apply-inflight';
 import { stopApplyBatch, getApplyBatchStatus } from '@/app/apply-batch-runner';
 import { enqueueApplyTicket, enqueueApplyQueue } from '@/app/apply-enqueue';
 import { getApplyQueueSnapshot, listApplyWorkers } from '@/app/apply-queue-status';
 import { readApplyStory, resolveApplyShotPath } from '@/app/apply-story';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
+import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
+import { AUTHENTICATED_SINGLE_JOB_SUBMIT } from '@/app/apply-submit-authorization';
 
 const logger = createChildLogger({ module: 'apply-operator-routes' });
+
+/** @description Resolve only the authenticated OIDC subject and preserve it byte-for-byte. */
+function authenticatedSubject(req: Request): string | null {
+  const subject = callerSub(req);
+  if (subject === null) return null;
+  try { return requireExactUserSubject(subject, 'authenticated subject'); }
+  catch { return null; }
+}
 
 export function createApplyOperatorRoutes(ctx: AppContext): Router {
   const router = Router();
@@ -48,29 +61,22 @@ export function createApplyOperatorRoutes(ctx: AppContext): Router {
   //    Awaits the ASYNC gatherAndDispatch (never spawnSync — the event loop stays free to serve
   //    /health + everyone else while the engine CLI chain runs). ─────────────────────────────────
   router.post('/submit', async (req: Request, res: Response) => {
-    const userSub = callerSub(req) || (req.body?.userSub ? String(req.body.userSub) : null);
+    const userSub = authenticatedSubject(req);
     const ticketId = req.body?.ticketId ? String(req.body.ticketId) : undefined;
     // Optional: the mobile review card sends the specific posting the operator reviewed, so we apply
     // THAT job (not just the newest-generated one). Omitted -> unchanged "next ready" behaviour.
     const postingId = Number(req.body?.postingId) || undefined;
     const targetRemoteClientId = req.body?.targetRemoteClientId ? String(req.body.targetRemoteClientId) : undefined;
     if (!userSub) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const r = await gatherAndDispatch(ctx, userSub, ticketId, postingId, targetRemoteClientId);
+    const r = await gatherAndDispatch(
+      ctx, userSub, ticketId, postingId, targetRemoteClientId, AUTHENTICATED_SINGLE_JOB_SUBMIT,
+    );
     res.status(r.status).json(r.body);
   });
 
-  // ── POST /complete/:taskId — legacy taskId-keyed completion ─────────────────────────────────────
-  router.post('/complete/:taskId', async (req: Request, res: Response) => {
-    const taskId = String(req.params.taskId);
-    const t = applyInFlight.get(taskId);
-    clearInFlight(taskId);
-    const result = String(req.body?.result || 'applied');
-    const ticketId = t?.ticketId || (req.body?.ticketId ? String(req.body.ticketId) : undefined);
-    if (ticketId) {
-      const status = result === 'applied' ? 'complete' : 'customer_action';
-      try { await ctx.ticketService.updateStatus(ticketId, status); } catch (err) { logger.warn({ err, ticketId, result }, 'complete: ticket update failed'); }
-    }
-    res.json({ ok: true, cleared: Boolean(t), result });
+  // ── Legacy task-id completion is intentionally gone: it had no owner/capability binding. ────────
+  router.post('/complete/:taskId', (_req: Request, res: Response) => {
+    res.status(410).json({ error: 'retired: trusted task-capability ingest is required' });
   });
 
   // ── Autonomous apply batch — start it once, walk away; the server works the whole queue
@@ -78,19 +84,19 @@ export function createApplyOperatorRoutes(ctx: AppContext): Router {
   // SUPERSEDED (2026-07-21 cutover): mints durable job-apply tickets instead of spinning the
   // in-memory runner (a second rail that died on every restart and drove the same desktop). ONE rail.
   router.post('/batch/start', async (req: Request, res: Response) => {
-    const userSub = callerSub(req) || (req.body?.userSub ? String(req.body.userSub) : null);
+    const userSub = authenticatedSubject(req);
     if (!userSub) { res.status(401).json({ error: 'unauthorized' }); return; }
     const limit = Number(req.body?.limit) || 200;
     const r = await enqueueApplyQueue(ctx, userSub, limit);
-    res.status(202).json({ ...r, superseded: 'the in-memory batch runner was replaced by durable job-apply tickets' });
+    res.status(r.ok ? 202 : 403).json({ ...r, superseded: 'the in-memory batch runner was replaced by durable job-apply tickets' });
   });
   router.post('/batch/stop', (req: Request, res: Response) => {
-    const userSub = callerSub(req) || (req.body?.userSub ? String(req.body.userSub) : null);
+    const userSub = authenticatedSubject(req);
     if (!userSub) { res.status(401).json({ error: 'unauthorized' }); return; }
     res.json({ ok: true, stopped: stopApplyBatch(userSub) });
   });
   router.get('/batch/status', (req: Request, res: Response) => {
-    const userSub = callerSub(req) || (req.query?.userSub ? String(req.query.userSub) : null);
+    const userSub = authenticatedSubject(req);
     if (!userSub) { res.status(401).json({ error: 'unauthorized' }); return; }
     res.json({ state: getApplyBatchStatus(userSub) });
   });
@@ -100,7 +106,7 @@ export function createApplyOperatorRoutes(ctx: AppContext): Router {
   //    so it survives restarts and the queue works it one-at-a-time. Optional targetRemoteClientId
   //    pins WHICH leaf node (desktop / remote) drives the browser. ──────────────────────────────────
   router.post('/enqueue', async (req: Request, res: Response) => {
-    const userSub = callerSub(req) || (req.body?.userSub ? String(req.body.userSub) : null);
+    const userSub = authenticatedSubject(req);
     if (!userSub) { res.status(401).json({ error: 'unauthorized' }); return; }
     const r = await enqueueApplyTicket(ctx, userSub, {
       postingId: Number(req.body?.postingId),
@@ -109,7 +115,7 @@ export function createApplyOperatorRoutes(ctx: AppContext): Router {
       url: req.body?.url ? String(req.body.url) : undefined,
       location: req.body?.location ? String(req.body.location) : undefined,
       targetRemoteClientId: req.body?.targetRemoteClientId ? String(req.body.targetRemoteClientId) : undefined,
-    });
+    }, AUTHENTICATED_SINGLE_JOB_SUBMIT);
     res.status(r.ok ? (r.deduped ? 200 : 201) : 400).json(r);
   });
 
@@ -117,12 +123,12 @@ export function createApplyOperatorRoutes(ctx: AppContext): Router {
   //    durable, restart-surviving replacement for "batch/start"). Scoped to the logged-in user.
   //    Optional targetRemoteClientId pins every minted ticket to one leaf node. ─────────────────────
   router.post('/enqueue-queue', async (req: Request, res: Response) => {
-    const userSub = callerSub(req) || (req.body?.userSub ? String(req.body.userSub) : null);
+    const userSub = authenticatedSubject(req);
     if (!userSub) { res.status(401).json({ error: 'unauthorized' }); return; }
     const limit = Number(req.body?.limit) || 200;
     const targetRemoteClientId = req.body?.targetRemoteClientId ? String(req.body.targetRemoteClientId) : undefined;
     const r = await enqueueApplyQueue(ctx, userSub, limit, targetRemoteClientId);
-    res.status(r.ok ? 202 : 400).json(r);
+    res.status(r.ok ? 202 : (r.denialReason ? 403 : 400)).json(r);
   });
 
   // ── GET /workers — the selectable target-computer list: the screen-control-capable leaf nodes THIS
@@ -136,12 +142,9 @@ export function createApplyOperatorRoutes(ctx: AppContext): Router {
     res.json(listApplyWorkers({ sub }));
   });
 
-  // ── GET /inflight — current watchdogs (debug/status) ────────────────────────────────────────────
+  // ── Process-global watchdog enumeration leaked other users' task ids; /queue is owner-scoped. ──
   router.get('/inflight', (_req: Request, res: Response) => {
-    const now = Date.now();
-    res.json({
-      inflight: [...applyInFlight.values()].map((t) => ({ taskId: t.taskId, postingId: t.postingId, ticketId: t.ticketId, ageMs: now - t.startedAt })),
-    });
+    res.status(410).json({ error: 'retired: use the owner-scoped /queue endpoint', replacement: '/queue' });
   });
 
   // ── GET /queue — the cockpit's apply queue: is the desktop reachable, what is waiting, what is

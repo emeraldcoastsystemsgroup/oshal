@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bind incident HTTP delegation to the persisted ticket owner and verified principal issuer instead of executing user-owned work as an ownerless system request.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Prohibit unsigned localhost fallback after a bot-node failure whenever signed HTTP delegation is enforced.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Authenticate the legacy localhost message fallback with the incident ticket owner so machine dispatch cannot select identity from request content.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Carry the incident owner over the canonical base64url trusted-service subject header so case and whitespace remain exact on localhost fallback.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -18,7 +19,7 @@ import type { TicketService, WorkspaceService } from '@/features/ticketing';
 import type { BotNodeClient, RuntimeParamsResolver } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import { pushOnDispatchFields } from './dispatch-manifest-worker';
-import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middleware/authz';
 import { taskSubdirs } from '@/shared/workspace-task-dirs';
 import type { WorkflowDefinition } from './dispatch-routing';
 import type { TaskFolderService } from './task-folder-service';
@@ -184,8 +185,7 @@ export async function dispatchIncidentTicket(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...serviceSecretHeaders(),
-        ...(ticket.ownerSub ? { 'x-oshal-user-sub': ticket.ownerSub } : {}),
+        ...(ticket.ownerSub ? trustedServiceUserHeaders(ticket.ownerSub) : serviceSecretHeaders()),
       },
       body: JSON.stringify({
         taskId: dispatchTaskId,

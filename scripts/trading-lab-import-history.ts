@@ -28,8 +28,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — curated catalog (sweeps #1–#5 + deploys + killed builds + open hypotheses) imported via /api/trading/lab with notes/lessons/decisions per entry; armed-strategy note-attach; optional --backtest.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve an explicit acting OIDC subject exactly while validating the trimmed operator-list fallback.
  */
 import 'dotenv/config';
+import { requireExactUserSubject } from '../src/shared/security/exact-user-subject';
 
 const BASE = argValue('--base') || process.env.OSHAL_BASE_URL || 'http://localhost:35457';
 const RUN_BACKTESTS = process.argv.includes('--backtest');
@@ -43,7 +45,9 @@ function authHeaders(): Record<string, string> {
   const pat = (process.env.OSHAL_CLI_TOKEN || '').trim();
   if (pat) return { Authorization: `Bearer ${pat}` };
   const secret = (process.env.OSHAL_SERVICE_SECRET || process.env.SWARM_SERVICE_SECRET || '').trim();
-  const sub = (process.env.OSHAL_USER_SUB || (process.env.OSHAL_OPERATOR_SUBS || '').split(',')[0] || '').trim();
+  const fallbackSub = (process.env.OSHAL_OPERATOR_SUBS || '').split(',')[0].trim();
+  const candidateSub = process.env.OSHAL_USER_SUB || fallbackSub;
+  const sub = candidateSub ? requireExactUserSubject(candidateSub) : '';
   if (secret && sub) return { 'X-Service-Secret': secret, 'X-OSHAL-User-Sub': sub };
   throw new Error('no auth: set OSHAL_CLI_TOKEN (swarm-cli login) or SWARM_SERVICE_SECRET + OSHAL_USER_SUB/OSHAL_OPERATOR_SUBS');
 }

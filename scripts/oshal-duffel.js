@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Travel (ADR-059) shopping CLI.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *   Reads the traveller's/operator's Duffel access token from the OSHAL connector store
  *   (oshal_connections, provider='duffel'), else the DUFFEL_ACCESS_TOKEN env fallback — NO
  *   keys baked in. Mirrors scripts/oshal-walmart.js token resolution: prefer a
@@ -31,6 +32,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 const DUFFEL_BASE = 'https://api.duffel.com';
 const DUFFEL_VERSION = 'v2';
@@ -38,9 +40,7 @@ const CABINS = ['economy', 'premium_economy', 'business', 'first'];
 
 // ── Identity (mirrors oshal-walmart.js — codex sandbox may not forward env) ──
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 // ── Credential resolution: brokered → DB → env ──────────────────────────────

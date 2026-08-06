@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Canonicalize every legacy forceTaskId before lookup/creation, reject every supplied owner assertion on the runtime that cannot enforce owner scoping, and forbid containment refusals from falling through to a generated workspace.
  */
 
 /**
@@ -31,6 +32,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { authorizeSwarmExecute } = require('./services/codebase/swarm-execute-auth');
+const { canonicalWorkspaceId } = require('./services/codebase/task-workspace-scope');
 
 // LLM providers
 const ClineProvider = require('./services/llm/ClineProvider');
@@ -56,6 +58,18 @@ const logger = {
   error: (...args) => console.error(`[swarm-node]`, ...args),
   debug: (...args) => { if (process.env.LOG_LEVEL === 'debug') console.log(`[swarm-node:debug]`, ...args); },
 };
+
+/** True only for workspace security errors that must never select a fallback directory. */
+function isWorkspaceBoundaryError(error) {
+  return Boolean(error && error.code === 'UNSAFE_TASK_WORKSPACE');
+}
+
+/** Build a stable boundary error when TaskController violates the canonical ID contract. */
+function workspaceMismatchError() {
+  const error = new Error('TaskController returned a non-canonical workspace id');
+  error.code = 'UNSAFE_TASK_WORKSPACE';
+  return error;
+}
 
 /**
  * @description Broadcast a locally-originated bot config change up to the OSHAL controller
@@ -267,7 +281,8 @@ class SwarmNodeServer {
         // supported BOT_RUNTIME=any-bot entrypoint runs app.js, which implements
         // the authenticated owner-scoped contract. Reject instead of dropping or
         // accidentally exposing sensitive request data here.
-        const carriesUserSub = typeof req.body?.userSub === 'string' && req.body.userSub.trim().length > 0;
+        const carriesUserSub = Boolean(req.body
+          && Object.prototype.hasOwnProperty.call(req.body, 'userSub'));
         const carriesCreds = req.body?.creds && typeof req.body.creds === 'object'
           && Object.keys(req.body.creds).length > 0;
         if (carriesUserSub || carriesCreds) {
@@ -285,15 +300,19 @@ class SwarmNodeServer {
         logger.info(`[swarm-execute] taskId=${taskId}, agentId=${agentId}, textLen=${text.length}, workspace=${workspaceFolderId}`);
 
         // Resolve or create task
-        const effectiveTaskId = workspaceFolderId || taskId || `swarm-${Date.now()}`;
+        const logicalTaskId = workspaceFolderId !== undefined
+          ? workspaceFolderId
+          : taskId !== undefined ? taskId : `swarm-${Date.now()}`;
+        const effectiveTaskId = canonicalWorkspaceId(logicalTaskId);
         let task;
         try {
           task = await taskController.getTask(effectiveTaskId);
           if (!task) {
             task = await taskController.createTask(`Swarm execution for ${agentId}`, 'act', { forceTaskId: effectiveTaskId });
-            if (task.id !== effectiveTaskId) task.id = effectiveTaskId;
+            if (task.id !== effectiveTaskId) throw workspaceMismatchError();
           }
-        } catch {
+        } catch (error) {
+          if (isWorkspaceBoundaryError(error)) throw error;
           task = await taskController.createTask(`Swarm execution for ${agentId}`, 'act');
         }
 
@@ -383,14 +402,14 @@ class SwarmNodeServer {
     this.app.post('/api/send-message', async (req, res) => {
       try {
         const { text, taskId, agentId, agenticMode = true } = req.body;
-        const effectiveTaskId = taskId || `msg-${Date.now()}`;
+        const effectiveTaskId = canonicalWorkspaceId(taskId !== undefined ? taskId : `msg-${Date.now()}`);
         let task;
         try {
           task = await taskController.getTask(effectiveTaskId);
         } catch { task = null; }
         if (!task) {
           task = await taskController.createTask(`Message for ${agentId || 'agent'}`, 'act', { forceTaskId: effectiveTaskId });
-          if (task.id !== effectiveTaskId) task.id = effectiveTaskId;
+          if (task.id !== effectiveTaskId) throw workspaceMismatchError();
         }
         const result = await taskController.processMessage(task.id, { text }, { agenticMode, autoApprove: { 'use_mcp_tool': true }, source: 'swarm-dispatch' });
         let response = '';

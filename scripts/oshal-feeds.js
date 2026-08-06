@@ -4,24 +4,22 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                          | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 2026-06-20 ... | maintainer@emeraldcoastsystemsgroup.com | Feeds provider CLI: the
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Feeds provider CLI: the
  *   registered `slack_feed` tool. Returns the signed-in user's indexed Slack feed as a
  *   JSON snapshot (recent messages, hot channels, top voices, counts, sentiment) so the
  *   feeds-curator bot — and Jarvis routing to it — can answer "what did I miss" over real
  *   data. Reads the feed_messages index the cron builds; no Slack token needed here. Mirrors
  *   scripts/oshal-jobhunter.js (per-user via OSHAL_USER_SUB / .oshal-user-sub, pg via DATABASE_URL).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *
  * Verbs: query (default) — emit the JSON snapshot to stdout. Exit 2 = no user identity.
  */
 'use strict';
-const fs = require('fs');
-const path = require('path');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 /** OSHAL_USER_SUB env, or the cwd-relative file the dispatcher drops (sandbox may not forward env). */
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB.trim();
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 async function main() {

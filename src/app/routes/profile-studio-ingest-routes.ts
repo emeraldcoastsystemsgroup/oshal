@@ -1,75 +1,101 @@
 /**
- * Profile Studio Ingest Route — the desktop worker's callback surface for LinkedIn profile updates.
+ * Profile Studio Ingest Route — trusted desktop-runtime callback for LinkedIn profile updates.
  *
- *   POST /ingest -> the box reports the outcome of a dispatched profile plan. Service-secret
- *                   authed (the box is not OIDC), so this lives in its OWN router mounted WITHOUT
- *                   requiresAuth — exactly like /api/apply/ingest. Resolves the plan
- *                   dispatched -> applied | failed via the store's CAS (a stale or duplicate
- *                   callback loses the CAS and is a no-op).
+ * POST /ingest accepts only a short-lived, one-use capability bound in PostgreSQL to the exact
+ * owner, immutable dispatch generation, task, selected client, and resolve operation. Callback
+ * result JSON is strict and bounded; missing, expired, replayed, mismatched, and stale ABA attempts
+ * all lose the same atomic update without falling back to the fleet service secret.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                     | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial ingest callback for
- *   the linkedin-profile-operator desktop worker (mirrors apply-ingest-routes).
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Machine-write identity (BACKLOG
- *   "Machine-write identity: audit every un-migrated identity-less WRITE"). This route claims to
- *   mirror /api/apply/ingest and did NOT mirror the half that matters: apply-ingest re-enters
- *   runWithRequestIdentity({ sub: userSub, isOperator: false }) before touching the user's rows,
- *   this one wrote under whatever the global middleware stamped — and for a valid X-Service-Secret
- *   that is `isOperator: true` (server.ts stamps `isOperator(req) || hasValidServiceSecret(req)`).
- *   So a desktop-worker callback mutated a user-owned row from an OPERATOR connection: it works
- *   only because linkedin_profile_plans has no owner policy yet, and it would fail exactly like the
- *   ADR-119 alert intake the day one is added (migration 060's Tier-1 pattern). The CAS is now
- *   scoped to the asserted userSub with isOperator:false — least privilege, and correct in advance.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial desktop-worker profile outcome callback.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-enter exact asserted plan-owner identity with non-operator database scope.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Replace reusable service-secret/body identity trust with a one-use generation/task/client/operation-bound capability, strict result validation, replay-safe atomic consume, and workspace cleanup.
  *
  * @module profile-studio-ingest-routes
  */
+
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
+import { cleanupProfileDispatchWorkspace } from '@/app/profile-studio-dispatch';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { ProfilePlanStore } from '@/features/profile-studio';
+import {
+  ProfileCallbackRequestSchema,
+  ProfilePlanStore,
+  hashProfileDispatchCapability,
+  parseProfileDispatchCapability,
+  type ProfileCallbackRequest,
+} from '@/features/profile-studio';
 
 const logger = createChildLogger({ module: 'profile-studio-ingest-routes' });
-const ALLOWED = new Set(['applied', 'failed']);
-
-/** Shared-secret check for the non-OIDC desktop worker (same contract as apply-ingest). */
-function serviceSecretOk(req: Request): boolean {
-  const secret = (process.env.SWARM_SERVICE_SECRET || '').trim();
-  return secret.length > 0 && String(req.header('x-service-secret') || '').trim() === secret;
-}
 
 /**
- * @description Build the service-secret-authed ingest router for profile-plan outcomes.
- * @param ctx - App context (Postgres pool for the plan store).
- * @returns The router (mount WITHOUT requiresAuth at /api/profile-studio).
+ * @description Builds the capability-authenticated profile result router. It remains outside OIDC
+ * because the trusted desktop daemon is not a browser session; the one-use grant self-authenticates.
+ * @param ctx - App context providing the owner-scoped PostgreSQL pool.
+ * @returns Router mounted at /api/profile-studio without requiresAuth.
  */
 export function createProfileStudioIngestRoutes(ctx: AppContext): Router {
   const router = Router();
   const store = new ProfilePlanStore(ctx.pool);
-
-  router.post('/ingest', async (req: Request, res: Response) => {
-    if (!serviceSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const userSub = req.body?.userSub ? String(req.body.userSub) : '';
-    const result = ALLOWED.has(String(req.body?.result)) ? (String(req.body.result) as 'applied' | 'failed') : 'failed';
-    const note = String(req.body?.note || '').slice(0, 4000);
-    if (!userSub) { res.status(400).json({ error: 'userSub required' }); return; }
-    try {
-      // Identity re-entry AFTER the secret check (an unauthenticated caller is rejected while
-      // still anonymous). Scoped to the row's own owner, NOT the operator stamp a service secret
-      // otherwise inherits and NOT runWithSystemIdentity — the machine gets exactly this user's
-      // plan row and nothing else. Mirrors apply-ingest-routes.ts.
-      const moved = await runWithRequestIdentity({ sub: userSub, isOperator: false }, () =>
-        store.casState(userSub, 'dispatched', result, { resultNote: note }));
-      logger.info({ userSub, result, moved }, 'profile plan outcome ingested from desktop worker');
-      res.json({ ok: true, moved, result });
-    } catch (err) {
-      logger.error({ err, userSub, result }, 'profile plan ingest failed');
-      res.status(500).json({ error: 'ingest failed' });
-    }
+  router.post('/ingest', (req: Request, res: Response) => {
+    void handleProfileResult(store, req, res);
   });
-
   return router;
+}
+
+/** @description Validates, atomically consumes, and resolves one exact dispatch callback. */
+async function handleProfileResult(
+  store: ProfilePlanStore,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const capability = parseProfileDispatchCapability(req.header('x-oshal-callback-capability'));
+  if (!capability) { res.status(401).json({ error: 'callback capability required' }); return; }
+  const parsed = ProfileCallbackRequestSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: 'invalid callback result' }); return; }
+  try {
+    const moved = await consumeProfileResult(store, parsed.data, capability);
+    if (!moved) { res.status(409).json({ error: 'callback rejected' }); return; }
+    await cleanupProfileDispatchWorkspace(parsed.data.taskId);
+    logger.info(callbackLog(parsed.data), 'profile plan result capability consumed');
+    res.json({ ok: true, result: parsed.data.result.result });
+  } catch (error) {
+    logger.error({ err: error, taskId: parsed.data.taskId }, 'profile plan callback failed');
+    res.status(500).json({ error: 'ingest failed' });
+  }
+}
+
+/** @description Re-enters exact owner scope before the atomic generation-bound database consume. */
+function consumeProfileResult(
+  store: ProfilePlanStore,
+  request: ProfileCallbackRequest,
+  token: string,
+): Promise<boolean> {
+  const { context, result, taskId } = request;
+  return runWithRequestIdentity({ sub: context.userSub, isOperator: false }, () =>
+    store.consumeDispatchCallback(
+      context.userSub,
+      context.generation,
+      taskId,
+      context.clientId,
+      context.operation,
+      hashProfileDispatchCapability(token),
+      result.result,
+      result.note,
+    ));
+}
+
+/** @description Produces a bounded structured log without capability or result-note content. */
+function callbackLog(request: ProfileCallbackRequest): Record<string, unknown> {
+  return {
+    userSub: request.context.userSub,
+    taskId: request.taskId,
+    clientId: request.context.clientId,
+    generation: request.context.generation,
+    result: request.result.result,
+  };
 }

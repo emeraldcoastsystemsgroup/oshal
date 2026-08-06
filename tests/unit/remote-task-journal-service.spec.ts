@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Cover owner-aware claim normalization and satisfy the durable registration/reassignment repository boundary.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Assert omitted task attribution is stamped from the authoritative durable owner before persistence.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Prove concurrent replay callers join one service-level pass, bounding shared-pool journal connections while publishers perform nested writes.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Prove durable owner identities retain exact case/whitespace while client identifiers keep normalization and whitespace-only owner values still fail closed.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -112,7 +113,7 @@ describe('RemoteTaskJournalService replay serialization', () => {
 });
 
 describe('RemoteTaskJournalService validation', () => {
-  it('normalizes client and owner identities before enqueue', async () => {
+  it('normalizes the client identifier but preserves the exact owner identity before enqueue', async () => {
     const repository = startupRepository([]).repository;
     vi.mocked(repository.enqueue).mockResolvedValue({
       kind: 'enqueued',
@@ -125,10 +126,10 @@ describe('RemoteTaskJournalService validation', () => {
       },
     });
     const service = new RemoteTaskJournalService(repository);
-    await service.enqueue(' client-a ', ' user-a ', { ...envelope, status: 'completed' });
+    await service.enqueue(' client-a ', ' User-A ', { ...envelope, status: 'completed' });
     expect(repository.enqueue).toHaveBeenCalledWith(expect.objectContaining({
-      clientId: 'client-a', ownerSub: 'user-a',
-      task: expect.objectContaining({ status: 'queued', userSub: 'user-a' }),
+      clientId: 'client-a', ownerSub: ' User-A ',
+      task: expect.objectContaining({ status: 'queued', userSub: ' User-A ' }),
     }));
   });
 
@@ -144,6 +145,7 @@ describe('RemoteTaskJournalService validation', () => {
     const repository = startupRepository([]).repository;
     const service = new RemoteTaskJournalService(repository);
     await expect(service.claimNext('   ', 'user-a')).rejects.toThrow('clientId must be a non-empty string');
+    await expect(service.claimNext('client-a', '   ')).rejects.toThrow('expectedOwnerSub must be a non-empty string');
     expect(repository.claimNext).not.toHaveBeenCalled();
   });
 });

@@ -25,6 +25,7 @@
  *   provider failure, while returning only bounded credential-safe diagnostics.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export a request-scoped, credential-argument live-search helper for
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY-HARDENING 3.1/9: removed the hardcoded dev-key fallback from the token-key derivation - SESSION_SECRET unset now fails loud instead of silently deriving a well-known AES key any reader of this public repo can compute. No change on a correctly-provisioned box; guard: tests/unit/no-dev-secret-fallback.spec.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the exact scoped OIDC subject through the shared CLI identity reader.
  *   deterministic provider intents; importing this module no longer runs the CLI.
  */
 'use strict';
@@ -32,6 +33,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { resolveExactUserSubject } = require('./lib/exact-user-subject');
 
 const PRODUCT = '/api-proxy/service/affil/product/v2';
 const PROVIDER_JSON_MAX_BYTES = 4 * 1024 * 1024;
@@ -45,9 +47,7 @@ const DEAL_FEEDS = {
 
 // ── Identity (mirrors oshal-smartthings.js — codex sandbox may not forward env) ──
 function resolveUserSub() {
-  if (process.env.OSHAL_USER_SUB) return process.env.OSHAL_USER_SUB;
-  try { return fs.readFileSync(path.join(process.cwd(), '.oshal-user-sub'), 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  return resolveExactUserSubject();
 }
 
 // ── Credential resolution: brokered first, then DB ──────────────────────────
