@@ -1,0 +1,248 @@
+# =============================================================================
+# oshal enforced security pipeline
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com | Add the SEC-06 PR/main/weekly fail-closed SAST, dependency, secret, policy-inventory, container, and SBOM gates.
+# 2 | maintainer@emeraldcoastsystemsgroup.com | Make active-only backlog hygiene a required, mutation-tested policy gate.
+# =============================================================================
+
+name: Security
+
+# Security controls must cover the candidate before merge, the exact main commit after merge,
+# and dependency/advisory drift even when source is quiet. The weekly cadence is deliberately one
+# run, not the former daily/full-CI spend; only this bounded security workflow is automatic.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 07 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.12"
+  PIP_AUDIT_VERSION: "2.10.1"
+  TRIVY_VERSION: "v0.73.0"
+  GITLEAKS_IMAGE: "zricethezav/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854"
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, python]
+    steps:
+      - name: Check out complete candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Analyze source
+        uses: github/codeql-action/analyze@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+        with:
+          category: /language:${{ matrix.language }}
+          output: codeql-results
+          upload: false
+
+      # CodeQL normally records alerts without failing a PR. SEC-06 requires an enforcement gate:
+      # high/critical findings always block; lower findings need a named, dated exception.
+      - name: Enforce SARIF findings and exception expiry
+        run: >-
+          node scripts/security/check-codeql-sarif.mjs
+          codeql-results scripts/security/codeql-exceptions.json
+
+      - name: Preserve CodeQL evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: codeql-${{ matrix.language }}-${{ github.sha }}
+          path: codeql-results/
+          if-no-files-found: error
+          retention-days: 30
+
+  policy-inventories:
+    name: Route, machine-write, migration and RLS policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --legacy-peer-deps
+
+      # The runner discovers each category and refuses zero files before invoking Vitest. That
+      # makes a renamed/deleted inventory fail instead of turning an empty glob into a green job.
+      - name: Run security policy regression families
+        run: node scripts/security/run-policy-gates.mjs
+
+      # Completion history belongs in as-built evidence, not the active queue. Keep the direct
+      # file check explicit so this invariant remains visible even if test discovery changes.
+      - name: Refuse completed-work history in the active backlog
+        run: node scripts/check-backlog-active-only.js
+
+  dependency-audit:
+    name: Blocking npm and pip audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Audit every production npm lockfile
+        shell: bash
+        run: |
+          mapfile -d '' locks < <(find . -name package-lock.json -not -path '*/node_modules/*' -print0)
+          ((${#locks[@]} > 0)) || { echo '::error::No npm lockfiles discovered'; exit 1; }
+          for lock in "${locks[@]}"; do
+            package_dir="$(dirname "$lock")"
+            echo "Auditing ${package_dir}"
+            npm --prefix "$package_dir" audit --package-lock-only --omit=dev --audit-level=high
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install pinned pip-audit
+        run: python -m pip install --disable-pip-version-check "pip-audit==${PIP_AUDIT_VERSION}"
+
+      # Audit every maintained Python dependency surface. Resolution errors are failures too: an
+      # input the scanner cannot resolve is not evidence of a clean dependency tree.
+      - name: Audit Python requirements and project metadata
+        run: |
+          python -m pip_audit -r bench/requirements.txt
+          python -m pip_audit -r scripts/spatial-recon-edge/requirements.txt
+          python -m pip_audit -r services/speaker-diarization/requirements.txt
+          python -m pip_audit -r services/speaker-diarization/requirements-dev.txt
+          python -m pip_audit packages/apply-operator-mcp
+
+  secret-scan:
+    name: Full-history and worktree secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      # The image is tag+manifest-digest pinned. Both scans are required: history catches a secret
+      # removed in the candidate diff; --no-git catches ignored/untracked material in manual runs.
+      - name: Scan complete Git history
+        run: >-
+          docker run --rm -v "$PWD:/scan:ro"
+          -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/scan
+          "$GITLEAKS_IMAGE"
+          detect --source=/scan --config=/scan/.gitleaks.toml
+          --log-opts="--all" --redact --verbose
+
+      - name: Scan checked-out worktree
+        run: >-
+          docker run --rm -v "$PWD:/scan:ro" "$GITLEAKS_IMAGE"
+          detect --source=/scan --config=/scan/.gitleaks.toml
+          --no-git --redact --verbose
+
+  container-and-sbom:
+    name: Container vulnerability gate and SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo docker image prune -af
+          df -h /
+
+      - name: Build the shipped image
+        run: docker build -f Dockerfile.oshal -t oshal-security:${{ github.sha }} .
+
+      # trivy-action is SHA-pinned to the post-incident v0.36.0 source and installs an explicit,
+      # non-compromised Trivy release. Never replace either pin with master/latest.
+      - name: Block fixable high and critical image findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: oshal-security:${{ github.sha }}
+          scanners: vuln
+          vuln-type: os,library
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          skip-dirs: /usr/local/bin
+          version: ${{ env.TRIVY_VERSION }}
+
+      - name: Generate CycloneDX image SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: oshal-security:${{ github.sha }}
+          format: cyclonedx
+          output: oshal-sbom.cdx.json
+          exit-code: "0"
+          skip-setup-trivy: true
+
+      - name: Preserve immutable SBOM evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: oshal-sbom-${{ github.sha }}
+          path: oshal-sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  required:
+    name: SEC-06 required security gate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [codeql, policy-inventories, dependency-audit, secret-scan, container-and-sbom]
+    steps:
+      - name: Refuse failed, skipped, or cancelled controls
+        env:
+          CODEQL: ${{ needs.codeql.result }}
+          POLICY: ${{ needs.policy-inventories.result }}
+          DEPENDENCIES: ${{ needs.dependency-audit.result }}
+          SECRETS: ${{ needs.secret-scan.result }}
+          CONTAINER: ${{ needs.container-and-sbom.result }}
+        run: |
+          for result in "$CODEQL" "$POLICY" "$DEPENDENCIES" "$SECRETS" "$CONTAINER"; do
+            [ "$result" = success ] || { echo "::error::Required security control ended: $result"; exit 1; }
+          done

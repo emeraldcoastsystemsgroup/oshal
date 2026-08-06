@@ -7,16 +7,13 @@ title = "OSHAL gitleaks config"
 [extend]
 useDefault = true
 
-[allowlist]
-description = "Examples, test fixtures, and local-dev default credentials (not real secrets)"
+[[allowlists]]
+description = "Generated dependencies, explicit examples, and operator-local release vault inputs"
 paths = [
   '''node_modules/.*''',
   '''.*\.example$''',
   '''.*\.example\.(ya?ml|yml|json|env)$''',
   '''.*\.env\.example$''',
-  '''tests/.*''',
-  '''.*\.spec\.ts$''',
-  '''.*\.test\.ts$''',
   # Private release-scrubber INPUTS — the real-secret replacement table + the reverse-identity
   # vault. Operator-local, gitignored, and DROPPED from the public baseline (build-public-baseline.sh
   # step 2b `rm -rf scripts/release`). They never commit + never ship, but gitleaks --no-git scans the
@@ -24,6 +21,8 @@ paths = [
   '''scripts/release/secret-replacements\.txt$''',
   '''scripts/release/authors\.vault\.json$''',
 ]
+[[allowlists]]
+description = "Exact public identifiers and self-describing placeholders"
 regexes = [
   '''AKIAIOSFODNN7EXAMPLE''',                     # AWS documentation dummy key
   '''postgresql://(oshal:oshal|user:pass)@''',    # docker-compose dev DSNs
@@ -46,3 +45,31 @@ regexes = [
   # into that file still fails: rank-or-ira prefix + tNN/cadNN dial + optional -cNN core pct.
   '''^(gravity|momentum|ensemble|ira)(-[a-z]+)*-(t\d+|cad\d+)(-c\d+)?$''',
 ]
+
+# Tests remain scanned. Only exact public/synthetic values at their reviewed fixture locations are
+# exempted, so a different credential pasted into any of these files still fails the gate.
+[[allowlists]]
+description = "Exact synthetic secret-detection fixtures"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''services/speaker-diarization/tests/test_api\.py$''',
+  '''src/features/governance/dlp/redactor\.test\.ts$''',
+  '''tests/unit/graph-keys\.spec\.ts$''',
+  '''tests/unit/secret-scanner\.spec\.ts$''',
+  '''tests/unit/workflow-run-history\.spec\.ts$''',
+]
+regexes = [
+  '''SERVICE_KEY\s*=\s*"test-speaker-key-123456789"''',
+  '''const jwt\s*=\s*'eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'''',
+  '''longNodeKey:\s*'k_84a0678c90937f5dcf9994d5866668da6b995109'''',
+  '''apiKey:\s*"9f8e7d6c5b4a39281706f5e4d3c2b1a0"''',
+  '''apiKey:\s*'sk-(abc1234567890xyz|verysecret12345678)'''',
+]
+
+[[allowlists]]
+description = "Kalshi tests assert generated PEM normalization without storing a private key"
+condition = "AND"
+regexTarget = "line"
+paths = ['''tests/unit/kalshi-auth\.spec\.ts$''']
+regexes = ['''toContain\('-----BEGIN (RSA )?PRIVATE KEY-----'\)''']
