@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Extracted agent panel, auth state management, renderers from config-admin.js (1277 → <1000 decomposition)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Made provider controls honor server-resolved precedence and push runtime changes before recording profile state
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Omit disabled provider/model controls from both single and bulk mutations; model-only updates now let the authoritative server resolve transport context
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -598,7 +599,7 @@ function renderAuthModeOptions(selectedValue) {
 
 // ── Payload Builders ────────────────────────────────────────────────────────
 
-function buildSelectedAgentProfilePayload(container) {
+export function buildSelectedAgentProfilePayload(container) {
   const providerInput = container.querySelector('#agentProviderInput');
   const modelInput = container.querySelector('#agentModelInput');
   const payload = {
@@ -617,10 +618,11 @@ function buildSelectedAgentProfilePayload(container) {
 
 /**
  * @description Build an authoritative runtime update only when provider/model values changed.
- * A pinned provider select never contributes its DOM value; model-only changes carry the API's
- * effective provider so bot-node's provider-required switch endpoint remains internally coherent.
+ * A pinned provider select never contributes its DOM value. The server resolves any provider
+ * context needed to transport a model-only update; a disabled
+ * provider never crosses the mutation boundary merely because the bot-node transport needs one.
  */
-function buildSelectedAgentRuntimePayload(container, agent, profile) {
+export function buildSelectedAgentRuntimePayload(container, agent, profile) {
   const providerInput = container.querySelector('#agentProviderInput');
   const modelInput = container.querySelector('#agentModelInput');
   const providerId = readString(providerInput?.value);
@@ -636,11 +638,8 @@ function buildSelectedAgentRuntimePayload(container, agent, profile) {
     && modelId !== originalModel;
   if (!providerChanged && !modelChanged) return null;
 
-  const effectiveProvider = providerChanged
-    ? providerId
-    : readString(agent?.effectiveProvider) || readString(profile.providerId);
   return {
-    ...(effectiveProvider ? { providerId: effectiveProvider } : {}),
+    ...(providerChanged ? { providerId } : {}),
     ...(modelChanged ? { modelId } : {}),
   };
 }
@@ -652,11 +651,13 @@ function readOriginalInputValue(input, fallback) {
   return readString(fallback);
 }
 
-function buildBulkTemplatePayload(container) {
+export function buildBulkTemplatePayload(container) {
+  const providerInput = container.querySelector('#agentProviderInput');
+  const modelInput = container.querySelector('#agentModelInput');
   const payload = {
     status: container.querySelector('#agentStatusInput')?.value || '',
-    providerId: container.querySelector('#agentProviderInput')?.value || '',
-    modelId: container.querySelector('#agentModelInput')?.value.trim() || '',
+    ...(!providerInput?.disabled ? { providerId: providerInput?.value || '' } : {}),
+    ...(!modelInput?.disabled ? { modelId: modelInput?.value.trim() || '' } : {}),
     projectUrl: container.querySelector('#agentProjectUrlInput')?.value.trim() || '',
     selectorSkillsText: container.querySelector('#agentSelectorSkillsInput')?.value || '',
     themePreference: container.querySelector('#agentThemeInput')?.value || '',

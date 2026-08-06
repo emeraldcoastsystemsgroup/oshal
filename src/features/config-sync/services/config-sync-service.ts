@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial ConfigSyncService — bidirectional any-bot config sync (ADR-034): push-down via switchProvider, broadcast-up reconcile via the swarm.config-change mesh channel, with versioning + audit
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Audit writes to the EXISTING config_sync_log table (migration 001 / ADR-006) — resolve agent UUID for the FK, map direction to push/pull, record version before/after (docker smoke caught the table already existed)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Wrap the config-change mesh handler in runWithSystemIdentity: mesh poll callbacks carry no AsyncLocalStorage identity, so recordSyncLog's pool queries ran identity-less — under OSHAL_DB_GUC_STRICT=deny they would be stamped anonymous non-operator (denied/zero rows) the moment agents/config_sync_log gain RLS. Same shape as the remote task-result landing fix; the sentinel is the sanctioned trusted-background marker.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve independent model changes without smuggling a disabled provider through the mutation. A model-only push resolves the live bot's current provider strictly as transport context, then persists only the requested model; inability to resolve that context refuses before the authoritative record advances.
  */
 
 import type { Pool } from 'pg';
@@ -150,10 +151,16 @@ export class ConfigSyncService {
     // endpoint — record authoritatively without an HTTP push.
     const hasEndpoint = this.botNodeClient.hasEndpoint(agentId);
     if (hasEndpoint) {
+      const transportProvider = await this.resolveTransportProvider(agentId, params);
+      if (!transportProvider) {
+        const reason = 'Live bot provider could not be resolved for a model-only update';
+        logger.error({ agentId, model: params.modelId }, reason);
+        return { pushed: false, reason };
+      }
       try {
         await this.botNodeClient.switchProvider(
           agentId,
-          params.providerId ?? '',
+          transportProvider,
           params.modelId,
           credentials,
         );
@@ -180,6 +187,32 @@ export class ConfigSyncService {
       'Config pushed down and recorded authoritatively',
     );
     return { pushed: hasEndpoint, newVersion: after };
+  }
+
+  /**
+   * @description Resolve the provider required by the bot-node switch transport. A provider
+   * supplied by the caller is authoritative for this change. For a model-only mutation, read the
+   * live provider without adding it to `params`, so the disabled/pinned value is never persisted
+   * as though the caller changed it.
+   * @param agentId - Target bot.
+   * @param params - Requested authoritative mutation.
+   * @returns Provider used only for the push transport, or undefined when it cannot be proven.
+   */
+  private async resolveTransportProvider(
+    agentId: string,
+    params: RuntimeParams,
+  ): Promise<string | undefined> {
+    const requested = params.providerId?.trim();
+    if (requested) {
+      return requested;
+    }
+    try {
+      const active = await this.botNodeClient.getProvider(agentId);
+      return active?.provider?.trim() || undefined;
+    } catch (err) {
+      logger.error({ err, agentId }, 'Failed to resolve live provider for model-only config push');
+      return undefined;
+    }
   }
 
   /**

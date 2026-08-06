@@ -34,10 +34,15 @@ the provider and model controls independently from `providerOverridable` / `mode
 prints the API's `precedenceNote` unchanged. Changed provider/model values are pushed through the
 authoritative `/api/agents/:agentId/runtime` route before the profile write; a bot-side refusal
 therefore performs zero profile writes and explicitly reports that nothing was recorded. A pinned
-provider's disabled DOM value never enters either payload; model-only updates carry the resolved
-effective provider required by the live bot switch endpoint. The profile update response is also
-re-enriched so the rendered policy cannot go stale after a successful save. Guarded by executable
-rendering/refusal cases in `tests/unit/bot-provider-precedence.spec.ts`.
+provider's disabled DOM value never enters single or bulk payloads. Model-only mutations contain
+only the model; the server resolves the bot's current provider strictly as transport context and
+does not persist it as a caller change. The runtime endpoint independently resolves live registry
+precedence, returns 409 `provider_pinned` to bypass attempts, pushes before persistence, and
+answers with `applied`, `pushed`, `configVersion`, `effectiveProvider`, and
+`effectiveModel`. The profile update response is also re-enriched so the rendered policy cannot
+go stale after a successful save. Guarded by executable rendering/refusal/pinned-direct-client
+cases in `tests/unit/bot-provider-precedence.spec.ts`,
+`tests/unit/config-runtime-precedence.spec.ts`, and `tests/config-sync-service.spec.ts`.
 
 ## Rides map — follow-ups after the 2026-08-01 map/fare fix (core PR #102, store PR #40)
 

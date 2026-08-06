@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard provider-panel-shows-registry-precedence. Pins the rule itself (a non-cline registry harnessType outranks the per-bot DB record; 'auto' is the no-opinion sentinel, not a provider; the MODEL stays overridable when the provider does not, because the bot-node config bootstrap maps modelId onto the harness's model env var), pins that a FAILED registry read fails CLOSED instead of promoting the DB record (the aliased require() the controller uses does not resolve under vitest, so this environment exercises that branch deterministically), pins that /api/agents carries the resolved fields, and pins that the Utilities panel disables the control FROM providerOverridable, renders the API's own reason verbatim, never sends a providerId from a disabled select, and reports a 502 push refusal as not-applied. The classification runs over the REAL active registry so it is not fixture-only. NOT asserted: "some bot is overridable" - every shipped registry entry declares a harness today, and a gate that a legitimate future cline bot would turn red is a gate nobody can act on.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-pointed the retired Utilities surface guard at Config Admin and added executable refusal coverage proving a disabled provider cannot leak into runtime/profile writes
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove disabled provider/model values are absent from single and bulk payloads; model-only runtime updates rely on server-owned transport resolution
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +16,8 @@ import { getActiveRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
 import { AgentProfileController } from '@/features/agent-profile';
 import type { AgentProfileService } from '@/features/agent-profile';
 import {
+  buildBulkTemplatePayload,
+  buildSelectedAgentProfilePayload,
   renderSelectedAgentPanelMarkup,
   saveSelectedAgentProfile,
 } from '../../src/pages/config-admin/config-admin-agent-panel.js';
@@ -291,8 +294,38 @@ describe('provider-panel-shows-registry-precedence', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/agents\/bot-1\/runtime$/);
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toEqual({ providerId: 'openai-codex', modelId: 'gpt-5.1' });
+    expect(JSON.parse(String(request.body))).toEqual({ modelId: 'gpt-5.1' });
     expect(statuses.at(-1)).toMatch(/Not applied.*Nothing was recorded/i);
+  });
+
+  it('bulk templates omit every disabled precedence-bound field', () => {
+    const fields: Record<string, any> = {
+      '#agentStatusInput': { value: 'active' },
+      '#agentProviderInput': { value: 'anthropic', disabled: true },
+      '#agentModelInput': { value: 'gpt-5.6', disabled: false },
+      '#agentProjectUrlInput': { value: '' },
+      '#agentSelectorSkillsInput': { value: 'review' },
+      '#agentThemeInput': { value: 'midnight' },
+      '#agentNameInput': { value: 'Pinned Bot' },
+      '#agentExcludeFromBulkInput': { checked: false },
+    };
+    const container = { querySelector: (selector: string) => fields[selector] || null };
+
+    expect(buildBulkTemplatePayload(container)).toEqual({
+      status: 'active',
+      modelId: 'gpt-5.6',
+      selectorSkillsText: 'review',
+      themePreference: 'midnight',
+    });
+    expect(buildSelectedAgentProfilePayload(container)).toMatchObject({
+      name: 'Pinned Bot',
+      modelId: 'gpt-5.6',
+    });
+    expect(buildSelectedAgentProfilePayload(container)).not.toHaveProperty('providerId');
+
+    fields['#agentModelInput'].disabled = true;
+    expect(buildBulkTemplatePayload(container)).not.toHaveProperty('modelId');
+    expect(buildSelectedAgentProfilePayload(container)).not.toHaveProperty('modelId');
   });
 
   it('metadata-only saves do not push unchanged displayed runtime defaults', async () => {
