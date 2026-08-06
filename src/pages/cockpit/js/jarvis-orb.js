@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Honor manifest-driven assistant suppression before or after profile resolution and restore the orb for non-immersive apps.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Tolerant JSON parsing on the super-admin self-edit calls: startSession/commit called r.json() raw, so any HTML reply (proxy 502 page, unmounted route's HTML 404) surfaced to the operator as `SyntaxError: Unexpected token '<' … <!DOCTYPE`. parseJsonResponse() reads text, tries JSON, and falls back to a readable {error} so the pane always shows "HTTP <status> — server returned a non-JSON response" instead of doctype vomit.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Expand/restore control on the panel header. A user reported being unable to read an assistant answer: the docked panel is 400px wide, which is a phone-width reading column on a desktop monitor, and browser zoom does not help because the panel is sized by THIS document, not by the iframe's content. Expanded reuses the same pinned safe-area geometry the phone rule already proves, so the docked size and the mobile dynamic-viewport fix (entry 2) are untouched, and no Fullscreen API delegation is needed. The choice persists, and Escape restores before it closes.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The orb is draggable and hideable (operator request 2026-08-06). Drag with any pointer; a saved position persists, is re-clamped to the viewport on every load and resize (a position saved on a large monitor must not strand the orb off-screen on a laptop), and a real drag suppresses the click-open that would otherwise fire on release. Right-click offers Hide / Reset position; hidden persists per browser and the confirmation names the exact restore (?orb=show on any cockpit URL, honored at init alongside ?orb=hide). Deliberately separate from the manifest-driven ASSISTANT_HIDDEN rail — that is the app's decision, this is the person's, and the URL override touches only the personal flag.
  */
 
 /**
@@ -42,9 +43,26 @@
   var JARVIS_URL = '/api/jarvis/';
   var ASSISTANT_HIDDEN_ATTR = 'data-oshal-assistant-hidden';
   var ASSISTANT_VISIBILITY_EVENT = 'oshal:assistant-visibility';
+  // Personal preferences (distinct from the manifest-driven rail above): where the orb sits,
+  // and whether this PERSON has hidden it. Never throws — storage can be unavailable.
+  var POS_KEY = 'jarvis-orb-pos';
+  var HIDDEN_KEY = 'jarvis-orb-hidden';
+
+  function userHidOrb() {
+    try { return localStorage.getItem(HIDDEN_KEY) === '1'; } catch (_) { return false; }
+  }
+
+  // ?orb=show / ?orb=hide on any cockpit URL flips the personal flag — the zero-UI restore
+  // path the hide confirmation names, since a hidden orb offers nothing left to click.
+  try {
+    var orbParam = new URLSearchParams(window.location.search).get('orb');
+    if (orbParam === 'show') localStorage.removeItem(HIDDEN_KEY);
+    else if (orbParam === 'hide') localStorage.setItem(HIDDEN_KEY, '1');
+  } catch (_) { /* storage unavailable — session default applies */ }
 
   function assistantIsHidden() {
     return fullJarvisSurface
+      || userHidOrb()
       || document.documentElement.getAttribute(ASSISTANT_HIDDEN_ATTR) === 'true';
   }
 
@@ -82,7 +100,24 @@
       + '  background: radial-gradient(circle at 32% 28%, #5eead4, #14b8a6 42%, #0f766e 100%);'
       + '  box-shadow: 0 10px 26px -8px rgba(13,148,136,.6), 0 0 0 4px rgba(45,212,191,.14);'
       + '  display: flex; align-items: center; justify-content: center;'
+      + '  touch-action: none;' // dragging the orb must not scroll the page under it
       + '  transition: transform .15s ease, box-shadow .15s ease; }'
+      + '#jarvisOrbFab.dragging { transition: none; cursor: grabbing; }'
+      + '#jarvisOrbMenu {'
+      + '  position: fixed; z-index: 2147483001; min-width: 170px; padding: 4px;'
+      + '  background: #0b1622; border: 1px solid rgba(45,212,191,.25); border-radius: 10px;'
+      + '  box-shadow: 0 12px 32px -8px rgba(0,0,0,.65); }'
+      + '#jarvisOrbMenu button {'
+      + '  display: block; width: 100%; text-align: left; background: transparent; border: none;'
+      + '  color: #cbd5e1; font: 500 12.5px/1 system-ui, sans-serif; padding: 9px 10px;'
+      + '  border-radius: 7px; cursor: pointer; }'
+      + '#jarvisOrbMenu button:hover { background: rgba(45,212,191,.14); color: #ecfeff; }'
+      + '#jarvisOrbToast {'
+      + '  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px));'
+      + '  transform: translateX(-50%); z-index: 2147483001; max-width: min(420px, calc(100vw - 32px));'
+      + '  background: #0b1622; color: #cbd5e1; border: 1px solid rgba(45,212,191,.3);'
+      + '  border-radius: 10px; padding: 10px 14px; font: 500 12.5px/1.45 system-ui, sans-serif;'
+      + '  box-shadow: 0 12px 32px -8px rgba(0,0,0,.65); }'
       + '#jarvisOrbFab:hover { transform: translateY(-2px) scale(1.06); box-shadow: 0 14px 30px -8px rgba(13,148,136,.7), 0 0 0 5px rgba(45,212,191,.22); }'
       + '#jarvisOrbFab:focus-visible { outline: 3px solid #99f6e4; outline-offset: 3px; }'
       + '#jarvisOrbFab svg { width: 30px; height: 30px; }'
@@ -241,6 +276,98 @@
       }
     }
     applyWide(wideSaved());
+
+    // ── Personal placement: drag anywhere, position persists, always re-clamped. ──────────────
+    var drag = { active: false, moved: false, startX: 0, startY: 0, offX: 0, offY: 0 };
+
+    function clampPos(left, top) {
+      var w = fab.offsetWidth || 60, h = fab.offsetHeight || 60;
+      return {
+        left: Math.min(Math.max(0, left), Math.max(0, (window.innerWidth || w) - w)),
+        top: Math.min(Math.max(0, top), Math.max(0, (window.innerHeight || h) - h)),
+      };
+    }
+    function applyPos(pos) {
+      var p = clampPos(pos.left, pos.top);
+      fab.style.left = p.left + 'px'; fab.style.top = p.top + 'px';
+      fab.style.right = 'auto'; fab.style.bottom = 'auto';
+    }
+    function savedPos() {
+      try {
+        var p = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
+        return p && typeof p.left === 'number' && typeof p.top === 'number' ? p : null;
+      } catch (_) { return null; }
+    }
+    var initialPos = savedPos();
+    if (initialPos) applyPos(initialPos); // clamped: a big-monitor position must not strand the orb off a laptop screen
+    window.addEventListener('resize', function () { var p = savedPos(); if (p) applyPos(p); });
+
+    fab.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      var r = fab.getBoundingClientRect();
+      drag.active = true; drag.moved = false;
+      drag.startX = e.clientX; drag.startY = e.clientY;
+      drag.offX = e.clientX - r.left; drag.offY = e.clientY - r.top;
+      try { fab.setPointerCapture(e.pointerId); } catch (_) { /* capture is an optimization */ }
+    });
+    fab.addEventListener('pointermove', function (e) {
+      if (!drag.active) return;
+      // 6px threshold: below it this is a click, not a drag — never steal the tap-to-open.
+      if (!drag.moved && Math.abs(e.clientX - drag.startX) + Math.abs(e.clientY - drag.startY) < 6) return;
+      drag.moved = true;
+      fab.classList.add('dragging');
+      applyPos({ left: e.clientX - drag.offX, top: e.clientY - drag.offY });
+    });
+    fab.addEventListener('pointerup', function () {
+      if (!drag.active) return;
+      drag.active = false;
+      fab.classList.remove('dragging');
+      if (drag.moved) {
+        var r = fab.getBoundingClientRect();
+        try { localStorage.setItem(POS_KEY, JSON.stringify({ left: r.left, top: r.top })); } catch (_) { /* session-only */ }
+      }
+    });
+    // Capture-phase, registered before `open`: the release at the end of a drag fires a click,
+    // and without this the orb would open its panel every time it was moved.
+    fab.addEventListener('click', function (e) {
+      if (drag.moved) { e.stopImmediatePropagation(); e.preventDefault(); drag.moved = false; }
+    }, true);
+
+    // ── Hide / reset via right-click. Hiding names its own undo, because a hidden orb has
+    //    nothing left to click: ?orb=show on any cockpit URL clears the flag (handled at init). ──
+    function toast(text) {
+      var old = document.getElementById('jarvisOrbToast'); if (old) old.remove();
+      var t = document.createElement('div');
+      t.id = 'jarvisOrbToast'; t.setAttribute('role', 'status'); t.textContent = text;
+      document.body.appendChild(t);
+      setTimeout(function () { t.remove(); }, 8000);
+    }
+    fab.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      var old = document.getElementById('jarvisOrbMenu'); if (old) old.remove();
+      var m = document.createElement('div');
+      m.id = 'jarvisOrbMenu';
+      m.innerHTML = '<button type="button" data-act="hide">Hide the orb</button>'
+        + '<button type="button" data-act="reset">Reset position</button>';
+      m.style.left = Math.min(e.clientX, (window.innerWidth || 400) - 190) + 'px';
+      m.style.top = Math.min(e.clientY, (window.innerHeight || 300) - 90) + 'px';
+      document.body.appendChild(m);
+      var onDoc = function (ev) { if (!m.contains(ev.target)) dismiss(); };
+      var dismiss = function () { m.remove(); document.removeEventListener('pointerdown', onDoc, true); };
+      document.addEventListener('pointerdown', onDoc, true);
+      m.addEventListener('click', function (ev) {
+        var act = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-act');
+        if (act === 'hide') {
+          try { localStorage.setItem(HIDDEN_KEY, '1'); } catch (_) { /* hides for this page-load only */ }
+          dismiss(); removeOrb();
+          toast('Jarvis orb hidden on this browser. To bring it back, open any cockpit page with ?orb=show added to the URL.');
+        } else if (act === 'reset') {
+          try { localStorage.removeItem(POS_KEY); } catch (_) { /* nothing saved */ }
+          fab.style.left = ''; fab.style.top = ''; fab.style.right = ''; fab.style.bottom = '';
+          dismiss();
+        }
+      });
+    });
 
     fab.addEventListener('click', open);
     panel.addEventListener('click', function (e) {
