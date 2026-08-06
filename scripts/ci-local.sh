@@ -22,6 +22,7 @@
 # 15 | maintainer@emeraldcoastsystemsgroup.com   | gate_lint scans `src tests scripts`, not `src` alone. The 1000-code-line cap covers source, tests, and logic-bearing config, but eslint's max-lines rule was scoped to src/**/*.ts{,x} — so the three files actually over the cap (an 1850-code-line chat modal .mjs, a 1044-line RAG popup .mjs, a 1006-line Playwright spec) exited 0 under the old command. The rule now also covers src JS, tests/, and scripts/, and this gate looks there; timeout raised 600->900 for the wider tree.
 # 16 | maintainer@emeraldcoastsystemsgroup.com   | New `unpushed-commits` gate: scripts/check-unpushed-commits.sh fails when a local ref carries commits that exist nowhere but this disk. The worktree-strays gate (entry 10) covers linked worktrees only and skips the PRIMARY checkout by design, so the shapes that actually strand work here were invisible — a commit on the shared checkout's branch, a local branch left ahead of origin, and a detached HEAD carrying a commit (the push-by-SHA recipe's failure mode, where a stale branch pointer pushes "successfully" while the real commit stays local). Runs unconditionally next to secret-scan rather than inside the NODE_GATES_OK block: ref state is repo plumbing and stays judgeable even when the HEAD export fails, which is exactly when work is most likely to be sitting uncommitted-or-unpushed.
 # 17 | maintainer@emeraldcoastsystemsgroup.com   | Scheduled-source truth: fetch origin/main once, pin its immutable commit SHA across the node export, secret scan, image build, logs, and alerts, and label the fail-loud HEAD fallback when fetch is unavailable. Interactive --head continues to judge HEAD. The windowless VBS launcher now waits and propagates the gate's real exit code to Task Scheduler.
+# 18 | maintainer@emeraldcoastsystemsgroup.com   | Refuse ignored plaintext credential backups before source-only scanning and direct operators to the redacted key-schema exporter.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -266,6 +267,15 @@ gate_workflow_triggers() {
   (cd "$GATE_SRC" && timeout 60 node scripts/check-workflow-triggers.js --quiet);
 }
 
+# SECURITY POLICY GATES (2026-08-06): the exact spec set that security.yml's `policy-inventories`
+# job runs. That workflow is manual-only again — automatic hosted-runner triggers have zeroed this
+# account twice — so without this gate the runner existed but nothing ever executed it. Local, $0,
+# and blocking: run-policy-gates.mjs fails closed if a required policy spec is missing from disk,
+# which is also what catches a policy spec committed without its companions.
+gate_security_policy() {
+  (cd "$GATE_SRC" && timeout 900 node scripts/security/run-policy-gates.mjs);
+}
+
 # STRUCTURAL GUARD (ADR-115): application code must never mix into the swarm/kernel repo. ADR-085
 # carved 21 app surfaces OUT of core and nothing stopped one walking back in; the public core trunk
 # is app-free BY CONSTRUCTION, so a re-mixed app is a release-blocking defect discovered at publish
@@ -325,6 +335,12 @@ gate_secrets() {
     --config=/scan/.gitleaks.toml --redact || rc=1
   rm -rf "$exp"
   return $rc
+}
+
+# The pinned source export deliberately excludes ignored runtime configuration. Check the actual
+# checkout separately so a copied live .env cannot persist forever outside the normal secret scan.
+gate_local_secret_hygiene() {
+  node "$REPO_DIR/scripts/security/check-local-secret-hygiene.mjs" "$REPO_DIR"
 }
 
 gate_e2e() {
@@ -481,6 +497,7 @@ if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate manifests gate_manifests
   run_gate kernel-skills gate_kernel_skills
   run_gate workflow-triggers gate_workflow_triggers
+  run_gate security-policy gate_security_policy
   run_gate repo-separation gate_repo_separation
   run_gate worktree-strays gate_worktree_strays
 else
@@ -489,6 +506,7 @@ else
   SKIP_E2E=1
 fi
 run_gate secret-scan gate_secrets
+run_gate local-secret-hygiene gate_local_secret_hygiene
 run_gate unpushed-commits gate_unpushed_commits
 if [ "$SKIP_E2E" != "1" ]; then run_gate e2e-green gate_e2e; fi
 if [ "$SKIP_IMAGE" != "1" ]; then

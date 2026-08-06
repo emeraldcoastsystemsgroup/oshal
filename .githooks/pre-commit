@@ -25,12 +25,24 @@ fi
 # in the first place (not just at public-release time). Placeholders / env refs are
 # allowed. Genuine false positive? add to the allowlist below, or override once:
 #   ALLOW_SECRET_COMMIT=1 git commit ...
+#
+# Allowlist entries gate on the IDENTIFIER, never on the file that tripped the scan (CLAUDE.md
+# Rule 0) — a path-scoped exemption stops protecting the moment the same value moves. Added
+# 2026-08-06 for the overnight hardening campaign, each an identifier that cannot carry a live
+# credential: `.invalid` is the RFC 2606 reserved TLD, so a URL under it can never resolve and
+# credentials embedded in one are unusable by construction (two hits came from the spec that
+# proves query-string secrets get REDACTED); `encrypted-and-never-returned`, `-token-value`,
+# `-provider-value` and `-sentinel` are literal fixture words; `parseTokenArgument` and
+# `readDelegationBearer` are function names, matching the generateCliToken/resolveStoreToken
+# entries already here. `([0-9a-f])\1{7}-` is the placeholder-UUID SHAPE — eight identical hex
+# characters before the first dash (aaaaaaaa-…, ffffffff-…), which a random UUID hits with
+# probability 16^-7; gating on the shape beats listing each fixture literal as more are written.
 # ------------------------------------------------------------------------------
 if [ "$ALLOW_SECRET_COMMIT" != "1" ]; then
   added=$(git diff --cached -U0 --no-color | grep -E '^\+' | grep -vE '^\+\+\+')
   secrets=$(printf '%s\n' "$added" \
     | grep -En "AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|(password|secret|api_?key|token|access_key)[\"' ]*[:=][\"' ]*[A-Za-z0-9/+_=-]{16,}" \
-    | grep -viE "REPLACE_ME|CHANGE_ME|changeme|example|placeholder|<[^>]+>|\\\$\\{|\\\$env|process\.env|import\.meta\.env|__[A-Z_]+__|do-not-use|dev-secret|your[-_]|sample|TODO|keycloak_db_password|ats_token|Initialize-Secret|New-JoinSecret|Get-EnvFileValue|Set-EnvFileValue|generateCliToken|generateInviteToken|localAuthSigningSecret|decodeURIComponent|encryptedAccessToken|encryptedRefreshToken|leak-|safeLanguageToken|resolveStoreToken|formatSecretForDisplay" \
+    | grep -viE "REPLACE_ME|CHANGE_ME|changeme|example|placeholder|<[^>]+>|\\\$\\{|\\\$env|process\.env|import\.meta\.env|__[A-Z_]+__|do-not-use|dev-secret|your[-_]|sample|TODO|keycloak_db_password|ats_token|Initialize-Secret|New-JoinSecret|Get-EnvFileValue|Set-EnvFileValue|generateCliToken|generateInviteToken|localAuthSigningSecret|decodeURIComponent|encryptedAccessToken|encryptedRefreshToken|leak-|safeLanguageToken|resolveStoreToken|formatSecretForDisplay|\.invalid|encrypted-and-never-returned|-token-value|-provider-value|-sentinel|parseTokenArgument|readDelegationBearer|([0-9a-f])\1{7}-" \
     || true)
   if [ -n "$secrets" ]; then
     echo "" >&2

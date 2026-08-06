@@ -7,19 +7,22 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com | Add the SEC-06 PR/main/weekly fail-closed SAST, dependency, secret, policy-inventory, container, and SBOM gates.
 # 2 | maintainer@emeraldcoastsystemsgroup.com | Make active-only backlog hygiene a required, mutation-tested policy gate.
+# 3 | maintainer@emeraldcoastsystemsgroup.com | Audit the exact hash-locked speaker production graph that the container installs.
+# 4 | maintainer@emeraldcoastsystemsgroup.com | Return to manual dispatch. Entry 1 shipped pull_request + push:main + weekly cron, which is ~225 job-minutes per PR and per merge across six jobs (CodeQL alone is a two-language matrix). Hosted-runner minutes are this account's binding constraint and automatic triggers have already zeroed it twice; the same change also widened scripts/check-workflow-triggers.js to bless itself, so the cost guard could not object. The gates are KEPT and unchanged - they run in scripts/ci-local.sh at no cost, and workflow_dispatch stays for a deliberate cloud run. Operator decision 2026-08-06.
 # =============================================================================
 
 name: Security
 
-# Security controls must cover the candidate before merge, the exact main commit after merge,
-# and dependency/advisory drift even when source is quiet. The weekly cadence is deliberately one
-# run, not the former daily/full-CI spend; only this bounded security workflow is automatic.
+# MANUAL ONLY - do not add pull_request / push / schedule here.
+#
+# Every job below is real and worth running; what is not affordable is running them on hosted
+# runners automatically. This repository's automatic-Actions budget went to zero twice (per-push CI
+# on 07-08, an hourly business-hours cron on 07-14), and these six jobs are heavier than either.
+# The enforced lane is LOCAL: scripts/ci-local.sh runs the same policy gates nightly at $0, and
+# scripts/security/run-policy-gates.mjs is what actually fails a change. Use workflow_dispatch when
+# a cloud run is genuinely wanted; re-adding an automatic trigger requires an operator decision,
+# and scripts/check-workflow-triggers.js will fail the build until one is recorded here.
 on:
-  pull_request:
-  push:
-    branches: [main]
-  schedule:
-    - cron: "17 07 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -148,6 +151,7 @@ jobs:
           python -m pip_audit -r bench/requirements.txt
           python -m pip_audit -r scripts/spatial-recon-edge/requirements.txt
           python -m pip_audit -r services/speaker-diarization/requirements.txt
+          python -m pip_audit --disable-pip -r services/speaker-diarization/requirements.lock
           python -m pip_audit -r services/speaker-diarization/requirements-dev.txt
           python -m pip_audit packages/apply-operator-mcp
 

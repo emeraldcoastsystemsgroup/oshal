@@ -4,6 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Execute the shared scheduled-task Git Bash resolver against valid MSYS/MINGW identity, empty/non-zero/WSL/hung variants, rejected direct and resolved paths, production discovery, and failed-taskkill descendant cleanup; mutation-guard all three fail-closed caller invocations and lab-path quoting.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Give the real PowerShell process boundary explicit host-startup headroom while retaining the bounded in-process version probe and descendant-cleanup assertions.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the lab-path quoting PowerShell probe the same explicit full-suite startup allowance as the other real process-boundary assertions.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Parse only a completed JSON result line so a child-process timeout reports its bounded-process error instead of being obscured by a JSON parse of trailing verbose diagnostics.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Make the hung-probe case an actual guard. Returning null inside the time budget is equally true of a resolver that kills its child and one that abandons it spinning, so the previous assertions passed while three orphans burned 20.6 CPU-hours; assert instead that no marker-tagged probe survives the call, and reap any leak in afterAll so a regression in this suite cannot peg the developer's machine.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -31,7 +35,12 @@ const validIdentityHook = join(scratch, 'valid-identity.sh');
 const nonzeroOutputHook = join(scratch, 'nonzero-output.sh');
 const wslIdentityHook = join(scratch, 'wsl-identity.sh');
 
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => {
+  // Net for every path, not just the asserted one: this suite deliberately manufactures a bash
+  // that never exits, so a regression anywhere in it must not leave the developer's box spinning.
+  reapStrayProbes(strayProbePids().filter((pid) => !suiteStartStrayPids.includes(pid)));
+  rmSync(scratch, { recursive: true, force: true });
+});
 
 const portableGitIdentity = process.platform === 'win32'
   ? ''
@@ -90,7 +99,39 @@ const resolveRealBash = (): string => {
 
 const bash = resolveRealBash();
 const bashPath = (path: string): string => path.replace(/\\/g, '/');
-const processTestTimeoutMs = 15_000;
+const processTestTimeoutMs = 30_000;
+
+/**
+ * @description Lists live Git Bash probes by the marker the resolver stamps into every probe
+ * command line. The hung-probe assertions below compare this before and after: returning null and
+ * finishing inside the budget are BOTH satisfied by a resolver that simply gives up and orphans a
+ * spinning child, which is exactly the defect that burned 20.6 CPU-hours on 2026-08-05/06. Only a
+ * process-table check can see it.
+ * @returns Process IDs of live marker-tagged probes; empty off Windows.
+ */
+const strayProbePids = (): number[] => {
+  if (process.platform !== 'win32') return [];
+  // Match the probe's full invocation shape, not the bare marker: any shell that merely MENTIONS
+  // the marker (a grep for it, this very file being edited) is a bash.exe carrying that string on
+  // its command line, and a guard that counts those is a guard that fails at random.
+  const listed = execFileSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    "@((Get-CimInstance Win32_Process -Filter \"Name='bash.exe'\" -ErrorAction SilentlyContinue |"
+    + " Where-Object { $_.CommandLine -like '*--noprofile --norc -c*printf __OSHAL_GIT_BASH__:*' })"
+    + ".ProcessId) -join ','",
+  ], { encoding: 'utf8' }).trim();
+  return listed ? listed.split(',').filter(Boolean).map(Number) : [];
+};
+
+const reapStrayProbes = (pids: number[]): void => {
+  if (process.platform !== 'win32' || pids.length === 0) return;
+  for (const pid of pids) {
+    try { execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); }
+    catch { /* already gone between listing and reaping */ }
+  }
+};
+
+const suiteStartStrayPids = strayProbePids();
 
 const runResolver = (candidate: string, startupFile = '', timeoutMs = 3_000) => {
   const started = Date.now();
@@ -99,13 +140,14 @@ const runResolver = (candidate: string, startupFile = '', timeoutMs = 3_000) => 
     resolver, candidate, String(timeoutMs),
   ], {
     encoding: 'utf8',
-    timeout: 10_000,
+    timeout: 25_000,
     env: {
       ...process.env,
       BASH_ENV: startupFile ? bashPath(startupFile) : '',
     },
   });
-  const line = (result.stdout ?? '').trim().split(/\r?\n/).at(-1) ?? '';
+  const line = (result.stdout ?? '').trim().split(/\r?\n/)
+    .findLast((candidate) => candidate.trimStart().startsWith('{')) ?? '';
   return { result, elapsedMs: Date.now() - started, outcome: line ? JSON.parse(line) as ResolverOutcome : null };
 };
 
@@ -151,10 +193,17 @@ describe('shared Windows Git Bash resolver', () => {
   }, processTestTimeoutMs);
 
   it('kills and rejects a hung version probe within a finite budget', () => {
+    const before = strayProbePids();
     const run = runResolver(bash, hungVersionHook, 200);
+    // Assert the leak FIRST. Ordering is deliberate: a cleanup regression also blows the elapsed
+    // budget, so a timing assertion placed earlier would mask the actual defect behind a slow-test
+    // failure and send the next reader hunting a performance problem instead of an orphan.
+    const leaked = strayProbePids().filter((pid) => !before.includes(pid));
+    reapStrayProbes(leaked);
+    expect(leaked, `hung probe left ${leaked.length} spinning Git Bash process(es) behind`).toEqual([]);
     expect(expectProbeSucceeded(run)).toEqual({ Found: false, Selected: '' });
     // The helper's worst cleanup path is bounded; leave scheduler headroom under the full suite.
-    expect(run.elapsedMs).toBeLessThan(10_000);
+    expect(run.elapsedMs).toBeLessThan(20_000);
   }, processTestTimeoutMs);
 
   it.each([
@@ -265,5 +314,5 @@ describe('shared Windows Git Bash resolver', () => {
     const result = runPowerShellProbe(quoteProbe, ["C:/Roger's Repo"]);
     expect(result.status, `${result.error?.message ?? ''}\n${result.stdout}\n${result.stderr}`).toBe(0);
     expect(parseLastJsonLine(result.stdout)).toBe("'C:/Roger'\"'\"'s Repo'");
-  });
+  }, 20_000);
 });

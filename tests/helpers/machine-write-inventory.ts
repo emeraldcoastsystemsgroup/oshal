@@ -9,6 +9,9 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Profile Studio result ingest as one-use capability authentication bound to exact callback context instead of a reusable fleet service secret.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Apply result ingest as a one-use
  *   exact-task capability and remove the residual body-asserted/unscoped ticket path.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Documented signed tool/Claude/runtime machine surfaces and their reviewed no-owner-write identity posture without weakening discovery
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Inventory both CORE-05 install-verification machine surfaces: service-auth package smokes own no database write, while PAT-only live verification forwards the exact caller into the ordinary owner-scoped chat-task write rail.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Inventory connector-oauth-ceremony.ts, which the 2026-08-06 connectors-routes decomposition split out. It carries the Meta signed_request HMAC check but no database access at all, so it takes the webhook-ingress-core shape: no-owner-scoped-write, with the deletion identity left where the DELETE lives. Discovery caught this the way it is meant to — the guard went red the moment a machine-auth surface appeared without an entry.
  */
 
 /**
@@ -166,6 +169,29 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
     note:
       'Pure framework: verifySignature + dispatchWebhook + SeenStore. Deliberately owns no ticket '
       + 'write, which is why the identity belongs to its caller and not to it.',
+  },
+  {
+    id: 'connector-oauth-ceremony-core',
+    entryPoint: 'the shared OAuth/signed-request helpers behind /api/connect and /auth/facebook',
+    file: 'src/app/routes/connector-oauth-ceremony.ts',
+    auth: 'provider-signature',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'Crypto and URL helpers only — appUrl, redirectUri, encrypt, pkcePair, signState, '
+        + 'verifyState, exchangeCode, parseSignedRequest. It holds no pool, issues no statement, '
+        + 'and imports no store. parseSignedRequest is what the discovery scan matches: it '
+        + 'HMAC-verifies Meta signed_requests, but the DELETE those verified ids drive stays in '
+        + 'connectors-routes.ts under the facebook-data-deletion entry above, which owns the '
+        + 'identity decision.',
+    },
+    behaviorallyProven: true,
+    note:
+      'Carved out of connectors-routes.ts by the 2026-08-06 decomposition, which moved the '
+      + 'verification helpers without moving the write. Inventoried rather than exempted: it does '
+      + 'implement a machine-auth mechanism, so it belongs in the model where a future write added '
+      + 'here is a visible change of posture, not a silent one.',
   },
   {
     id: 'telegram-channel-webhook',
@@ -373,6 +399,36 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       + 'a missing binding and observes the trusted actor at the access_audit_log INSERT.',
   },
   {
+    id: 'agent-runtime-bootstrap-read',
+    entryPoint: 'GET /api/agents/:agentId/runtime (serviceSecretOr mount)',
+    file: 'src/app/extensions/swarm/routes/config-runtime-routes.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'The machine-secret branch is read-only bootstrap inventory. PUT rejects machine-secret '
+        + 'callers and admits an exact operator browser session before config push or persistence.',
+    },
+    behaviorallyProven: true,
+    note:
+      'requiresOperatorOrService preserves bot startup reads; requiresOperatorBrowser closes the '
+      + 'credential-bearing mutation path before ConfigSyncService is invoked.',
+  },
+  {
+    id: 'claude-config-propagation-operator',
+    entryPoint: 'POST/GET /api/swarm/config/propagate/claude-code-auth*',
+    file: 'src/app/extensions/swarm/routes/config-propagation-routes.ts',
+    auth: 'oidc-session',
+    ownerScopedTables: [],
+    identity: { kind: 'oidc-session-identity' },
+    behaviorallyProven: true,
+    note:
+      'The inbound route is exact-operator only. The service secret detected by discovery is used '
+      + 'only on outbound controller-to-bot status/import requests; absence fails closed before '
+      + 'credentials are read or transmitted, and no Postgres row is written.',
+  },
+  {
     id: 'message-routes-service-callers',
     entryPoint: '/api/{tasks,messages,…} reached with X-Service-Secret (serviceSecretOr mount)',
     file: 'src/app/routes/message-routes.ts',
@@ -387,6 +443,40 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       'The router rejects a service secret without X-OSHAL-User-Sub, removes body.userSub as an '
       + 'identity source, re-enters as the trusted owner, and propagates that owner onto both PM '
       + 'ticket and chat-task rows. The real route driver observes the task write under that sub.',
+  },
+  {
+    id: 'install-verification-app-smokes',
+    entryPoint: 'POST /api/install-verification/apps',
+    file: 'src/app/routes/install-verification-routes.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'The service-authenticated installer path reads installed manifests and performs bounded '
+        + 'loopback HTTP probes. It has no INSERT, UPDATE, DELETE, ticket collaborator, or cost write.',
+    },
+    behaviorallyProven: true,
+    note:
+      'serviceOrOperator admits the deployment secret for unattended postflight, but /apps only '
+      + 'loads exact app records and executes their declared HTTP assertions. The package route, '
+      + 'not this verifier, owns any package-specific persistence behind a smoke endpoint.',
+  },
+  {
+    id: 'install-verification-live',
+    entryPoint: 'POST /api/install-verification/live',
+    file: 'src/app/routes/install-verification-routes.ts',
+    auth: 'per-credential-bearer',
+    ownerScopedTables: ['chat_tasks'],
+    identity: {
+      kind: 'caller-scoped',
+      via: 'operator PAT forwarded unchanged into the ordinary /api/send-message owner rail',
+    },
+    behaviorallyProven: true,
+    note:
+      'The route refuses session-only and service-secret callers, forwards the exact verified PAT '
+      + 'to one direct-mode message request, and selects the resulting ledger row by both task_id '
+      + 'and the PAT owner sub. The behavioral driver observes that sub at the orchestrator write seam.',
   },
   {
     id: 'graph-routes',

@@ -26,6 +26,13 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Forward the manifest-owned hideAssistant policy so immersive app surfaces can suppress redundant global assistant chrome.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Status-flip gap (BACKLOG, surfaced by the skill-profiles adversarial review): loadApp on a record whose resulting status is 'inactive' now calls deactivate() — a manifest edit flipping active→inactive used to call NEITHER activate nor deactivate, so the app read status='inactive' while its bots/workflow/tools/schedules/guest-tier/skill-profiles stayed live until a real toggle-off. deactivate() is idempotent, so the boot auto-load of an already-inactive app stays a safe no-op.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile tools removed by an app manifest update before upsert: retire sole-owner executors fail-loud, delete only the app's prior/incoming declared-bot grants for retired names, retain another active app's same-named executor, and fail closed on activation rollback so stale grants cannot reappear when a tool name is later enabled.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: prevent manifest-derived teardown from deleting kernel-owned RAG collections.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: pass each manifest's opt-in app access declaration to the dynamic route enforcement boundary.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: cache each route-owning app's access declaration so the global gate covers hard-mounted kernel routes as well as dynamic package routes.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | Register package-contributed Takeout slices as a fail-closed activation resource and retract them on reload, toggle-off, and uninstall.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | Forward the manifest schedule target as an explicit prompt or deterministic service-route union so package workers never enter the generic prompt dispatcher.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile retired and execution-class-changed schedules from the previous active manifest before activating its replacement, preventing stale prompt/per-user/service handlers after hot reload.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | Back under the 1000-code-line hard cap (1082 -> 941). Entries 27-29 pushed this file past it, which fails the BLOCKING gate_lint (eslint max-lines, --max-warnings 0) and would have blocked the branch. Moved out the two groups that were never orchestration: record presentation/visibility to swarm-app-record-view.ts, and manifest-to-runtime translation (tool create-input, selector seed, safe WHERE, interpolation) to swarm-app-manifest-mapping.ts. Verbatim moves behind the same names, so the class body and this module's public exports are unchanged; both tsconfigs typecheck at 0 errors and the manifest specs stay green.
  */
 
 import type { Pool } from 'pg';
@@ -41,6 +48,7 @@ import {
 } from '@/app/routes/tool-routes';
 import type { AgentProfileRepository } from '@/entities/agent';
 import { WorkflowPipelineRegistry } from '@/features/swarm-orchestration';
+import { assertGenericRagCollection } from '@/features/rag';
 import type { RuntimeToolRegistrationService } from '@/features/tool-registry';
 import type { CreateToolInput } from '@/entities/tool';
 import { AuthMode, InstallMethod, ToolType } from '@/shared/types/tool';
@@ -55,6 +63,14 @@ import {
   unregisterAppSkillProfiles,
 } from '@/shared/skill-profiles';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
+import { firstAppIcon, isVisibleToCaller, toSummary } from './swarm-app-record-view';
+import {
+  interpolate,
+  manifestToolToCreateInput,
+  parseSafeWhere,
+  readBotSelectorSeed,
+  staticToolNames,
+} from './swarm-app-manifest-mapping';
 import {
   assertToolNamesUnique,
   assertToolDependenciesResolvable,
@@ -67,6 +83,7 @@ import { deleteManifestBotToolGrants, deregisterOwnedManifestTools, failClosedMa
 import { SwarmAppRepository, type SwarmAppScopeMeta } from './swarm-app-repository';
 import type {
   SwarmAppManifest,
+  SwarmAppAccessDeclaration,
   SwarmApplicationRecord,
   SwarmApplicationSummary,
   SwarmAppStaticUi,
@@ -77,137 +94,12 @@ import type {
   ManifestScheduleDeregistrar,
   ManifestRouteMounter,
   ManifestBotRegistrar,
+  ManifestTakeoutRegistrar,
   RagCollectionTeardown,
   SwarmAppBotDeclaration,
 } from '../types';
 
 const logger = createChildLogger({ module: 'swarm-app-service' });
-
-/**
- * @description Resolve a single display icon (codicon class) for an app from its manifest UI —
- * the first static ribbon-tile icon, else the assistant bubble icon, else null. Used so listing
- * surfaces can render a real icon rather than a first-initial placeholder.
- * @param manifest Parsed app manifest (may be undefined for bare records).
- * @returns A trimmed codicon class string, or null when no UI icon is declared.
- */
-function firstAppIcon(manifest: SwarmApplicationRecord['manifest'] | undefined): string | null {
-  const staticTiles = manifest?.ui?.static;
-  if (Array.isArray(staticTiles)) {
-    for (const tile of staticTiles) {
-      if (tile && typeof tile.icon === 'string' && tile.icon.trim()) {
-        return tile.icon.trim();
-      }
-    }
-  }
-  const assistantIcon = manifest?.ui?.assistant?.icon;
-  return typeof assistantIcon === 'string' && assistantIcon.trim() ? assistantIcon.trim() : null;
-}
-
-function toSummary(r: SwarmApplicationRecord): SwarmApplicationSummary {
-  return {
-    name: r.name,
-    displayName: r.displayName,
-    description: r.description,
-    version: r.version,
-    status: r.status,
-    botCount: r.agentIds.length,
-    toolCount: r.toolNames.length,
-    icon: firstAppIcon(r.manifest),
-    suite: r.manifest?.suite ?? null,
-    manifestPath: r.manifestPath,
-    loadedAt: r.loadedAt.toISOString(),
-    updatedAt: r.updatedAt.toISOString(),
-    // An app IS a queue (queueId === name); ticketType is the type filter key the
-    // cockpit uses to scope tickets/schedules to this loaded app's queue.
-    queueId: r.name,
-    ticketType: r.manifest?.ticketType ?? null,
-    scope: r.scope,
-    ownerSub: r.ownerSub,
-    tenantId: r.tenantId,
-  };
-}
-
-/**
- * @description Can a caller see this app in a listing? Public apps are visible to
- * everyone; person-scoped apps only to their owner; operator-scoped apps (admin
- * tooling like security-center) to no non-operator ever; tenant-scoped apps are
- * hidden from non-operators until tenant filtering is wired. Operators bypass this
- * entirely (see listApps). Mirrors the canAccessResource owner/operator pattern in
- * authz.ts; the RLS public-read policy (migration 063) backstops it at the DB layer.
- */
-function isVisibleToCaller(r: SwarmApplicationRecord, ownerSub: string | null): boolean {
-  if (r.scope === 'public') return true;
-  if (r.scope === 'person') return !!ownerSub && r.ownerSub === ownerSub;
-  if (r.scope === 'operator') return false; // admin-only — operators bypass via listApps
-  return false; // 'tenant' — deferred to multi-tenant wiring
-}
-
-/** Extracts the toolNames the manifest will register statically at load time. */
-function staticToolNames(manifest: SwarmAppManifest): string[] {
-  return Array.from(new Set([
-    ...(manifest.ui?.static ?? []).map(s => s.toolName),
-    ...(manifest.tools ?? []).map(t => t.name),
-  ]));
-}
-
-function readBotSelectorSeed(bot: SwarmAppBotDeclaration): {
-  selectorDescriptor: string;
-  routingKeywords: string[];
-} {
-  const explicitDescriptor = typeof bot.selectorDescriptor === 'string' ? bot.selectorDescriptor.trim() : '';
-  const explicitKeywords = Array.isArray(bot.routingKeywords)
-    ? bot.routingKeywords.filter((keyword): keyword is string => typeof keyword === 'string' && keyword.trim().length > 0)
-    : [];
-  if (explicitDescriptor || explicitKeywords.length > 0) {
-    return {
-      selectorDescriptor: explicitDescriptor,
-      routingKeywords: Array.from(new Set(explicitKeywords.map((keyword) => keyword.trim()))),
-    };
-  }
-
-  const personaPath = typeof bot.persona === 'string' ? bot.persona.trim() : '';
-  if (!personaPath) {
-    return { selectorDescriptor: '', routingKeywords: [] };
-  }
-
-  try {
-    const resolvedPath = resolve(process.cwd(), personaPath);
-    if (!existsSync(resolvedPath)) {
-      return { selectorDescriptor: '', routingKeywords: [] };
-    }
-    const doc = yaml.load(readFileSync(resolvedPath, 'utf8')) as Record<string, unknown> | null;
-    const selectorDescriptor = String(doc?.selector_descriptor ?? doc?.selectorDescriptor ?? '').trim();
-    const rawRoutingKeywords = doc?.routing_keywords ?? doc?.routingKeywords;
-    const routingKeywords = Array.isArray(rawRoutingKeywords)
-      ? rawRoutingKeywords
-        .filter((keyword): keyword is string => typeof keyword === 'string' && keyword.trim().length > 0)
-        .map((keyword) => keyword.trim())
-      : [];
-    return { selectorDescriptor, routingKeywords: Array.from(new Set(routingKeywords)) };
-  } catch (err) {
-    logger.warn({ err, agentId: bot.agentId, persona: bot.persona }, 'Failed to read bot selector seed from persona YAML');
-    return { selectorDescriptor: '', routingKeywords: [] };
-  }
-}
-
-/**
- * Resolves `{column}` tokens in a manifest template against a DB row.
- * Supports a special alias `{class_id_prefix}` that expands to the first
- * 8 chars of `row.class_id` — lets a manifest reference a short readable
- * ID suffix without requiring a generated column.
- */
-function interpolate(template: string, row: Record<string, unknown>): string {
-  return template.replace(/\{(\w+)\}/g, (_, key) => {
-    // Derived/computed tokens first — must be checked BEFORE looking up the
-    // raw column, since e.g. `class_id_prefix` is not a real column.
-    if (key === 'class_id_prefix' && typeof row.class_id === 'string') {
-      return row.class_id.substring(0, 8);
-    }
-    const raw = row[key];
-    if (raw === undefined || raw === null) return '';
-    return String(raw);
-  });
-}
 
 /**
  * @description Orchestrates swarm application manifests. A manifest bundles
@@ -241,6 +133,9 @@ export class SwarmAppService {
    */
   private readonly appStatusCache: Map<string, 'active' | 'inactive'> = new Map();
 
+  /** Access declaration cache for the global hard-mounted route boundary. */
+  private readonly appAccessCache: Map<string, SwarmAppAccessDeclaration | undefined> = new Map();
+
   constructor(
     private readonly pool: Pool,
     private readonly repo: SwarmAppRepository,
@@ -269,6 +164,9 @@ export class SwarmAppService {
     /** Expands manifest ragCollections for impact + deletes them at dropData uninstall
      *  (ADR-085 §5 + ADR-091). Injected — FSD forbids importing @/features/rag here. */
     private readonly ragTeardown?: RagCollectionTeardown,
+    /** Registers package-owned Takeout archive slices while the app is active. Package-module
+     * loading stays in the app layer; this feature slice owns only lifecycle reconciliation. */
+    private readonly takeoutRegistrar?: ManifestTakeoutRegistrar,
   ) {}
 
   /**
@@ -278,7 +176,11 @@ export class SwarmAppService {
    * mount. Returns null if no app claims the path (→ framework-owned,
    * always gated through).
    */
-  ownerOf(requestPath: string): { appName: string; status: 'active' | 'inactive' } | null {
+  ownerOf(requestPath: string): {
+    appName: string;
+    status: 'active' | 'inactive';
+    access?: SwarmAppAccessDeclaration;
+  } | null {
     let best: { appName: string; mountPath: string } | null = null;
     for (const [mountPath, appName] of this.mountPathOwnership) {
       if (requestPath === mountPath || requestPath.startsWith(mountPath + '/') || requestPath.startsWith(mountPath + '?')) {
@@ -287,16 +189,18 @@ export class SwarmAppService {
     }
     if (!best) return null;
     const status = this.appStatusCache.get(best.appName) ?? 'inactive';
-    return { appName: best.appName, status };
+    return { appName: best.appName, status, access: this.appAccessCache.get(best.appName) };
   }
 
   /** Rebuilds the ownership + status caches from the DB. Called after every load/toggle/unload. */
   private async refreshOwnershipCache(): Promise<void> {
     this.mountPathOwnership.clear();
     this.appStatusCache.clear();
+    this.appAccessCache.clear();
     const all = await this.repo.list();
     for (const r of all) {
       this.appStatusCache.set(r.name, r.status);
+      this.appAccessCache.set(r.name, r.manifest.access);
       for (const route of r.manifest.routes ?? []) {
         if (route.mountPath) this.mountPathOwnership.set(route.mountPath, r.name);
       }
@@ -323,6 +227,7 @@ export class SwarmAppService {
     );
     const toolNames = staticToolNames(manifest);
     const record = await this.repo.upsert(manifest, manifestPath, toolNames, scopeMeta);
+    await this.deregisterRetiredManifestSchedules(previous, manifest);
     if (record.status === 'active') {
       try {
         await this.activate(record);
@@ -682,6 +587,7 @@ export class SwarmAppService {
     if (opts?.dropData && this.ragTeardown) {
       for (const collection of impact.ragCollections) {
         try {
+          assertGenericRagCollection(collection);
           await this.ragTeardown.deleteCollection(collection);
           droppedRagCollections.push(collection);
         } catch (err) {
@@ -885,6 +791,15 @@ export class SwarmAppService {
     // Package schema FIRST: bots/tools/UI may depend on the app's own tables existing.
     await this.applyPackageMigrations(record);
 
+    // Archive dispatch is a trust boundary, so registration is activation-critical. A missing,
+    // escaped, or malformed handler fails the app closed. Passing [] also retracts a stale
+    // contribution when an active manifest reload removes its takeout block.
+    await this.takeoutRegistrar?.register(
+      record.name,
+      dirname(record.manifestPath),
+      record.manifest.takeout ?? [],
+    );
+
     // ADR-085: packaged bots join the ACTIVE bot registry (dispatchable + wiring-audit green) with
     // zero core-registry edits. Non-fatal — inline dispatch still works.
     //
@@ -911,7 +826,7 @@ export class SwarmAppService {
     await this.registerManifestTools(record.manifest, dirname(record.manifestPath));
     await this.seedBotAuthorizations(record.manifest, dirname(record.manifestPath));
     this.registerWorkflow(record.manifest);
-    await this.registerManifestSchedules(record.manifest);
+    await this.registerManifestSchedules(record.manifest, dirname(record.manifestPath));
     await this.mountManifestRoutes(record);
   }
 
@@ -928,7 +843,7 @@ export class SwarmAppService {
     if (!this.routeMounter || !record.manifest.routes?.length) return;
     try {
       const packageDir = dirname(record.manifestPath);
-      await this.routeMounter.mount(record.name, packageDir, record.manifest.routes);
+      await this.routeMounter.mount(record.name, packageDir, record.manifest.routes, record.manifest.access);
     } catch (err) {
       logger.error({ err, app: record.name }, 'Manifest route mount failed (non-fatal)');
     }
@@ -1028,10 +943,12 @@ export class SwarmAppService {
    * recurring jobs with it. Per-user schedules are skipped here; the connector
    * write path activates them through the per-user schedule reconciler. Idempotent
    * (the scheduler replaces by id on re-load) and non-fatal: a scheduler hiccup must
-   * never break app activation. Registered jobs only EXECUTE when the agent scheduler
-   * is enabled (ENABLE_AGENT_SCHEDULER=true).
+   * never break app activation. Deterministic service-route handler registration is
+   * activation-critical because a missing/escaped export must not leave an app claiming an
+   * unattended worker that cannot run. Registered jobs only EXECUTE when the agent scheduler is
+   * enabled (ENABLE_AGENT_SCHEDULER=true).
    */
-  private async registerManifestSchedules(manifest: SwarmAppManifest): Promise<void> {
+  private async registerManifestSchedules(manifest: SwarmAppManifest, packageDir: string): Promise<void> {
     if (!this.scheduleRegistrar || !manifest.schedules?.length) return;
     for (const s of manifest.schedules) {
       if (s.enabled === false) continue;
@@ -1040,14 +957,44 @@ export class SwarmAppService {
         continue;
       }
       try {
+        const owningRoute = s.target === 'service-route'
+          ? (manifest.routes ?? [])
+              .filter((route) => {
+                const mount = route.mountPath.length > 1 ? route.mountPath.replace(/\/+$/, '') : route.mountPath;
+                return s.route === mount || s.route.startsWith(`${mount}/`);
+              })
+              .sort((a, b) => b.mountPath.length - a.mountPath.length)[0]
+          : undefined;
+        if (s.target === 'service-route' && !owningRoute) {
+          throw new Error(`Service-route schedule ${manifest.name}/${s.id} has no owning route`);
+        }
+        const target = s.target === 'service-route'
+          ? {
+              kind: 'service-route' as const,
+              appName: manifest.name,
+              packageDir,
+              module: owningRoute!.module,
+              handler: s.handler,
+              path: s.route,
+              body: s.body ?? {},
+            }
+          : {
+              kind: 'prompt' as const,
+              prompt: s.prompt,
+              targetAgent: s.targetAgent,
+            };
         await this.scheduleRegistrar({
           scheduleId: `${manifest.name}-${s.id}`,
           cron: s.cron,
-          prompt: s.prompt,
-          targetAgent: s.targetAgent,
           queue: manifest.name,
+          target,
         });
       } catch (err) {
+        if (s.target === 'service-route') {
+          logger.error({ err, app: manifest.name, schedule: s.id }, 'Failed to register deterministic manifest schedule (activation denied)');
+          await this.deregisterManifestSchedules(manifest);
+          throw err;
+        }
         logger.error({ err, app: manifest.name, schedule: s.id }, 'Failed to register manifest schedule (non-fatal)');
       }
     }
@@ -1184,6 +1131,13 @@ export class SwarmAppService {
   }
 
   private async deactivate(record: SwarmApplicationRecord): Promise<void> {
+    // Close package ingestion first so a handler cannot remain reachable during asynchronous
+    // teardown. The registry operation is synchronous and idempotent.
+    try {
+      this.takeoutRegistrar?.unregister(record.name);
+    } catch (err) {
+      logger.error({ err, app: record.name }, 'Manifest Takeout deregistration failed (non-fatal)');
+    }
     await this.setBotStatuses(record.agentIds, 'inactive');
     // ADR-085 D4: retract the guest tier — a toggled-off app must not keep granting guests reach
     // into routes its own gate now blocks. Idempotent; the segment falls back to the read-only default.
@@ -1236,6 +1190,42 @@ export class SwarmAppService {
       });
     } catch (err) {
       logger.error({ err, app: manifest.name }, 'Manifest schedule teardown failed (non-fatal)');
+    }
+  }
+
+  /**
+   * @description Retract schedule identities that the incoming manifest no longer replaces in
+   * place. Same-mode framework schedules are safely upserted by task type; removed declarations,
+   * prompt↔service changes, and per-user scope/connection changes own different persisted children
+   * and must be torn down explicitly before the replacement activates.
+   */
+  private async deregisterRetiredManifestSchedules(
+    previous: SwarmApplicationRecord | null,
+    incoming: SwarmAppManifest,
+  ): Promise<void> {
+    if (!this.scheduleDeregistrar || previous?.status !== 'active' || !previous.manifest.schedules?.length) return;
+    const next = new Map((incoming.schedules ?? []).map((schedule) => [schedule.id, schedule]));
+    const retiredIds = previous.manifest.schedules
+      .filter((prior) => {
+        const replacement = next.get(prior.id);
+        if (!replacement) return true;
+        const priorTarget = prior.target === 'service-route' ? 'service-route' : 'prompt';
+        const nextTarget = replacement.target === 'service-route' ? 'service-route' : 'prompt';
+        return (
+          priorTarget !== nextTarget ||
+          prior.scope !== replacement.scope ||
+          prior.requiresConnection !== replacement.requiresConnection
+        );
+      })
+      .map((schedule) => schedule.id);
+    if (retiredIds.length === 0) return;
+    try {
+      await this.scheduleDeregistrar({ appName: incoming.name, scheduleIds: retiredIds });
+    } catch (error) {
+      logger.error(
+        { err: error, app: incoming.name, schedules: retiredIds },
+        'Retired manifest schedule teardown failed (non-fatal)',
+      );
     }
   }
 
@@ -1566,76 +1556,3 @@ export class SwarmAppService {
 }
 
 export type { SwarmApplicationRecord, SwarmApplicationSummary, SwarmAppManifest } from '../types';
-
-/**
- * @description Parse a manifest's dynamic-UI `where` string into a parameterised
- * SQL fragment + params array. Only accepts a tiny allowlist:
- *   - `col = 'literal'` or `col = "literal"` — string equality
- *   - Multiple clauses joined by AND
- * Column names must match `[a-z_][a-z0-9_]*`. Literals are bound as $N params.
- * Anything else → whereSql = null (caller should reject the manifest clause).
- *
- * @param where - The raw where string from the manifest (may be undefined)
- * @returns { whereSql: 'WHERE col1 = $1 AND col2 = $2' | '' | null, params: unknown[] }
- */
-function parseSafeWhere(where?: string): { whereSql: string | null; params: unknown[] } {
-  if (!where) return { whereSql: '', params: [] };
-  const trimmed = where.trim();
-  if (!trimmed) return { whereSql: '', params: [] };
-
-  const clauseRe = /^\s*([a-z_][a-z0-9_]*)\s*=\s*(?:'([^']*)'|"([^"]*)")\s*$/i;
-  const parts = trimmed.split(/\s+AND\s+/i);
-  const fragments: string[] = [];
-  const params: unknown[] = [];
-  for (const part of parts) {
-    const m = clauseRe.exec(part);
-    if (!m) return { whereSql: null, params: [] };
-    const col = m[1];
-    const lit = m[2] ?? m[3];
-    fragments.push(`${col} = $${params.length + 1}`);
-    params.push(lit);
-  }
-  return { whereSql: `WHERE ${fragments.join(' AND ')}`, params };
-}
-
-function manifestToolToCreateInput(tool: SwarmAppToolDeclaration, appName: string): CreateToolInput {
-  return {
-    name: tool.name,
-    displayName: tool.displayName ?? tool.name,
-    type: toToolType(tool.type, tool.executor.executorType),
-    category: tool.category ?? appName,
-    version: tool.version ?? '1.0.0',
-    installSpec: (tool.installSpec as CreateToolInput['installSpec']) ?? { method: InstallMethod.NONE },
-    skills: tool.skills ?? [],
-    selectorFragment: tool.selectorFragment ?? '',
-    routingTags: tool.routingTags ?? [],
-    authGroup: tool.authGroup ?? '',
-    defaultAuthMode: toAuthMode(tool.defaultAuthMode, tool.executor.executorType),
-    description: tool.description,
-    inputSchema: tool.inputSchema ?? { type: 'object', properties: {} },
-    outputSchema: tool.outputSchema,
-    usageInstructions: tool.usageInstructions,
-    examples: tool.examples ?? [],
-    requiresApproval: tool.requiresApproval ?? tool.executor.executorType !== 'builtin',
-    timeoutMs: tool.timeoutMs ?? 30000,
-    tags: Array.from(new Set([...(tool.tags ?? []), 'swarm-app-tool', `swarm-app:${appName}`])),
-    enabled: tool.enabled ?? true,
-    registeredBy: tool.registeredBy ?? `swarm-app:${appName}`,
-  };
-}
-
-function toToolType(type: SwarmAppToolDeclaration['type'], executorType: SwarmAppToolDeclaration['executor']['executorType']): ToolType {
-  if (type) return type as ToolType;
-  if (executorType === 'api') return ToolType.API;
-  if (executorType === 'mcp') return ToolType.MCP;
-  if (executorType === 'builtin') return ToolType.CLI;
-  return ToolType.CLI;
-}
-
-function toAuthMode(
-  authMode: SwarmAppToolDeclaration['defaultAuthMode'],
-  executorType: SwarmAppToolDeclaration['executor']['executorType'],
-): AuthMode {
-  if (authMode) return authMode as AuthMode;
-  return executorType === 'builtin' ? AuthMode.AUTO : AuthMode.ASK;
-}

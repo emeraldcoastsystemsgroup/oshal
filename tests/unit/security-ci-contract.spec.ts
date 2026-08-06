@@ -5,6 +5,11 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the SEC-06 automatic trigger, immutable-action, fail-closed scan, policy-discovery, and CodeQL exception contracts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Extend immutable-action enforcement to every workflow, including the manual CI and publish gate.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Require local plaintext-backup hygiene to remain inside the discovered blocking policy family.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Require active runtime subprocess credential containment to remain inside the discovered blocking policy family.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Require private app-store token transport to remain inside the discovered blocking policy family.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Require direct MCP/tool authorization inventory and behavior proofs in the discovered blocking policy family.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Invert the trigger clause with entry 1's: the workflow is manual-only again, so assert automatic triggers are ABSENT rather than required. Requiring pull_request/push/schedule made removing hosted-runner billing a build failure. Coverage is unchanged and now enforced locally — the same policy family runs in scripts/ci-local.sh (gate security-policy) at $0. Operator decision 2026-08-06.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -34,11 +39,20 @@ function allWorkflowActions(): Array<{ workflow: string; action: string }> {
 }
 
 describe('SEC-06 security workflow contract', () => {
-  it('runs on PRs, exact main pushes, one weekly schedule, and manual dispatch', () => {
-    expect(securityWorkflow).toMatch(/^  pull_request:\s*$/m);
-    expect(securityWorkflow).toMatch(/^  push:\s*\n    branches: \[main\]$/m);
-    expect(securityWorkflow).toMatch(/^  schedule:\s*\n    - cron: "17 07 \* \* 1"$/m);
+  it('stays manual-only, with the policy family enforced locally instead', () => {
     expect(securityWorkflow).toMatch(/^  workflow_dispatch:\s*$/m);
+    // Absence, not presence. Entry 1 required the automatic triggers, which meant switching
+    // hosted-runner billing off failed this suite — the guard defended the spend, not the budget.
+    for (const trigger of ['pull_request', 'push', 'schedule', 'pull_request_target']) {
+      expect(securityWorkflow, `security.yml regained the ${trigger} trigger`)
+        .not.toMatch(new RegExp(`^  ${trigger}:`, 'm'));
+    }
+    // Manual-only must not mean unenforced: ci-local.sh has to actually run the policy family.
+    const ciLocal = readFileSync('scripts/ci-local.sh', 'utf8');
+    expect(ciLocal, 'ci-local.sh does not run the security policy gates')
+      .toContain('scripts/security/run-policy-gates.mjs');
+    expect(ciLocal, 'the security-policy gate is defined but never invoked')
+      .toMatch(/^\s*run_gate security-policy gate_security_policy$/m);
   });
 
   it('pins every third-party action in every workflow to an immutable commit', () => {
@@ -85,6 +99,10 @@ describe('SEC-06 policy discovery', () => {
     expect(files).toContain('tests/unit/machine-write-identity.spec.ts');
     expect(files).toContain('tests/unit/security-ci-contract.spec.ts');
     expect(files).toContain('tests/unit/backlog-active-only.spec.ts');
+    expect(files).toContain('tests/unit/local-secret-hygiene.spec.ts');
+    expect(files).toContain('tests/unit/subprocess-environment-boundary.spec.ts');
+    expect(files).toContain('tests/unit/oshal-app-token-transport.spec.ts');
+    expect(files).toContain('tests/unit/mcp-tool-authorization-boundary.spec.ts');
     expect(files.filter((file) => /(?:migration|rls).*\.spec\.ts$/i.test(file)).length).toBeGreaterThan(4);
   });
 });

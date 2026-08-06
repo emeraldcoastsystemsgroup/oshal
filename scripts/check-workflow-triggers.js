@@ -4,26 +4,31 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com | Fail if a workflow regains an unsanctioned automatic trigger.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Cost guard: FAIL if any GitHub Actions workflow regains an automatic trigger. Hosted-runner minutes are the account's binding constraint and this has now regressed TWICE — per-push CI (07-08), then an "hourly during business hours" cron that ran ~55 full pipelines/week on the public mirror, unattended, until it took the account to zero (07-14). A rule nobody enforces is a rule that comes back.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Permit the bounded SEC-06 PR/main/weekly workflow while keeping general CI manual-only.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Revert entry 2 and restore entry 1's incident history, which entry 2 deleted. Widening this allowlist to admit security.yml made the guard bless the very workflow whose ~225 job-minutes per PR and per merge it exists to refuse — a cost guard that grants its own exception is not a guard. The security jobs are kept and run in scripts/ci-local.sh at $0. Also drops the inverted `missing-<trigger>` checks: requiring push/schedule to be PRESENT meant turning billing OFF failed the build. Operator decision 2026-08-06.
  */
 
 /**
- * @description Enforce the repository's narrow automatic-workflow budget and security contract.
+ * @description Assert every workflow in .github/workflows/ is MANUAL-ONLY (workflow_dispatch).
  *
- * General CI remains manual-only. `publish-gate.yml` may run on PRs. `security.yml` must run on
- * PRs, exact main pushes, and one weekly schedule so source and advisory drift are both covered.
- * No other workflow may run automatically.
+ * The rule: **no `push:`, no `schedule:`, no `pull_request:`.** Anything automatic bills hosted
+ * runner minutes, forever, whether or not anyone is watching — which is exactly how the budget went
+ * to zero. The single automated gate is LOCAL (`scripts/ci-local.sh`, one nightly run, $0), and
+ * builds and deploys are local too.
+ *
+ * `publish-gate.yml` is the one standing exception: it runs on PRs because it is the wall between
+ * a commit and the public, and it is cheap.
+ *
+ * This is deliberately a DUMB text check, not a YAML parse: it must also catch a trigger that is
+ * commented back in, reformatted, or added under an alias.
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const AUTOMATIC_TRIGGERS = ['push', 'pull_request', 'pull_request_target', 'schedule'];
-const EXCEPTIONS = {
-  'publish-gate.yml': ['pull_request'],
-  'security.yml': ['pull_request', 'push', 'schedule'],
-};
+const EXCEPTIONS = { 'publish-gate.yml': ['pull_request'] };
 
 /** @description Find every YAML workflow in stable order. */
 function workflowFiles(dir) {
@@ -51,26 +56,14 @@ function declaredTriggers(source) {
   return out;
 }
 
-/** @description Validate the exact scope of the one scheduled security workflow. */
-function securityTriggerViolations(source, triggers) {
-  const violations = [];
-  const required = ['pull_request', 'push', 'schedule', 'workflow_dispatch'];
-  violations.push(...required.filter((trigger) => !triggers.includes(trigger)).map((v) => `missing-${v}`));
-  if (!/^  push:\s*\n    branches: \[main\]$/m.test(source)) violations.push('push-not-main-only');
-  if (!/^  schedule:\s*\n    - cron: "17 07 \* \* 1"$/m.test(source)) violations.push('schedule-not-weekly');
-  return violations;
-}
-
 /** @description Return trigger-policy violations for all workflow files. */
 function findViolations(files) {
   const violations = [];
   for (const file of files) {
     const source = fs.readFileSync(file, 'utf8');
     const triggers = declaredTriggers(source);
-    const basename = path.basename(file);
-    const allowed = EXCEPTIONS[basename] || [];
+    const allowed = EXCEPTIONS[path.basename(file)] || [];
     const bad = triggers.filter((trigger) => AUTOMATIC_TRIGGERS.includes(trigger) && !allowed.includes(trigger));
-    if (basename === 'security.yml') bad.push(...securityTriggerViolations(source, triggers));
     if (bad.length) violations.push({ file: path.relative(process.cwd(), file), bad });
   }
   return violations;
@@ -84,8 +77,9 @@ if (violations.length > 0) {
   console.error('\nGitHub Actions automatic-trigger scope violates the bounded gate policy:\n');
   for (const violation of violations) console.error(`  - ${violation.file}: ${violation.bad.join(', ')}`);
   console.error(
-    '\nGeneral workflows remain manual-only. Only publish-gate.yml (PR) and security.yml ' +
-      '(PR, exact main push, one weekly schedule) may run automatically.\n',
+    '\nWorkflows are MANUAL-ONLY (workflow_dispatch). The only exception is publish-gate.yml on ' +
+      'pull_request. Automatic triggers bill hosted-runner minutes and have zeroed this account ' +
+      'twice; the enforced gate is local — scripts/ci-local.sh, $0.\n',
   );
   process.exit(1);
 }

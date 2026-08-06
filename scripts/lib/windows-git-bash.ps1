@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Add one bounded, fail-closed Git for Windows Bash resolver for scheduled PowerShell jobs; reject System32/WSL launchers, require a non-empty BASH_VERSION plus an MSYS/MINGW runtime identity, and verify descendant cleanup when a timed probe must be stopped.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Stop orphaning spinning probes. Three orphans burned 20.6 CPU-hours over 17 hours on 2026-08-05/06 and starved the stack watchdog into its fail-closed branch on ten consecutive runs. Fixes: walk the probe tree with targeted per-parent queries instead of enumerating every process (the ~2s whole-table scan sat between the timeout and the first kill, and a host terminated in that window left the child spinning forever); terminate a live child in the finally before disposing its handle, because Dispose only releases the handle and every statement between Start-Process and WaitForExit could previously throw straight past any cleanup; reap marker-tagged probes older than any legal probe lifetime before starting a new one, so an orphan from a dead host cannot accumulate unnoticed; and raise cleanup-verification failures on the warning stream, since all three production callers run without -Verbose and the code was reporting its own leak where nobody listened.
 
 function Test-OshalWindowsSubsystemBashPath([string]$Path) {
   if (-not $Path) { return $false }
@@ -32,23 +33,71 @@ function Get-OshalGitBashCandidates {
   return @($candidates | Select-Object -Unique)
 }
 
-function Get-OshalGitBashProbeTreeIds([int]$RootProcessId) {
+function Get-OshalGitBashProbeTreeIds([int]$RootProcessId, [int]$MaxDepth = 4) {
   $ids = New-Object 'System.Collections.Generic.HashSet[int]'
   [void]$ids.Add($RootProcessId)
   if ($env:OS -ne 'Windows_NT') { return @($RootProcessId) }
-  $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop |
-      Select-Object ProcessId, ParentProcessId)
+  # Query children per-parent rather than enumerating Win32_Process whole. The full scan cost up
+  # to 2s and ran BEFORE the first kill, so a host terminated in that window (the Node spawnSync
+  # timeout does exactly this) orphaned a probe that then spun on a core indefinitely. The probe
+  # tree is a launcher stub plus its re-exec, so the depth bound is generous.
   $frontier = @($RootProcessId)
-  while ($frontier.Count -gt 0) {
+  for ($depth = 0; $depth -lt $MaxDepth -and $frontier.Count -gt 0; $depth++) {
     $next = @()
-    foreach ($row in $rows) {
-      if ($frontier -notcontains [int]$row.ParentProcessId) { continue }
-      $childProcessId = [int]$row.ProcessId
-      if ($ids.Add($childProcessId)) { $next += $childProcessId }
+    foreach ($parentProcessId in $frontier) {
+      $rows = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentProcessId" `
+          -OperationTimeoutSec 1 -ErrorAction Stop | Select-Object ProcessId)
+      foreach ($row in $rows) {
+        $childProcessId = [int]$row.ProcessId
+        if ($ids.Add($childProcessId)) { $next += $childProcessId }
+      }
     }
     $frontier = $next
   }
   return @($ids | ForEach-Object { [int]$_ })
+}
+
+function Remove-OshalStaleGitBashProbes([int]$MinimumAgeSeconds = 120) {
+  <#
+    .SYNOPSIS
+    Reaps marker-tagged Git Bash probes orphaned by an earlier run's terminated host.
+    .DESCRIPTION
+    Cleanup is otherwise entirely in-process, so a host killed mid-probe leaves a child nothing
+    ever notices. Only probes older than any legal probe lifetime are reaped (ProbeTimeoutMs caps
+    at 30s and worst-case cleanup adds ~15s), which keeps a concurrent run's live probe safe.
+    .PARAMETER MinimumAgeSeconds
+    Age past which a marker-tagged probe cannot belong to an in-flight resolve.
+    .OUTPUTS
+    System.Int32[] of reaped process IDs; empty when nothing was stale.
+  #>
+  if ($env:OS -ne 'Windows_NT') { return @() }
+  try {
+    $cutoff = (Get-Date).AddSeconds(-$MinimumAgeSeconds)
+    # Match the probe's full invocation shape, not the bare marker: a shell that merely MENTIONS
+    # the marker (a grep, an editor, this repo's own tooling) also carries it on its command line,
+    # and this function kills what it matches.
+    $stale = @(Get-CimInstance Win32_Process -Filter "Name='bash.exe'" -OperationTimeoutSec 2 -ErrorAction Stop |
+        Where-Object {
+          $_.CommandLine -like '*--noprofile --norc -c*printf __OSHAL_GIT_BASH__:*' -and
+          $_.CreationDate -lt $cutoff
+        })
+  } catch {
+    Write-Warning "Stale Git Bash probe sweep could not enumerate processes: $($_.Exception.Message)"
+    return @()
+  }
+  $reaped = @()
+  foreach ($orphan in $stale) {
+    try { Stop-Process -Id $orphan.ProcessId -Force -ErrorAction Stop; $reaped += [int]$orphan.ProcessId }
+    catch {
+      if ($null -ne (Get-Process -Id $orphan.ProcessId -ErrorAction SilentlyContinue)) {
+        Write-Warning "Stale Git Bash probe $($orphan.ProcessId) survived reaping: $($_.Exception.Message)"
+      }
+    }
+  }
+  if ($reaped.Count -gt 0) {
+    Write-Warning "Reaped $($reaped.Count) stale Git Bash probe(s) orphaned by an earlier run: $($reaped -join ',')"
+  }
+  return $reaped
 }
 
 function Get-OshalLiveGitBashProbeIds([int[]]$ProcessIds) {
@@ -115,7 +164,9 @@ function Stop-OshalGitBashProbe($Process, [string]$Path) {
   $survivors = @(Wait-OshalGitBashProbeTreeStopped $treeIds 3000)
   if ($survivors.Count -gt 0) { Stop-OshalGitBashProbeIds $survivors $Path; $survivors = @(Wait-OshalGitBashProbeTreeStopped $survivors 2000) }
   $verified = $survivors.Count -eq 0 -and ($taskkillOk -or $treeKnown)
-  if (-not $verified) { Write-Verbose "Git Bash probe cleanup could not verify every descendant for '$Path'; live PIDs: $($survivors -join ',')" }
+  # Warning, not Verbose: all three production callers invoke the resolver without -Verbose, so a
+  # leak announced on the verbose stream is a leak announced to nobody.
+  if (-not $verified) { Write-Warning "Git Bash probe cleanup could not verify every descendant for '$Path'; live PIDs: $($survivors -join ',')" }
   return $verified
 }
 
@@ -161,7 +212,7 @@ function Invoke-OshalGitBashVersionProbe([string]$Path, [int]$TimeoutMs) {
     $null = $process.Handle
     if (-not $process.WaitForExit($TimeoutMs)) {
       $cleanupComplete = Stop-OshalGitBashProbe $process $Path
-      if (-not $cleanupComplete) { Write-Verbose "Git Bash probe timed out with incomplete process-tree cleanup: '$Path'" }
+      if (-not $cleanupComplete) { Write-Warning "Git Bash probe timed out with incomplete process-tree cleanup: '$Path'" }
       return $null
     }
     $process.WaitForExit()
@@ -182,6 +233,13 @@ function Invoke-OshalGitBashVersionProbe([string]$Path, [int]$TimeoutMs) {
     return $null
   } finally {
     if ($null -ne $process) {
+      # Dispose only releases the handle. Every statement between Start-Process and WaitForExit can
+      # throw (PowerShell 5.1 .Handle and .EnableRaisingEvents both can), and the catch above used
+      # to return past any kill, leaving a live child with nothing tracking it. Treat a throwing
+      # HasExited as still-running: reaping a dead PID is harmless, leaking a live one is not.
+      $stillRunning = $false
+      try { $stillRunning = -not $process.HasExited } catch { $stillRunning = $true }
+      if ($stillRunning) { [void](Stop-OshalGitBashProbe $process $Path) }
       try { $process.Dispose() } catch { Write-Verbose "Git Bash probe dispose failed for '$Path': $($_.Exception.Message)" }
     }
     Remove-OshalGitBashProbeFiles @($stdoutPath, $stderrPath)
@@ -209,6 +267,9 @@ function Resolve-OshalGitBash {
     [string[]]$CandidatePaths,
     [ValidateRange(50, 30000)][int]$ProbeTimeoutMs = 3000
   )
+  # Reap first: a probe that outlived its host burns a core until someone notices, and this must
+  # happen before our own child exists so the sweep cannot target it.
+  [void](Remove-OshalStaleGitBashProbes)
   $candidates = if ($PSBoundParameters.ContainsKey('CandidatePaths')) {
     @($CandidatePaths)
   } else { @(Get-OshalGitBashCandidates) }
