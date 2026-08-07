@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (1000-line cap decomposition): legacy /auth/* redirect helpers, OpenAI Codex callback-port detection, OIDC state-mismatch recovery, and the onboarding-completed lookup. Verbatim moves — call sites and route registrations stay in server.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | buildOidcLoginRestartPath (and its state decoder) moved to @/shared/middleware/oidc so guardedCallback can share it; re-exported here so server.ts's import is unchanged. The shared version also sanitizes the decoded returnTo (open-redirect gate) now that /login actually honors it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Re-export loginRestartPathForCallbackPath (ADR-126 multi-provider login) so server.ts's state-mismatch recovery can map /callback/<provider> back to /login/<provider> through its existing auth-helpers import.
  */
 
 import express from 'express';
@@ -117,7 +118,9 @@ export function isOidcStateMismatchError(error: unknown): boolean {
 
 // buildOidcLoginRestartPath lives in @/shared/middleware/oidc now (guardedCallback needs it
 // below the app layer); re-exported so server.ts's import path is unchanged.
-export { buildOidcLoginRestartPath } from '@/shared/middleware/oidc';
+// loginRestartPathForCallbackPath maps /callback[/provider] → /login[/provider] for the
+// state-mismatch recovery in server.ts (multi-provider login, ADR-126).
+export { buildOidcLoginRestartPath, loginRestartPathForCallbackPath } from '@/shared/middleware/oidc';
 
 /**
  * @description Returns whether a user has completed the onboarding wizard. Tolerant by design:

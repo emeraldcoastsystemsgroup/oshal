@@ -127,6 +127,18 @@ x-bot-env: &bot-env
   OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
   OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  # Multi-provider login (ADR-126): per-provider enable flags + the Microsoft (Entra)
+  # secondary. The OIDC_* block above stays the primary (Google today) on /callback;
+  # Microsoft answers on /login/microsoft + /callback/microsoft. Tenant-SPECIFIC issuer
+  # only — 'common' fails strict OIDC issuer validation.
+  GOOGLE_LOGIN: ${GOOGLE_LOGIN:-}
+  MICROSOFT_LOGIN: ${MICROSOFT_LOGIN:-}
+  MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-}
+  MICROSOFT_OIDC_ISSUER_URL: ${MICROSOFT_OIDC_ISSUER_URL:-}
+  MICROSOFT_OIDC_CLIENT_ID: ${MICROSOFT_OIDC_CLIENT_ID:-}
+  MICROSOFT_OIDC_CLIENT_SECRET: ${MICROSOFT_OIDC_CLIENT_SECRET:-}
+  GOOGLE_OIDC_CLIENT_ID: ${GOOGLE_OIDC_CLIENT_ID:-}
+  GOOGLE_OIDC_CLIENT_SECRET: ${GOOGLE_OIDC_CLIENT_SECRET:-}
   APP_URL: ${APP_URL:-http://localhost:35457}
   # Per-host OIDC login origins (fixes cross-host login loop). Unset = single-host.
   OIDC_BASE_URLS: ${OIDC_BASE_URLS:-}
