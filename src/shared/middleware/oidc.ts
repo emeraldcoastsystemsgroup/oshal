@@ -21,13 +21,24 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Deep links survive login recovery: the stock /login route hardcodes returnTo=baseURL, so every recovery path that restarts a login (guardedCallback retry, state-mismatch restart, the cockpit 401 guard) forgot the original URL — a /cockpit/?app=<name> shortcut double-logged-in and landed on the bare cockpit. routes.login=false disables the stock route; createOidcMiddleware now returns a loginHandler honoring a sanitized same-origin ?returnTo (mock mode included), guardedCallback re-derives returnTo from the callback state, and the state-decode helpers move here from server-auth-helpers so both layers share one implementation.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Export shouldReturnUnauthorizedResponse so the LOCAL_AUTH middleware set (ADR-117, src/app/routes/local-auth-routes.ts) answers API/fetch vs browser-document requests with the SAME 401-JSON/redirect split as this wrapper — one discrimination rule, not two drifting copies.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Stamp MOCK_OIDC identities with an explicit synthetic issuer so downstream account binding uses the same verified (issuer, subject) namespace as real OIDC instead of app-specific fallback logic.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Multi-provider login (ADR-126): one auth() instance per host × enabled provider (GOOGLE_LOGIN / MICROSOFT_LOGIN — registry in oidc-providers.ts). The legacy issuer stays the primary on /callback + the default appSession cookie (registered redirect URIs and live sessions survive); secondaries get /login/<name>, /callback/<name>, and a suffixed session cookie. Bare /login renders a provider chooser when more than one is enabled; starting a login clears sibling providers' session cookies so exactly one identity is active per browser.
  */
 
 import { auth, requiresAuth, ConfigParams } from 'express-openid-connect';
-import { type Request, type RequestHandler } from 'express';
+import { type Request, type RequestHandler, type Response } from 'express';
 import http from 'http';
 import { createChildLogger } from '@/shared/logger';
 import { MOCK_OIDC_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import {
+  DEFAULT_SESSION_COOKIE,
+  type LoginProvider,
+  loginRestartPathForCallbackPath,
+  renderLoginChooser,
+  resolveLoginProviders,
+  selectRequestProvider,
+} from '@/shared/middleware/oidc-providers';
+
+export { loginRestartPathForCallbackPath } from '@/shared/middleware/oidc-providers';
 
 const logger = createChildLogger({ module: 'oidc-middleware' });
 
@@ -130,15 +141,17 @@ function decodeOidcReturnToState(stateValue: unknown): string | undefined {
  * back on the URL they originally asked for instead of the bare landing surface.
  *
  * @param stateValue - Raw `state` query parameter from the failed callback request
+ * @param loginBasePath - Login route to restart at ('/login/<provider>' for a
+ *   provider-suffixed callback so the restart skips the chooser; default '/login')
  * @returns Login URL with an encoded returnTo query parameter when one can be recovered
  */
-export function buildOidcLoginRestartPath(stateValue: unknown): string {
+export function buildOidcLoginRestartPath(stateValue: unknown, loginBasePath = '/login'): string {
   const returnTo = sanitizeLoginReturnTo(decodeOidcReturnToState(stateValue));
   if (!returnTo) {
-    return '/login';
+    return loginBasePath;
   }
 
-  return `/login?returnTo=${encodeURIComponent(returnTo)}`;
+  return `${loginBasePath}?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
 /**
@@ -367,9 +380,15 @@ export function resolveCookieDomainForHost(configured: string | undefined, baseU
   return undefined;
 }
 
-function buildOidcConfig(env: ReturnType<typeof resolveOidcEnv>, baseURL: string): ConfigParams {
-  const { browserIssuerBaseURL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET, SESSION_SECRET } = env;
-  const hasClientSecret = KEYCLOAK_CLIENT_SECRET.length > 0;
+function buildOidcConfig(
+  env: ReturnType<typeof resolveOidcEnv>,
+  baseURL: string,
+  provider: LoginProvider,
+): ConfigParams {
+  const { KEYCLOAK_CLIENT_SECRET, SESSION_SECRET } = env;
+  const hasClientSecret = provider.clientSecret.length > 0;
+  // ONE session secret for every provider instance: cookies stay mutually
+  // decryptable, so dispatch (not crypto) decides which instance owns a request.
   const sessionSecret = SESSION_SECRET || KEYCLOAK_CLIENT_SECRET;
 
   if (!sessionSecret) {
@@ -381,7 +400,7 @@ function buildOidcConfig(env: ReturnType<typeof resolveOidcEnv>, baseURL: string
   // must be configured on the issuer". Keycloak and Microsoft Entra DO publish it.
   // Enable IdP logout only for issuers that support it; for Google we fall back to a
   // local session clear (the user stays signed into Google, the app session ends).
-  const idpSupportsLogout = !/accounts\.google\.com/i.test(browserIssuerBaseURL || '');
+  const idpSupportsLogout = !/accounts\.google\.com/i.test(provider.issuerBaseURL || '');
 
   // Discovery + token calls to the issuer time out at 5s by default; a momentary
   // slow response from Google then showed satellite users a raw "Timeout awaiting
@@ -389,10 +408,10 @@ function buildOidcConfig(env: ReturnType<typeof resolveOidcEnv>, baseURL: string
   const httpTimeout = Math.max(1000, Number(process.env.OIDC_HTTP_TIMEOUT_MS) || 15000);
 
   return {
-    issuerBaseURL: browserIssuerBaseURL,
+    issuerBaseURL: provider.issuerBaseURL,
     baseURL,
-    clientID: KEYCLOAK_CLIENT_ID,
-    ...(hasClientSecret ? { clientSecret: KEYCLOAK_CLIENT_SECRET } : {}),
+    clientID: provider.clientID,
+    ...(hasClientSecret ? { clientSecret: provider.clientSecret } : {}),
     secret: sessionSecret,
     httpTimeout,
     idpLogout: idpSupportsLogout,
@@ -403,7 +422,9 @@ function buildOidcConfig(env: ReturnType<typeof resolveOidcEnv>, baseURL: string
       scope: 'openid profile email',
     },
     routes: {
-      callback: '/callback',
+      // Primary keeps the legacy /callback (already registered with the IdP for
+      // every login host); secondaries answer on /callback/<provider>.
+      callback: provider.callbackPath,
       // The stock login route hardcodes returnTo=baseURL, silently discarding any
       // ?returnTo= a recovery path passes. Disabled — server.ts registers the
       // loginHandler returned below, which honors a sanitized same-origin returnTo.
@@ -415,6 +436,10 @@ function buildOidcConfig(env: ReturnType<typeof resolveOidcEnv>, baseURL: string
       rolling: true,
       rollingDuration: 60 * 60,
       absoluteDuration: 24 * 60 * 60,
+      // Secondary providers keep their session in a suffixed cookie so two auth()
+      // instances never fight over one cookie; primary stays on the default name
+      // (appSession) so sessions from before the multi-provider split survive.
+      ...(provider.cookieName ? { name: provider.cookieName } : {}),
       // Share the login session across sibling subdomains (e.g. littlemonster +
       // oshal under .agenticfederal.us, or the *.oshal.ai app bundles) so one
       // sign-in covers each family. Resolved PER HOST: a domain that does not
@@ -524,18 +549,6 @@ function resolveBaseUrls(appUrl: string): string[] {
 }
 
 /**
- * @description True when the request targets the OIDC redirect callback route,
- * where a token-exchange failure must restart login rather than crash with a 500.
- *
- * @param req - Express request flowing through the OIDC auth middleware.
- * @returns true if the path is the /callback route.
- */
-function isOidcCallbackRequest(req: Parameters<RequestHandler>[0]): boolean {
-  const path = typeof req.path === 'string' ? req.path : '';
-  return path === '/callback' || path.endsWith('/callback');
-}
-
-/**
  * @description Runs the per-host auth() instance for a /callback request and
  * recovers from token-exchange failures instead of surfacing an unhandled 500.
  * The usual trigger is a reused single-use authorization code (a replayed/stale
@@ -544,15 +557,23 @@ function isOidcCallbackRequest(req: Parameters<RequestHandler>[0]): boolean {
  * loop, so a second consecutive failure falls through to the normal handler.
  *
  * @param instance - The host's express-openid-connect auth() middleware.
+ * @param provider - The provider owning this callback route; its login path is
+ *   the restart target so a failed Microsoft callback re-enters the Microsoft
+ *   flow instead of landing back on the chooser.
  * @returns Express RequestHandler that wraps the callback with recovery.
  */
-function guardedCallback(instance: RequestHandler): RequestHandler {
+function guardedCallback(instance: RequestHandler, provider: LoginProvider): RequestHandler {
   return (req, res, next) =>
     instance(req, res, (err?: unknown) => {
       if (!err) return next();
       const alreadyRetried = (req.headers.cookie ?? '').includes('oidc_login_retry=1');
       logger.warn(
-        { err: err instanceof Error ? err.message : String(err), host: req.hostname, alreadyRetried },
+        {
+          err: err instanceof Error ? err.message : String(err),
+          host: req.hostname,
+          provider: provider.name,
+          alreadyRetried,
+        },
         'OIDC callback failed — recovering instead of 500',
       );
       if (alreadyRetried) {
@@ -563,8 +584,63 @@ function guardedCallback(instance: RequestHandler): RequestHandler {
       // Recover the interrupted login's destination from the callback state — a bare
       // /login restart forgot it, so a /cockpit/?app=<name> deep link double-logged-in
       // and stranded the user on the bare landing surface.
-      return res.redirect(buildOidcLoginRestartPath(req.query.state));
+      return res.redirect(buildOidcLoginRestartPath(req.query.state, loginRestartPathForCallbackPath(req.path) ?? '/login'));
     });
+}
+
+/**
+ * @description Expires the session cookies of every provider EXCEPT the one a
+ * login is starting for (chunk cookies `.0`–`.4` included — the library splits
+ * large sessions). Starting a login with provider X replaces any session from
+ * provider Y, so exactly one identity is active per browser and /logout always
+ * finds the session that the user considers "signed in".
+ *
+ * @param res - Response the expirations are written to
+ * @param providers - Full enabled provider list
+ * @param keep - The provider whose session must NOT be cleared
+ * @param requestHostname - Hostname of the serving request, for cookie-domain resolution
+ */
+function clearSiblingProviderSessions(
+  res: Response,
+  providers: LoginProvider[],
+  keep: LoginProvider,
+  requestHostname: string,
+): void {
+  const domain = resolveCookieDomainForHost(process.env.SESSION_COOKIE_DOMAIN, `https://${requestHostname}`);
+  for (const p of providers) {
+    if (p.name === keep.name) continue;
+    const base = p.cookieName ?? DEFAULT_SESSION_COOKIE;
+    for (const name of [base, `${base}.0`, `${base}.1`, `${base}.2`, `${base}.3`, `${base}.4`]) {
+      res.clearCookie(name, { path: '/' });
+      if (domain) res.clearCookie(name, { path: '/', domain });
+    }
+  }
+}
+
+/**
+ * @description Builds one auth() instance per login host × enabled provider.
+ * Each host origin gets a full provider set so every subdomain can complete a
+ * login for any enabled provider against its own /callback[/name].
+ *
+ * @param env - Resolved primary OIDC env settings
+ * @param providers - Enabled provider list from resolveLoginProviders()
+ * @param baseUrls - Host origins allowed to complete a login
+ * @returns Map of hostname → (provider name → auth() middleware)
+ */
+function buildProviderInstancesByHost(
+  env: ReturnType<typeof resolveOidcEnv>,
+  providers: LoginProvider[],
+  baseUrls: string[],
+): Map<string, Map<string, RequestHandler>> {
+  const byHost = new Map<string, Map<string, RequestHandler>>();
+  for (const origin of baseUrls) {
+    const perProvider = new Map<string, RequestHandler>();
+    for (const provider of providers) {
+      perProvider.set(provider.name, auth(buildOidcConfig(env, origin, provider)));
+    }
+    byHost.set(new URL(origin).hostname, perProvider);
+  }
+  return byHost;
 }
 
 /**
@@ -573,8 +649,11 @@ function guardedCallback(instance: RequestHandler): RequestHandler {
  * `OIDC_BASE_URLS` lists multiple origins, one auth() instance is built per host
  * and dispatched by `req.hostname` so each subdomain logs in against its own
  * /callback — the shared session cookie (SESSION_COOKIE_DOMAIN) then covers all.
+ * With more than one provider enabled (GOOGLE_LOGIN / MICROSOFT_LOGIN), requests
+ * are additionally dispatched to the provider owning them: exact login/callback
+ * routes by path, /logout and everything else by which session cookie is present.
  *
- * @returns Object with authMiddleware (global), requiresAuth (route guard), and loginHandler (/login route)
+ * @returns Object with authMiddleware (global), requiresAuth (route guard), and loginHandler (/login + /login/:provider routes)
  */
 export function createOidcMiddleware(): OidcMiddlewareSet {
   if (isMockOidcEnabled()) {
@@ -582,42 +661,63 @@ export function createOidcMiddleware(): OidcMiddlewareSet {
   }
 
   const env = resolveOidcEnv();
+  const providers = resolveLoginProviders({
+    issuerBaseURL: env.browserIssuerBaseURL,
+    clientID: env.KEYCLOAK_CLIENT_ID,
+    clientSecret: env.KEYCLOAK_CLIENT_SECRET,
+  });
   // Patch http.request once (no-op for cloud issuers / local dev) before building
   // any auth instances, so it isn't re-applied per host.
   patchHttpForDockerRouting(env.internalKeycloakHost, 8080);
 
   const baseUrls = resolveBaseUrls(env.APP_URL);
   const defaultHost = new URL(env.APP_URL).hostname;
-  const byHost = new Map<string, RequestHandler>();
-  for (const origin of baseUrls) {
-    byHost.set(new URL(origin).hostname, auth(buildOidcConfig(env, origin)));
-  }
-  if (byHost.size > 1) {
-    logger.info({ hosts: Array.from(byHost.keys()), defaultHost }, 'OIDC per-host login enabled');
+  const byHost = buildProviderInstancesByHost(env, providers, baseUrls);
+  if (byHost.size > 1 || providers.length > 1) {
+    logger.info(
+      { hosts: Array.from(byHost.keys()), defaultHost, providers: providers.map((p) => p.name) },
+      'OIDC per-host/per-provider login enabled',
+    );
   }
 
   const authMiddleware: RequestHandler = (req, res, next) => {
-    const instance = byHost.get(req.hostname) ?? byHost.get(defaultHost)!;
-    logger.debug({ path: req.path, method: req.method, host: req.hostname }, 'OIDC middleware invoked');
-    if (isOidcCallbackRequest(req)) {
-      return guardedCallback(instance)(req, res, next);
+    const perProvider = byHost.get(req.hostname) ?? byHost.get(defaultHost)!;
+    const match = selectRequestProvider(providers, req.path, req.headers.cookie ?? '');
+    const instance = perProvider.get(match.provider.name)!;
+    logger.debug(
+      { path: req.path, method: req.method, host: req.hostname, provider: match.provider.name, kind: match.kind },
+      'OIDC middleware invoked',
+    );
+    if (match.kind === 'callback') {
+      return guardedCallback(instance, match.provider)(req, res, next);
     }
     return instance(req, res, next);
   };
 
-  // Replaces the disabled stock login route. Runs after authMiddleware (which attaches
-  // res.oidc), starts an interactive login, and — unlike the stock route — carries a
-  // sanitized same-origin ?returnTo through the IdP round-trip so deep links survive.
+  // Replaces the disabled stock login route (served on /login AND /login/:provider).
+  // Runs after authMiddleware (which attaches the matched provider's res.oidc),
+  // renders the chooser when several providers are enabled and the path names none,
+  // and otherwise starts an interactive login carrying a sanitized same-origin
+  // ?returnTo through the IdP round-trip so deep links survive.
   const loginHandler: RequestHandler = (req, res, next) => {
+    const match = selectRequestProvider(providers, req.path, req.headers.cookie ?? '');
+    const returnTo = sanitizeLoginReturnTo(req.query.returnTo);
+    if (match.kind === 'chooser') {
+      logger.info({ host: req.hostname, returnTo }, 'Rendering login provider chooser');
+      res.status(200).type('html').send(renderLoginChooser(providers, returnTo));
+      return;
+    }
     if (!res.oidc || typeof res.oidc.login !== 'function') {
       // authMiddleware did not attach a context (unexpected) — fall through rather than crash.
       logger.error({ path: req.path, host: req.hostname }, 'Login route reached without an OIDC response context');
       next();
       return;
     }
-    const returnTo = sanitizeLoginReturnTo(req.query.returnTo) ?? '/';
-    logger.info({ returnTo, host: req.hostname }, 'Interactive login starting');
-    void res.oidc.login({ returnTo });
+    // Starting a login with provider X replaces any sibling provider's session,
+    // so exactly one identity is active per browser at a time.
+    clearSiblingProviderSessions(res, providers, match.provider, req.hostname);
+    logger.info({ returnTo: returnTo ?? '/', host: req.hostname, provider: match.provider.name }, 'Interactive login starting');
+    void res.oidc.login({ returnTo: returnTo ?? '/' });
   };
 
   return {

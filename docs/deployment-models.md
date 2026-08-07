@@ -83,6 +83,23 @@ APP_URL=https://oshal.example.com
 SESSION_SECRET=<32+ random bytes>             # master connector-token AES key
 ```
 
+**More than one login method (ADR-126):** the block above stays the *primary* provider
+(it keeps `/callback` and the default session cookie); per-provider flags add more. E.g.
+Google primary + a "Continue with Microsoft" button:
+
+```env
+MICROSOFT_LOGIN=true
+MICROSOFT_TENANT_ID=<directory (tenant) id>   # tenant-SPECIFIC; 'common' fails issuer validation
+MICROSOFT_OIDC_CLIENT_ID=...    MICROSOFT_OIDC_CLIENT_SECRET=...
+```
+
+Register `https://<each login host>/callback/microsoft` as a **Web** redirect URI on the
+Azure app (probe with `scripts/check-oidc-redirect-uris.sh -p microsoft <host>`). With
+several providers enabled, `/login` renders a chooser; `GOOGLE_LOGIN=false` removes the
+Google button. Each provider issues its own identity — a person signing in with Google and
+with Microsoft is two different `sub`s (operator status via `OSHAL_OPERATOR_EMAILS` follows
+the email, which covers both).
+
 **Security note:** with the tunnel up, the site is public — never set `MOCK_OIDC=true` while
 tunneled (it would let anyone in as a mock user). `SESSION_SECRET` lives only on the
 controller, never on a bot-node (token-broker model). See the route-auth audit in

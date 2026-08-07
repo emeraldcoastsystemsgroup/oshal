@@ -170,6 +170,7 @@
  * 157 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile ADR-067 connector-route documentation with the lazy marketplace gate: boot mounts two stable parameterized delegates, while deployment and caller enablement are checked on every request before a provider spec is loaded.
  * 158 | maintainer@emeraldcoastsystemsgroup.com   | Wire one lifecycle-scoped package Takeout registry into app activation and the generic authenticated archive route.
  * 159 | maintainer@emeraldcoastsystemsgroup.com   | Wire one confined deterministic package-schedule registry into the shared scheduler and manifest activation lifecycle.
+ * 160 | maintainer@emeraldcoastsystemsgroup.com   | Multi-provider login (ADR-126): registered /login/:provider next to /login (same loginHandler — it dispatches by path/provider), and made the callback state-mismatch recovery provider-aware via loginRestartPathForCallbackPath so a failed /callback/microsoft restarts the Microsoft flow instead of the generic /login.
  */
 
 require('dotenv').config();
@@ -307,7 +308,7 @@ import { createManifestScheduleRegistrar, createManifestScheduleDeregistrar, reg
 // Standalone HTML serving + UI asset/page-dir resolution helpers — extracted verbatim to
 // server-ui-assets.ts; auth-callback/OIDC-recovery/onboarding helpers to server-auth-helpers.ts.
 import { resolveExistingPath, sendHtmlResponse, readOptionalTextFile, resolveUiAssetPaths, resolveUiSurfacePages } from './server-ui-assets';
-import { DEFAULT_OPENAI_CODEX_CALLBACK_PORT, redirectLegacyAuthRoute, extractQueryString, isLikelyOpenAiCodexCallback, resolveConfiguredOpenAiCodexCallbackPort, isOpenAiCodexCallbackPortRequest, hasAuthCallbackQuery, isOidcStateMismatchError, buildOidcLoginRestartPath, isOnboardingCompleted } from './server-auth-helpers';
+import { DEFAULT_OPENAI_CODEX_CALLBACK_PORT, redirectLegacyAuthRoute, extractQueryString, isLikelyOpenAiCodexCallback, resolveConfiguredOpenAiCodexCallbackPort, isOpenAiCodexCallbackPortRequest, hasAuthCallbackQuery, isOidcStateMismatchError, buildOidcLoginRestartPath, loginRestartPathForCallbackPath, isOnboardingCompleted } from './server-auth-helpers';
 import { auditSwarmBotWiring } from '@/app/extensions/swarm/validate-swarm-wiring';
 import { registerAppBots, unregisterAppBots } from '@/app/extensions/swarm/swarm-bot-registry';
 import { manifestBotDefinition } from '@/app/extensions/swarm/manifest-bot-definition';
@@ -728,6 +729,9 @@ function createApp(): express.Application {
   // state-mismatch restart, the cockpit's 401 auth-lapse guard — funnels through here;
   // the stock route dropped returnTo, stranding ?app= deep links on the bare cockpit.
   app.get('/login', loginHandler);
+  // Provider-suffixed login entries (/login/google, /login/microsoft, …): same handler —
+  // it resolves the provider from the path. The chooser page on bare /login links here.
+  app.get('/login/:provider', loginHandler);
 
   // TV pairing token auth: when there is no interactive OIDC session but a valid `oshal_tv`
   // cookie is present (set by the Fire TV app after device pairing), inject an authenticated
@@ -1725,8 +1729,9 @@ function createApp(): express.Application {
   app.use('/api', createApiFallbackHandler(() => packageRoutesSettled || Date.now() >= bootWindowDeadline));
 
   app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (req.path === '/callback' && isOidcStateMismatchError(error)) {
-      const restartPath = buildOidcLoginRestartPath(req.query.state);
+    const oidcLoginRestartBase = loginRestartPathForCallbackPath(req.path);
+    if (oidcLoginRestartBase && isOidcStateMismatchError(error)) {
+      const restartPath = buildOidcLoginRestartPath(req.query.state, oidcLoginRestartBase);
       logger.warn(
         { err: error, path: req.path, method: req.method, restartPath },
         'OIDC callback state mismatch detected; restarting login',
