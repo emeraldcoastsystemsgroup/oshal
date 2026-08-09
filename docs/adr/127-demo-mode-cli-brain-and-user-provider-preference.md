@@ -114,9 +114,12 @@ nothing.
 - **A preference makes the ladder legible.** The failure mode this replaces was silent: three
   connected providers, no way to know which would run, and no way to change it. The cost is one
   more piece of per-user state to migrate, back up, and delete on account deletion.
-- **CLI turns are not cost-attributed the way hosted turns are.** A subscription CLI reports no
-  per-call price, so `chat_tasks` records the call without a dollar figure. Cost dashboards must
-  keep reading provider-reported usage and not infer spend from call counts.
+- **A CLI turn's recorded cost is a price-equivalent, not a bill.** Corrected against a live run:
+  the Claude Code CLI *does* report a per-call figure ($0.079 for the first real operator turn) and
+  it lands in `chat_tasks` like any other. What it is not is money that changed hands — a
+  subscription already paid for that call. Any surface summing cost across providers is therefore
+  adding two different units, and must say which turns were subscription-backed rather than
+  presenting one total as spend.
 - **Open-source deployments get the options without inheriting the risk.** Defaults ship closed:
   no `DEMO_MODE`, no key lending, no CLI. A deployment turns on exactly what its threat model
   allows.
