@@ -139,6 +139,22 @@
   </div>
 
   <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">Bot LLM access</h2>
+
+  <!-- ADR-127: which of the connected providers below runs THIS user's work. Options and their
+       availability come from the server (/api/settings/llm-default) — the page never decides what
+       a caller may pick. -->
+  <div class="card" style="flex-direction:column;align-items:stretch;gap:10px;">
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div class="ico">&#127919;</div>
+      <div class="info">
+        <div class="name">My default brain</div>
+        <div class="meta" id="brainMeta">Checking…</div>
+      </div>
+    </div>
+    <div id="brainOptions" style="display:flex;flex-direction:column;gap:6px;"></div>
+    <div class="meta" id="brainMsg"></div>
+  </div>
+
   <div class="card" style="flex-direction:column;align-items:stretch;gap:12px;">
     <div style="display:flex;align-items:center;gap:16px;">
       <div class="ico">&#129302;</div>
@@ -1207,6 +1223,59 @@ function wireFreeTier() {
   });
 }
 
+// ── ADR-127: my default brain ────────────────────────────────────────────────────────────────
+// Renders the server's option list as radios. An unavailable option stays visible and disabled so
+// the user can SEE what connecting something would unlock, rather than wondering what's missing.
+async function loadDefaultBrain() {
+  var host = document.getElementById('brainOptions');
+  var meta = document.getElementById('brainMeta');
+  if (!host) return;
+  try {
+    var data = await (await fetch('/api/settings/llm-default', { credentials: 'include' })).json();
+    renderDefaultBrain(data);
+  } catch (e) {
+    if (meta) meta.textContent = 'Could not load your default provider.';
+    host.innerHTML = '';
+  }
+}
+
+function renderDefaultBrain(data) {
+  var host = document.getElementById('brainOptions');
+  var meta = document.getElementById('brainMeta');
+  var current = (data && data.preference && data.preference.preferred) || 'auto';
+  var options = (data && data.options) || [];
+  var chosen = options.filter(function (o) { return o.id === current; })[0];
+  if (meta) meta.textContent = chosen ? chosen.label + ' — ' + chosen.detail : 'Automatic';
+  host.innerHTML = options.map(function (o) {
+    return '<label style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:9px;'
+      + 'border:1px solid var(--border);' + (o.id === current ? 'background:var(--card2);' : '')
+      + (o.available ? 'cursor:pointer;' : 'opacity:.55;') + '">'
+      + '<input type="radio" name="brainPick" value="' + ftEsc(o.id) + '"'
+      + (o.id === current ? ' checked' : '') + (o.available ? '' : ' disabled')
+      + ' onchange="saveDefaultBrain(this.value)" style="margin-top:3px;">'
+      + '<span><span style="font-weight:600;">' + ftEsc(o.label) + '</span><br>'
+      + '<span class="meta">' + ftEsc(o.detail) + '</span></span></label>';
+  }).join('');
+}
+
+async function saveDefaultBrain(preferred) {
+  var msg = document.getElementById('brainMsg');
+  if (msg) msg.textContent = 'Saving…';
+  try {
+    var r = await fetch('/api/settings/llm-default', {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferred: preferred }),
+    });
+    var data = await r.json();
+    if (!r.ok) { if (msg) msg.textContent = data.error || 'Could not save that choice.'; return; }
+    renderDefaultBrain(data);
+    if (msg) msg.textContent = 'Saved. New conversations use it right away.';
+  } catch (e) {
+    if (msg) msg.textContent = 'Could not save that choice.';
+  }
+}
+
 showBanner();
 loadAccount();
 loadTenants().then(load);
@@ -1215,6 +1284,7 @@ loadCodex();
 loadGemini();
 loadFreeTier();
 loadLlmProviders();
+loadDefaultBrain();
 </script>
 </body>
 </html>
