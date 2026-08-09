@@ -55,6 +55,17 @@ for, and a demo switch must not quietly enable it.
 Every unlocked execution logs an audit line naming the provider, the agent, and the operator sub.
 An unlock that leaves no trace is not auditable, and this one is a posture exception.
 
+**SEC-05 is two boundaries, not one, and both need the carve.** The TypeScript preflight decides
+whether work is *accepted*; any-bot's `assertCliToolBoundary` decides whether a process is
+*spawned*, and it refuses for a different reason — the CLI cannot enforce the server-issued tool
+list. Carving only the first produced an execution that passed policy and then died at the spawn
+gate (`UNENFORCEABLE_CLI_TOOL_BOUNDARY`, 65ms, empty response), which is how this second layer was
+found. The spawn gate now applies the identical two conditions, with one difference that matters:
+it reads the subject from the per-request spawn env the handler builds
+(`extraEnv.OSHAL_USER_SUB`), never from a caller-supplied option. An earlier revision of that file
+removed exactly such a bypass (a caller-asserted `brokeredSandbox` flag); re-introducing one in a
+different shape would be the same defect wearing a demo hat.
+
 The carve is a *deployment* decision expressed as a flag, not an identity claim that outranks the
 gate. A shared box leaves `DEMO_MODE` off and nothing changes. The guest demo surfaces that share
 this stack are covered by the operator-identity half: a guest turn can never reach the CLI even
