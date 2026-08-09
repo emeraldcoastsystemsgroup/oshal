@@ -261,6 +261,15 @@ x-bot-env: &bot-env
   GROQ_API_KEY: ${GROQ_API_KEY:-}
   CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
   MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+  # DEMO SWITCH (default OFF). On, the operator-key lane may run an operator's turn on THIS
+  # deployment's own hosted keys (the vars above) when they have connected no LLM of their own —
+  # what makes a demo box answer out of the tin. Off, those keys are never lent to a turn: a caller
+  # with no connection gets an honest "no engine connected" instead of silently spending the host's
+  # key. Lane order/model: OSHAL_OPERATOR_LLM_LANES / _PROVIDER / _MODEL (free-tier-rotation.ts).
+  DEMO_MODE: ${DEMO_MODE:-}
+  OSHAL_OPERATOR_LLM_LANES: ${OSHAL_OPERATOR_LLM_LANES:-}
+  OSHAL_OPERATOR_LLM_PROVIDER: ${OSHAL_OPERATOR_LLM_PROVIDER:-}
+  OSHAL_OPERATOR_LLM_MODEL: ${OSHAL_OPERATOR_LLM_MODEL:-}
   GOOGLE_SEARCH_MCP_URL: ${GOOGLE_SEARCH_MCP_URL:-}
   TOOL_AUTH_AWS_CLI: ${TOOL_AUTH_AWS_CLI:-off}
   TOOL_AUTH_KUBECTL: ${TOOL_AUTH_KUBECTL:-off}

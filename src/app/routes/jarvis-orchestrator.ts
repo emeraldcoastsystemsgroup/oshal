@@ -17,6 +17,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: JARVIS_AGENT_ID, APP_ROUTES/loadEffectiveRoutes, runJarvisBot + the classify/delegate/synthesize helpers, summarizeComplexTask, maskPendingComplexSummaries, repairCompletedTaskTableVisuals (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credential forwarding from Jarvis/model delegation; credentials stay inside audited server-side provider operations.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the turn's resolved endpoint through the whole turn: the in-process steps (haven passive learning, the legacy classify/synthesize path) now run on the same byoLlmConnection instead of silently falling to the controller's configured CLI harness, and the one bounded retry re-resolves to the NEXT usable endpoint rather than deliberately dropping the connection onto a provider a SEC-05 node refuses.
  *
  * @module jarvis-orchestrator
  */
@@ -41,6 +42,7 @@ import {
   type MultiAppPlan,
 } from '@/features/swarm-orchestration';
 import { reportResolvedLlmFailure, resolveUserLlmConnection } from './free-tier-rotation';
+import type { ByoLlmConnection } from './byo-llm-routes';
 import { executeBotOrInline } from './inline-bot-execution';
 import { createOptionalJarvisVisual } from './jarvis-visual-response';
 import { extractJsonObject, extractJarvisDirectives } from './jarvis-directives';
@@ -266,16 +268,22 @@ function freshTaskId(tag: string, sub: string): string {
  */
 async function runInline(
   ctx: AppContext, agentId: string, prompt: string, sub: string, tag: string,
+  byoLlmConnection?: ByoLlmConnection,
 ): Promise<string> {
   const result = await ctx.orchestrator.processMessage(freshTaskId(tag, sub), prompt, {
     agenticMode: true, autoApprove: false, source: 'jarvis', agentId, userSub: sub,
+    // Same resolved endpoint the turn itself ran on. Without it these in-process steps fall to the
+    // controller's configured CLI harness, which is refused unattended — a silent no-brain step.
+    byoLlmConnection,
   } as never);
   return String(result.response || '').trim();
 }
 
 /** Run the oshal-assistant brain for a classify/synthesize step (inline, in-process). */
-async function runJarvis(ctx: AppContext, sub: string, prompt: string, step: string): Promise<string> {
-  return runInline(ctx, JARVIS_AGENT_ID, prompt, sub, step);
+async function runJarvis(
+  ctx: AppContext, sub: string, prompt: string, step: string, byoLlmConnection?: ByoLlmConnection,
+): Promise<string> {
+  return runInline(ctx, JARVIS_AGENT_ID, prompt, sub, step, byoLlmConnection);
 }
 
 /**
@@ -318,21 +326,26 @@ export async function runJarvisBot(
   } catch (error) {
     const retryable = await reportResolvedLlmFailure(ctx.pool, resolvedLlmConnection, error);
     if (!retryable) throw error;
+    // reportResolvedLlmFailure has already cooled/invalidated the lane that just failed, so this
+    // re-resolution returns the NEXT usable endpoint (another free lane, or the next operator key).
+    // Only when nothing resolves does the turn fall through to the bot's configured provider — the
+    // final resilience leg, which on a SEC-05 node is a refusal, not an answer.
+    const nextConnection = await resolveUserLlmConnection(ctx.pool, sub);
     logger.warn(
-      { err: error, model: resolvedLlmConnection?.model },
-      'Jarvis free/BYO provider was unavailable; retrying once on the configured bot provider',
+      { err: error, model: resolvedLlmConnection?.model, retryModel: nextConnection?.model ?? null },
+      'Jarvis free/BYO provider was unavailable; retrying once on the next resolved endpoint',
     );
-    // The retry deliberately omits byoLlmConnection. The bot's configured provider is the final
-    // resilience leg; it still runs on the Jarvis node and retains the same caller/task context.
     result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, {
       ...request,
-      byoLlmConnection: undefined,
+      byoLlmConnection: nextConnection
+        ? { baseUrl: nextConnection.baseUrl, apiKey: nextConnection.apiKey, model: nextConnection.model }
+        : undefined,
     });
   }
   const answer = String(result.response || '').trim();
   // Passive learning (fire-and-forget, throttled): extraction runs on the same accountable
   // inline brain so its LLM cost lands in chat_tasks (ADR-036/050). Never blocks the reply.
-  void learnFromExchange(ctx.pool, sub, message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn'));
+  void learnFromExchange(ctx.pool, sub, message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
   return { answer, routed: [], handoffs: [] };
 }
 
