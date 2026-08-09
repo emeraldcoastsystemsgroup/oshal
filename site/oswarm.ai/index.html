@@ -661,6 +661,7 @@
       <span class="word">oshal</span>
     </a>
     <div class="navlinks">
+      <a href="/product/">Applications</a>
       <a href="#platform">Platform</a>
       <a href="#compare">Compare</a>
       <a href="#architecture" class="hide-m">Architecture</a>
@@ -679,6 +680,7 @@
     </div>
   </div>
   <div class="mobile-menu" id="mobile-menu">
+    <a href="/product/">Applications</a>
     <a href="#platform">Platform</a>
     <a href="#compare">Compare</a>
     <a href="#architecture">Architecture</a>
@@ -738,7 +740,7 @@
   <div class="wrap">
     <div class="stat"><div class="n">6</div><div class="l">Agent harnesses</div></div>
     <div class="stat"><div class="n">40</div><div class="l">Model providers</div></div>
-    <div class="stat"><div class="n">307</div><div class="l">Connectors in catalog</div></div>
+    <div class="stat"><div class="n">308</div><div class="l">Connectors in catalog</div></div>
     <div class="stat"><div class="n">40</div><div class="l">App packages in the store</div></div>
     <div class="stat"><div class="n">AGPL-3.0</div><div class="l">Open source, forever</div></div>
   </div>
@@ -888,6 +890,12 @@
       <div class="day-app"><b>Workflow Studio</b><span>design workflows by conversation</span></div>
     </div>
     <!-- APPS:END -->
+    <!-- Deliberately OUTSIDE the generated markers: the grid above is the KERNEL-resident set, and
+         site-apps-catalog.js rewrites everything between them. The store catalog is far larger, so
+         this line is what stops the count above from reading as the whole product. -->
+    <p class="eyebrow apps-label">
+      Plus the installable app store — <a href="/product/">see the full catalog and what's inside the platform &rarr;</a>
+    </p>
     <div class="spotlights">
       <div class="spotlight">
         <span class="mono-tag">app spotlight — intelligent trading</span>
@@ -1094,7 +1102,7 @@
       </figure>
       <figure class="shot">
         <img src="assets/cockpit-connectors.png" alt="The cockpit connector marketplace: a searchable catalog of connectors with per-user credentials, risk filters, and live counts" loading="lazy" width="1440" height="900">
-        <figcaption><b>The connector marketplace.</b> <strong>307 hand-audited connectors ship in the repo.</strong> This instance has also run the OpenAPI bulk importer, which is what takes the catalog to 1,306 — the counters break it down for you. Credentials stay user-owned.</figcaption>
+        <figcaption><b>The connector marketplace.</b> <strong>308 hand-audited connectors ship in the repo.</strong> This instance has also run the OpenAPI bulk importer, which is what takes the catalog to 1,306 — the counters break it down for you. Credentials stay user-owned.</figcaption>
       </figure>
       <figure class="shot">
         <img src="assets/cockpit-connector-governance.png" alt="Connector cards showing each provider's auth model, risk rating, and exact read and write capabilities" loading="lazy" width="1300" height="305">
@@ -1633,7 +1641,7 @@
         <ul>
           <li><strong>Six harnesses</strong> behind one interface, mixed within a single ticket</li>
           <li><strong>40 model providers</strong>, including fully local via Ollama / LM Studio / LiteLLM</li>
-          <li><strong>Connector marketplace</strong> — 307 hand-audited specs (plus a bulk OpenAPI importer), OAuth broker, live-proven core</li>
+          <li><strong>Connector marketplace</strong> — 308 hand-audited specs (plus a bulk OpenAPI importer), OAuth broker, live-proven core</li>
           <li><strong>40 app packages in the public store</strong> — email, social, storage, presentations, gaming, career, ops, and more (the grid above shows the published set, generated from them)</li>
           <li><strong>Row-level security live</strong> on every tenant table; per-user AES-256-GCM token encryption</li>
           <li><strong>Per-call cost ledger</strong> in Postgres — every bot, provider, model, ticket</li>

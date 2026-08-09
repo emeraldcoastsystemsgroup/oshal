@@ -1,0 +1,868 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oshal — the applications and what runs them</title>
+<meta name="description" content="Every application that ships on oshal, grouped by what it does for you — and the platform underneath: cockpit, connectors, queues, databases, monitoring, model harnesses, remote nodes, external agents, and security.">
+<link rel="canonical" href="https://oshal.ai/product/">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230B1020'/%3E%3Ccircle cx='16' cy='16' r='3.5' fill='%237DD3FC'/%3E%3Ccircle cx='16' cy='16' r='8' stroke='%237DD3FC' stroke-opacity='.45' fill='none'/%3E%3Ccircle cx='26' cy='8' r='2.2' fill='%2334D399'/%3E%3Ccircle cx='6' cy='10' r='2.2' fill='%2334D399'/%3E%3Ccircle cx='23' cy='25' r='2.2' fill='%2334D399'/%3E%3C/svg%3E">
+<meta property="og:title" content="oshal — the applications and what runs them">
+<meta property="og:description" content="The full application catalog, grouped by what it does for you, and the platform underneath it.">
+<meta property="og:url" content="https://oshal.ai/product/">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --night: #0B1020;
+    --panel: #111A2E;
+    --panel-2: #0E1526;
+    --hairline: rgba(148, 163, 184, 0.16);
+    --hairline-strong: rgba(148, 163, 184, 0.28);
+    --cyan: #7DD3FC;
+    --cyan-deep: #38BDF8;
+    --green: #34D399;
+    --amber: #FBBF24;
+    --slate: #94A3B8;
+    --body: #B7C3D6;
+    --white: #F8FAFC;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace;
+    --sans: system-ui, "Segoe UI Variable Display", "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --w: 1120px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+  body {
+    background: var(--night);
+    color: var(--body);
+    font-family: var(--sans);
+    font-size: 1rem;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  ::selection { background: rgba(125, 211, 252, 0.28); color: var(--white); }
+
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 2px;
+  }
+
+  .wrap { max-width: var(--w); margin: 0 auto; padding: 0 24px; }
+  @media (max-width: 720px) { .wrap { padding-inline: 16px; } }
+
+  /* ---------- status strip ---------- */
+  .statusbar {
+    border-bottom: 1px solid var(--hairline);
+    font-family: var(--mono); font-size: 0.72rem;
+    letter-spacing: 0.08em; color: var(--slate);
+  }
+  .statusbar .wrap {
+    display: flex; justify-content: space-between; align-items: center;
+    height: 34px; gap: 16px;
+  }
+  .statusbar .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); margin-right: 7px; vertical-align: 1px;
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.7);
+  }
+  @media (max-width: 720px) { .statusbar .right { display: none; } }
+
+  /* ---------- nav ---------- */
+  nav.top {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(11, 16, 32, 0.86);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  nav.top .wrap {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 64px; gap: 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 11px; color: var(--white); }
+  .brand:hover { text-decoration: none; }
+  .brand svg { display: block; }
+  .brand .word { font-weight: 750; letter-spacing: -0.02em; font-size: 1.06rem; white-space: nowrap; }
+  .navlinks { display: flex; align-items: center; gap: 26px; font-size: 0.9rem; }
+  .navlinks a { color: var(--slate); white-space: nowrap; }
+  .navlinks a:hover { color: var(--white); text-decoration: none; }
+  @media (max-width: 860px) { .navlinks > a:not(.primary) { display: none; } }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+    min-height: 44px;
+    font-family: var(--mono); font-size: 0.84rem; font-weight: 500;
+    padding: 10px 18px; border-radius: 6px;
+    border: 1px solid var(--hairline-strong);
+    color: var(--white); background: transparent;
+    white-space: nowrap; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--cyan); color: var(--cyan); text-decoration: none; }
+  .btn.primary { background: var(--cyan); border-color: var(--cyan); color: #06121F; font-weight: 700; }
+  .btn.primary:hover { background: var(--cyan-deep); border-color: var(--cyan-deep); color: #06121F; }
+
+  /* ---------- shared type ---------- */
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--slate);
+  }
+  .eyebrow b { color: var(--green); font-weight: 500; }
+  h1 {
+    margin: 22px 0 24px;
+    font-size: clamp(2.25rem, 5.2vw, 3.7rem);
+    line-height: 1.05; font-weight: 800; letter-spacing: -0.035em;
+    color: var(--white); text-wrap: balance;
+  }
+  h1 .accent { color: var(--cyan); }
+  h2 {
+    font-size: clamp(1.6rem, 3.2vw, 2.3rem);
+    line-height: 1.15; font-weight: 750; letter-spacing: -0.028em;
+    color: var(--white); text-wrap: balance;
+  }
+  h3 { font-size: 1.02rem; font-weight: 700; color: var(--white); letter-spacing: -0.01em; }
+  .lede { max-width: 40em; font-size: 1.08rem; line-height: 1.72; }
+  .lede strong { color: var(--white); font-weight: 600; }
+
+  section { border-bottom: 1px solid var(--hairline); padding: 84px 0; }
+  @media (max-width: 720px) { section { padding: 56px 0; } }
+  .sec-head { max-width: 46em; margin-bottom: 40px; }
+  .sec-head h2 { margin: 14px 0 16px; }
+
+  /* ---------- hero ---------- */
+  header.hero { border-bottom: 1px solid var(--hairline); padding: 88px 0 72px; }
+  @media (max-width: 720px) { header.hero { padding: 56px 0 48px; } }
+  .hero-sub { max-width: 38em; font-size: 1.12rem; line-height: 1.72; color: var(--body); }
+  .hero-sub strong { color: var(--white); font-weight: 600; }
+  .hero-ctas { display: flex; gap: 14px; margin-top: 34px; flex-wrap: wrap; }
+
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1px; margin-top: 52px;
+    background: var(--hairline); border: 1px solid var(--hairline); border-radius: 10px;
+    overflow: hidden;
+  }
+  .stats div { background: var(--panel-2); padding: 20px 18px; }
+  .stats .n {
+    font-family: var(--mono); font-size: 1.75rem; font-weight: 600;
+    color: var(--cyan); line-height: 1.1;
+  }
+  .stats .l {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--slate); margin-top: 8px;
+  }
+
+  /* ---------- filters ---------- */
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .chip {
+    font-family: var(--mono); font-size: 0.78rem;
+    padding: 9px 15px; min-height: 40px;
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--hairline-strong); border-radius: 99px;
+    background: transparent; color: var(--slate); cursor: pointer;
+  }
+  .chip:hover { color: var(--white); border-color: var(--slate); }
+  .chip[aria-pressed="true"] { background: rgba(125, 211, 252, 0.12); border-color: var(--cyan); color: var(--cyan); }
+  .chip .k { opacity: 0.6; font-size: 0.72rem; }
+
+  .searchrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 26px; }
+  .searchrow input {
+    flex: 1 1 260px; min-height: 44px;
+    background: var(--panel-2); border: 1px solid var(--hairline-strong);
+    border-radius: 6px; padding: 10px 14px;
+    color: var(--white); font-family: var(--sans); font-size: 0.95rem;
+  }
+  .searchrow input::placeholder { color: var(--slate); }
+  .searchrow input:focus { outline: none; border-color: var(--cyan); }
+  .resultcount { font-family: var(--mono); font-size: 0.76rem; color: var(--slate); white-space: nowrap; }
+
+  .suite-note {
+    font-size: 0.94rem; color: var(--slate); margin-bottom: 26px;
+    min-height: 1.6em;
+  }
+
+  /* ---------- tile grid ---------- */
+  .grid {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr));
+  }
+  .tile {
+    text-align: left; cursor: pointer;
+    background: var(--panel-2); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 20px 20px 18px;
+    display: flex; flex-direction: column; gap: 10px;
+    color: var(--body); font: inherit;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .tile:hover { border-color: var(--cyan); transform: translateY(-2px); }
+  .tile .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .tile h3 { text-wrap: balance; }
+  .tile p { font-size: 0.9rem; line-height: 1.6; color: var(--body); flex: 1; }
+  .badge {
+    font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.09em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 99px;
+    border: 1px solid var(--hairline-strong); color: var(--slate); white-space: nowrap;
+  }
+  .badge.core { border-color: rgba(52, 211, 153, 0.5); color: var(--green); }
+  .tile .more {
+    font-family: var(--mono); font-size: 0.74rem; color: var(--cyan);
+    letter-spacing: 0.05em;
+  }
+  .tile .suitetag {
+    font-family: var(--mono); font-size: 0.68rem; color: var(--slate);
+    letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .empty {
+    border: 1px dashed var(--hairline-strong); border-radius: 10px;
+    padding: 40px 24px; text-align: center; color: var(--slate);
+  }
+
+  /* ---------- platform boxes ---------- */
+  .boxes {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
+  }
+  .box {
+    text-align: left; cursor: pointer; font: inherit; color: var(--body);
+    background: var(--panel-2); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 22px;
+    display: flex; flex-direction: column; gap: 12px;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .box:hover { border-color: var(--cyan); transform: translateY(-2px); }
+  .box .idx {
+    font-family: var(--mono); font-size: 0.7rem; color: var(--slate);
+    letter-spacing: 0.12em;
+  }
+  .box h3 { font-size: 1.08rem; }
+  .box p { font-size: 0.92rem; line-height: 1.62; flex: 1; }
+  .box .more { font-family: var(--mono); font-size: 0.74rem; color: var(--cyan); }
+  .flag {
+    /* align-self, because the box is a flex column: a stretched pill reads as a banner, not a tag. */
+    display: inline-block; align-self: flex-start;
+    font-family: var(--mono); font-size: 0.63rem;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 99px;
+    border: 1px solid rgba(251, 191, 36, 0.45); color: var(--amber);
+  }
+
+  /* ---------- detail dialog ---------- */
+  dialog#detail {
+    width: min(680px, calc(100vw - 32px));
+    max-height: min(84vh, 900px);
+    padding: 0; border: 1px solid var(--hairline-strong); border-radius: 12px;
+    background: var(--panel); color: var(--body);
+    margin: auto;
+  }
+  dialog#detail::backdrop { background: rgba(4, 8, 18, 0.78); backdrop-filter: blur(3px); }
+  .dlg-head {
+    position: sticky; top: 0; z-index: 2;
+    background: var(--panel); border-bottom: 1px solid var(--hairline);
+    padding: 22px 24px 18px;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  }
+  .dlg-head h3 { font-size: 1.35rem; letter-spacing: -0.02em; line-height: 1.25; }
+  .dlg-kicker {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--slate); margin-bottom: 8px;
+  }
+  .dlg-close {
+    flex-shrink: 0; width: 40px; height: 40px; border-radius: 6px;
+    background: transparent; border: 1px solid var(--hairline-strong);
+    color: var(--white); cursor: pointer; font-size: 1.1rem; line-height: 1;
+  }
+  .dlg-close:hover { border-color: var(--cyan); color: var(--cyan); }
+  .dlg-body { padding: 22px 24px 26px; overflow-y: auto; }
+  .dlg-body p { margin-bottom: 16px; line-height: 1.72; }
+  .dlg-body ul { margin: 0 0 18px 0; padding-left: 0; list-style: none; }
+  .dlg-body li {
+    position: relative; padding-left: 20px; margin-bottom: 11px;
+    font-size: 0.95rem; line-height: 1.62;
+  }
+  .dlg-body li::before {
+    content: ""; position: absolute; left: 4px; top: 0.66em;
+    width: 5px; height: 5px; border-radius: 50%; background: var(--cyan);
+  }
+  .dlg-body strong { color: var(--white); font-weight: 600; }
+  .dlg-body h4 {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--slate);
+    margin: 24px 0 12px; padding-top: 18px; border-top: 1px solid var(--hairline);
+  }
+  .dlg-body code, code.inline {
+    font-family: var(--mono); font-size: 0.84em;
+    background: rgba(125, 211, 252, 0.1); color: var(--cyan);
+    padding: 2px 6px; border-radius: 4px; word-break: break-word;
+  }
+  .dlg-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+
+  /* ---------- generic prose blocks ---------- */
+  .cols {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  }
+  .panel {
+    background: var(--panel-2); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 22px;
+  }
+  .panel h3 { margin-bottom: 10px; }
+  .panel p { font-size: 0.93rem; line-height: 1.65; }
+  .panel .k {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--slate); margin-bottom: 12px;
+  }
+
+  .urlrow {
+    display: grid; gap: 1px; background: var(--hairline);
+    border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden;
+    margin-top: 26px;
+  }
+  .urlrow > div {
+    background: var(--panel-2); padding: 18px 20px;
+    display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 18px;
+    align-items: baseline;
+  }
+  @media (max-width: 640px) { .urlrow > div { grid-template-columns: 1fr; gap: 6px; } }
+  .urlrow code { font-family: var(--mono); font-size: 0.82rem; color: var(--cyan); word-break: break-all; }
+  .urlrow span { font-size: 0.93rem; line-height: 1.6; }
+
+  .note {
+    margin-top: 26px; padding: 18px 20px;
+    border: 1px solid var(--hairline); border-left: 2px solid var(--amber);
+    border-radius: 0 8px 8px 0; background: var(--panel-2);
+    font-size: 0.93rem; line-height: 1.65;
+  }
+  .note b { color: var(--white); }
+
+  footer {
+    padding: 46px 0 60px; color: var(--slate); font-size: 0.88rem;
+  }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 18px 28px; justify-content: space-between; }
+  footer a { color: var(--slate); }
+  footer a:hover { color: var(--cyan); }
+</style>
+</head>
+<body>
+
+<div class="statusbar">
+  <div class="wrap">
+    <div class="left"><span class="dot"></span>APPLICATION CATALOG</div>
+    <div class="right">AGPL-3.0 · SELF-HOSTED · YOUR KEYS</div>
+  </div>
+</div>
+
+<nav class="top" aria-label="Primary">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="oshal home">
+      <svg width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">
+        <circle cx="15" cy="15" r="3.4" fill="#7DD3FC"/>
+        <circle cx="15" cy="15" r="7.5" stroke="#7DD3FC" stroke-opacity="0.45" stroke-width="1"/>
+        <circle cx="25" cy="8" r="2.1" fill="#34D399"/>
+        <circle cx="5.5" cy="10" r="2.1" fill="#34D399"/>
+        <circle cx="22" cy="24.5" r="2.1" fill="#34D399"/>
+        <path d="M17.8 12.6 23.4 9.3M12 13 7.4 10.9M17.3 17.6l3.4 5.2" stroke="#94A3B8" stroke-opacity="0.6" stroke-width="1"/>
+      </svg>
+      <span class="word">oshal</span>
+    </a>
+    <div class="navlinks">
+      <a href="#apps">Applications</a>
+      <a href="#platform">Platform</a>
+      <a href="#dashboards">Dashboards</a>
+      <a href="#open">Open it</a>
+      <a href="/">Overview</a>
+      <a class="btn primary" href="/#get-started">Install</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow"><b>●</b> One platform · one login · <span data-count="apps"></span> applications</p>
+    <h1>Every app you'd want an assistant for — <span class="accent">on hardware you own</span>.</h1>
+    <p class="hero-sub">
+      oshal is an orchestration platform for agentic AI. The platform is the part that never changes:
+      a cockpit, a queue, a set of databases, a connector vault, and accountable bot identities that
+      do the work. <strong>Applications are what you install on top</strong> — each one a packaged bot
+      with its own surface, its own connectors, and its own domain. Find yours below, then look inside
+      the box that runs it.
+    </p>
+    <div class="hero-ctas">
+      <a class="btn primary" href="#apps">Browse the applications</a>
+      <a class="btn" href="#platform">See what's inside</a>
+    </div>
+
+    <div class="stats" id="stats">
+      <div><div class="n" data-count="apps"></div><div class="l">Applications</div></div>
+      <div><div class="n" data-count="suites"></div><div class="l">Catalog shelves</div></div>
+      <div><div class="n" data-count="connectors"></div><div class="l">Connector specs</div></div>
+      <div><div class="n" data-count="providers"></div><div class="l">Model providers</div></div>
+      <div><div class="n" data-count="personas"></div><div class="l">Bot personas</div></div>
+    </div>
+  </div>
+</header>
+
+<section id="apps">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The application group</p>
+      <h2>Pick the job, not the technology.</h2>
+      <p class="lede">
+        Applications are grouped onto shelves by <strong>who they serve</strong> — not by which model or
+        connector they happen to use. An app bundles the bots, the connector permissions, the ticket
+        types and the cockpit surface it needs, and installs as one unit. Nothing is compiled into the
+        core: install one, install a shelf, or install none of them and use the assistant alone.
+      </p>
+    </div>
+
+    <div class="filters" id="filters" role="group" aria-label="Filter applications by shelf"></div>
+    <div class="searchrow">
+      <input type="search" id="search" placeholder="Search applications — try &ldquo;job&rdquo;, &ldquo;video&rdquo;, &ldquo;home&rdquo;" aria-label="Search applications">
+      <span class="resultcount" id="resultcount" role="status"></span>
+    </div>
+    <p class="suite-note" id="suitenote"></p>
+
+    <div class="grid" id="appgrid"></div>
+    <div class="empty" id="appempty" hidden>No application matches that search.</div>
+
+    <div class="note">
+      <b>Installing.</b> Apps install from git and hot-load — <code class="inline">node scripts/oshal-app.js install &lt;name&gt;</code>
+      on the host, then the swarm auto-loads it. A one-call install straight from the catalog
+      (<code class="inline">POST /api/swarm/apps/install-remote</code>) is planned, not shipped.
+      Uninstall is dependency-aware: it refuses to orphan an app another one depends on.
+    </div>
+  </div>
+</section>
+
+<section id="platform">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Inside the box</p>
+      <h2>The platform every one of those apps is standing on.</h2>
+      <p class="lede">
+        The apps are the visible part. Underneath, the same nine pieces run for all of them —
+        one cockpit, one queue, one credential vault, one set of databases. An app never ships its
+        own copy; it reaches platform capability by declaring what it needs. Open any box to see
+        what's actually in it.
+      </p>
+    </div>
+    <div class="boxes" id="boxgrid"></div>
+  </div>
+</section>
+
+<section id="dashboards">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Watching the work</p>
+      <h2>A dashboard for every layer that can go wrong.</h2>
+      <p class="lede">
+        Agent systems fail quietly — a bot stops heartbeating, a queue backs up, a model bill runs
+        away. Each of those has its own surface, and they read from the live tables rather than
+        from a log summary.
+      </p>
+    </div>
+    <div class="cols">
+      <div class="panel">
+        <div class="k">Operations</div>
+        <h3>Ops dashboard</h3>
+        <p>The whole stack on one screen — container health, alert state from the monitoring overlay, and which incidents the swarm opened for itself.</p>
+      </div>
+      <div class="panel">
+        <div class="k">Throughput</div>
+        <h3>Queue &amp; mesh</h3>
+        <p>Tickets by phase, what each bot is holding, stream depth, dead-letter contents, and live heartbeats per agent identity.</p>
+      </div>
+      <div class="panel">
+        <div class="k">Money</div>
+        <h3>Cost &amp; tasks</h3>
+        <p>Per-call tokens and dollars land in <code class="inline">chat_tasks</code> as the work happens, attributed to the bot that spent it — the canonical number, not an estimate off the logs.</p>
+      </div>
+      <div class="panel">
+        <div class="k">Forensics</div>
+        <h3>Run trace &amp; task explorer</h3>
+        <p>Replay a ticket end to end: which bot took which phase, what it was given, what it returned, and where a revision loop turned around.</p>
+      </div>
+      <div class="panel">
+        <div class="k">Quality</div>
+        <h3>Eval wall</h3>
+        <p>Compare model lanes on the same job against a shared quality judge, so a provider swap is a measured decision rather than a vibe.</p>
+      </div>
+      <div class="panel">
+        <div class="k">Personal</div>
+        <h3>Your dashboard</h3>
+        <p>The signed-in user's own view — the apps authorized to them, their connected accounts, and what their bots did today.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="open">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Opening it</p>
+      <h2>One app, one shelf, everything, or just the assistant.</h2>
+      <p class="lede">
+        The cockpit is shaped by the URL, and the URL is the only source of truth — nothing is cached
+        into your browser to poison the next visit. That means a shape is a link: bookmark it, send it
+        to someone, put it on a kiosk.
+      </p>
+    </div>
+
+    <div class="urlrow">
+      <div>
+        <code>/cockpit/</code>
+        <span>The framework default. Tickets, chat, calendar, dashboard — the ribbon shaped by what you're authorized for, with no app loaded.</span>
+      </div>
+      <div>
+        <code>/cockpit/?app=&lt;name&gt;</code>
+        <span>One application, full screen: its ribbon, its surfaces, and its ticket list pre-filtered to the ticket types that app registered.</span>
+      </div>
+      <div>
+        <code>?app=life</code> · <code>?app=system</code> · <code>?app=games</code>
+        <span>A shelf as one desk. These are real apps whose job is to gather related apps behind a single toolbar — the lifestyle desk, the account-infrastructure desk, the game night desk.</span>
+      </div>
+      <div>
+        <code>?app=jarvis</code>
+        <span>Just the assistant. Ask in plain language; it classifies the request, routes it to the specialist bot that owns that domain, and answers as one voice — or tells you which app needs your screen first.</span>
+      </div>
+    </div>
+
+    <div class="note">
+      <b>Local first.</b> The stack runs on one box with Docker — cockpit, Postgres, Redis, the vector
+      store and the bot containers — and scales out to Kubernetes without changing the app contract.
+      Sign-in is OIDC in production; local development runs with a mock identity so a human can always
+      exercise the thing in a browser without an external service being up.
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a href="/">oshal.ai</a> · open swarm oshal ·
+      <a href="https://github.com/emeraldcoastsystemsgroup/oshal">core repo</a> ·
+      <a href="https://github.com/emeraldcoastsystemsgroup/oshal-apps">app store</a>
+    </div>
+    <div>AGPL-3.0-or-later. Your infrastructure, your keys, your data.</div>
+  </div>
+</footer>
+
+<dialog id="detail" aria-labelledby="dlg-title">
+  <div class="dlg-head">
+    <div>
+      <div class="dlg-kicker" id="dlg-kicker"></div>
+      <h3 id="dlg-title"></h3>
+    </div>
+    <button class="dlg-close" id="dlg-close" type="button" aria-label="Close">&#10005;</button>
+  </div>
+  <div class="dlg-body" id="dlg-body"></div>
+</dialog>
+
+<!-- PRODUCT-DATA:START -->
+<script id="product-data" type="application/json">
+{"counts":{"apps":54,"storeApps":47,"kernelApps":7,"suites":6,"connectors":308,"providers":40,"personas":103,"adrs":129},"suites":[{"id":"ai-productivity","label":"Productivity","blurb":"Run the day — mail, messages, documents, money in and out."},{"id":"ai-knowledge","label":"Knowledge","blurb":"Read the world for you and remember what it said."},{"id":"ai-finance","label":"Finance","blurb":"Accounts, markets, payroll — reasoned over, never auto-traded."},{"id":"ai-creative","label":"Creative","blurb":"Make things: video, images, characters, games."},{"id":"ai-home","label":"Home & life","blurb":"The house, the family, the trip, the ride, the takeout."},{"id":"ai-engineering","label":"Engineering","blurb":"Operate the swarm and build on top of it."},{"id":"platform","label":"Assistant","blurb":"One way in — ask, and it routes to whichever specialist owns the answer."}],"apps":[{"name":"aero-lab","title":"Aero Lab","suite":"ai-engineering","version":"1.0.0","blurb":"Persistent-flight design lab - shape a solar-endurance aircraft (span, area, aspect ratio, battery, cells, buoyancy fraction, site, season), run it…","detail":"Persistent-flight design lab - shape a solar-endurance aircraft (span, area, aspect ratio, battery, cells, buoyancy fraction, site, season), run it through the validated aerosim engine (wing polar, 24 h energy limit cycle, admissibility screen), read the verdict with real plots (SOC trace, polar, drag buildup, margins), and download the build package (STL / DXF / BOM). The Python engine is bundled and feature-detected; a box without the engine venv reports honestly as unavailable rather than returning numbers.","origin":"store"},{"name":"bake-off","title":"AI Bake-Off","suite":"ai-engineering","version":"1.0.0","blurb":"Race one job across every AI lane you already have, grade every output on the shared quality judge, and get the cheapest lane that still clears your…","detail":"Race one job across every AI lane you already have, grade every output on the shared quality judge, and get the cheapest lane that still clears your quality bar.","origin":"store"},{"name":"presentations","title":"AI Office","suite":"ai-productivity","version":"2.5.0","blurb":"One outline, three artifacts — a themed PowerPoint deck, Word document, or live Excel workbook","detail":"One outline, three artifacts — a themed PowerPoint deck, Word document, or live Excel workbook. Ten shared looks, twenty layouts, fully editable in Microsoft Office, Google Workspace or LibreOffice; saves to Dropbox, Google Drive, OneDrive, or OSHAL local. A guided visual start walks you from artifact to look to outline — or talk to the Guide, open a file, or type one line and AI drafts it all. Phone-friendly: dictate instead of typing, resume recent files in one tap, drive edits with tap chips. My files is a real file browser - click a file for download, open-in-provider, or edit-and-regenerate. The deck-generation engine stays framework-resident (kernel skill); this package is the studio surface.","origin":"store"},{"name":"person-model","title":"Ambient Recall","suite":"ai-knowledge","blurb":"Ask what someone said. Turns your Jarvis ambient transcripts into recall with receipts — an exact count, the verbatim quoted lines, and play-it-back…","detail":"Ask what someone said. Turns your Jarvis ambient transcripts into recall with receipts — an exact count, the verbatim quoted lines, and play-it-back that re-speaks them in the assistant voice. Opt-in, owner-private, no audio stored.","origin":"kernel"},{"name":"codex-packer","title":"Bot Forge","suite":"ai-engineering","blurb":"The bot factory. Describe a task you want automated; the Forge agent interviews you (task / inputs / outputs / success criteria / corpus / external…","detail":"The bot factory. Describe a task you want automated; the Forge agent interviews you (task / inputs / outputs / success criteria / corpus / external services / trigger & side effects / PII + tool whitelist) and packs a fully-encapsulated single-purpose bot — persona + app manifest + tools + knowledge — staged for your one-click Inject. No redeploy. It appears in the gallery and at /cockpit/?app=<your-new-bot> immediately, live on your connectors.","origin":"kernel"},{"name":"brand-graphics","title":"Brand Graphics","suite":"ai-creative","version":"1.0.1","blurb":"On-brand OSHAL motion graphics — a short brief becomes the validated electric-\"oshal\" intro look via Google Vids on the operator's signed-in Chrome","detail":"On-brand OSHAL motion graphics — a short brief becomes the validated electric-\"oshal\" intro look via Google Vids on the operator's signed-in Chrome.","origin":"store"},{"name":"camera","title":"Camera Ops","suite":"ai-creative","version":"1.0.0","blurb":"Remote camera control - connect a GoPro (Open GoPro HTTP) or other cameras as device nodes and drive them: record, photo, modes, settings…","detail":"Remote camera control - connect a GoPro (Open GoPro HTTP) or other cameras as device nodes and drive them: record, photo, modes, settings, low-latency preview. A control concierge turns natural language into one validated command; destructive ops always need a human confirm. The camera engine, the camera-node server, and the camera-operator inline node stay framework-resident; this package is the surface over them.","origin":"store"},{"name":"cloud","title":"Cloud","suite":"ai-engineering","version":"1.0.0","blurb":"Inspect and operate your Google Cloud by chat. Connect GCP at /utilities","detail":"Inspect and operate your Google Cloud by chat. Connect GCP at /utilities; the cloud-ops-bot reads your projects/services/instances via your connector token and acts on your behalf (read-only by default) - the API-based replacement for gcloud. The cloud-ops-bot node, the GCP CLIs/toolkit, and the gcp connector + token broker stay framework-resident; this package is the manifest + queue over them.","origin":"store"},{"name":"creative-studio","title":"Creative Studio","suite":"ai-creative","version":"1.1.0","blurb":"A creative bot that just keeps making short kid-safe videos - it rotates a public-domain library (fables, fairytales, famous sayings), animates each…","detail":"A creative bot that just keeps making short kid-safe videos - it rotates a public-domain library (fables, fairytales, famous sayings), animates each ~100-word story across ~10 continuous Google Vids Extend scenes on the remote worker (ADR-080), downloads the finished MP4, and saves it to your content folder + Google Drive. The shared vids-operator desktop worker, its registry entries, and the oshal-vids CLI stay framework-resident; the /api/vids surface it tiles is owned by the vids app (declared dependency); this package is the manifest + tools + tile over them.","origin":"store"},{"name":"daily-trade-recap","title":"Daily Trade Recap","suite":"ai-finance","version":"1.0.0","blurb":"After the closing bell: render the day's charted trade-recap video (real Alpaca data -> PowerPoint deck -> narrated MP4) on the swarm render node…","detail":"After the closing bell: render the day's charted trade-recap video (real Alpaca data -> PowerPoint deck -> narrated MP4) on the swarm render node, then email it to the operator with the day's numbers and the video attached as a preview. An approval gate holds the result before posting. Vids-family despite the name: the shared vids-operator desktop worker, its registry entries, all trading engines + the deck-data pipeline, the recap stage scripts, and the 5PM CT host cron stay framework-resident; this package is the manifest + tools over them (no route, no tile).","origin":"store"},{"name":"devops","title":"DevOps + Vault","suite":"ai-engineering","blurb":"Premium privileged swarm (Private Preview). A vault-bot pulls short-lived, scoped cloud credentials from your HashiCorp Vault per task, acts on your…","detail":"Premium privileged swarm (Private Preview). A vault-bot pulls short-lived, scoped cloud credentials from your HashiCorp Vault per task, acts on your infrastructure, and wipes the session when done — the controlled \"real credentials → real results\" loop. Not the free local demo. Live: KV + credential broker + DB dynamic secrets. Architecture: docs/adr/040-devops-vault-swarm.md.","origin":"kernel"},{"name":"drone","title":"Drone Ops","suite":"ai-home","version":"1.1.0","blurb":"Drone fleet automation control - arm, take off, fly waypoint missions, and coordinate multi-drone fleet plans inside a hard geofence with…","detail":"Drone fleet automation control - arm, take off, fly waypoint missions, and coordinate multi-drone fleet plans inside a hard geofence with deterministic separation checks. A flight-planning concierge drafts single or fleet missions from natural language; a human approves every flight (real hardware also needs the confirm rail). The drone engine, the drone-node server, and the drone-operator inline node stay framework-resident; this package is the surface over them (ADR-099: drones ARE swarm nodes).","origin":"store"},{"name":"dnd","title":"Dungeon Master","suite":"ai-creative","version":"0.19.1","blurb":"Play D&D with an AI Dungeon Master on a cinematic shared board: claimed heroes and visible AI companions follow an explicit move, action, target…","detail":"Play D&D with an AI Dungeon Master on a cinematic shared board: claimed heroes and visible AI companions follow an explicit move, action, target, dice, result, and advance loop with natural narration, saved characters, multiplayer join codes, playback, and rewind. Open SRD 5.1 (CC-BY).","origin":"store"},{"name":"eats","title":"Eats","suite":"ai-home","version":"1.0.0","blurb":"AI Uber Eats concierge — search restaurants, browse menus, build an order, and hand off a ready Uber Eats checkout you confirm and pay in your own…","detail":"AI Uber Eats concierge — search restaurants, browse menus, build an order, and hand off a ready Uber Eats checkout you confirm and pay in your own Uber app.","origin":"store"},{"name":"feeds","title":"Feeds","suite":"ai-productivity","version":"1.0.0","blurb":"Your connected message feeds in one place - live stream, activity trends, hot channels, and trending topics over your own Slack messages, with a…","detail":"Your connected message feeds in one place - live stream, activity trends, hot channels, and trending topics over your own Slack messages, with a curator bot that answers 'what did I miss'. The feeds-indexing engine + cron, the feeds-curator inline node, the slack connector, and the /feeds framework page stay framework-resident; this package is the surface over them.","origin":"store"},{"name":"finance","title":"Finance","suite":"ai-finance","version":"1.1.1","blurb":"Link your banks and brokerages via Plaid and see everything in one place — net worth, accounts, holdings, spending — with a plain-English brief","detail":"Link your banks and brokerages via Plaid and see everything in one place — net worth, accounts, holdings, spending — with a plain-English brief. Read-only aggregation; money movement is explicit-confirm gated.","origin":"store"},{"name":"game-show","title":"Game Show","suite":"ai-creative","version":"0.10.0","blurb":"TV-style AI game night: Family Feud, Jeopardy, Wheel of Fortune and Whammy, each with its own television set — podium characters, sound cues and…","detail":"TV-style AI game night: Family Feud, Jeopardy, Wheel of Fortune and Whammy, each with its own television set — podium characters, sound cues and opening titles. Play solo against skill-tiered AI contestants, or hand everyone a phone as a buzzer.","origin":"store"},{"name":"games","title":"Games","suite":"ai-creative","version":"1.1.0","blurb":"A focused cockpit toolbar with direct launchers for the AI Dungeon Master and Game Show","detail":"A focused cockpit toolbar with direct launchers for the AI Dungeon Master and Game Show.","origin":"store"},{"name":"rides","title":"Get a Ride","suite":"ai-home","version":"1.1.0","blurb":"AI Uber Rides concierge on a real map — set pickup and destination by pin or address, see the measured distance, compare ride types with labelled…","detail":"AI Uber Rides concierge on a real map — set pickup and destination by pin or address, see the measured distance, compare ride types with labelled fare estimates, and hand off a ready deep link you confirm and pay in your own Uber app.","origin":"store"},{"name":"hello-oshal","title":"Hello OSHAL","suite":"ai-engineering","version":"1.1.0","blurb":"The minimal working example — one route, one ribbon tile. Copy it to start a new extension","detail":"The minimal working example — one route, one ribbon tile. Copy it to start a new extension.","origin":"store"},{"name":"identity","title":"Identity Hub","suite":"ai-productivity","version":"1.0.0","blurb":"Every account you've connected, in one place - click to jump straight into Gmail, LinkedIn, your smart-home app, and more, reconnect a login that's…","detail":"Every account you've connected, in one place - click to jump straight into Gmail, LinkedIn, your smart-home app, and more, reconnect a login that's expired, or connect a new one, plus an optional access review that flags what needs attention. OSHAL never shows or hands back a password. The identity-advisor inline node and the connector hub (/api/connect + /utilities) stay framework-resident; this package is the surface over them.","origin":"store"},{"name":"career-hunter","title":"Intelligent Career","suite":"ai-knowledge","version":"1.6.4","blurb":"Reads openings from employers' own public ATS job feeds into a shared corpus, scores every posting against your private career profile, and turns the…","detail":"Reads openings from employers' own public ATS job feeds into a shared corpus, scores every posting against your private career profile, and turns the best fits into a human-in-the-loop application queue — approve, approve-with-OSHAL, or deny, then it writes a tailored resume + cover letter. Single-tenant, multi-user (per-user isolation); multi-tenant ready.","origin":"store"},{"name":"email-summarizer","title":"Intelligent Communication","suite":"ai-productivity","version":"1.0.0","blurb":"Your inbox, calendar, and day in one surface - the ADR-037 reference comms app","detail":"Your inbox, calendar, and day in one surface - the ADR-037 reference comms app. Reads your connected Gmail + Calendar (read-only scopes), builds a prioritized My Day digest, and the communications bot summarizes your day and drafts replies on its own harness/model with cost captured per user; sending is a single explicit-confirm gated action. The communications-bot node, the kernel sendGmail/sendOutlookMail machinery (with the header-injection fence), the gmail/outlook/twilio connectors + CLIs, and the inbox-ingest Signals engine stay framework-resident; this package is the surface over them.","origin":"store"},{"name":"intelligent-operations","title":"Intelligent Operations","suite":"ai-engineering","blurb":"The base ticket system with the RCA process enabled. The swarm triages an incident, performs root-cause analysis, and writes remediation scripts for…","detail":"The base ticket system with the RCA process enabled. The swarm triages an incident, performs root-cause analysis, and writes remediation scripts for operator review — never auto-applied to production. Incident investigation is grounded in a curated, operator-seeded runbook corpus.","origin":"kernel"},{"name":"intelligent-processing","title":"Intelligent Processing","suite":"ai-engineering","blurb":"Streamlined self-healing alert queue. Prometheus self-monitoring alerts open intelligent-processing tickets that park in backlog until an operator…","detail":"Streamlined self-healing alert queue. Prometheus self-monitoring alerts open intelligent-processing tickets that park in backlog until an operator promotes them, then run the incident-rca pipeline (RCA proposes a fix; executing a container remediation is an operator act on the profile-gated self-healing node, outside this manifest).","origin":"kernel"},{"name":"intelligent-trades","title":"Intelligent Trades","suite":"ai-finance","version":"1.1.1","blurb":"Signal-justified stock trading (ADR-052). Capture a market signal, let the trading-analyst reason it into a decision tree, and execute through the…","detail":"Signal-justified stock trading (ADR-052). Capture a market signal, let the trading-analyst reason it into a decision tree, and execute through the provider-agnostic BrokerAdapter (Alpaca paper / Schwab live) - every order FK-bound to its justifying decision and signals. Dual paper/live books, PAPER-ONLY by default; the env-level live gate (TRADING_LIVE_ENABLED + explicit confirm) and the whole autopilot/engine stay framework-resident - this package is the four route surfaces (/api/trading, /autopilot, /lab, /trading-charts), the cockpit surface + vendored chart lib, the trading_* operator tools, and the analyst/feed-bot manifest. NOTE: package directory is 'trading' (install trading); the registered app name stays intelligent-trades.","origin":"store"},{"name":"job-apply","title":"Job Apply","suite":"ai-knowledge","version":"1.0.0","blurb":"Submit an approved, packet-ready job application by driving your real browser on a desktop worker node — push a ticket, it queues, the career-hunter…","detail":"Submit an approved, packet-ready job application by driving your real browser on a desktop worker node — push a ticket, it queues, the career-hunter worker submits it, and the ticket passes or fails. Workflow-only: the career-hunter worker bot and the apply-operator/apply-ingest submission engine stay framework-resident; this package is the ticket queue over them.","origin":"store"},{"name":"kalshi","title":"Kalshi Prediction Markets","suite":"ai-finance","version":"1.1.0","blurb":"Find mispriced event contracts on Kalshi (ADR-094). Every open market is evaluated like a poker hand - calibrated true probability (from Kalshi's own…","detail":"Find mispriced event contracts on Kalshi (ADR-094). Every open market is evaluated like a poker hand - calibrated true probability (from Kalshi's own settled-market tape, no history means no edge) versus price plus fees - and playable hands are ranked with quarter-Kelly stakes and explicit risk flags. Portfolio + order placement ride the per-user connector, confirm-gated and demo-exchange-first (KALSHI_LIVE_ENABLED gates live money; every order and refusal audited). The prediction-markets engine, the kalshi connector + broker key, the calibration/forward-test CLIs, and the default tile stay framework-resident; this package is the surface + confirm-gated order routes over them. The scan runs in the BACKGROUND on a cadence configured in the manifest (default hourly) and posts new playable hands to the user's Jarvis feed; the surface serves the last snapshot instantly instead of waiting on a feed walk, and the cadence/alert thresholds are editable from the app's Settings tab.","origin":"store"},{"name":"youtube-kids","title":"Kid Lens","suite":"ai-home","version":"1.0.0","blurb":"Upload your YouTube Takeout watch history and get a parent-friendly brief on what your kid is into — top interests, decoded channels, gift ideas…","detail":"Upload your YouTube Takeout watch history and get a parent-friendly brief on what your kid is into — top interests, decoded channels, gift ideas, conversation openers. Read-only.","origin":"store"},{"name":"life","title":"Life","suite":"ai-home","version":"1.0.0","blurb":"One desk for everything lifestyle: movies & TV, music, food delivery, rides, shopping, travel, payments, and the weekly AI Bake-Off — each already…","detail":"One desk for everything lifestyle: movies & TV, music, food delivery, rides, shopping, travel, payments, and the weekly AI Bake-Off — each already its own app, gathered here so you don't have to hunt the full catalog for them.","origin":"store"},{"name":"little-monsters","title":"Little Monsters","suite":"ai-home","version":"1.0.9","blurb":"Voice-first ADHD study companion for K-12: lecture capture, flashcards, authoritative quizzes, and a Socratic tutor grounded in caller-owned or…","detail":"Voice-first ADHD study companion for K-12: lecture capture, flashcards, authoritative quizzes, and a Socratic tutor grounded in caller-owned or teacher/admin-approved class material.","origin":"store"},{"name":"lora","title":"LoRA Studio","suite":"ai-creative","version":"1.0.2","blurb":"Train a reusable character (a \"sprite\") from images and captions, validate it on a fixed held-out matrix, and improve it by targeting its weak spots…","detail":"Train a reusable character (a \"sprite\") from images and captions, validate it on a fixed held-out matrix, and improve it by targeting its weak spots — every version scored so \"better\" is a number. Runs free on your GPU box.","origin":"store"},{"name":"movies","title":"Movies & TV","suite":"ai-home","version":"1.0.0","blurb":"AI movies & TV concierge — search films and shows, see where they're streaming, watch trailers, get recommendations, build a watchlist, and find…","detail":"AI movies & TV concierge — search films and shows, see where they're streaming, watch trailers, get recommendations, build a watchlist, and find showtimes.","origin":"store"},{"name":"ocean-lab","title":"Ocean Lab","suite":"ai-engineering","version":"1.0.0","blurb":"Ambient-energy design lab — model a machine that moves on tidal and current flow or on the soil thermal gradient, size its rotor with real…","detail":"Ambient-energy design lab — model a machine that moves on tidal and current flow or on the soil thermal gradient, size its rotor with real blade-element momentum theory, and export printable geometry. Two surfaces: a harvest siting console (energy budgets, seasonal gap analysis, storage sizing) and a blade studio (NACA sections, panel-method polars, Cp sweeps, STL/OBJ/SCAD/DXF export). Every model runs in-process and deterministically; every site parameter is illustrative, not surveyed, and no hardware was built.","origin":"store"},{"name":"jarvis","title":"OSHAL Assistant","suite":"platform","blurb":"Your single assistant over everything OSHAL connects to","detail":"Your single assistant over everything OSHAL connects to. Ask in plain language — Jarvis routes it to the right specialist (email, jobs, smart home, cloud, social, presentations) and answers as one voice, or points you to the app that needs your screen first (finance or identity).","origin":"kernel"},{"name":"payments","title":"Payments","suite":"ai-productivity","version":"1.0.0","blurb":"Take payments through your own Square or PayPal account — Square runs a card charge, PayPal sends an invoice","detail":"Take payments through your own Square or PayPal account — Square runs a card charge, PayPal sends an invoice. Deterministic, sandbox by default, explicit-confirm gated.","origin":"store"},{"name":"payroll","title":"Payroll","suite":"ai-finance","version":"2.2.0","blurb":"Run payroll for your team, ADP-style, then pay, file and RECONCILE from the same place. Earnings codes with FLSA overtime computed per workweek","detail":"Run payroll for your team, ADP-style, then pay, file and RECONCILE from the same place. Earnings codes with FLSA overtime computed per workweek; typed deductions with garnishment priority; encrypted SSN/EIN; gross-up; void corrections. Produces the NACHA ACH file your own bank executes, printable checks, Form 941/940 and Florida RT-6 worksheets, issuable W-2s and the SSA EFW2 submission, then reads your bank's returns and notifications of change back in so a failed deposit is visible instead of silent. Deterministic: no LLM computes a dollar, and every tax constant cites the primary IRS/SSA document it was verified against. oshal computes and produces; your bank and the agencies execute. It transmits nothing.","origin":"store"},{"name":"portrait-studio","title":"Portrait Studio","suite":"ai-creative","version":"1.3.0","blurb":"Turn any photo into a portrait worth framing — 100 profiles × 100 backdrops: business, business casual, slice of life, work environments, history and…","detail":"Turn any photo into a portrait worth framing — 100 profiles × 100 backdrops: business, business casual, slice of life, work environments, history and fantasy, with interchangeable clothing, hats, props and finishes. Millions of permutations of awesome.","origin":"store"},{"name":"pumpkin","title":"Pumpkin","suite":"ai-creative","version":"1.2.0","blurb":"Animated talking jack-o'-lantern Halloween prop - project a glowing procedural pumpkin face into an inflatable, with a lip-syncing mouth","detail":"Animated talking jack-o'-lantern Halloween prop - project a glowing procedural pumpkin face into an inflatable, with a lip-syncing mouth. The public browser demo has locally interactive control, projector, voice, saved looks, and same-device remote tabs without server writes or AI spend; signed-in mode adds owner-scoped cross-device pairing and autonomous pumpkin-bot replies.","origin":"store"},{"name":"sat-ops","title":"Sat Ops","suite":"ai-engineering","version":"1.1.0","blurb":"Satellite fleet plane - a 3D orbit console with fleet attitude telemetry (MEKF health, wheel momentum, ADCS mode), SGP4 ground tracks and pass…","detail":"Satellite fleet plane - a 3D orbit console with fleet attitude telemetry (MEKF health, wheel momentum, ADCS mode), SGP4 ground tracks and pass windows, pairwise conjunction screening, and an approval-gated command console (point / detumble / desat / safe). Sim engines only (RK4 gyrostat or the NASA 42 referee) - commands cannot leave simulation. The sat engine, the sat-node server, and the sat-operator inline node stay framework-resident; this package is the surface over them (ADR-102: sats ARE swarm nodes).","origin":"store"},{"name":"purchasing","title":"Shopping","suite":"ai-productivity","version":"1.0.0","blurb":"AI shopping concierge — search Walmart, build lists, learn your preferences, find deals, and hand off a ready-to-checkout cart you complete on the…","detail":"AI shopping concierge — search Walmart, build lists, learn your preferences, find deals, and hand off a ready-to-checkout cart you complete on the retailer's site. Other swarm bots can ask it to prepare a purchase.","origin":"store"},{"name":"home","title":"Smart Home","suite":"ai-home","version":"1.1.0","blurb":"Your smart home, one surface — read device state and scenes across SmartThings and Google Home, ask the home bot to run a routine, and let scheduled…","detail":"Your smart home, one surface — read device state and scenes across SmartThings and Google Home, ask the home bot to run a routine, and let scheduled 'morning routine' tickets drive the house. The home-bot node, home-data store, and the scheduler's home-control branch stay framework-resident; this package is the surface over them.","origin":"store"},{"name":"social","title":"Social","suite":"ai-productivity","version":"1.0.0","blurb":"Draft, review, and publish across your networks from one surface - the comms bot drafts a post in your voice, you approve, and it publishes on your…","detail":"Draft, review, and publish across your networks from one surface - the comms bot drafts a post in your voice, you approve, and it publishes on your per-user LinkedIn / X / Facebook token (nothing posts until you click Publish). The Signals view reads your social-notification emails straight from your connected inbox. The comms + social-writer nodes, the inbox-ingest Signals engine, and the kernel-resident LinkedIn AI Content Assistant stay framework-resident; this package is the surface over them.","origin":"store"},{"name":"spaces","title":"Spaces","suite":"ai-home","version":"0.5.1","blurb":"Turn a real space into an explorable 3D scene: film a walkthrough (or import an iPhone/LiDAR/drone capture) into a Gaussian-splat scene you walk in a…","detail":"Turn a real space into an explorable 3D scene: film a walkthrough (or import an iPhone/LiDAR/drone capture) into a Gaussian-splat scene you walk in a WebGL viewer, get live walk/pan guidance while you film, mint a phone-pairing token for LiDAR ingest, paint Wi-Fi coverage onto the map, and fly a sim-drone scan orbit. The video->3D reconstruction engine + owner-scoped scan store stay framework-resident as the pinned 'spatial-mapping' kernel skill (declared in the package uses:), and the spaces-operator inline concierge stays core; this package is the surface over them (ADR-111, ADR-093).","origin":"store"},{"name":"spotify","title":"Spotify","suite":"ai-home","version":"1.0.0","blurb":"AI music concierge — search your Spotify, see what's playing and your playlists, get recommendations from your taste, and build playlists on your…","detail":"AI music concierge — search your Spotify, see what's playing and your playlists, get recommendations from your taste, and build playlists on your account. Playback opens in your own Spotify app.","origin":"store"},{"name":"storage","title":"Storage","suite":"ai-productivity","version":"1.1.0","blurb":"Your storage hub — choose where OSHAL saves generated code vs files (GitHub / Dropbox / OSHAL-local), manage targets by chat with the Storage…","detail":"Your storage hub — choose where OSHAL saves generated code vs files (GitHub / Dropbox / OSHAL-local), manage targets by chat with the Storage Assistant, and browse your files. The storage-target kernel skill and /api/files browser stay framework-resident.","origin":"store"},{"name":"switchboard","title":"Switchboard","suite":"ai-productivity","version":"0.3.0","blurb":"Every line, one board. Switchboard pulls your mail, DMs, texts, calls, and social mentions into a single prioritized stream — the Today board — so…","detail":"Every line, one board. Switchboard pulls your mail, DMs, texts, calls, and social mentions into a single prioritized stream — the Today board — so you triage your whole day in one place instead of app-hopping. Reads run on your own connector tokens; ranking and drafting run on the communications bot with cost captured per user. Nothing is sent or posted without your say-so.","origin":"store"},{"name":"system","title":"System","suite":"ai-productivity","version":"1.0.0","blurb":"One desk for account infrastructure: Identity Hub, Storage, and Cloud accounts — each already its own app, gathered here so you don't have to hunt…","detail":"One desk for account infrastructure: Identity Hub, Storage, and Cloud accounts — each already its own app, gathered here so you don't have to hunt the full catalog.","origin":"store"},{"name":"travel","title":"Travel","suite":"ai-home","version":"1.0.0","blurb":"AI travel concierge (ADR-059) - search real flights (Duffel), see an honest price read from the swarm's shared price history, watch routes for a fare…","detail":"AI travel concierge (ADR-059) - search real flights (Duffel), see an honest price read from the swarm's shared price history, watch routes for a fare drop, and book via a deep-link handoff; hotels and cars are deep-link handoffs today. The swarm-shared price engine + fare-watch cron, the Duffel CLI + connector, the travel migrations, and the travel-concierge node stay framework-resident; this package is the surface + tools over them.","origin":"store"},{"name":"venture-plan","title":"Venture Plan","suite":"ai-finance","version":"1.0.0","blurb":"Turn an idea into the venture document set a real decision needs — bill of materials, landed cost, channel margin, profit, cash and working capital…","detail":"Turn an idea into the venture document set a real decision needs — bill of materials, landed cost, channel margin, profit, cash and working capital, schedule, org, funding ask. Bots supply assumptions with a source, a band and a confidence; a deterministic engine does every calculation. Every number is either computed and traceable, or visibly a labelled guess you should go replace with a quote.","origin":"store"},{"name":"video","title":"Video Studio","suite":"ai-creative","version":"1.1.0","blurb":"Make prompted short-form videos (TikTok / YouTube Shorts / Instagram Reels) from an idea - the director bot storyboards it and the studio renders a…","detail":"Make prompted short-form videos (TikTok / YouTube Shorts / Instagram Reels) from an idea - the director bot storyboards it and the studio renders a real .mp4 with voiceover and captions, saved to your Files storage; a series is written by the screenplay-writer, approval-gated on the script, then rendered one episode at a time on the remote Vids node. The series conductor engine, the video-generation slice, the video-director + screenplay-writer inline nodes, and the shared vids-operator desktop worker stay framework-resident; this package is the surface over them.","origin":"store"},{"name":"vids","title":"Vids Studio","suite":"ai-creative","version":"1.1.1","blurb":"Turn an idea into generated video - the Veo specialist drives Google Vids by clicking, in a remote operator's logged-in Chrome: describe the shot, it…","detail":"Turn an idea into generated video - the Veo specialist drives Google Vids by clicking, in a remote operator's logged-in Chrome: describe the shot, it generates the clip and places it on the timeline. Job + multi-scene Extend-story dispatch to the registered desktop worker, with the job-queue surface behind the cockpit tile. The shared vids-operator desktop worker (the ADR-080 story engine lives in its content.* tools), its registry entries, the remote-client mesh, and the oshal-vids CLI stay framework-resident; this package is the surface over them.","origin":"store"},{"name":"workflow-studio","title":"Workflow Studio","suite":"ai-engineering","blurb":"Design workflows by conversation. Tell the workflow-assistant what process you want to automate — a single worker, approval gates, parallel branches…","detail":"Design workflows by conversation. Tell the workflow-assistant what process you want to automate — a single worker, approval gates, parallel branches, conditional logic — and it draws the graph live as you talk. Refine by talking; publish as a deterministic ticket-type queue with its own ribbon icon. Works on web and mobile.","origin":"kernel"},{"name":"world","title":"World Intelligence","suite":"ai-knowledge","version":"1.0.3","blurb":"Shared world intelligence (ADR-061 Layer B) - multi-source news feeds classified into a bias-aware sentiment graph (political + economic +…","detail":"Shared world intelligence (ADR-061 Layer B) - multi-source news feeds classified into a bias-aware sentiment graph (political + economic + outlet-kind axes), entity co-mention graph, and historical series. Ask the analyst what the press is saying about X and get a structured, bias-contextualized read, not a misleading average. The Layer-B engine (src/features/world-data), the deterministic world-schedule dispatcher, scripts/oshal-world.js, the world-analyst registry entry, and the default tile stay framework-resident; this package is the /api/world surface (fail-closed header-authenticated writes, open reads), the world-analyst manifest, the seven world_* tools, and the refresh/pulse schedules.","origin":"store"}],"platformApps":[{"name":"jarvis","title":"OSHAL Assistant","suite":"platform","blurb":"Your single assistant over everything OSHAL connects to","detail":"Your single assistant over everything OSHAL connects to. Ask in plain language — Jarvis routes it to the right specialist (email, jobs, smart home, cloud, social, presentations) and answers as one voice, or points you to the app that needs your screen first (finance or identity).","origin":"kernel"}]}
+</script>
+<!-- PRODUCT-DATA:END -->
+
+<script>
+(function () {
+  'use strict';
+
+  var data = {};
+  try { data = JSON.parse(document.getElementById('product-data').textContent || '{}'); } catch (e) { data = {}; }
+  var counts = data.counts || {};
+  var suites = data.suites || [];
+  var apps = data.apps || [];
+  var platformApps = data.platformApps || [];
+
+  /* ---- counts: every number on the page comes from the generated island ---- */
+  function num(n) { return typeof n === 'number' ? n.toLocaleString('en-US') : '—'; }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-count]'), function (el) {
+    el.textContent = num(counts[el.getAttribute('data-count')]);
+  });
+
+  var suiteById = {};
+  suites.forEach(function (s) { suiteById[s.id] = s; });
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  /* Counts are injected into hand-written platform prose through %tokens%, so the prose can
+     mention a number without anybody typing one. An unknown token renders as an em dash. */
+  function fill(html) {
+    return html.replace(/%(\w+)%/g, function (_, key) { return num(counts[key]); });
+  }
+
+  /* ---------------- platform boxes ---------------- */
+  var boxes = [
+    {
+      title: 'Cockpit &amp; ribbon',
+      kicker: 'The surface',
+      lead: 'One shell for every app. The left ribbon is drawn from the app you opened, and the URL decides — never a cached preference.',
+      body:
+        '<p>Every application surface is a view, not a program. An app declares the pages it contributes; the cockpit mounts them in the shared shell with the ribbon, the ticket list and the assistant already present.</p>' +
+        '<ul>' +
+        '<li><strong>The URL is authoritative.</strong> <code>?app=&lt;name&gt;</code> selects the shape on every page load. Nothing is written to browser storage, because a cached app name used to poison plain cockpit visits with the last app you happened to open.</li>' +
+        '<li><strong>Surfaces run sandboxed.</strong> App pages mount as in-page views and talk to the shell over one small message contract — navigate, and tell the ribbon its tools changed. An app cannot reach into the shell any other way.</li>' +
+        '<li><strong>Themes are per app.</strong> A packaged app can carry its own look and still sit inside the same chrome as everything else.</li>' +
+        '<li><strong>Kiosk shapes exist.</strong> A stripped ribbon for a single focused app is a supported mode, not a hack — useful for a shared screen or a child\'s login.</li>' +
+        '</ul>'
+    },
+    {
+      title: 'Connectors &amp; the vault',
+      kicker: 'Connections',
+      lead: '%connectors% hand-audited connector specs ship in the repo. Your token is encrypted per user, and the model never sees it.',
+      body:
+        '<p>Connecting an account is the moment most agent systems quietly hand a credential to a language model. oshal does not: the credential is consumed by a fixed, schema-bounded server operation, and only the normalized result of that call is allowed into reasoning.</p>' +
+        '<ul>' +
+        '<li><strong>%connectors% connector definitions</strong> live as audited specs in the repo — the catalog you can read before you trust it.</li>' +
+        '<li><strong>Per-user encryption.</strong> Every token is stored encrypted and scoped to the person who granted it. One user connecting Gmail does not give the swarm anyone else\'s mail.</li>' +
+        '<li><strong>Two registration shapes only</strong> — an OAuth client with a fixed callback, or a pasted access token. Every partner integration follows the same documented path, so a new connector is a form to fill in rather than a new design.</li>' +
+        '<li><strong>No connectors to nowhere.</strong> A connector only ships when its token actually drives a usable API. Integrations that would need a certification the project does not have are documented as staged instead of faked.</li>' +
+        '</ul>'
+    },
+    {
+      title: 'Queues &amp; the mesh',
+      kicker: 'Work routing',
+      lead: 'A request becomes a ticket, a ticket becomes phases, and phases are dispatched to accountable bot identities over Redis streams.',
+      body:
+        '<p>This is the part that makes it a swarm rather than a chatbot with plugins. Work is durable, addressed to a named identity, and observable while it runs.</p>' +
+        '<ul>' +
+        '<li><strong>Tickets, not calls.</strong> Scheduled and swarm-initiated work enters a queue with a declared ticket type; the dispatcher routes it by the workflow that type registered.</li>' +
+        '<li><strong>One bot per ticket type, by default.</strong> The persona carries its own quality gate — classification rules, citation rules, required artifacts — so most work needs no second reviewer bot. A workflow can opt into a reviewer with a revision limit when the worker genuinely cannot self-gate.</li>' +
+        '<li><strong>Interactive work skips the queue.</strong> A direct synchronous call to the owning bot still records its cost against that bot, so the accounting is identical either way.</li>' +
+        '<li><strong>Streams, heartbeats, dead letters.</strong> Each agent reads its own stream with a consumer group and publishes a heartbeat; work that cannot be delivered lands in a dead-letter queue you can actually open and read.</li>' +
+        '</ul>'
+    },
+    {
+      title: 'Databases',
+      kicker: 'State',
+      lead: 'Postgres for the record, Redis for the mesh, a vector store for retrieval, and an optional graph tier when relationships are the point.',
+      body:
+        '<p>Four stores, each with a job it is genuinely better at. None of them is a general dumping ground.</p>' +
+        '<ul>' +
+        '<li><strong>Postgres</strong> — tickets, agents, work items, and the per-call cost and token table. Row-level security scopes user-owned data to its owner, and app-owned domain state is keyed to the user who owns it.</li>' +
+        '<li><strong>Redis</strong> — the internal mesh: agent streams, consumer groups, heartbeats and runtime coordination.</li>' +
+        '<li><strong>Vector store</strong> — the retrieval corpus, embedded server-side. If a collection is ever missing its embedding function, retrieval falls back to lexical scoring rather than silently returning nothing.</li>' +
+        '<li><strong>Graph tier — optional by design.</strong> For relationship-heavy domains there is an engine-agnostic graph connector with a per-person and a per-tenant database. It is absent unless you configure it, and the graph API answers a plain 503 when it is not there. Relational data stays relational.</li>' +
+        '</ul>'
+    },
+    {
+      title: 'Monitoring &amp; self-healing',
+      kicker: 'Operations',
+      lead: 'The stack watches itself, files its own incident tickets, and does root-cause analysis on them — with the repair still gated on a human.',
+      flag: 'Observe-only by default',
+      body:
+        '<p>The monitoring overlay is wired all the way through to the ticket system, which means an alert is not a notification you learn to ignore — it is a unit of work with a disposition.</p>' +
+        '<ul>' +
+        '<li><strong>Metrics → alerts → tickets.</strong> A Prometheus/Alertmanager/cAdvisor overlay feeds a fail-closed alert webhook that opens processing tickets, which run root-cause analysis and reach an explicit disposition.</li>' +
+        '<li><strong>Noise is handled before dispatch.</strong> A triage stage does storm consolidation, bundles related alerts behind an ordered root-candidate policy, and applies claim, budget, flap and already-resolved gates so one bad night does not become two hundred tickets.</li>' +
+        '<li><strong>Automatic analysis, manual repair.</strong> Auto-analysis is on for container-health rules. Bounded auto-apply of whitelisted container restarts is built and ships <em>off</em>, with a per-incident lock, an hourly cap and verify-after-apply when you do turn it on.</li>' +
+        '<li><strong>Core infrastructure is never ticket-healed.</strong> The database, cache and API tier stay owned by the watchdog regardless of that switch.</li>' +
+        '</ul>'
+    },
+    {
+      title: 'Model harnesses',
+      kicker: 'any-bot',
+      lead: '%providers% model providers wired in, hosted or local, on your keys — with a containment boundary that fails closed.',
+      body:
+        '<p>The provider layer is deliberately boring and deliberately strict. Reasoning runs on an authorized hosted or bring-your-own rail; exact external actions do not go through a model at all.</p>' +
+        '<ul>' +
+        '<li><strong>%providers% providers</strong> — the major hosted vendors alongside local endpoints, so a laptop-only deployment is a real configuration rather than a demo mode.</li>' +
+        '<li><strong>Per-bot model choice.</strong> Each bot identity carries its own provider and model, so an expensive lane and a cheap lane can run side by side in the same swarm and be compared on the eval wall.</li>' +
+        '<li><strong>Bring-your-own is ephemeral.</strong> A caller-supplied connection is used for that request and does not rewrite the bot\'s default.</li>' +
+        '<li><strong>Unattended local CLI execution fails closed.</strong> The CLI harness family stays a typed configuration interface, but running one unattended is refused at the guard rather than sandboxed and hoped for. Re-enabling it is an explicit, audited piece of work — not a flag.</li>' +
+        '</ul>'
+    },
+    {
+      title: 'Remote &amp; edge nodes',
+      kicker: 'Reach',
+      lead: 'Bots are containers with identities, and an identity can live on another machine — including the desktop where your browser is already signed in.',
+      body:
+        '<p>Not every job can run in a data centre. Some need the machine that already has a session, a camera, a drive or a serial port.</p>' +
+        '<ul>' +
+        '<li><strong>A bot is an identity, not a location.</strong> Its UUID has to line up across the compose file, the registry, its heartbeat and the database — which is exactly what makes a remote node a first-class member rather than a webhook.</li>' +
+        '<li><strong>Desktop worker nodes.</strong> Work that genuinely requires a real signed-in browser runs on an operator\'s own machine, driven step by step, with the submit action gated behind an explicit approval.</li>' +
+        '<li><strong>Private overlay networking.</strong> Remote nodes join over a self-hosted overlay network instead of being exposed to the internet.</li>' +
+        '<li><strong>An installable edge client</strong> ships as an npm package, so adding a machine to the swarm is an install rather than a deployment project.</li>' +
+        '</ul>'
+    },
+    {
+      title: 'External agents (A2A)',
+      kicker: 'Interop',
+      lead: 'Agents that are not yours can be given a scoped door into the swarm — and oshal bots can call out through the same protocol.',
+      flag: 'Shipped, default off',
+      body:
+        '<p>The gateway is built and was proven end to end against a real standalone foreign agent. It is off in every deployment until it is deliberately enabled, and the route is structurally absent until then.</p>' +
+        '<ul>' +
+        '<li><strong>Inbound work becomes a real ticket.</strong> A foreign agent\'s request is queued under its own synthetic identity, so budgets, dead-lettering and run tracing apply to it exactly as they do to an internal bot.</li>' +
+        '<li><strong>Per-agent credentials and capability scopes.</strong> No shared global secret; the published agent card is curated by the same access-role policy that governs everything else.</li>' +
+        '<li><strong>Cost is real or honestly flagged</strong> — a foreign call never books as a silent zero.</li>' +
+        '<li><strong>Internal coordination stays internal.</strong> In-swarm bots use the Redis mesh; the external protocol is for agents outside the trust boundary, and the two do not get merged for convenience.</li>' +
+        '</ul>'
+    },
+    {
+      title: 'Security &amp; isolation',
+      kicker: 'The wall',
+      lead: 'Auth per route, credentials the model never sees, per-user data scoping, and a fail-closed gate between a commit and the public.',
+      body:
+        '<p>The honest framing: this is a self-hosted platform whose security posture is enforced by gates in the pipeline rather than promised in a document.</p>' +
+        '<ul>' +
+        '<li><strong>Routes are gated explicitly.</strong> Anything exposing workspace paths, file content, persona detail, model execution or ticket creation must carry authentication, and an inventory test fails the build if a new route quietly does not.</li>' +
+        '<li><strong>Sign-in options.</strong> OIDC providers in production, plus an invited-login mode with a second factor for deployments that should not depend on an external identity provider. Local development runs on a mock identity so the thing is always testable by a human.</li>' +
+        '<li><strong>Data is scoped to its owner</strong> at the database level, and connector tokens are encrypted per user and brokered — never handed to a bot environment.</li>' +
+        '<li><strong>A publish gate stands between the repo and the world</strong> and is fail-closed on every push. Every fix ships with a regression guard in the same change, and a guard that would pass against a mocked version of the thing that broke does not count as one.</li>' +
+        '</ul>'
+    }
+  ];
+
+  var boxGrid = document.getElementById('boxgrid');
+  boxGrid.innerHTML = boxes.map(function (b, i) {
+    return '<button class="box" type="button" data-box="' + i + '">' +
+      '<span class="idx">' + String(i + 1).padStart(2, '0') + ' / ' + esc(b.kicker) + '</span>' +
+      '<h3>' + b.title + '</h3>' +
+      '<p>' + fill(b.lead) + '</p>' +
+      (b.flag ? '<span class="flag">' + esc(b.flag) + '</span>' : '') +
+      '<span class="more">Learn more &rarr;</span>' +
+      '</button>';
+  }).join('');
+
+  /* ---------------- the dialog ---------------- */
+  var dlg = document.getElementById('detail');
+  var dlgTitle = document.getElementById('dlg-title');
+  var dlgKicker = document.getElementById('dlg-kicker');
+  var dlgBody = document.getElementById('dlg-body');
+  var lastFocus = null;
+
+  function openDialog(kicker, title, bodyHtml) {
+    lastFocus = document.activeElement;
+    dlgKicker.textContent = kicker;
+    dlgTitle.innerHTML = title;
+    dlgBody.innerHTML = bodyHtml;
+    dlgBody.scrollTop = 0;
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+    document.getElementById('dlg-close').focus();
+  }
+  function closeDialog() {
+    if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
+  }
+  document.getElementById('dlg-close').addEventListener('click', closeDialog);
+  dlg.addEventListener('close', function () { if (lastFocus && lastFocus.focus) lastFocus.focus(); });
+  /* Click on the backdrop — the dialog element itself is the click target outside its own box. */
+  dlg.addEventListener('click', function (ev) {
+    if (ev.target === dlg) closeDialog();
+  });
+
+  boxGrid.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('[data-box]');
+    if (!btn) return;
+    var b = boxes[Number(btn.getAttribute('data-box'))];
+    openDialog(b.kicker, b.title + (b.flag ? ' <span class="flag">' + esc(b.flag) + '</span>' : ''), fill(b.body));
+  });
+
+  /* ---------------- app grid ---------------- */
+  var grid = document.getElementById('appgrid');
+  var emptyEl = document.getElementById('appempty');
+  var noteEl = document.getElementById('suitenote');
+  var countEl = document.getElementById('resultcount');
+  var searchEl = document.getElementById('search');
+  var activeSuite = 'all';
+
+  var perSuite = {};
+  apps.forEach(function (a) { perSuite[a.suite] = (perSuite[a.suite] || 0) + 1; });
+
+  var filterEl = document.getElementById('filters');
+  filterEl.innerHTML =
+    '<button class="chip" type="button" data-suite="all" aria-pressed="true">All <span class="k">' + apps.length + '</span></button>' +
+    suites.filter(function (s) { return perSuite[s.id]; }).map(function (s) {
+      return '<button class="chip" type="button" data-suite="' + esc(s.id) + '" aria-pressed="false">' +
+        esc(s.label) + ' <span class="k">' + perSuite[s.id] + '</span></button>';
+    }).join('');
+
+  function suiteLabel(id) { return (suiteById[id] && suiteById[id].label) || id; }
+
+  function render() {
+    var q = searchEl.value.trim().toLowerCase();
+    var shown = apps.filter(function (a) {
+      if (activeSuite !== 'all' && a.suite !== activeSuite) return false;
+      if (!q) return true;
+      return (a.title + ' ' + a.blurb + ' ' + a.detail).toLowerCase().indexOf(q) !== -1;
+    });
+
+    grid.innerHTML = shown.map(function (a, i) {
+      var idx = apps.indexOf(a);
+      return '<button class="tile" type="button" data-app="' + idx + '">' +
+        '<span class="top">' +
+          '<span class="suitetag">' + esc(suiteLabel(a.suite)) + '</span>' +
+          '<span class="badge' + (a.origin === 'kernel' ? ' core' : '') + '">' +
+            (a.origin === 'kernel' ? 'Core' : 'Store') + '</span>' +
+        '</span>' +
+        '<h3>' + esc(a.title) + '</h3>' +
+        '<p>' + esc(a.blurb) + '</p>' +
+        '<span class="more">Learn more &rarr;</span>' +
+        '</button>';
+    }).join('');
+
+    emptyEl.hidden = shown.length !== 0;
+    countEl.textContent = shown.length === apps.length
+      ? shown.length + ' applications'
+      : shown.length + ' of ' + apps.length;
+    var s = suiteById[activeSuite];
+    noteEl.textContent = s ? s.blurb : 'Everything installable today, newest shelves and all. Pick a shelf to narrow it.';
+  }
+
+  filterEl.addEventListener('click', function (ev) {
+    var chip = ev.target.closest('[data-suite]');
+    if (!chip) return;
+    activeSuite = chip.getAttribute('data-suite');
+    Array.prototype.forEach.call(filterEl.querySelectorAll('.chip'), function (c) {
+      c.setAttribute('aria-pressed', String(c === chip));
+    });
+    render();
+  });
+  searchEl.addEventListener('input', render);
+
+  grid.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('[data-app]');
+    if (!btn) return;
+    var a = apps[Number(btn.getAttribute('data-app'))];
+    var meta = '<div class="dlg-meta">' +
+      '<span class="badge' + (a.origin === 'kernel' ? ' core' : '') + '">' +
+        (a.origin === 'kernel' ? 'Ships with the core' : 'Store package') + '</span>' +
+      '<span class="badge">' + esc(suiteLabel(a.suite)) + '</span>' +
+      (a.version ? '<span class="badge">v' + esc(a.version) + '</span>' : '') +
+      '</div>';
+    var howto = '<h4>Opening it</h4><p>Open it directly at <code>/cockpit/?app=' + esc(a.name) + '</code>' +
+      (a.origin === 'store'
+        ? ', once installed with <code>node scripts/oshal-app.js install ' + esc(a.name) + '</code>.'
+        : ' — it ships with the platform, no install step.') +
+      '</p>';
+    openDialog(suiteLabel(a.suite), esc(a.title), meta + '<p>' + esc(a.detail) + '</p>' + howto);
+  });
+
+  render();
+
+  /* ---------------- the assistant, described from its own manifest ---------------- */
+  if (platformApps.length) {
+    var jarvis = platformApps[0];
+    boxes.push({
+      title: esc(jarvis.title),
+      kicker: 'Assistant',
+      lead: esc(jarvis.blurb),
+      body: '<p>' + esc(jarvis.detail) + '</p>'
+    });
+    boxGrid.insertAdjacentHTML('beforeend',
+      '<button class="box" type="button" data-box="' + (boxes.length - 1) + '">' +
+      '<span class="idx">' + String(boxes.length).padStart(2, '0') + ' / Assistant</span>' +
+      '<h3>' + esc(jarvis.title) + '</h3>' +
+      '<p>' + esc(jarvis.blurb) + '</p>' +
+      '<span class="more">Learn more &rarr;</span>' +
+      '</button>');
+  }
+})();
+</script>
+
+</body>
+</html>
