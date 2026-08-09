@@ -160,6 +160,14 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 
 ## Workflow, agent, and model runtime
 
+### Jarvis must fail honestly when the operator has no hosted brain
+- **Remaining:** when `resolveUserLlmConnection` returns nothing and the bot's configured harness is an unbrokered CLI, the surface shows "Sorry, that didn't work" and the log shows a CLI-refusal — neither tells the operator the actual problem or the fix. Root-caused 2026-08-09: the operator's `any-llm` BYO row had disappeared, the operator is (by design) exempt from free-tier fallback, and SEC-05 preflight (correctly) refuses every CLI harness at bot nodes — so Jarvis had no admissible brain and said so in jargon. Restored by re-saving the BYO connection (gemini-2.5-flash over the existing `GEMINI_API_KEY`). Same honesty doctrine as the PR #54 voice fix.
+- **Done when:** that state produces a user-facing "Jarvis has no AI engine connected — add one under Settings → BYO LLM" (surface and TTS), a guard proves the message appears when resolution is empty and the harness is unbrokered, and the briefing shelf (which needs no live model) still renders instead of being dragged down with the ask path.
+
+### Jarvis briefing preferences (operator ask, 2026-08-09)
+- **Remaining:** the Kalshi playable-hand briefing is loved, but it is the only proactive update Jarvis gives and there is no control surface. Operator asked for: a config screen listing every briefing-capable bot with per-bot on/off, an update frequency, and a delivery-channel choice per briefing — voice, bubble, or main-Jarvis-screen-only.
+- **Done when:** a Jarvis settings surface lists briefing sources discovered from registered bots (not hardcoded), each with enable/frequency/channel persisted per user; the cron honors them; a disabled source never briefs; and the Kalshi briefing continues working unchanged for a user who touches nothing.
+
 ### ADR-045 graph-tier residuals
 - **Remaining:** decide/build RCA-persona graph use, add `subgraph()` if still needed, and make store-package graph dependencies explicit through `uses:` or an ADR-backed alternative.
 - **Done when:** each residual is implemented or explicitly rejected in [ADR-045](adr/045-two-tier-graph-database-and-connector.md), and package validation makes the graph dependency visible before activation.
