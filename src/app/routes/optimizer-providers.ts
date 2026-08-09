@@ -27,6 +27,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Resolve current, BYO, and compatible framework lanes for Token Chase without exposing stored credentials.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep the shared OpenRouter key on probed `:free` models and refuse it when the free quota is unavailable.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Add the aggregate `free:auto` selector backed by owner-scoped health/LRU rotation; replay-time provider walls rotate only through free lanes and otherwise fail closed.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Source the OpenAI-compatible endpoint table from the shared openai-compat-lanes module so the operator-key resolver and this optimizer cannot drift apart on base URLs or key env names.
  *
  * @module optimizer-providers
  */
@@ -38,6 +39,7 @@ import type { VariantLaneRotation, VariantReplayLane } from '@/features/token-ch
 import { listConfiguredProviders } from './provider-routes';
 import { getUserLlmConnection, buildAnyLlmListEntry, ANY_LLM_PROVIDER } from './byo-llm-routes';
 import { accessibleConnections } from './connector-tenancy';
+import { OPENAI_COMPAT_LANES } from './openai-compat-lanes';
 import {
   freeTierRuntimeSnapshot,
   listFreeTierConnections,
@@ -57,18 +59,12 @@ const CURRENT_ID = 'current';
 export const TOKEN_CHASE_FREE_ROTATION_ID = 'free:auto';
 const MAX_FREE_ROTATION_ATTEMPTS = 8;
 
-/** OpenAI-compatible base URL + key env vars for framework providers the bot CAN replay ephemerally. */
-const COMPAT: Record<string, { baseUrl: string; envKeys: string[] }> = {
-  openai: { baseUrl: 'https://api.openai.com/v1', envKeys: ['OPENAI_API_KEY'] },
-  gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
-  openrouter: { baseUrl: 'https://openrouter.ai/api/v1', envKeys: ['OPENROUTER_API_KEY'] },
-  deepseek: { baseUrl: 'https://api.deepseek.com', envKeys: ['DEEPSEEK_API_KEY'] },
-  groq: { baseUrl: 'https://api.groq.com/openai/v1', envKeys: ['GROQ_API_KEY'] },
-  mistral: { baseUrl: 'https://api.mistral.ai/v1', envKeys: ['MISTRAL_API_KEY'] },
-  cerebras: { baseUrl: 'https://api.cerebras.ai/v1', envKeys: ['CEREBRAS_API_KEY'] },
-  xai: { baseUrl: 'https://api.x.ai/v1', envKeys: ['XAI_API_KEY'] },
-  together: { baseUrl: 'https://api.together.xyz/v1', envKeys: ['TOGETHER_API_KEY', 'TOGETHERAI_API_KEY'] },
-};
+/**
+ * OpenAI-compatible base URL + key env vars for framework providers the bot CAN replay ephemerally.
+ * The table itself lives in openai-compat-lanes so the operator-key resolver in free-tier-rotation
+ * runs against the SAME endpoints (one place to add a vendor, no drift between the two consumers).
+ */
+const COMPAT = OPENAI_COMPAT_LANES;
 
 /** @description A login the optimizer can offer in its picker (no secrets — id + display + model). */
 export interface OptimizerLogin {

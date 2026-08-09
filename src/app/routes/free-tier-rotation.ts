@@ -31,6 +31,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Runtime free-model discovery (BACKLOG "Free-tier model rot"): the platform candidate list now comes from OpenRouter GET /models (filter :free + zero pricing, family/context ranking, 30-min cache) instead of the hardcoded PLATFORM_FREE_MODELS array that kept 404ing as the catalog churned. Platform probes now also reject 200-but-empty completions (reasoning models eat a tiny-max_tokens probe) so the pick demonstrably answers; last-live model is tried first to cut probe burn. User-connection probe semantics unchanged.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Made rotation OBSERVABLE (ADR-064 Plan-B step 3, the last open clause). FreeTierStatus gains lastUsedAt - without the LRU position a lane the rotation has silently stopped picking is indistinguishable from a healthy idle one. New freeTierRuntimeSnapshot(): a NON-PROBING read of the module-level platform-lane state (platformVerdict / freeCatalog / lastLivePlatformModel), which was readable from nowhere. Non-probing is the whole point - calling platformFreeConnection() from a cockpit poll spends up to MAX_PLATFORM_PROBES real completions of the shared key's daily quota, so the surface would burn the resource it reports on. The key never leaves this module, and the snapshot labels itself per-process (one verdict cache per replica).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Make the background operator exemption case-sensitive and exact for OIDC subjects. Configuration delimiters remain trim-tolerant, but case/whitespace variants no longer inherit the operator's paid-provider privilege.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added the DEMO-gated OPERATOR-KEY lane (DEMO_MODE, default OFF — a non-demo deployment never lends its own vendor keys to a turn). The operator's exemption from the free legs used to return undefined, which handed the turn to the bot's configured CLI harness — and SEC-05 refuses every unattended CLI at a bot node, so an operator turn with no explicit BYO row had no admissible brain at all ("Sorry, that didn't work"). The operator now falls back to this deployment's OWN hosted keys (GEMINI/GROQ/CEREBRAS/MISTRAL/OPENAI env, ordered, probed once and cached) as a normal hosted byoLlmConnection. Non-operator callers are unaffected: they never see these keys. Also raised the require-content probe budget from 16 to 512 max_tokens — a reasoning model spends the whole 16 on hidden thinking and answers 200-but-empty, which scored live lanes (gemini-2.5-flash, gpt-oss-120b) as dead.
  *
  * @module free-tier-rotation
  */
@@ -44,6 +45,9 @@ import { getUserLlmConnection, type ByoLlmConnection } from './byo-llm-routes';
 import {
   getFreeProvider, freeIdFromProviderColumn, FREE_PROVIDER_PREFIX, hostOf, type FreeProvider,
 } from './free-tier-providers';
+import {
+  DEFAULT_OPERATOR_LANE_ORDER, OPENAI_COMPAT_LANES, laneKeyFromEnv,
+} from './openai-compat-lanes';
 
 const logger = createChildLogger({ module: 'free-tier-rotation' });
 
@@ -63,7 +67,7 @@ export interface FreeTierResolution {
 
 /** Controller-only metadata for reporting a real execution failure before the key is stripped. */
 export interface ResolvedUserLlmConnection extends ByoLlmConnection {
-  resolutionSource: 'explicit' | 'free-tier' | 'platform';
+  resolutionSource: 'explicit' | 'free-tier' | 'platform' | 'operator-key';
   connectionId?: string;
 }
 
@@ -302,6 +306,14 @@ export function providerOfRow(row: { provider: string }): FreeProvider | undefin
 // ── Live resolution (execution wiring) ──────────────────────────────────────────
 
 /**
+ * Completion budget for a require-content probe. A reasoning model bills hidden thinking against
+ * max_tokens, so a 16-token probe comes back 200-with-EMPTY-content and the lane is scored dead —
+ * measured against live gemini-2.5-flash and cerebras gpt-oss-120b keys. 512 is enough for a
+ * thinking pass plus a word of answer, and costs ~nothing on the lanes this probes.
+ */
+const REQUIRE_CONTENT_PROBE_TOKENS = 512;
+
+/**
  * @description Cheap liveness probe: a 1-token chat completion against the connection.
  * Distinguishes a rate-limit/quota wall (cool it down, rotate past it) from a transient
  * error. Kept here so the rotation engine owns "is this connection usable right now".
@@ -316,7 +328,7 @@ async function probe(conn: FreeTierResolution, opts?: { requireContent?: boolean
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${conn.apiKey}` },
       body: JSON.stringify({
         model: conn.model, messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: opts?.requireContent ? 16 : 1, temperature: 0, stream: false,
+        max_tokens: opts?.requireContent ? REQUIRE_CONTENT_PROBE_TOKENS : 1, temperature: 0, stream: false,
       }),
       signal: ctrl.signal,
     });
@@ -581,6 +593,11 @@ export async function reportResolvedLlmFailure(
   } else if (connection.resolutionSource === 'platform') {
     platformVerdict = { conn: null, until: Date.now() + PLATFORM_WALLED_TTL_MS };
     logger.warn({ model: connection.model }, 'free-tier: live platform execution hit a provider wall; using configured-provider fallback');
+  } else if (connection.resolutionSource === 'operator-key') {
+    // Drop the cached lane so the retry (and every later turn) re-probes and can rotate to the next
+    // configured vendor instead of replaying the same walled key for the rest of the TTL.
+    invalidateOperatorKeyLane();
+    logger.warn({ model: connection.model }, 'operator-key: the deployment lane failed mid-execution; re-resolving on the next turn');
   }
   return true;
 }
@@ -604,6 +621,93 @@ function isOperatorCaller(userSub: string): boolean {
   return subs.includes(userSub);
 }
 
+/** Cached operator-lane verdict: the resolved lane (or null = none usable) and when to re-probe. */
+let operatorVerdict: { conn: ByoLlmConnection | null; until: number } | null = null;
+const OPERATOR_LIVE_TTL_MS = 10 * 60_000;
+const OPERATOR_DEAD_TTL_MS = 5 * 60_000;
+
+/**
+ * @description The demo switch. ON (DEMO_MODE=1/true/yes/on), this deployment may lend its OWN
+ * hosted keys to an operator turn that has no connected LLM — that is what makes a demo box answer
+ * out of the tin. OFF (the default), those keys are never lent: a caller with nothing connected
+ * gets an honest no-engine answer rather than silently spending the host's key.
+ *
+ * Deliberately NOT coupled to MOCK_OIDC (unlike shouldSeedDemoData): mock auth is a local-testing
+ * convenience and must not, by itself, unlock real metered vendor keys.
+ * @returns true when this deployment is running as a demo
+ */
+export function demoKeysEnabled(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((process.env.DEMO_MODE || '').trim().toLowerCase());
+}
+
+/** Ordered lane ids for the operator, from env or the catalog default. */
+function operatorLaneOrder(): string[] {
+  const pinned = (process.env.OSHAL_OPERATOR_LLM_PROVIDER || '').trim().toLowerCase();
+  if (pinned) return [pinned];
+  const configured = (process.env.OSHAL_OPERATOR_LLM_LANES || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return configured.length ? configured : DEFAULT_OPERATOR_LANE_ORDER;
+}
+
+/**
+ * @description Drop the cached operator lane so the next resolution re-probes and can rotate to the
+ * next configured vendor. Called when a turn actually failed on the lane this handed out.
+ */
+export function invalidateOperatorKeyLane(): void {
+  operatorVerdict = null;
+}
+
+/**
+ * @description This DEPLOYMENT's own hosted LLM key, shaped as a byoLlmConnection — the operator's
+ * brain of last resort.
+ *
+ * Why it exists: the operator is exempt from the `:free` legs (their own directive — free tokens are
+ * for OTHER users), so with no explicit BYO row the resolver returned undefined and the turn fell
+ * through to the bot's configured provider. Every such provider is a local CLI harness, and SEC-05
+ * refuses those unattended at a bot node, so the turn had no admissible brain at all. The keys are
+ * already in the controller and node env (x-bot-env); this just makes the resolver USE them instead
+ * of failing. Only ever handed to an operator caller — see resolveUserLlmConnection.
+ *
+ * GATED ON THE DEMO SWITCH (demoKeysEnabled): with DEMO_MODE off this returns null and no host key
+ * is ever lent to a turn — the demo box answers out of the tin, a non-demo deployment does not.
+ *
+ * Order comes from OSHAL_OPERATOR_LLM_LANES (or a single OSHAL_OPERATOR_LLM_PROVIDER pin), model
+ * from OSHAL_OPERATOR_LLM_MODEL or the lane's catalog default. Each candidate is probed for real
+ * content once and the verdict cached, so a dead key costs one probe per 5 minutes, not per turn.
+ * OpenRouter is not in the default order: that key is the shared free-fallback, hard-guarded to
+ * `:free` ids.
+ * @returns { baseUrl, apiKey, model } for the first live lane, or null when none is usable
+ */
+export async function operatorKeyConnection(): Promise<ByoLlmConnection | null> {
+  if (!demoKeysEnabled()) return null;
+  if (operatorVerdict && Date.now() < operatorVerdict.until) return operatorVerdict.conn;
+  const modelOverride = (process.env.OSHAL_OPERATOR_LLM_MODEL || '').trim();
+  for (const laneId of operatorLaneOrder()) {
+    const lane = OPENAI_COMPAT_LANES[laneId];
+    if (!lane) {
+      logger.warn({ laneId }, 'operator-key: unknown lane id in OSHAL_OPERATOR_LLM_LANES — skipped');
+      continue;
+    }
+    const apiKey = laneKeyFromEnv(lane);
+    const model = modelOverride || lane.defaultModel;
+    if (!apiKey || !model) continue;
+    const status = await probe({
+      connectionId: `operator-${laneId}`, providerId: laneId, clineProvider: laneId,
+      model, baseUrl: lane.baseUrl, apiKey, label: 'operator-key',
+    }, { requireContent: true });
+    if (status === 'ok') {
+      const conn = { baseUrl: lane.baseUrl, apiKey, model };
+      operatorVerdict = { conn, until: Date.now() + OPERATOR_LIVE_TTL_MS };
+      logger.info({ laneId, model }, 'operator-key: resolved the operator lane from this deployment\'s own key');
+      return conn;
+    }
+    logger.warn({ laneId, model, status }, 'operator-key: lane unusable — trying the next configured vendor');
+  }
+  operatorVerdict = { conn: null, until: Date.now() + OPERATOR_DEAD_TTL_MS };
+  logger.warn('operator-key: no hosted key on this deployment answered — the turn falls through to the bot\'s configured provider');
+  return null;
+}
+
 /**
  * @description The per-request LLM resolver the agentic routes call. Returns the OpenAI-compatible
  * { baseUrl, apiKey, model } the execution handler runs as `byoLlmConnection` (routed through
@@ -625,7 +729,13 @@ export async function resolveUserLlmConnection(
 ): Promise<ResolvedUserLlmConnection | undefined> {
   const byo = await getUserLlmConnection(pool, userSub);
   if (byo) return { ...byo, resolutionSource: 'explicit' };
-  if (isOperatorCaller(userSub)) return undefined;
+  if (isOperatorCaller(userSub)) {
+    // The operator skips the `:free` legs, but on a DEMO box "skip" must not mean "no brain": fall
+    // back to this deployment's own hosted key rather than a CLI harness SEC-05 refuses at the node.
+    // Off-demo this resolves to null and the previous behaviour (configured provider) is unchanged.
+    const own = await operatorKeyConnection();
+    return own ? { ...own, resolutionSource: 'operator-key' } : undefined;
+  }
   const free = await resolveLiveFreeTierConnection(pool, userSub);
   if (free) {
     return {
