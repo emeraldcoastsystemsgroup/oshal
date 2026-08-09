@@ -238,6 +238,7 @@ import { createConnectorsRoutes, createFacebookDataDeletionRoute } from './route
 import { createConnectorLivenessRoutes } from './routes/connector-liveness';
 import { createByoLlmRoutes } from './routes/byo-llm-routes';
 import { createFreeTierRoutes } from './routes/free-tier-routes';
+import { createLlmPreferenceRoutes } from './routes/llm-preference-routes';
 import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-pairing-routes';
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
 import { createLocalAuthMiddlewareSet, createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-routes';
@@ -1108,6 +1109,9 @@ function createApp(): express.Application {
   // providers, rotated. Mounted ahead of the generic connectors router so /free-tier/*
   // (and /free-tier/openrouter/oauth/*) resolve here, not /:provider/*.
   app.use('/api/connect/free-tier', requiresAuth, createFreeTierRoutes(ctx));
+  // Default brain (ADR-127): which connected provider runs THIS caller's work. Owner-scoped —
+  // every handler reads the authenticated sub and never accepts a subject parameter.
+  app.use('/api/settings/llm-default', requiresAuth, createLlmPreferenceRoutes(ctx));
   // Connectors / Utilities hub — per-user provider authorization (Gmail, etc.)
   app.use('/api/connect', requiresAuth, createConnectorsRoutes(ctx));
   // Live connection health (INSTALLER-GAPS G14): GET /api/connect/liveness probes whether the

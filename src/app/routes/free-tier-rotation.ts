@@ -37,6 +37,7 @@
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { demoModeEnabled } from '@/shared/deployment-mode';
 import { getRequestIdentity } from '@/shared/services/database/request-identity';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { decryptToken } from './connector-token-crypto';
@@ -637,7 +638,7 @@ const OPERATOR_DEAD_TTL_MS = 5 * 60_000;
  * @returns true when this deployment is running as a demo
  */
 export function demoKeysEnabled(): boolean {
-  return ['1', 'true', 'yes', 'on'].includes((process.env.DEMO_MODE || '').trim().toLowerCase());
+  return demoModeEnabled();
 }
 
 /** Ordered lane ids for the operator, from env or the catalog default. */

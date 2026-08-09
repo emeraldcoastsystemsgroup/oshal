@@ -42,6 +42,7 @@ import {
   type MultiAppPlan,
 } from '@/features/swarm-orchestration';
 import { reportResolvedLlmFailure, resolveUserLlmConnection } from './free-tier-rotation';
+import { resolveUserBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
 import { executeBotOrInline } from './inline-bot-execution';
 import { createOptionalJarvisVisual } from './jarvis-visual-response';
@@ -296,15 +297,20 @@ async function runJarvis(
 export async function runJarvisBot(
   ctx: AppContext, sub: string, message: string, taskId: string, agentic = true,
 ): Promise<{ answer: string; routed: AppRoute[]; handoffs: AppRoute[] }> {
-  // Free-tier (ADR-064): run this turn on the caller's own endpoint — their explicit BYO-LLM, else
-  // a probed-live free-tier rotation pick — falling back to Jarvis's configured provider when they
-  // have none connected. Same seam the email/finance/security/trading routes use.
-  const resolvedLlmConnection = await resolveUserLlmConnection(ctx.pool, sub);
+  // ADR-127: which brain runs this turn — the caller's saved default, else the ladder (demo CLI
+  // login for the operator, their own endpoint, their free tiers, this deployment's keys). A
+  // `hosted` result rides as byoLlmConnection; a `cli` result is STAMPED as the dispatch's
+  // authoritative provider so the node reconciles onto that harness before executing.
+  const brain = await resolveUserBrain(ctx.pool, sub);
+  const resolvedLlmConnection = brain.kind === 'hosted' ? brain.connection : undefined;
   const byoLlmConnection = resolvedLlmConnection ? {
     baseUrl: resolvedLlmConnection.baseUrl,
     apiKey: resolvedLlmConnection.apiKey,
     model: resolvedLlmConnection.model,
   } : undefined;
+  const cliProvider = brain.kind === 'cli'
+    ? { providerId: brain.providerId, ...(brain.model ? { model: brain.model } : {}) }
+    : {};
   // Jarvis just talks or emits a handoff directive — it never runs the heavy tool loop itself (tool
   // WORK is filed as a build-queue ticket and routed to the owning bot by selector), so the
   // single-threaded conversation can't hang. This turn is conversation + light summarisation only.
@@ -319,6 +325,7 @@ export async function runJarvisBot(
     direct: true,
     userSub: sub,
     byoLlmConnection,
+    ...cliProvider,
   };
   let result: Awaited<ReturnType<typeof executeBotOrInline>>;
   try {
@@ -335,8 +342,13 @@ export async function runJarvisBot(
       { err: error, model: resolvedLlmConnection?.model, retryModel: nextConnection?.model ?? null },
       'Jarvis free/BYO provider was unavailable; retrying once on the next resolved endpoint',
     );
+    // The retry is a HOSTED leg by construction: it drops the CLI stamp, because the failure we are
+    // recovering from may BE that harness, and a hosted endpoint is the one thing a SEC-05 node
+    // always accepts.
     result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, {
       ...request,
+      providerId: undefined,
+      model: undefined,
       byoLlmConnection: nextConnection
         ? { baseUrl: nextConnection.baseUrl, apiKey: nextConnection.apiKey, model: nextConnection.model }
         : undefined,
