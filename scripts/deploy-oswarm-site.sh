@@ -7,8 +7,9 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — deploy site/oswarm.ai to Cloudflare Pages (project 'oswarm-ai'). Stages a clean public dir (index.html + assets only; README.md never ships), deploys via wrangler, then VERIFIES prod serves the page + both screenshots before reporting success — the same verify-before-claiming-success gate publish-agenticfederal-recap.ps1 uses. Deploy is from the WORKING TREE: a git push does NOT publish.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Verify marker "PRE-RELEASE" -> "AGPL-3.0": the launch made pre-release false, and the page now states the real license (it said MIT in seven places; the project is AGPL-3.0-or-later).
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Stage + hash-verify /lab (the nightly Strategy Lab report, written by site-lab-report.js). Optional on purpose: a tree without a generated report still deploys the main site.
-# 5 | maintainer@emeraldcoastsystemsgroup.com   | Generate, stage and hash-verify /product (the application + platform catalog). Its data island is regenerated from the kernel manifests AND the store trunk on every deploy, so the catalog can never drift the way the index grid did when it advertised 7 apps against 54 live.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Make the wrangler deploy non-interactive (CI=true, WRANGLER_SEND_METRICS=false) and bound it with `timeout 420`. wrangler 4.114.0 re-armed the first-run metrics-consent prompt, which has no TTY to answer in the hidden nightly task — the deploy hung indefinitely and three days of wedged runs starved the Docker host into an OOM crash loop that took the whole local swarm down. The timeout guarantees a wedge fails loud instead of piling up.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Generate, stage and hash-verify /product (the application + platform catalog). Its data island is regenerated from the kernel manifests AND the store trunk on every deploy, so the catalog can never drift the way the index grid did when it advertised 7 apps against 54 live.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | Stage and hash-verify the /product + /platform PAGE TREES, not a single page. The one-page catalog it replaces had no URL per app to share or index; the tree is copied whole (a hand-listed set of ~70 pages rots on the next app) and verified one-of-each-shape: hub, shelf, deep app page and platform topic, so a deploy that shipped the hub and dropped the rest fails.
 #
 # Usage: bash scripts/deploy-oswarm-site.sh
 # Exit 0 = deployed AND verified. Non-zero = the real error (nothing is claimed live).
@@ -35,13 +36,14 @@ fail() { echo "[deploy-oswarm] FAILED: $*" >&2; exit 1; }
 note "regenerating the app catalog from swarm-apps/ ..."
 node "$(dirname "${BASH_SOURCE[0]}")/site-apps-catalog.js" || fail "app-catalog generation failed"
 
-# 0b) Regenerate the /product catalog island. Same anti-drift reasoning, wider source: it reads the
-#     kernel manifests AND the sibling store trunk, which is why it can show the whole catalog where
-#     the index grid only ever saw swarm-apps/. It prints what it publishes and what it withholds —
-#     read that line. If the store trunk is not checked out it WARNS and leaves the committed island
-#     alone (never shrinks the public catalog), so a fresh clone still deploys the site.
-note "regenerating the product catalog from the manifests + store trunk ..."
-node "$(dirname "${BASH_SOURCE[0]}")/site-product-page.js" || fail "product-catalog generation failed"
+# 0b) Regenerate the /product and /platform page trees. Same anti-drift reasoning, wider source:
+#     these read the kernel manifests, the sibling store trunk AND each package's own manifest,
+#     which is why they can show the whole catalog where the index grid only ever saw swarm-apps/.
+#     The generator prints what it publishes and what it withholds — read that line. It also PRUNES
+#     pages whose app has been delisted. If the store trunk is not checked out it WARNS and leaves
+#     the committed pages alone (never shrinks the public catalog), so a fresh clone still deploys.
+note "regenerating the product + platform page trees from the manifests + store trunk ..."
+node "$(dirname "${BASH_SOURCE[0]}")/site-product-pages.js" || fail "product-page generation failed"
 
 # 1) Stage only what should be public. README.md is repo-internal and must not ship.
 note "staging public files..."
@@ -61,12 +63,15 @@ if [ -f "$SRC/lab/index.html" ]; then
   cp "$SRC/lab/index.html" "$STAGE/lab/index.html"
   note "staged /lab (nightly strategy report)"
 fi
-# The product catalog. NOT optional (unlike /lab): it is a committed page and the index links to it,
-# so a deploy that silently dropped it would publish a dead nav link.
-[ -f "$SRC/product/index.html" ] || fail "missing $SRC/product/index.html"
-mkdir -p "$STAGE/product"
-cp "$SRC/product/index.html" "$STAGE/product/index.html"
-note "staged /product (application + platform catalog)"
+# The product + platform page trees. NOT optional (unlike /lab): the index links into them, and
+# every page links to its siblings, so a deploy that silently dropped one publishes dead links.
+# Copied whole rather than file-by-file — a hand-listed set of ~70 pages is a staleness bug waiting
+# to happen the next time an app is added.
+for tree in product platform; do
+  [ -f "$SRC/$tree/index.html" ] || fail "missing $SRC/$tree/index.html — run scripts/site-product-pages.js"
+  cp -r "$SRC/$tree" "$STAGE/$tree"
+  note "staged /$tree ($(find "$STAGE/$tree" -name index.html | wc -l | tr -d ' ') pages)"
+done
 
 # 2) Deploy. Force wrangler NON-INTERACTIVE and time-bounded. In the hidden nightly scheduled task
 #    there is no TTY, so wrangler's first-run "send usage metrics?" consent prompt (re-armed by the
@@ -135,22 +140,32 @@ done <<< "$assets"
 
 note "VERIFIED: $BASE serves the page and all $count referenced asset(s)"
 
-# 4b) Hash-verify /product (same edge-lag rationale as the index gate). Required, not conditional.
-#     The marker is the data island's id, not a sentence: editorial copy on that page is expected to
-#     change, but a build that lost the island renders an empty catalog and must fail the deploy.
-PROD_SHA="$(sha256sum "$STAGE/product/index.html" | cut -d' ' -f1)"
-PROD_SERVED="$STAGE/.served-product.html"
-prod_ok=""
-note "verifying $BASE/product/ (expecting sha256 ${PROD_SHA:0:12}…) ..."
-for _ in 1 2 3 4 5 6 7 8; do
-  code="$(curl -s -o "$PROD_SERVED" -w '%{http_code}' -L --max-time 25 "$BASE/product/" || true)"
-  if [ "$code" = "200" ] && [ "$(sha256sum "$PROD_SERVED" | cut -d' ' -f1)" = "$PROD_SHA" ]; then prod_ok=1; break; fi
-  note "  /product/ not serving this build yet (HTTP $code) — retrying in 8s"; sleep 8
-done
-[ -n "$prod_ok" ] || fail "prod verify: $BASE/product/ never served the catalog we staged"
-prod_body="$(cat "$PROD_SERVED")"
-[[ "$prod_body" == *'id="product-data"'* ]] || fail "prod verify: /product/ build has lost its catalog data island"
-note "VERIFIED: $BASE/product/ serves the catalog"
+# 4b) Hash-verify the product site (same edge-lag rationale as the index gate). Required, not
+#     conditional. Verifying only the hub would pass a deploy that shipped one page and dropped the
+#     other seventy, so this checks a hub, a shelf, a DEEP app page and a platform topic — one of
+#     each URL shape the generator produces.
+verify_page() {   # $1 = site path, $2 = staged file
+  local urlpath="$1" staged="$2" want served ok="" code
+  want="$(sha256sum "$staged" | cut -d' ' -f1)"
+  served="$STAGE/.served$(echo "$urlpath" | tr '/' '_').html"
+  note "verifying $BASE$urlpath (expecting sha256 ${want:0:12}…) ..."
+  for _ in 1 2 3 4 5 6 7 8; do
+    code="$(curl -s -o "$served" -w '%{http_code}' -L --max-time 25 "$BASE$urlpath" || true)"
+    if [ "$code" = "200" ] && [ "$(sha256sum "$served" | cut -d' ' -f1)" = "$want" ]; then ok=1; break; fi
+    note "  $urlpath not serving this build yet (HTTP $code) — retrying in 8s"; sleep 8
+  done
+  [ -n "$ok" ] || fail "prod verify: $BASE$urlpath never served the page we staged"
+}
+
+# One of every shape. The app page is picked from what was actually staged rather than hardcoded,
+# so this gate cannot rot the next time an app is renamed.
+SAMPLE_APP="$(find "$STAGE/product/apps" -mindepth 1 -maxdepth 1 -type d | sort | head -1)"
+[ -n "$SAMPLE_APP" ] || fail "prod verify: no application pages were staged"
+verify_page "/product/" "$STAGE/product/index.html"
+verify_page "/platform/" "$STAGE/platform/index.html"
+verify_page "/platform/security/" "$STAGE/platform/security/index.html"
+verify_page "/product/apps/$(basename "$SAMPLE_APP")/" "$SAMPLE_APP/index.html"
+note "VERIFIED: $BASE serves the product site ($(find "$STAGE/product" "$STAGE/platform" -name index.html | wc -l | tr -d ' ') pages staged)"
 
 # 5) When the lab report was staged, hash-verify it too (same edge-lag rationale as the index gate).
 if [ -f "$STAGE/lab/index.html" ]; then
