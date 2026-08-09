@@ -326,6 +326,7 @@
   }
   @media (max-width: 640px) { .urlrow > div { grid-template-columns: 1fr; gap: 6px; } }
   .urlrow code { font-family: var(--mono); font-size: 0.82rem; color: var(--cyan); word-break: break-all; }
+  .urlrow .codes { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; color: var(--slate); }
   .urlrow span { font-size: 0.93rem; line-height: 1.6; }
 
   .note {
@@ -519,7 +520,9 @@
         <span>One application, full screen: its ribbon, its surfaces, and its ticket list pre-filtered to the ticket types that app registered.</span>
       </div>
       <div>
-        <code>?app=life</code> · <code>?app=system</code> · <code>?app=games</code>
+        <!-- Wrapped: the row is a 2-column grid, and three bare <code>s plus their separators
+             become SIX grid items — the dots land in the description column. One wrapper, one cell. -->
+        <div class="codes"><code>?app=life</code> · <code>?app=system</code> · <code>?app=games</code></div>
         <span>A shelf as one desk. These are real apps whose job is to gather related apps behind a single toolbar — the lifestyle desk, the account-infrastructure desk, the game night desk.</span>
       </div>
       <div>
