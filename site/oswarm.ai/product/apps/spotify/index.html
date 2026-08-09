@@ -126,6 +126,13 @@ pre code{background:none;padding:0;font-size:.85rem;color:var(--cyan)}
 .pill{font-family:var(--mono);font-size:.74rem;padding:7px 13px;border:1px solid var(--hairline-strong);border-radius:99px;color:var(--slate)}
 .pill.screen{color:var(--body);border-color:var(--hairline-strong)}
 
+ol.flow{list-style:none;counter-reset:none;display:grid;gap:1px;background:var(--hairline);border:1px solid var(--hairline);border-radius:10px;overflow:hidden}
+ol.flow>li{background:var(--panel-2);padding:22px 24px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:20px;align-items:start}
+ol.flow .step{font-family:var(--mono);font-size:.78rem;color:var(--cyan);letter-spacing:.08em;padding-top:2px}
+ol.flow h3{margin-bottom:7px}
+ol.flow p{font-size:.95rem;line-height:1.65}
+@media (max-width:640px){ol.flow>li{grid-template-columns:minmax(0,1fr);gap:8px}}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
@@ -206,6 +213,25 @@ footer a:hover{color:var(--cyan)}</style>
       <p class="lede">Registered server-side, scoped to the signed-in user. The bot calls the tool —
         it never shells out, and it never handles the credential behind it.</p></div>
       <ul class="bullets"><li><strong>Search Spotify.</strong> Search the listener&#39;s Spotify catalog for real tracks</li><li><strong>Now Playing.</strong> Read the listener&#39;s current Spotify playback state when available</li><li><strong>List Playlists.</strong> List the listener&#39;s Spotify playlists</li><li><strong>Build Spotify Playlist.</strong> Create a playlist on the listener&#39;s own Spotify account from selected track URIs</li><li><strong>Spotify Account Status.</strong> Check whether Spotify is connected and usable for this listener</li></ul>
+    </div></section>
+<section><div class="wrap"><div class="sec-head">
+      <p class="eyebrow">How it runs</p>
+      <h2>What happens when you use it.</h2>
+      <p class="lede">Not a chat window with a plugin behind it. Every step below is something the
+        app declares in its manifest, which is why it can be told to you plainly.</p></div>
+      <ol class="flow"><li>
+      <span class="step">01</span>
+      <div><h3>You open it, or the assistant does</h3><p>Opening <code>?app=spotify</code> loads its 1 screen into the shared cockpit, starting on <code>spotify-concierge</code>. The ribbon, the ticket list and the assistant are already there — the app contributes views, not a second application to log into.</p></div>
+    </li><li>
+      <span class="step">02</span>
+      <div><h3>It reads your accounts without ever holding the keys</h3><p>The connector call happens in a fixed server operation outside the model. Only the normalized result reaches reasoning — the token stays encrypted and scoped to you.</p></div>
+    </li><li>
+      <span class="step">03</span>
+      <div><h3>Longer work becomes a ticket</h3><p>Scheduled and swarm-initiated work enters the queue as a <code>spotify</code> ticket. It is durable, it has an owner, you can watch it move through its phases, and if it fails it fails somewhere you can open and read.</p></div>
+    </li><li>
+      <span class="step">04</span>
+      <div><h3>The result lands where you can check it</h3><p>Back on the app's own screens, as state you own — not as a chat message you have to scroll back to find.</p></div>
+    </li></ol>
     </div></section>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">What it needs</p><h2>Before it can do anything for you.</h2></div>

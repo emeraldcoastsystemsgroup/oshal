@@ -41,6 +41,72 @@ function bulletList(items) {
   return `<ul class="bullets">${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
 }
 
+/** Numbered "what actually happens" flow. Each step is a claim the manifest supports. */
+function flowList(steps) {
+  return `<ol class="flow">${steps.map((s, i) => `<li>
+      <span class="step">${String(i + 1).padStart(2, '0')}</span>
+      <div><h3>${s.h}</h3><p>${s.p}</p></div>
+    </li>`).join('')}</ol>`;
+}
+
+/** `resume-generation` → `resume generation`, for use inside a sentence. */
+const humanize = (cap) => String(cap).replace(/[-_]/g, ' ').trim();
+
+/**
+ * The three ways work reaches an application, narrated from what it actually declares. An app that
+ * registered no ticket type does not get told it "runs unattended" — the shape flags gate each step.
+ */
+function activationFlow(app) {
+  const s = app.shape || {};
+  const steps = [];
+
+  if (s.surfaces) {
+    steps.push({
+      h: 'You open it, or the assistant does',
+      p: `Opening <code>?app=${esc(app.name)}</code> loads its ${s.surfaces} screen${s.surfaces === 1 ? '' : 's'} into the shared cockpit`
+        + `${app.defaultView ? `, starting on <code>${esc(app.defaultView)}</code>` : ''}. `
+        + 'The ribbon, the ticket list and the assistant are already there — the app contributes views, not a second application to log into.',
+    });
+  }
+  if (s.conversational) {
+    steps.push({
+      h: 'Or you just ask',
+      p: 'The assistant classifies what you asked for and hands it to the bot that owns that domain. '
+        + 'You do not pick the app, and you do not learn a command — routing is by declared capability, not by keyword matching a menu.',
+    });
+  }
+  if (s.bots) {
+    const names = app.bots.map((b) => `<code>${esc(b.name)}</code>`).join(', ');
+    steps.push({
+      h: 'A named bot picks it up',
+      p: `${names} ${app.bots.length === 1 ? 'is' : 'are'} accountable for the work. `
+        + `${s.capabilities ? `${s.capabilities} declared capabilities say what it is trusted to do; ` : ''}`
+        + 'the tokens and dollars it spends are recorded against that identity, so the cost has a line item rather than disappearing into a monthly bill.',
+    });
+  }
+  if (s.connectors) {
+    steps.push({
+      h: 'It reads your accounts without ever holding the keys',
+      p: 'The connector call happens in a fixed server operation outside the model. '
+        + 'Only the normalized result reaches reasoning — the token stays encrypted and scoped to you.',
+    });
+  }
+  if (s.queued) {
+    steps.push({
+      h: 'Longer work becomes a ticket',
+      p: `Scheduled and swarm-initiated work enters the queue as a <code>${esc(app.ticketType)}</code> ticket. `
+        + 'It is durable, it has an owner, you can watch it move through its phases, and if it fails it fails somewhere you can open and read.',
+    });
+  }
+  steps.push({
+    h: 'The result lands where you can check it',
+    p: s.surfaces
+      ? 'Back on the app\'s own screens, as state you own — not as a chat message you have to scroll back to find.'
+      : 'As state keyed to you in the platform\'s store, which the assistant can then answer questions about.',
+  });
+  return steps;
+}
+
 function factTable(rows) {
   return `<div class="facts">${rows.map(([k, v]) => `
       <div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}
@@ -223,12 +289,37 @@ function renderApp(model, app) {
     </div></section>`);
   }
 
+  blocks.push(`<section><div class="wrap"><div class="sec-head">
+      <p class="eyebrow">How it runs</p>
+      <h2>What happens when you use it.</h2>
+      <p class="lede">Not a chat window with a plugin behind it. Every step below is something the
+        app declares in its manifest, which is why it can be told to you plainly.</p></div>
+      ${flowList(activationFlow(app))}
+    </div></section>`);
+
+  if (app.bots && app.bots.length) {
+    const asks = (app.capabilities || []).slice(0, 6);
+    blocks.push(`<section><div class="wrap"><div class="sec-head">
+      <p class="eyebrow">With the assistant</p>
+      <h2>You can ignore this app entirely and just ask.</h2>
+      <p class="lede">The assistant is the front door. It classifies your request, delegates to the
+        bot that owns the domain, and answers in one voice — so you do not have to know which of the
+        applications this happens to live in.</p></div>
+      ${bulletList([
+        `<strong>Routing is by declared capability</strong>, not by keyword. ${app.bots.map((b) => `<code>${esc(b.name)}</code>`).join(', ')} ${app.bots.length === 1 ? 'advertises' : 'advertise'} what ${app.bots.length === 1 ? 'it is' : 'they are'} accountable for, and the assistant matches against that.`,
+        ...(asks.length ? [`<strong>Asks that land here:</strong> ${asks.map((c) => `anything about ${esc(humanize(c))}`).join(', ')}.`] : []),
+        `<strong>The specialist does the work, not the assistant.</strong> Cost, permissions and audit stay attached to ${app.bots.length === 1 ? 'the bot' : 'the bots'} above — delegation does not launder accountability.`,
+        `<strong>It will tell you when it cannot.</strong> If a request needs your screen — an approval, a payment, a login — it says which app to open rather than guessing.`,
+      ])}
+    </div></section>`);
+  }
+
   if (app.capabilities && app.capabilities.length) {
     blocks.push(`<section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">Accountability</p>
-      <h2>What its bot is trusted to do.</h2>
-      <p class="lede">Every capability is declared in the app's manifest and attached to a named bot
-        identity, so the work has an owner and its cost has a line item.</p></div>
+      <h2>${app.capabilities.length} capabilit${app.capabilities.length === 1 ? 'y' : 'ies'}, each attached to a named identity.</h2>
+      <p class="lede">Declared in the manifest and bound to the bot above — so "what is this thing
+        allowed to do" is a list you can read, not a prompt you have to trust.</p></div>
       <div class="pills">${app.capabilities.map((c) => `<span class="pill">${esc(c)}</span>`).join('')}</div>
     </div></section>`);
   }

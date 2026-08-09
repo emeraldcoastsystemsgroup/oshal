@@ -126,6 +126,13 @@ pre code{background:none;padding:0;font-size:.85rem;color:var(--cyan)}
 .pill{font-family:var(--mono);font-size:.74rem;padding:7px 13px;border:1px solid var(--hairline-strong);border-radius:99px;color:var(--slate)}
 .pill.screen{color:var(--body);border-color:var(--hairline-strong)}
 
+ol.flow{list-style:none;counter-reset:none;display:grid;gap:1px;background:var(--hairline);border:1px solid var(--hairline);border-radius:10px;overflow:hidden}
+ol.flow>li{background:var(--panel-2);padding:22px 24px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:20px;align-items:start}
+ol.flow .step{font-family:var(--mono);font-size:.78rem;color:var(--cyan);letter-spacing:.08em;padding-top:2px}
+ol.flow h3{margin-bottom:7px}
+ol.flow p{font-size:.95rem;line-height:1.65}
+@media (max-width:640px){ol.flow>li{grid-template-columns:minmax(0,1fr);gap:8px}}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
@@ -201,10 +208,37 @@ footer a:hover{color:var(--cyan)}</style>
       <p class="eyebrow">What it does</p><h2>The rest of the story.</h2></div>
       <p class="lede">The video-&gt;3D reconstruction engine + owner-scoped scan store stay framework-resident as the pinned &#39;spatial-mapping&#39; kernel skill (declared in the package uses:), and the spaces-operator inline concierge stays core; this package is the surface over them (ADR-111, ADR-093).</p></div></section>
 <section><div class="wrap"><div class="sec-head">
+      <p class="eyebrow">How it runs</p>
+      <h2>What happens when you use it.</h2>
+      <p class="lede">Not a chat window with a plugin behind it. Every step below is something the
+        app declares in its manifest, which is why it can be told to you plainly.</p></div>
+      <ol class="flow"><li>
+      <span class="step">01</span>
+      <div><h3>You open it, or the assistant does</h3><p>Opening <code>?app=spaces</code> loads its 1 screen into the shared cockpit, starting on <code>spaces-viewer</code>. The ribbon, the ticket list and the assistant are already there — the app contributes views, not a second application to log into.</p></div>
+    </li><li>
+      <span class="step">02</span>
+      <div><h3>Or you just ask</h3><p>The assistant classifies what you asked for and hands it to the bot that owns that domain. You do not pick the app, and you do not learn a command — routing is by declared capability, not by keyword matching a menu.</p></div>
+    </li><li>
+      <span class="step">03</span>
+      <div><h3>A named bot picks it up</h3><p><code>spaces-operator</code> is accountable for the work. 5 declared capabilities say what it is trusted to do; the tokens and dollars it spends are recorded against that identity, so the cost has a line item rather than disappearing into a monthly bill.</p></div>
+    </li><li>
+      <span class="step">04</span>
+      <div><h3>The result lands where you can check it</h3><p>Back on the app's own screens, as state you own — not as a chat message you have to scroll back to find.</p></div>
+    </li></ol>
+    </div></section>
+<section><div class="wrap"><div class="sec-head">
+      <p class="eyebrow">With the assistant</p>
+      <h2>You can ignore this app entirely and just ask.</h2>
+      <p class="lede">The assistant is the front door. It classifies your request, delegates to the
+        bot that owns the domain, and answers in one voice — so you do not have to know which of the
+        applications this happens to live in.</p></div>
+      <ul class="bullets"><li><strong>Routing is by declared capability</strong>, not by keyword. <code>spaces-operator</code> advertises what it is accountable for, and the assistant matches against that.</li><li><strong>Asks that land here:</strong> anything about scan status briefing, anything about capture planning, anything about guided capture, anything about reconstruction guidance, anything about coverage briefing.</li><li><strong>The specialist does the work, not the assistant.</strong> Cost, permissions and audit stay attached to the bot above — delegation does not launder accountability.</li><li><strong>It will tell you when it cannot.</strong> If a request needs your screen — an approval, a payment, a login — it says which app to open rather than guessing.</li></ul>
+    </div></section>
+<section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">Accountability</p>
-      <h2>What its bot is trusted to do.</h2>
-      <p class="lede">Every capability is declared in the app's manifest and attached to a named bot
-        identity, so the work has an owner and its cost has a line item.</p></div>
+      <h2>5 capabilities, each attached to a named identity.</h2>
+      <p class="lede">Declared in the manifest and bound to the bot above — so "what is this thing
+        allowed to do" is a list you can read, not a prompt you have to trust.</p></div>
       <div class="pills"><span class="pill">scan-status-briefing</span><span class="pill">capture-planning</span><span class="pill">guided-capture</span><span class="pill">reconstruction-guidance</span><span class="pill">coverage-briefing</span></div>
     </div></section>
 <section><div class="wrap"><div class="sec-head">
