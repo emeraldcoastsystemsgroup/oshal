@@ -7,6 +7,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — deploy site/oswarm.ai to Cloudflare Pages (project 'oswarm-ai'). Stages a clean public dir (index.html + assets only; README.md never ships), deploys via wrangler, then VERIFIES prod serves the page + both screenshots before reporting success — the same verify-before-claiming-success gate publish-agenticfederal-recap.ps1 uses. Deploy is from the WORKING TREE: a git push does NOT publish.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Verify marker "PRE-RELEASE" -> "AGPL-3.0": the launch made pre-release false, and the page now states the real license (it said MIT in seven places; the project is AGPL-3.0-or-later).
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Stage + hash-verify /lab (the nightly Strategy Lab report, written by site-lab-report.js). Optional on purpose: a tree without a generated report still deploys the main site.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Generate, stage and hash-verify /product (the application + platform catalog). Its data island is regenerated from the kernel manifests AND the store trunk on every deploy, so the catalog can never drift the way the index grid did when it advertised 7 apps against 54 live.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Make the wrangler deploy non-interactive (CI=true, WRANGLER_SEND_METRICS=false) and bound it with `timeout 420`. wrangler 4.114.0 re-armed the first-run metrics-consent prompt, which has no TTY to answer in the hidden nightly task — the deploy hung indefinitely and three days of wedged runs starved the Docker host into an OOM crash loop that took the whole local swarm down. The timeout guarantees a wedge fails loud instead of piling up.
 #
 # Usage: bash scripts/deploy-oswarm-site.sh
@@ -34,6 +35,14 @@ fail() { echo "[deploy-oswarm] FAILED: $*" >&2; exit 1; }
 note "regenerating the app catalog from swarm-apps/ ..."
 node "$(dirname "${BASH_SOURCE[0]}")/site-apps-catalog.js" || fail "app-catalog generation failed"
 
+# 0b) Regenerate the /product catalog island. Same anti-drift reasoning, wider source: it reads the
+#     kernel manifests AND the sibling store trunk, which is why it can show the whole catalog where
+#     the index grid only ever saw swarm-apps/. It prints what it publishes and what it withholds —
+#     read that line. If the store trunk is not checked out it WARNS and leaves the committed island
+#     alone (never shrinks the public catalog), so a fresh clone still deploys the site.
+note "regenerating the product catalog from the manifests + store trunk ..."
+node "$(dirname "${BASH_SOURCE[0]}")/site-product-page.js" || fail "product-catalog generation failed"
+
 # 1) Stage only what should be public. README.md is repo-internal and must not ship.
 note "staging public files..."
 mkdir -p "$STAGE/assets"
@@ -52,6 +61,12 @@ if [ -f "$SRC/lab/index.html" ]; then
   cp "$SRC/lab/index.html" "$STAGE/lab/index.html"
   note "staged /lab (nightly strategy report)"
 fi
+# The product catalog. NOT optional (unlike /lab): it is a committed page and the index links to it,
+# so a deploy that silently dropped it would publish a dead nav link.
+[ -f "$SRC/product/index.html" ] || fail "missing $SRC/product/index.html"
+mkdir -p "$STAGE/product"
+cp "$SRC/product/index.html" "$STAGE/product/index.html"
+note "staged /product (application + platform catalog)"
 
 # 2) Deploy. Force wrangler NON-INTERACTIVE and time-bounded. In the hidden nightly scheduled task
 #    there is no TTY, so wrangler's first-run "send usage metrics?" consent prompt (re-armed by the
@@ -119,6 +134,23 @@ while IFS= read -r a; do
 done <<< "$assets"
 
 note "VERIFIED: $BASE serves the page and all $count referenced asset(s)"
+
+# 4b) Hash-verify /product (same edge-lag rationale as the index gate). Required, not conditional.
+#     The marker is the data island's id, not a sentence: editorial copy on that page is expected to
+#     change, but a build that lost the island renders an empty catalog and must fail the deploy.
+PROD_SHA="$(sha256sum "$STAGE/product/index.html" | cut -d' ' -f1)"
+PROD_SERVED="$STAGE/.served-product.html"
+prod_ok=""
+note "verifying $BASE/product/ (expecting sha256 ${PROD_SHA:0:12}…) ..."
+for _ in 1 2 3 4 5 6 7 8; do
+  code="$(curl -s -o "$PROD_SERVED" -w '%{http_code}' -L --max-time 25 "$BASE/product/" || true)"
+  if [ "$code" = "200" ] && [ "$(sha256sum "$PROD_SERVED" | cut -d' ' -f1)" = "$PROD_SHA" ]; then prod_ok=1; break; fi
+  note "  /product/ not serving this build yet (HTTP $code) — retrying in 8s"; sleep 8
+done
+[ -n "$prod_ok" ] || fail "prod verify: $BASE/product/ never served the catalog we staged"
+prod_body="$(cat "$PROD_SERVED")"
+[[ "$prod_body" == *'id="product-data"'* ]] || fail "prod verify: /product/ build has lost its catalog data island"
+note "VERIFIED: $BASE/product/ serves the catalog"
 
 # 5) When the lab report was staged, hash-verify it too (same edge-lag rationale as the index gate).
 if [ -f "$STAGE/lab/index.html" ]; then
