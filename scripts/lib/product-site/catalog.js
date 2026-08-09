@@ -161,6 +161,7 @@ function readPackageExtras(name) {
     bots,
     capabilities,
     tools,
+    chatBot: clean(doc.chatBot),
     defaultView: clean(doc.ribbon && doc.ribbon.defaultView),
     ticketType: clean(doc.ticketType),
     uses: (doc.uses || []).map(clean).filter(Boolean),
@@ -273,6 +274,21 @@ function build() {
       app.related = shelf.apps.filter((o) => o.name !== app.name).slice(0, 4);
       app.requires = (app.requiresApps || []).map((n) => byName.get(n)).filter(Boolean);
     }
+  }
+
+  // The shape flags the renderer narrates from. Derived from what the manifest actually declares —
+  // an app "runs unattended" only if it really registered a ticket type, and so on. Nothing here is
+  // a marketing assertion; each flag corresponds to a declaration you can read in the manifest.
+  for (const app of apps) {
+    app.shape = {
+      surfaces: (app.screens || []).length,
+      bots: (app.bots || []).length,
+      tools: (app.tools || []).length,
+      connectors: (app.connectors || []).length,
+      capabilities: (app.capabilities || []).length,
+      queued: Boolean(app.ticketType),
+      conversational: Boolean(app.chatBot) || (app.capabilities || []).length > 0,
+    };
   }
 
   const userFacingShelves = shelves.filter((s) => s.id !== 'platform').length;

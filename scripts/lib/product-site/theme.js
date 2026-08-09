@@ -132,6 +132,13 @@ pre code{background:none;padding:0;font-size:.85rem;color:var(--cyan)}
 .pill{font-family:var(--mono);font-size:.74rem;padding:7px 13px;border:1px solid var(--hairline-strong);border-radius:99px;color:var(--slate)}
 .pill.screen{color:var(--body);border-color:var(--hairline-strong)}
 
+ol.flow{list-style:none;counter-reset:none;display:grid;gap:1px;background:var(--hairline);border:1px solid var(--hairline);border-radius:10px;overflow:hidden}
+ol.flow>li{background:var(--panel-2);padding:22px 24px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:20px;align-items:start}
+ol.flow .step{font-family:var(--mono);font-size:.78rem;color:var(--cyan);letter-spacing:.08em;padding-top:2px}
+ol.flow h3{margin-bottom:7px}
+ol.flow p{font-size:.95rem;line-height:1.65}
+@media (max-width:640px){ol.flow>li{grid-template-columns:minmax(0,1fr);gap:8px}}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
