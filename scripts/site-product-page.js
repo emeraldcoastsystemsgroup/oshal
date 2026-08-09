@@ -254,4 +254,17 @@ function main() {
   console.log(`[site-product] rewrote the catalog island in ${path.relative(REPO, PAGE)}`);
 }
 
-main();
+/** Reads the island the page currently ships, so a guard can compare it to a fresh build. */
+function readCommittedIsland() {
+  const html = fs.readFileSync(PAGE, 'utf8');
+  const m = /<script id="product-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+  if (!m) throw new Error('the product page has no product-data island');
+  return JSON.parse(m[1]);
+}
+
+// Exported so tests exercise the REAL collectors against the REAL manifests rather than a fixture
+// of them — the withholding filter is the thing that once silently published an internal app, and
+// a guard over a hand-made copy of the manifest list would not have caught it.
+module.exports = { blurb, collectKernel, collectStore, build, readCommittedIsland, PRIVATE_APPS, COMMERCIAL_PACKAGES, SUITES, STORE_DIR };
+
+if (require.main === module) main();
