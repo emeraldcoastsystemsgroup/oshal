@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Normalized calendar bot alias matching and work-item-backed assignee filtering so Address Book handoff and ticket events stay visible in the cockpit calendar
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Session 20: Redesigned schedule dialog as Outlook-style meeting form — date/time/recurrence pickers, auto-generated cron, meeting cards in day detail
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Scoped calendar to the active app's queue — schedules (?taskType) and tickets (?type) now filter to the focused ?app= manifest's ticketType
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Fix the create path, dead since the Outlook redesign: _hasEnabledSchedulerTool matched the tool UUID against the string "agent-scheduler" (never true → create button permanently disabled) — now matches the tool NAME and requires AUTO (the mode the runtime dispatch gate requires). Also fix the date→cron off-by-one: `new Date("YYYY-MM-DD")` parsed UTC then read local, shifting the day back one in negative-UTC zones ("Tuesday" → Monday); _localDate builds from parts. And mark a "once" recurrence as a real one-shot (once:true) with the browser's timezone, so it fires at the user's clock and pauses after firing instead of recurring annually.
  */
 
 import { ApiClient } from '../api-client.js';
@@ -143,8 +144,19 @@ export class CalendarView {
 
   _hasEnabledSchedulerTool(payload) {
     const tools = payload.tools || payload || [];
-    const scheduler = tools.find((tool) => (tool.toolId || tool.id) === 'agent-scheduler');
-    return Boolean(scheduler?.enabled);
+    // Match on the tool NAME, not `toolId`/`id` — those are UUIDs, so the old comparison against the
+    // string 'agent-scheduler' never matched and the create path was permanently disabled. The name
+    // lives on `tool.name` (and, in the nested shape, `tool.tool.name`).
+    const scheduler = tools.find((tool) => {
+      const name = tool && (tool.name || (tool.tool && tool.tool.name));
+      return name === 'agent-scheduler';
+    });
+    if (!scheduler) return false;
+    // Enablement is an auth MODE, not a boolean. The runtime dispatch gate requires exactly AUTO
+    // (an ASK grant is not sufficient there), so a bot is only "scheduler-ready" for the calendar
+    // when it is AUTO — otherwise the user could create a schedule the runner then refuses to fire.
+    const mode = scheduler.authMode || (scheduler.tool && scheduler.tool.authMode) || 'off';
+    return mode === 'auto';
   }
 
   _renderFull() {
@@ -646,20 +658,33 @@ export class CalendarView {
     const hr = hour || 9;
 
     if (recurrence === 'once' && date) {
-      const d = new Date(date);
+      const d = this._localDate(date);
       return `${min} ${hr} ${d.getDate()} ${d.getMonth() + 1} *`;
     }
     if (recurrence === 'daily') return `${min} ${hr} * * *`;
     if (recurrence === 'weekdays') return `${min} ${hr} * * 1-5`;
     if (recurrence === 'weekly') {
-      const d = date ? new Date(date) : new Date();
+      const d = date ? this._localDate(date) : new Date();
       return `${min} ${hr} * * ${d.getDay()}`;
     }
     if (recurrence === 'monthly') {
-      const d = date ? new Date(date) : new Date();
+      const d = date ? this._localDate(date) : new Date();
       return `${min} ${hr} ${d.getDate()} * *`;
     }
     return `${min} ${hr} * * 1-5`;
+  }
+
+  /**
+   * @description Parses a `<input type="date">` value ("YYYY-MM-DD") as a LOCAL calendar date.
+   * `new Date("2026-08-11")` parses as UTC midnight, and then getDate()/getDay()/getMonth() read in
+   * local time — so in any negative-UTC-offset zone the day shifts back one ("Tuesday" -> Monday).
+   * Building from the parts avoids the round-trip entirely.
+   * @param {string} value - A "YYYY-MM-DD" date input value.
+   * @returns {Date} A Date at local midnight on that calendar day.
+   */
+  _localDate(value) {
+    const [y, m, d] = String(value).split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1);
   }
 
   async _createSchedule(dialog, close) {
@@ -684,6 +709,11 @@ export class CalendarView {
       await this.api.post('/api/v1/agent/schedule-task', {
         taskType: this._buildTaskType(bot, title || desc),
         schedule: cron,
+        // A "once" recurrence is a genuine one-shot: mark it so the runner pauses it after it fires
+        // instead of letting the year-less cron recur annually. The browser's own timezone is the
+        // user's actual zone, so "9:00" on the calendar fires at their 9:00, not the container's.
+        once: (dialog.querySelector('#schedRecurrence')?.value || 'once') === 'once',
+        timezone: (Intl.DateTimeFormat().resolvedOptions().timeZone) || undefined,
         taskData: {
           prompt,
           targetAgent: bot,
