@@ -155,6 +155,22 @@ describe('product site: every internal link resolves', () => {
     expect([...new Set(missing)]).toEqual([]);
   });
 
+  it('the catalog orb lists every app, each linking to a real app page', () => {
+    // The hub orb is the completeness showcase — it must be the WHOLE catalog, and every node must
+    // point at a page that exists. A silently-missing app (or a node linking nowhere) turns this red.
+    const html = fs.readFileSync(path.join(gen.SITE, 'product', 'index.html'), 'utf8');
+    const m = /<script id="orb-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+    expect(m, 'the hub has no orb data island').toBeTruthy();
+    const orb = JSON.parse(m![1]) as Array<{ t: string; u: string; c: string }>;
+    expect(orb.length).toBe(model.apps.length);
+    for (const node of orb) {
+      expect(node.t.length, 'orb node title').toBeGreaterThan(0);
+      expect(node.c, `orb node colour for ${node.t}`).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      const target = path.join(gen.SITE, node.u.replace(/\/$/, ''), 'index.html');
+      expect(fs.existsSync(target), `orb node ${node.t} -> ${node.u} (page missing)`).toBe(true);
+    }
+  });
+
   it('declares a unique canonical URL on every page — no duplicate-content pages', () => {
     const seen = new Map<string, string>();
     for (const rel of onDisk) {

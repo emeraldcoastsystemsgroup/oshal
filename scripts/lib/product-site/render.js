@@ -8,6 +8,7 @@
 
 const { page, esc, APP_HOST } = require('./theme');
 const { TOPICS } = require('./platform-content');
+const { renderOrb } = require('./orb');
 
 /** Site-absolute URLs. One place, so a path change cannot half-happen across seventy pages. */
 const url = {
@@ -165,13 +166,13 @@ function renderProductHub(model) {
     .map((n) => apps.find((a) => a.name === n)).filter(Boolean).slice(0, 6);
 
   const body = `
-<header class="page"><div class="wrap">
-  <p class="eyebrow"><b>●</b> ${counts.apps} applications · ${counts.shelves} shelves · one login</p>
-  <h1>Every app you'd want an assistant for — <span class="accent">on hardware you own</span>.</h1>
-  <p class="lede">oshal is an orchestration platform for agentic AI. The platform underneath never changes:
-    a cockpit, a queue, a set of databases, a connector vault, and accountable bot identities that do
-    the work. <strong>Applications are what you install on top</strong> — each one a packaged bot with
-    its own screens, its own connectors and its own domain.</p>
+${renderOrb(model)}
+
+<section><div class="wrap">
+  <p class="lede" style="max-width:44em">oshal is an orchestration platform for agentic AI. The platform
+    underneath never changes: a cockpit, a queue, a set of databases, a connector vault, and accountable
+    bot identities that do the work. <strong>Applications are what you install on top</strong> — each one
+    a packaged bot with its own screens, its own connectors and its own domain.</p>
   <div class="cta-row">
     <a class="btn primary" href="#shelves">Browse by what you need</a>
     <a class="btn" href="${url.platformHub}">See the platform underneath</a>
@@ -183,7 +184,7 @@ function renderProductHub(model) {
     <div><div class="n">${counts.providers}</div><div class="l">Model providers</div></div>
     <div><div class="n">${counts.personas}</div><div class="l">Bot personas</div></div>
   </div>
-</div></header>
+</div></section>
 
 <section id="shelves"><div class="wrap">
   <div class="sec-head">
