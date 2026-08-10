@@ -227,6 +227,49 @@ function collectStore() {
   return { published, withheld };
 }
 
+/** Display names for the provider ids that are not obvious title-cased slugs. */
+const PROVIDER_NAMES = {
+  anthropic: 'Anthropic', 'claude-code': 'Claude Code', openrouter: 'OpenRouter', bedrock: 'AWS Bedrock',
+  vertex: 'Google Vertex AI', openai: 'OpenAI', 'openai-native': 'OpenAI (native)', 'openai-codex': 'OpenAI Codex',
+  gemini: 'Google Gemini', ollama: 'Ollama', lmstudio: 'LM Studio', litellm: 'LiteLLM', deepseek: 'DeepSeek',
+  qwen: 'Qwen', 'qwen-code': 'Qwen Code', mistral: 'Mistral', groq: 'Groq', xai: 'xAI', together: 'Together AI',
+  fireworks: 'Fireworks AI', cerebras: 'Cerebras', sambanova: 'SambaNova', nebius: 'Nebius', moonshot: 'Moonshot',
+  zai: 'Z.AI', huggingface: 'Hugging Face', asksage: 'AskSage', 'huawei-cloud-maas': 'Huawei Cloud MaaS',
+  'vercel-ai-gateway': 'Vercel AI Gateway', oca: 'OCA', aihubmix: 'AiHubMix', minimax: 'MiniMax', hicap: 'HiCap',
+  nousResearch: 'Nous Research', doubao: 'Doubao', requesty: 'Requesty', dify: 'Dify', baseten: 'Baseten',
+  'vscode-lm': 'VS Code LM', cline: 'Cline',
+};
+
+/**
+ * @description Reads every connector spec and groups it by its declared category, so the site can
+ * SHOW the 300-plus connectors rather than just count them. Names from each spec's `displayName`,
+ * categories from `metadata.category`. Generated, never hand-typed.
+ */
+function collectConnectors() {
+  const dir = path.join(REPO, 'swarm-apps', 'connectors');
+  const byCat = {};
+  let total = 0;
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.yaml'))) {
+    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+    const name = readField(text, 'displayName') || file.replace(/\.yaml$/, '');
+    const cat = (/category:\s*["']?([^"'\n]+)/.exec(text) || [])[1];
+    (byCat[cat ? cat.trim() : 'Other'] = byCat[cat ? cat.trim() : 'Other'] || []).push(name);
+    total += 1;
+  }
+  const categories = Object.keys(byCat)
+    .map((c) => ({ category: c, names: byCat[c].sort((a, b) => a.localeCompare(b)) }))
+    .sort((a, b) => b.names.length - a.names.length || a.category.localeCompare(b.category));
+  return { categories, total };
+}
+
+/** Reads the wired model providers off PROVIDER_DEFINITIONS, mapped to display names. */
+function collectProviders() {
+  const file = path.join(REPO, 'src/features/llm-provider/services/provider-definitions.ts');
+  const ids = (fs.readFileSync(file, 'utf8').match(/^ {4}id: '([^']+)'/gm) || [])
+    .map((line) => /id: '([^']+)'/.exec(line)[1]);
+  return ids.map((id) => PROVIDER_NAMES[id] || id.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()));
+}
+
 /** Every number the site shows, counted off the tree. A count that cannot be taken is a failure. */
 function countTree(appCount, kernelCount, storeCount, shelfCount) {
   const filesIn = (rel, ext) => {
@@ -296,11 +339,14 @@ function build() {
     counts: countTree(apps.length, kernel.published.length, store.published.length, userFacingShelves),
     shelves,
     apps,
+    // The real substance behind the numbers: the actual connectors (grouped) and providers (named).
+    connectors: collectConnectors(),
+    providers: collectProviders(),
     withheld: { kernel: kernel.withheld.map((a) => a.title), store: store.withheld },
   };
 }
 
 module.exports = {
-  build, collectKernel, collectStore, summarize, splitLead, readPackageExtras,
+  build, collectKernel, collectStore, collectConnectors, collectProviders, summarize, splitLead, readPackageExtras,
   SHELVES, PRIVATE_APPS, COMMERCIAL_PACKAGES, STORE_DIR, REPO,
 };

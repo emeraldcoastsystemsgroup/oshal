@@ -517,6 +517,45 @@ function renderPlatformHub(model) {
 // A platform page shows the surface it describes, where a vetted capture exists.
 const TOPIC_SHOTS = { connectors: ['connectors', 'connectorGovernance'], monitoring: ['ops'] };
 
+/**
+ * The real connector directory — the 300+ specs grouped by category, names and all. Turns "308
+ * connectors" from a number into something a visitor can actually read. Generated from the tree.
+ */
+function connectorDirectory(model) {
+  const { connectors } = model;
+  if (!connectors || !connectors.categories.length) return '';
+  const groups = connectors.categories.map((g) => `<div class="dir-group">
+      <div class="dir-head">${esc(g.category)} <b>${g.names.length}</b></div>
+      <div class="dir-names">${g.names.map((n) => `<span>${esc(n)}</span>`).join('')}</div>
+    </div>`).join('\n    ');
+  return `<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">The catalog, in full</p>
+    <h2>All ${connectors.total} connectors, grouped by what they do.</h2>
+    <p class="lede">Not a logo wall — the real specs that ship in the repo, every one an auditable YAML
+      definition you can read before you trust it. ${connectors.categories.length} categories.</p>
+  </div>
+  <div class="directory">${groups}</div>
+</div></section>`;
+}
+
+/** The real, named model providers. "40 providers" made concrete. */
+function providerDirectory(model) {
+  const { providers } = model;
+  if (!providers || !providers.length) return '';
+  return `<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Every lane, named</p>
+    <h2>The ${providers.length} model providers wired in.</h2>
+    <p class="lede">Hosted vendors and local endpoints, on your keys. Each bot picks its own — an
+      expensive lane and a cheap lane run side by side and get compared on the same job.</p>
+  </div>
+  <div class="pills">${providers.map((p) => `<span class="pill">${esc(p)}</span>`).join('')}</div>
+</div></section>`;
+}
+
+const TOPIC_DIRECTORY = { connectors: connectorDirectory, harnesses: providerDirectory };
+
 function renderPlatformTopic(model, topic) {
   const { counts } = model;
   const others = TOPICS.filter((t) => t.slug !== topic.slug);
@@ -548,6 +587,7 @@ function renderPlatformTopic(model, topic) {
   </div>
 </div></header>
 ${shotSection}
+${(TOPIC_DIRECTORY[topic.slug] || (() => ''))(model)}
 ${sections}
 
 <section><div class="wrap">
