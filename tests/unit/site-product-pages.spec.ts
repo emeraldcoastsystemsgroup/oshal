@@ -155,6 +155,26 @@ describe('product site: every internal link resolves', () => {
     expect([...new Set(missing)]).toEqual([]);
   });
 
+  it.runIf(storePresent)('the connectors page shows EVERY connector, not just the count', () => {
+    // "308 connectors" as a number is a claim; the directory is the proof. The rendered directory
+    // must carry exactly as many names as the tree has connector specs, or the page is under-showing.
+    const html = fs.readFileSync(path.join(gen.SITE, 'platform', 'connectors', 'index.html'), 'utf8');
+    const dir = html.split('class="directory"')[1] || '';
+    const names = (dir.match(/<span>/g) || []).length;
+    expect(names).toBe(model.counts.connectors);
+    expect(dir).toContain('GitHub');
+    expect(dir).toContain('Stripe');
+  });
+
+  it.runIf(storePresent)('the harnesses page names EVERY provider', () => {
+    const html = fs.readFileSync(path.join(gen.SITE, 'platform', 'harnesses', 'index.html'), 'utf8');
+    const seg = html.split('Every lane, named')[1] || '';
+    const pills = (seg.match(/class="pill"/g) || []).length;
+    expect(pills).toBe(model.counts.providers);
+    expect(seg).toContain('Anthropic');
+    expect(seg).toContain('OpenAI');
+  });
+
   it('the catalog orb lists every app, each linking to a real app page', () => {
     // The hub orb is the completeness showcase — it must be the WHOLE catalog, and every node must
     // point at a page that exists. A silently-missing app (or a node linking nowhere) turns this red.

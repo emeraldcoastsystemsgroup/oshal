@@ -172,6 +172,15 @@ figure.shot figcaption{padding:12px 18px;font-size:.86rem;line-height:1.55;color
 figure.shot figcaption b{color:var(--body);font-weight:600}
 @media (max-width:720px){figure.shot img{min-width:560px}}
 
+/* The real connector directory — categorised names, dense but readable. */
+.directory{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))}
+.dir-group{background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));border:1px solid var(--glass-border);border-radius:12px;padding:16px 18px;box-shadow:inset 0 1px 0 var(--glass-hi)}
+.dir-head{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--slate);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--hairline)}
+.dir-head b{color:var(--cyan);font-weight:600}
+.dir-names{display:flex;flex-wrap:wrap;gap:5px 8px}
+.dir-names span{font-size:.82rem;color:var(--body);line-height:1.35}
+.dir-names span:not(:last-child)::after{content:"·";color:var(--hairline-strong);margin-left:8px}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
@@ -270,6 +279,146 @@ footer a:hover{color:var(--cyan)}</style>
       <div class="frame"><img src="/assets/cockpit-connector-governance.png" alt="Connector governance cards" loading="lazy"></div>
       <figcaption><b>Every connector is a readable spec.</b> Enablement state, auth shape, and read/write scope — audited before you trust it.</figcaption>
     </figure></div></section>
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">The catalog, in full</p>
+    <h2>All 308 connectors, grouped by what they do.</h2>
+    <p class="lede">Not a logo wall — the real specs that ship in the repo, every one an auditable YAML
+      definition you can read before you trust it. 33 categories.</p>
+  </div>
+  <div class="directory"><div class="dir-group">
+      <div class="dir-head">Operations <b>31</b></div>
+      <div class="dir-names"><span>BetterStack Uptime</span><span>Bugsnag</span><span>Checkly</span><span>Cronitor</span><span>Datadog</span><span>DigitalOcean</span><span>Dynatrace</span><span>Fastly</span><span>Grafana</span><span>Healthchecks.io</span><span>Heroku</span><span>Hetzner Cloud</span><span>Honeycomb</span><span>Instatus</span><span>Linode</span><span>Loggly</span><span>Logz.io</span><span>New Relic</span><span>Opsgenie</span><span>PagerDuty</span><span>Pingdom</span><span>Render</span><span>Rollbar</span><span>Scaleway</span><span>Sentry</span><span>ServiceNow</span><span>Site24x7</span><span>StatusCake</span><span>Statuspage</span><span>Sumo Logic</span><span>Vultr</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Finance <b>27</b></div>
+      <div class="dir-names"><span>Blockchain.com</span><span>BlockCypher</span><span>Brex</span><span>Coinbase</span><span>CoinCap</span><span>CoinGecko</span><span>CoinMarketCap</span><span>Coinpaprika</span><span>CryptoCompare</span><span>CurrencyAPI</span><span>Etherscan</span><span>exchangerate.host</span><span>Finnhub</span><span>FreshBooks</span><span>Kraken</span><span>Lunch Money</span><span>Mercury</span><span>Monzo</span><span>Moralis</span><span>PocketSmith</span><span>QuickBooks Online</span><span>Ramp</span><span>Splitwise</span><span>Wise</span><span>Xero</span><span>YNAB</span><span>Zoho Books</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Media <b>22</b></div>
+      <div class="dir-names"><span>api.video</span><span>Bunny Stream</span><span>Bunny.net</span><span>Cloudinary</span><span>Dacast</span><span>Discogs</span><span>Flickr</span><span>Giphy</span><span>Gumlet</span><span>Last.fm</span><span>Movies &amp; TV (TMDB)</span><span>Mux</span><span>Pexels</span><span>Pixabay</span><span>SoundCloud</span><span>Spotify</span><span>Twitch</span><span>Unsplash</span><span>Vidyard</span><span>Vimeo</span><span>Wistia</span><span>YouTube</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Communications <b>18</b></div>
+      <div class="dir-names"><span>Agora</span><span>Courier</span><span>Daily</span><span>Discord</span><span>Front</span><span>Mattermost</span><span>MessageBird</span><span>ntfy</span><span>Plivo</span><span>Rocket.Chat</span><span>Sinch</span><span>Slack</span><span>Telegram</span><span>Telnyx</span><span>Twilio</span><span>Vonage</span><span>Zoom</span><span>Zulip</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Support <b>16</b></div>
+      <div class="dir-names"><span>Crisp</span><span>Dixa</span><span>Featurebase</span><span>Freshdesk</span><span>Frill</span><span>Gorgias</span><span>Help Scout</span><span>HelpCrunch</span><span>Intercom</span><span>Kustomer</span><span>LiveAgent</span><span>Nolt</span><span>Re:amaze</span><span>Tidio</span><span>Usersnap</span><span>Zendesk</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Email <b>15</b></div>
+      <div class="dir-names"><span>Abstract Email Validation</span><span>Bouncer</span><span>DeBounce</span><span>Emailable</span><span>Gmail</span><span>Hunter</span><span>Kickbox</span><span>mailboxlayer</span><span>Mailgun</span><span>Microsoft 365 (Outlook)</span><span>NeverBounce</span><span>Postmark</span><span>SendGrid</span><span>Verifalia</span><span>ZeroBounce</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Commerce <b>14</b></div>
+      <div class="dir-names"><span>BigCommerce</span><span>eBay</span><span>Etsy</span><span>Faire</span><span>Gumroad</span><span>PrestaShop</span><span>Printful</span><span>Printify</span><span>Shippo</span><span>Shopify</span><span>Squarespace</span><span>Webflow</span><span>Wix</span><span>WooCommerce</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Location &amp; maps <b>14</b></div>
+      <div class="dir-names"><span>AbstractAPI</span><span>Aviationstack</span><span>Geoapify</span><span>HERE</span><span>IPGeolocation</span><span>IPinfo</span><span>LocationIQ</span><span>Mapbox</span><span>MapQuest</span><span>OpenCage</span><span>OpenSky Network</span><span>Positionstack</span><span>TomTom</span><span>Transitland</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Developer tools <b>13</b></div>
+      <div class="dir-names"><span>Ably</span><span>Bitbucket</span><span>CircleCI</span><span>Cloudflare</span><span>Docker Hub</span><span>Gitea</span><span>GitHub</span><span>GitLab</span><span>JFrog Artifactory</span><span>Netlify</span><span>SonarCloud</span><span>Vercel</span><span>WakaTime</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Knowledge <b>13</b></div>
+      <div class="dir-names"><span>Coda</span><span>Datamuse</span><span>Discourse</span><span>Free Dictionary API</span><span>NASA Open APIs</span><span>Notion</span><span>Numbers API</span><span>Open Library</span><span>Raindrop.io</span><span>REST Countries</span><span>Wikidata</span><span>Wikipedia</span><span>Wordnik</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">HR &amp; recruiting <b>12</b></div>
+      <div class="dir-names"><span>BambooHR</span><span>Breezy HR</span><span>Finch</span><span>Greenhouse</span><span>Gusto</span><span>JazzHR</span><span>Lever</span><span>Personio</span><span>Recruitee</span><span>SmartRecruiters</span><span>Teamtailor</span><span>Workable</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Payments <b>12</b></div>
+      <div class="dir-names"><span>Bill.com</span><span>Braintree</span><span>Chargebee</span><span>Dwolla</span><span>GoCardless Bank Account Data</span><span>Invoice Ninja</span><span>Lemon Squeezy</span><span>Paddle</span><span>Razorpay</span><span>Recurly</span><span>Square</span><span>Stripe</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Data infrastructure <b>11</b></div>
+      <div class="dir-names"><span>CockroachDB Cloud</span><span>Directus</span><span>MongoDB Atlas</span><span>Neon</span><span>Pinecone</span><span>PlanetScale</span><span>Qdrant</span><span>Supabase</span><span>Turso</span><span>Upstash</span><span>Xata</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">AI <b>9</b></div>
+      <div class="dir-names"><span>Anthropic</span><span>AssemblyAI</span><span>Cohere</span><span>Deepgram</span><span>ElevenLabs</span><span>Hugging Face</span><span>OpenAI</span><span>Replicate</span><span>Stability AI</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Productivity <b>9</b></div>
+      <div class="dir-names"><span>Airtable</span><span>Baserow</span><span>Clockify</span><span>Expensify</span><span>Harvest</span><span>NocoDB</span><span>Smartsheet</span><span>Todoist</span><span>Toggl Track</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Project management <b>9</b></div>
+      <div class="dir-names"><span>Asana</span><span>Basecamp</span><span>ClickUp</span><span>Jira</span><span>Productboard</span><span>Shortcut</span><span>Teamwork</span><span>Trello</span><span>Wrike</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Marketing <b>7</b></div>
+      <div class="dir-names"><span>ActiveCampaign</span><span>Brevo</span><span>Buttondown</span><span>ConvertKit</span><span>Customer.io</span><span>Klaviyo</span><span>Mailchimp</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Social <b>7</b></div>
+      <div class="dir-names"><span>DeviantArt</span><span>LinkedIn</span><span>Mastodon</span><span>Pinterest</span><span>Reddit</span><span>Tumblr</span><span>X (Twitter)</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">E-signature &amp; documents <b>6</b></div>
+      <div class="dir-names"><span>DocuSeal</span><span>DocuSign</span><span>Dropbox Sign</span><span>PandaDoc</span><span>PDFMonkey</span><span>SignNow</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Games <b>6</b></div>
+      <div class="dir-names"><span>BoardGameGeek</span><span>Giant Bomb</span><span>MobyGames</span><span>OpenDota</span><span>RAWG</span><span>Steam</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Security <b>6</b></div>
+      <div class="dir-names"><span>Elastic Security</span><span>Microsoft Defender for Cloud</span><span>Microsoft Sentinel</span><span>Snyk</span><span>Tenable</span><span>VirusTotal</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">CRM <b>4</b></div>
+      <div class="dir-names"><span>HubSpot</span><span>Pipedrive</span><span>Salesforce</span><span>Zoho CRM</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Forms <b>4</b></div>
+      <div class="dir-names"><span>Formstack</span><span>Getform</span><span>Jotform</span><span>Typeform</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Health <b>4</b></div>
+      <div class="dir-names"><span>Fitbit</span><span>Oura Ring</span><span>Strava</span><span>WHOOP</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Sports <b>4</b></div>
+      <div class="dir-names"><span>balldontlie</span><span>NHL</span><span>PandaScore</span><span>TheSportsDB</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Analytics <b>3</b></div>
+      <div class="dir-names"><span>Amplitude</span><span>Mixpanel</span><span>PostHog</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Design <b>2</b></div>
+      <div class="dir-names"><span>Figma</span><span>Miro</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Files <b>2</b></div>
+      <div class="dir-names"><span>Dropbox</span><span>Google Drive</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">News <b>2</b></div>
+      <div class="dir-names"><span>NewsAPI</span><span>The Guardian</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Scheduling <b>2</b></div>
+      <div class="dir-names"><span>Calendly</span><span>Google Calendar</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Weather <b>2</b></div>
+      <div class="dir-names"><span>OpenWeatherMap</span><span>WeatherAPI</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Communication <b>1</b></div>
+      <div class="dir-names"><span>RingCentral</span></div>
+    </div>
+    <div class="dir-group">
+      <div class="dir-head">Travel <b>1</b></div>
+      <div class="dir-names"><span>Amadeus</span></div>
+    </div></div>
+</div></section>
 <section><div class="wrap">
   <div class="sec-head"><h2>The credential never reaches the model</h2></div>
   <p>Connecting an account is the moment most agent systems quietly hand a credential to a language model and hope the prompt holds. oshal does not. The credential is consumed by a schema-bounded server operation, the call completes outside the model, and only the normalized result is allowed into reasoning.</p><p>That is the whole reason connectors are a platform concern rather than an app concern: an app declares what it needs, and the platform decides what the model gets to see.</p>

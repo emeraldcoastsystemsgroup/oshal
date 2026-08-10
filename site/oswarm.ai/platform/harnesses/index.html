@@ -172,6 +172,15 @@ figure.shot figcaption{padding:12px 18px;font-size:.86rem;line-height:1.55;color
 figure.shot figcaption b{color:var(--body);font-weight:600}
 @media (max-width:720px){figure.shot img{min-width:560px}}
 
+/* The real connector directory — categorised names, dense but readable. */
+.directory{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))}
+.dir-group{background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));border:1px solid var(--glass-border);border-radius:12px;padding:16px 18px;box-shadow:inset 0 1px 0 var(--glass-hi)}
+.dir-head{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--slate);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--hairline)}
+.dir-head b{color:var(--cyan);font-weight:600}
+.dir-names{display:flex;flex-wrap:wrap;gap:5px 8px}
+.dir-names span{font-size:.82rem;color:var(--body);line-height:1.35}
+.dir-names span:not(:last-child)::after{content:"·";color:var(--hairline-strong);margin-left:8px}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
@@ -264,6 +273,15 @@ footer a:hover{color:var(--cyan)}</style>
   </div>
 </div></header>
 
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Every lane, named</p>
+    <h2>The 40 model providers wired in.</h2>
+    <p class="lede">Hosted vendors and local endpoints, on your keys. Each bot picks its own — an
+      expensive lane and a cheap lane run side by side and get compared on the same job.</p>
+  </div>
+  <div class="pills"><span class="pill">Anthropic</span><span class="pill">Claude Code</span><span class="pill">OpenRouter</span><span class="pill">AWS Bedrock</span><span class="pill">Google Vertex AI</span><span class="pill">OpenAI</span><span class="pill">OpenAI (native)</span><span class="pill">OpenAI Codex</span><span class="pill">Google Gemini</span><span class="pill">Ollama</span><span class="pill">LM Studio</span><span class="pill">LiteLLM</span><span class="pill">DeepSeek</span><span class="pill">Qwen</span><span class="pill">Qwen Code</span><span class="pill">Mistral</span><span class="pill">Groq</span><span class="pill">xAI</span><span class="pill">Together AI</span><span class="pill">Fireworks AI</span><span class="pill">Cerebras</span><span class="pill">SambaNova</span><span class="pill">Nebius</span><span class="pill">Moonshot</span><span class="pill">Z.AI</span><span class="pill">Hugging Face</span><span class="pill">AskSage</span><span class="pill">Huawei Cloud MaaS</span><span class="pill">Vercel AI Gateway</span><span class="pill">OCA</span><span class="pill">AiHubMix</span><span class="pill">MiniMax</span><span class="pill">HiCap</span><span class="pill">Nous Research</span><span class="pill">Doubao</span><span class="pill">Requesty</span><span class="pill">Dify</span><span class="pill">Baseten</span><span class="pill">VS Code LM</span><span class="pill">Cline</span></div>
+</div></section>
 <section><div class="wrap">
   <div class="sec-head"><h2>Deliberately boring, deliberately strict</h2></div>
   <p>Reasoning runs on an authorized hosted or bring-your-own rail. Exact external actions do not go through a model at all — they are fixed server operations. Those two sentences are the whole security posture of the model layer, and everything else follows from them.</p>

@@ -172,6 +172,15 @@ figure.shot figcaption{padding:12px 18px;font-size:.86rem;line-height:1.55;color
 figure.shot figcaption b{color:var(--body);font-weight:600}
 @media (max-width:720px){figure.shot img{min-width:560px}}
 
+/* The real connector directory — categorised names, dense but readable. */
+.directory{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))}
+.dir-group{background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));border:1px solid var(--glass-border);border-radius:12px;padding:16px 18px;box-shadow:inset 0 1px 0 var(--glass-hi)}
+.dir-head{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--slate);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--hairline)}
+.dir-head b{color:var(--cyan);font-weight:600}
+.dir-names{display:flex;flex-wrap:wrap;gap:5px 8px}
+.dir-names span{font-size:.82rem;color:var(--body);line-height:1.35}
+.dir-names span:not(:last-child)::after{content:"·";color:var(--hairline-strong);margin-left:8px}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
@@ -262,6 +271,7 @@ footer a:hover{color:var(--cyan)}</style>
     </aside>
   </div>
 </div></header>
+
 
 <section><div class="wrap">
   <div class="sec-head"><h2>Every application surface is a view, not a program</h2></div>
