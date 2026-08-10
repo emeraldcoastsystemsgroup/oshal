@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added schedule orchestration service with Redis persistence and cron-based next-run computation
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Persisted ownerSub on create + filtered listSchedules by app queue (taskType) and caller (ownerSub, own-or-unowned)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Scope new user-owned schedule ids by exact taskType and owner so create-or-replace cannot overwrite another tenant; preserve exact-owner legacy ids in place.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Honour the record's `timezone` when computing next-run (cron-parser `tz` option) so "9am" fires at the user's 9am, not the container's; and treat `once` as a real state — a one-shot pauses itself the moment it fires instead of relying on the stale-misfire heuristic (which let a no-year cron recur annually). Both changes are inert for records that set neither field, so existing schedules are byte-for-byte unaffected.
  */
 
 import { createHash } from 'node:crypto';
@@ -397,7 +398,7 @@ export class ScheduleService {
       await this.store.saveSchedule({
         ...schedule,
         updatedAt: now.toISOString(),
-        nextRunAt: this.computeNextRunOrNull(schedule.cron, schedule.status, now),
+        nextRunAt: this.computeNextRunOrNull(schedule.cron, schedule.status, now, schedule.timezone),
       });
       repaired++;
     }
@@ -414,6 +415,9 @@ export class ScheduleService {
    * @description Detects legacy one-time schedules encoded as cron records.
    */
   private isOneTimeSchedule(schedule: ScheduleRecord): boolean {
+    // The first-class flag is authoritative; the heuristic below is only for legacy records that
+    // encoded one-shot intent in their taskData/text before `once` existed.
+    if (schedule.once === true) return true;
     const taskData = schedule.taskData as Record<string, unknown>;
     const typedFields = [
       taskData.kind,
@@ -483,13 +487,15 @@ export class ScheduleService {
       status: existing?.status || 'active',
       createdAt: existing?.createdAt || nowIso,
       updatedAt: nowIso,
-      nextRunAt: this.computeNextRunOrNull(cron, existing?.status || 'active', now),
+      nextRunAt: this.computeNextRunOrNull(cron, existing?.status || 'active', now, input.timezone ?? existing?.timezone),
       lastRunAt: existing?.lastRunAt || null,
       executionCount: existing?.executionCount || 0,
       ownerSub: input.ownerSub ?? existing?.ownerSub ?? null,
       // Tag the schedule with its owning app queue so the cockpit calendar can
       // filter to loaded apps. Explicit queue wins; otherwise derive from taskType.
       queue: input.queue ?? existing?.queue ?? deriveQueueIdFromTaskType(input.taskType),
+      timezone: input.timezone ?? existing?.timezone ?? null,
+      once: input.once ?? existing?.once ?? false,
     };
   }
 
@@ -503,7 +509,7 @@ export class ScheduleService {
       cron,
       taskData,
       updatedAt: new Date().toISOString(),
-      nextRunAt: this.computeNextRunOrNull(cron, schedule.status, new Date()),
+      nextRunAt: this.computeNextRunOrNull(cron, schedule.status, new Date(), schedule.timezone),
     };
   }
 
@@ -527,7 +533,7 @@ export class ScheduleService {
       ...schedule,
       status,
       updatedAt: now.toISOString(),
-      nextRunAt: this.computeNextRunOrNull(schedule.cron, status, now),
+      nextRunAt: this.computeNextRunOrNull(schedule.cron, status, now, schedule.timezone),
     };
   }
 
@@ -536,12 +542,17 @@ export class ScheduleService {
    */
   private withDispatchResult(schedule: ScheduleRecord, success: boolean): ScheduleRecord {
     const now = new Date();
+    // A one-shot is done the moment it fires: pause it and clear the next run so it never repeats.
+    // This is the first-class replacement for the "cron with no year" encoding, which recurred
+    // annually until the misfire-grace heuristic happened to catch it.
+    const oneShotDone = schedule.once === true;
     return {
       ...schedule,
       lastRunAt: now.toISOString(),
       updatedAt: now.toISOString(),
       executionCount: success ? schedule.executionCount + 1 : schedule.executionCount,
-      nextRunAt: this.computeNextRunOrNull(schedule.cron, schedule.status, now),
+      status: oneShotDone ? 'paused' : schedule.status,
+      nextRunAt: oneShotDone ? null : this.computeNextRunOrNull(schedule.cron, schedule.status, now, schedule.timezone),
     };
   }
 
@@ -554,7 +565,7 @@ export class ScheduleService {
     return {
       ...schedule,
       updatedAt: now.toISOString(),
-      nextRunAt: this.computeNextRunOrNull(schedule.cron, schedule.status, now),
+      nextRunAt: this.computeNextRunOrNull(schedule.cron, schedule.status, now, schedule.timezone),
     };
   }
 
@@ -580,11 +591,11 @@ export class ScheduleService {
   /**
    * @description Computes next-run timestamp or null when schedule is paused.
    */
-  private computeNextRunOrNull(cron: string, status: 'active' | 'paused', now: Date): string | null {
+  private computeNextRunOrNull(cron: string, status: 'active' | 'paused', now: Date, timezone?: string | null): string | null {
     if (status !== 'active') {
       return null;
     }
-    return this.computeNextRunIso(cron, now);
+    return this.computeNextRunIso(cron, now, timezone);
   }
 
   /**
@@ -600,10 +611,13 @@ export class ScheduleService {
   }
 
   /**
-   * @description Computes the next occurrence for a cron expression.
+   * @description Computes the next occurrence for a cron expression, in the schedule's timezone
+   * when one is set. Without a timezone the expression resolves in the process clock, which is the
+   * historical behaviour — so legacy records that carry no timezone are unaffected.
    */
-  private computeNextRunIso(cron: string, now: Date): string {
-    const expression = CronExpressionParser.parse(cron, { currentDate: now });
+  private computeNextRunIso(cron: string, now: Date, timezone?: string | null): string {
+    const options = timezone ? { currentDate: now, tz: timezone } : { currentDate: now };
+    const expression = CronExpressionParser.parse(cron, options);
     const iso = expression.next().toISOString();
     if (!iso) {
       throw new Error(`Could not compute next run for cron expression: ${cron}`);

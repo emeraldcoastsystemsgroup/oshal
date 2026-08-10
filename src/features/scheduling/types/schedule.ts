@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added schedule domain schemas and types for Redis-backed self-scheduling
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added ownerSub (per-user scoping) + ListSchedulesFilter so calendar surfaces filter on their app queue and the caller's own schedules
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add the internal manifest-service-route task-data shape while retaining legacy prompt payloads. Exactly one mode is valid, so deterministic package jobs no longer need a fake prompt merely to enter the scheduler.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | First-class `timezone` and `once` on the schedule record + create input. Both are optional and default to prior behaviour (no tz = process clock, once=false = recurring), so every existing schedule is untouched. `timezone` fixes cron firing in the container clock instead of the user's; `once` makes a one-shot a real state the runner pauses after firing, replacing the fragile "cron with no year" encoding that recurred annually.
  */
 
 import { z } from 'zod';
@@ -77,6 +78,14 @@ export const ScheduleRecordSchema = z.object({
   // can filter schedules to the loaded apps. Derived from the ticket queue the
   // schedule's taskType maps to; null for legacy/system schedules.
   queue: z.string().nullable().optional(),
+  // IANA timezone the cron clock time is interpreted in (e.g. "America/Chicago").
+  // Absent = the process clock, which is the historical behaviour every existing
+  // record relies on, so this stays optional.
+  timezone: z.string().min(1).nullable().optional(),
+  // One-shot intent: fire the next matching occurrence, then pause. Absent/false =
+  // recurring, the historical default. This is what makes "on Tuesday" fire once
+  // instead of once a year.
+  once: z.boolean().optional(),
 });
 
 /**
@@ -97,6 +106,10 @@ export const CreateScheduleInputSchema = z.object({
   // Explicit queue (app id) this schedule belongs to. When omitted it is derived
   // from the taskType's ticket queue mapping.
   queue: z.string().min(1).optional(),
+  // IANA timezone the cron is interpreted in. Optional; absent = process clock.
+  timezone: z.string().min(1).nullable().optional(),
+  // One-shot intent — fire the next occurrence then pause. Optional; absent = recurring.
+  once: z.boolean().optional(),
 });
 
 /**
