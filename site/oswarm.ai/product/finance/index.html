@@ -175,6 +175,33 @@ ul.bullets strong{color:var(--white);font-weight:600}
 .aside h3{margin-bottom:14px}
 .aside .btn{width:100%;margin-bottom:10px}
 
+/* ---- the catalog orb: a 3D sphere of every app, coloured by shelf ---- */
+.orb-hero{border-bottom:1px solid var(--hairline);padding:40px 0 64px;overflow:hidden;position:relative}
+.orb-hero .wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:40px;align-items:center}
+@media (max-width:900px){.orb-hero .wrap{grid-template-columns:1fr;gap:8px}}
+.orb-copy .orb-h1{font-size:clamp(2rem,4.4vw,3.3rem);margin:16px 0 18px}
+.orb-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+.orb-key{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.74rem;color:var(--slate);border:1px solid var(--hairline);border-radius:99px;padding:6px 12px}
+.orb-key:hover{color:var(--white);border-color:var(--hairline-strong);text-decoration:none}
+.orb-key b{color:var(--body);font-weight:600}
+.orb-key .dot{width:9px;height:9px;border-radius:50%;background:var(--h);box-shadow:0 0 8px var(--h)}
+.orb-stage{position:relative;width:100%;height:clamp(360px,42vw,560px);touch-action:none}
+.orb-stage.orb-live{cursor:grab}
+.orb-stage.grabbing{cursor:grabbing}
+.orb-glow{position:absolute;inset:0;margin:auto;width:66%;height:66%;border-radius:50%;background:radial-gradient(circle,rgba(125,211,252,.28),rgba(52,211,153,.10) 42%,transparent 68%);filter:blur(24px);pointer-events:none;animation:orbPulse 6s ease-in-out infinite}
+@keyframes orbPulse{0%,100%{opacity:.7;transform:scale(1)}50%{opacity:1;transform:scale(1.06)}}
+/* faint sphere silhouette so the node cloud reads as one orb */
+.orb-ring{position:absolute;inset:0;margin:auto;width:min(80%,80vmin);aspect-ratio:1;border-radius:50%;border:1px solid var(--hairline);box-shadow:inset 0 0 60px rgba(125,211,252,.10);pointer-events:none;opacity:.6}
+.orb{position:absolute;inset:0;margin:auto;width:1px;height:1px}
+@media (prefers-reduced-motion:reduce){.orb-glow{animation:none}}
+/* Nodes are hidden until the engine places them, so a no-JS visitor sees the legend + catalog, not a pile. */
+.orb-node{position:absolute;left:50%;top:50%;display:none;white-space:nowrap;font-family:var(--mono);font-size:.72rem;letter-spacing:.01em;padding:4px 10px;border-radius:99px;color:var(--white);background:color-mix(in srgb, var(--c) 16%, var(--night));border:1px solid color-mix(in srgb, var(--c) 55%, transparent);box-shadow:0 0 10px color-mix(in srgb, var(--c) 30%, transparent);will-change:transform,opacity;transition:background .15s,border-color .15s}
+.orb-live .orb-node{display:inline-block}
+.orb-node:hover{background:var(--c);color:#06121F;text-decoration:none;border-color:var(--c);box-shadow:0 0 18px var(--c);z-index:99999 !important;filter:none !important;opacity:1 !important}
+.orb-node.back{pointer-events:none}
+.orb-fallback{color:var(--slate);font-size:.9rem;text-align:center;padding-top:40%}
+@media (prefers-reduced-motion:reduce){.orb-glow{filter:blur(12px)}}
+
 footer{padding:44px 0 60px;color:var(--slate);font-size:.88rem;border-top:1px solid var(--hairline)}
 footer .wrap{display:flex;flex-wrap:wrap;gap:16px 28px;justify-content:space-between}
 footer a{color:var(--slate)}
