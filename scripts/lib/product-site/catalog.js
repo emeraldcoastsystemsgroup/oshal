@@ -262,6 +262,35 @@ function collectConnectors() {
   return { categories, total };
 }
 
+/**
+ * Personas withheld from the public roster: the carved federal-capture commercial family (same
+ * discipline as the withheld apps), keyed by persona `name`. Everything else is real platform
+ * substance and appears.
+ */
+const PRIVATE_PERSONAS = new Set(['capture-specialist', 'capture-coordinator']);
+
+/**
+ * @description Reads the bot personas that run the swarm — name + the one-line role each declares —
+ * so the site can SHOW the agents instead of only counting them. Only personas that declare a role
+ * appear (a bare name is not roster-worthy), and the carved commercial ones are withheld.
+ */
+function collectPersonas() {
+  const dir = path.join(REPO, 'ai-lab', 'bot-personas');
+  if (!fs.existsSync(dir)) return [];
+  const roster = [];
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.yaml'))) {
+    const name = file.replace(/\.yaml$/, '');
+    if (PRIVATE_PERSONAS.has(name)) continue;
+    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+    const role = (/^role:\s*["']?(.+?)["']?\s*$/m.exec(text) || [])[1];
+    if (!role) continue;
+    // The role often reads "Title — long clause"; keep the first clause as the crisp label.
+    const label = role.split(/\s+[—–-]\s+/)[0].trim();
+    roster.push({ name, role: label, full: role.replace(/\s+/g, ' ').trim() });
+  }
+  return roster.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Reads the wired model providers off PROVIDER_DEFINITIONS, mapped to display names. */
 function collectProviders() {
   const file = path.join(REPO, 'src/features/llm-provider/services/provider-definitions.ts');
@@ -339,14 +368,17 @@ function build() {
     counts: countTree(apps.length, kernel.published.length, store.published.length, userFacingShelves),
     shelves,
     apps,
-    // The real substance behind the numbers: the actual connectors (grouped) and providers (named).
+    // The real substance behind the numbers: the actual connectors (grouped), providers (named),
+    // and the swarm roster (the agents that do the work).
     connectors: collectConnectors(),
     providers: collectProviders(),
+    personas: collectPersonas(),
     withheld: { kernel: kernel.withheld.map((a) => a.title), store: store.withheld },
   };
 }
 
 module.exports = {
-  build, collectKernel, collectStore, collectConnectors, collectProviders, summarize, splitLead, readPackageExtras,
-  SHELVES, PRIVATE_APPS, COMMERCIAL_PACKAGES, STORE_DIR, REPO,
+  build, collectKernel, collectStore, collectConnectors, collectProviders, collectPersonas,
+  summarize, splitLead, readPackageExtras,
+  SHELVES, PRIVATE_APPS, COMMERCIAL_PACKAGES, PRIVATE_PERSONAS, STORE_DIR, REPO,
 };

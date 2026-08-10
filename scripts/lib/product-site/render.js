@@ -71,11 +71,12 @@ const SHOTS = {
   littleMonsters: ['/assets/app-little-monsters.png', 'The Little Monsters student dashboard', '<b>Learning, grounded in the class.</b> Join a class, record a lecture, and get a replay, flashcards and a tutor from it — shown here with open demo classes.'],
   finance: ['/assets/app-finance.png', 'The Finance app', '<b>Your money in one view.</b> Balances, holdings and spending across every linked account, with a plain-English brief. Shown on demo data — reading is read-only.'],
   dnd: ['/assets/app-dnd.png', 'The Dungeon Master campaign shelf', '<b>Pick a campaign and play.</b> An AI Dungeon Master runs a cinematic shared board — investigations remember clues, battles share the same visible turn and dice.'],
+  jarvis: ['/assets/app-jarvis-cockpit.png', 'The Jarvis assistant in the cockpit', '<b>Your swarm, one orb, one voice.</b> Tap to talk; the assistant classifies what you asked and routes it to the specialist that owns it. The live cockpit, on a guest workspace.'],
 };
 const shot = (id, section) => (SHOTS[id] ? `${section ? '<section><div class="wrap">' : ''}${figure(...SHOTS[id])}${section ? '</div></section>' : ''}` : '');
 
 /** App pages that have a real, safe screenshot, keyed by app name → SHOTS id. */
-const APP_SHOTS = { world: 'world', 'little-monsters': 'littleMonsters', finance: 'finance', dnd: 'dnd' };
+const APP_SHOTS = { world: 'world', 'little-monsters': 'littleMonsters', finance: 'finance', dnd: 'dnd', jarvis: 'jarvis' };
 
 /** Numbered "what actually happens" flow. Each step is a claim the manifest supports. */
 function flowList(steps) {
@@ -167,6 +168,17 @@ function renderProductHub(model) {
 
   const body = `
 ${renderOrb(model)}
+
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Not a mock-up</p>
+    <h2>The orb above is the idea. This is the real cockpit.</h2>
+    <p class="lede">Every one of those apps opens into the same shell — and at its centre is the same
+      thing: your swarm as one orb, one voice. Tap to talk, and it routes what you asked to whichever
+      of the ${(model.personas || []).length} agents owns it.</p>
+  </div>
+  ${figure(...SHOTS.jarvis)}
+</div></section>
 
 <section><div class="wrap">
   <p class="lede" style="max-width:44em">oshal is an orchestration platform for agentic AI. The platform
@@ -501,7 +513,8 @@ function renderPlatformHub(model) {
   <div class="grid two">
     ${cards}
   </div>
-</div></section>`;
+</div></section>
+${swarmRoster(model)}`;
 
   return page({
     title: 'The oshal platform — cockpit, connectors, queues, databases, security',
@@ -555,6 +568,28 @@ function providerDirectory(model) {
 }
 
 const TOPIC_DIRECTORY = { connectors: connectorDirectory, harnesses: providerDirectory };
+
+/**
+ * The swarm roster — the real bot personas that do the work, name and declared role. This is the
+ * "the swarm IS the bots" content: the platform's accountable agents, shown not just counted.
+ */
+function swarmRoster(model) {
+  const roster = model.personas || [];
+  if (!roster.length) return '';
+  const rows = roster.map((b) => `<div class="agent">
+      <code>${esc(b.name)}</code><span>${esc(b.role)}</span>
+    </div>`).join('\n    ');
+  return `<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Who does the work</p>
+    <h2>${roster.length} accountable agents, each with one job.</h2>
+    <p class="lede">The swarm is not one model wearing hats — it is a roster of named identities, each
+      with a declared role, its own model and tools, and its own line in the cost table. Every one is
+      a real persona that ships in the repo.</p>
+  </div>
+  <div class="roster">${rows}</div>
+</div></section>`;
+}
 
 function renderPlatformTopic(model, topic) {
   const { counts } = model;
