@@ -151,6 +151,15 @@ ol.flow pre{margin-top:12px}
 .lane p{font-size:.93rem;line-height:1.62;flex:1}
 .quote{border-left:2px solid var(--cyan);padding:6px 0 6px 20px;margin:22px 0;font-size:1.12rem;line-height:1.6;color:var(--white);font-style:italic}
 
+/* Screenshot figure. The image is framed and captioned; it scrolls inside its own box on narrow
+   viewports rather than widening the page. Only real, vetted, same-origin captures are used here. */
+figure.shot{margin:26px 0 0;border:1px solid var(--hairline);border-radius:12px;overflow:hidden;background:var(--panel-2)}
+figure.shot .frame{background:#070B16;overflow-x:auto}
+figure.shot img{display:block;width:100%;min-width:640px;height:auto}
+figure.shot figcaption{padding:12px 18px;font-size:.86rem;line-height:1.55;color:var(--slate);border-top:1px solid var(--hairline)}
+figure.shot figcaption b{color:var(--body);font-weight:600}
+@media (max-width:720px){figure.shot img{min-width:560px}}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
@@ -227,6 +236,12 @@ footer a:hover{color:var(--cyan)}</style>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">What it does</p><h2>The rest of the story.</h2></div>
       <p class="lede">Ask the analyst what the press is saying about X and get a structured, bias-contextualized read, not a misleading average. The Layer-B engine (src/features/world-data), the deterministic world-schedule dispatcher, scripts/oshal-world.js, the world-analyst registry entry, and the default tile stay framework-resident; this package is the /api/world surface (fail-closed header-authenticated writes, open reads), the world-analyst manifest, the seven world_* tools, and the refresh/pulse schedules.</p></div></section>
+<section><div class="wrap"><div class="sec-head">
+      <p class="eyebrow">On screen</p><h2>What it looks like.</h2></div>
+      <figure class="shot">
+      <div class="frame"><img src="/assets/cockpit-world-intelligence.png" alt="The World Intelligence surface" loading="lazy"></div>
+      <figcaption><b>Bias-aware sentiment.</b> Each tracked subject scored across political and economic axes and by outlet kind — a naive average would mislead.</figcaption>
+    </figure></div></section>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">What you can ask it</p>
       <h2>Tools the bot can actually call.</h2>

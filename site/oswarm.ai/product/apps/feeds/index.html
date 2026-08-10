@@ -151,6 +151,15 @@ ol.flow pre{margin-top:12px}
 .lane p{font-size:.93rem;line-height:1.62;flex:1}
 .quote{border-left:2px solid var(--cyan);padding:6px 0 6px 20px;margin:22px 0;font-size:1.12rem;line-height:1.6;color:var(--white);font-style:italic}
 
+/* Screenshot figure. The image is framed and captioned; it scrolls inside its own box on narrow
+   viewports rather than widening the page. Only real, vetted, same-origin captures are used here. */
+figure.shot{margin:26px 0 0;border:1px solid var(--hairline);border-radius:12px;overflow:hidden;background:var(--panel-2)}
+figure.shot .frame{background:#070B16;overflow-x:auto}
+figure.shot img{display:block;width:100%;min-width:640px;height:auto}
+figure.shot figcaption{padding:12px 18px;font-size:.86rem;line-height:1.55;color:var(--slate);border-top:1px solid var(--hairline)}
+figure.shot figcaption b{color:var(--body);font-weight:600}
+@media (max-width:720px){figure.shot img{min-width:560px}}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
