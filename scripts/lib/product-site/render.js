@@ -43,6 +43,36 @@ function bulletList(items) {
   return `<ul class="bullets">${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
 }
 
+/**
+ * A framed, captioned screenshot. `src` is a same-origin path under /assets (the main site deploy
+ * stages those), so nothing external loads. Only real, vetted captures are passed here — never a
+ * mock-up, and never a surface that shows real user data.
+ */
+function figure(src, alt, caption) {
+  return `<figure class="shot">
+      <div class="frame"><img src="${esc(src)}" alt="${esc(alt)}" loading="lazy"></div>
+      <figcaption>${caption}</figcaption>
+    </figure>`;
+}
+
+/**
+ * The vetted, already-public cockpit captures reused across the site, keyed by a short id. Each is a
+ * structural UI shot with no personal data — the same five that ship on the home page. Adding an
+ * entry here is the only place a screenshot is declared, so a page can never reference one that was
+ * not deliberately cleared.
+ */
+const SHOTS = {
+  connectors: ['/assets/cockpit-connectors.png', 'The oshal connector marketplace', '<b>The connector marketplace.</b> Search the audited catalog, enable only what you need, and keep every token user-owned.'],
+  connectorGovernance: ['/assets/cockpit-connector-governance.png', 'Connector governance cards', '<b>Every connector is a readable spec.</b> Enablement state, auth shape, and read/write scope — audited before you trust it.'],
+  ops: ['/assets/cockpit-ops-dashboard.png', 'The oshal operations dashboard', '<b>The ops dashboard.</b> Runtime health, the process-flow snapshot, and the per-agent health registry, read from live APIs.'],
+  workflow: ['/assets/cockpit-workflow-studio.png', 'The Workflow Studio canvas', '<b>Workflow Studio.</b> A real branching canvas — intake, an approval gate, a parallel split, verify and review — compiled to a live queue on Publish.'],
+  world: ['/assets/cockpit-world-intelligence.png', 'The World Intelligence surface', '<b>Bias-aware sentiment.</b> Each tracked subject scored across political and economic axes and by outlet kind — a naive average would mislead.'],
+};
+const shot = (id, section) => (SHOTS[id] ? `${section ? '<section><div class="wrap">' : ''}${figure(...SHOTS[id])}${section ? '</div></section>' : ''}` : '');
+
+/** App pages that have a real, safe screenshot, keyed by app name. */
+const APP_SHOTS = { world: 'world' };
+
 /** Numbered "what actually happens" flow. Each step is a claim the manifest supports. */
 function flowList(steps) {
   return `<ol class="flow">${steps.map((s, i) => `<li>
@@ -281,6 +311,13 @@ function renderApp(model, app) {
       <p class="lede">${esc(app.rest)}</p></div></section>`);
   }
 
+  // A real screenshot, only for apps with a vetted capture — never a mock-up or a data-bearing shot.
+  if (APP_SHOTS[app.name]) {
+    blocks.push(`<section><div class="wrap"><div class="sec-head">
+      <p class="eyebrow">On screen</p><h2>What it looks like.</h2></div>
+      ${figure(...SHOTS[APP_SHOTS[app.name]])}</div></section>`);
+  }
+
   if (app.tools && app.tools.length) {
     blocks.push(`<section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">What you can ask it</p>
@@ -438,6 +475,7 @@ function renderPlatformHub(model) {
     <a class="btn primary" href="${url.productHub}">Browse the applications</a>
     <a class="btn" href="/">Platform overview</a>
   </div>
+  ${figure(...SHOTS.ops)}
 </div></header>
 
 <section><div class="wrap">
@@ -457,9 +495,14 @@ function renderPlatformHub(model) {
   });
 }
 
+// A platform page shows the surface it describes, where a vetted capture exists.
+const TOPIC_SHOTS = { connectors: ['connectors', 'connectorGovernance'], monitoring: ['ops'] };
+
 function renderPlatformTopic(model, topic) {
   const { counts } = model;
   const others = TOPICS.filter((t) => t.slug !== topic.slug);
+  const shots = (TOPIC_SHOTS[topic.slug] || []).map((id) => figure(...SHOTS[id])).join('\n');
+  const shotSection = shots ? `<section><div class="wrap">${shots}</div></section>` : '';
 
   const sections = topic.sections.map((s) => `<section><div class="wrap">
   <div class="sec-head"><h2>${fill(s.h, counts)}</h2></div>
@@ -485,6 +528,7 @@ function renderPlatformTopic(model, topic) {
     </aside>
   </div>
 </div></header>
+${shotSection}
 ${sections}
 
 <section><div class="wrap">
@@ -638,6 +682,7 @@ function renderBuild(model) {
       <p class="cta-note" style="margin-top:0"><strong>Honestly:</strong> ${l.honest}</p>
     </div>`).join('')}
   </div>
+  ${figure(...SHOTS.workflow)}
 </div></section>
 
 <section><div class="wrap">

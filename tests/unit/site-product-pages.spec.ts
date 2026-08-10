@@ -135,6 +135,26 @@ describe('product site: every internal link resolves', () => {
     expect([...new Set(dead)]).toEqual([]);
   });
 
+  it('every referenced screenshot exists and is tracked in git', () => {
+    // A page that references /assets/foo.png with no such file publishes a broken image (and the
+    // deploy's asset gate would fail). Assert every referenced asset is a real, tracked file.
+    const tracked = new Set(
+      execFileSync('git', ['ls-files', '--', 'site/oswarm.ai/assets'], { cwd: REPO, encoding: 'utf8' })
+        .split(/\r?\n/).filter(Boolean),
+    );
+    const missing: string[] = [];
+    for (const rel of onDisk) {
+      const html = fs.readFileSync(path.join(gen.SITE, rel), 'utf8');
+      for (const m of html.matchAll(/src="(\/assets\/[^"]+)"/g)) {
+        const assetPath = `site/oswarm.ai${m[1]}`.replace(/\//g, path.sep === '\\' ? '/' : '/');
+        const onDiskPath = path.join(gen.SITE, m[1]);
+        if (!fs.existsSync(onDiskPath)) missing.push(`${rel} -> ${m[1]} (file missing)`);
+        else if (!tracked.has(`site/oswarm.ai${m[1]}`)) missing.push(`${rel} -> ${m[1]} (untracked)`);
+      }
+    }
+    expect([...new Set(missing)]).toEqual([]);
+  });
+
   it('declares a unique canonical URL on every page — no duplicate-content pages', () => {
     const seen = new Map<string, string>();
     for (const rel of onDisk) {
