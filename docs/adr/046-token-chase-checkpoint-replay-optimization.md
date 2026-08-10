@@ -344,6 +344,12 @@ that a provider-backed production acceptance run has occurred:
 
 **Still Proposed or awaiting external proof:** the complete commit + encrypted-store checkpoint,
 tool/read pin capture, artifact-producing downstream replay, interactive rewind/edit/forward debugger,
-learned selection policy beyond the shipped health/LRU free-lane selector, and current provider-backed
-acceptance evidence. Their exact
+and current provider-backed acceptance evidence. Their exact
 acceptance boundaries remain in the Token Chase section of [BACKLOG.md](../BACKLOG.md).
+
+**§6's learned selection policy is reframed as a non-goal** (operator decision, 2026-08-09): routing
+is the operator-approved keep-winner switch — approve, apply to the owning bot via the ADR-034 push,
+audited one-click revert, with cockpit promote/revert controls — never an autonomous re-router. The
+shipped health/LRU free-lane selector stays as-is. A corpus-backed *suggestion* heuristic may be
+commissioned later, but it would only propose a switch for approval, not route on its own
+(BACKLOG "Variant-selection switches").

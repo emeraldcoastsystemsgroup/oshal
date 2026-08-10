@@ -92,8 +92,9 @@ Legend: `[x]` done+merged · `[~]` in flight (bot assigned) · `[ ]` queued (non
   benchmark doc.
 - [ ] **Consolidate the dual/tri runtime** → one canonical AnyBot node runtime with full parity to the
   TS tool/provider registries. Large; ADR-level.
-- [ ] **Token Chase Step 5** — heuristic → trained selection policy from the accumulated corpus (the
-  keep-winner loop is the deterministic precursor).
+- [x] **Token Chase Step 5** — CLOSED as the approved switch, not a trained selector (operator,
+  2026-08-09): the keep-winner promotion (approve → ADR-034 apply → audited revert, cockpit
+  controls) IS the routing mechanism; a learned/background re-router is a ROADMAP non-goal.
 - [ ] **Agentic authoring** — compose brand-new agents/goals/personas from an NL description (talk-to-
   build drafts the graph over *existing* bots; this is the missing half). *Needs a scope decision.*
 

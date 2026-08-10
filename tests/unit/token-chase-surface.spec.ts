@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add the missing Change Log header + a step-2b debugger guard: the surface must keep the call-by-call stepper, the recorded-results (replays/variants/grades) section, and the read-only /observations + /inspect reads — and the routes file must gain NO new POST (the debugger never fires replays; ADR-046 §10).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the honest `free:auto` optimizer surface and route wiring: eligible free lanes rotate or fail closed, selected provider/model evidence is returned, and non-free lanes retain explicit billing language.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the keep-winner promotion surface (the approved routing switch): the inspector must keep the Promote-winner action with the apply-to-bot-config opt-in and the honest LLM-judged-only bar language, the Promotions view must keep revert wiring, and the promote/revert POSTs must stay on the auth-mounted promotion router — routing switches are operator-approved, never a background re-router.
  */
 
 import { readFileSync } from 'node:fs';
@@ -55,6 +56,36 @@ describe('token chase optimizer surface', () => {
     expect(routes).toContain('replayVariantRotating');
     expect(routes).toContain('selection: replay.selection');
     expect(routes).toContain('rotation: laneSelection');
+  });
+
+  it('wires the keep-winner promotion surface: approve, apply-to-bot-config opt-in, and revert', () => {
+    const promoRoutes = readFileSync(
+      resolve(process.cwd(), 'src/app/routes/token-chase-promotion-routes.ts'),
+      'utf8',
+    );
+    // The approved routing switch lives in the frame inspector: an explicit action, never automatic.
+    expect(html).toContain('promotePanel()');
+    expect(html).toContain('promoteBtn');
+    expect(html).toContain('promoteFrame(runId, seq)');
+    expect(html).toContain('/promote');
+    expect(html).toContain('applyToBotConfig');
+    // The bar is stated honestly on the surface: LLM-judged only, nothing re-routes on its own.
+    expect(html).toContain('LLM-judged variants only');
+    expect(html).toContain('Nothing re-routes on its own');
+    // The 422 no-winner answer renders as evidence (bar + per-candidate rejections), not a bare error.
+    expect(html).toContain('renderNoWinner');
+    expect(html).toContain('rejected because');
+    // Promotions view: run-scoped list + audit trail + one-click revert.
+    expect(html).toContain('loadPromotions');
+    expect(html).toContain('/promotions/');
+    expect(html).toContain('data-revert');
+    expect(html).toContain('Audit trail');
+    // The actions hit the promotion router, which token-chase-routes mounts INSIDE its
+    // requiresAuth-wrapped router — promote/revert must never move to an unauthenticated mount.
+    expect(routes).toContain('router.use(createTokenChasePromotionRoutes(ctx))');
+    expect(promoRoutes).toContain("router.post('/runs/:runId/frames/:seq/promote'");
+    expect(promoRoutes).toContain("router.post('/promotions/:promotionId/revert'");
+    expect(promoRoutes).toContain("router.get('/runs/:runId/promotions'");
   });
 
   it('wires the step-2b debugger view: stepper, recorded results, and the read-only endpoints', () => {
