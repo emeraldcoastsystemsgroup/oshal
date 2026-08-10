@@ -311,6 +311,15 @@ The click-path (Azure wraps the standard Shape A steps in its own console names)
 > have each user **reconnect** on `/utilities` — an existing token without the scope
 > gets a 403 `ErrorAccessDenied` from `POST /me/sendMail`.
 
+### Microsoft Entra ID **login** (`MICROSOFT_LOGIN`) — same Azure app, different purpose (ADR-126)
+
+Sign-in with Microsoft ([ADR-126](adr/126-multi-provider-oidc-login.md)) reuses this same app
+registration — no second app, no second secret. It is NOT a connector: it adds **Web** redirect
+URIs of the shape `https://<login host>/callback/microsoft` and the `MICROSOFT_OIDC_*` env
+block. The complete procedure (URI list, probe verification, flag flip, rollback,
+troubleshooting) is one runbook:
+[docs/runbooks/microsoft-login-enable.md](runbooks/microsoft-login-enable.md).
+
 ---
 
 ## Media / Entertainment bundle

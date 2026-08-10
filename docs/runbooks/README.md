@@ -78,6 +78,12 @@ OSHAL pipelines and surfaces. One file per procedure.
   inbound A2A gateway (ADR-109) live on the local stack: preconditions (image role-gate fix,
   migration 089 check), the exact `.env` lines, api-only recreate, verification (card 200,
   disabled=404 re-proof), and the paid end-to-end inbound proof.
+- [microsoft-login-enable.md](./microsoft-login-enable.md) — turning on the DEFAULT-OFF
+  "Continue with Microsoft" login next to Google (ADR-126): the exact Entra redirect-URI
+  list per login host, probe verification (incl. the probe self-check and why the negative
+  verdict can't name bad-URI vs bad-client), the `MICROSOFT_LOGIN=true` flip + api recreate,
+  a browser proof script, the two-`sub`s identity model, rollback, and the AADSTS
+  troubleshooting table.
 - [workspace-root-and-autocommitter.md](./workspace-root-and-autocommitter.md) — workspace-root
   fix go-live and the auto-committer.
 - [daily-trade-recap-pipeline.md](./daily-trade-recap-pipeline.md) — the post-close daily

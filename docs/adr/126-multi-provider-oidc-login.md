@@ -70,7 +70,9 @@ provider and dispatches every request to exactly one of them.**
   same routes, same cookie); the unit suite pins this.
 - Enabling Microsoft is env + Azure portal work, no deploy of new code: flip
   `MICROSOFT_LOGIN=true`, register `https://<host>/callback/microsoft` per login host,
-  recreate the api container.
+  recreate the api container. The operator procedure (URI list, probe verification,
+  browser proof, rollback, troubleshooting) is
+  [docs/runbooks/microsoft-login-enable.md](../runbooks/microsoft-login-enable.md).
 - **A provider is an identity namespace.** The same human signing in with Google and with
   Microsoft is two different `sub`s with separate per-user data. Operator status follows
   `OSHAL_OPERATOR_EMAILS` (email-based, covers both); anything keyed on
