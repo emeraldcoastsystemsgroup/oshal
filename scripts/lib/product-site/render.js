@@ -619,7 +619,7 @@ function renderBuild(model) {
   <p class="quote">&ldquo;${esc(G.FLOWERS.quote)}&rdquo;</p>
   <p class="lede">${G.FLOWERS.intro}</p>
   <div style="margin-top:28px">${flowList(G.FLOWERS.steps)}</div>
-  <div class="note"><b>Where this stops, and why.</b>
+  <div class="note"><b>The honest edges.</b>
     ${bulletList(G.FLOWERS.ceiling)}
   </div>
 </div></section>

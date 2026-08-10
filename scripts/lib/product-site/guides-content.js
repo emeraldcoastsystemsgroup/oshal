@@ -123,33 +123,33 @@ const INSTALL_TROUBLE = [
  */
 const FLOWERS = {
   quote: 'On Tuesday, order flowers for the anniversary.',
-  intro: 'That sentence is a whole application: a trigger, a task, a decision, and an action that touches the outside world. Here is what it actually looks like on oshal today — including the two places it deliberately stops.',
+  intro: 'That sentence is a whole application: a trigger, a task, a decision, and an action that touches the outside world. You say it to the assistant — here is what happens, including the one place it deliberately stops.',
   steps: [
     {
-      h: 'You describe it, in words',
-      p: 'Open Workflow Studio and type or dictate the process. An assistant drafts the workflow as a graph on the canvas while you talk, and you refine it by talking — "add an approval before it orders", "check the calendar first". It returns the whole revised graph each turn, so refinement is a conversation rather than a redraw.',
+      h: 'You just say it',
+      p: 'To the assistant, in those words. It recognizes the scheduling intent without you opening a form or learning a syntax — a time phrase at the start of a message ("On Tuesday…", "every morning…", "tomorrow at 3…") is read as an instruction, not chatter.',
     },
     {
-      h: 'You point each step at a bot',
-      p: 'Pick from a roster dropdown on each step. This is the one place the canvas asks you to choose rather than infer — you are saying who is accountable for that step, which is what makes the cost and the audit trail land somewhere.',
+      h: 'It turns your words into a real trigger',
+      p: 'A deterministic parser — not a guess — converts "on Tuesday" into a schedule rule: the next Tuesday, once, at your morning hour, in your timezone. "every Tuesday" would make it recurring instead. It confirms in one line what it set, and you can cancel it any time.',
     },
     {
-      h: 'You publish it, and it is live',
-      p: 'Publish compiles the canvas into a real executable workflow and loads it into the running swarm — no redeploy, no rebuild. It is scoped to you by default: your workflow, your data, invisible to anyone else on the box.',
+      h: 'The trigger is durable, owned, and yours alone',
+      p: 'It becomes a real schedule the runner fires — not a timer in a browser tab. Scoped to you, visible on your calendar, and it survives restarts. A one-time reminder fires once and stops; a recurring one keeps going until you cancel it.',
     },
     {
-      h: 'You give it a trigger',
-      p: 'A cron scheduler runs the timed side. You set the recurrence in the scheduler panel and it stores the rule; a runner polls for due work and files a ticket when it fires. The ticket is durable, owned, and visible — not a timer in someone\'s browser tab.',
+      h: 'Tuesday: it does the work',
+      p: 'When it fires, your request runs through the assistant exactly as if you had typed it that morning — it routes to the shopping specialist, which searches the connected retailer and assembles the order.',
     },
     {
-      h: 'Tuesday: it does the work and then stops',
-      p: 'The shopping specialist searches the connected retailer, assembles the basket, and hands you a ready checkout. It does not pay. <strong>Nothing in oshal spends your money</strong> — there is no stored card, no outbound payment rail, and every commerce app in the catalog ends at a confirm-it-yourself handoff. That is a design decision, not a missing feature.',
+      h: 'Then it stops and hands it to you',
+      p: 'The specialist hands you a ready checkout. It does not pay. <strong>Nothing in oshal spends your money</strong> — there is no stored card, no outbound payment rail, and every commerce app in the catalog ends at a confirm-it-yourself handoff. And because the fired request keeps every interactive approval gate, an outward step waits for your yes. That is a design decision, not a missing feature.',
     },
   ],
   ceiling: [
-    '<strong>Saying it to the assistant does not create the trigger.</strong> The scheduler is real and the assistant is real, but they are not wired together yet, and nothing translates "on Tuesday" into a schedule rule. You author the schedule once, in the panel, using a recurrence picker — then the sentence runs on its own every week.',
-    '<strong>Nothing completes a purchase.</strong> Shopping, food, rides and travel all stop at a ready handoff you confirm in your own account. If you were expecting a florist charge to appear on a card, that does not exist and is not on the way.',
-    '<strong>Times are stored as plain schedule rules with no timezone attached</strong>, so "9am" means 9am in the container\'s clock. Worth knowing before you schedule something that matters at a specific local hour.',
+    '<strong>Nothing completes a purchase.</strong> Shopping, food, rides and travel all stop at a ready handoff you confirm in your own account. The reminder schedules the intent; it never pre-authorizes the spend. If you were expecting a florist charge to appear on a card on its own, that does not exist and is not on the way — by design.',
+    '<strong>The assistant creates reminders where a scheduler is running</strong> — the standard local stack runs one. On a deployment with the scheduler switched off, the assistant says so rather than accepting a reminder that would never fire.',
+    '<strong>A reminder uses the deployment\'s timezone</strong> unless a per-user zone is configured, so "9am" is 9am there. The cockpit calendar, which knows your browser\'s zone, uses that.',
   ],
 };
 
