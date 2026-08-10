@@ -67,7 +67,7 @@ fi
 # every page links to its siblings, so a deploy that silently dropped one publishes dead links.
 # Copied whole rather than file-by-file — a hand-listed set of ~70 pages is a staleness bug waiting
 # to happen the next time an app is added.
-for tree in product platform; do
+for tree in product platform install build; do
   [ -f "$SRC/$tree/index.html" ] || fail "missing $SRC/$tree/index.html — run scripts/site-product-pages.js"
   cp -r "$SRC/$tree" "$STAGE/$tree"
   note "staged /$tree ($(find "$STAGE/$tree" -name index.html | wc -l | tr -d ' ') pages)"
@@ -165,7 +165,9 @@ verify_page "/product/" "$STAGE/product/index.html"
 verify_page "/platform/" "$STAGE/platform/index.html"
 verify_page "/platform/security/" "$STAGE/platform/security/index.html"
 verify_page "/product/apps/$(basename "$SAMPLE_APP")/" "$SAMPLE_APP/index.html"
-note "VERIFIED: $BASE serves the product site ($(find "$STAGE/product" "$STAGE/platform" -name index.html | wc -l | tr -d ' ') pages staged)"
+verify_page "/install/" "$STAGE/install/index.html"
+verify_page "/build/" "$STAGE/build/index.html"
+note "VERIFIED: $BASE serves the product site ($(find "$STAGE/product" "$STAGE/platform" "$STAGE/install" "$STAGE/build" -name index.html | wc -l | tr -d ' ') pages staged)"
 
 # 5) When the lab report was staged, hash-verify it too (same edge-lag rationale as the index gate).
 if [ -f "$STAGE/lab/index.html" ]; then

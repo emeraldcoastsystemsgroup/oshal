@@ -133,6 +133,24 @@ ol.flow h3{margin-bottom:7px}
 ol.flow p{font-size:.95rem;line-height:1.65}
 @media (max-width:640px){ol.flow>li{grid-template-columns:minmax(0,1fr);gap:8px}}
 
+/* Guide pages: a numbered step whose payload is a command you copy. Reuses ol.flow's chrome so a
+   guide and an app page read as the same document family. */
+ol.flow pre{margin-top:12px}
+.cmd{display:block;font-family:var(--mono);font-size:.84rem;color:var(--cyan);background:var(--panel-2);border:1px solid var(--hairline);border-radius:8px;padding:14px 16px;margin-top:12px;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.cmd .c{color:var(--slate)}
+.checklist{display:grid;gap:1px;background:var(--hairline);border:1px solid var(--hairline);border-radius:10px;overflow:hidden;margin-top:8px}
+.checklist>div{background:var(--panel-2);padding:16px 20px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start}
+.checklist .tick{color:var(--green);font-family:var(--mono);font-size:.8rem;padding-top:2px}
+.checklist .req{color:var(--amber)}
+.checklist b{color:var(--white);display:block;margin-bottom:3px}
+.checklist span{font-size:.93rem;line-height:1.6}
+.lanes{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));margin-top:8px}
+.lane{background:var(--panel-2);border:1px solid var(--hairline);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:12px}
+.lane .n{font-family:var(--mono);font-size:.72rem;color:var(--cyan);letter-spacing:.1em}
+.lane h3{font-size:1.15rem}
+.lane p{font-size:.93rem;line-height:1.62;flex:1}
+.quote{border-left:2px solid var(--cyan);padding:6px 0 6px 20px;margin:22px 0;font-size:1.12rem;line-height:1.6;color:var(--white);font-style:italic}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
@@ -166,7 +184,8 @@ footer a:hover{color:var(--cyan)}</style>
   <div class="navlinks">
     <a href="/product/" aria-current="page">Applications</a>
     <a href="/platform/">Platform</a>
-    <a href="/">Overview</a>
+    <a href="/build/">Build</a>
+    <a href="/install/">Install</a>
     <a class="btn" href="https://oshal.agenticfederal.us/guest">Live demo</a>
     <a class="btn primary" href="/#get-started">Install</a>
   </div>
@@ -236,6 +255,7 @@ footer a:hover{color:var(--cyan)}</style>
 </div></section>
 <footer><div class="wrap">
   <div><a href="/">oshal.ai</a> · <a href="/product/">Applications</a> · <a href="/platform/">Platform</a> ·
+  <a href="/build/">Add an app</a> · <a href="/install/">Install</a> ·
   <a href="https://github.com/emeraldcoastsystemsgroup/oshal">core repo</a> ·
   <a href="https://github.com/emeraldcoastsystemsgroup/oshal-apps">app store</a></div>
   <div>AGPL-3.0-or-later. Your infrastructure, your keys, your data.</div>

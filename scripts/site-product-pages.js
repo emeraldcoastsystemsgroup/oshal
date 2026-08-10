@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const catalog = require('./lib/product-site/catalog');
-const { renderProductHub, renderShelf, renderApp, renderPlatformHub, renderPlatformTopic, TOPICS } = require('./lib/product-site/render');
+const { renderProductHub, renderShelf, renderApp, renderPlatformHub, renderPlatformTopic, renderInstall, renderBuild, TOPICS } = require('./lib/product-site/render');
 
 const REPO = path.resolve(__dirname, '..');
 const SITE = path.join(REPO, 'site', 'oswarm.ai');
@@ -20,7 +20,7 @@ const SITE = path.join(REPO, 'site', 'oswarm.ai');
  * The two directories this generator OWNS. Everything inside them is generated and prunable;
  * nothing outside them is ever written. Keeping the roots explicit is what makes the prune safe.
  */
-const ROOTS = [path.join(SITE, 'product'), path.join(SITE, 'platform')];
+const ROOTS = [path.join(SITE, 'product'), path.join(SITE, 'platform'), path.join(SITE, 'install'), path.join(SITE, 'build')];
 
 /** Builds the full { relativePath -> html } map for the site. */
 function renderAll(model) {
@@ -36,6 +36,9 @@ function renderAll(model) {
   for (const topic of TOPICS) {
     pages.set(path.join('platform', topic.slug, 'index.html'), renderPlatformTopic(model, topic));
   }
+  // The two guides: how to get a platform, and how to put something on it.
+  pages.set(path.join('install', 'index.html'), renderInstall(model));
+  pages.set(path.join('build', 'index.html'), renderBuild(model));
   return pages;
 }
 
@@ -89,7 +92,7 @@ function main() {
   }
 
   const c = model.counts;
-  console.log(`[product-site] ${pages.size} pages: 1 catalog hub + ${model.shelves.length} shelves + ${model.apps.length} apps + 1 platform hub + ${TOPICS.length} platform topics`);
+  console.log(`[product-site] ${pages.size} pages: 1 catalog hub + ${model.shelves.length} shelves + ${model.apps.length} apps + 1 platform hub + ${TOPICS.length} platform topics + 2 guides`);
   console.log(`[product-site] catalog: ${c.apps} apps (${c.storeApps} store + ${c.kernelApps} kernel) across ${c.shelves} user-facing shelves`);
   console.log(`[product-site] counts: ${c.connectors} connectors, ${c.providers} providers, ${c.personas} personas, ${c.adrs} ADRs`);
   console.log(`[product-site] withheld: ${[...model.withheld.kernel, ...model.withheld.store].join(', ') || '(none)'}`);

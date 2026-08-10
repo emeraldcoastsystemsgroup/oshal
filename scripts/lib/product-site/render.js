@@ -16,6 +16,8 @@ const url = {
   app: (name) => `/product/apps/${name}/`,
   platformHub: '/platform/',
   topic: (slug) => `/platform/${slug}/`,
+  install: '/install/',
+  build: '/build/',
 };
 
 /** Counts are substituted into prose so no number is ever typed into copy. */
@@ -509,4 +511,177 @@ ${sections}
   });
 }
 
-module.exports = { renderProductHub, renderShelf, renderApp, renderPlatformHub, renderPlatformTopic, url, TOPICS };
+/* ────────────────────────────── guides ────────────────────────────── */
+
+const G = require('./guides-content');
+
+function renderInstall(model) {
+  const { counts } = model;
+  const body = `
+<header class="page"><div class="wrap">
+  <p class="eyebrow">Install</p>
+  <h1>One command, and a stack that <span class="accent">checks its own work</span>.</h1>
+  <p class="lede">oshal runs on one machine with Docker — cockpit, database, mesh, vector store and the
+    bot fleet — and the installer refuses to tell you it worked until it has verified that it did.
+    No cloud account, no API key to begin with, nothing to compile.</p>
+  <div class="cta-row">
+    <a class="btn primary" href="#paths">Pick your path</a>
+    <a class="btn" href="${url.build}">Then add an app &rarr;</a>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <div class="sec-head"><p class="eyebrow">Before you start</p><h2>What the machine needs.</h2></div>
+  <div class="checklist">
+    ${G.INSTALL_REQUIREMENTS.map((r) => `<div>
+      <span class="tick${r.req ? ' req' : ''}">${r.req ? 'REQ' : 'OPT'}</span>
+      <span><b>${r.title}</b>${r.body}</span>
+    </div>`).join('')}
+  </div>
+</div></section>
+
+<section id="paths"><div class="wrap">
+  <div class="sec-head"><p class="eyebrow">Three ways in</p><h2>Pick the one that matches your machine.</h2></div>
+  <div class="lanes">
+    ${G.INSTALL_PATHS.map((p) => `<div class="lane">
+      <span class="n">${esc(p.n)}</span>
+      <h3>${p.title}</h3>
+      <p>${p.body}</p>
+      <code class="cmd">${esc(p.cmd)}</code>
+    </div>`).join('')}
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">What it does</p><h2>Six things, in this order.</h2>
+    <p class="lede">Worth reading once, because it explains why an oshal install either works or tells
+      you exactly which capability is missing — rather than leaving you with running containers and a
+      blank page.</p>
+  </div>
+  ${flowList(G.INSTALL_STEPS)}
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head"><p class="eyebrow">After it finishes</p><h2>Where everything is.</h2></div>
+  ${factTable(G.INSTALL_PORTS)}
+  <div class="note"><b>One port is public, the rest are not.</b> Only the cockpit binds to all
+    interfaces, because that is how a second machine joins your swarm. Every datastore is bound to
+    loopback, so nothing on your network can reach your database even if you never configure a
+    firewall.</div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head"><p class="eyebrow">If something is wrong</p><h2>The four that actually happen.</h2></div>
+  ${flowList(G.INSTALL_TROUBLE)}
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head"><p class="eyebrow">Next</p><h2>You have a platform. Now put something on it.</h2>
+  <p class="lede">${counts.apps} applications are installable from the catalog, and adding your own
+    takes a conversation rather than a codebase.</p></div>
+  <div class="cta-row">
+    <a class="btn primary" href="${url.build}">Add an application &rarr;</a>
+    <a class="btn" href="${url.productHub}">Browse the catalog</a>
+  </div>
+</div></section>`;
+
+  return page({
+    title: 'Install oshal — one command, self-hosted, verified',
+    description: 'Install oshal on one machine with Docker: one command on macOS or Linux, a double-click on Windows, or an offline archive. The installer generates its own secrets, brings the stack up in order, and verifies by capability before reporting success.',
+    canonical: url.install,
+    section: 'install',
+    statusLeft: 'INSTALL GUIDE',
+    trail: [{ label: 'oshal', href: '/' }, { label: 'Install' }],
+    body,
+  });
+}
+
+function renderBuild(model) {
+  const { counts } = model;
+  const body = `
+<header class="page"><div class="wrap">
+  <p class="eyebrow">Adding an application</p>
+  <h1>You need an idea. <span class="accent">Not an architecture.</span></h1>
+  <p class="lede">You do not have to understand agent orchestration, prompt engineering, OAuth scopes,
+    row-level security or front-end layout to add something to oshal. You need to be able to say what
+    you want to happen. A requirement, a workflow, a reminder, an event — the platform already owns
+    the hard parts, and the parts it cannot do for you are named on this page rather than discovered
+    at step four.</p>
+  <div class="cta-row">
+    <a class="btn primary" href="#routes">The four routes in</a>
+    <a class="btn" href="#example">See a real one</a>
+  </div>
+</div></header>
+
+<section id="example"><div class="wrap">
+  <div class="sec-head"><p class="eyebrow">A worked example</p><h2>One sentence, start to finish.</h2></div>
+  <p class="quote">&ldquo;${esc(G.FLOWERS.quote)}&rdquo;</p>
+  <p class="lede">${G.FLOWERS.intro}</p>
+  <div style="margin-top:28px">${flowList(G.FLOWERS.steps)}</div>
+  <div class="note"><b>Where this stops, and why.</b>
+    ${bulletList(G.FLOWERS.ceiling)}
+  </div>
+</div></section>
+
+<section id="routes"><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Four routes in</p><h2>Talk, draw, import, or copy.</h2>
+    <p class="lede">Three of the four never ask you to open an editor. Each one ends the same way —
+      a real application, registered in the running swarm, with its own bots and its own screens.</p>
+  </div>
+  <div class="lanes">
+    ${G.BUILD_LANES.map((l) => `<div class="lane">
+      <span class="n">${esc(l.n)}</span>
+      <h3>${l.title}</h3>
+      <p>${l.body}</p>
+      <p class="cta-note" style="margin-top:0"><strong>Honestly:</strong> ${l.honest}</p>
+    </div>`).join('')}
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">What you skip</p><h2>Six things you will never build.</h2>
+    <p class="lede">This is the actual reason adding an app is small: almost everything that makes
+      software hard is already here, and your package declares that it wants it.</p>
+  </div>
+  ${bulletList(G.BUILD_FREE)}
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">What still needs you</p><h2>The honest four.</h2>
+    <p class="lede">Every platform that claims "just describe it" hides a step. Here are ours,
+      up front.</p>
+  </div>
+  ${flowList(G.BUILD_LIMITS)}
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head"><p class="eyebrow">Where it lands</p><h2>Your app is a real app.</h2>
+    <p class="lede">Whatever route you took, the result is the same shape as the ${counts.apps}
+      applications already in the catalog — the same manifest, the same cockpit, the same rails.
+      It opens at its own URL, it can be installed onto another box, and the assistant can route
+      to it.</p></div>
+  <div class="cta-row">
+    <a class="btn primary" href="${url.productHub}">See what that looks like</a>
+    <a class="btn" href="${url.install}">Install first</a>
+  </div>
+</div></section>`;
+
+  return page({
+    title: 'Add an application to oshal — describe it, and publish it',
+    description: 'Adding an application to oshal takes a conversation, not a codebase. Four routes in: describe a bot in eight questions, draw a workflow by talking, import an existing skill, or copy a five-file example.',
+    canonical: url.build,
+    section: 'build',
+    statusLeft: 'BUILD GUIDE',
+    trail: [{ label: 'oshal', href: '/' }, { label: 'Add an application' }],
+    body,
+  });
+}
+
+module.exports = {
+  renderProductHub, renderShelf, renderApp, renderPlatformHub, renderPlatformTopic,
+  renderInstall, renderBuild, url, TOPICS,
+};

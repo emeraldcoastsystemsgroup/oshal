@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the multi-page product site. Replaces the single-page site-product-page.spec.ts. Four failure shapes are pinned, all against the REAL manifests rather than a fixture of them: UNDER-CLAIMING (the committed pages must equal a fresh render, because the index grid advertised 7 apps while 54 shipped), OVER-PUBLISHING (withheld apps must not get a page — the withhold list once keyed off the filename and silently published an internal app), BROKEN NAVIGATION (every internal link must resolve to a file that exists, which is the failure a single-page build could not have), and ORPHANS (a delisted app must not keep a live page).
  */
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -47,8 +48,10 @@ describe('product site: the committed pages match the manifests', () => {
     expect(paths).toContain('platform/index.html');
     for (const app of model.apps) expect(paths).toContain(`product/apps/${app.name}/index.html`);
     for (const shelf of model.shelves) expect(paths).toContain(`product/${shelf.slug}/index.html`);
-    // 2 hubs + shelves + apps + the platform topics
-    expect(rendered.size).toBe(2 + model.shelves.length + model.apps.length + 9);
+    // 2 hubs + shelves + apps + the 9 platform topics + the 2 guides
+    expect(paths).toContain('install/index.html');
+    expect(paths).toContain('build/index.html');
+    expect(rendered.size).toBe(2 + model.shelves.length + model.apps.length + 9 + 2);
   });
 
   it.runIf(storePresent)('is byte-identical to what a fresh render produces', () => {
@@ -141,6 +144,31 @@ describe('product site: every internal link resolves', () => {
       const canonical = m![1];
       expect(seen.has(canonical), `${canonical} claimed by both ${seen.get(canonical)} and ${rel}`).toBe(false);
       seen.set(canonical, rel);
+    }
+  });
+
+  it('has every generated page TRACKED in git, not just present on disk', () => {
+    // The site deploys from the working tree, so a page can exist locally, publish fine, and be
+    // absent from a fresh clone. That is exactly what happened to /build/: .gitignore's generic
+    // `build/` artifact rule silently untracked it. On disk is not the same as shipped.
+    const tracked = new Set(
+      execFileSync('git', ['ls-files', '--', 'site/oswarm.ai'], { cwd: REPO, encoding: 'utf8' })
+        .split(/\r?\n/).filter(Boolean).map((p) => p.replace(/\//g, path.sep)),
+    );
+    const untracked = onDisk.filter((rel) => !tracked.has(path.join('site', 'oswarm.ai', rel)));
+    expect(
+      untracked,
+      'these generated pages are ignored or unstaged — a fresh clone would deploy without them',
+    ).toEqual([]);
+  });
+
+  it('reaches the install and build guides from the shared nav on every page', () => {
+    // The guides are the two pages a first-time visitor most needs, and they live outside the
+    // /product and /platform trees — so a nav regression would strand them with no inbound link.
+    for (const rel of onDisk) {
+      const html = fs.readFileSync(path.join(gen.SITE, rel), 'utf8');
+      expect(html.includes('href="/install/"'), `${rel} has no install link`).toBe(true);
+      expect(html.includes('href="/build/"'), `${rel} has no build link`).toBe(true);
     }
   });
 
