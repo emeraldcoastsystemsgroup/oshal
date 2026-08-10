@@ -67,11 +67,14 @@ const SHOTS = {
   ops: ['/assets/cockpit-ops-dashboard.png', 'The oshal operations dashboard', '<b>The ops dashboard.</b> Runtime health, the process-flow snapshot, and the per-agent health registry, read from live APIs.'],
   workflow: ['/assets/cockpit-workflow-studio.png', 'The Workflow Studio canvas', '<b>Workflow Studio.</b> A real branching canvas — intake, an approval gate, a parallel split, verify and review — compiled to a live queue on Publish.'],
   world: ['/assets/cockpit-world-intelligence.png', 'The World Intelligence surface', '<b>Bias-aware sentiment.</b> Each tracked subject scored across political and economic axes and by outlet kind — a naive average would mislead.'],
+  littleMonsters: ['/assets/app-little-monsters.png', 'The Little Monsters student dashboard', '<b>Learning, grounded in the class.</b> Join a class, record a lecture, and get a replay, flashcards and a tutor from it — shown here with open demo classes.'],
+  finance: ['/assets/app-finance.png', 'The Finance app', '<b>Your money in one view.</b> Balances, holdings and spending across every linked account, with a plain-English brief. Shown on demo data — reading is read-only.'],
+  dnd: ['/assets/app-dnd.png', 'The Dungeon Master campaign shelf', '<b>Pick a campaign and play.</b> An AI Dungeon Master runs a cinematic shared board — investigations remember clues, battles share the same visible turn and dice.'],
 };
 const shot = (id, section) => (SHOTS[id] ? `${section ? '<section><div class="wrap">' : ''}${figure(...SHOTS[id])}${section ? '</div></section>' : ''}` : '');
 
-/** App pages that have a real, safe screenshot, keyed by app name. */
-const APP_SHOTS = { world: 'world' };
+/** App pages that have a real, safe screenshot, keyed by app name → SHOTS id. */
+const APP_SHOTS = { world: 'world', 'little-monsters': 'littleMonsters', finance: 'finance', dnd: 'dnd' };
 
 /** Numbered "what actually happens" flow. Each step is a claim the manifest supports. */
 function flowList(steps) {
@@ -204,6 +207,21 @@ function renderProductHub(model) {
   </div>
   <div class="grid">
     ${featured.map(appCard).join('\n    ')}
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Spotlight — learning</p>
+    <h2>Built for the kitchen table, not just the desk.</h2>
+    <p class="lede">The same platform that runs an incident queue runs a study companion for a
+      12-year-old. <strong>Little Monsters</strong> turns a recorded lecture into a replay, flashcards
+      and a tutor — every answer grounded in that class's own material, so it can cite where it came
+      from instead of guessing.</p>
+  </div>
+  ${figure(...SHOTS.littleMonsters)}
+  <div class="grid" style="margin-top:22px">
+    ${['little-monsters', 'youtube-kids'].map((n) => apps.find((a) => a.name === n)).filter(Boolean).map(appCard).join('\n    ')}
   </div>
 </div></section>
 
