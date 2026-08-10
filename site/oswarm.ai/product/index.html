@@ -16,6 +16,11 @@
   --hairline:rgba(148,163,184,.16); --hairline-strong:rgba(148,163,184,.28);
   --cyan:#7DD3FC; --cyan-deep:#38BDF8; --green:#34D399; --amber:#FBBF24;
   --slate:#94A3B8; --body:#B7C3D6; --white:#F8FAFC;
+  /* Glass surface language, borrowed from the app's own design-system (src/shared/ui/css): a
+     translucent panel over a textured background, a soft white top-edge highlight, real blur. This
+     is what makes the site read as the cockpit rather than a flat brochure. */
+  --glass:rgba(17,26,46,.62); --glass-strong:rgba(17,26,46,.82);
+  --glass-border:rgba(148,163,184,.20); --glass-hi:rgba(255,255,255,.10); --glass-blur:16px;
   --mono:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,"SF Mono",Menlo,monospace;
   --sans:system-ui,"Segoe UI Variable Display","Segoe UI",-apple-system,"Helvetica Neue",Arial,sans-serif;
   --w:1120px;
@@ -23,7 +28,14 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-body{background:var(--night);color:var(--body);font-family:var(--sans);font-size:1rem;line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+/* Layered background: the flat night, plus fixed brand-colour glows so glass panels have real depth
+   to refract against. This is the single biggest change from "dry" to "alive" — the page is no
+   longer a matte void. */
+body{background:var(--night);color:var(--body);font-family:var(--sans);font-size:1rem;line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden;position:relative}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:
+  radial-gradient(70% 55% at 8% -5%, rgba(125,211,252,.10), transparent 60%),
+  radial-gradient(60% 50% at 100% 8%, rgba(52,211,153,.08), transparent 55%),
+  radial-gradient(80% 60% at 50% 115%, rgba(56,189,248,.07), transparent 60%)}
 ::selection{background:rgba(125,211,252,.28);color:var(--white)}
 a{color:var(--cyan);text-decoration:none}
 a:hover{text-decoration:underline;text-underline-offset:3px}
@@ -79,15 +91,15 @@ section:last-of-type{border-bottom:none}
 .cta-row{display:flex;gap:14px;margin-top:30px;flex-wrap:wrap}
 .cta-note{font-family:var(--mono);font-size:.74rem;color:var(--slate);margin-top:14px}
 
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;margin-top:44px;background:var(--hairline);border:1px solid var(--hairline);border-radius:10px;overflow:hidden}
-.stats>div{background:var(--panel-2);padding:18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;margin-top:44px;background:var(--glass-border);border:1px solid var(--glass-border);border-radius:12px;overflow:hidden}
+.stats>div{background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));padding:18px}
 .stats .n{font-family:var(--mono);font-size:1.6rem;font-weight:600;color:var(--cyan);line-height:1.1}
 .stats .l{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--slate);margin-top:7px}
 
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,272px),1fr))}
 .grid.two{grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr))}
-.card{display:flex;flex-direction:column;gap:10px;background:var(--panel-2);border:1px solid var(--hairline);border-radius:10px;padding:20px;color:var(--body);transition:border-color .15s ease,transform .15s ease}
-a.card:hover{border-color:var(--cyan);transform:translateY(-2px);text-decoration:none}
+.card{display:flex;flex-direction:column;gap:10px;background:var(--glass);backdrop-filter:blur(var(--glass-blur)) saturate(135%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(135%);box-shadow:inset 0 1px 0 var(--glass-hi);border:1px solid var(--glass-border);border-radius:12px;padding:20px;color:var(--body);transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
+a.card:hover{border-color:var(--cyan);transform:translateY(-2px);text-decoration:none;box-shadow:inset 0 1px 0 var(--glass-hi),0 10px 30px rgba(56,189,248,.14)}
 .card .top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .card h3{text-wrap:balance}
 .card p{font-size:.9rem;line-height:1.6;flex:1;color:var(--body)}
@@ -97,15 +109,15 @@ a.card:hover{border-color:var(--cyan);transform:translateY(-2px);text-decoration
 .badge.core{border-color:rgba(52,211,153,.5);color:var(--green)}
 .flag{display:inline-block;align-self:flex-start;font-family:var(--mono);font-size:.63rem;letter-spacing:.09em;text-transform:uppercase;padding:3px 8px;border-radius:99px;border:1px solid rgba(251,191,36,.45);color:var(--amber)}
 
-.shelfcard{display:flex;flex-direction:column;gap:12px;background:var(--panel-2);border:1px solid var(--hairline);border-radius:12px;padding:26px;color:var(--body)}
-a.shelfcard:hover{border-color:var(--cyan);transform:translateY(-2px);text-decoration:none}
-.shelfcard .n{font-family:var(--mono);font-size:.72rem;color:var(--slate);letter-spacing:.1em}
+.shelfcard{display:flex;flex-direction:column;gap:12px;background:var(--glass);backdrop-filter:blur(var(--glass-blur)) saturate(135%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(135%);box-shadow:inset 0 1px 0 var(--glass-hi);border:1px solid var(--glass-border);border-radius:14px;padding:26px;color:var(--body);transition:border-color .15s,transform .15s,box-shadow .15s}
+a.shelfcard:hover{border-color:var(--cyan);transform:translateY(-2px);text-decoration:none;box-shadow:inset 0 1px 0 var(--glass-hi),0 12px 34px rgba(56,189,248,.16)}
+.shelfcard{position:relative;overflow:hidden}.shelfcard::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--sh,var(--slate));opacity:.85}.shelfcard:hover{border-color:color-mix(in srgb,var(--sh,var(--cyan)) 60%,transparent);box-shadow:inset 0 1px 0 var(--glass-hi),0 12px 34px color-mix(in srgb,var(--sh,var(--cyan)) 22%,transparent)}.shelfcard .dot,.shelfcard .n b{color:var(--sh)}.shelfcard .n{font-family:var(--mono);font-size:.72rem;color:var(--slate);letter-spacing:.1em}
 .shelfcard h3{font-size:1.3rem;letter-spacing:-.02em}
 .shelfcard p{font-size:.94rem;line-height:1.62;flex:1}
 .shelfcard .names{font-family:var(--mono);font-size:.72rem;color:var(--slate);line-height:1.7}
 
-.facts{display:grid;gap:1px;background:var(--hairline);border:1px solid var(--hairline);border-radius:10px;overflow:hidden}
-.facts>div{background:var(--panel-2);padding:16px 20px;display:grid;grid-template-columns:minmax(0,190px) minmax(0,1fr);gap:16px;align-items:baseline}
+.facts{display:grid;gap:1px;background:var(--glass-border);border:1px solid var(--glass-border);border-radius:12px;overflow:hidden}
+.facts>div{background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));padding:16px 20px;display:grid;grid-template-columns:minmax(0,190px) minmax(0,1fr);gap:16px;align-items:baseline}
 /* minmax(0,1fr), never a bare 1fr: a bare fr track keeps min-width:auto, so one unbreakable
    string (an install command, a long app name) widens the track past the viewport. */
 @media (max-width:640px){.facts>div{grid-template-columns:minmax(0,1fr);gap:4px}}
@@ -126,8 +138,8 @@ pre code{background:none;padding:0;font-size:.85rem;color:var(--cyan)}
 .pill{font-family:var(--mono);font-size:.74rem;padding:7px 13px;border:1px solid var(--hairline-strong);border-radius:99px;color:var(--slate)}
 .pill.screen{color:var(--body);border-color:var(--hairline-strong)}
 
-ol.flow{list-style:none;counter-reset:none;display:grid;gap:1px;background:var(--hairline);border:1px solid var(--hairline);border-radius:10px;overflow:hidden}
-ol.flow>li{background:var(--panel-2);padding:22px 24px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:20px;align-items:start}
+ol.flow{list-style:none;counter-reset:none;display:grid;gap:1px;background:var(--glass-border);border:1px solid var(--glass-border);border-radius:12px;overflow:hidden}
+ol.flow>li{background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));padding:22px 24px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:20px;align-items:start}
 ol.flow .step{font-family:var(--mono);font-size:.78rem;color:var(--cyan);letter-spacing:.08em;padding-top:2px}
 ol.flow h3{margin-bottom:7px}
 ol.flow p{font-size:.95rem;line-height:1.65}
@@ -138,14 +150,14 @@ ol.flow p{font-size:.95rem;line-height:1.65}
 ol.flow pre{margin-top:12px}
 .cmd{display:block;font-family:var(--mono);font-size:.84rem;color:var(--cyan);background:var(--panel-2);border:1px solid var(--hairline);border-radius:8px;padding:14px 16px;margin-top:12px;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .cmd .c{color:var(--slate)}
-.checklist{display:grid;gap:1px;background:var(--hairline);border:1px solid var(--hairline);border-radius:10px;overflow:hidden;margin-top:8px}
-.checklist>div{background:var(--panel-2);padding:16px 20px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start}
+.checklist{display:grid;gap:1px;background:var(--glass-border);border:1px solid var(--glass-border);border-radius:12px;overflow:hidden;margin-top:8px}
+.checklist>div{background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));padding:16px 20px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start}
 .checklist .tick{color:var(--green);font-family:var(--mono);font-size:.8rem;padding-top:2px}
 .checklist .req{color:var(--amber)}
 .checklist b{color:var(--white);display:block;margin-bottom:3px}
 .checklist span{font-size:.93rem;line-height:1.6}
 .lanes{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));margin-top:8px}
-.lane{background:var(--panel-2);border:1px solid var(--hairline);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:12px}
+.lane{background:var(--glass);backdrop-filter:blur(var(--glass-blur)) saturate(135%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(135%);box-shadow:inset 0 1px 0 var(--glass-hi);border:1px solid var(--glass-border);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:12px}
 .lane .n{font-family:var(--mono);font-size:.72rem;color:var(--cyan);letter-spacing:.1em}
 .lane h3{font-size:1.15rem}
 .lane p{font-size:.93rem;line-height:1.62;flex:1}
@@ -153,7 +165,7 @@ ol.flow pre{margin-top:12px}
 
 /* Screenshot figure. The image is framed and captioned; it scrolls inside its own box on narrow
    viewports rather than widening the page. Only real, vetted, same-origin captures are used here. */
-figure.shot{margin:26px 0 0;border:1px solid var(--hairline);border-radius:12px;overflow:hidden;background:var(--panel-2)}
+figure.shot{margin:26px 0 0;border:1px solid var(--glass-border);border-radius:14px;overflow:hidden;background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));box-shadow:inset 0 1px 0 var(--glass-hi),0 12px 40px rgba(6,12,24,.4)}
 figure.shot .frame{background:#070B16;overflow-x:auto}
 figure.shot img{display:block;width:100%;min-width:640px;height:auto}
 figure.shot figcaption{padding:12px 18px;font-size:.86rem;line-height:1.55;color:var(--slate);border-top:1px solid var(--hairline)}
@@ -165,12 +177,12 @@ ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
 ul.bullets strong{color:var(--white);font-weight:600}
 
-.note{margin-top:24px;padding:18px 20px;border:1px solid var(--hairline);border-left:2px solid var(--amber);border-radius:0 8px 8px 0;background:var(--panel-2);font-size:.93rem;line-height:1.65}
+.note{margin-top:24px;padding:18px 20px;border:1px solid var(--glass-border);border-left:2px solid var(--amber);border-radius:0 10px 10px 0;background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));font-size:.93rem;line-height:1.65}
 .note b{color:var(--white)}
 .split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,340px);gap:44px;align-items:start}
 .split>*{min-width:0}
 @media (max-width:900px){.split{grid-template-columns:minmax(0,1fr);gap:32px}}
-.aside{background:var(--panel-2);border:1px solid var(--hairline);border-radius:12px;padding:24px;position:sticky;top:88px}
+.aside{background:var(--glass-strong);backdrop-filter:blur(var(--glass-blur)) saturate(135%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(135%);box-shadow:inset 0 1px 0 var(--glass-hi);border:1px solid var(--glass-border);border-radius:14px;padding:24px;position:sticky;top:88px}
 @media (max-width:900px){.aside{position:static}}
 .aside h3{margin-bottom:14px}
 .aside .btn{width:100%;margin-bottom:10px}
@@ -389,49 +401,49 @@ footer a:hover{color:var(--cyan)}</style>
       and the screens it needs, and installs as one unit.</p>
   </div>
   <div class="grid two">
-    <a class="shelfcard" href="/product/productivity/">
+    <a class="shelfcard" style="--sh:#22D3EE" href="/product/productivity/">
       <span class="n">01 — 10 apps</span>
       <h3>Productivity</h3>
       <p>Mail, messages, documents, money in and money out. The apps you would otherwise keep eleven browser tabs open for.</p>
       <span class="names">AI Office · Feeds · Identity Hub · Intelligent Communication · Payments …</span>
       <span class="more">Browse productivity &rarr;</span>
     </a>
-    <a class="shelfcard" href="/product/knowledge/">
+    <a class="shelfcard" style="--sh:#34D399" href="/product/knowledge/">
       <span class="n">02 — 4 apps</span>
       <h3>Knowledge</h3>
       <p>Feeds, corpora and recall. These apps do the reading you do not have time for, and can tell you where every claim came from.</p>
       <span class="names">Ambient Recall · Intelligent Career · Job Apply · World Intelligence</span>
       <span class="more">Browse knowledge &rarr;</span>
     </a>
-    <a class="shelfcard" href="/product/finance/">
+    <a class="shelfcard" style="--sh:#FBBF24" href="/product/finance/">
       <span class="n">03 — 6 apps</span>
       <h3>Finance</h3>
       <p>Money apps that reason out loud and stop at the point of action. Nothing here moves a dollar without you saying so.</p>
       <span class="names">Daily Trade Recap · Finance · Intelligent Trades · Kalshi Prediction Markets · Payroll …</span>
       <span class="more">Browse finance &rarr;</span>
     </a>
-    <a class="shelfcard" href="/product/creative/">
+    <a class="shelfcard" style="--sh:#F472B6" href="/product/creative/">
       <span class="n">04 — 11 apps</span>
       <h3>Creative</h3>
       <p>Video, images, characters, game nights. The output is the point, and the render is real — not a mock-up of one.</p>
       <span class="names">Brand Graphics · Camera Ops · Creative Studio · Dungeon Master · Game Show …</span>
       <span class="more">Browse creative &rarr;</span>
     </a>
-    <a class="shelfcard" href="/product/home/">
+    <a class="shelfcard" style="--sh:#A78BFA" href="/product/home/">
       <span class="n">05 — 11 apps</span>
       <h3>Home &amp; life</h3>
       <p>Devices, meals, rides, travel and the people you run a household with. The domestic half of the day, on the same rails as the work half.</p>
       <span class="names">Drone Ops · Eats · Get a Ride · Kid Lens · Life …</span>
       <span class="more">Browse home &amp; life &rarr;</span>
     </a>
-    <a class="shelfcard" href="/product/engineering/">
+    <a class="shelfcard" style="--sh:#60A5FA" href="/product/engineering/">
       <span class="n">06 — 11 apps</span>
       <h3>Engineering</h3>
       <p>The apps that run the swarm itself and the ones that turn it into a workbench — design labs, bake-offs, and the factory that packs new bots.</p>
       <span class="names">Aero Lab · AI Bake-Off · Bot Forge · Cloud · DevOps + Vault …</span>
       <span class="more">Browse engineering &rarr;</span>
     </a>
-    <a class="shelfcard" href="/product/assistant/">
+    <a class="shelfcard" style="--sh:#F8FAFC" href="/product/assistant/">
       <span class="n">07 — 1 app</span>
       <h3>Assistant</h3>
       <p>Ask in plain language and it works out which specialist owns the answer. The front door to every other app on this page.</p>

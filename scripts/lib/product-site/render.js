@@ -8,7 +8,7 @@
 
 const { page, esc, APP_HOST } = require('./theme');
 const { TOPICS } = require('./platform-content');
-const { renderOrb } = require('./orb');
+const { renderOrb, SHELF_HUE } = require('./orb');
 
 /** Site-absolute URLs. One place, so a path change cannot half-happen across seventy pages. */
 const url = {
@@ -153,7 +153,7 @@ function factTable(rows) {
 
 function renderProductHub(model) {
   const { counts, shelves, apps } = model;
-  const shelfCards = shelves.map((shelf, i) => `<a class="shelfcard" href="${url.shelf(shelf.slug)}">
+  const shelfCards = shelves.map((shelf, i) => `<a class="shelfcard" style="--sh:${SHELF_HUE[shelf.id] || '#94A3B8'}" href="${url.shelf(shelf.slug)}">
       <span class="n">${String(i + 1).padStart(2, '0')} — ${shelf.apps.length} app${shelf.apps.length === 1 ? '' : 's'}</span>
       <h3>${esc(shelf.label)}</h3>
       <p>${esc(shelf.blurb)}</p>
