@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added the trading-lab dispatch branch (ADR-092 Strategy Lab: nightly forward walks + pinned-window regressions) + its gate bypass — a system sim pass, same class as review/optimize
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the schedule dispatch callback + the enablement gate in runWithSystemIdentity so scheduled DB work (ticket/trading/world/series writes, tool-enablement reads) keeps operator visibility once OSHAL_DB_GUC_STRICT denies the identity-less case. Per-user home actions re-scope to the owner sub inside home-schedule-dispatch (nested, mirrors the interactive path).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch active manifest service-route schedules through their deterministic loopback worker instead of the generic orchestrator, with the same system-schedule gate bypass as other kernel-owned deterministic branches.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Wire the assistant's reminder path: hand the scheduler service to jarvis-schedule-intent (only when the runner is enabled) and bypass the per-agent scheduler tool gate for the jarvis-reminder taskType — a user scheduling their own prompt through the assistant, re-run with autoApprove:false so the fire-time approval gates own execution. A jarvis-reminder falls through to the generic orchestrator dispatch, which is the intended behaviour (run the prompt as if the user had typed it then).
  */
 
 import type { AppContext } from './composition-root';
@@ -32,6 +33,7 @@ import { isLabSchedule, dispatchTradingLab } from './trading-lab-dispatch';
 import { isSwingSchedule, dispatchTradingSwing } from './trading-swing-dispatch';
 import { isWorldSchedule, dispatchWorldSchedule } from './world-schedule-dispatch';
 import { isWorkflowTicketSchedule, dispatchWorkflowTicketSchedule } from './workflow-ticket-schedule-dispatch';
+import { JARVIS_REMINDER_TASK_TYPE, setJarvisScheduleService } from './routes/jarvis-schedule-intent';
 import {
   isManifestServiceRouteSchedule,
   type ManifestServiceRouteScheduleRuntime,
@@ -101,6 +103,12 @@ export function createScheduleController(
       // Installed-package deterministic workers are validated service-auth routes. The active
       // registry, rather than an agent tool grant, is their execution authority.
       if (isManifestServiceRouteSchedule(taskType)) return;
+      // A Jarvis personal reminder is a user scheduling their OWN prompt through the assistant. It
+      // re-runs that prompt through the general orchestrator with autoApprove:false, so the fire-time
+      // approval gates own execution — same class as the workflow-ticket bypass. The reminder is
+      // per-user (ownerSub) and creates no outward effect at schedule time, so it is not gated behind
+      // the per-agent agent-scheduler tool (which gates a BOT self-scheduling, not a person).
+      if (taskType === JARVIS_REMINDER_TASK_TYPE) return;
       if (!targetAgentId) {
         throw new Error(`Schedule ${taskType} is missing a target agent`);
       }
@@ -126,6 +134,11 @@ export function createScheduleController(
   setHomeScheduleService(service);
   // Same handle for the trading autopilot control route (enable/status/stop).
   setTradingScheduleService(service);
+  // Give the assistant's /ask path a handle so "remind me on Tuesday" creates a real schedule. Only
+  // wired when the runner is actually enabled — a reminder is pointless without a runner to fire it,
+  // so jarvisSchedulingAvailable() is false (and the /ask pre-check declines) on a box with the
+  // scheduler off, which is the honest posture rather than accepting reminders that never run.
+  setJarvisScheduleService(process.env.ENABLE_AGENT_SCHEDULER === 'true' ? service : null);
   registerSchedulerShutdownHook(runner, service);
   return new ScheduleController(service, runner);
 }

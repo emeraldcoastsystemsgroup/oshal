@@ -90,6 +90,12 @@ import {
 import { extractJarvisDirectives, type HandoffDirective } from './jarvis-directives';
 import { buildAttachmentEnrichment } from './jarvis-attachments';
 import { detectProviderBoundHandoff, classifyWeatherLocationFollowUp } from './jarvis-provider-intent-detect';
+import {
+  detectScheduleIntent,
+  createJarvisReminder,
+  jarvisSchedulingAvailable,
+  schedulingTimezone,
+} from './jarvis-schedule-intent';
 import { visualSpecForDirectRequest } from './jarvis-visuals';
 import { buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
 import { buildBots, buildComms, buildActivity, buildCalendar } from './jarvis-overview';
@@ -671,6 +677,14 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     } else if (providerBoundIntent?.kind === 'weather' && providerBoundIntent.handoff.providerIntent) {
       pendingWeatherClarifications.delete(clarificationKey);
     }
+    // Scheduling intent (deterministic): "remind me on Tuesday to order flowers" becomes a real
+    // schedule the runner fires, confirmed without a model turn. Gated so it never hijacks a recall,
+    // a media turn, a provider-bound ask, or a plain question — and only when a runner exists to fire
+    // it (jarvisSchedulingAvailable). The fired prompt re-enters the orchestrator with
+    // autoApprove:false, so any outward action still hits the interactive approval gates.
+    const scheduleIntent = (!doRecall && !hasAttachments && !providerBoundIntent && !providerClarification && jarvisSchedulingAvailable())
+      ? detectScheduleIntent(message, { now: new Date(), timezone: schedulingTimezone() })
+      : null;
     // Prepend the auto tool-feed (what Jarvis can actually DO) + the user's recent tasks/results only
     // when a direct model decision is still needed; the deterministic provider path needs neither.
     let botMessage = message;
@@ -697,6 +711,19 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
             logger.warn({ err }, 'jarvis: ambient recall failed');
             answer = 'I could not reach your ambient recall just now — try again in a moment.';
           }
+          await persistJarvisTurn(ctx, sessionId, 'assistant', answer);
+          await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
+          const j = askJobs.get(jobId);
+          askJobs.set(jobId, {
+            sub, label, taskId: sessionId, kind: 'chat', status: 'done',
+            createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
+            result: { answer, routed: [], handoffs: [], dispatched: [] },
+          });
+          return;
+        }
+        if (scheduleIntent) {
+          const answer = (await createJarvisReminder(scheduleIntent, sub, JARVIS_AGENT_ID))
+            ?? 'I could not set that reminder up just now — try again in a moment.';
           await persistJarvisTurn(ctx, sessionId, 'assistant', answer);
           await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
           const j = askJobs.get(jobId);
