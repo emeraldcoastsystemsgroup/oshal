@@ -193,7 +193,7 @@ footer a:hover{color:var(--cyan)}</style>
 <nav class="crumbs wrap" aria-label="Breadcrumb"><a href="/">oshal</a><span>/</span><a href="/product/">Applications</a><span>/</span><a href="/product/productivity/">Productivity</a><span>/</span><span aria-current="page" style="color:var(--body)">Switchboard</span></nav>
 
 <header class="page"><div class="wrap">
-  <p class="eyebrow">Productivity · Store package · v0.3.0</p>
+  <p class="eyebrow">Productivity · Store package · v0.4.0</p>
   <h1>Switchboard</h1>
   <div class="split">
     <div>
@@ -204,15 +204,15 @@ footer a:hover{color:var(--cyan)}</style>
       </div>
       <p class="cta-note">Opens <code>?app=switchboard</code> on the demo deployment. On your own box it is the same URL.</p>
       <div style="margin-top:36px">
-        <p class="eyebrow">8 screens in the ribbon · opens on <code>switchboard-today</code></p>
-        <div class="pills" style="margin-top:14px"><span class="pill screen">Today</span><span class="pill screen">Inbox</span><span class="pill screen">Threads</span><span class="pill screen">Calendar</span><span class="pill screen">Compose</span><span class="pill screen">Stage</span><span class="pill screen">Feeds</span><span class="pill screen">Workspaces</span></div>
+        <p class="eyebrow">9 screens in the ribbon · opens on <code>switchboard-today</code></p>
+        <div class="pills" style="margin-top:14px"><span class="pill screen">Today</span><span class="pill screen">Inbox</span><span class="pill screen">Threads</span><span class="pill screen">Calendar</span><span class="pill screen">Compose</span><span class="pill screen">Stage</span><span class="pill screen">Streams</span><span class="pill screen">Feeds</span><span class="pill screen">Workspaces</span></div>
       </div>
     </div>
     <aside class="aside">
       <h3>At a glance</h3>
       <div class="facts">
       <div><div class="k">Shelf</div><div class="v"><a href="/product/productivity/">Productivity</a></div></div>
-      <div><div class="k">Version</div><div class="v"><code>0.3.0</code></div></div>
+      <div><div class="k">Version</div><div class="v"><code>0.4.0</code></div></div>
       <div><div class="k">Ships as</div><div class="v">An installable store package</div></div>
       <div><div class="k">Opens at</div><div class="v"><code>?app=switchboard</code></div></div>
       <div><div class="k">Accountable bots</div><div class="v"><code>communications-bot</code></div></div>
@@ -225,7 +225,7 @@ footer a:hover{color:var(--cyan)}</style>
 </div></header>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">What it does</p><h2>The rest of the story.</h2></div>
-      <p class="lede">Switchboard pulls your mail, DMs, texts, calls, and social mentions into a single prioritized stream — the Today board — so you triage your whole day in one place instead of app-hopping. Reads run on your own connector tokens; ranking and drafting run on the communications bot with cost captured per user. Nothing is sent or posted without your say-so.</p></div></section>
+      <p class="lede">Switchboard pulls your mail, DMs, texts, calls, and social mentions into a single prioritized stream — the Today board — so you triage your whole day in one place instead of app-hopping. The Streams desk manages your outbound posts CMS-style: drafts move through review, approval, scheduling, and publish with per-channel variants and revision history. Reads run on your own connector tokens; ranking and drafting run on the communications bot with cost captured per user. Nothing is sent or posted without your say-so.</p></div></section>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">How it runs</p>
       <h2>What happens when you use it.</h2>
@@ -233,7 +233,7 @@ footer a:hover{color:var(--cyan)}</style>
         app declares in its manifest, which is why it can be told to you plainly.</p></div>
       <ol class="flow"><li>
       <span class="step">01</span>
-      <div><h3>You open it, or the assistant does</h3><p>Opening <code>?app=switchboard</code> loads its 8 screens into the shared cockpit, starting on <code>switchboard-today</code>. The ribbon, the ticket list and the assistant are already there — the app contributes views, not a second application to log into.</p></div>
+      <div><h3>You open it, or the assistant does</h3><p>Opening <code>?app=switchboard</code> loads its 9 screens into the shared cockpit, starting on <code>switchboard-today</code>. The ribbon, the ticket list and the assistant are already there — the app contributes views, not a second application to log into.</p></div>
     </li><li>
       <span class="step">02</span>
       <div><h3>Or you just ask</h3><p>The assistant classifies what you asked for and hands it to the bot that owns that domain. You do not pick the app, and you do not learn a command — routing is by declared capability, not by keyword matching a menu.</p></div>
