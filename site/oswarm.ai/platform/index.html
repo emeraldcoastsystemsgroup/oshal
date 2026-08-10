@@ -181,6 +181,12 @@ figure.shot figcaption b{color:var(--body);font-weight:600}
 .dir-names span{font-size:.82rem;color:var(--body);line-height:1.35}
 .dir-names span:not(:last-child)::after{content:"·";color:var(--hairline-strong);margin-left:8px}
 
+/* The swarm roster — named agent + its role, dense two/three columns. */
+.roster{display:grid;gap:1px;background:var(--glass-border);border:1px solid var(--glass-border);border-radius:12px;overflow:hidden;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr))}
+.agent{background:var(--glass);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));padding:12px 16px;display:flex;flex-direction:column;gap:3px}
+.agent code{font-family:var(--mono);font-size:.78rem;color:var(--cyan);background:none;padding:0}
+.agent span{font-size:.86rem;color:var(--body);line-height:1.4}
+
 ul.bullets{list-style:none}
 ul.bullets li{position:relative;padding-left:20px;margin-bottom:11px;font-size:.96rem;line-height:1.62}
 ul.bullets li::before{content:"";position:absolute;left:4px;top:.66em;width:5px;height:5px;border-radius:50%;background:var(--cyan)}
@@ -331,6 +337,312 @@ footer a:hover{color:var(--cyan)}</style>
       <span class="more">Learn more &rarr;</span>
     </a>
   </div>
+</div></section>
+<section><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Who does the work</p>
+    <h2>99 accountable agents, each with one job.</h2>
+    <p class="lede">The swarm is not one model wearing hats — it is a roster of named identities, each
+      with a declared role, its own model and tools, and its own line in the cost table. Every one is
+      a real persona that ships in the repo.</p>
+  </div>
+  <div class="roster"><div class="agent">
+      <code>3d-printing-bot</code><span>3D Printing &amp; Additive Manufacturing Specialist</span>
+    </div>
+    <div class="agent">
+      <code>agent-factory</code><span>swarm/factory</span>
+    </div>
+    <div class="agent">
+      <code>ambient-analyst</code><span>Ambient Person-Model Enrichment Analyst</span>
+    </div>
+    <div class="agent">
+      <code>animatronics-bot</code><span>Animatronics &amp; Prop Effects Specialist</span>
+    </div>
+    <div class="agent">
+      <code>apply-operator</code><span>Career Application Submission Operator</span>
+    </div>
+    <div class="agent">
+      <code>architect-bot</code><span>System Architect</span>
+    </div>
+    <div class="agent">
+      <code>business-plan-bot</code><span>Business Strategy &amp; Financial Planning Specialist</span>
+    </div>
+    <div class="agent">
+      <code>camera-operator</code><span>Camera Control Operator</span>
+    </div>
+    <div class="agent">
+      <code>cloud-ops-bot</code><span>Cloud operations</span>
+    </div>
+    <div class="agent">
+      <code>code-developer</code><span>Senior Software Engineer</span>
+    </div>
+    <div class="agent">
+      <code>code-reviewer</code><span>Senior Code Reviewer</span>
+    </div>
+    <div class="agent">
+      <code>codex-packer</code><span>Bot Authoring Factory</span>
+    </div>
+    <div class="agent">
+      <code>daily-standup-summary-bot</code><span>Daily Standup Analyst &amp; Team Status Reporter</span>
+    </div>
+    <div class="agent">
+      <code>data-extraction-bot</code><span>Data Extraction &amp; Web Scraping Specialist</span>
+    </div>
+    <div class="agent">
+      <code>deck-builder</code><span>Presentation Guide</span>
+    </div>
+    <div class="agent">
+      <code>delivery-analyst</code><span>Business Analyst</span>
+    </div>
+    <div class="agent">
+      <code>delivery-architect</code><span>Solution Architect</span>
+    </div>
+    <div class="agent">
+      <code>delivery-sizer</code><span>Performance and Capacity Analyst</span>
+    </div>
+    <div class="agent">
+      <code>delivery-verifier</code><span>Delivery Verification and Hand-over</span>
+    </div>
+    <div class="agent">
+      <code>devops-bot</code><span>DevOps Engineer</span>
+    </div>
+    <div class="agent">
+      <code>documentation-writer</code><span>Technical Writer</span>
+    </div>
+    <div class="agent">
+      <code>drives-specialist-bot</code><span>Variable Frequency Drives &amp; Industrial Motion Control Specialist</span>
+    </div>
+    <div class="agent">
+      <code>drone-operator</code><span>Drone Flight-Planning Operator</span>
+    </div>
+    <div class="agent">
+      <code>eats-concierge</code><span>Eats Concierge &amp; Food-Delivery Specialist</span>
+    </div>
+    <div class="agent">
+      <code>eats-foundation</code><span>commerce/food-foundation</span>
+    </div>
+    <div class="agent">
+      <code>electrical-specialist-bot</code><span>Electronics &amp; Electrical Systems Specialist</span>
+    </div>
+    <div class="agent">
+      <code>email-bot</code><span>Email Integration Specialist</span>
+    </div>
+    <div class="agent">
+      <code>email-summarizer</code><span>Communications hub</span>
+    </div>
+    <div class="agent">
+      <code>everything-default</code><span>Generalist Agent</span>
+    </div>
+    <div class="agent">
+      <code>facebook-bot</code><span>Facebook Integration Specialist &amp; Social Media Automation Engineer</span>
+    </div>
+    <div class="agent">
+      <code>feeds-curator</code><span>Feeds Curator &amp; Signal Watcher</span>
+    </div>
+    <div class="agent">
+      <code>finance-analyst</code><span>Finance analyst</span>
+    </div>
+    <div class="agent">
+      <code>gcp-cli-bot</code><span>Google Cloud Platform &amp; GCP CLI Specialist</span>
+    </div>
+    <div class="agent">
+      <code>google-bot</code><span>Google Workspace API Specialist</span>
+    </div>
+    <div class="agent">
+      <code>haven-home-assistant</code><span>orchestrator</span>
+    </div>
+    <div class="agent">
+      <code>hephaestus</code><span>Visionary Creator &amp; Swarm Director</span>
+    </div>
+    <div class="agent">
+      <code>home-bot</code><span>Smart-home control</span>
+    </div>
+    <div class="agent">
+      <code>identity-advisor</code><span>Identity advisor</span>
+    </div>
+    <div class="agent">
+      <code>incident-remediation-bot</code><span>Incident Remediation Specialist</span>
+    </div>
+    <div class="agent">
+      <code>incident-response-bot</code><span>Incident Responder</span>
+    </div>
+    <div class="agent">
+      <code>intake-bot</code><span>intake-specialist</span>
+    </div>
+    <div class="agent">
+      <code>linkedin-profile-operator</code><span>LinkedIn Profile Customization Operator</span>
+    </div>
+    <div class="agent">
+      <code>log-analyzer-bot</code><span>Log Analysis &amp; Pattern Detection Specialist</span>
+    </div>
+    <div class="agent">
+      <code>marketing-strategy-bot</code><span>Marketing Strategy &amp; Campaign Director</span>
+    </div>
+    <div class="agent">
+      <code>motivational-quotes-bot</code><span>Motivational Speaker &amp; Quote Specialist</span>
+    </div>
+    <div class="agent">
+      <code>movies-concierge</code><span>Movies &amp; TV Concierge &amp; Media Specialist</span>
+    </div>
+    <div class="agent">
+      <code>movies-foundation</code><span>media/film-tv-foundation</span>
+    </div>
+    <div class="agent">
+      <code>news-aggregator-bot</code><span>News Intelligence Analyst &amp; Sentiment Specialist</span>
+    </div>
+    <div class="agent">
+      <code>online-sales-bot</code><span>E-commerce Sales Engineer &amp; Conversion Optimization Specialist</span>
+    </div>
+    <div class="agent">
+      <code>oshal-assistant</code><span>OSHAL Assistant</span>
+    </div>
+    <div class="agent">
+      <code>oshal-developer</code><span>OSHAL platform developer</span>
+    </div>
+    <div class="agent">
+      <code>personal-assistant</code><span>Swarm Concierge</span>
+    </div>
+    <div class="agent">
+      <code>physics-bot</code><span>Applied Physics &amp; Engineering Mechanics Specialist</span>
+    </div>
+    <div class="agent">
+      <code>pr-communications-bot</code><span>PR &amp; Communications Specialist</span>
+    </div>
+    <div class="agent">
+      <code>presentation-bot</code><span>Presentation Specialist</span>
+    </div>
+    <div class="agent">
+      <code>project-manager</code><span>Project Manager</span>
+    </div>
+    <div class="agent">
+      <code>pumpkin-bot</code><span>Animated Jack-o&#39;-Lantern / Halloween Prop Voice</span>
+    </div>
+    <div class="agent">
+      <code>purchasing-foundation</code><span>commerce/foundation</span>
+    </div>
+    <div class="agent">
+      <code>quality-judge</code><span>Quality Judge / Grading Specialist</span>
+    </div>
+    <div class="agent">
+      <code>queue-bot</code><span>Queue Manager / Quality Enforcer</span>
+    </div>
+    <div class="agent">
+      <code>rca-specialist</code><span>RCA Specialist</span>
+    </div>
+    <div class="agent">
+      <code>remediation-writer</code><span>SRE Remediation Engineer</span>
+    </div>
+    <div class="agent">
+      <code>research-bot</code><span>Research Analyst</span>
+    </div>
+    <div class="agent">
+      <code>rides-concierge</code><span>Rides Concierge &amp; Transportation Specialist</span>
+    </div>
+    <div class="agent">
+      <code>rides-foundation</code><span>transportation/foundation</span>
+    </div>
+    <div class="agent">
+      <code>robotics-bot</code><span>Robotics Systems &amp; Automation Specialist</span>
+    </div>
+    <div class="agent">
+      <code>sat-operator</code><span>Satellite Operations Planner</span>
+    </div>
+    <div class="agent">
+      <code>scheduler-bot</code><span>Job Scheduling Expert &amp; Automation Coordinator</span>
+    </div>
+    <div class="agent">
+      <code>screenplay-writer</code><span>Series Screenwriter</span>
+    </div>
+    <div class="agent">
+      <code>security-analyst</code><span>Security analyst</span>
+    </div>
+    <div class="agent">
+      <code>security-auditor-bot</code><span>Security Auditor</span>
+    </div>
+    <div class="agent">
+      <code>self-healing-bot</code><span>Infrastructure Self-Healing &amp; Autonomous Code Deploy Specialist</span>
+    </div>
+    <div class="agent">
+      <code>shopping-concierge</code><span>Shopping Concierge &amp; Purchasing Specialist</span>
+    </div>
+    <div class="agent">
+      <code>small-motors-bot</code><span>Small Motor Systems &amp; Motion Control Specialist</span>
+    </div>
+    <div class="agent">
+      <code>social-writer</code><span>Social Content Partner</span>
+    </div>
+    <div class="agent">
+      <code>spaces-operator</code><span>Spatial Capture &amp; Reconstruction Operator</span>
+    </div>
+    <div class="agent">
+      <code>spotify-concierge</code><span>Spotify Concierge &amp; Music Specialist</span>
+    </div>
+    <div class="agent">
+      <code>spotify-foundation</code><span>media/music-foundation</span>
+    </div>
+    <div class="agent">
+      <code>storage-assistant</code><span>Storage Operations Assistant</span>
+    </div>
+    <div class="agent">
+      <code>system-architect</code><span>Senior Systems Architect</span>
+    </div>
+    <div class="agent">
+      <code>task-manager</code><span>QA Validator &amp; Final Gatekeeper</span>
+    </div>
+    <div class="agent">
+      <code>test-engineer</code><span>Senior Test Engineer</span>
+    </div>
+    <div class="agent">
+      <code>tester-bot</code><span>QA Engineer</span>
+    </div>
+    <div class="agent">
+      <code>trade-recap-bot</code><span>Daily Trade Recap Operator</span>
+    </div>
+    <div class="agent">
+      <code>trading-analyst</code><span>Trading analyst</span>
+    </div>
+    <div class="agent">
+      <code>trading-research-analyst</code><span>trading/research-mass-finder</span>
+    </div>
+    <div class="agent">
+      <code>travel-concierge</code><span>Travel Concierge &amp; Trip-Planning Specialist</span>
+    </div>
+    <div class="agent">
+      <code>travel-foundation</code><span>travel/foundation</span>
+    </div>
+    <div class="agent">
+      <code>vault-bot</code><span>Vault credential broker (KV + short-TTL scoped credential issuance/revocation)</span>
+    </div>
+    <div class="agent">
+      <code>video-bot</code><span>Video Generation and Assessment Specialist</span>
+    </div>
+    <div class="agent">
+      <code>video-director</code><span>Short-form Video Director</span>
+    </div>
+    <div class="agent">
+      <code>vids-operator</code><span>Veo Specialist &amp; Vids Studio Operator</span>
+    </div>
+    <div class="agent">
+      <code>weather-analyst</code><span>trading/weather-mass-finder</span>
+    </div>
+    <div class="agent">
+      <code>weather-bot</code><span>Weather Data Specialist &amp; Formatter</span>
+    </div>
+    <div class="agent">
+      <code>website-design-bot</code><span>Website Design &amp; SEO Specialist</span>
+    </div>
+    <div class="agent">
+      <code>welding-specialist-bot</code><span>Welding &amp; Metal Fabrication Specialist</span>
+    </div>
+    <div class="agent">
+      <code>workflow-assistant</code><span>Workflow Orchestration Specialist</span>
+    </div>
+    <div class="agent">
+      <code>world-analyst</code><span>World Intelligence Analyst</span>
+    </div>
+    <div class="agent">
+      <code>world-foundation</code><span>World Intelligence Foundation</span>
+    </div></div>
 </div></section>
 <footer><div class="wrap">
   <div><a href="/">oshal.ai</a> · <a href="/product/">Applications</a> · <a href="/platform/">Platform</a> ·

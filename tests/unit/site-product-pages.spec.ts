@@ -166,6 +166,17 @@ describe('product site: every internal link resolves', () => {
     expect(dir).toContain('Stripe');
   });
 
+  it('the platform hub shows the swarm roster and withholds the carved-commercial personas', () => {
+    const html = fs.readFileSync(path.join(gen.SITE, 'platform', 'index.html'), 'utf8');
+    const seg = html.split('Who does the work')[1] || '';
+    const agents = (seg.match(/class="agent"/g) || []).length;
+    expect(agents).toBeGreaterThan(50);        // a real roster, not a token sample
+    expect(seg).toContain('code-developer');   // a real, recognisable agent
+    // The federal-capture commercial family must never appear (same discipline as the apps).
+    expect(html).not.toContain('capture-specialist');
+    expect(html).not.toContain('capture-coordinator');
+  });
+
   it.runIf(storePresent)('the harnesses page names EVERY provider', () => {
     const html = fs.readFileSync(path.join(gen.SITE, 'platform', 'harnesses', 'index.html'), 'utf8');
     const seg = html.split('Every lane, named')[1] || '';
