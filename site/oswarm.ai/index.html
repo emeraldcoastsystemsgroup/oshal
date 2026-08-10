@@ -1649,7 +1649,7 @@
           <li><strong>Workflow Studio</strong> — author on a canvas or talk-to-build, then <strong>Publish</strong> compiles it (single-shot, staged with approval gates, or a full branch/parallel graph) into a live ticket queue</li>
           <li><strong>Bot Forge</strong> — pack and hot-load a new bot by conversation</li>
           <li><strong>Self-healing red/blue loop</strong> — a bot patches its own source, redeploys, re-tests against a per-bot baseline, and auto-reverts a regression (health/regression scope; only possible because you own the stack)</li>
-          <li><strong>Token Chase</strong> — LLM calls captured as replayable frames, variants graded for equivalence, real estimated-vs-actual savings</li>
+          <li><strong>Token Chase</strong> — LLM calls captured as replayable frames, variants graded for equivalence, real estimated-vs-actual savings — and <strong>approved routing switches</strong>: a keep-winner bar (LLM-judged, strictly cheaper) promotes the winning lane and, on your approval, applies it to the owning bot's configuration — audited and one-click reversible; nothing re-routes on its own</li>
           <li><strong>Edge nodes</strong> — remote machines join the mesh over A2A and take tasks, proven on real hardware</li>
           <li><strong>Real-world comms</strong> — the swarm places real phone calls (Twilio voice leg, live-proven against a real handset); Telegram and Gmail channels wired, per-user BYO credentials, every outbound send confirm-gated</li>
           <li><strong>Postflight truth</strong> — installs end with a capability verifier, and <code>/api/readiness</code> reports per-capability ok / off / fail — a deployment cannot report success while a capability it advertises has nothing behind it</li>
@@ -1659,7 +1659,6 @@
       <div class="honest-col road">
         <h3>On the roadmap</h3>
         <ul>
-          <li><strong>Token Chase auto-routing</strong> — the replay corpus records every graded variant today; learning a selection policy from it and re-routing future calls to the cheapest equivalent lane automatically is what's next</li>
           <li><strong>Cluster batch scale-out</strong> — Kubernetes and Argo manifests for the pipeline ship in the repo today; the plumbing that actually runs agent work as scheduled cluster batch jobs is still being built</li>
           <li><strong>Multi-organization tenancy</strong> — multi-user isolation is DB-enforced and live-proven today; realm-per-tenant is designed</li>
           <li><strong>Packaged all-local profile</strong> — local models run today via Ollama; the documented one-command all-local stack with benchmarks is ahead</li>

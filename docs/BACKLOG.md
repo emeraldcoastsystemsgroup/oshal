@@ -346,9 +346,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** expose the captured timeline with prompt/response inspection, rewind, hand-edit, and forward play; clearly mark non-replayable frames.
 - **Done when:** an operator opens a finished run, edits the failing call, and replays the tail while preserving the original immutable baseline and audit trail.
 
-### Variant-selection policy
-- **Remaining:** build the task-class/query-type corpus and ship a lookup/heuristic before considering a trained selector.
-- **Done when:** preselection beats always-baseline cost on held-out workflows at equal quality, with a reproducible comparison and safe fallback.
+### Variant-selection switches (learned re-routing reframed as a non-goal, 2026-08-09)
+- **Decision (operator):** routing is the operator-approved keep-winner switch — promote an LLM-judged, strictly-cheaper winner, optionally apply it to the owning bot via the ADR-034 push, audited and one-click revertible, with cockpit promote/revert controls in the Optimizer. An autonomous learned/trained selector is a ROADMAP non-goal; nothing re-routes without approval (auto mode stays behind `TOKEN_CHASE_AUTO_PROMOTE`, default off).
+- **Remaining (optional, unscheduled):** a corpus-backed query-type lookup that *suggests* a switch before any spend — an advisor that proposes for approval, never a re-router.
+- **Done when:** closed by the promotion switch; reopen only if the suggestion advisor is commissioned.
 
 ## Career and job application
 

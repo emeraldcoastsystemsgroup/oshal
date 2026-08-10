@@ -1,10 +1,15 @@
 <!DOCTYPE html>
 <!--
-  Token Chase — debugger view (ADR-046 §10, steps 1 + 2b). Read-only timeline over captured
-  per-call frames with the recorded replay/variant/grade history rendered side-by-side.
+  Token Chase — debugger view (ADR-046 §10, steps 1 + 2b) plus keep-winner promotion (step 5).
+  Read-only timeline over captured per-call frames with the recorded replay/variant/grade
+  history rendered side-by-side, and the APPROVED ROUTING SWITCH: "Promote winner" runs the
+  keep-winner bar (LLM-judged variants only, quality + savings) over this frame's recorded
+  results and can apply the winner to the owning bot's config via the ADR-034 path; the
+  Promotions view lists the run's switches + audit trail with one-click revert.
   Data: GET /api/token-chase/runs, /runs/:runId, /runs/:runId/observations,
-  /runs/:runId/frames/:seq, /runs/:runId/frames/:seq/inspect. No build step.
-  The debugger itself never fires replays — the Replay / Optimizer buttons are the actions.
+  /runs/:runId/frames/:seq, /runs/:runId/frames/:seq/inspect, /runs/:runId/promotions.
+  Actions: POST .../frames/:seq/promote and /promotions/:id/revert (plus Replay / Optimizer).
+  Nothing re-routes without an explicit click here (or the operator-gated auto mode). No build step.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -190,6 +195,7 @@
     <h1>OPTIMIZER</h1>
     <a class="refresh demo" onclick="loadDemoComparison()">Demo comparison</a>
     <a class="refresh report" onclick="loadSavingsReport()">Savings report</a>
+    <a class="refresh report" onclick="loadPromotions()">Promotions</a>
     <span class="sub">replay a captured call against your own providers — compare cost · time · accuracy</span>
     <a class="refresh" onclick="loadRuns()">↻ refresh</a>
   </header>
@@ -355,6 +361,8 @@
         el.innerHTML = renderFrameInspector(frame, seq, canReplay, observations, observationsUnavailable);
         const btn = $('replayBtn');
         if (btn) btn.onclick = () => replayFrame(runId, seq);
+        const pbtn = $('promoteBtn');
+        if (pbtn) pbtn.onclick = () => promoteFrame(runId, seq);
         if (canReplay) wireOptimizer(runId, seq, frame);
       } catch (e) { el.innerHTML = `<h2>Inspector</h2><div class="empty">failed: ${esc(e.message)}</div>`; }
     }
@@ -395,8 +403,9 @@
     }
 
     // Debugger (step 2b): the RECORDED replay/variant/grade history for this frame, side-by-side
-    // with the captured baseline. Read-only — rows render what the corpus already holds; the
-    // Replay / Optimizer buttons above are the only actions that add rows.
+    // with the captured baseline. Rows render what the corpus already holds; the Replay /
+    // Optimizer buttons add rows, and the keep-winner panel below turns a recorded LLM-judged
+    // winner into an APPROVED routing switch (step 5) — never applied without the click.
     function recordedResults(observations, unavailable) {
       const title = '<div class="inspect-section-title">Recorded results (replays · variants · grades)</div>';
       if (unavailable) {
@@ -413,7 +422,8 @@
         <thead><tr><th>lane</th><th>model</th><th>cost</th><th>Δ cost</th><th>latency</th><th>accuracy</th><th>judge</th><th>verdict</th><th>when</th></tr></thead>
         <tbody>${baseRow}${rows}</tbody>
       </table>
-      <div class="hint">Recorded metrics only — variant response text is not persisted. Click a row for the full diff vs baseline; re-fire the lane with the Optimizer to see its live output.</div>`;
+      <div class="hint">Recorded metrics only — variant response text is not persisted. Click a row for the full diff vs baseline; re-fire the lane with the Optimizer to see its live output.</div>`
+        + promotePanel();
     }
 
     function obsRow(o, i) {
@@ -660,6 +670,116 @@
         <span class="mode-tag mode-lex">lexical fallback</span> = deterministic token-overlap proxy (judge lane unavailable) — reported separately, never blended into the verified number.
         “held” = judge score ≥ ${rep.threshold}; only held-and-cheaper frames bank savings.</div>`;
       return head + controls + cards + table + legend;
+    }
+
+    // ── Keep-winner promotion (ADR-046 step 5): the APPROVED routing switch ──
+    // Promotion IS the routing mechanism: there is no learned/background re-router. A switch
+    // happens only on this explicit approval (or the operator-gated TOKEN_CHASE_AUTO_PROMOTE
+    // mode), lands audited, and is reversible from the Promotions view.
+    function promotePanel() {
+      return `<div class="opt" id="promotePanel">
+        <h3>Keep winner — approved routing switch</h3>
+        <div class="row">
+          <button class="opt-run" id="promoteBtn">★ Promote winner</button>
+          <label class="hint" style="margin:0"><input type="checkbox" id="promoteApplyCfg"> also apply to the owning bot's config (ADR-034 push, versioned + audited)</label>
+        </div>
+        <div class="hint">Promotion bar: <b>LLM-judged variants only</b>, at/above the quality bar and strictly cheaper — lexical-fallback grades never promote. Nothing re-routes on its own: the switch happens only on this approval, is audited, and is reversible under <b>Promotions</b> in the header.</div>
+        <div id="promoteResult"></div>
+      </div>`;
+    }
+
+    async function promoteFrame(runId, seq) {
+      const btn = $('promoteBtn'), box = $('promoteResult');
+      const applyToBotConfig = !!($('promoteApplyCfg') && $('promoteApplyCfg').checked);
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ running the promotion bar…'; }
+      if (box) box.innerHTML = '';
+      try {
+        const r = await fetch(`/api/token-chase/runs/${encodeURIComponent(runId)}/frames/${seq}/promote`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ applyToBotConfig }),
+        });
+        const data = await r.json();
+        if (!r.ok && r.status !== 422) throw new Error(data.error || ('HTTP ' + r.status));
+        box.innerHTML = r.status === 422 ? renderNoWinner(data) : renderPromotion(data);
+      } catch (e) {
+        if (box) box.innerHTML = `<div class="verdict v-divergent">promotion failed: ${esc(e.message)}</div>`;
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '★ Promote winner'; }
+      }
+    }
+
+    // The 422 "no winner" answer is evidence, not an error: show the bar + every rejection.
+    function renderNoWinner(data) {
+      const t = data.thresholds || {};
+      const rows = (data.rejected || []).map((c) => `<tr>
+        <td><b>${esc(c.variantProvider || '—')}</b></td><td>${esc(c.variantModel || '—')}</td>
+        <td>${c.judgeScore != null ? c.judgeScore + ' (' + esc(c.judgeMode || '—') + ')' : '—'}</td>
+        <td>${c.savedUsd == null ? '—' : (c.savedUsd > 0 ? '−$' + fmtCost(c.savedUsd) : '+$' + fmtCost(-c.savedUsd))}</td>
+        <td>${esc(c.reason || '—')}</td></tr>`).join('');
+      return `<div class="verdict"><span class="vbadge v-non-replayable">NO WINNER — nothing clears the bar</span>
+        <div class="m" style="margin-top:6px">Bar: LLM-judge score ≥ ${t.minQuality ?? '—'} and savings ≥ $${t.minSavingsUsd != null ? fmtCost(t.minSavingsUsd) : '—'}. Per-candidate rejections:</div>
+        <table class="cmp"><thead><tr><th>lane</th><th>model</th><th>judge</th><th>saved</th><th>rejected because</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
+    function renderPromotion(data) {
+      const p = data.promotion || {};
+      const cfg = data.botConfig;
+      const cfgLine = cfg == null ? ''
+        : cfg.applied
+          ? `<div class="m" style="margin-top:6px">Bot config updated via the ADR-034 push${cfg.newVersion != null ? ' (version ' + cfg.newVersion + ')' : ''} — the owning bot now defaults to this lane.</div>`
+          : `<div class="m" style="margin-top:6px">Bot config NOT changed: ${esc(cfg.reason || 'no reason given')}</div>`;
+      return `<div class="verdict"><span class="vbadge v-deterministic">PROMOTED — ${esc(p.provider || '—')} / ${esc(p.model || '—')}</span>
+        <div class="kv" style="margin-top:8px">
+          <span>saves <b>$${fmtCost(p.savedUsd)}</b> vs ${esc(p.baselineModel || 'baseline')}</span>
+          <span>judge <b>${p.judgeScore ?? '—'}</b> (LLM)</span>
+          <span>source <b>${esc(p.source || 'manual')}</b></span>
+        </div>${cfgLine}
+        <div class="m" style="margin-top:6px">This frame's preferred lane is switched — audited and reversible under <b>Promotions</b>.</div></div>`;
+    }
+
+    async function loadPromotions() {
+      const el = $('inspector');
+      if (!activeRun) { el.innerHTML = '<h2>Promotions</h2><div class="empty">select a run first — promotions are listed per captured run</div>'; return; }
+      el.innerHTML = '<h2>Promotions</h2><div class="empty">loading…</div>';
+      try {
+        const { promotions, audit } = await api('/runs/' + encodeURIComponent(activeRun) + '/promotions');
+        el.innerHTML = renderPromotions(promotions || [], audit || []);
+        [...el.querySelectorAll('button[data-revert]')].forEach((b) => { b.onclick = () => revertPromotionAction(b.dataset.revert); });
+      } catch (e) { el.innerHTML = `<h2>Promotions</h2><div class="empty">failed: ${esc(e.message)}</div>`; }
+    }
+
+    function renderPromotions(promotions, audit) {
+      const head = `<div class="inspect-head"><h2>Promotions — run ${esc(activeRun)}</h2>
+        <div class="m">Approved routing switches for this run: each promotion pins a frame's preferred lane (and optionally the owning bot's config). Every promote / auto-promote / revert is in the audit trail below.</div></div>`;
+      if (!promotions.length) {
+        return head + '<div class="empty-card"><h3>No promotions yet</h3><p>Select a frame with recorded LLM-judged results and use <b>Promote winner</b> — the switch lands here, audited and reversible.</p></div>';
+      }
+      const rows = promotions.map((p) => `<tr>
+        <td>#${p.seq}</td><td><b>${esc(p.provider || '—')}</b></td><td>${esc(p.model)}</td>
+        <td class="cheaper">$${fmtCost(p.savedUsd)}</td><td>${p.judgeScore}</td>
+        <td><span class="mode-tag ${p.source === 'auto' ? 'mode-lex' : 'mode-llm'}">${esc(p.source)}</span></td>
+        <td><span class="tier ${p.status === 'active' ? 'tier-equivalent-cheaper' : 'tier-equivalent-pricier'}">${esc(p.status)}</span></td>
+        <td>${p.createdAt ? esc(fmtDate(p.createdAt)) : '—'}</td>
+        <td>${p.status === 'active' ? `<button class="opt-run" data-revert="${esc(p.id)}">revert</button>` : '—'}</td>
+      </tr>`).join('');
+      const table = `<table class="cmp"><thead><tr><th>frame</th><th>lane</th><th>model</th><th>saves</th><th>judge</th><th>source</th><th>status</th><th>when</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+      const auditRows = audit.map((a) => `<tr><td>${a.createdAt ? esc(fmtDate(a.createdAt)) : '—'}</td><td>#${a.seq}</td><td>${esc(a.action)}</td><td>${esc(a.detail ? pretty(a.detail) : '—')}</td></tr>`).join('');
+      const auditTable = audit.length ? `<div class="inspect-section-title">Audit trail</div>
+        <table class="cmp"><thead><tr><th>when</th><th>frame</th><th>action</th><th>detail</th></tr></thead><tbody>${auditRows}</tbody></table>` : '';
+      return head + table + auditTable;
+    }
+
+    async function revertPromotionAction(promotionId) {
+      try {
+        const r = await fetch(`/api/token-chase/promotions/${encodeURIComponent(promotionId)}/revert`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        loadPromotions();
+      } catch (e) {
+        $('inspector').insertAdjacentHTML('afterbegin', `<div class="verdict v-divergent">revert failed: ${esc(e.message)}</div>`);
+      }
     }
 
     const tierLabel = (t) => ({ 'equivalent-cheaper': 'SWAP ✓ cheaper, same answer',
