@@ -6,9 +6,9 @@ Source for the public Open Swarm product site — live at **https://oswarm.ai** 
 - `index.html` — the entire site: self-contained (inline CSS/JS, no build step, no external
   requests, no webfonts). Deployable to any static host — Cloudflare Pages / `wrangler`,
   GitHub Pages, or an nginx container.
-- `product/` and `platform/` — the product site: **~70 fully generated pages**, one URL per thing.
-  A catalog hub, a page per shelf, **a page per application**, a platform hub and a page per
-  platform topic. Same self-contained rules as `index.html` (CSS inlined into every page — a linked
+- `product/`, `platform/`, `install/` and `build/` — the product site: **74 fully generated pages**, one URL per thing.
+  A catalog hub, a page per shelf, **a page per application**, a platform hub, a page per
+  platform topic, plus the install guide and the add-an-application guide. Same self-contained rules as `index.html` (CSS inlined into every page — a linked
   stylesheet that failed to stage would render all seventy unstyled).
 
   **Every file in those two directories is generated. Do not hand-edit any of them** — your change
@@ -25,6 +25,7 @@ Source for the public Open Swarm product site — live at **https://oswarm.ai** 
   | Application copy, screens, capabilities | The app's own manifest — kernel `swarm-apps/*.yaml`, or the store package's `oshal-app.yaml` |
   | Shelf names, taglines, which shelves exist | `SHELVES` in `scripts/lib/product-site/catalog.js` |
   | Platform page prose | `scripts/lib/product-site/platform-content.js` |
+  | Install / build guide prose | `scripts/lib/product-site/guides-content.js` |
   | Layout, CSS, page shell | `scripts/lib/product-site/theme.js` / `render.js` |
 
   Counts are read off the tree and substituted into prose through `%token%`, so no number is ever

@@ -17,6 +17,10 @@ pnpm-debug.log*
 dist/
 dist-bundle/
 build/
+# ...EXCEPT the generated product-site guide, whose public URL is /build/. The generic rule above
+# silently untracked it, so the page existed locally, deployed from the working tree, and would have
+# been MISSING from a fresh clone — a dead nav link on every one of the site's pages.
+!site/oswarm.ai/build/
 coverage/
 .nyc_output/
 *.tsbuildinfo
