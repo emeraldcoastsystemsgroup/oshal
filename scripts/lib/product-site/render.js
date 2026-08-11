@@ -72,11 +72,17 @@ const SHOTS = {
   finance: ['/assets/app-finance.png', 'The Finance app', '<b>Your money in one view.</b> Balances, holdings and spending across every linked account, with a plain-English brief. Shown on demo data — reading is read-only.'],
   dnd: ['/assets/app-dnd.png', 'The Dungeon Master campaign shelf', '<b>Pick a campaign and play.</b> An AI Dungeon Master runs a cinematic shared board — investigations remember clues, battles share the same visible turn and dice.'],
   jarvis: ['/assets/app-jarvis-cockpit.png', 'The Jarvis assistant in the cockpit', '<b>Your swarm, one orb, one voice.</b> Tap to talk; the assistant classifies what you asked and routes it to the specialist that owns it. The live cockpit, on a guest workspace.'],
+  travel: ['/assets/app-travel.png', 'The Travel app', '<b>Search, read the price, hand off.</b> Real flight search with an honest price read from the swarm and a travel concierge — shown live on the guest demo.'],
+  presentations: ['/assets/app-presentations.png', 'AI Office', '<b>One outline, three artifacts.</b> A themed deck, a Word document, or a live Excel workbook — pick a shape and the Guide builds it. The live studio, on the guest demo.'],
+  careerHunter: ['/assets/app-career-hunter.png', 'The Intelligent Career job board', '<b>Index your resume, score every opening.</b> Upload once; every posting gets a fit score against your background, and the best fits become an approval queue. The live board, on the guest demo.'],
 };
 const shot = (id, section) => (SHOTS[id] ? `${section ? '<section><div class="wrap">' : ''}${figure(...SHOTS[id])}${section ? '</div></section>' : ''}` : '');
 
 /** App pages that have a real, safe screenshot, keyed by app name → SHOTS id. */
-const APP_SHOTS = { world: 'world', 'little-monsters': 'littleMonsters', finance: 'finance', dnd: 'dnd', jarvis: 'jarvis' };
+const APP_SHOTS = {
+  world: 'world', 'little-monsters': 'littleMonsters', finance: 'finance', dnd: 'dnd', jarvis: 'jarvis',
+  travel: 'travel', presentations: 'presentations', 'career-hunter': 'careerHunter',
+};
 
 /** Numbered "what actually happens" flow. Each step is a claim the manifest supports. */
 function flowList(steps) {
