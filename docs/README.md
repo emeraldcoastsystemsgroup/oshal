@@ -9,6 +9,10 @@ The front door for `docs/`. The layout rule is simple:
 
 ## Start here
 
+**Using the product rather than building on it?** → **[guides/](./guides/README.md)** — the per-screen
+user guides (what the buttons do, what the columns mean, and why a screen that looks stuck usually
+isn't). Everything below this line is written for builders.
+
 New to OSHAL, or building on it:
 
 1. [WHY_OSHAL.md](./WHY_OSHAL.md) — the case for OSHAL, with measured cost data.
@@ -62,6 +66,7 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | [enterprise/](./enterprise/README.md) | Permission-aware RAG, procurement security packet, SCIM bridge. |
 | evidence/ | *Not in this repo* — the generated competitive-scoreboard evidence tree is internal-only and lives in the private archive (see CLAUDE.md Rule 0b). |
 | [governance/](./governance/README.md) | RLS/RBAC policies, provisioning SQL, RLS runbook. |
+| [guides/](./guides/README.md) | **End-user guides** — one per cockpit screen, as-built: how to reach it, what each control does, what it deliberately does not do, and the confusions users actually hit. |
 | intelligent-career-automation/ | *Not in this repo* — the apply-agent specs and application-form playbook stayed in the private archive. |
 | [k8/](./k8/README.md) | Kubernetes setup docs and handover (the manifests themselves live in `ops/any-bot-k8s/`). |
 | [legal/](./legal/README.md) | Licensing, attribution, trademark, and inbound contribution terms — what AGPL-3.0 actually grants and requires, and the commercial exception. |
