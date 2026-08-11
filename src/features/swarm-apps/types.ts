@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS CORE-05: add package smoke declarations and explicit AI-route availability metadata.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Add manifest-contributed Google Takeout slices and the activation registrar port: packages declare bounded path suffixes plus a package-local ingest export, while the kernel owns archive parsing and retracts contributions on deactivate/uninstall.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Add a first-class deterministic service-route schedule target. The manifest contract separates prompt dispatch from a static POST to a package-owned service-auth route so scheduled package workers never masquerade as agent prompts.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppStaticUi.group — a manifest may split its ribbon's top tray into labelled bands. The cockpit renderer already grouped by this field and already gated it to the top section; the key simply had nowhere to come from, because synthesiseProfile's map dropped it. Optional, so every existing manifest is unchanged and an older core ignores it (flat ribbon) rather than failing the load.
  */
 
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
@@ -196,6 +197,15 @@ export interface SwarmAppStaticUi {
   icon: string;
   iframeUrl: string;
   section?: 'top' | 'bottom';
+  /**
+   * Optional ribbon group heading (ADR-085 addendum). Items sharing a `group`
+   * render under one small label in the scrollable middle tray, in first-appearance
+   * order; items with no `group` render first, under no header. Honoured only for
+   * `section: 'top'` — RibbonNav forces `''` on the pinned bottom tray, which is
+   * already divided by its own border. An older core ignores the key entirely, so a
+   * manifest that declares it degrades to a flat ribbon rather than failing to load.
+   */
+  group?: string;
 }
 
 /** A DB-sourced dynamic ribbon icon spec (one icon per row). */
