@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: return the canonical 503 ai_disabled response on chat writes when the operator declares OSHAL_NO_AI=true.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05 identity closure: narrow authenticated PAT message writes to their exact owner so bounded live verification cannot persist chat_tasks under the operator-bypass database stamp.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: this route calls ctx.orchestrator.processMessage DIRECTLY (see seq 9), so it now resolves the caller's hosted user-brain ladder via the SAME shared helper executeBotOrInline uses (resolveHostedBrainForCliAgent — one condition, no drift) when the resolved agent's registry harness is an unbrokered CLI, and threads it as options.byoLlmConnection. Runs BEFORE ticket creation so a turn that cannot run never opens a ticket. NO_HOSTED_BRAIN maps to a clean 422 whose `error` field carries the friendly Settings → AI Providers message the cockpit chat panel renders (throwResponseError shows error.error).
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time hosted-brain failover: a lane that passes its resolution probe can exhaust its quota mid-turn (Gemini free tier = 20 requests/day), and the provider's 429 was handed to the caller AS THE ANSWER. The turn now reports the failure (cools the free-tier row / drops the cached operator-lane verdict) and replays ONCE on the next resolved lane via retryHostedBrainTurn — same bounded-retry shape the Jarvis path uses. Explicit BYO connections keep surfacing their own failures unretried.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -31,7 +32,7 @@ import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-s
 import { requireAiEnabled } from '@/shared/middleware/ai-availability';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { NoHostedBrainError, resolveHostedBrainForCliAgent } from './inline-bot-execution';
+import { NoHostedBrainError, hostedBrainWire, resolveHostedBrainMeta, retryHostedBrainTurn } from './inline-bot-execution';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'message-routes' });
@@ -227,7 +228,7 @@ function handleSendMessage(ctx: AppContext) {
       // bot declares one, resolve the caller's hosted brain via the SAME shared helper
       // executeBotOrInline uses. Also before ticket creation: a turn with no admissible brain
       // must not open a ticket on its way to being refused (NO_HOSTED_BRAIN → 422 below).
-      const byoLlmConnection = await resolveHostedBrainForCliAgent(ctx.pool, resolvedAgentId, callerSub);
+      const resolvedBrain = await resolveHostedBrainMeta(ctx.pool, resolvedAgentId, callerSub);
       const resolvedContext = await resolveProjectManagerTicketExecutionContext(
         {
           taskStore: ctx.taskStore,
@@ -255,23 +256,37 @@ function handleSendMessage(ctx: AppContext) {
         ticketTitle: resolvedContext.ticketTitle ?? null,
       };
 
-      const result = await ctx.orchestrator.processMessage(resolvedContext.taskId, text, {
-        agenticMode: agenticMode ?? true,
-        autoApprove: false,
-        source: resolvedContext.source,
-        agentId: resolvedAgentId,
-        ticketContext: resolvedContext.ticketContext,
-        // The generic message endpoint IS the conversational chat path (cockpit chat panel), so
-        // default to 'chat' — this opens a workflow-less chat-ticket for each new thread (ADR: direct
-        // bot chat → Chat queue). Callers doing task-mode work pass interactionMode:'task' to opt out.
-        interactionMode: req.body.interactionMode ?? 'chat',
-        ticketId: resolvedContext.ticketId ?? (typeof bodyTicketId === 'string' ? bodyTicketId : undefined),
-        // Scope owner-bound server operations to the authenticated caller. Connector
-        // credentials are never forwarded into this model-visible path.
-        userSub: callerSub,
-        // Caller's resolved hosted brain (server-side resolution above — never from the body).
-        byoLlmConnection,
-      } as any);
+      const runTurn = (byoLlmConnection: ReturnType<typeof hostedBrainWire>) =>
+        ctx.orchestrator.processMessage(resolvedContext.taskId, text, {
+          agenticMode: agenticMode ?? true,
+          autoApprove: false,
+          source: resolvedContext.source,
+          agentId: resolvedAgentId,
+          ticketContext: resolvedContext.ticketContext,
+          // The generic message endpoint IS the conversational chat path (cockpit chat panel), so
+          // default to 'chat' — this opens a workflow-less chat-ticket for each new thread (ADR: direct
+          // bot chat → Chat queue). Callers doing task-mode work pass interactionMode:'task' to opt out.
+          interactionMode: req.body.interactionMode ?? 'chat',
+          ticketId: resolvedContext.ticketId ?? (typeof bodyTicketId === 'string' ? bodyTicketId : undefined),
+          // Scope owner-bound server operations to the authenticated caller. Connector
+          // credentials are never forwarded into this model-visible path.
+          userSub: callerSub,
+          // Caller's resolved hosted brain (server-side resolution above — never from the body).
+          byoLlmConnection,
+        } as any);
+      let result: Awaited<ReturnType<typeof runTurn>>;
+      try {
+        result = await runTurn(hostedBrainWire(resolvedBrain));
+      } catch (turnError) {
+        // Turn-time failover: a lane that passed its resolution probe can hit its quota
+        // mid-turn (Gemini free tier = 20/day). Cool the lane and replay ONCE on the next
+        // vendor instead of handing the caller the provider's 429 as the answer.
+        const nextLane = await retryHostedBrainTurn(
+          ctx.pool, resolvedAgentId, callerSub, resolvedBrain, turnError,
+        );
+        if (!nextLane) throw turnError;
+        result = await runTurn(nextLane);
+      }
 
       const durationMs = Date.now() - startTime;
       logger.info(

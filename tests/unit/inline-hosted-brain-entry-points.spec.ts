@@ -14,7 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // executeBotOrInline chokepoint, the swarm registry the condition reads — is real.
 vi.mock('@/app/routes/free-tier-rotation', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/app/routes/free-tier-rotation')>();
-  return { ...actual, resolveUserLlmConnection: vi.fn(async () => undefined) };
+  return {
+    ...actual,
+    resolveUserLlmConnection: vi.fn(async () => undefined),
+    reportResolvedLlmFailure: vi.fn(async () => false),
+  };
 });
 vi.mock('@/features/chat-orchestration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/features/chat-orchestration')>();
@@ -231,5 +235,90 @@ describe('POST /api/send-message — direct chat resolves the hosted brain over 
     expect(res.status).toBe(200);
     const options = processMessage.mock.calls[0][2] as { byoLlmConnection?: unknown };
     expect(options.byoLlmConnection).toBeUndefined();
+  });
+});
+
+describe('turn-time failover — a lane that 429s mid-turn replays once on the next lane', () => {
+  const QUOTA_429 = Object.assign(
+    new Error('byo-hosted endpoint generativelanguage.googleapis.com returned HTTP 429: quota exceeded'),
+    { code: 'BYO_HOSTED_HTTP_ERROR' },
+  );
+  const SECOND = { baseUrl: 'https://groq.example.test/v1', apiKey: 'sk-second', model: 'second-model' };
+
+  it('executeBotOrInline: reports the failure, re-resolves, and the retried turn answers', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const rotation = await import('../../src/app/routes/free-tier-rotation');
+    const ladder = rotation.resolveUserLlmConnection as unknown as ReturnType<typeof vi.fn>;
+    // First resolution → Gemini-shaped lane; after the report, the re-resolution → the next vendor.
+    ladder.mockImplementationOnce(async () => ({ ...CONNECTION, resolutionSource: 'operator-key' }));
+    ladder.mockImplementationOnce(async () => ({ ...SECOND, resolutionSource: 'operator-key' }));
+    const report = (rotation.reportResolvedLlmFailure as unknown as ReturnType<typeof vi.fn>);
+    report.mockImplementation(async () => true);
+    // The FIRST turn dies on the provider wall; the SECOND answers.
+    processMessage.mockImplementationOnce(async () => { throw QUOTA_429; });
+    const { executeBotOrInline } = await import('../../src/app/routes/inline-bot-execution');
+    const ctx = { pool: {}, orchestrator: { processMessage } } as never;
+    const botClient = { hasEndpoint: () => false } as never;
+
+    const result = await executeBotOrInline(ctx, botClient, agentId, {
+      text: 'hello', taskId: TASK_ID, agentId, userSub: USER_SUB,
+    } as never);
+
+    expect(result.success).toBe(true);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(processMessage).toHaveBeenCalledTimes(2);
+    const retryOptions = processMessage.mock.calls[1][2] as { byoLlmConnection?: typeof SECOND };
+    expect(retryOptions.byoLlmConnection).toEqual(SECOND);
+  });
+
+  it('send-message: the cockpit gets the retried answer, not the 429', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const rotation = await import('../../src/app/routes/free-tier-rotation');
+    const ladder = rotation.resolveUserLlmConnection as unknown as ReturnType<typeof vi.fn>;
+    ladder.mockImplementationOnce(async () => ({ ...CONNECTION, resolutionSource: 'operator-key' }));
+    ladder.mockImplementationOnce(async () => ({ ...SECOND, resolutionSource: 'operator-key' }));
+    (rotation.reportResolvedLlmFailure as unknown as ReturnType<typeof vi.fn>)
+      .mockImplementation(async () => true);
+    processMessage.mockImplementationOnce(async () => { throw QUOTA_429; });
+    const base = await bootSendMessageApp();
+
+    const res = await fetch(`${base}/send-message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-sub': USER_SUB },
+      body: JSON.stringify({ taskId: TASK_ID, text: 'hello', agentId }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(processMessage).toHaveBeenCalledTimes(2);
+    const retryOptions = processMessage.mock.calls[1][2] as { byoLlmConnection?: typeof SECOND };
+    expect(retryOptions.byoLlmConnection).toEqual(SECOND);
+  });
+
+  it('no retry when the report says the failure is not a provider wall, or the same lane resolves again', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const rotation = await import('../../src/app/routes/free-tier-rotation');
+    const ladder = rotation.resolveUserLlmConnection as unknown as ReturnType<typeof vi.fn>;
+    const report = rotation.reportResolvedLlmFailure as unknown as ReturnType<typeof vi.fn>;
+    const { executeBotOrInline } = await import('../../src/app/routes/inline-bot-execution');
+    const ctx = { pool: {}, orchestrator: { processMessage } } as never;
+    const botClient = { hasEndpoint: () => false } as never;
+
+    // Non-wall failure: report answers false — the original error surfaces, one turn only.
+    ladder.mockImplementation(async () => ({ ...CONNECTION, resolutionSource: 'operator-key' }));
+    report.mockImplementation(async () => false);
+    processMessage.mockImplementationOnce(async () => { throw new Error('genuine content failure'); });
+    await expect(executeBotOrInline(ctx, botClient, agentId, {
+      text: 'x', taskId: TASK_ID, agentId, userSub: USER_SUB,
+    } as never)).rejects.toThrow('genuine content failure');
+    expect(processMessage).toHaveBeenCalledTimes(1);
+
+    // Same lane re-resolves: a replay would reproduce the wall — original error surfaces.
+    processMessage.mockClear();
+    report.mockImplementation(async () => true);
+    processMessage.mockImplementationOnce(async () => { throw QUOTA_429; });
+    await expect(executeBotOrInline(ctx, botClient, agentId, {
+      text: 'x', taskId: TASK_ID, agentId, userSub: USER_SUB,
+    } as never)).rejects.toThrow('429');
+    expect(processMessage).toHaveBeenCalledTimes(1);
   });
 });
