@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Allow trusted internal direct-mode callers to bypass filesystem persona discovery with an explicit system prompt.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: stop threading connector credentials through model-provider calls; server-side connector operations resolve their own credentials at the operation boundary.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: fail closed when the tool authorization registry/interceptor is unavailable instead of exposing the raw executor.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: both agentic and direct turns now honor options.byoLlmConnection — a caller-resolved hosted OpenAI-compatible endpoint runs the turn (governed, same GovernedProvider wrap the composition root applies) instead of deps.getProvider's registry harness, which for CLI-harness bots is refused unattended on the controller. Callers (executeBotOrInline, jarvis runInline) were already threading the option; nothing here read it.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -32,7 +33,13 @@ import type {
 } from '@/shared/types';
 import type { ITaskStore } from '@/entities/task';
 import type { IMessageStore } from '@/entities/message';
-import { resolveUsageCost, type LLMService, type LLMToolDefinition, type LLMResponse } from '@/features/llm-provider';
+import {
+  createGovernedByoHostedProvider,
+  resolveUsageCost,
+  type LLMService,
+  type LLMToolDefinition,
+  type LLMResponse,
+} from '@/features/llm-provider';
 import { StreamManager } from '@/features/streaming';
 import type { ToolAuthInterceptor } from '@/features/tool-approval';
 import type { MemoryLayerService } from '@/features/memory';
@@ -221,7 +228,7 @@ export class TaskOrchestrator {
     text: string,
     options: ProcessMessageOptions,
   ): Promise<ProcessResult> {
-    const provider = this.deps.getProvider(options.agentId);
+    const provider = this.resolveProvider(options);
     const tools = await this.deps.getTools(options.agentId);
     const baseSystemPrompt = await this.deps.getSystemPrompt(options.agentId, tools, taskId);
     const systemPrompt = appendTicketContextNote(baseSystemPrompt, options);
@@ -265,7 +272,7 @@ export class TaskOrchestrator {
     text: string,
     options: ProcessMessageOptions,
   ): Promise<ProcessResult> {
-    const provider = this.deps.getProvider(options.agentId);
+    const provider = this.resolveProvider(options);
     const baseSystemPrompt = options.systemPromptOverride
       ?? (await this.deps.getSystemPrompt(options.agentId, undefined, taskId));
     const systemPrompt = options.systemPromptOverride
@@ -298,6 +305,30 @@ export class TaskOrchestrator {
       logger.error({ err: error, taskId }, 'Direct processing failed');
       throw error;
     }
+  }
+
+  /**
+   * @description Selects the LLM provider for this turn. A caller-resolved hosted
+   * `byoLlmConnection` (ADR-127 user-brain ladder — resolved server-side by the chat entry
+   * points, never from an HTTP body) wins over the registry/process provider: for a bot whose
+   * registry harness is an unattended local CLI, `deps.getProvider` would hand back a bridge
+   * that the SEC-05 policy refuses unconditionally on the controller, so the hosted connection
+   * is the only admissible brain. The BYO provider gets the SAME GovernedProvider wrap the
+   * composition root applies to every other provider path (no pool here, so budget legs fail
+   * open while the in-process quota window still enforces) — and because it replaces
+   * `deps.getProvider` entirely, there is no double wrap.
+   *
+   * @param options - Processing options (byoLlmConnection, agentId).
+   * @returns The provider to run this turn on.
+   */
+  private resolveProvider(options: ProcessMessageOptions): LLMService {
+    const connection = options.byoLlmConnection;
+    if (connection) {
+      // Model only — the endpoint host is logged inside the provider; the key is never logged.
+      logger.info({ model: connection.model, agentId: options.agentId }, 'Turn runs on caller-resolved hosted BYO connection');
+      return createGovernedByoHostedProvider(connection);
+    }
+    return this.deps.getProvider(options.agentId);
   }
 
   /**

@@ -15,6 +15,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: surfaced the PURE governance/config/data members consumers were reaching via deep paths (tool-capability-scope, provider-catalog, cline-config-builder, governance gate/budget/quota/fallback-routing). Deliberately NOT re-exported here: the LLM-EXECUTION provider runtimes (GovernedProvider, ProviderFailoverService, CodexHarnessProvider, ClaudeCodeCliProvider, ClineHarnessProvider / AgentStartup* aggregate) — adding them would pull the execution stack onto this controller-graph barrel, regressing the two-runtimes split above.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export the credential-free live Codex availability probe for controller UI metadata.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Surface the dependency-free unattended-provider denial through the feature barrel for FSD-compliant controller preflight imports.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: export ByoHostedProvider + createGovernedByoHostedProvider (hosted OpenAI-compatible reasoning — no harness module on its graph, verified against the controller-runtime-boundary barrel scan) and the isUnbrokeredAutonomousProvider predicate the chat entry points share.
  */
 
 export {
@@ -64,7 +65,19 @@ export {
 
 export { NoopProvider } from './services/noop-provider';
 export { AnthropicProvider, type AnthropicProviderConfig } from './services/anthropic-provider';
-export { assertAuditedAutonomousHarness } from './services/unattended-provider-policy';
+export {
+  assertAuditedAutonomousHarness,
+  isUnbrokeredAutonomousProvider,
+} from './services/unattended-provider-policy';
+// Hosted OpenAI-compatible reasoning on a caller-resolved connection (ADR-127). This is a
+// HOSTED provider, not a harness: its module graph is llm-service + governed-provider only,
+// so exporting it here keeps the barrel-split boundary intact (see the barrel scan in
+// tests/unit/controller-runtime-boundary.spec.ts).
+export {
+  ByoHostedProvider,
+  createGovernedByoHostedProvider,
+  type ByoHostedConnection,
+} from './services/byo-hosted-provider';
 
 // A2A cost-event TYPES only, from the pure-types module — the harness runtime
 // itself (adapters, HarnessLLMBridge) is deliberately NOT
