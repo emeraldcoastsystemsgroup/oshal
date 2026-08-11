@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05 identity closure: narrow authenticated PAT message writes to their exact owner so bounded live verification cannot persist chat_tasks under the operator-bypass database stamp.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: this route calls ctx.orchestrator.processMessage DIRECTLY (see seq 9), so it now resolves the caller's hosted user-brain ladder via the SAME shared helper executeBotOrInline uses (resolveHostedBrainForCliAgent — one condition, no drift) when the resolved agent's registry harness is an unbrokered CLI, and threads it as options.byoLlmConnection. Runs BEFORE ticket creation so a turn that cannot run never opens a ticket. NO_HOSTED_BRAIN maps to a clean 422 whose `error` field carries the friendly Settings → AI Providers message the cockpit chat panel renders (throwResponseError shows error.error).
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time hosted-brain failover: a lane that passes its resolution probe can exhaust its quota mid-turn (Gemini free tier = 20 requests/day), and the provider's 429 was handed to the caller AS THE ANSWER. The turn now reports the failure (cools the free-tier row / drops the cached operator-lane verdict) and replays ONCE on the next resolved lane via retryHostedBrainTurn — same bounded-retry shape the Jarvis path uses. Explicit BYO connections keep surfacing their own failures unretried.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Close seq 17's blind spot (live 2026-08-11: the 429 STILL became the answer on THIS route): agentic turns catch provider errors inside task-orchestrator.handleError and RESOLVE with { success:false, error }, so the catch never fired. swallowedTurnFailure inspects the resolved result and feeds the same retryHostedBrainTurn; a non-retryable failure (reportResolvedLlmFailure's gate) keeps the original failed result.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -32,7 +33,7 @@ import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-s
 import { requireAiEnabled } from '@/shared/middleware/ai-availability';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { NoHostedBrainError, hostedBrainWire, resolveHostedBrainMeta, retryHostedBrainTurn } from './inline-bot-execution';
+import { NoHostedBrainError, hostedBrainWire, resolveHostedBrainMeta, retryHostedBrainTurn, swallowedTurnFailure } from './inline-bot-execution';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'message-routes' });
@@ -286,6 +287,17 @@ function handleSendMessage(ctx: AppContext) {
         );
         if (!nextLane) throw turnError;
         result = await runTurn(nextLane);
+      }
+
+      // The agentic loop catches provider errors internally and resolves with a failed
+      // result — the catch above never sees those (this WAS the live 429-as-answer path).
+      // Same failover, keyed off the result shape instead of a throw.
+      const swallowed = swallowedTurnFailure(result);
+      if (swallowed) {
+        const nextLane = await retryHostedBrainTurn(
+          ctx.pool, resolvedAgentId, callerSub, resolvedBrain, swallowed,
+        );
+        if (nextLane) result = await runTurn(nextLane);
       }
 
       const durationMs = Date.now() - startTime;
