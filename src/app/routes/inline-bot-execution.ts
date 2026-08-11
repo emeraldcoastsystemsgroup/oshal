@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: reject generic credential carriers and require deterministic provider intents to execute on a dedicated audited bot node; inline model requests receive caller identity but never connector secrets.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: the INLINE branch resolves the caller's hosted user-brain ladder (resolveUserLlmConnection) when the target bot's registry harness is an unbrokered CLI and no byoLlmConnection was threaded — the SEC-05 refusal must never be the user-facing answer. Shared helpers (agentRequiresHostedBrain / resolveHostedBrainForCliAgent, NoHostedBrainError code NO_HOSTED_BRAIN) are exported so message-routes rides the SAME condition and the two chat entry points cannot drift.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Review hardening: the registry loader is a lazy dynamic import (the raw require could not load the .ts module under vitest, silently no-op'ing the condition in every route spec — the guard gap the first review caught); agentRequiresHostedBrain is pure over supplied entries; identity-less callers refuse with NO_HOSTED_BRAIN before the ladder so an anonymous turn can never ride the platform lane. Entry-point guards live in tests/unit/inline-hosted-brain-entry-points.spec.ts, mutation-tested on both wirings.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time hosted-brain failover (retryHostedBrainTurn): resolution-time probing cannot cover a lane exhausting its quota BETWEEN probe and completion (Gemini free tier = 20/day), so the 429 was handed to the caller as the answer. On a resolver-owned connection the failed turn now reports through reportResolvedLlmFailure (cools the free-tier row / drops the operator-lane verdict) and replays ONCE on the next resolved lane; same-lane re-resolution and explicit BYO connections surface the original failure unretried. resolveHostedBrainMeta returns the FULL connection (metadata needed to cool the right lane) and hostedBrainWire strips to the three wire fields at the processMessage boundary.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -19,7 +20,7 @@ import { BudgetService } from '@/features/cost-governance';
 import { isUnbrokeredAutonomousProvider } from '@/features/llm-provider';
 import { composeSkillProfilePrompt, resolveSkillProfileByApp } from '@/shared/skill-profiles';
 import { assertExecuteEntitlement } from '@/app/bot-node-execute-entitlement';
-import { resolveUserLlmConnection } from './free-tier-rotation';
+import { reportResolvedLlmFailure, resolveUserLlmConnection, type ResolvedUserLlmConnection } from './free-tier-rotation';
 import type { ByoLlmConnection } from './byo-llm-routes';
 
 const logger = createChildLogger({ module: 'inline-bot-execution' });
@@ -61,6 +62,8 @@ export interface HostedBrainResolutionOverrides {
   loadRegistry?: () => ReadonlyArray<RegistryHarnessFacts>;
   /** Ladder override for condition tests; production always walks resolveUserLlmConnection. */
   resolveConnection?: (pool: AppContext['pool'], userSub: string) => Promise<ByoLlmConnection | undefined>;
+  /** Failure-report override for retry tests; production always calls reportResolvedLlmFailure. */
+  reportFailure?: (pool: AppContext['pool'], connection: ResolvedUserLlmConnection, error: unknown) => Promise<boolean>;
 }
 
 /**
@@ -105,18 +108,20 @@ export function agentRequiresHostedBrain(
 /**
  * @description The ONE resolve-condition both chat entry points ride (ADR-127): when the
  * target bot's registry harness is an unbrokered CLI, resolve the caller's hosted user-brain
- * ladder (explicit BYO → free tiers → platform lane → operator key) and return the
- * connection the turn should run on. Hosted/other harnesses get NO override (undefined), and
- * a CLI-harness bot with nothing on the ladder throws {@link NoHostedBrainError} so callers
- * answer with Settings → AI Providers, never the raw SEC-05 refusal.
+ * ladder (explicit BYO → free tiers → platform lane → operator key) and return the FULL
+ * resolved connection — resolver metadata included, because turn-time failover
+ * ({@link retryHostedBrainTurn}) needs `resolutionSource`/`connectionId` to cool the right
+ * lane. Hosted/other harnesses get NO override (undefined), and a CLI-harness bot with
+ * nothing on the ladder throws {@link NoHostedBrainError} so callers answer with
+ * Settings → AI Providers, never the raw SEC-05 refusal.
  * @param pool - pg pool for the ladder's per-user reads.
  * @param agentId - The target bot's agent UUID.
- * @param userSub - The caller's OIDC sub (absent callers still reach the platform lane).
+ * @param userSub - The caller's OIDC sub; identity-less callers get no override.
  * @param overrides - Injectable seams for guard specs only.
- * @returns The hosted connection to thread as byoLlmConnection, or undefined for no override.
+ * @returns The full resolved connection, or undefined for no override.
  * @throws NoHostedBrainError when a CLI-harness bot has no resolvable hosted brain.
  */
-export async function resolveHostedBrainForCliAgent(
+export async function resolveHostedBrainMeta(
   pool: AppContext['pool'],
   agentId: string,
   userSub: string | undefined,
@@ -152,8 +157,87 @@ export async function resolveHostedBrainForCliAgent(
     throw new NoHostedBrainError();
   }
   logger.info({ agentId, model: connection.model }, 'hosted-brain resolution: CLI-harness bot rides the resolved hosted connection');
-  // Exactly the three wire fields — resolver metadata (resolutionSource etc.) never travels on.
-  return { baseUrl: connection.baseUrl, apiKey: connection.apiKey, model: connection.model };
+  return connection;
+}
+
+/**
+ * @description Strips a resolved connection to exactly the three wire fields the turn may
+ * see — resolver metadata (resolutionSource, connectionId, …) never travels into
+ * processMessage options or the provider.
+ * @param connection - The full resolved connection, or undefined.
+ * @returns The wire trio, or undefined.
+ */
+export function hostedBrainWire(connection: ByoLlmConnection | undefined): ByoLlmConnection | undefined {
+  return connection
+    ? { baseUrl: connection.baseUrl, apiKey: connection.apiKey, model: connection.model }
+    : undefined;
+}
+
+/**
+ * @description Back-compat wrapper over {@link resolveHostedBrainMeta} returning only the
+ * wire trio. Callers that need turn-time failover use the meta form + retryHostedBrainTurn.
+ * @param pool - pg pool for the ladder's per-user reads.
+ * @param agentId - The target bot's agent UUID.
+ * @param userSub - The caller's OIDC sub; identity-less callers get no override.
+ * @param overrides - Injectable seams for guard specs only.
+ * @returns The hosted connection to thread as byoLlmConnection, or undefined for no override.
+ * @throws NoHostedBrainError when a CLI-harness bot has no resolvable hosted brain.
+ */
+export async function resolveHostedBrainForCliAgent(
+  pool: AppContext['pool'],
+  agentId: string,
+  userSub: string | undefined,
+  overrides?: HostedBrainResolutionOverrides,
+): Promise<ByoLlmConnection | undefined> {
+  return hostedBrainWire(await resolveHostedBrainMeta(pool, agentId, userSub, overrides));
+}
+
+/**
+ * @description Turn-time failover (the half resolution-time probing cannot cover): a lane can
+ * pass its probe and then hit a provider wall mid-turn — Gemini's free tier is 20 requests a
+ * day, so the quota exhausts BETWEEN resolution and completion. When the failed turn ran on a
+ * connection this module resolved, report the failure (cools the free-tier row / drops the
+ * cached operator-lane verdict) and re-resolve ONCE; the caller replays the turn on the next
+ * lane. Explicit BYO connections are a user-selected billing boundary — reportResolvedLlmFailure
+ * refuses those, so they surface their own errors unretried, exactly like the Jarvis path.
+ * @param pool - pg pool for the ladder's reads.
+ * @param agentId - The target bot's agent UUID.
+ * @param userSub - The caller's OIDC sub.
+ * @param first - The full resolved connection the failed turn ran on (undefined = no retry).
+ * @param error - The turn failure.
+ * @param overrides - Injectable seams for guard specs only.
+ * @returns The next lane's wire trio to replay on, or null when no retry is warranted.
+ */
+export async function retryHostedBrainTurn(
+  pool: AppContext['pool'],
+  agentId: string,
+  userSub: string | undefined,
+  first: ByoLlmConnection | undefined,
+  error: unknown,
+  overrides?: HostedBrainResolutionOverrides,
+): Promise<ByoLlmConnection | null> {
+  if (!first) return null;
+  const report = overrides?.reportFailure
+    ?? (reportResolvedLlmFailure as (pool: AppContext['pool'], connection: ResolvedUserLlmConnection, error: unknown) => Promise<boolean>);
+  const shouldRetry = await report(pool, first as ResolvedUserLlmConnection, error).catch((reportErr) => {
+    logger.warn({ err: reportErr, agentId }, 'hosted-brain retry: failure report failed — no retry');
+    return false;
+  });
+  if (!shouldRetry) return null;
+  let second: ByoLlmConnection | undefined;
+  try {
+    second = await resolveHostedBrainMeta(pool, agentId, userSub, overrides);
+  } catch {
+    return null; // the ladder is now empty (NoHostedBrainError) — surface the ORIGINAL failure
+  }
+  if (!second || (second.baseUrl === first.baseUrl && second.model === first.model)) {
+    return null; // same lane again — a replay would reproduce the wall
+  }
+  logger.info(
+    { agentId, failedModel: first.model, retryModel: second.model },
+    'hosted-brain retry: lane failed mid-turn — replaying once on the next lane',
+  );
+  return hostedBrainWire(second) ?? null;
 }
 
 /**
@@ -236,20 +320,35 @@ export async function executeBotOrInline(
   // admissible in-process runtime (SEC-05 refuses those unconditionally on the controller), so when
   // the caller did not thread a connection, resolve the user-brain ladder HERE — the same hosted
   // rungs Jarvis rides. Throws NO_HOSTED_BRAIN (naming Settings → AI Providers) when nothing
-  // resolves; hosted/other harnesses pass through with no override.
-  const byoLlmConnection = request.byoLlmConnection
-    ?? await resolveHostedBrainForCliAgent(ctx.pool, agentId, request.userSub);
-  const result = await ctx.orchestrator.processMessage(request.taskId, inlineText, {
-    agenticMode: request.agenticMode ?? true,
-    autoApprove: false,
-    source: 'inline-bot',
-    agentId,
-    userSub: request.userSub,
-    providerId: request.providerId,
-    model: request.model,
-    interactionMode: request.direct ? 'task' : 'chat',
-    byoLlmConnection,
-  } as any);
+  // resolves; hosted/other harnesses pass through with no override. A caller-threaded connection
+  // is an explicit billing boundary — used verbatim, never retried elsewhere.
+  const resolvedBrain = request.byoLlmConnection
+    ? undefined
+    : await resolveHostedBrainMeta(ctx.pool, agentId, request.userSub);
+  const runTurn = (byoLlmConnection: typeof request.byoLlmConnection) =>
+    ctx.orchestrator.processMessage(request.taskId, inlineText, {
+      agenticMode: request.agenticMode ?? true,
+      autoApprove: false,
+      source: 'inline-bot',
+      agentId,
+      userSub: request.userSub,
+      providerId: request.providerId,
+      model: request.model,
+      interactionMode: request.direct ? 'task' : 'chat',
+      byoLlmConnection,
+    } as any);
+  let result: Awaited<ReturnType<typeof runTurn>>;
+  try {
+    result = await runTurn(request.byoLlmConnection ?? hostedBrainWire(resolvedBrain));
+  } catch (turnError) {
+    // Turn-time failover: a lane that passed its resolution probe can hit its quota mid-turn
+    // (Gemini free tier = 20/day). Cool the lane and replay ONCE on the next vendor.
+    const nextLane = await retryHostedBrainTurn(
+      ctx.pool, agentId, request.userSub, resolvedBrain, turnError,
+    );
+    if (!nextLane) throw turnError;
+    result = await runTurn(nextLane);
+  }
 
   if (!result.success) {
     throw new Error(`Inline bot execution failed: ${result.error || 'Unknown error'}`);
@@ -269,7 +368,7 @@ export async function executeBotOrInline(
     },
     cost: usage?.totalCost ?? 0,
     model,
-    provider: byoLlmConnection ? 'byo-llm' : 'inline-orchestrator',
+    provider: (request.byoLlmConnection || resolvedBrain) ? 'byo-llm' : 'inline-orchestrator',
     durationMs: Date.now() - start,
     taskId: request.taskId,
   };
