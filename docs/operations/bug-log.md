@@ -151,3 +151,97 @@ whitepaper/reference/stem-cell ("26 bots / 68 personas / 9 apps / 22 providers")
   `CLAUDE.md` cited an archived extension guide as authoritative.
 - **Fix (planned):** add carved-out/completed/paused banners or relocate; document the shipped k8s
   path; repoint the archived citation.
+
+## BUG-12 — Cockpit surfaces render their own hardcoded palette instead of the active theme
+- **Type:** Bug · **Priority:** Med · **Status:** OPEN
+- **Discovered:** 2026-08-09, operator, on **Intelligent Processing** — the pane renders a dark-navy
+  header and body inside a light-themed cockpit, so the surface visibly does not belong to the shell
+  around it.
+- **Summary:** An embedded cockpit surface is supposed to take its colours from the framework theme
+  the user picked. A large share of surfaces instead ship a bespoke `:root` palette of hardcoded hex
+  values and link no theme source at all, so they only look correct in a dark theme, by accident, and
+  clash in the other ten.
+- **Where (verified, not inferred):** `src/pages/intelligent-processing/index.html` links exactly one
+  stylesheet — `/shared/ui/css/surface-glass.css` — and **omits `/shared/ui/css/surface-themes.css`**.
+  It then defines its own `:root` with `--bg: #070d1c`, `--text: #e8eef7`, `--line: #22324f` and
+  siblings; its 22 `var(--…)` references resolve to that local palette, never to framework tokens.
+  Repo-wide, **25 of 49 surface HTML files link no theme source**. Excluding the cockpit shell
+  (`src/pages/cockpit/index.html`, which legitimately owns the theme and links `css/themes/*` itself)
+  and the standalone public pages (`api/index.html`, `api/privacy.html`, `api/terms.html`), roughly
+  twenty of those are ribbon-reachable surfaces with the same defect — among them Eval Wall, Run
+  Trace, the Health/Ops/Queue/Mesh dashboards, RAG Center, Task Explorer, Process Lab and Swarm Control.
+- **Root cause:** a **half-finished remediation, not an unknown problem.** `surface-themes.css` was
+  built precisely for this — its own header records that "28 of 37 surfaces hardcoded their own dark
+  palette and consumed ZERO framework tokens, so they only 'worked' in dark by accident and broke in
+  the other ten themes." Twenty-four surfaces were converted; the rollout stopped there, and nothing
+  fails when a new or unconverted surface ships without a theme source. Every surface added since
+  inherits the old habit because the bespoke-palette file is the nearest copy-paste neighbour.
+- **Fix:** for each affected surface, link `/shared/ui/css/surface-themes.css`, carry the theme
+  through on `<html data-theme=…>` from the shell's stored choice, and replace the hardcoded `:root`
+  block with aliases onto framework tokens. `src/api/token-chase.html` is the reference
+  implementation of the whole pattern. No layout change is required — only the colour source.
+- **Prevention (guard-per-fix):** a unit gate that enumerates the surface HTML files and fails when
+  one links neither `surface-themes.css` nor `cockpit/css/themes/*`, and that flags a bare hex colour
+  in a `:root` block. Without it this regresses on the next surface anyone adds — which is exactly
+  how it got to twenty. Tracked in [BACKLOG.md](../BACKLOG.md) → "Shared product experience".
+
+## BUG-13 — Identity Hub's expired-login signal is dead UI (the field is never sent)
+- **Type:** Bug · **Priority:** Med · **Status:** OPEN
+- **Discovered:** 2026-08-09, by the adversarial as-built review while writing
+  [the Identity Hub guide](../guides/identity-hub.md) — the reviewer could not make the documented
+  "Reconnect an expired login" affordance appear, and traced it to the API rather than the surface.
+- **Summary:** Identity Hub's reason to exist is telling you which connected account has gone stale.
+  That signal can never fire. The surface reads a per-connection `expired` flag that the API does not
+  emit, so the flag is `undefined` — falsy — everywhere it is used.
+- **Where (verified both ends):** `src/app/routes/connector-response-helpers.ts` builds each
+  connection as `{ connectionId, label, account, tenantId, isDefault }`; the file contains no
+  `expired` / `expiry` / `expiresAt` key at all. The store surface
+  `oshal-applications/identity/tools/identity.html` consumes `c.expired` in four places — the
+  per-provider `anyExpired` (`:606`), the `· expired` account marker (`:610`), `countExpired`
+  (`:632`) feeding the **Need attention** summary tile (`:642`), and the card's Reconnect-pill
+  decision (`:650`). Net user-visible effect: **Need attention always reads 0**, the red Reconnect
+  pill never renders, the `· expired` marker never renders, and the **Needs attention** filter
+  catches only connected-but-unconfigured providers. A user whose Google token actually expired gets
+  no indication on the one screen built to show it.
+- **Not a wider outage:** those four are the only consumers of a per-connection `expired` flag in
+  either repo, and the Access Review path is unaffected — it computes expiry itself from the stored
+  `expiry` value rather than trusting the list response, which is why the same page can report a
+  stale account in the review while showing zero in the tile.
+- **Root cause:** the list response is a deliberately narrow, credential-free projection (its header
+  says "status and account selectors only"), and expiry was never added to that allowlist when the
+  Hub was written against an assumed field. Nothing fails when a surface reads a key the response
+  does not carry, so it shipped looking correct.
+- **Fix:** derive expiry in `buildConnectorListResponse` from the stored token expiry — a boolean
+  (and optionally an ISO timestamp), never the token itself — keeping the projection credential-free.
+  The surface then needs no change.
+- **Prevention (guard-per-fix):** a unit assertion that the connector list response carries the keys
+  the shipped surfaces actually read, so a projection that drops a consumed field goes red instead of
+  silently rendering a zero.
+
+## BUG-14 — Notifications screen claims per-user credentials for channels that use deployment ones
+- **Type:** Bug · **Priority:** High (it is a trust/privacy claim, on-screen, and it is false) ·
+  **Status:** OPEN
+- **Discovered:** 2026-08-09, by the adversarial as-built review while writing
+  [the Platform tools guide](../guides/platform-tools.md).
+- **Summary:** The Notifications preference screen tells the user every notification is sent on their
+  own account and explicitly promises the opposite of what three of its four channels do.
+- **Where (verified both ends):** `src/pages/cockpit/tools/notify.html:74-76` renders: *"Every send
+  uses your own connected account (your Gmail, your Twilio, your Telegram chat), **never a shared
+  deployment credential**."* But `src/features/notifications/services/telegram-transport.ts:41` sends
+  with the deployment's `TELEGRAM_BOT_TOKEN`; `twilio-voice-transport.ts` is
+  `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER` only, with no personal tier at all;
+  and `twilio-sms-transport.ts` falls back to the same deployment credentials when the user has no
+  connected Twilio. Email is the one channel where the claim holds.
+- **Why this is High rather than cosmetic:** it is not an over-sold feature, it is a **statement about
+  whose credentials carry the user's messages**, made at the moment they choose a channel. A user
+  reading it would reasonably conclude their Telegram notifications leave through their own bot and
+  are invisible to the deployment operator. On a shared or hosted install that conclusion is wrong,
+  and it is the kind of claim the anti-drift rules exist to keep off a surface.
+- **Fix:** replace the blanket sentence with the per-channel truth — email on your connected account;
+  SMS on yours when connected, otherwise the deployment's; voice and Telegram on the deployment's —
+  and show the effective sender per channel in the routing table so it is visible at choose-time
+  rather than buried in copy.
+- **Prevention:** treat on-surface credential/privacy sentences as claims that need the same
+  as-built check as documentation (CLAUDE.md anti-drift rule 1 applies to surfaces, not just docs);
+  the honest per-channel wording now lives in the Platform tools guide and should be the source the
+  surface copies from.

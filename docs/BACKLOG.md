@@ -284,6 +284,18 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 
 ## Shared product experience
 
+### Finish the surface theme-token rollout (and gate it)
+- **Remaining:** ~20 ribbon-reachable surfaces link no theme source and paint from a hardcoded `:root` hex palette, so they clash with every theme except a dark one — the operator hit this on Intelligent Processing ([BUG-12](operations/bug-log.md)). `surface-themes.css` already exists and 24 surfaces were converted; convert the rest to the `src/api/token-chase.html` pattern (link the theme sheet, carry `data-theme` from the shell, alias local names onto framework tokens), then add the gate that makes a themeless surface fail loudly.
+- **Done when:** every surface HTML file links `surface-themes.css` or the cockpit theme sheets and declares no bare hex colour in a `:root` block; a unit gate enumerates the surfaces and goes red on both violations (mutation-checked); and a spot check of one converted surface in a light theme and a dark theme shows it matching the shell in both.
+
+### Identity Hub expiry reporting
+- **Remaining:** the connector list response never emits a per-connection `expired` flag, so Identity Hub's Need-attention tile, expired marker, and red Reconnect pill are dead UI ([BUG-13](operations/bug-log.md)). Derive expiry in `buildConnectorListResponse` from the stored token expiry, keeping the projection credential-free.
+- **Done when:** a connection whose stored token has passed its expiry renders the expired marker and is counted by the Need-attention tile and filter; a unit assertion pins the response keys the shipped surfaces read, so dropping a consumed field goes red.
+
+### End-user guides and an in-app way to reach them
+- **Remaining:** the per-surface user guides now live in [docs/guides/](guides/README.md), but a user still has no in-product route to them: there is no `/help` route, `/docs` serves Swagger, and the first-run strip suppresses itself on the full framework profile (`src/pages/cockpit/js/first-run.js`). Add a help entry point in the ribbon, per-surface `? Help` modals on the `sat-ops` pattern, and honest empty states that explain a screen that looks broken but is not (Intelligent Processing's parked backlog is the worst offender).
+- **Done when:** a signed-in user who has never seen the product can reach the guide for the screen they are on without leaving the cockpit; each covered surface exposes a `? Help` affordance carrying a condensed version of its guide; and the first-run strip appears on the full framework profile instead of hiding.
+
 ### Shared response-renderer completion
 - **Remaining:** add safe `oshal:map` and `oshal:doc` components, wire Jarvis/concierge/orb consumers to the registry, and finish the live Gmail, delayed-worker lifecycle, actions/forms, voice, attribution, and transcript decisions in [the acceptance plan](backlog/jarvis-voice-and-visuals.md).
 - **Done when:** the same untrusted response renders safely and consistently across at least Jarvis, chat, and one app; provider-grounded blocks cannot be model-forged; every remaining acceptance-plan item has live evidence or an explicit disposition.
