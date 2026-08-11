@@ -18,6 +18,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: JARVIS_AGENT_ID, APP_ROUTES/loadEffectiveRoutes, runJarvisBot + the classify/delegate/synthesize helpers, summarizeComplexTask, maskPendingComplexSummaries, repairCompletedTaskTableVisuals (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credential forwarding from Jarvis/model delegation; credentials stay inside audited server-side provider operations.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the turn's resolved endpoint through the whole turn: the in-process steps (haven passive learning, the legacy classify/synthesize path) now run on the same byoLlmConnection instead of silently falling to the controller's configured CLI harness, and the one bounded retry re-resolves to the NEXT usable endpoint rather than deliberately dropping the connection onto a provider a SEC-05 node refuses.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Let a CLI-lane failure reach the bounded retry: reportResolvedLlmFailure only answers for hosted connections, so a CLI turn (the demo operator's default brain) could never retry and surfaced the harness error instead of an answer.
  *
  * @module jarvis-orchestrator
  */
@@ -42,7 +43,7 @@ import {
   type MultiAppPlan,
 } from '@/features/swarm-orchestration';
 import { reportResolvedLlmFailure, resolveUserLlmConnection } from './free-tier-rotation';
-import { resolveUserBrain } from './user-brain-resolution';
+import { isRetryableCliBrainFailure, resolveUserBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
 import { executeBotOrInline } from './inline-bot-execution';
 import { createOptionalJarvisVisual } from './jarvis-visual-response';
@@ -331,7 +332,15 @@ export async function runJarvisBot(
   try {
     result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, request);
   } catch (error) {
-    const retryable = await reportResolvedLlmFailure(ctx.pool, resolvedLlmConnection, error);
+    // A CLI-lane turn has no resolved hosted connection, and reportResolvedLlmFailure answers only
+    // for hosted lanes — it refuses outright when there is no connection to cool, which is EVERY CLI
+    // turn. That silence is what turned an expired CLI login into a dead end on the one path the
+    // demo operator actually lands on (resolveUserBrain hands the operator `cli` first). The CLI
+    // lane therefore decides its own retryability; the hosted lanes keep their existing contract,
+    // including the refusal to silently replay an explicitly chosen BYO endpoint.
+    const retryable = brain.kind === 'cli'
+      ? isRetryableCliBrainFailure(error)
+      : await reportResolvedLlmFailure(ctx.pool, resolvedLlmConnection, error);
     if (!retryable) throw error;
     // reportResolvedLlmFailure has already cooled/invalidated the lane that just failed, so this
     // re-resolution returns the NEXT usable endpoint (another free lane, or the next operator key).
