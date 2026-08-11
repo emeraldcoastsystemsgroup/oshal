@@ -51,10 +51,12 @@ x-bot-common: &bot-common
   #   BOT_RUNTIME=swarm  → node dist/app/server.js (swarm controller)
   # Per any-bot-swarm-separation-design.md: worker bots run the bot-node runtime,
   # the API/PM container runs the swarm controller.
+  # Seeding is the ENTRYPOINT's job (bot-entrypoint.sh Step 1b, copy-IF-MISSING): a `cp -f`
+  # here force-reimposed the config-seed onto /app/output on EVERY container start, silently
+  # discarding runtime provider config each boot and making the entrypoint's guard dead code
+  # (2026-08-12 seeding repair — the same change that split the shared output volume).
   command: >
-    sh -c "cp -f /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
-           cp -f /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
-           exec bash /app/scripts/bot-entrypoint.sh"
+    sh -c "exec bash /app/scripts/bot-entrypoint.sh"
   restart: unless-stopped
   networks:
     - oshal
@@ -714,7 +716,7 @@ services:
     # Override command to wait for DB to accept real queries before starting the app.
     # This is the SWARM CONTROLLER — runs dist/app/server.js, NOT the any-bot.
     command: >
-      sh -c "cp -f /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
+      sh -c "cp -n /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
              cp -n /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
              echo 'Waiting for Postgres to accept queries...';
              for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -1932,7 +1934,7 @@ services:
       - *gemini-auth-volume
       - *claude-auth-json
       # Shared output volume = same career-hunter-data store + global config the api uses.
-      - api-output:/app/output
+      - jarvis-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -1973,7 +1975,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - eats-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2016,7 +2018,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - rides-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2058,7 +2060,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - shopping-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2090,7 +2092,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - spotify-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2122,7 +2124,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - travel-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2154,7 +2156,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - movies-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2188,7 +2190,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - social-writer-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2220,7 +2222,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - storage-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2252,7 +2254,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - deck-builder-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2284,7 +2286,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - finance-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2316,7 +2318,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - trading-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2348,7 +2350,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - identity-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2383,7 +2385,7 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      - api-output:/app/output
+      - general-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2622,6 +2624,26 @@ volumes:
   oshal_ollama_models:
   oshal_workspace:
   api-output:
+  # Per-bot /app/output volumes for the concierge wave (2026-08-12 seeding repair): these 14
+  # services shared api-output, and bot-entrypoint.sh writes every bot's persona to the SAME
+  # fixed path (/app/output/bot-persona.json) — a parallel boot is a last-writer-wins race that
+  # was live-measured putting 7 of 14 bots under ANOTHER bot's persona (finance answered as
+  # general, trading as travel-concierge, identity as oshal-assistant). One writer per volume,
+  # like the tm-output/codedev-output group below that never raced.
+  jarvis-output:
+  eats-output:
+  rides-output:
+  shopping-output:
+  spotify-output:
+  travel-output:
+  movies-output:
+  social-writer-output:
+  storage-output:
+  deck-builder-output:
+  finance-output:
+  trading-output:
+  identity-output:
+  general-output:
   tm-output:
   codedev-output:
   devops-output:

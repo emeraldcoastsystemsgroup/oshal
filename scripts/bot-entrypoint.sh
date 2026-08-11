@@ -11,6 +11,7 @@
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | Fix ticket-time dev-repo git auth (BACKLOG 2026-07-09): the helper lived ONLY in /root/.gitconfig, but the codex harness spawns ticket work with HOME=<workspace>/.codex-home, so ticket-time git never loaded it ("could not read Username"). Helper is now ALSO repo-local (HOME-independent) and falls back to a container-local /run/oshal-dev-token file (mode 600, NOT on any volume — dies with the container) in case the codex spawn env is scrubbed. The secret still never persists.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrected BOT_RUNTIME comments to match the current bot-node controller/worker split so docs and entrypoint guidance agree.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | Refuse the unsigned legacy any-bot HTTP runtime whenever delegation verification/signing material enables the task-bound security posture.
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | 2026-08-12 seeding repair (comment-only here): Step 1b's copy-IF-MISSING is now the ONLY config seeding path — the compose x-bot-common command had force-copied (`cp -f`) the seed over /app/output on EVERY start, which made this guard dead code and silently reset runtime provider config each boot. Compose now execs this entrypoint directly; the same change split the 14 concierge bots off the shared api-output volume (each bot's /app/output is private, so the fixed bot-persona.json path in Step 2 no longer races across containers).
 # =============================================================================
 #
 # @description Bot startup entrypoint for per-container architecture.
@@ -50,6 +51,9 @@ fi
 # If a config-seed directory exists with global-config.json or secrets.json,
 # copy them to the per-bot output dir (only if not already present).
 # This enables "configure once, apply to all bots" workflow.
+# NOTE (2026-08-12): this copy-if-missing IS the seeding path — compose must NOT
+# force-copy the seed ahead of it (see change-log seq 8); the seed initializes a
+# fresh volume once, and runtime config survives restarts thereafter.
 SEED_DIR="/app/config-seed"
 if [ -d "$SEED_DIR" ]; then
   for f in global-config.json secrets.json llm-config.json; do

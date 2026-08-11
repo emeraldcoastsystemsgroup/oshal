@@ -2,8 +2,8 @@
   "mode": "act",
   "actModeApiProvider": "claude-code",
   "planModeApiProvider": "claude-code",
-  "actModeApiModelId": "claude-sonnet-4-20250514",
-  "planModeApiModelId": "claude-sonnet-4-20250514",
+  "actModeApiModelId": "claude-sonnet-4-6",
+  "planModeApiModelId": "claude-sonnet-4-6",
   "voice": {
     "tts": {
       "default": "google-cloud-tts",
