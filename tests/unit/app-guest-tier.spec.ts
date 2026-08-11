@@ -90,6 +90,16 @@ describe('an OPERATOR-APPROVED tier takes effect', () => {
     expect(guestDecision(`/api/${SEG}/x`, 'POST')).toBe('guest_readonly');
   });
 
+  // The trading data API returns the DEPLOYMENT's paper book (env-resolved Alpaca creds, not the
+  // caller's) — so a guest GET must be BLOCKED, not the read-only default that leaked it. Found
+  // live 2026-08-09: /api/trading/ledger handed a guest 19 positions and the account equity.
+  it('blocks guest GETs to the trading data API (it leaks the deployment book on the Tier-B default)', () => {
+    expect(guestDecision('/api/trading/ledger', 'GET')).toBe('guest_blocked');
+    expect(guestDecision('/api/trading/account', 'GET')).toBe('guest_blocked');
+    expect(guestDecision('/api/trading/positions', 'GET')).toBe('guest_blocked');
+    expect(guestDecision('/api/trading/ledger', 'POST')).toBe('guest_blocked');
+  });
+
   // Revocation (and deactivate/uninstall) must drop the app straight back to read-only.
   it('revoking the approval drops back to the read-only default', () => {
     registerAppGuestTier(SEG, 'full');
