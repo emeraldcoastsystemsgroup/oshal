@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Added paused task status so cockpit fallback task-backed tickets can honor pause lifecycle controls consistently
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Permit trusted in-process reason-only callers to supply an explicit system prompt without filesystem persona discovery.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove the generic connector-credential carrier from ProcessMessageOptions; model requests keep owner identity only.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: typed byoLlmConnection on ProcessMessageOptions (baseUrl+apiKey+model — the user-brain ladder result) so the orchestrator can honor a caller-resolved hosted endpoint instead of the callers smuggling it through an `as any` cast the orchestrator never read.
  */
 
 import { z } from 'zod';
@@ -178,6 +179,14 @@ export const ProcessMessageOptionsSchema = z.object({
   userSub: z.string().optional(),
   /** Trusted in-process direct-mode prompt. Route handlers must never copy this from an HTTP body. */
   systemPromptOverride: z.string().min(1).max(50000).optional(),
+  /** Caller-resolved hosted OpenAI-compatible endpoint for THIS turn's reasoning (ADR-127
+   *  user-brain ladder). Resolved server-side (never copied from an HTTP body); when present
+   *  the orchestrator runs the turn on it instead of the registry/process provider. */
+  byoLlmConnection: z.object({
+    baseUrl: z.string().min(1),
+    apiKey: z.string().min(1),
+    model: z.string().min(1),
+  }).optional(),
 });
 
 /**

@@ -1,0 +1,235 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the two chat ENTRY POINTS of the ADR-127 inline hosted brain. The first review of this fix proved the provider, the orchestrator branch, and the shared helper individually — and then showed that deleting the wiring in executeBotOrInline or handleSendMessage left every suite green, because the lazy '@/…' registry require failed under vitest and turned the condition into a silent no-op. That require is now RELATIVE (loads the REAL registry here and in dist identically), and these cases drive the real entry points end to end: the inline branch threads the resolved connection into processMessage, send-message does the same over HTTP before creating a ticket, and an empty ladder answers the friendly 422 NO_HOSTED_BRAIN — never the raw SEC-05 refusal.
+ */
+
+import express, { type NextFunction, type Request, type Response } from 'express';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The ladder is the ONE collaborator doubled here: these guards pin the entry-point wiring,
+// and the ladder's own resolution order has its own suites. Everything else — the router, the
+// executeBotOrInline chokepoint, the swarm registry the condition reads — is real.
+vi.mock('@/app/routes/free-tier-rotation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/app/routes/free-tier-rotation')>();
+  return { ...actual, resolveUserLlmConnection: vi.fn(async () => undefined) };
+});
+vi.mock('@/features/chat-orchestration', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/features/chat-orchestration')>();
+  return {
+    ...actual,
+    resolveProjectManagerTicketExecutionContext: vi.fn(async (_deps: unknown, input: { requestedTaskId: string; source: string }) => ({
+      taskId: input.requestedTaskId,
+      source: input.source,
+      ticketCreated: false,
+      ticketId: null,
+      ticketStatus: null,
+      ticketTitle: null,
+      ticketContext: undefined,
+    })),
+  };
+});
+vi.mock('@/features/cost-governance', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/features/cost-governance')>();
+  return {
+    ...actual,
+    BudgetService: class { async checkBudget(): Promise<{ allowed: boolean }> { return { allowed: true }; } },
+  };
+});
+
+const USER_SUB = 'auth0|hosted-brain-user';
+const TASK_ID = 'f2b7a9d0-0000-4000-8000-000000000002';
+const CONNECTION = { baseUrl: 'https://hosted.example.test/v1', apiKey: 'sk-test-never-logged', model: 'test-model' };
+
+const servers: Array<{ close: (cb: () => void) => void }> = [];
+let processMessage: ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  processMessage = vi.fn(async () => ({ success: true, response: 'ok', usageSummary: undefined }));
+});
+
+afterEach(async () => {
+  await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(resolve))));
+  servers.length = 0;
+  vi.clearAllMocks();
+});
+
+/** Resolves a REAL claude-code inline bot from the active registry — the exact population the fix serves. */
+async function pickCliHarnessAgentId(): Promise<string> {
+  const { getActiveRegistry } = await import('../../src/app/extensions/swarm/swarm-bot-registry');
+  const entry = getActiveRegistry().find((bot) => {
+    const roles = (bot as { accessRoles?: string[] }).accessRoles;
+    const open = !roles || roles.length === 0;
+    return Boolean(bot.agentId) && bot.harnessType === 'claude-code' && open;
+  });
+  if (!entry?.agentId) throw new Error('no open claude-code registry bot found');
+  return entry.agentId;
+}
+
+/** Arms the doubled ladder for one test. */
+async function armLadder(connection: typeof CONNECTION | undefined): Promise<ReturnType<typeof vi.fn>> {
+  const rotation = await import('../../src/app/routes/free-tier-rotation');
+  const doubled = rotation.resolveUserLlmConnection as unknown as ReturnType<typeof vi.fn>;
+  doubled.mockImplementation(async () => (connection ? { ...connection, resolutionSource: 'explicit' } : undefined));
+  return doubled;
+}
+
+/** Boots the REAL message router with the same identity stamping the OIDC middleware produces. */
+async function bootSendMessageApp(): Promise<string> {
+  const { createMessageRoutes } = await import('../../src/app/routes/message-routes');
+  const ctx = {
+    taskStore: { get: async () => null },
+    workspaceService: { resolveTaskOwner: async () => null },
+    ticketService: {},
+    pool: {},
+    orchestrator: { processMessage },
+  } as unknown as Parameters<typeof createMessageRoutes>[0];
+
+  const app = express();
+  app.use(express.json());
+  app.use(((req: Request, _res: Response, next: NextFunction) => {
+    const sub = req.header('x-test-sub');
+    if (sub) {
+      (req as Request & { oidc?: unknown }).oidc = {
+        isAuthenticated: () => true,
+        user: { sub, email: `${sub}@example.test` },
+      };
+    }
+    next();
+  }));
+  app.use('/api', createMessageRoutes(ctx));
+  const server = app.listen(0);
+  servers.push(server);
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('test server did not bind');
+  return `http://127.0.0.1:${address.port}/api`;
+}
+
+describe('executeBotOrInline — the INLINE branch resolves and threads the hosted brain', () => {
+  it('a CLI-harness inline bot with no threaded connection rides the resolved ladder connection', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const ladder = await armLadder(CONNECTION);
+    const { executeBotOrInline } = await import('../../src/app/routes/inline-bot-execution');
+    const ctx = { pool: {}, orchestrator: { processMessage } } as never;
+    const botClient = { hasEndpoint: () => false } as never;
+
+    const result = await executeBotOrInline(ctx, botClient, agentId, {
+      text: 'hello', taskId: TASK_ID, agentId, userSub: USER_SUB,
+    } as never);
+
+    expect(result.success).toBe(true);
+    expect(ladder).toHaveBeenCalledTimes(1);
+    const options = processMessage.mock.calls[0][2] as { byoLlmConnection?: typeof CONNECTION };
+    // Exactly the wire trio — resolver metadata must not travel on.
+    expect(options.byoLlmConnection).toEqual(CONNECTION);
+  });
+
+  it('a caller-threaded connection wins — the ladder is never walked', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const ladder = await armLadder(CONNECTION);
+    const { executeBotOrInline } = await import('../../src/app/routes/inline-bot-execution');
+    const ctx = { pool: {}, orchestrator: { processMessage } } as never;
+    const botClient = { hasEndpoint: () => false } as never;
+    const threaded = { baseUrl: 'https://mine.example.test', apiKey: 'sk-mine', model: 'my-model' };
+
+    await executeBotOrInline(ctx, botClient, agentId, {
+      text: 'hello', taskId: TASK_ID, agentId, userSub: USER_SUB, byoLlmConnection: threaded,
+    } as never);
+
+    expect(ladder).not.toHaveBeenCalled();
+    const options = processMessage.mock.calls[0][2] as { byoLlmConnection?: typeof threaded };
+    expect(options.byoLlmConnection).toEqual(threaded);
+  });
+
+  it('an empty ladder surfaces NO_HOSTED_BRAIN, not the raw SEC refusal', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    await armLadder(undefined);
+    const { executeBotOrInline } = await import('../../src/app/routes/inline-bot-execution');
+    const ctx = { pool: {}, orchestrator: { processMessage } } as never;
+    const botClient = { hasEndpoint: () => false } as never;
+
+    await expect(executeBotOrInline(ctx, botClient, agentId, {
+      text: 'hello', taskId: TASK_ID, agentId, userSub: USER_SUB,
+    } as never)).rejects.toMatchObject({ code: 'NO_HOSTED_BRAIN', message: expect.stringContaining('Settings → AI Providers') });
+    expect(processMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/send-message — direct chat resolves the hosted brain over HTTP', () => {
+  it('threads the resolved connection into processMessage for a CLI-harness bot', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    await armLadder(CONNECTION);
+    const base = await bootSendMessageApp();
+
+    const res = await fetch(`${base}/send-message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-sub': USER_SUB },
+      body: JSON.stringify({ taskId: TASK_ID, text: 'hello', agentId }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(processMessage).toHaveBeenCalledTimes(1);
+    const options = processMessage.mock.calls[0][2] as { byoLlmConnection?: typeof CONNECTION };
+    expect(options.byoLlmConnection).toEqual(CONNECTION);
+  });
+
+  it('answers 422 NO_HOSTED_BRAIN with the friendly Settings message when the ladder is empty — and never creates the turn', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    await armLadder(undefined);
+    const base = await bootSendMessageApp();
+
+    const res = await fetch(`${base}/send-message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-sub': USER_SUB },
+      body: JSON.stringify({ taskId: TASK_ID, text: 'hello', agentId }),
+    });
+
+    expect(res.status).toBe(422);
+    const body = await res.json() as { success: boolean; error: string; code: string };
+    expect(body.success).toBe(false);
+    expect(body.code).toBe('NO_HOSTED_BRAIN');
+    // The `error` field is what the cockpit chat panel renders — it must be the actionable text.
+    expect(body.error).toContain('Settings → AI Providers');
+    expect(processMessage).not.toHaveBeenCalled();
+  });
+
+  it('an identity-less caller never walks the ladder — no override, unchanged pre-feature behavior', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const ladder = await armLadder(CONNECTION);
+    const base = await bootSendMessageApp();
+
+    const res = await fetch(`${base}/send-message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ taskId: TASK_ID, text: 'hello', agentId }),
+    });
+
+    // The gate sits BEFORE the ladder: no identity ⇒ no resolution ⇒ the platform lane can
+    // never serve an anonymous turn. The turn itself proceeds exactly as before the feature
+    // (internal/swarm-dispatch callers carry no user and must not break).
+    expect(res.status).toBe(200);
+    expect(ladder).not.toHaveBeenCalled();
+    const options = processMessage.mock.calls[0][2] as { byoLlmConnection?: unknown };
+    expect(options.byoLlmConnection).toBeUndefined();
+  });
+
+  it('a ladder FAILURE degrades to no override instead of a user-facing refusal', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const rotation = await import('../../src/app/routes/free-tier-rotation');
+    (rotation.resolveUserLlmConnection as unknown as ReturnType<typeof vi.fn>)
+      .mockImplementation(async () => { throw new Error('db down'); });
+    const base = await bootSendMessageApp();
+
+    const res = await fetch(`${base}/send-message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-sub': USER_SUB },
+      body: JSON.stringify({ taskId: TASK_ID, text: 'hello', agentId }),
+    });
+
+    expect(res.status).toBe(200);
+    const options = processMessage.mock.calls[0][2] as { byoLlmConnection?: unknown };
+    expect(options.byoLlmConnection).toBeUndefined();
+  });
+});

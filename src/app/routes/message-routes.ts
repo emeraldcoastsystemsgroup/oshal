@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: keep Twilio credentials out of conversational threads; authenticated fixed controller operations own any per-user SMS send.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: return the canonical 503 ai_disabled response on chat writes when the operator declares OSHAL_NO_AI=true.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05 identity closure: narrow authenticated PAT message writes to their exact owner so bounded live verification cannot persist chat_tasks under the operator-bypass database stamp.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: this route calls ctx.orchestrator.processMessage DIRECTLY (see seq 9), so it now resolves the caller's hosted user-brain ladder via the SAME shared helper executeBotOrInline uses (resolveHostedBrainForCliAgent — one condition, no drift) when the resolved agent's registry harness is an unbrokered CLI, and threads it as options.byoLlmConnection. Runs BEFORE ticket creation so a turn that cannot run never opens a ticket. NO_HOSTED_BRAIN maps to a clean 422 whose `error` field carries the friendly Settings → AI Providers message the cockpit chat panel renders (throwResponseError shows error.error).
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -30,6 +31,7 @@ import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-s
 import { requireAiEnabled } from '@/shared/middleware/ai-availability';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
+import { NoHostedBrainError, resolveHostedBrainForCliAgent } from './inline-bot-execution';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'message-routes' });
@@ -220,6 +222,12 @@ function handleSendMessage(ctx: AppContext) {
       // Runs BEFORE ticket creation and before any LLM work: an unentitled caller must not
       // create a ticket, consume budget, or reach a broker on the way to being refused.
       assertSendMessageEntitlement(req, resolvedAgentId, taskId);
+      // ADR-127 inline hosted brain: direct chat runs in-process on the controller, where an
+      // unbrokered-CLI registry harness is refused unconditionally (SEC-05) — so when the target
+      // bot declares one, resolve the caller's hosted brain via the SAME shared helper
+      // executeBotOrInline uses. Also before ticket creation: a turn with no admissible brain
+      // must not open a ticket on its way to being refused (NO_HOSTED_BRAIN → 422 below).
+      const byoLlmConnection = await resolveHostedBrainForCliAgent(ctx.pool, resolvedAgentId, callerSub);
       const resolvedContext = await resolveProjectManagerTicketExecutionContext(
         {
           taskStore: ctx.taskStore,
@@ -261,6 +269,8 @@ function handleSendMessage(ctx: AppContext) {
         // Scope owner-bound server operations to the authenticated caller. Connector
         // credentials are never forwarded into this model-visible path.
         userSub: callerSub,
+        // Caller's resolved hosted brain (server-side resolution above — never from the body).
+        byoLlmConnection,
       } as any);
 
       const durationMs = Date.now() - startTime;
@@ -296,6 +306,17 @@ function handleSendMessage(ctx: AppContext) {
           'send-message refused: caller is not entitled to the named agent',
         );
         res.status(403).json({ success: false, error: error.code });
+        return;
+      }
+      // No hosted brain anywhere on the caller's ladder (ADR-127): a clean 422 whose `error`
+      // field is the friendly Settings → AI Providers message — the cockpit chat panel renders
+      // exactly that field (api-client throwResponseError), never the raw SEC-05 refusal.
+      if (error instanceof NoHostedBrainError) {
+        logger.warn(
+          { taskId, durationMs: Date.now() - startTime },
+          'send-message refused: no hosted AI engine resolved for the caller',
+        );
+        res.status(422).json({ success: false, error: error.message, code: error.code });
         return;
       }
       logger.error({ err: error, taskId, durationMs: Date.now() - startTime }, 'Failed to process message');
