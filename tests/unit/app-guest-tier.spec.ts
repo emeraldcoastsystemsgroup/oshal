@@ -90,14 +90,18 @@ describe('an OPERATOR-APPROVED tier takes effect', () => {
     expect(guestDecision(`/api/${SEG}/x`, 'POST')).toBe('guest_readonly');
   });
 
-  // The trading data API returns the DEPLOYMENT's paper book (env-resolved Alpaca creds, not the
-  // caller's) — so a guest GET must be BLOCKED, not the read-only default that leaked it. Found
-  // live 2026-08-09: /api/trading/ledger handed a guest 19 positions and the account equity.
-  it('blocks guest GETs to the trading data API (it leaks the deployment book on the Tier-B default)', () => {
-    expect(guestDecision('/api/trading/ledger', 'GET')).toBe('guest_blocked');
-    expect(guestDecision('/api/trading/account', 'GET')).toBe('guest_blocked');
-    expect(guestDecision('/api/trading/positions', 'GET')).toBe('guest_blocked');
-    expect(guestDecision('/api/trading/ledger', 'POST')).toBe('guest_blocked');
+  // Operator decision (2026-08-10): the trading PAPER desk is intended demo content — a guest may
+  // VIEW it (GET) but never trade (mutations blocked). The paper book is the deployment's Alpaca
+  // paper account, shown to demonstrate the strategy; it is not private data. So trading gets the
+  // view-only Tier-B posture, NOT a full block. (Live is a separate risk and is not configured here.)
+  it('lets guests VIEW the trading paper desk but never write to it', () => {
+    expect(guestDecision('/api/trading/ledger', 'GET')).toBe('allow');
+    expect(guestDecision('/api/trading/account', 'GET')).toBe('allow');
+    expect(guestDecision('/api/trading/positions', 'GET')).toBe('allow');
+    // No trading, ever, from a guest: every mutation is refused.
+    expect(guestDecision('/api/trading/decide', 'POST')).toBe('guest_readonly');
+    expect(guestDecision('/api/trading/orders', 'POST')).toBe('guest_readonly');
+    expect(guestDecision('/api/trading/ledger', 'DELETE')).toBe('guest_readonly');
   });
 
   // Revocation (and deactivate/uninstall) must drop the app straight back to read-only.
