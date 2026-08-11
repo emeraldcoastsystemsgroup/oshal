@@ -839,6 +839,10 @@ services:
       CAREER_SCORE_CATCHUP_LIMIT: ${CAREER_SCORE_CATCHUP_LIMIT:-250}
       # Ceiling on the per-user title pass that follows the keyword pass.
       CAREER_TITLE_PASS_LIMIT: ${CAREER_TITLE_PASS_LIMIT:-60}
+      # Comma-separated subs allowed into the Companies admin surface (shared-corpus writes).
+      # Empty = nobody: the route 403s with a page naming this var, and logs the
+      # no-admins-configured case distinctly so an unset deployment is diagnosable from logs.
+      CAREER_HUNTER_ADMIN_SUBS: ${CAREER_HUNTER_ADMIN_SUBS:-}
       # Drone Ops (ADR-098/099): extra embedded sim drones on the api's fleet plane —
       # comma-separated ids (e.g. "bravo,charlie") for hardware-free fleet demos with
       # zero node processes. Empty (default) = just the embedded 'alpha'.
