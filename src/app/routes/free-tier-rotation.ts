@@ -32,6 +32,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Made rotation OBSERVABLE (ADR-064 Plan-B step 3, the last open clause). FreeTierStatus gains lastUsedAt - without the LRU position a lane the rotation has silently stopped picking is indistinguishable from a healthy idle one. New freeTierRuntimeSnapshot(): a NON-PROBING read of the module-level platform-lane state (platformVerdict / freeCatalog / lastLivePlatformModel), which was readable from nowhere. Non-probing is the whole point - calling platformFreeConnection() from a cockpit poll spends up to MAX_PLATFORM_PROBES real completions of the shared key's daily quota, so the surface would burn the resource it reports on. The key never leaves this module, and the snapshot labels itself per-process (one verdict cache per replica).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Make the background operator exemption case-sensitive and exact for OIDC subjects. Configuration delimiters remain trim-tolerant, but case/whitespace variants no longer inherit the operator's paid-provider privilege.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added the DEMO-gated OPERATOR-KEY lane (DEMO_MODE, default OFF — a non-demo deployment never lends its own vendor keys to a turn). The operator's exemption from the free legs used to return undefined, which handed the turn to the bot's configured CLI harness — and SEC-05 refuses every unattended CLI at a bot node, so an operator turn with no explicit BYO row had no admissible brain at all ("Sorry, that didn't work"). The operator now falls back to this deployment's OWN hosted keys (GEMINI/GROQ/CEREBRAS/MISTRAL/OPENAI env, ordered, probed once and cached) as a normal hosted byoLlmConnection. Non-operator callers are unaffected: they never see these keys. Also raised the require-content probe budget from 16 to 512 max_tokens — a reasoning model spends the whole 16 on hidden thinking and answers 200-but-empty, which scored live lanes (gemini-2.5-flash, gpt-oss-120b) as dead.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Operator-lane failure COOLDOWN (live 2026-08-11): a ~16-token probe passes on a quota trickle while full turns 429, so "invalidate the verdict and re-probe" handed the SAME walled Gemini lane back to the turn-time failover, whose same-lane check then (correctly) refused to replay — the 429 surfaced despite two layers of failover. reportResolvedLlmFailure now puts the failed lane on a 15-min exclusion (coolOperatorKeyLane, keyed by baseUrl→laneId) and operatorKeyConnection skips cooled lanes before probing, so re-resolution rotates to the next configured vendor by construction. Guard: operator-key-lane.spec cooldown cases.
  *
  * @module free-tier-rotation
  */
@@ -595,10 +596,12 @@ export async function reportResolvedLlmFailure(
     platformVerdict = { conn: null, until: Date.now() + PLATFORM_WALLED_TTL_MS };
     logger.warn({ model: connection.model }, 'free-tier: live platform execution hit a provider wall; using configured-provider fallback');
   } else if (connection.resolutionSource === 'operator-key') {
-    // Drop the cached lane so the retry (and every later turn) re-probes and can rotate to the next
-    // configured vendor instead of replaying the same walled key for the rest of the TTL.
+    // EXCLUDE the failed lane for a cooldown, then drop the cached verdict so the retry
+    // re-resolves. The exclusion is the part that matters: a probe can pass on a quota trickle
+    // while full turns 429, so re-probing alone hands back the same walled lane.
+    const cooledLane = coolOperatorKeyLane(connection.baseUrl);
     invalidateOperatorKeyLane();
-    logger.warn({ model: connection.model }, 'operator-key: the deployment lane failed mid-execution; re-resolving on the next turn');
+    logger.warn({ model: connection.model, cooledLane }, 'operator-key: the deployment lane failed mid-execution; lane cooling, re-resolving');
   }
   return true;
 }
@@ -626,6 +629,40 @@ function isOperatorCaller(userSub: string): boolean {
 let operatorVerdict: { conn: ByoLlmConnection | null; until: number } | null = null;
 const OPERATOR_LIVE_TTL_MS = 10 * 60_000;
 const OPERATOR_DEAD_TTL_MS = 5 * 60_000;
+
+/**
+ * Operator lanes a real turn FAILED on, keyed by laneId → skip-until epoch ms. A ~16-token
+ * resolution probe can pass on a quota trickle while full turns 429 (live 2026-08-11: Gemini's
+ * free tier daily-walled, probes kept passing, re-resolution returned the SAME lane, and the
+ * turn-time failover's same-lane check correctly refused to replay — so the 429 surfaced
+ * anyway). A failure report must therefore EXCLUDE the lane for a cooldown, not merely drop
+ * the cached verdict and hope the re-probe fails. Slightly longer than the live verdict TTL so
+ * the two windows don't expire in lockstep.
+ */
+const operatorLaneCooldowns = new Map<string, number>();
+const OPERATOR_LANE_COOLDOWN_MS = 15 * 60_000;
+
+/**
+ * @description Put the operator lane serving `baseUrl` on failure cooldown so resolution skips
+ * it even when its probe would pass. Called by {@link reportResolvedLlmFailure} with the
+ * connection a real turn just failed on.
+ * @param baseUrl - The failed connection's base URL (identifies the lane).
+ * @returns The cooled laneId, or null when no configured lane matches the URL.
+ */
+export function coolOperatorKeyLane(baseUrl: string): string | null {
+  for (const [laneId, lane] of Object.entries(OPENAI_COMPAT_LANES)) {
+    if (lane.baseUrl === baseUrl) {
+      operatorLaneCooldowns.set(laneId, Date.now() + OPERATOR_LANE_COOLDOWN_MS);
+      return laneId;
+    }
+  }
+  return null;
+}
+
+/** Test-only: clears lane cooldowns so specs cannot leak walls into one another. */
+export function resetOperatorLaneCooldownsForTesting(): void {
+  operatorLaneCooldowns.clear();
+}
 
 /**
  * @description The demo switch. ON (DEMO_MODE=1/true/yes/on), this deployment may lend its OWN
@@ -684,6 +721,10 @@ export async function operatorKeyConnection(): Promise<ByoLlmConnection | null> 
   if (operatorVerdict && Date.now() < operatorVerdict.until) return operatorVerdict.conn;
   const modelOverride = (process.env.OSHAL_OPERATOR_LLM_MODEL || '').trim();
   for (const laneId of operatorLaneOrder()) {
+    if ((operatorLaneCooldowns.get(laneId) ?? 0) > Date.now()) {
+      logger.info({ laneId }, 'operator-key: lane cooling after a mid-turn failure — skipping');
+      continue;
+    }
     const lane = OPENAI_COMPAT_LANES[laneId];
     if (!lane) {
       logger.warn({ laneId }, 'operator-key: unknown lane id in OSHAL_OPERATOR_LLM_LANES — skipped');
