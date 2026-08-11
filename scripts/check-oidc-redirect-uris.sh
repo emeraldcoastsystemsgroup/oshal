@@ -37,6 +37,15 @@
 #                     |                             | a wrong client id (Entra hides which — verdict says so, never a
 #                     |                             | false REGISTERED). MS_PROBE_PATH overrides the probed path to
 #                     |                             | validate the probe itself against a known-registered URI.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | `-p outlook` probes https://<host>/callback/outlook — but
+#                     |                             | against the ORG tenant, deliberately: redirect URIs are
+#                     |                             | registered app-level, and live probing showed the consumers
+#                     |                             | tenant 302s to login.live.com BEFORE validating the redirect
+#                     |                             | (a bogus URI and a registered one answer identically there),
+#                     |                             | so only the org tenant can prove app-level registration
+#                     |                             | pre-auth. Personal-account support itself is a separate
+#                     |                             | app property (supported-account-types), checked once in the
+#                     |                             | runbook, not per host.
 
 set -u
 
@@ -49,9 +58,10 @@ if [ "${1:-}" = "-p" ]; then
 fi
 
 usage() {
-  echo "usage: $(basename "$0") [-p google|microsoft] <host> [host ...]" >&2
+  echo "usage: $(basename "$0") [-p google|microsoft|outlook] <host> [host ...]" >&2
   echo "  google (default): probes https://<host>/callback" >&2
   echo "  microsoft:        probes https://<host>/callback/microsoft" >&2
+  echo "  outlook:          probes https://<host>/callback/outlook (app-level check via the org tenant)" >&2
   exit 2
 }
 
@@ -65,15 +75,21 @@ case "$PROVIDER" in
       exit 2
     fi
     ;;
-  microsoft)
+  microsoft|outlook)
     CID=$(envval MICROSOFT_OIDC_CLIENT_ID)
+    if [ "$PROVIDER" = "outlook" ]; then
+      OCID=$(envval OUTLOOK_OIDC_CLIENT_ID)
+      [ -n "$OCID" ] && CID="$OCID"
+    fi
+    # ALWAYS the org tenant, even for outlook: redirect URIs are app-level and the
+    # consumers tenant hands off to login.live.com before validating them.
     TENANT=$(envval MICROSOFT_TENANT_ID)
     if [ -z "$TENANT" ]; then
       # Fall back to extracting the tenant from an explicit issuer URL.
       TENANT=$(envval MICROSOFT_OIDC_ISSUER_URL | sed -n 's|.*login\.microsoftonline\.com/\([^/]*\)/v2\.0.*|\1|p')
     fi
     if [ -z "$CID" ] || [ -z "$TENANT" ]; then
-      echo "ERROR: microsoft mode needs MICROSOFT_OIDC_CLIENT_ID and MICROSOFT_TENANT_ID (or MICROSOFT_OIDC_ISSUER_URL) in ${REPO_ROOT}/.env" >&2
+      echo "ERROR: $PROVIDER mode needs MICROSOFT_OIDC_CLIENT_ID (or OUTLOOK_OIDC_CLIENT_ID) and MICROSOFT_TENANT_ID (or MICROSOFT_OIDC_ISSUER_URL) in ${REPO_ROOT}/.env" >&2
       exit 2
     fi
     ;;
@@ -134,6 +150,11 @@ probe_microsoft() {
     200) echo "NOT-REGISTERED-OR-BAD-CLIENT"; return 0 ;;
     *) echo "ERROR:http-${status:-none}"; return 0 ;;
   esac
+}
+
+# Same probe as microsoft against a different default path — MS_PROBE_PATH still overrides.
+probe_outlook() {
+  MS_PROBE_PATH="${MS_PROBE_PATH:-/callback/outlook}" probe_microsoft "$1"
 }
 
 FAILED=0

@@ -78,8 +78,17 @@ provider and dispatches every request to exactly one of them.**
   `OSHAL_OPERATOR_EMAILS` (email-based, covers both); anything keyed on
   `OSHAL_OPERATOR_SUBS` needs the new sub added deliberately. Cross-provider account linking
   is future work if ever wanted.
-- Instance count is hosts × providers (15 × 2 = 30 today) — discovery is lazy and per-host
-  behavior is unchanged, but a pathological provider list would multiply; the registry is a
-  closed set by design.
+- Instance count is hosts × providers — discovery is lazy and per-host behavior is
+  unchanged, but a pathological provider list would multiply; the registry is a closed set
+  by design.
+- **2026-08-10 extension (the anticipated "add a row"):** third provider `outlook` —
+  personal Microsoft accounts (outlook.com/hotmail) via the **fixed consumers tenant**
+  (`9188040d-6c67-4c5b-b112-36a304b66dad`), whose issuer is stable and passes strict
+  validation, unlike `common`. `OUTLOOK_LOGIN` flag; credentials default to the
+  `MICROSOFT_OIDC_*` app (one Azure registration, two doors — org directory + personal),
+  overridable via `OUTLOOK_OIDC_*`. Chooser buttons gained inline-SVG provider icons. The
+  probe's `-p outlook` validates `/callback/outlook` registration against the **org**
+  tenant, because live probing showed the consumers tenant 302s to `login.live.com`
+  before validating redirect URIs (a bogus and a registered URI answer identically there).
 - Guards: `tests/unit/oidc-login-providers.spec.ts` (fail-closed resolution, legacy-default
   equivalence, dispatch matrix incl. chunked/sibling cookies, chooser escaping).
