@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Review hardening: the registry loader is a lazy dynamic import (the raw require could not load the .ts module under vitest, silently no-op'ing the condition in every route spec — the guard gap the first review caught); agentRequiresHostedBrain is pure over supplied entries; identity-less callers refuse with NO_HOSTED_BRAIN before the ladder so an anonymous turn can never ride the platform lane. Entry-point guards live in tests/unit/inline-hosted-brain-entry-points.spec.ts, mutation-tested on both wirings.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time hosted-brain failover (retryHostedBrainTurn): resolution-time probing cannot cover a lane exhausting its quota BETWEEN probe and completion (Gemini free tier = 20/day), so the 429 was handed to the caller as the answer. On a resolver-owned connection the failed turn now reports through reportResolvedLlmFailure (cools the free-tier row / drops the operator-lane verdict) and replays ONCE on the next resolved lane; same-lane re-resolution and explicit BYO connections surface the original failure unretried. resolveHostedBrainMeta returns the FULL connection (metadata needed to cool the right lane) and hostedBrainWire strips to the three wire fields at the processMessage boundary.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Close the failover's blind spot (live 2026-08-11: the 429 STILL became the answer): the agentic loop catches provider errors internally (task-orchestrator handleError) and RESOLVES with { success:false, error } — so the route-level catch entry 7 added never fired on exactly the live path. swallowedTurnFailure detects the failure-shaped RESULT and both entry points feed it through the SAME retryHostedBrainTurn; retryability still belongs to reportResolvedLlmFailure's pattern gate, so genuine content failures stay failures. Cost: a replayed turn re-appends the user message to the thread (cosmetic duplicate) — accepted over shipping a provider's quota wall as the assistant's reply.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Diagnosability: every declined retry in retryHostedBrainTurn now logs its reason (not-a-wall / ladder-empty / same-lane). The same-lane branch declining SILENTLY in 7ms is what hid the probe-passes-on-a-quota-trickle trap (fixed in free-tier-rotation seq 10) behind a mystery.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -224,14 +225,24 @@ export async function retryHostedBrainTurn(
     logger.warn({ err: reportErr, agentId }, 'hosted-brain retry: failure report failed — no retry');
     return false;
   });
-  if (!shouldRetry) return null;
+  if (!shouldRetry) {
+    // Every declined retry names its reason — a silent early return here cost the live
+    // diagnosis of the same-lane trap (2026-08-11).
+    logger.info({ agentId, failedModel: first.model }, 'hosted-brain retry: failure is not a provider wall (or the connection is caller-owned) — surfacing the original error');
+    return null;
+  }
   let second: ByoLlmConnection | undefined;
   try {
     second = await resolveHostedBrainMeta(pool, agentId, userSub, overrides);
   } catch {
+    logger.info({ agentId, failedModel: first.model }, 'hosted-brain retry: the ladder is empty after cooling the lane — surfacing the original error');
     return null; // the ladder is now empty (NoHostedBrainError) — surface the ORIGINAL failure
   }
   if (!second || (second.baseUrl === first.baseUrl && second.model === first.model)) {
+    logger.info(
+      { agentId, failedModel: first.model, reResolvedModel: second?.model ?? null },
+      'hosted-brain retry: re-resolution returned the same lane (or none) — a replay would reproduce the wall; surfacing the original error',
+    );
     return null; // same lane again — a replay would reproduce the wall
   }
   logger.info(
