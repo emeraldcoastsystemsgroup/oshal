@@ -217,3 +217,31 @@ whitepaper/reference/stem-cell ("26 bots / 68 personas / 9 apps / 22 providers")
 - **Prevention (guard-per-fix):** a unit assertion that the connector list response carries the keys
   the shipped surfaces actually read, so a projection that drops a consumed field goes red instead of
   silently rendering a zero.
+
+## BUG-14 — Notifications screen claims per-user credentials for channels that use deployment ones
+- **Type:** Bug · **Priority:** High (it is a trust/privacy claim, on-screen, and it is false) ·
+  **Status:** OPEN
+- **Discovered:** 2026-08-09, by the adversarial as-built review while writing
+  [the Platform tools guide](../guides/platform-tools.md).
+- **Summary:** The Notifications preference screen tells the user every notification is sent on their
+  own account and explicitly promises the opposite of what three of its four channels do.
+- **Where (verified both ends):** `src/pages/cockpit/tools/notify.html:74-76` renders: *"Every send
+  uses your own connected account (your Gmail, your Twilio, your Telegram chat), **never a shared
+  deployment credential**."* But `src/features/notifications/services/telegram-transport.ts:41` sends
+  with the deployment's `TELEGRAM_BOT_TOKEN`; `twilio-voice-transport.ts` is
+  `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER` only, with no personal tier at all;
+  and `twilio-sms-transport.ts` falls back to the same deployment credentials when the user has no
+  connected Twilio. Email is the one channel where the claim holds.
+- **Why this is High rather than cosmetic:** it is not an over-sold feature, it is a **statement about
+  whose credentials carry the user's messages**, made at the moment they choose a channel. A user
+  reading it would reasonably conclude their Telegram notifications leave through their own bot and
+  are invisible to the deployment operator. On a shared or hosted install that conclusion is wrong,
+  and it is the kind of claim the anti-drift rules exist to keep off a surface.
+- **Fix:** replace the blanket sentence with the per-channel truth — email on your connected account;
+  SMS on yours when connected, otherwise the deployment's; voice and Telegram on the deployment's —
+  and show the effective sender per channel in the routing table so it is visible at choose-time
+  rather than buried in copy.
+- **Prevention:** treat on-surface credential/privacy sentences as claims that need the same
+  as-built check as documentation (CLAUDE.md anti-drift rule 1 applies to surfaces, not just docs);
+  the honest per-channel wording now lives in the Platform tools guide and should be the source the
+  surface copies from.
