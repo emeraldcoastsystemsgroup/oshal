@@ -33,6 +33,7 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Forward the manifest schedule target as an explicit prompt or deterministic service-route union so package workers never enter the generic prompt dispatcher.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile retired and execution-class-changed schedules from the previous active manifest before activating its replacement, preventing stale prompt/per-user/service handlers after hot reload.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Back under the 1000-code-line hard cap (1082 -> 941). Entries 27-29 pushed this file past it, which fails the BLOCKING gate_lint (eslint max-lines, --max-warnings 0) and would have blocked the branch. Moved out the two groups that were never orchestration: record presentation/visibility to swarm-app-record-view.ts, and manifest-to-runtime translation (tool create-input, selector seed, safe WHERE, interpolation) to swarm-app-manifest-mapping.ts. Verbatim moves behind the same names, so the class body and this module's public exports are unchanged; both tsconfigs typecheck at 0 errors and the manifest specs stay green.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com   | Forward ui.static[].group into the synthesised ribbon items. RibbonNav has grouped on this field since the rail-pin work, but synthesiseProfile's static-item map listed the keys it copied, so a manifest declaring `group:` produced an identical flat ribbon with no error anywhere — the silent no-op that made the feature look unimplemented. Forwarded verbatim; the renderer stays the authority on where a heading is allowed.
  */
 
 import type { Pool } from 'pg';
@@ -627,7 +628,7 @@ export class SwarmAppService {
     displayName: string;
     description?: string;
     ribbon: {
-      items: Array<string | { id: string; icon: string; label: string; section: 'top' | 'bottom'; toolUi?: { iframeUrl: string; sidebarLabel: string } }>;
+      items: Array<string | { id: string; icon: string; label: string; section: 'top' | 'bottom'; group?: string; toolUi?: { iframeUrl: string; sidebarLabel: string } }>;
       dynamicTools: { allow: string[]; section?: 'top' | 'bottom' };
     };
     defaultView?: string;
@@ -682,11 +683,17 @@ export class SwarmAppService {
     // case (`viewId.startsWith('tool-')`) routes them to renderToolView,
     // which embeds an iframe in the main content area instead of doing a
     // whole-page navigation.
+    // `group` rides through to the ribbon so a manifest can split its rail into
+    // labelled bands (ADR-085 addendum). It is forwarded verbatim; RibbonNav is the
+    // authority on where a heading is allowed, and already forces `''` on the pinned
+    // bottom tray. Dropping the key here — which is what this map did before — made a
+    // manifest-only `group:` edit a silent no-op, since nothing else reads ui.static.
     const staticItems = (manifest.ui?.static ?? []).map(s => ({
       id: `tool-${s.toolName}`,
       icon: s.icon,
       label: s.label,
       section: (s.section === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom',
+      group: s.group,
       toolUi: { iframeUrl: s.iframeUrl, sidebarLabel: s.label },
     }));
 
