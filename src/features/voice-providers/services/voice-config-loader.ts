@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Voice config loader — reads swarm-level defaults from config-seed/global-config.json with a built-in fallback so the framework works even pre-seed
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Declare local-stt in the default STT provider map: the provider class, sidecar, and env wiring all existed, but nothing registered the provider, so VoiceService's failover (and explicit local-stt requests) could never reach the on-host sidecar. Config-less by design — the provider reads SPEAKER_DIARIZATION_URL / SPEAKER_SERVICE_KEY itself and reports unconfigured where the sidecar is absent.
  */
 
 import fs from 'node:fs';
@@ -51,6 +52,12 @@ export const DEFAULT_VOICE_CONFIG: SwarmVoiceConfig = {
         defaultLanguageCode: 'en-US',
         location: 'us',
       },
+      // The on-host sherpa-onnx sidecar (URL/key from SPEAKER_DIARIZATION_URL /
+      // SPEAKER_SERVICE_KEY env). Declared by default so it is REGISTERED wherever the
+      // sidecar runs — without this row the STT failover had no local landing spot while
+      // Gemini's free tier was quota-walled and the sidecar sat idle. Unconfigured
+      // deployments register it harmlessly: it reports unconfigured and is skipped.
+      'local-stt': {},
     },
   },
 };

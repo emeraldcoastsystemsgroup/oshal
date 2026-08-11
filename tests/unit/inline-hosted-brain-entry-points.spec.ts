@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the two chat ENTRY POINTS of the ADR-127 inline hosted brain. The first review of this fix proved the provider, the orchestrator branch, and the shared helper individually — and then showed that deleting the wiring in executeBotOrInline or handleSendMessage left every suite green, because the lazy '@/…' registry require failed under vitest and turned the condition into a silent no-op. That require is now RELATIVE (loads the REAL registry here and in dist identically), and these cases drive the real entry points end to end: the inline branch threads the resolved connection into processMessage, send-message does the same over HTTP before creating a ticket, and an empty ladder answers the friendly 422 NO_HOSTED_BRAIN — never the raw SEC-05 refusal.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Swallowed-failure leg: the deployed catch-based failover never fired live because task-orchestrator.handleError RESOLVES agentic provider errors as { success:false, error } — new cases pin both entry points replaying that result shape through the same retryHostedBrainTurn, the pure swallowedTurnFailure predicate rows, and the non-wall failed result staying failed (mutation kill for an unconditional retry).
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -319,6 +320,93 @@ describe('turn-time failover — a lane that 429s mid-turn replays once on the n
     await expect(executeBotOrInline(ctx, botClient, agentId, {
       text: 'x', taskId: TASK_ID, agentId, userSub: USER_SUB,
     } as never)).rejects.toThrow('429');
+    expect(processMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('turn-time failover — SWALLOWED provider errors (the orchestrator resolves { success:false })', () => {
+  // task-orchestrator.handleError catches every agentic-turn error, marks the task failed, and
+  // RESOLVES with this exact shape — no throw ever reaches the route. This was the LIVE
+  // 2026-08-11 path where the Gemini 429 became the chat answer with the catch-based failover
+  // already deployed. These cases pin the result-shape leg of the same failover.
+  const FAILED_429_RESULT = {
+    success: false,
+    error: 'byo-hosted endpoint generativelanguage.googleapis.com returned HTTP 429: quota exceeded',
+    turnCount: 0,
+  };
+  const SECOND = { baseUrl: 'https://groq.example.test/v1', apiKey: 'sk-second', model: 'second-model' };
+
+  it('swallowedTurnFailure: only a failed result with error text becomes an Error', async () => {
+    const { swallowedTurnFailure } = await import('../../src/app/routes/inline-bot-execution');
+    expect(swallowedTurnFailure({ success: true })).toBeUndefined();
+    expect(swallowedTurnFailure(undefined)).toBeUndefined();
+    expect(swallowedTurnFailure({ success: false, error: '   ' })).toBeUndefined();
+    expect(swallowedTurnFailure(FAILED_429_RESULT)?.message).toContain('HTTP 429');
+  });
+
+  it('executeBotOrInline: a resolved-failed 429 cools the lane and the replay answers', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const rotation = await import('../../src/app/routes/free-tier-rotation');
+    const ladder = rotation.resolveUserLlmConnection as unknown as ReturnType<typeof vi.fn>;
+    ladder.mockImplementationOnce(async () => ({ ...CONNECTION, resolutionSource: 'operator-key' }));
+    ladder.mockImplementationOnce(async () => ({ ...SECOND, resolutionSource: 'operator-key' }));
+    const report = rotation.reportResolvedLlmFailure as unknown as ReturnType<typeof vi.fn>;
+    report.mockImplementation(async () => true);
+    // The first turn RESOLVES failed (no throw) — the live shape; the replay succeeds.
+    processMessage.mockImplementationOnce(async () => FAILED_429_RESULT);
+    const { executeBotOrInline } = await import('../../src/app/routes/inline-bot-execution');
+    const ctx = { pool: {}, orchestrator: { processMessage } } as never;
+    const botClient = { hasEndpoint: () => false } as never;
+
+    const result = await executeBotOrInline(ctx, botClient, agentId, {
+      text: 'hello', taskId: TASK_ID, agentId, userSub: USER_SUB,
+    } as never);
+
+    expect(result.success).toBe(true);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(processMessage).toHaveBeenCalledTimes(2);
+    const retryOptions = processMessage.mock.calls[1][2] as { byoLlmConnection?: typeof SECOND };
+    expect(retryOptions.byoLlmConnection).toEqual(SECOND);
+  });
+
+  it('send-message: a resolved-failed 429 replays — the cockpit gets the answer, not the quota text', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const rotation = await import('../../src/app/routes/free-tier-rotation');
+    const ladder = rotation.resolveUserLlmConnection as unknown as ReturnType<typeof vi.fn>;
+    ladder.mockImplementationOnce(async () => ({ ...CONNECTION, resolutionSource: 'operator-key' }));
+    ladder.mockImplementationOnce(async () => ({ ...SECOND, resolutionSource: 'operator-key' }));
+    (rotation.reportResolvedLlmFailure as unknown as ReturnType<typeof vi.fn>)
+      .mockImplementation(async () => true);
+    processMessage.mockImplementationOnce(async () => FAILED_429_RESULT);
+    const base = await bootSendMessageApp();
+
+    const res = await fetch(`${base}/send-message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-sub': USER_SUB },
+      body: JSON.stringify({ taskId: TASK_ID, text: 'hello', agentId }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(processMessage).toHaveBeenCalledTimes(2);
+    const retryOptions = processMessage.mock.calls[1][2] as { byoLlmConnection?: typeof SECOND };
+    expect(retryOptions.byoLlmConnection).toEqual(SECOND);
+  });
+
+  it('a resolved-failed result that is NOT a provider wall stays failed — one turn only', async () => {
+    const agentId = await pickCliHarnessAgentId();
+    const rotation = await import('../../src/app/routes/free-tier-rotation');
+    (rotation.resolveUserLlmConnection as unknown as ReturnType<typeof vi.fn>)
+      .mockImplementation(async () => ({ ...CONNECTION, resolutionSource: 'operator-key' }));
+    (rotation.reportResolvedLlmFailure as unknown as ReturnType<typeof vi.fn>)
+      .mockImplementation(async () => false);
+    processMessage.mockImplementationOnce(async () => ({ success: false, error: 'genuine content failure', turnCount: 0 }));
+    const { executeBotOrInline } = await import('../../src/app/routes/inline-bot-execution');
+    const ctx = { pool: {}, orchestrator: { processMessage } } as never;
+    const botClient = { hasEndpoint: () => false } as never;
+
+    await expect(executeBotOrInline(ctx, botClient, agentId, {
+      text: 'x', taskId: TASK_ID, agentId, userSub: USER_SUB,
+    } as never)).rejects.toThrow('genuine content failure');
     expect(processMessage).toHaveBeenCalledTimes(1);
   });
 });

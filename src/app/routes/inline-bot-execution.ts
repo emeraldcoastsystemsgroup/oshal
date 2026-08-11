@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: the INLINE branch resolves the caller's hosted user-brain ladder (resolveUserLlmConnection) when the target bot's registry harness is an unbrokered CLI and no byoLlmConnection was threaded — the SEC-05 refusal must never be the user-facing answer. Shared helpers (agentRequiresHostedBrain / resolveHostedBrainForCliAgent, NoHostedBrainError code NO_HOSTED_BRAIN) are exported so message-routes rides the SAME condition and the two chat entry points cannot drift.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Review hardening: the registry loader is a lazy dynamic import (the raw require could not load the .ts module under vitest, silently no-op'ing the condition in every route spec — the guard gap the first review caught); agentRequiresHostedBrain is pure over supplied entries; identity-less callers refuse with NO_HOSTED_BRAIN before the ladder so an anonymous turn can never ride the platform lane. Entry-point guards live in tests/unit/inline-hosted-brain-entry-points.spec.ts, mutation-tested on both wirings.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time hosted-brain failover (retryHostedBrainTurn): resolution-time probing cannot cover a lane exhausting its quota BETWEEN probe and completion (Gemini free tier = 20/day), so the 429 was handed to the caller as the answer. On a resolver-owned connection the failed turn now reports through reportResolvedLlmFailure (cools the free-tier row / drops the operator-lane verdict) and replays ONCE on the next resolved lane; same-lane re-resolution and explicit BYO connections surface the original failure unretried. resolveHostedBrainMeta returns the FULL connection (metadata needed to cool the right lane) and hostedBrainWire strips to the three wire fields at the processMessage boundary.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Close the failover's blind spot (live 2026-08-11: the 429 STILL became the answer): the agentic loop catches provider errors internally (task-orchestrator handleError) and RESOLVES with { success:false, error } — so the route-level catch entry 7 added never fired on exactly the live path. swallowedTurnFailure detects the failure-shaped RESULT and both entry points feed it through the SAME retryHostedBrainTurn; retryability still belongs to reportResolvedLlmFailure's pattern gate, so genuine content failures stay failures. Cost: a replayed turn re-appends the user message to the thread (cosmetic duplicate) — accepted over shipping a provider's quota wall as the assistant's reply.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -241,6 +242,27 @@ export async function retryHostedBrainTurn(
 }
 
 /**
+ * @description Detects a provider failure the orchestrator caught INTERNALLY: the agentic
+ * loop wraps every turn in handleError, which marks the task failed and RESOLVES with
+ * `{ success: false, error }` instead of throwing — so a route-level catch around
+ * processMessage never fires for exactly the mid-turn quota walls turn-time failover exists
+ * for (live 2026-08-11: a Gemini 429 rode this shape straight into the chat as the answer).
+ * Both entry points call this on the RESOLVED result and feed the synthesized Error through
+ * {@link retryHostedBrainTurn}, whose retryability gate (reportResolvedLlmFailure's pattern
+ * match) still decides — a genuine content failure stays a failure, unretried.
+ * @param result - The resolved orchestrator result.
+ * @returns An Error carrying the result's error text, or undefined when the turn succeeded.
+ */
+export function swallowedTurnFailure(
+  result: { success?: boolean; error?: string | null } | null | undefined,
+): Error | undefined {
+  if (result && result.success === false && typeof result.error === 'string' && result.error.trim()) {
+    return new Error(result.error);
+  }
+  return undefined;
+}
+
+/**
  * @description Executes a bot request on its remote any-bot node when one exists;
  * otherwise runs controller-inline bots through the local orchestrator. Both paths sit
  * behind the cost-governance budget gate: a HARD user-scope daily cap definitively
@@ -348,6 +370,16 @@ export async function executeBotOrInline(
     );
     if (!nextLane) throw turnError;
     result = await runTurn(nextLane);
+  }
+
+  // The agentic loop catches provider errors internally and resolves with a failed result —
+  // the catch above never sees those. Same failover, keyed off the result shape instead.
+  const swallowed = swallowedTurnFailure(result);
+  if (swallowed) {
+    const nextLane = await retryHostedBrainTurn(
+      ctx.pool, agentId, request.userSub, resolvedBrain, swallowed,
+    );
+    if (nextLane) result = await runTurn(nextLane);
   }
 
   if (!result.success) {

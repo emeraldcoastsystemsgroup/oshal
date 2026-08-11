@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Non-auth provider errors (bad audio, rate-limit, etc.) now return `fallback: 'failed'` in the envelope instead of bubbling to a 500 — the client always gets a structured payload to render
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added safe STT provider override and timestamp-segment request options for deterministic diarization alignment.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 voice picker rails: listTtsProviders() reports every registered provider with its LIVE getStatus (configured true/false + reason — the UI renders unconfigured ones as honest disabled states) and voices for the configured ones; getAvailableVoices() accepts an optional explicit providerId so the picker can enumerate a non-default provider's voices.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time STT failover: when the DEFAULT-resolved provider fails or is unconfigured mid-call (live 2026-08-11: Gemini free tier quota-walled → every dictation answered "Transcription failed" while the local sherpa sidecar sat idle), walk each remaining server-kind registered provider once and return the first real transcript; nothing answers → the ORIGINAL failure surfaces. An explicitly requested provider is the caller's choice and never switches — same boundary rule as an explicit BYO brain. Guard: tests/unit/voice-stt-failover.spec.ts.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -105,9 +106,28 @@ export class VoiceService {
         message: 'Browser STT selected — use Web Speech API on the client',
       };
     }
-    return this.runServerSTT(
+    const first = await this.runServerSTT(
       provider, buffer, mimetype, options.enableSegments === true, options.signal,
     );
+    // Turn-time STT failover (live 2026-08-11: Gemini free tier exhausted mid-day and every
+    // dictation answered "Transcription failed" while the local sherpa sidecar sat idle): when
+    // the DEFAULT-resolved provider fails or is unconfigured, try each remaining server-kind
+    // provider once and return the first real transcript. An EXPLICITLY requested provider is
+    // the caller's choice — it surfaces its own failure unswitched, like an explicit BYO brain.
+    if (!options.providerId && (first.fallback === 'failed' || first.fallback === 'unconfigured')) {
+      for (const candidate of this.sttRegistry.list()) {
+        if (candidate.id === provider.id || candidate.kind === 'browser') continue;
+        logger.info(
+          { failedProviderId: provider.id, retryProviderId: candidate.id },
+          'STT failover: default provider failed — trying the next server-kind provider',
+        );
+        const next = await this.runServerSTT(
+          candidate, buffer, mimetype, options.enableSegments === true, options.signal,
+        );
+        if (!next.fallback) return next;
+      }
+    }
+    return first;
   }
 
   /**
