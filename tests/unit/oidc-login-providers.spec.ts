@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for multi-provider login (ADR-126): flag/credential resolution stays fail-closed (a half-configured provider or an all-disabled set throws at boot), default env reproduces the legacy single-Google behavior exactly, request→provider dispatch routes provider-suffixed login/callback paths and cookie-owned sessions to the right auth() instance (chunked cookies included, suffixed names never shadow the primary), and the /login chooser escapes hostile returnTo values.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Third provider guards: `outlook` (OUTLOOK_LOGIN — personal MSA via the fixed consumers tenant) resolves with MICROSOFT_OIDC_* credential fallback and explicit OUTLOOK_OIDC_* override, fails closed with neither, dispatches on its own routes/cookie beside the other two, the consumers-tenant issuer sniffs to `outlook` (not `microsoft`), the chooser renders one SVG icon per provider, and the construction smoke now builds hosts × three providers.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   hasSessionCookie,
   loginRestartPathForCallbackPath,
+  MSA_CONSUMERS_TENANT,
   renderLoginChooser,
   resolveLoginProviders,
   selectRequestProvider,
@@ -112,6 +114,48 @@ describe('resolveLoginProviders', () => {
     expect(both[1].callbackPath).toBe('/callback/google');
   });
 
+  it('adds Outlook.com (personal MSA) on the consumers tenant, credentials falling back to the Microsoft app', () => {
+    const providers = resolveLoginProviders(GOOGLE_PRIMARY, { ...MS_ENV, OUTLOOK_LOGIN: 'true' });
+    expect(providers.map((p) => p.name)).toEqual(['google', 'microsoft', 'outlook']);
+    const outlook = providers[2];
+    expect(outlook).toMatchObject({
+      isPrimary: false,
+      issuerBaseURL: `https://login.microsoftonline.com/${MSA_CONSUMERS_TENANT}/v2.0`,
+      clientID: 'ms-client',
+      clientSecret: 'ms-secret',
+      loginPath: '/login/outlook',
+      callbackPath: '/callback/outlook',
+      cookieName: 'appSession_outlook',
+    });
+  });
+
+  it('lets explicit OUTLOOK_OIDC_* credentials override the Microsoft fallback', () => {
+    const providers = resolveLoginProviders(GOOGLE_PRIMARY, {
+      ...MS_ENV,
+      OUTLOOK_LOGIN: 'true',
+      OUTLOOK_OIDC_CLIENT_ID: 'own-client',
+      OUTLOOK_OIDC_CLIENT_SECRET: 'own-secret',
+    });
+    expect(providers[2]).toMatchObject({ name: 'outlook', clientID: 'own-client', clientSecret: 'own-secret' });
+  });
+
+  it('works without MICROSOFT_LOGIN — outlook alone next to Google', () => {
+    const providers = resolveLoginProviders(GOOGLE_PRIMARY, {
+      OUTLOOK_LOGIN: 'true',
+      MICROSOFT_OIDC_CLIENT_ID: 'ms-client',
+      MICROSOFT_OIDC_CLIENT_SECRET: 'ms-secret',
+    });
+    expect(providers.map((p) => p.name)).toEqual(['google', 'outlook']);
+  });
+
+  it('fails closed when OUTLOOK_LOGIN is on with no credentials anywhere', () => {
+    expect(() => resolveLoginProviders(GOOGLE_PRIMARY, { OUTLOOK_LOGIN: 'true' })).toThrow(/OUTLOOK_OIDC_CLIENT_ID/);
+  });
+
+  it('sniffs the consumers-tenant issuer to outlook, not microsoft', () => {
+    expect(sniffProviderName(`https://login.microsoftonline.com/${MSA_CONSUMERS_TENANT}/v2.0`)).toBe('outlook');
+  });
+
   it('keeps an unrecognized primary issuer (Keycloak) always on — it has no flag', () => {
     const providers = resolveLoginProviders(
       { issuerBaseURL: 'http://localhost:8080/realms/oshal', clientID: 'kc', clientSecret: 'kcs' },
@@ -156,6 +200,26 @@ describe('selectRequestProvider', () => {
     expect(selectRequestProvider(providers, '/callback/microsoft', '')).toMatchObject({
       kind: 'callback',
       provider: { name: 'microsoft' },
+    });
+  });
+
+  it('routes the outlook provider beside the other two on its own routes and cookie', () => {
+    const three = resolveLoginProviders(GOOGLE_PRIMARY, { ...MS_ENV, OUTLOOK_LOGIN: 'true' });
+    expect(selectRequestProvider(three, '/login/outlook', '')).toMatchObject({
+      kind: 'login',
+      provider: { name: 'outlook' },
+    });
+    expect(selectRequestProvider(three, '/callback/outlook', '')).toMatchObject({
+      kind: 'callback',
+      provider: { name: 'outlook' },
+    });
+    expect(selectRequestProvider(three, '/api/user', 'appSession_outlook.0=x')).toMatchObject({
+      kind: 'session',
+      provider: { name: 'outlook' },
+    });
+    expect(selectRequestProvider(three, '/logout', 'appSession_outlook=x')).toMatchObject({
+      kind: 'logout',
+      provider: { name: 'outlook' },
     });
   });
 
@@ -224,6 +288,17 @@ describe('renderLoginChooser', () => {
     expect(html).toContain('href="/login/microsoft"');
   });
 
+  it('renders one provider icon per button (Google G, Microsoft squares, Outlook envelope)', () => {
+    const three = resolveLoginProviders(GOOGLE_PRIMARY, { ...MS_ENV, OUTLOOK_LOGIN: 'true' });
+    const html = renderLoginChooser(three);
+    expect(html.match(/<svg /g)).toHaveLength(3);
+    expect(html).toContain('#4285F4'); // Google G blue segment
+    expect(html).toContain('#f25022'); // Microsoft top-left square
+    expect(html).toContain('#0F6CBD'); // Outlook envelope blue
+    expect(html).toContain('href="/login/outlook"');
+    expect(html).toContain('Continue with Outlook.com');
+  });
+
   it('escapes hostile returnTo values instead of reflecting markup', () => {
     const hostile = '/"/><script>alert(1)</script>';
     const html = renderLoginChooser(twoProviders(), hostile);
@@ -247,6 +322,9 @@ describe('createOidcMiddleware construction with two providers', () => {
     'MICROSOFT_TENANT_ID',
     'MICROSOFT_OIDC_CLIENT_ID',
     'MICROSOFT_OIDC_CLIENT_SECRET',
+    'OUTLOOK_LOGIN',
+    'OUTLOOK_OIDC_CLIENT_ID',
+    'OUTLOOK_OIDC_CLIENT_SECRET',
   ] as const;
   let saved: Record<string, string | undefined>;
 
@@ -263,6 +341,9 @@ describe('createOidcMiddleware construction with two providers', () => {
     process.env.MICROSOFT_TENANT_ID = '11111111-2222-3333-4444-555555555555';
     process.env.MICROSOFT_OIDC_CLIENT_ID = 'ms-client';
     process.env.MICROSOFT_OIDC_CLIENT_SECRET = 'ms-secret';
+    process.env.OUTLOOK_LOGIN = 'true';
+    delete process.env.OUTLOOK_OIDC_CLIENT_ID;
+    delete process.env.OUTLOOK_OIDC_CLIENT_SECRET;
   });
 
   afterEach(() => {
@@ -272,7 +353,7 @@ describe('createOidcMiddleware construction with two providers', () => {
     }
   });
 
-  it('builds the middleware set for hosts × {google, microsoft} without throwing', () => {
+  it('builds the middleware set for hosts × {google, microsoft, outlook} without throwing', () => {
     const set = createOidcMiddleware();
     expect(typeof set.authMiddleware).toBe('function');
     expect(typeof set.requiresAuth).toBe('function');

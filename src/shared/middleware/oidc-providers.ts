@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Multi-provider login registry (ADR-126): per-provider enable flags (GOOGLE_LOGIN / MICROSOFT_LOGIN), request→provider dispatch shared by the OIDC middleware, and the /login chooser page shown when more than one provider is enabled. The legacy single-issuer config (OIDC_ISSUER_URL / Keycloak) stays the "primary" provider on the already-registered /callback; secondaries get /login/<name> + /callback/<name> and their own session cookie.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Third provider: `outlook` (OUTLOOK_LOGIN) — personal outlook.com/hotmail sign-in via the FIXED Entra consumers tenant (9188040d-…), whose issuer is stable and passes strict OIDC validation (live-verified). Credentials default to the MICROSOFT_OIDC_* app (one Azure registration, two doors: org directory + personal MSA — registration was live-verified to accept personal accounts). Chooser buttons now carry inline-SVG provider icons.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -11,10 +12,19 @@ import { createChildLogger } from '@/shared/logger';
 const logger = createChildLogger({ module: 'oidc-providers' });
 
 /**
- * @description Known login provider identities. `primary` names a legacy issuer
- * that is neither Google nor Microsoft (e.g. a Keycloak realm or LinkedIn).
+ * @description Known login provider identities. `microsoft` is work/school
+ * accounts in a specific Entra directory; `outlook` is personal Microsoft
+ * accounts (outlook.com/hotmail) via the fixed consumers tenant. `primary`
+ * names a legacy issuer that is none of these (e.g. a Keycloak realm).
  */
-export type LoginProviderName = 'google' | 'microsoft' | 'primary';
+export type LoginProviderName = 'google' | 'microsoft' | 'outlook' | 'primary';
+
+/**
+ * @description The fixed, global Entra tenant id that holds every personal
+ * Microsoft account (outlook.com / hotmail / live). Its issuer is stable, so —
+ * unlike `common`/`organizations` — it passes strict OIDC issuer validation.
+ */
+export const MSA_CONSUMERS_TENANT = '9188040d-6c67-4c5b-b112-36a304b66dad';
 
 /**
  * @description One configured interactive login provider. The primary provider
@@ -90,6 +100,9 @@ export function envFlag(value: string | undefined, defaultValue: boolean): boole
  */
 export function sniffProviderName(issuerBaseURL: string): LoginProviderName {
   if (/accounts\.google\.com/i.test(issuerBaseURL)) return 'google';
+  // The consumers tenant is personal-account login — sniff it BEFORE the generic
+  // microsoftonline test so OUTLOOK_LOGIN (not MICROSOFT_LOGIN) governs it.
+  if (issuerBaseURL.toLowerCase().includes(MSA_CONSUMERS_TENANT)) return 'outlook';
   if (/login\.microsoftonline\.com/i.test(issuerBaseURL)) return 'microsoft';
   return 'primary';
 }
@@ -97,7 +110,22 @@ export function sniffProviderName(issuerBaseURL: string): LoginProviderName {
 const PROVIDER_LABELS: Record<LoginProviderName, string> = {
   google: 'Google',
   microsoft: 'Microsoft',
+  outlook: 'Outlook.com',
   primary: 'SSO',
+};
+
+// Inline SVG button icons for the chooser (self-contained — the login page must
+// not fetch external assets). Google/Microsoft are their standard sign-in marks;
+// Outlook.com is an envelope in Outlook blue; `primary` is a generic key.
+const PROVIDER_ICONS: Record<LoginProviderName, string> = {
+  google:
+    '<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>',
+  microsoft:
+    '<svg viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>',
+  outlook:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2" fill="#0F6CBD"/><path d="M2 6.5l10 6.5 10-6.5" stroke="#fff" stroke-width="1.6" fill="none"/></svg>',
+  primary:
+    '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2m-4 4 3 3"/></svg>',
 };
 
 /**
@@ -135,6 +163,43 @@ function buildMicrosoftProvider(env: NodeJS.ProcessEnv): LoginProvider {
     loginPath: '/login/microsoft',
     callbackPath: '/callback/microsoft',
     cookieName: `${DEFAULT_SESSION_COOKIE}_microsoft`,
+  };
+}
+
+/**
+ * @description Builds the Outlook.com (personal Microsoft account) secondary
+ * provider: the fixed consumers tenant, so outlook.com/hotmail/live accounts
+ * sign in while the `microsoft` provider stays restricted to the org directory.
+ * Credentials default to the MICROSOFT_OIDC_* app — one Azure registration
+ * serves both doors when its supported-account-types includes personal
+ * accounts — and can be overridden with OUTLOOK_OIDC_CLIENT_ID/SECRET.
+ *
+ * @param env - Environment map (injectable for tests)
+ * @returns The Outlook.com provider definition
+ */
+function buildOutlookProvider(env: NodeJS.ProcessEnv): LoginProvider {
+  const clientID = ((env.OUTLOOK_OIDC_CLIENT_ID ?? '').trim() || (env.MICROSOFT_OIDC_CLIENT_ID ?? '').trim());
+  const clientSecret =
+    (env.OUTLOOK_OIDC_CLIENT_SECRET ?? '').trim() || (env.MICROSOFT_OIDC_CLIENT_SECRET ?? '').trim();
+
+  if (!clientID || !clientSecret) {
+    throw new Error(
+      'OUTLOOK_LOGIN=true requires client credentials — set OUTLOOK_OIDC_CLIENT_ID and ' +
+        'OUTLOOK_OIDC_CLIENT_SECRET (or the MICROSOFT_OIDC_* pair they default to). ' +
+        'Refusing to boot with a half-configured login provider.',
+    );
+  }
+
+  return {
+    name: 'outlook',
+    label: PROVIDER_LABELS.outlook,
+    issuerBaseURL: `https://login.microsoftonline.com/${MSA_CONSUMERS_TENANT}/v2.0`,
+    clientID,
+    clientSecret,
+    isPrimary: false,
+    loginPath: '/login/outlook',
+    callbackPath: '/callback/outlook',
+    cookieName: `${DEFAULT_SESSION_COOKIE}_outlook`,
   };
 }
 
@@ -193,7 +258,9 @@ export function resolveLoginProviders(
       ? envFlag(env.GOOGLE_LOGIN, dflt)
       : name === 'microsoft'
         ? envFlag(env.MICROSOFT_LOGIN, dflt)
-        : true; // an unrecognized primary issuer has no flag and stays on
+        : name === 'outlook'
+          ? envFlag(env.OUTLOOK_LOGIN, dflt)
+          : true; // an unrecognized primary issuer has no flag and stays on
 
   if (flagFor(primaryName, true)) {
     providers.push({
@@ -211,6 +278,9 @@ export function resolveLoginProviders(
 
   if (primaryName !== 'microsoft' && envFlag(env.MICROSOFT_LOGIN, false)) {
     providers.push(buildMicrosoftProvider(env));
+  }
+  if (primaryName !== 'outlook' && envFlag(env.OUTLOOK_LOGIN, false)) {
+    providers.push(buildOutlookProvider(env));
   }
   if (primaryName !== 'google' && envFlag(env.GOOGLE_LOGIN, false)) {
     providers.push(buildGoogleSecondaryProvider(env));
@@ -343,7 +413,7 @@ export function renderLoginChooser(providers: LoginProvider[], returnTo?: string
     .map(
       (p) =>
         `<a class="btn" data-provider="${escapeHtml(p.name)}" href="${escapeHtml(p.loginPath + query)}">` +
-        `Continue with ${escapeHtml(p.label)}</a>`,
+        `${PROVIDER_ICONS[p.name]}<span>Continue with ${escapeHtml(p.label)}</span></a>`,
     )
     .join('\n      ');
   return `<!doctype html>
@@ -362,9 +432,11 @@ export function renderLoginChooser(providers: LoginProvider[], returnTo?: string
           text-align: center; }
   h1 { font-size: 1.25rem; margin: 0 0 .4rem; font-weight: 600; }
   p  { margin: 0 0 1.4rem; font-size: .9rem; opacity: .75; }
-  .btn { display: block; margin: .6rem 0; padding: .7rem 1rem; border-radius: 9px;
+  .btn { display: flex; align-items: center; justify-content: center; gap: .65rem;
+         margin: .6rem 0; padding: .7rem 1rem; border-radius: 9px;
          border: 1px solid light-dark(#d4d9e2, #303849); text-decoration: none;
          color: inherit; font-size: .95rem; font-weight: 500; }
+  .btn svg { width: 20px; height: 20px; flex: none; }
   .btn:hover { background: light-dark(#eef1f6, #232a3a); }
 </style>
 </head>

@@ -79,10 +79,12 @@ OSHAL pipelines and surfaces. One file per procedure.
   migration 089 check), the exact `.env` lines, api-only recreate, verification (card 200,
   disabled=404 re-proof), and the paid end-to-end inbound proof.
 - [microsoft-login-enable.md](./microsoft-login-enable.md) — turning on the DEFAULT-OFF
-  "Continue with Microsoft" login next to Google (ADR-126): the exact Entra redirect-URI
-  list per login host, probe verification (incl. the probe self-check and why the negative
-  verdict can't name bad-URI vs bad-client), the `MICROSOFT_LOGIN=true` flip + api recreate,
-  a browser proof script, the two-`sub`s identity model, rollback, and the AADSTS
+  "Continue with Microsoft" (work directory) and "Continue with Outlook.com" (personal
+  MSA, fixed consumers tenant) logins next to Google (ADR-126): the exact Entra
+  redirect-URI lists per login host, probe verification (incl. the probe self-check, why
+  the negative verdict can't name bad-URI vs bad-client, and why `-p outlook` validates
+  via the org tenant), the `MICROSOFT_LOGIN`/`OUTLOOK_LOGIN` flips + api recreate, a
+  browser proof script, the identity-namespace model, rollback, and the AADSTS
   troubleshooting table.
 - [workspace-root-and-autocommitter.md](./workspace-root-and-autocommitter.md) — workspace-root
   fix go-live and the auto-committer.
