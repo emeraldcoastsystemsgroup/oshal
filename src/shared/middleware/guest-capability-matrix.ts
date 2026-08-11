@@ -45,13 +45,13 @@ export const GUEST_TIER_A_APPS = [
 export const GUEST_TIER_C_APPS = [
   'workflow-studio',
   'forge', // bots
-  // 'trading' MUST be Tier C, not the Tier-B default. The Tier-B assumption — "GET is safe because a
-  // guest owns no data" — is FALSE here: the Alpaca broker reader resolves PAPER credentials from
-  // deployment env (ALPACA_PAPER_KEY_ID…), not from the caller, so GET /api/trading/ledger returns
-  // the DEPLOYMENT's paper book (positions, equity) to any caller, guest included. Blocking guest
-  // GETs closes the public exposure; the cross-user isolation of the shared paper account is a
-  // separate, tracked hardening item. Found 2026-08-09.
-  'trading',
+  // NOTE on `trading` (operator decision, 2026-08-10): guests get the Tier-B default — GET the
+  // PAPER desk (view-only), all mutations blocked. The paper book a guest sees is the deployment's
+  // Alpaca *paper* account (env-resolved), which is intended demo content, not private data: the
+  // desk exists to show the strategy running on paper. It is deliberately NOT Tier C. The one line
+  // held: LIVE is a different risk class — this box has no live keys configured (live reads 503), so
+  // there is nothing real-money to expose today; if ALPACA_LIVE_* is ever set, force guests to
+  // mode=paper in the trading read routes before that goes public.
   // ('lora' removed: carved to the app store, ADR-085 — the package declares guestTier: blocked;
   //  unapproved packages default to guest-read-only/mutations-blocked anyway, D4.)
   // ('video' removed: the Video Studio carved to the app store, ADR-085 Wave 3 — the D4
