@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR        | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added opt-in LLM provider failover for provider-runtime stalls.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Kept in sync with any-bot providerFailureClassifier SEQ 3: a logged-out CLI login classifies as auth, and the providers' own "<vendor> CLI task failed" banner as a runtime failure.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -149,8 +150,8 @@ export function isProviderRecoverableRuntimeFailure(error: unknown): boolean {
   const message = formatError(error);
   return /CLI stalled|INACTIVITY CIRCUIT BREAKER|no output for \d+s|no output for 180s|runtime stall/i.test(message)
     || /\b(?:429|too many requests|rate[-\s]?limit(?:ed)?|retry-after|quota|insufficient_quota|resource_exhausted|throttl\w*|ThrottlingException|ResourceExhaustedException|ServiceUnavailableException|overloaded|temporarily unavailable)\b/i.test(message)
-    || /\b(?:401 Unauthorized|403 Forbidden|unauthorized|not authenticated|authentication (?:issue|failed|required)|invalid api key|invalid_api_key|ANTHROPIC_API_KEY|OPENAI_API_KEY|OAuth (?:file|token|login|credentials)|oauth (?:token|login|credentials|expired|required|failed))\b/i.test(message)
-    || /(?:Claude Code|Cline|Codex|Gemini)[\w\s-]*CLI (?:encountered an error|error)|Command failed with exit code \d+|runtime failed before completion|failed to connect to websocket/i.test(message);
+    || /\b(?:401 Unauthorized|403 Forbidden|unauthorized|not authenticated|not logged in|logged out|login required|please run \/login|run \/login|authentication (?:issue|failed|required)|invalid api key|invalid_api_key|ANTHROPIC_API_KEY|OPENAI_API_KEY|OAuth (?:file|token|login|credentials)|oauth (?:token|login|credentials|expired|required|failed))\b/i.test(message)
+    || /(?:Claude Code|Cline|Codex|Gemini)[\w\s-]*CLI (?:encountered an error|error|task failed)|Command failed with exit code \d+|runtime failed before completion|failed to connect to websocket/i.test(message);
 }
 
 /**
@@ -164,7 +165,7 @@ export function isProviderRecoverableRuntimeFailure(error: unknown): boolean {
 export function isProviderFailureResponse(response: unknown): boolean {
   const message = formatError(response);
   return /CLI stalled|INACTIVITY CIRCUIT BREAKER|no output for \d+s|no output for 180s|runtime stall/i.test(message)
-    || /(?:Claude Code|Cline|Codex|Gemini)[\w\s-]*CLI (?:encountered an error|error)|Command failed with exit code \d+|runtime failed before completion|failed to connect to websocket/i.test(message);
+    || /(?:Claude Code|Cline|Codex|Gemini)[\w\s-]*CLI (?:encountered an error|error|task failed)|Command failed with exit code \d+|runtime failed before completion|failed to connect to websocket/i.test(message);
 }
 
 function formatError(error: unknown): string {

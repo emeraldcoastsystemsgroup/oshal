@@ -207,6 +207,19 @@ describe('any-bot ProviderFailoverProvider', () => {
     expect(isProviderRecoverableRuntimeFailure(new Error('business rule rejected the request'))).toBe(false);
   });
 
+  it('classifies a LOGGED-OUT CLI as an auth failure, not as an answer', () => {
+    // Live 2026-08-11: the CLI's own logged-out text matched no pattern here, so the provider
+    // returned it as content and the operator read "Please run /login" as Jarvis's reply.
+    expect(isProviderRecoverableRuntimeFailure(
+      new Error('Claude Code CLI task failed: Not logged in · Please run /login'),
+    )).toBe(true);
+    expect(isProviderRecoverableRuntimeFailure('Not logged in')).toBe(true);
+    expect(isProviderRecoverableRuntimeFailure('Please run /login')).toBe(true);
+    expect(isProviderRecoverableRuntimeFailure('login required')).toBe(true);
+    // A provider must recognize the failure banner it builds ITSELF.
+    expect(isProviderRecoverableRuntimeFailure('Cline CLI task failed: exit 1')).toBe(true);
+  });
+
   it('does NOT fall back when a successful primary answer merely mentions throttle/auth keywords', async () => {
     // Regression: a valid answer explaining a 429/quota/401 must be returned as-is,
     // not misclassified as a provider failure and needlessly failed over.
@@ -241,6 +254,10 @@ describe('any-bot ProviderFailoverProvider', () => {
     // ...but the broad classifier (error channel) still catches them.
     expect(isProviderRecoverableRuntimeFailure('429 too many requests')).toBe(true);
     expect(isProviderRecoverableRuntimeFailure('401 Unauthorized')).toBe(true);
+    // The banner check owns the provider's own "<vendor> CLI task failed" text...
+    expect(isProviderRuntimeBanner('Claude Code CLI task failed: Not logged in')).toBe(true);
+    // ...while a valid answer that merely discusses a logged-out CLI stays an answer.
+    expect(isProviderRuntimeBanner('Tell the operator they are not logged in and to run /login')).toBe(false);
   });
 
   it('denies Codex before a stubbed successful autonomous result can cross the boundary', async () => {

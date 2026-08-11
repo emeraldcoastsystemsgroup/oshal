@@ -22,6 +22,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: per-user preference store + preference-aware brain resolution (preference → demo CLI default → explicit BYO → free tiers → operator-key lane → none).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added isRetryableCliBrainFailure so a CLI-lane turn can fall back to a hosted lane. reportResolvedLlmFailure speaks only for hosted connections (it refuses when there is none, which is every CLI turn), so a logged-out CLI login dead-ended instead of retrying.
  *
  * @module user-brain-resolution
  */
@@ -66,6 +67,31 @@ export type ResolvedBrain =
  */
 export function cliBrainAvailable(userSub: string): boolean {
   return demoModeEnabled() && isDeploymentOperatorSub(userSub);
+}
+
+/**
+ * CLI-harness failures a hosted retry can survive: an expired or absent CLI login, a throttled
+ * subscription, and the harness's own runtime/stall banners. Deliberately NOT the free-tier
+ * rotation matcher — that one classifies hosted QUOTA walls and doubles as the signal that cools a
+ * rotation lane, and a CLI lane has no rotation state to cool.
+ */
+const CLI_BRAIN_RETRYABLE =
+  /not logged in|logged out|please run \/login|login required|invalid api key|\b(?:401|403)\b|unauthorized|authentication (?:issue|failed|required)|\boauth\b|\b(?:429|too many requests)\b|rate[-\s]?limit|quota|usage limit|throttl\w*|overloaded|CLI (?:task failed|encountered an error|error)|CLI stalled|INACTIVITY CIRCUIT BREAKER|runtime stall|exit code \d+/i;
+
+/**
+ * @description Whether a failed CLI-brain turn may be replayed once on a hosted lane. A CLI brain is
+ * the DEPLOYMENT's own mounted harness, not an endpoint the user chose, so there is no privacy or
+ * billing boundary to protect the way there is for an explicit BYO connection — the only question is
+ * whether the harness failed for a reason a different lane can survive. A genuine content or
+ * business-rule failure is not retried, because a second brain would only reproduce it.
+ * @param error - the execution failure thrown by the turn
+ * @returns true when the caller should retry this turn on a hosted endpoint
+ */
+export function isRetryableCliBrainFailure(error: unknown): boolean {
+  const text = error instanceof Error
+    ? `${String((error as Error & { code?: unknown }).code || '')} ${error.message}`
+    : String(error);
+  return CLI_BRAIN_RETRYABLE.test(text);
 }
 
 /** Table bootstrap — same runtime path every other per-user store uses. */
