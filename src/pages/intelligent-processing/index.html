@@ -9,16 +9,29 @@
   issue is always one row with a count — the queue cannot show 10K duplicates.
   Promote moves backlog -> approved (the only way work enters the RCA pipeline).
 -->
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Intelligent Processing — Self-Healing Queue</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Without this the surface
+    // renders its default theme inside whatever theme the operator actually chose — the BUG-12
+    // mismatch. data-theme on <html> is required: theme tokens are scoped to it, never to :root.
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <style>
+    /* Every colour derives from the framework theme tokens, so this surface follows whichever
+       theme the operator picked instead of painting its own dark palette (BUG-12). The alias
+       names below are unchanged, so the rest of this stylesheet needed no edits. */
     :root {
-      --navy: #0b1733; --navy2: #11203f; --emerald: #2ecc8f; --emerald-dim: #1d8c63;
-      --text: #e8eef7; --muted: #8aa0c0; --line: #22324f; --bg: #070d1c;
-      --urgent: #ff5b6e; --high: #ffa033; --medium: #ffd23f; --low: #6fb7ff;
+      --navy: var(--bg-secondary); --navy2: var(--bg-tertiary);
+      --emerald: var(--accent-primary); --emerald-dim: var(--accent-primary-hover);
+      --text: var(--text-primary); --muted: var(--text-secondary);
+      --line: var(--border-color); --bg: var(--bg-primary);
+      --urgent: var(--status-error); --high: var(--status-warning);
+      --medium: var(--status-warning); --low: var(--status-active);
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--text);
@@ -39,7 +52,9 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
     th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
-    tr:hover td { background: rgba(46,204,143,.04); }
+    /* Neutral translucent tint — a fixed accent-coloured wash reads wrong in themes whose
+       accent is not green (the same reason the palette above is token-derived). */
+    tr:hover td { background: rgba(127,127,127,.08); }
     .sev { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
     .sev.critical, .sev.urgent { background: rgba(255,91,110,.18); color: var(--urgent); }
     .sev.warning, .sev.high, .sev.major { background: rgba(255,160,51,.18); color: var(--high); }

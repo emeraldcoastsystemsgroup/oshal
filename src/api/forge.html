@@ -20,7 +20,7 @@
      eleven themes work — not just the dark one the old literal hex happened to match. Status colors
      come from the theme with the old hex as a comma-fallback so they stay legible if a theme omits
      one; the scrollbar thumb is a translucent overlay and stays literal. */
-  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-secondary); --accent:var(--accent-primary, #7c6cff); --accent2:var(--status-success, #00d3a7); --warn:var(--status-warning, #ffb454); --danger:var(--status-error, #ff6b6b); --scrollbar-thumb:rgba(255,255,255,.14); }
+  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-secondary); --accent:var(--accent-primary, var(--accent-primary)); --accent2:var(--status-success, var(--status-success)); --warn:var(--status-warning, var(--status-warning)); --danger:var(--status-error, var(--status-error)); --scrollbar-thumb:rgba(255,255,255,.14); }
   * { box-sizing:border-box; }
   body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
   .wrap { max-width:980px; margin:0 auto; padding:26px 24px 60px; }

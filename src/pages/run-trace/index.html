@@ -6,14 +6,14 @@
   fetches /api/trace/<id> (auth-gated, caller-scoped); it never writes.
   Author: maintainer@emeraldcoastsystemsgroup.com
 -->
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Run Trace</title>
 <style>
-  :root{--bg:#fff;--fg:#111827;--mut:#6b7280;--line:#e5e7eb;--card:#f9fafb;--acc:#6366f1}
-  @media (prefers-color-scheme:dark){:root{--bg:#0b0f19;--fg:#e5e7eb;--mut:#9ca3af;--line:#1f2937;--card:#111827}}
+  :root{--bg:#fff;--fg:var(--bg-primary);--mut:var(--text-secondary);--line:var(--text-primary);--card:var(--text-primary);--acc:var(--accent-primary)}
+  @media (prefers-color-scheme:dark){:root{--bg:var(--bg-primary);--fg:var(--text-primary);--mut:var(--text-secondary);--line:var(--bg-tertiary);--card:var(--bg-primary)}}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif}
   .wrap{max-width:1100px;margin:0 auto;padding:24px}
@@ -40,6 +40,12 @@
   code{font-size:12px}
   @media (max-width:640px){.row{grid-template-columns:140px 1fr}.mt{display:none}}
 </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
 <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
 <body>
@@ -54,7 +60,7 @@
   <p class="foot">Read-only. You can trace tickets you own; operators can trace any ticket.</p>
 </main>
 <script>
-  var KIND_COLOR = { phase: '#6366f1', bot: '#0ea5e9', 'llm-call': '#22c55e' };
+  var KIND_COLOR = { phase: 'var(--accent-primary)', bot: '#0ea5e9', 'llm-call': 'var(--status-success)' };
 
   function esc(s){ return String(s).replace(/[&<>"']/g, function(c){
     return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]; }); }

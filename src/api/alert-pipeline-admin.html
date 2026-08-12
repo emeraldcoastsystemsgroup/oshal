@@ -20,10 +20,10 @@
     --text: var(--text-primary);
     --dim: var(--text-secondary);
     --muted: var(--text-muted);
-    --accent: var(--accent-primary, #5e8fff);
-    --ok: var(--status-success, #34c759);
-    --warn: var(--status-warning, #ff9f0a);
-    --danger: var(--status-error, #ff453a);
+    --accent: var(--accent-primary, var(--accent-primary));
+    --ok: var(--status-success, var(--status-success));
+    --warn: var(--status-warning, var(--status-warning));
+    --danger: var(--status-error, var(--status-error));
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden;

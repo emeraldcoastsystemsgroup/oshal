@@ -10,8 +10,8 @@
   :root {
     --bg: var(--bg-primary); --panel: var(--bg-card); --panel2: var(--bg-tertiary);
     --line: var(--border-color); --text: var(--text-primary); --muted: var(--text-muted);
-    --accent: var(--accent-primary, #0a66c2); --ok: var(--status-success, #00d3a7);
-    --warn: #e0a800; --bad: #ff6b6b; --li: #0a66c2;
+    --accent: var(--accent-primary, var(--accent-primary)); --ok: var(--status-success, var(--status-success));
+    --warn: var(--status-warning); --bad: var(--status-error); --li: var(--accent-primary);
   }
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }

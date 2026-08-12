@@ -5,7 +5,7 @@
   Framework surface conventions: local CSS vars overridden from the cockpit theme by the
   theme-sync script (light/dark aware); external nav breaks out of the iframe via window.top.
 -->
-<html lang="en"><head>
+<html lang="en" data-theme="midnight"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Feeds</title>
 <style>
@@ -13,10 +13,10 @@
      theme-sync script below overrides them from the active light/dark theme. Accent HUES
      are fixed (read fine on both themes); SURFACES/text/borders use the themed tokens. */
   :root {
-    --bg:#0e0e16; --panel:#15151f; --panel2:#1b1b27; --line:#272735;
-    --text:#e6e6f0; --muted:#8b8ba3; --accent:#7c6cff; --accent2:#00d3a7;
+    --bg:var(--bg-secondary); --panel:var(--bg-secondary); --panel2:var(--bg-tertiary); --line:var(--bg-tertiary);
+    --text:var(--text-primary); --muted:var(--text-secondary); --accent:var(--accent-primary); --accent2:var(--status-success);
     --scrollbar-thumb:rgba(255,255,255,.14);
-    --hot:#f472b6; --warn:#ffb454; --pos:#00d3a7; --neg:#ff6b6b;
+    --hot:var(--accent-primary); --warn:var(--status-warning); --pos:var(--status-success); --neg:var(--status-error);
     --radius:14px;
     --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   }
@@ -119,6 +119,12 @@
 <!-- Framework theme-sync: copy the cockpit's active theme tokens onto our locals (light/dark
      aware, reacts to data-theme + cockpit-theme). Same script every in-cockpit surface uses. -->
 <script>(function(){const M={'--bg':'--bg-primary','--panel':'--bg-secondary','--panel2':'--bg-tertiary','--line':'--border-color','--text':'--text-primary','--muted':'--text-secondary','--accent':'--accent-primary','--accent2':'--status-success','--scrollbar-thumb':'--scrollbar-thumb'};function m(){try{const p=(window.parent&&window.parent!==window)?window.parent:null;if(!p)return;const cs=p.getComputedStyle(p.document.documentElement);for(const k in M){const v=cs.getPropertyValue(M[k]).trim();if(v)document.documentElement.style.setProperty(k,v);}}catch(e){}}m();window.addEventListener('storage',e=>{if(e.key==='cockpit-theme')setTimeout(m,30);});try{const p=window.parent;if(p&&p!==window)new MutationObserver(m).observe(p.document.documentElement,{attributes:true,attributeFilter:['data-theme']});}catch(e){}document.addEventListener('DOMContentLoaded',m);})();</script>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
 <body>
@@ -177,7 +183,7 @@
 
 <script>
 const POLL_MS = 15000;
-const COLORS = ['#00d3a7','#7c6cff','#f472b6','#ffb454','#a78bfa','#fb7185','#22d3ee','#4ade80'];
+const COLORS = ['var(--status-success)','var(--accent-primary)','var(--accent-primary)','var(--status-warning)','var(--accent-primary)','#fb7185','#22d3ee','#4ade80'];
 const STOP = new Set('the a an and or but if then to of in on for with at by from is are was were be been being it this that these those i you he she we they them his her our your my me us as so not no do does did have has had will would can could just like get got out up down about into over also new'.split(' '));
 let seen = new Set(); let live = true; let timer = null; let settings = null;
 

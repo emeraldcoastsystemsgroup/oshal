@@ -15,25 +15,31 @@
   package code cannot assign its own platform tier, and all values are HTML-escaped on render.
 -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
   <meta charset="UTF-8" />
   <title>Swarm Applications — OSHAL</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <link rel="stylesheet" href="/fonts/codicon.css" />
   <style>
     :root {
-      --bg: #f4f6f8;
-      --panel: #eef2f5;
+      --bg: var(--bg-primary);
+      --panel: var(--bg-secondary);
       --card: #ffffff;
-      --ink: #151b22;
-      --ink-muted: #53606c;
+      --ink: var(--bg-primary);
+      --ink-muted: var(--text-secondary);
       --line: rgba(21, 27, 34, 0.10);
       --line-dark: rgba(21, 27, 34, 0.15);
-      --navy: #111820;
-      --teal: #149783;
-      --amber: #a46119;
-      --green: #5f8a3f;
-      --red: #b6453c;
+      --navy: var(--bg-secondary);
+      --teal: var(--accent-primary);
+      --amber: var(--status-warning);
+      --green: var(--status-success);
+      --red: var(--status-error);
       --radius: 10px;
     }
     * { box-sizing: border-box; }
@@ -132,7 +138,7 @@
     .app-ico {
       width: 38px; height: 38px; border-radius: 8px; flex: 0 0 auto;
       display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(120% 120% at 0% 0%, #223041 0%, #111820 70%);
+      background: radial-gradient(120% 120% at 0% 0%, var(--bg-tertiary) 0%, var(--bg-secondary) 70%);
       color: rgba(255,255,255,0.92); font-size: 0.98rem; font-weight: 800; letter-spacing: 0.02em;
     }
     .app-ico .codicon { font-size: 19px; line-height: 1; }
@@ -143,7 +149,7 @@
     .app-version { color: var(--ink-muted); font-size: 0.72rem; }
     .update-badge {
       border-radius: 999px; padding: 2px 9px; font-size: 0.68rem; font-weight: 700; white-space: nowrap;
-      color: #7a4d00; background: rgba(255, 176, 32, 0.16); border: 1px solid rgba(255, 176, 32, 0.45);
+      color: var(--status-warning); background: rgba(255, 176, 32, 0.16); border: 1px solid rgba(255, 176, 32, 0.45);
     }
     .app-desc { color: var(--ink-muted); font-size: 0.84rem; margin: 1px 0 0; line-height: 1.4;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -225,8 +231,8 @@
     <div class="admin">
       <div class="admin-head"><span class="codicon codicon-tools"></span> Swarm administration</div>
       <div class="admin-row">
-        <a id="buildBtn" class="tb-build" href="/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000030" title="Describe a swarm and codex-packer builds the manifest + bots">&#127959;&#65039; Build a swarm</a>
-        <a id="packsBtn" class="tb-secondary" href="/api/swarm/packs/studio" title="View flow, download, or deploy the swarms you scoped with codex-packer">&#128230; Packs</a>
+        <a id="buildBtn" class="tb-build" href="/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000030" title="Describe a swarm and codex-packer builds the manifest + bots">&var(--status-success);&#65039; Build a swarm</a>
+        <a id="packsBtn" class="tb-secondary" href="/api/swarm/packs/studio" title="View flow, download, or deploy the swarms you scoped with codex-packer">&var(--status-success); Packs</a>
         <span class="sep"></span>
         <input id="loadPath" type="text" placeholder="Manifest path (e.g. swarm-apps/eats.yaml)" />
         <button id="loadBtn">Load manifest</button>

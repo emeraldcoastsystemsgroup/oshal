@@ -25,8 +25,8 @@
   :root{
     --bg:var(--bg-primary); --bg2:var(--bg-secondary); --card:var(--bg-card); --card2:var(--bg-secondary);
     --border:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted); --soft:var(--text-secondary);
-    --accent:var(--accent-primary); --accent2:var(--accent-primary-hover); --ok:var(--status-success,#00d3a7); --warn:var(--status-warning,#ffb454);
-    --grad:var(--accent-gradient,linear-gradient(120deg,#5b8bff 0%,#7c5cff 55%,#00d3a7 120%));
+    --accent:var(--accent-primary); --accent2:var(--accent-primary-hover); --ok:var(--status-success,var(--status-success)); --warn:var(--status-warning,var(--status-warning));
+    --grad:var(--accent-gradient,linear-gradient(120deg,var(--accent-primary) 0%,var(--accent-primary) 55%,var(--status-success) 120%));
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}

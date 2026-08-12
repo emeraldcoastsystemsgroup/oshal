@@ -8,15 +8,15 @@
 
 :root {
   color-scheme: dark;
-  --bg: radial-gradient(circle at top left, rgba(94, 234, 212, 0.12), transparent 38%), #06101a;
+  --bg: radial-gradient(circle at top left, rgba(94, 234, 212, 0.12), transparent 38%), var(--bg-primary);
   --panel: rgba(12, 24, 38, 0.88);
   --border: rgba(120, 214, 255, 0.2);
-  --text: #ecf4ff;
-  --muted: #93a8c7;
-  --accent: #78f0c4;
-  --accent-strong: #60a5fa;
-  --warn: #fbbf24;
-  --error: #f87171;
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --accent: var(--status-success);
+  --accent-strong: var(--accent-primary);
+  --warn: var(--status-warning);
+  --error: var(--status-error);
 }
 
 * {

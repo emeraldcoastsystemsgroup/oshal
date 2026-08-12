@@ -14,7 +14,7 @@
      so all eleven themes work, not just the dark ones. --accent2 follows the theme's success color;
      --li stays a literal (LinkedIn brand blue). Fallbacks after the comma keep the surface legible
      if a theme omits a status token. */
-  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary, #7c6cff); --accent2:var(--status-success, #00d3a7); --li:#0a66c2; }
+  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary, var(--accent-primary)); --accent2:var(--status-success, var(--status-success)); --li:var(--accent-primary); }
   * { box-sizing:border-box; }
   body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
   .page { max-width:880px; margin:0 auto; padding:28px 24px 70px; }
@@ -29,7 +29,7 @@
   .cards { display:grid; gap:12px; }
   .card { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px 17px; cursor:pointer; transition:border-color .15s; }
   .card .dismiss { position:absolute; top:8px; right:10px; background:transparent; border:none; color:var(--muted); font-size:15px; line-height:1; cursor:pointer; padding:4px 6px; border-radius:6px; opacity:.5; }
-  .card .dismiss:hover { opacity:1; color:var(--status-error, #ff6b6b); background:rgba(255,107,107,.1); }
+  .card .dismiss:hover { opacity:1; color:var(--status-error, var(--status-error)); background:rgba(255,107,107,.1); }
   .card:hover { border-color:var(--accent); }
   .card.sel { border-color:var(--accent); background:var(--panel2); }
   .card .t { font-size:15px; font-weight:600; margin-bottom:5px; }
@@ -42,7 +42,7 @@
   .catchip .cc { opacity:.6; font-size:11px; margin-left:3px; }
   .catpill { background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:1px 7px; font-size:11px; color:var(--accent2); }
   .card .meta a { color:var(--accent); text-decoration:none; }
-  .compose { background:linear-gradient(160deg,var(--bg-tertiary, #191929),var(--bg-card, #15151f)); border:1px solid var(--accent); border-radius:14px; padding:20px; margin-top:18px; }
+  .compose { background:linear-gradient(160deg,var(--bg-tertiary, #191929),var(--bg-card, var(--bg-secondary))); border:1px solid var(--accent); border-radius:14px; padding:20px; margin-top:18px; }
   .compose .q { font-size:15px; color:var(--accent2); margin-bottom:4px; }
   .compose .angle { color:var(--muted); font-size:13px; margin-bottom:12px; }
   textarea { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:9px; padding:12px; font-family:inherit; font-size:14px; line-height:1.55; resize:vertical; }
@@ -80,7 +80,7 @@
   .toggle input { accent-color:var(--accent); width:15px; height:15px; }
   .sighead { font-size:12px; color:var(--accent2); text-transform:uppercase; letter-spacing:.5px; margin:4px 0 9px; }
   .siggrid { display:grid; gap:10px; margin-bottom:20px; }
-  .sig { background:linear-gradient(160deg,var(--bg-tertiary, #191929),var(--bg-card, #15151f)); border:1px solid var(--line); border-radius:11px; padding:12px 15px; }
+  .sig { background:linear-gradient(160deg,var(--bg-tertiary, #191929),var(--bg-card, var(--bg-secondary))); border:1px solid var(--line); border-radius:11px; padding:12px 15px; }
   .sig .lbl { font-size:12px; color:var(--accent2); font-weight:600; }
   .sig .subj { font-size:14px; margin:3px 0; }
   .sig .from { color:var(--muted); font-size:12px; }

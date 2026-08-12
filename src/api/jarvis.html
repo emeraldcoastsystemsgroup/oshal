@@ -34,8 +34,8 @@
     --card:var(--bg-card); --card-hover:var(--bg-card-hover);
     --line:var(--border-color); --line-hover:var(--border-color-hover);
     --text:var(--text-primary); --muted:var(--text-secondary); --faint:var(--text-muted);
-    --accent:var(--accent-primary, #7c7cff); --accent-hover:var(--accent-primary-hover, #9d9dff);
-    --ok:var(--status-success, #34d399); --active:var(--status-active, #60a5fa); --warn:var(--status-warning, #fbbf24); --danger:var(--status-error, #f87171);
+    --accent:var(--accent-primary, var(--accent-primary)); --accent-hover:var(--accent-primary-hover, var(--accent-primary));
+    --ok:var(--status-success, var(--status-success)); --active:var(--status-active, var(--accent-primary)); --warn:var(--status-warning, var(--status-warning)); --danger:var(--status-error, var(--status-error));
     --glass:var(--glass-bg, rgba(255,255,255,.04));
     --font:'Inter',system-ui,-apple-system,sans-serif;
     --font-d:'Plus Jakarta Sans','SF Pro Display',system-ui,sans-serif;
@@ -524,13 +524,13 @@ sizeOrb(); addEventListener('resize', sizeOrb);
 let mode='idle', level=0, targetLevel=0, freq=null, t=0; const BARS=72;
 
 // Orb takes the live cockpit accent so it matches the active theme (purple in midnight).
-const TC = { acc:'#7c7cff', bright:'#9d9dff', glow:'124,124,255', core:'#0a0a12' };
+const TC = { acc:'var(--accent-primary)', bright:'var(--accent-primary)', glow:'124,124,255', core:'var(--bg-primary)' };
 function hexToRgb(h){ try{ h=String(h).trim().replace('#',''); if(h.length===3)h=h.split('').map(c=>c+c).join(''); const n=parseInt(h,16); return ((n>>16)&255)+','+((n>>8)&255)+','+(n&255); }catch(e){ return '124,124,255'; } }
 function readTheme(){
   const cs=getComputedStyle(document.documentElement);
-  const acc=(cs.getPropertyValue('--accent').trim()||'#7c7cff');
-  const br =(cs.getPropertyValue('--accent-hover').trim()||'#9d9dff');
-  const bg =(cs.getPropertyValue('--bg').trim()||'#0a0a12');
+  const acc=(cs.getPropertyValue('--accent').trim()||'var(--accent-primary)');
+  const br =(cs.getPropertyValue('--accent-hover').trim()||'var(--accent-primary)');
+  const bg =(cs.getPropertyValue('--bg').trim()||'var(--bg-primary)');
   TC.acc=acc; TC.bright=br; if(/^#/.test(bg))TC.core=bg; TC.glow=hexToRgb(acc);
 }
 readTheme();

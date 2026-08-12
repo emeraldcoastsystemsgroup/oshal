@@ -22,9 +22,9 @@
     --border: var(--border-color);
     --text: var(--text-primary);
     --muted: var(--text-secondary);
-    --accent: var(--accent-primary, #8b5cf6);
-    --ok: var(--status-success, #34d399);
-    --err: var(--status-error, #ef4444);
+    --accent: var(--accent-primary, var(--accent-primary));
+    --ok: var(--status-success, var(--status-success));
+    --err: var(--status-error, var(--status-error));
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, -apple-system, sans-serif; padding: 28px 18px; }
@@ -63,7 +63,7 @@
   .cardhead { display: flex; align-items: center; gap: 14px; }
   .statuspill { border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 800; padding: 5px 9px; white-space: nowrap; }
   .statuspill.ok { border-color: rgba(52,211,153,.45); color: var(--ok); background: rgba(52,211,153,.08); }
-  .statuspill.warn { border-color: rgba(251,191,36,.5); color: #fbbf24; background: rgba(251,191,36,.08); }
+  .statuspill.warn { border-color: rgba(251,191,36,.5); color: var(--status-warning); background: rgba(251,191,36,.08); }
   .statuspill.err { border-color: rgba(239,68,68,.5); color: var(--err); background: rgba(239,68,68,.08); }
   .conn { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 12px; background: var(--card2); border-radius: 9px; }
   .connmeta { font-size: 12.5px; color: var(--text); }

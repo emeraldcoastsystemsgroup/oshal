@@ -11,7 +11,7 @@
   6 | maintainer@emeraldcoastsystemsgroup.com   | Loaded chat-ui bundle as ES module to prevent browser syntax errors on exported module output
 -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -22,9 +22,9 @@
     .oidc-auth-section {
       margin-bottom: 20px;
       padding: 12px;
-      background: #2d2d2d;
+      background: var(--bg-primary);
       border-radius: 6px;
-      border: 1px solid #3c3c3c;
+      border: 1px solid var(--bg-secondary);
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -35,18 +35,18 @@
       align-items: center;
     }
     .oidc-user-info {
-      color: #4ec9b0;
+      color: var(--accent-primary);
       font-size: 13px;
       margin-left: 8px;
     }
     .oidc-status {
       font-size: 12px;
-      color: #858585;
+      color: var(--text-secondary);
      -left: 8px;
     }
     .oidc-auth-btn {
       padding: 8px 16px;
-      background: #007acc;
+      background: var(--accent-primary);
       border: none;
       color: white;
       cursor: pointer;
@@ -56,14 +56,14 @@
       transition: all 0.2s;
     }
     .oidc-auth-btn:hover {
-      background: #005a9e;
+      background: var(--accent-primary);
     }
     .oidc-auth-btn.secondary {
-      background: #3c3c3c;
-      color: #d4d4d4;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
     }
     .oidc-auth-btn.secondary:hover {
-      background: #4c4c4c;
+      background: var(--bg-tertiary);
     }
 
     @media (max-width: 640px) {
@@ -105,6 +105,12 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
 <body>
@@ -123,14 +129,14 @@
     </div>
 
     <!-- Authentication (API Key) -->
-    <div class="form-group" id="auth-section" style="margin-bottom: 20px; padding: 12px; background: #2d2d2d; border-radius: 6px; border: 1px solid #3c3c3c;">
-      <label for="auth-api-key" style="color: #858585; font-size: 12px; display: block; margin-bottom: 4px;">🔑 API Key (optional — required when server has AUTH_API_KEY set)</label>
+    <div class="form-group" id="auth-section" style="margin-bottom: 20px; padding: 12px; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--bg-secondary);">
+      <label for="auth-api-key" style="color: var(--text-secondary); font-size: 12px; display: block; margin-bottom: 4px;">🔑 API Key (optional — required when server has AUTH_API_KEY set)</label>
       <div style="display: flex; gap: 8px; align-items: center;">
         <input type="password" id="auth-api-key" placeholder="Enter API key for server authentication"
-          style="flex: 1; padding: 8px 12px; background: #3c3c3c; border: 1px solid #555; border-radius: 4px; color: #d4d4d4; font-size: 13px;">
+          style="flex: 1; padding: 8px 12px; background: var(--bg-secondary); border: 1px solid #555; border-radius: 4px; color: var(--text-primary); font-size: 13px;">
         <button type="button" onclick="toggleAuthKeyVisibility()" id="auth-toggle-btn"
-          style="padding: 8px 12px; background: #3c3c3c; border: 1px solid #555; border-radius: 4px; color: #d4d4d4; cursor: pointer; font-size: 13px;">👁️</button>
-        <span id="auth-status" style="font-size: 12px; color: #858585;">Not set</span>
+          style="padding: 8px 12px; background: var(--bg-secondary); border: 1px solid #555; border-radius: 4px; color: var(--text-primary); cursor: pointer; font-size: 13px;">👁️</button>
+        <span id="auth-status" style="font-size: 12px; color: var(--text-secondary);">Not set</span>
       </div>
     </div>
 

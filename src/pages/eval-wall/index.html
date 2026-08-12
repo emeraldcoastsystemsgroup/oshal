@@ -7,17 +7,17 @@
   Framework surface conventions: local CSS vars are overridden from the cockpit theme by the
   theme-sync script at the bottom (the same one every in-cockpit surface uses).
 -->
-<html lang="en"><head>
+<html lang="en" data-theme="midnight"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Eval Wall</title>
 <style>
   /* Local token defaults for the standalone view; the theme-sync script below overrides
      surfaces/text/borders from the active light/dark cockpit theme. State HUES are fixed. */
   :root {
-    --bg:#0e0e16; --panel:#15151f; --panel2:#1b1b27; --line:#272735;
-    --text:#e6e6f0; --muted:#8b8ba3; --accent:#7c6cff; --accent2:#00d3a7;
+    --bg:var(--bg-primary); --panel:var(--bg-secondary); --panel2:var(--bg-tertiary); --line:var(--bg-tertiary);
+    --text:var(--text-primary); --muted:var(--text-secondary); --accent:var(--accent-primary); --accent2:var(--status-success);
     --scrollbar-thumb:rgba(255,255,255,.14);
-    --pass:#00d3a7; --degraded:#ffb454; --gap:#7c6cff; --fail:#ff6b6b;
+    --pass:var(--status-success); --degraded:var(--status-warning); --gap:var(--accent-primary); --fail:var(--status-error);
     --radius:14px;
     --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   }
@@ -69,6 +69,12 @@
   .na { color:var(--muted); }
   .empty { padding:30px 18px; color:var(--muted); font-size:13px; text-align:center; }
 </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
 <body>
@@ -137,15 +143,15 @@
     var x = function(i){ return pad + (W - 2*pad) * (n === 1 ? 0 : i/(n-1)); };
     var y = function(v){ return pad + (H - 2*pad) * (1 - Math.max(0, Math.min(1, v))); };
     var line = pts.map(function(p,i){ return (i?'L':'M') + x(i).toFixed(1) + ' ' + y(p.successRate).toFixed(1); }).join(' ');
-    var grid = [0, 0.5, 1].map(function(v){ return '<line x1="'+pad+'" y1="'+y(v).toFixed(1)+'" x2="'+(W-pad)+'" y2="'+y(v).toFixed(1)+'" stroke="var(--border,#2a3344)" stroke-width="0.5" stroke-dasharray="3 3"/>'; }).join('');
+    var grid = [0, 0.5, 1].map(function(v){ return '<line x1="'+pad+'" y1="'+y(v).toFixed(1)+'" x2="'+(W-pad)+'" y2="'+y(v).toFixed(1)+'" stroke="var(--border,var(--border-color))" stroke-width="0.5" stroke-dasharray="3 3"/>'; }).join('');
     var dots = pts.map(function(p,i){
-      var c = p.successRate >= 0.85 ? 'var(--pass)' : p.successRate >= 0.6 ? 'var(--warn,#e0a800)' : 'var(--fail)';
+      var c = p.successRate >= 0.85 ? 'var(--pass)' : p.successRate >= 0.6 ? 'var(--warn,var(--status-warning))' : 'var(--fail)';
       return '<circle cx="'+x(i).toFixed(1)+'" cy="'+y(p.successRate).toFixed(1)+'" r="2.6" fill="'+c+'"><title>'+esc(p.date)+': '+Math.round(p.successRate*100)+'% ('+p.passed+'/'+p.total+')</title></circle>';
     }).join('');
     document.getElementById('trendWrap').innerHTML =
       '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="none" style="overflow:visible">'
       + grid
-      + '<path d="'+line+'" fill="none" stroke="var(--accent,#3fa7ff)" stroke-width="1.6" stroke-linejoin="round"/>'
+      + '<path d="'+line+'" fill="none" stroke="var(--accent,var(--accent-primary))" stroke-width="1.6" stroke-linejoin="round"/>'
       + dots + '</svg>'
       + '<div class="s" style="display:flex;justify-content:space-between;margin-top:4px">'
       + '<span>'+esc(pts[0].date)+'</span><span class="na">0–100% daily success</span><span>'+esc(pts[n-1].date)+'</span></div>';
