@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard fail-closed packaged-bot runtime validation and dynamic registry propagation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-093 Tier 2: guard the bots[].container/port node declaration — passthrough to the dynamic registry (dispatch leaves the controller), the 5000 default, and every fail-closed rejection shape (bad slug, 'oshal-api', orphan port, non-integer port).
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -57,5 +58,23 @@ describe('packaged bot runtime declarations', () => {
     expect(() => readBot('    harnessType: codex-cli\n    apiType: future-api\n')).toThrow(/apiType is unknown/);
     expect(() => readBot('    harnessType: codex-cli\n    apiType: claude-code\n')).toThrow(/runtime is incompatible/);
     expect(() => readBot('    harnessType: cline\n    apiType: a2a\n')).toThrow(/runtime is incompatible/);
+  });
+
+  it('registers a declared node container/port as a dedicated bot-node (ADR-093 Tier 2)', () => {
+    const bot = readBot('    container: career-bot\n    port: 5001\n');
+    expect(manifestBotDefinition(bot)).toMatchObject({ container: 'career-bot', port: 5001 });
+  });
+
+  it('defaults a declared node to the standard execution port 5000', () => {
+    expect(manifestBotDefinition(readBot('    container: career-bot\n')))
+      .toMatchObject({ container: 'career-bot', port: 5000 });
+  });
+
+  it('rejects malformed node declarations fail-closed instead of registering the bot inline', () => {
+    expect(() => readBot('    container: "Career Bot"\n')).toThrow(/container must be a Docker service-name slug/);
+    expect(() => readBot('    container: oshal-api\n')).toThrow(/must name a dedicated bot-node service/);
+    expect(() => readBot('    port: 5000\n')).toThrow(/port is only meaningful together with container/);
+    expect(() => readBot('    container: career-bot\n    port: 99999\n')).toThrow(/port must be an integer TCP port/);
+    expect(() => readBot('    container: career-bot\n    port: half\n')).toThrow(/port must be an integer TCP port/);
   });
 });

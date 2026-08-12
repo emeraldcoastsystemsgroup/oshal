@@ -1916,7 +1916,10 @@ services:
       FORCE_LLM_MODEL: ${JARVIS_LLM_MODEL:-gpt-5.5}
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       # career_database tool (node scripts/oshal-jobhunter.js query) reads the user's jobs DB here.
-      JOBHUNTER_STORE_ROOT: /app/output/career-hunter-data
+      # The store lives on the API's output volume (the career routes write it) — mounted below at
+      # a NON-/app/output path, because sharing /app/output is the bot-persona identity race the
+      # 2026-08-12 seeding repair split apart (jarvis's own /app/output is jarvis-output).
+      JOBHUNTER_STORE_ROOT: /app/api-data/career-hunter-data
       BOT_UI_LABEL: Assistant
       BOT_UI_URL: /cockpit/?app=jarvis
       BOT_UI_ICON: "codicon codicon-sparkle"
@@ -1933,8 +1936,60 @@ services:
       - *claude-auth-volume
       - *gemini-auth-volume
       - *claude-auth-json
-      # Shared output volume = same career-hunter-data store + global config the api uses.
+      # The api's career-hunter-data store, at a non-/app/output path (see JOBHUNTER_STORE_ROOT).
+      - api-output:/app/api-data
       - jarvis-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  # ── Career Bot — career-hunter's dedicated node (ADR-093 Tier 2) ────────────
+  # The store package's bot (cb…0001) as a first-class bot-node, so executeBotOrInline
+  # dispatches here (the package manifest declares `container: career-bot`) instead of the
+  # controller-inline path — which is what lets the ADR-127 demo-CLI carve run the operator's
+  # turns on the mounted CLI login like every other bot, rather than knocking them onto the
+  # hosted ladder. PROFILE-GATED: inert until the operator opts in (COMPOSE_PROFILES=career-node
+  # in .env) — the persona lives on the workspace volume and only exists where the career-hunter
+  # package is deployed. See deployed-apps/career-hunter/oshal-app.yaml.
+  career-bot:
+    <<: *bot-common
+    container_name: oshal-local-career-bot
+    profiles: ["career-node"]
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: career-hunter
+      AGENT_ID: cb000000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/workspace-shared/deployed-apps/career-hunter/personas/career-hunter.yaml
+      AGENT_CAPABILITIES: "job-search,job-scoring,resume-generation,resume-tailoring,cover-letter-generation,application-strategy,application-status,recruiter-outreach,career-coaching"
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
+      # The engine's per-user store (SQLite corpus, packets, resumes) lives on the API's output
+      # volume — the career routes write it. Mounted below at a NON-/app/output path; sharing
+      # /app/output is the bot-persona identity race the 2026-08-12 seeding repair split apart.
+      JOBHUNTER_STORE_ROOT: /app/api-data/career-hunter-data
+      BOT_UI_LABEL: Career
+      BOT_UI_URL: /cockpit/?app=career-hunter
+      BOT_UI_ICON: "codicon codicon-briefcase"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      # CLI tools (oshal-jobhunter.js etc.) bind-mounted so tool iterations apply without a rebuild.
+      - ./scripts:/app/scripts:ro
+      # The bot-node runtime requires the any-bot server tree (utils/stores/controllers/services);
+      # the image doesn't COPY it, so without this the node crashes on a missing module.
+      - ./any-bot/server:/app/any-bot/server:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - api-output:/app/api-data
+      - career-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -2631,6 +2686,9 @@ volumes:
   # general, trading as travel-concierge, identity as oshal-assistant). One writer per volume,
   # like the tm-output/codedev-output group below that never raced.
   jarvis-output:
+  # career-bot (profile `career-node`) — same one-writer rule; declared unconditionally so the
+  # profile toggling on never fails on a missing volume.
+  career-output:
   eats-output:
   rides-output:
   shopping-output:

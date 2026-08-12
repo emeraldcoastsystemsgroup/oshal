@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: remove provider credential forwarding from switchProvider; runtime config push-down now carries provider/model metadata only.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Bind controller-to-bot delegation to exact POST /api/swarm-execute route metadata in addition to the request body and task.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Make authoritative push-on-dispatch enforcement explicit in the wire contract: requests can require a provider record, and responses report the config source/action/version actually enforced.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | Harden loadActiveBotEndpointRegistry: the raw registry require has no .js on disk under the ESM/vitest transform (the exact gap inline-bot-execution seq 6 documents for its own loader) and it had NO catch — so the first route that called hasEndpoint() in a spec threw a 500 instead of resolving. Now: require works as before in the compiled dist; on failure the loader kicks warmBotEndpointRegistry() (dynamic-import cache, exported so specs and boot paths can await it) and reports no endpoints until warm — the caller falls back to the inline path, exactly the pre-loader behaviour, never an exception.
  */
 
 import * as http from 'node:http';
@@ -711,9 +712,45 @@ export function createRegistryEndpointResolver(
   };
 }
 
+/** Dynamic-import fallback cache for contexts where the CJS require below cannot resolve. */
+let warmedRegistryModule: { getActiveRegistry: () => unknown } | null = null;
+let registryWarmStarted = false;
+
+/**
+ * @description Load the swarm-bot registry module through a dynamic import and cache the MODULE
+ * (not a snapshot — dynamically registered app bots must stay visible). The compiled dist never
+ * needs this (the synchronous require resolves); the ESM/vitest transform does, and specs that
+ * exercise node dispatch await it before driving a route.
+ * @returns Resolves once the registry module is cached for the synchronous loader.
+ */
+export async function warmBotEndpointRegistry(): Promise<void> {
+  // The '.js' extension is the nodenext ESM contract — emitted filename in dist, mapped back to
+  // the .ts source by the TS/vitest resolvers (same rationale as inline-bot-execution seq 6).
+  const mod = await import('../../../app/extensions/swarm/swarm-bot-registry.js');
+  warmedRegistryModule = mod as never;
+}
+
 function loadActiveBotEndpointRegistry(): ReadonlyArray<BotEndpointRegistryEntry> {
-  // Lazy require to avoid circular dependency at module load time.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { getActiveRegistry } = require('../../../app/extensions/swarm/swarm-bot-registry');
-  return getActiveRegistry() as ReadonlyArray<BotEndpointRegistryEntry>;
+  if (warmedRegistryModule) {
+    return warmedRegistryModule.getActiveRegistry() as ReadonlyArray<BotEndpointRegistryEntry>;
+  }
+  try {
+    // Lazy require to avoid circular dependency at module load time.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getActiveRegistry } = require('../../../app/extensions/swarm/swarm-bot-registry');
+    return getActiveRegistry() as ReadonlyArray<BotEndpointRegistryEntry>;
+  } catch (err) {
+    // ESM/vitest: the CJS require cannot resolve the .ts module. Kick the async warm ONCE and
+    // report no endpoints until it lands — callers fall back to the inline execution path (the
+    // exact pre-loader behaviour); an exception here became a 500 on every route that probed
+    // hasEndpoint() under the spec runner.
+    if (!registryWarmStarted) {
+      registryWarmStarted = true;
+      void warmBotEndpointRegistry().catch((warmErr) => {
+        logger.warn({ err: warmErr }, 'Bot endpoint registry warm failed — endpoints stay unresolved');
+      });
+    }
+    logger.warn({ err }, 'Bot endpoint registry not synchronously loadable — reporting no endpoints until warmed');
+    return [];
+  }
 }

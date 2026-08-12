@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: this route calls ctx.orchestrator.processMessage DIRECTLY (see seq 9), so it now resolves the caller's hosted user-brain ladder via the SAME shared helper executeBotOrInline uses (resolveHostedBrainForCliAgent — one condition, no drift) when the resolved agent's registry harness is an unbrokered CLI, and threads it as options.byoLlmConnection. Runs BEFORE ticket creation so a turn that cannot run never opens a ticket. NO_HOSTED_BRAIN maps to a clean 422 whose `error` field carries the friendly Settings → AI Providers message the cockpit chat panel renders (throwResponseError shows error.error).
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time hosted-brain failover: a lane that passes its resolution probe can exhaust its quota mid-turn (Gemini free tier = 20 requests/day), and the provider's 429 was handed to the caller AS THE ANSWER. The turn now reports the failure (cools the free-tier row / drops the cached operator-lane verdict) and replays ONCE on the next resolved lane via retryHostedBrainTurn — same bounded-retry shape the Jarvis path uses. Explicit BYO connections keep surfacing their own failures unretried.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Close seq 17's blind spot (live 2026-08-11: the 429 STILL became the answer on THIS route): agentic turns catch provider errors inside task-orchestrator.handleError and RESOLVE with { success:false, error }, so the catch never fired. swallowedTurnFailure inspects the resolved result and feeds the same retryHostedBrainTurn; a non-retryable failure (reportResolvedLlmFailure's gate) keeps the original failed result.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | ONE-CHOKEPOINT node dispatch: when the resolved agent has a dedicated node endpoint, this route now executes the turn through executeBotOrInline (budget gate + ADR-090 skills + the ADR-127 REMOTE brain stamp — the demo operator's mounted CLI, a guest's hosted lane) instead of calling the controller orchestrator directly with the hosted-ONLY ladder — which is exactly how a node-backed bot's chat turns kept dying on an exhausted hosted key while a healthy CLI login sat mounted at its node. The controller persists both turns (persistJarvisTurn, the shared chat-turn writer) so GET /api/:taskId/messages replays node threads; ticket/chat-task bookkeeping and guest chatOnly containment are identical to the inline path. Inline bots are byte-identical to seq 18.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -33,10 +34,15 @@ import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-s
 import { requireAiEnabled } from '@/shared/middleware/ai-availability';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { NoHostedBrainError, hostedBrainWire, resolveHostedBrainMeta, retryHostedBrainTurn, swallowedTurnFailure } from './inline-bot-execution';
+import { NoHostedBrainError, executeBotOrInline, hostedBrainWire, resolveHostedBrainMeta, retryHostedBrainTurn, swallowedTurnFailure } from './inline-bot-execution';
+import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
+import { persistJarvisTurn } from './jarvis-task-store';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'message-routes' });
+
+/** Dedicated-node transport for bots the registry binds to their own container (standard idiom). */
+const botClient = new BotNodeClient(createRegistryEndpointResolver());
 
 /**
  * @description Object-level authorization for posting to a task thread. Existing
@@ -224,6 +230,76 @@ function handleSendMessage(ctx: AppContext) {
       // Runs BEFORE ticket creation and before any LLM work: an unentitled caller must not
       // create a ticket, consume budget, or reach a broker on the way to being refused.
       assertSendMessageEntitlement(req, resolvedAgentId, taskId);
+      // ONE-CHOKEPOINT node dispatch (2026-08-12): a bot the registry binds to its own node takes
+      // this turn AT the node via executeBotOrInline — budget gate, ADR-090 skill profile, and the
+      // ADR-127 REMOTE brain (stampRemoteBrain: the demo operator's mounted CLI stamped as the
+      // authoritative provider, a guest's hosted lane threaded as byoLlmConnection). The inline
+      // path below resolves the hosted-ONLY ladder, which is exactly wrong for a node-backed bot:
+      // it is how a career chat turn kept landing on an exhausted hosted key while a healthy CLI
+      // login sat mounted at the bot's node. Ticket/chat-task bookkeeping is identical to inline.
+      if (botClient.hasEndpoint(resolvedAgentId)) {
+        const nodeContext = await resolveProjectManagerTicketExecutionContext(
+          { taskStore: ctx.taskStore, ticketService: ctx.ticketService },
+          {
+            requestedTaskId: taskId,
+            resolvedAgentId,
+            source: source ?? 'api',
+            text,
+            ownerSub: callerSub,
+            // Same guest containment as the inline path below — not overridable from the body.
+            chatOnly: chatOnly === true || isGuestRequest(req),
+          },
+        );
+        executionContext = {
+          taskId,
+          taskIdUsed: nodeContext.taskId,
+          ticketCreated: nodeContext.ticketCreated,
+          ticketId: nodeContext.ticketId ?? null,
+          ticketStatus: nodeContext.ticketStatus ?? null,
+          ticketTitle: nodeContext.ticketTitle ?? null,
+        };
+        const isMachineCall = hasValidServiceSecret(req);
+        const sessionSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub ?? null;
+        const result = await executeBotOrInline(ctx, botClient, resolvedAgentId, {
+          text,
+          taskId: nodeContext.taskId,
+          workspaceFolderId: nodeContext.taskId,
+          agentId: resolvedAgentId,
+          agenticMode: agenticMode ?? true,
+          // Same interactive-vs-swarm distinction assertSendMessageEntitlement applies (seq 9):
+          // a valid service-secret call is swarm dispatch, never a direct interactive turn.
+          direct: !isMachineCall && Boolean(sessionSub),
+          userSub: callerSub,
+        });
+        // The turn executed remotely, so the controller owns thread durability: persist both
+        // turns to the SAME store GET /api/:taskId/messages replays. persistJarvisTurn is the
+        // shared best-effort chat-turn writer (one save shape, no drift) despite its name.
+        await persistJarvisTurn(ctx, nodeContext.taskId, 'user', text);
+        await persistJarvisTurn(ctx, nodeContext.taskId, 'assistant', String(result.response || ''));
+        logger.info(
+          {
+            taskId: nodeContext.taskId,
+            requestedTaskId: taskId,
+            agentId: resolvedAgentId,
+            durationMs: Date.now() - startTime,
+            success: result.success,
+            ticketCreated: executionContext.ticketCreated,
+          },
+          'Message processed at the bot node',
+        );
+        res.json({
+          ...result,
+          taskId: executionContext.taskIdUsed,
+          taskIdUsed: executionContext.taskIdUsed,
+          requestedTaskId: taskId,
+          agentId: resolvedAgentId,
+          ticketCreated: executionContext.ticketCreated,
+          ticketId: executionContext.ticketId ?? null,
+          ticketStatus: executionContext.ticketStatus ?? null,
+          ticketTitle: executionContext.ticketTitle ?? null,
+        });
+        return;
+      }
       // ADR-127 inline hosted brain: direct chat runs in-process on the controller, where an
       // unbrokered-CLI registry harness is refused unconditionally (SEC-05) — so when the target
       // bot declares one, resolve the caller's hosted brain via the SAME shared helper
