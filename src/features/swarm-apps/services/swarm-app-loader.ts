@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | INSTALLER-GAPS CORE-05: validate package-owned smoke probes, confined JSON fixtures, route ownership, and explicit AI-route metadata.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Validate manifest-contributed Takeout slices fail-closed: literal canonical suffixes only, confined compiled modules, bounded uncompressed bytes, unique stable ids/paths, and named handler exports.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | Validate both manifest schedule modes fail-closed. Deterministic service-route jobs must be framework-scoped static POSTs beneath an exactly service-authenticated package route; malformed cron, mixed prompt/route fields, dynamic interpolation, and oversized bodies are rejected at load.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com  | ADR-093 Tier 2: validate bots[].container/port fail-closed (service-name slug, sane port, port requires container, 'oshal-api' rejected) — a malformed node declaration must fail the load, not silently register the bot inline on a runtime the operator opted out of.
  */
 
 import fs from 'fs';
@@ -155,6 +156,33 @@ function validateBotRuntime(bot: SwarmAppBotDeclaration, index: number, absPath:
   }
   if (harness === 'cline' && !ApiProviderSchema.safeParse(api).success) {
     throw new Error(`Manifest ${absPath}: ${at} runtime is incompatible: cline/${api}; expected a core API provider.`);
+  }
+}
+
+/**
+ * @description Fail closed on malformed dedicated-node declarations (ADR-093 Tier 2). A bad
+ * `container:` must fail the load, not silently register the bot inline — the operator applied a
+ * node service expecting dispatch to reach it, and an inline fallback would run the bot on a
+ * runtime (and brain ladder) they explicitly opted out of.
+ */
+function validateBotNodeDeclaration(bot: SwarmAppBotDeclaration, index: number, absPath: string): void {
+  const at = `bots[${index}] (${bot && bot.name || '?'})`;
+  const { container, port } = bot ?? {};
+  if (container !== undefined) {
+    if (typeof container !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(container)) {
+      throw new Error(`Manifest ${absPath}: ${at}.container must be a Docker service-name slug (lowercase alphanumeric + hyphen).`);
+    }
+    if (container === 'oshal-api') {
+      throw new Error(`Manifest ${absPath}: ${at}.container must name a dedicated bot-node service — 'oshal-api' is the inline default; omit the key instead.`);
+    }
+  }
+  if (port !== undefined) {
+    if (container === undefined) {
+      throw new Error(`Manifest ${absPath}: ${at}.port is only meaningful together with container:.`);
+    }
+    if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`Manifest ${absPath}: ${at}.port must be an integer TCP port (1-65535).`);
+    }
   }
 }
 
@@ -818,6 +846,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // role or an empty list must not silently leave a bot open to every caller, Jarvis included.
   for (const [i, bot] of (manifest.bots ?? []).entries()) {
     validateBotRuntime(bot, i, absPath);
+    validateBotNodeDeclaration(bot, i, absPath);
     if (bot.accessRoles === undefined) continue; // omitted = open to every caller (ADR-087)
     const at = `bots[${i}] (${bot.name ?? '?'})`;
     // `accessRoles:` with no values parses to null in YAML — the likeliest author typo, and the

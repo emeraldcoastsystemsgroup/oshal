@@ -127,6 +127,13 @@ export interface SwarmAppBotDeclaration {
   harnessType?: SwarmAppBotHarnessType;
   /** Provider consumed by the selected harness; loader validation enforces compatible pairs. */
   apiType?: string;
+  /** ADR-093 Tier 2: the package's dedicated bot-node service, as its Docker service DNS name.
+   *  Omit for an inline concierge on the controller (the historical default). With a node
+   *  declared, dispatch resolves `http://<container>:<port>` and leaves the controller, so the
+   *  node's own runtime (and the ADR-127 demo-CLI carve its preflight enforces) governs turns. */
+  container?: string;
+  /** The node's internal execution port. Only meaningful with `container:`; defaults to 5000. */
+  port?: number;
   persona?: string;
   role?: string;
   capabilities?: string[];

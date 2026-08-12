@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time hosted-brain failover (retryHostedBrainTurn): resolution-time probing cannot cover a lane exhausting its quota BETWEEN probe and completion (Gemini free tier = 20/day), so the 429 was handed to the caller as the answer. On a resolver-owned connection the failed turn now reports through reportResolvedLlmFailure (cools the free-tier row / drops the operator-lane verdict) and replays ONCE on the next resolved lane; same-lane re-resolution and explicit BYO connections surface the original failure unretried. resolveHostedBrainMeta returns the FULL connection (metadata needed to cool the right lane) and hostedBrainWire strips to the three wire fields at the processMessage boundary.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Close the failover's blind spot (live 2026-08-11: the 429 STILL became the answer): the agentic loop catches provider errors internally (task-orchestrator handleError) and RESOLVES with { success:false, error } — so the route-level catch entry 7 added never fired on exactly the live path. swallowedTurnFailure detects the failure-shaped RESULT and both entry points feed it through the SAME retryHostedBrainTurn; retryability still belongs to reportResolvedLlmFailure's pattern gate, so genuine content failures stay failures. Cost: a replayed turn re-appends the user message to the thread (cosmetic duplicate) — accepted over shipping a provider's quota wall as the assistant's reply.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Diagnosability: every declined retry in retryHostedBrainTurn now logs its reason (not-a-wall / ladder-empty / same-lane). The same-lane branch declining SILENTLY in 7ms is what hid the probe-passes-on-a-quota-trickle trap (fixed in free-tier-rotation seq 10) behind a mystery.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | ADR-127 REMOTE brain (stampRemoteBrain): a dedicated-node dispatch for a CLI-harness bot now carries the caller's resolved brain — the FULL ladder including the demo-CLI carve, so the operator's turns ride the mounted login stamped as the ADR-034 authoritative provider and guests ride a hosted lane as byoLlmConnection. Before this, only jarvis-orchestrator stamped its own dispatches; every other node route dispatched brainless and the node's static default governed regardless of who was calling.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -23,6 +24,7 @@ import { isUnbrokeredAutonomousProvider } from '@/features/llm-provider';
 import { composeSkillProfilePrompt, resolveSkillProfileByApp } from '@/shared/skill-profiles';
 import { assertExecuteEntitlement } from '@/app/bot-node-execute-entitlement';
 import { reportResolvedLlmFailure, resolveUserLlmConnection, type ResolvedUserLlmConnection } from './free-tier-rotation';
+import { resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
 
 const logger = createChildLogger({ module: 'inline-bot-execution' });
@@ -66,6 +68,8 @@ export interface HostedBrainResolutionOverrides {
   resolveConnection?: (pool: AppContext['pool'], userSub: string) => Promise<ByoLlmConnection | undefined>;
   /** Failure-report override for retry tests; production always calls reportResolvedLlmFailure. */
   reportFailure?: (pool: AppContext['pool'], connection: ResolvedUserLlmConnection, error: unknown) => Promise<boolean>;
+  /** Full-ladder override for remote-stamp tests; production always walks resolveUserBrain. */
+  resolveBrain?: (pool: AppContext['pool'], userSub: string) => Promise<ResolvedBrain>;
 }
 
 /**
@@ -192,6 +196,57 @@ export async function resolveHostedBrainForCliAgent(
   overrides?: HostedBrainResolutionOverrides,
 ): Promise<ByoLlmConnection | undefined> {
   return hostedBrainWire(await resolveHostedBrainMeta(pool, agentId, userSub, overrides));
+}
+
+/**
+ * @description The REMOTE-branch half of ADR-127: a dedicated-node dispatch for a CLI-harness bot
+ * carries the caller's resolved brain. Unlike the inline branch (hosted rungs only — SEC-05
+ * refuses every controller CLI unconditionally), a node dispatch walks the FULL user-brain
+ * ladder: a `cli` result is STAMPED as the dispatch's authoritative provider (ADR-034) — the demo
+ * operator's mounted login, which the node's own preflight re-enforces under the SAME carve — and
+ * a `hosted` result rides as byoLlmConnection (guests and every non-carve caller). A
+ * caller-threaded connection or provider stamp always wins untouched; identity-less dispatches
+ * and hosted-harness nodes pass through unchanged. Ladder FAILURE (not "no brain") dispatches
+ * unstamped — the node's registry default governs, the exact pre-feature behaviour.
+ * @param pool - pg pool for the ladder's per-user reads.
+ * @param agentId - The target bot's agent UUID.
+ * @param request - The dispatch about to ride to the node; stamped in place.
+ * @param overrides - Injectable seams for guard specs only.
+ * @throws NoHostedBrainError when a CLI-harness node's non-carve caller has nothing on the
+ *   ladder — the honest Settings answer, never the node's raw SEC-05 refusal.
+ */
+export async function stampRemoteBrain(
+  pool: AppContext['pool'],
+  agentId: string,
+  request: BotNodeRequest,
+  overrides?: HostedBrainResolutionOverrides,
+): Promise<void> {
+  if (request.byoLlmConnection || request.providerId) return; // the caller's explicit choice wins
+  if (!request.userSub) return; // internal/swarm dispatches behave exactly as before
+  const registry = overrides?.loadRegistry ? overrides.loadRegistry() : await defaultLoadSwarmRegistry();
+  if (!agentRequiresHostedBrain(agentId, registry)) return; // hosted-harness nodes keep their own provider
+  let brain: ResolvedBrain;
+  try {
+    brain = overrides?.resolveBrain
+      ? await overrides.resolveBrain(pool, request.userSub)
+      : await resolveUserBrain(pool, request.userSub);
+  } catch (err) {
+    logger.warn({ err, agentId }, 'remote-brain stamp: ladder failed — dispatching unstamped');
+    return;
+  }
+  if (brain.kind === 'cli') {
+    request.providerId = brain.providerId;
+    if (brain.model) request.model = brain.model;
+    logger.info({ agentId, providerId: brain.providerId }, 'remote-brain stamp: CLI brain stamped as the authoritative dispatch provider');
+    return;
+  }
+  if (brain.kind === 'hosted') {
+    request.byoLlmConnection = hostedBrainWire(brain.connection as ByoLlmConnection);
+    logger.info({ agentId, model: brain.connection.model }, 'remote-brain stamp: hosted brain rides as byoLlmConnection');
+    return;
+  }
+  logger.warn({ agentId }, 'remote-brain stamp: nothing on the ladder — refusing with NO_HOSTED_BRAIN');
+  throw new NoHostedBrainError();
 }
 
 /**
@@ -342,6 +397,10 @@ export async function executeBotOrInline(
     // the layered branch builds from persona layers + buildUserMessage, never from `text`, which is
     // exactly why weaving into `text` (as the inline path does) would never reach it there.
     if (skillPattern) request.pattern = skillPattern;
+    // ADR-127 remote brain: stamp the caller's resolved brain on a CLI-harness node dispatch —
+    // cli as the authoritative provider (the demo operator's mounted login), hosted riding as
+    // byoLlmConnection. See stampRemoteBrain; explicit caller choices pass through untouched.
+    await stampRemoteBrain(ctx.pool, agentId, request);
     return botClient.execute(agentId, request);
   }
 
