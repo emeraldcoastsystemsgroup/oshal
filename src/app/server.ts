@@ -219,6 +219,7 @@ import {
   createTokenChaseRoutes,
   createOptimizeRoutes,
   createMemoryRoutes,
+  createHelpRoutes,
   createCockpitRoutes,
   createTaskExplorerRoutes,
   registerCockpitStaticRoutes,
@@ -1616,6 +1617,9 @@ function createApp(): express.Application {
   app.use('/api/optimize', requiresAuth, createOptimizeRoutes(ctx));
   app.use('/api/token-chase', requiresAuth, createTokenChaseRoutes(apiDir, ctx));
   app.use('/api/memory', requiresAuth, createMemoryRoutes(ctx));
+  // In-product help: docs/guides rendered for the signed-in user. Auth-gated like every other
+  // surface — the guides describe operator-gated screens, so they are not anonymous-callable.
+  app.use('/api/help', requiresAuth, createHelpRoutes());
 
   // Internal ticketing system routes
   app.use('/api/tickets', requiresAuth, createTicketRoutes(ctx));

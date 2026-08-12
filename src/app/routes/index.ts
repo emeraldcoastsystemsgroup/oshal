@@ -95,3 +95,4 @@ export { createPersonalRoutes } from './personal-routes';
 //  ADR-085 Wave 3 — the package mounts /api/world; the world-data engine stays core.)
 export { createAmbientListeningRoutes } from './ambient-listening-routes';
 export { createAmbientSpeakerRoutes } from './ambient-speaker-routes';
+export { createHelpRoutes } from './help-routes';
