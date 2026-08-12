@@ -4,10 +4,57 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared page shell for the multi-page product site. CSS is inlined into every generated page rather than linked: the site's rule is self-contained pages with no external requests, and a linked stylesheet that failed to stage would render all seventy pages unstyled — a failure mode worth more than the bytes it saves. Brand tokens follow docs/assets/oshal/visual-identity.md.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Per-app themed subdomains (APP_SUBDOMAINS, mirrors the deployment HOST_APP_MAP) + appOpenUrl/appDemoUrl helpers. An app that has a subdomain gets a clean host — the app identity lives in the hostname, which survives the OIDC login round-trip; a ?app= query param does not (first login redirects through /login and /welcome, both of which drop the query, stranding the visitor on the generic ribbon). Apps without a subdomain still reach the right surface via the guest gate's ?next= deep-link.
  */
 
 /** Where a visitor actually opens an app. Already the public demo host on the main site. */
 const APP_HOST = 'https://oshal.agenticfederal.us';
+
+/**
+ * Themed per-app subdomains. MUST mirror the deployment's HOST_APP_MAP (.env) — a host here that
+ * the deployment does not map lands on the generic ribbon instead of the app. Keys are the
+ * manifest `name` (the app-page slug); values are the bare hostname.
+ */
+const APP_SUBDOMAINS = {
+  'career-hunter': 'career.oshal.ai',
+  finance: 'finance.oshal.ai',
+  switchboard: 'social.oshal.ai',
+  home: 'iot.oshal.ai',
+  'creative-studio': 'creative.oshal.ai',
+  games: 'games.oshal.ai',
+  life: 'life.oshal.ai',
+  system: 'system.oshal.ai',
+  presentations: 'office.oshal.ai',
+  'intelligent-operations': 'operations.oshal.ai',
+  dnd: 'dnd.oshal.ai',
+  'intelligent-sales': 'factor-crm.oshal.ai',
+  'little-monsters': 'littlemonsters.oshal.ai',
+};
+
+/**
+ * @description The URL a signed-in visitor opens an app at. A themed subdomain roots on the app via
+ * HOST_APP_MAP (the app is in the hostname, so it survives the login round-trip); every other app
+ * uses the ?app= query on the demo host.
+ * @param {string} name - The manifest name / app slug.
+ * @returns {string} An absolute URL.
+ */
+function appOpenUrl(name) {
+  const sub = APP_SUBDOMAINS[name];
+  return sub ? `https://${sub}/` : `${APP_HOST}/cockpit/?app=${encodeURIComponent(name)}`;
+}
+
+/**
+ * @description The public guest-demo URL for an app. A themed subdomain lands the guest straight on
+ * the app via HOST_APP_MAP; every other app carries the app through the guest gate with a ?next=
+ * deep-link, so the demo button always opens the app the page is about — never the generic ribbon.
+ * @param {string} name - The manifest name / app slug.
+ * @returns {string} An absolute URL.
+ */
+function appDemoUrl(name) {
+  const sub = APP_SUBDOMAINS[name];
+  if (sub) return `https://${sub}/guest`;
+  return `${APP_HOST}/guest?next=${encodeURIComponent(`/cockpit/?app=${name}`)}`;
+}
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -308,4 +355,4 @@ ${body}
 `;
 }
 
-module.exports = { page, esc, attr, APP_HOST };
+module.exports = { page, esc, attr, APP_HOST, APP_SUBDOMAINS, appOpenUrl, appDemoUrl };

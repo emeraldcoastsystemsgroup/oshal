@@ -6,7 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Renderers for the multi-page product site: catalog hub, shelf pages, one page per application, platform hub, one page per platform topic. Content is baked into static HTML rather than rendered from a JSON island by client script — a catalog that only exists after JavaScript runs is invisible to search, to link previews and to anyone who opens the page with a flaky connection, which is a large part of why a single-page version of this reads as a brochure instead of a product site.
  */
 
-const { page, esc, APP_HOST } = require('./theme');
+const { page, esc, APP_HOST, APP_SUBDOMAINS, appOpenUrl, appDemoUrl } = require('./theme');
 const { TOPICS } = require('./platform-content');
 const { renderOrb, SHELF_HUE } = require('./orb');
 
@@ -319,13 +319,15 @@ function renderShelf(model, shelf) {
 /* ────────────────────────────── app page ────────────────────────────── */
 
 function renderApp(model, app) {
-  const openHref = `${APP_HOST}/cockpit/?app=${encodeURIComponent(app.name)}`;
+  const openHref = appOpenUrl(app.name);
+  const demoHref = appDemoUrl(app.name);
+  const subdomain = APP_SUBDOMAINS[app.name];
   const isStore = app.origin === 'store';
 
   const facts = [['Shelf', `<a href="${url.shelf(app.shelf.slug)}">${esc(app.shelf.label)}</a>`]];
   if (app.version) facts.push(['Version', `<code>${esc(app.version)}</code>`]);
   facts.push(['Ships as', isStore ? 'An installable store package' : 'Resident in the platform core']);
-  facts.push(['Opens at', `<code>?app=${esc(app.name)}</code>`]);
+  facts.push(['Opens at', subdomain ? `<code>${esc(subdomain)}</code>` : `<code>?app=${esc(app.name)}</code>`]);
   if (app.ticketType) facts.push(['Queued work', `Registers the <code>${esc(app.ticketType)}</code> ticket type`]);
   if (app.bots && app.bots.length) {
     facts.push(['Accountable bots', app.bots.map((b) => `<code>${esc(b.name)}</code>`).join(' ')]);
@@ -440,9 +442,11 @@ function renderApp(model, app) {
       <p class="lede">${esc(app.lead)}</p>
       <div class="cta-row">
         <a class="btn primary" href="${openHref}">Open the app &rarr;</a>
-        <a class="btn" href="${APP_HOST}/guest">Try the live demo</a>
+        <a class="btn" href="${demoHref}">Try the live demo</a>
       </div>
-      <p class="cta-note">Opens <code>?app=${esc(app.name)}</code> on the demo deployment. On your own box it is the same URL.</p>
+      <p class="cta-note">${subdomain
+        ? `Opens at <code>${esc(subdomain)}</code> &mdash; the app lives in the hostname, so a first login lands you right back on it. On your own box it is <code>?app=${esc(app.name)}</code>.`
+        : `Opens <code>?app=${esc(app.name)}</code> on the demo deployment. On your own box it is the same URL.`}</p>
       ${screensBlock}
     </div>
     <aside class="aside">

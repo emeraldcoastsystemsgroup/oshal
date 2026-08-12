@@ -5,9 +5,11 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pins the public guest-demo entry rails: (1) /guest?next= deep links are same-origin only — the landing form carries a sanitized next, start redirects there, off-origin/protocol-relative/oversized values fall back to /cockpit/, and an already-authenticated visitor skips the landing; (2) the demo seed runs inside ONE transaction with a transaction-local oshal.current_sub GUC (FORCE-RLS rejected every guest's seed until 2026-07-18) and only ever plants queue-INERT ticket statuses (complete/backlog) so a seeded ticket can never be dispatched to a bot and spend LLM.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard guest start against malformed SESSION_COOKIE_DOMAIN values: the route still mints a host-only guest cookie and redirects instead of surfacing Express/cookie's invalid-domain TypeError as HTTP 500.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the HOST_APP_MAP wiring on guest-start: with no explicit `next`, a themed subdomain (via req.hostname) must land the guest on its mapped app instead of the bare /cockpit/ generic ribbon; an explicit `next` still wins, and a single-host request with no map entry still falls back to /cockpit/. Uses a raw http request to set the Host header, which node's fetch strips as a forbidden header.
  */
 
 import express from 'express';
+import http from 'node:http';
 import type { AddressInfo } from 'net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGuestRoutes } from '../../src/app/routes/guest-routes';
@@ -24,8 +26,10 @@ describe('guest ?next= deep links', () => {
     savedEnv.ENABLE_GUEST_MODE = process.env.ENABLE_GUEST_MODE;
     savedEnv.SESSION_SECRET = process.env.SESSION_SECRET;
     savedEnv.SESSION_COOKIE_DOMAIN = process.env.SESSION_COOKIE_DOMAIN;
+    savedEnv.HOST_APP_MAP = process.env.HOST_APP_MAP;
     process.env.ENABLE_GUEST_MODE = 'true';
     process.env.SESSION_SECRET = 'unit-test-secret';
+    delete process.env.HOST_APP_MAP; // off by default; the host-map tests set it explicitly
   });
 
   afterEach(async () => {
@@ -33,9 +37,35 @@ describe('guest ?next= deep links', () => {
     process.env.SESSION_SECRET = savedEnv.SESSION_SECRET;
     if (savedEnv.SESSION_COOKIE_DOMAIN === undefined) delete process.env.SESSION_COOKIE_DOMAIN;
     else process.env.SESSION_COOKIE_DOMAIN = savedEnv.SESSION_COOKIE_DOMAIN;
+    if (savedEnv.HOST_APP_MAP === undefined) delete process.env.HOST_APP_MAP;
+    else process.env.HOST_APP_MAP = savedEnv.HOST_APP_MAP;
     await Promise.all(servers.map((s) => new Promise<void>((resolve) => s.close(resolve))));
     servers.length = 0;
   });
+
+  /**
+   * @description POSTs /api/guest/start with an explicit Host header (node fetch strips Host as a
+   * forbidden header, so req.hostname would otherwise always be 127.0.0.1). Does not follow the
+   * redirect — returns the raw status + Location so the host-map landing target is observable.
+   * @param base - Server base URL from boot().
+   * @param host - The Host header to send (the subdomain under test).
+   * @param nextQs - Optional `?next=…` query string (already encoded) appended to the path.
+   * @returns The response status and Location header.
+   */
+  function startWithHost(base: string, host: string, nextQs = ''): Promise<{ status: number; location: string | undefined }> {
+    const { port } = new URL(base);
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port: Number(port), method: 'POST', path: `/api/guest/start${nextQs}`, headers: { host } },
+        (res) => {
+          res.resume(); // drain
+          resolve({ status: res.statusCode ?? 0, location: res.headers.location });
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  }
 
   /**
    * @description Boots a throwaway express app with the guest routes mounted.
@@ -107,6 +137,27 @@ describe('guest ?next= deep links', () => {
     process.env.ENABLE_GUEST_MODE = 'false';
     const res = await fetch(`${boot()}/guest?next=${NEXT_ENCODED}`);
     expect(res.status).toBe(404);
+  });
+
+  // The bug this guards: a themed subdomain landed the guest on the bare /cockpit/ generic ribbon
+  // because guest-start's no-`next` fallback ignored HOST_APP_MAP that the root `/` handler applies.
+  it('lands a themed-subdomain guest on its mapped app (no explicit next)', async () => {
+    process.env.HOST_APP_MAP = 'career.oshal.ai=career-hunter,finance.oshal.ai=finance';
+    const { status, location } = await startWithHost(boot(), 'career.oshal.ai');
+    expect(status).toBe(302);
+    expect(location).toBe('/cockpit/?app=career-hunter');
+  });
+
+  it('still falls back to /cockpit/ for a host with no HOST_APP_MAP entry', async () => {
+    process.env.HOST_APP_MAP = 'career.oshal.ai=career-hunter';
+    const { location } = await startWithHost(boot(), 'oshal.agenticfederal.us');
+    expect(location).toBe('/cockpit/');
+  });
+
+  it('lets an explicit next win over the host map', async () => {
+    process.env.HOST_APP_MAP = 'career.oshal.ai=career-hunter';
+    const { location } = await startWithHost(boot(), 'career.oshal.ai', `?next=${NEXT_ENCODED}`);
+    expect(location).toBe(NEXT_DECODED); // /cockpit/?app=jarvis, not the host's career-hunter
   });
 });
 

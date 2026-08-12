@@ -256,16 +256,16 @@ footer a:hover{color:var(--cyan)}</style>
 <nav class="crumbs wrap" aria-label="Breadcrumb"><a href="/">oshal</a><span>/</span><a href="/product/">Applications</a><span>/</span><a href="/product/knowledge/">Knowledge</a><span>/</span><span aria-current="page" style="color:var(--body)">Intelligent Career</span></nav>
 
 <header class="page"><div class="wrap">
-  <p class="eyebrow">Knowledge · Store package · v1.6.4</p>
+  <p class="eyebrow">Knowledge · Store package · v1.9.1</p>
   <h1>Intelligent Career</h1>
   <div class="split">
     <div>
       <p class="lede">Reads openings from employers&#39; own public ATS job feeds into a shared corpus, scores every posting against your private career profile, and turns the best fits into a human-in-the-loop application queue — approve, approve-with-OSHAL, or deny, then it writes a tailored resume + cover letter.</p>
       <div class="cta-row">
-        <a class="btn primary" href="https://oshal.agenticfederal.us/cockpit/?app=career-hunter">Open the app &rarr;</a>
-        <a class="btn" href="https://oshal.agenticfederal.us/guest">Try the live demo</a>
+        <a class="btn primary" href="https://career.oshal.ai/">Open the app &rarr;</a>
+        <a class="btn" href="https://career.oshal.ai/guest">Try the live demo</a>
       </div>
-      <p class="cta-note">Opens <code>?app=career-hunter</code> on the demo deployment. On your own box it is the same URL.</p>
+      <p class="cta-note">Opens at <code>career.oshal.ai</code> &mdash; the app lives in the hostname, so a first login lands you right back on it. On your own box it is <code>?app=career-hunter</code>.</p>
       <div style="margin-top:36px">
         <p class="eyebrow">12 screens in the ribbon · opens on <code>career-board</code></p>
         <div class="pills" style="margin-top:14px"><span class="pill screen">Mobile</span><span class="pill screen">Job Board</span><span class="pill screen">Submissions</span><span class="pill screen">Recruiters</span><span class="pill screen">Insights</span><span class="pill screen">Strengthen</span><span class="pill screen">Resume Studio</span><span class="pill screen">Profile Studio</span><span class="pill screen">Portrait Studio</span><span class="pill screen">Approvals</span><span class="pill screen">Companies</span><span class="pill screen">Career Settings</span></div>
@@ -275,9 +275,9 @@ footer a:hover{color:var(--cyan)}</style>
       <h3>At a glance</h3>
       <div class="facts">
       <div><div class="k">Shelf</div><div class="v"><a href="/product/knowledge/">Knowledge</a></div></div>
-      <div><div class="k">Version</div><div class="v"><code>1.6.4</code></div></div>
+      <div><div class="k">Version</div><div class="v"><code>1.9.1</code></div></div>
       <div><div class="k">Ships as</div><div class="v">An installable store package</div></div>
-      <div><div class="k">Opens at</div><div class="v"><code>?app=career-hunter</code></div></div>
+      <div><div class="k">Opens at</div><div class="v"><code>career.oshal.ai</code></div></div>
       <div><div class="k">Queued work</div><div class="v">Registers the <code>career-application</code> ticket type</div></div>
       <div><div class="k">Accountable bots</div><div class="v"><code>career-hunter</code></div></div>
     </div>
@@ -301,7 +301,7 @@ footer a:hover{color:var(--cyan)}</style>
       <h2>Tools the bot can actually call.</h2>
       <p class="lede">Registered server-side, scoped to the signed-in user. The bot calls the tool —
         it never shells out, and it never handles the credential behind it.</p></div>
-      <ul class="bullets"><li><strong>Career Database.</strong> Read the signed-in user&#39;s career-hunter data — scored job matches, applied/generated pipeline counts, fresh high-fit roles, and resume gap themes — from their migrated jobs database</li><li><strong>Draft Application.</strong> Write the tailored resume + cover letter PDFs for ONE approved posting — the engine tailors against the user&#39;s real profile (its own LLM pass under their connected key) and returns the…</li><li><strong>Draft Application (OSHAL variant).</strong> Same as career_draft but includes the OSHAL/open-source resume section. OPT-IN only</li><li><strong>Score Fresh Postings.</strong> AI fit-score the signed-in user&#39;s fresh in-lane postings (bounded to recent postings; the engine&#39;s own scoring pass under the user&#39;s connected key)</li><li><strong>Refresh Jobs Database.</strong> Start the full jobs-database refresh NOW — scrape every company&#39;s ATS feed, re-index all users&#39; keyword matches, AI-score the new roles, and queue the top drafts</li><li><strong>Refresh Status.</strong> Whether a jobs-database refresh is currently running, plus the corpus&#39;s newest last-seen timestamp (how fresh the data is)</li></ul>
+      <ul class="bullets"><li><strong>Career Database.</strong> Read the signed-in user&#39;s career-hunter data — scored job matches, applied/generated pipeline counts, fresh high-fit roles, and resume gap themes — from their migrated jobs database</li><li><strong>Draft Application.</strong> Write the tailored resume + cover letter PDFs for ONE approved posting — the engine tailors against the user&#39;s real profile (its own LLM pass under their connected key) and returns the…</li><li><strong>Draft Application (OSHAL variant).</strong> Same as career_draft but includes the OSHAL/open-source resume section. OPT-IN only</li><li><strong>Score Fresh Postings.</strong> AI fit-score the signed-in user&#39;s fresh in-lane postings (bounded to recent postings; the engine&#39;s own scoring pass under the user&#39;s connected key)</li><li><strong>Refresh Jobs Database.</strong> Start the full jobs-database refresh NOW — scrape every company&#39;s ATS feed, re-index all users&#39; keyword matches, AI-score the new roles, and queue the top drafts</li><li><strong>Refresh Status.</strong> Whether a jobs-database refresh is currently running, plus the corpus&#39;s newest last-seen timestamp (how fresh the data is)</li><li><strong>Read Resume (Master Document).</strong> Read the signed-in user&#39;s editable resume document — the durable master career profile (headline, summary, competencies, experience with bullets, skills, clearance) every tailored resume is…</li><li><strong>Save Resume Edits.</strong> Apply an edited resume document — &#39;master&#39; saves the durable career profile through the whitelist write-back (backup snapshot + audit), a numeric postingId saves that job packet&#39;s tailored…</li></ul>
     </div></section>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">How it runs</p>
@@ -342,7 +342,7 @@ footer a:hover{color:var(--cyan)}</style>
     </div></section>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">What it needs</p><h2>Before it can do anything for you.</h2></div>
-      <ul class="bullets"><li><strong>Platform capability:</strong> <code>graph</code> <code>notifications</code> — reached by declaration, never by copying platform code into the package.</li></ul></div></section>
+      <ul class="bullets"><li><strong>Other apps:</strong> <a href="/product/apps/portrait-studio/">Portrait Studio</a>. Install is dependency-aware and refuses to orphan them.</li><li><strong>Platform capability:</strong> <code>graph</code> <code>notifications</code> — reached by declaration, never by copying platform code into the package.</li></ul></div></section>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">Also on the knowledge shelf</p>
       <h2>Apps that pair with this one.</h2></div>
