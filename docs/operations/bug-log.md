@@ -218,30 +218,35 @@ whitepaper/reference/stem-cell ("26 bots / 68 personas / 9 apps / 22 providers")
   the shipped surfaces actually read, so a projection that drops a consumed field goes red instead of
   silently rendering a zero.
 
-## BUG-14 — Notifications screen claims per-user credentials for channels that use deployment ones
-- **Type:** Bug · **Priority:** High (it is a trust/privacy claim, on-screen, and it is false) ·
-  **Status:** OPEN
-- **Discovered:** 2026-08-09, by the adversarial as-built review while writing
-  [the Platform tools guide](../guides/platform-tools.md).
-- **Summary:** The Notifications preference screen tells the user every notification is sent on their
-  own account and explicitly promises the opposite of what three of its four channels do.
-- **Where (verified both ends):** `src/pages/cockpit/tools/notify.html:74-76` renders: *"Every send
-  uses your own connected account (your Gmail, your Twilio, your Telegram chat), **never a shared
-  deployment credential**."* But `src/features/notifications/services/telegram-transport.ts:41` sends
-  with the deployment's `TELEGRAM_BOT_TOKEN`; `twilio-voice-transport.ts` is
-  `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER` only, with no personal tier at all;
-  and `twilio-sms-transport.ts` falls back to the same deployment credentials when the user has no
-  connected Twilio. Email is the one channel where the claim holds.
-- **Why this is High rather than cosmetic:** it is not an over-sold feature, it is a **statement about
-  whose credentials carry the user's messages**, made at the moment they choose a channel. A user
-  reading it would reasonably conclude their Telegram notifications leave through their own bot and
-  are invisible to the deployment operator. On a shared or hosted install that conclusion is wrong,
-  and it is the kind of claim the anti-drift rules exist to keep off a surface.
-- **Fix:** replace the blanket sentence with the per-channel truth — email on your connected account;
-  SMS on yours when connected, otherwise the deployment's; voice and Telegram on the deployment's —
-  and show the effective sender per channel in the routing table so it is visible at choose-time
-  rather than buried in copy.
-- **Prevention:** treat on-surface credential/privacy sentences as claims that need the same
-  as-built check as documentation (CLAUDE.md anti-drift rule 1 applies to surfaces, not just docs);
-  the honest per-channel wording now lives in the Platform tools guide and should be the source the
-  surface copies from.
+## BUG-14 — Notifications copy describes only one of the two credential tiers
+- **Type:** Bug (copy accuracy) · **Priority:** Low · **Status:** OPEN
+- **Discovered:** 2026-08-09 by the as-built review behind
+  [the Platform tools guide](../guides/platform-tools.md); **scope corrected the same day by the
+  operator** — the first write-up of this entry called the service tier "a shared deployment
+  credential" and filed it High as a trust claim. That framing was wrong and is recorded here so it
+  is not repeated.
+- **The design is intentional and correct.** Notification channels have **two credential
+  classifications**, exactly like any mail stack that has both a user mailbox and a service relay:
+  1. **Personal (BYO)** — the user signs up with the provider and connects it; their own account
+     carries the message.
+  2. **Swarm service** — an administrator configures a deployment account because the swarm is
+     acting as a *notification server* for users who never registered with that provider.
+  `smsSender` (`src/app/routes/notify-routes.ts`) implements exactly that order: `twilioReady(pool,
+  userSub)` wins first, and only with no personal connection does it use the deployment transport
+  with the destination overridden to the user's own saved number. SEC-05 further tightened it to
+  pass each transport's exact credential fields rather than cloning the environment. Nothing here is
+  unscoped, and nothing is a defect.
+- **The actual defect is one sentence of UI copy.** `src/pages/cockpit/tools/notify.html:74-76`
+  reads *"Every send uses your own connected account (your Gmail, your Twilio, your Telegram chat),
+  never a shared deployment credential."* That describes tier 1 only, so it is inaccurate for a user
+  on the service tier — and on a demo/family deployment, where the service tier is the normal path,
+  it is inaccurate for most users. Voice is service-tier only; Telegram sends through the
+  administrator's configured bot; SMS uses whichever tier applies.
+- **Fix:** reword the line to state both tiers plainly — your own account when you have connected
+  one, otherwise the deployment's notification service, with the destination always your own — and
+  surface the effective tier per channel in the routing table so it reads at choose-time. The
+  honest per-channel wording already exists in the Platform tools guide.
+- **Prevention:** on-surface sentences about *whose* credentials are used deserve the same as-built
+  check as documentation, in both directions — this one over-promised isolation, and the first
+  write-up of the bug over-stated the exposure. Describe the tier model; do not collapse it to
+  either extreme.

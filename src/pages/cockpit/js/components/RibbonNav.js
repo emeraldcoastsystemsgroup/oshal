@@ -450,6 +450,18 @@ export class RibbonNav {
 
     const PLATFORM_TOOLS = [
       {
+        id: 'tool-help',
+        icon: 'codicon codicon-book',
+        label: 'Help',
+        section: 'bottom',
+        // The in-product user guides (/api/help renders docs/guides). Before this entry the guides
+        // existed but nothing in the cockpit linked to them: there is no /help route on the shell,
+        // /docs serves Swagger, and first-run.js suppresses its own strip on the full framework
+        // profile — so a user stuck on a screen had no way in. Pinned here so every profile that
+        // shows platform tools carries it.
+        toolUi: { iframeUrl: '/api/help', sidebarLabel: 'Help' },
+      },
+      {
         id: 'tool-token-chase',
         icon: 'codicon codicon-rocket',
         label: 'Optimizer',

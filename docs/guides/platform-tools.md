@@ -148,11 +148,19 @@ operator surfaces, gated on the operator allowlist (`OSHAL_OPERATOR_SUBS` / `OSH
 
 ## Notifications — "where does each kind of message reach me?"
 
-Your own routing, per topic. Which credential carries a message depends on the channel: email always
-goes out through your own connected Google account; a text prefers your own connected Twilio and
-falls back to the deployment's; voice and Telegram are always carried by the deployment's credential
-to a destination you supply (your number, your chat id). The channel table below says which is which
-— the screen's own intro claims every send uses your own account, and that is true only of email.
+Your own routing, per topic. Notifications can travel on either of **two kinds of account**, and
+which one carries a given message depends on the channel:
+
+- **Your own connected account**, when you have signed up with that provider and connected it. Email
+  always works this way, and a text does too once you connect your own Twilio.
+- **The swarm's notification service** — an account your administrator configured so the swarm can
+  send on behalf of people who never registered with that provider. Voice and Telegram always use
+  this, and a text falls back to it when you have not connected your own Twilio.
+
+Either way the destination is yours — your number, your chat id, your inbox — and the service tier
+exists so you can be notified without signing up for a telephony provider first. On a home or demo
+deployment the service tier is the normal path. The channel table below says which applies where.
+(The screen's own intro line currently describes only the first kind; it is being reworded.)
 
 **What you see:** the title **Notifications**; a status line (*N saved topic pref(s)*); a banner
 naming your **Default channel** and what happens to topics you have not configured; the **Saved
@@ -282,10 +290,11 @@ recent 200 entries.
   resolves first to a saved topic named exactly `default` when you have one — quiet hours and all —
   and only otherwise to the banner's default channel. Saving one `default` topic is therefore how you
   route everything you have not named individually.
-- **Telegram does nothing without a deployment bot token** (`TELEGRAM_BOT_TOKEN`). A text needs either
-  your own connected Twilio or the deployment's (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
-  `TWILIO_FROM_NUMBER`); **voice has no personal tier at all** — it is the deployment's Twilio or
-  nothing.
+- **Telegram needs the swarm's bot token configured** (`TELEGRAM_BOT_TOKEN`) — there is no personal
+  tier for it. A text works on either tier: your own connected Twilio, or the swarm's
+  (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`). **Voice is service-tier only.**
+  If a channel is silent, the usual cause is that neither tier is available for it — you have not
+  connected that provider and your administrator has not configured the service account.
 - **My Data cannot show you your data without generating something.** There is no read-only listing of
   your stores or the coverage gaps — both arrive only with a delete plan — and it cannot show past
   exports or deletions at all.

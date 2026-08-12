@@ -266,6 +266,10 @@ COPY scripts/migrations/ ./scripts/migrations/
 # fresh deploy with OSHAL_APP_ROLE_BOOTSTRAP=true can create/own oshal_app at boot.
 COPY scripts/governance/ ./scripts/governance/
 COPY docs/governance/ ./docs/governance/
+# End-user guides — served in-product by /api/help. Without this COPY the help hub renders a 503
+# on a deployed box while working fine from a checkout, which is exactly the class of "works on my
+# machine" the image-probe gate exists to catch.
+COPY docs/guides/ ./docs/guides/
 
 
 # Swarm application manifests — ADR 2026-04-20. Each YAML in swarm-apps/
