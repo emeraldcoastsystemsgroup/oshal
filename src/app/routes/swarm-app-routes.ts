@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11: uninstall-impact reports toolsProvided + toolDependents (active apps whose dependencies.tools name a tool this app provides) and blocked reflects them; the DELETE 409 body names the stranded tools.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7: wire the app-store remote rail (GET /catalog + operator-only POST /install-remote from app-store-remote.ts) BEFORE the /:name params so the literal segments aren't captured as app names.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: add framework-owned operator APIs for the user-by-app access matrix, assignment updates, and explicit-assignment clearing.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | GET /:name is now viewer-scoped (getAppForViewer) instead of serving the raw record. It had no visibility check of any kind, so any caller who could name an app — including a guest, for whom the mount-level requiresAuth is a no-op — received the installing operator's real OIDC subject. Not-visible now answers 404 like not-found, so it cannot be used to confirm another user's app exists.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -243,7 +244,13 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
   router.get('/:name', async (req: Request, res: Response) => {
     const name = String(req.params.name);
     try {
-      const app = await service.getApp(name);
+      // Viewer-scoped on purpose. The raw record carries the installing user's OIDC subject (POST
+      // /load stamps it, and a manifest with no `scope:` still lands 'public'), so serving getApp()
+      // verbatim handed any caller — including a guest, whose session is authenticated enough to
+      // clear the mount-level requiresAuth — the operator's real subject for any app they could
+      // name. Not-visible and not-found both return 404 so this never confirms someone else's app.
+      const { sub } = getCaller(req);
+      const app = await service.getAppForViewer(name, { ownerSub: sub, isOperator: isOperator(req) });
       if (!app) {
         res.status(404).json({ error: 'App not found' });
         return;

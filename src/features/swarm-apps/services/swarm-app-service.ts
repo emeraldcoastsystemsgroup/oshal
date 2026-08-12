@@ -34,6 +34,7 @@
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile retired and execution-class-changed schedules from the previous active manifest before activating its replacement, preventing stale prompt/per-user/service handlers after hot reload.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Back under the 1000-code-line hard cap (1082 -> 941). Entries 27-29 pushed this file past it, which fails the BLOCKING gate_lint (eslint max-lines, --max-warnings 0) and would have blocked the branch. Moved out the two groups that were never orchestration: record presentation/visibility to swarm-app-record-view.ts, and manifest-to-runtime translation (tool create-input, selector seed, safe WHERE, interpolation) to swarm-app-manifest-mapping.ts. Verbatim moves behind the same names, so the class body and this module's public exports are unchanged; both tsconfigs typecheck at 0 errors and the manifest specs stay green.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Forward ui.static[].group into the synthesised ribbon items. RibbonNav has grouped on this field since the rail-pin work, but synthesiseProfile's static-item map listed the keys it copied, so a manifest declaring `group:` produced an identical flat ribbon with no error anywhere — the silent no-op that made the feature look unimplemented. Forwarded verbatim; the renderer stays the authority on where a heading is allowed.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com   | listApps passes its caller to toSummary as the VIEWER, and the new getAppForViewer is the viewer-scoped counterpart to getApp. A public-scoped app keeps the owner_sub stamped at install, so both read paths were serializing the deployment operator's OIDC subject to every caller. The viewer is passed through even when undefined on purpose: global search lists with no caller and matches summary.ownerSub to find a user's own person-scoped apps, so unconditional redaction would have hidden those from their owner.
  */
 
 import type { Pool } from 'pg';
@@ -64,7 +65,7 @@ import {
   unregisterAppSkillProfiles,
 } from '@/shared/skill-profiles';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
-import { firstAppIcon, isVisibleToCaller, toSummary } from './swarm-app-record-view';
+import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
 import {
   interpolate,
   manifestToolToCreateInput,
@@ -431,12 +432,40 @@ export class SwarmAppService {
     const visible = !caller || caller.isOperator
       ? records
       : records.filter((r) => isVisibleToCaller(r, caller.ownerSub));
-    return visible.map(toSummary);
+    // The caller is also the VIEWER: a row this caller may see is not automatically a row that may
+    // name its owner (a public app is visible to everyone). Passing `caller` through — including
+    // when it is undefined — keeps the internal, non-serializing listers (global search) on real
+    // identity while every request-scoped listing is redacted.
+    return visible.map((r) => toSummary(r, caller ?? null));
   }
 
-  /** Fetch one app's full record (manifest included). */
+  /**
+   * Fetch one app's full record (manifest included), UNREDACTED and unfiltered. Server-internal
+   * only — ownership decisions (publish/clone collision, the clone visibility check) need the real
+   * owner subject. Never serialize the result of this straight to a client; use
+   * {@link getAppForViewer}.
+   */
   async getApp(name: string): Promise<SwarmApplicationRecord | null> {
     return this.repo.findByName(name);
+  }
+
+  /**
+   * @description Fetch one app AS A GIVEN VIEWER may see it — the request-scoped counterpart to
+   * {@link getApp}. Returns null both when the app does not exist and when it exists but this
+   * viewer may not see it, so the caller answers 404 either way and never confirms the existence
+   * of someone else's app. Owner identity is blanked unless the viewer owns the app or is an
+   * operator; without this a guest could read the deployment operator's OIDC subject off any app
+   * by name, which is exactly what the listing redaction alone would leave open.
+   * @param name - The app name.
+   * @param viewer - The requesting principal.
+   * @returns The record with owner identity redacted as appropriate, or null when not visible.
+   */
+  async getAppForViewer(name: string, viewer: SummaryViewer): Promise<SwarmApplicationRecord | null> {
+    const record = await this.repo.findByName(name);
+    if (!record) return null;
+    if (!viewer.isOperator && !isVisibleToCaller(record, viewer.ownerSub)) return null;
+    if (maySeeOwnerIdentity(record, viewer)) return record;
+    return { ...record, ownerSub: null, tenantId: null };
   }
 
   /**
