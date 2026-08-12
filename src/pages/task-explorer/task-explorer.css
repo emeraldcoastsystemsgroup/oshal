@@ -8,18 +8,18 @@
 
 :root {
   color-scheme: dark;
-  --bg: #09111c;
-  --surface: #132133;
-  --surface-alt: #1a2d43;
+  --bg: var(--bg-secondary);
+  --surface: var(--bg-tertiary);
+  --surface-alt: var(--border-color);
   --surface-glow: linear-gradient(180deg, rgba(45, 84, 123, 0.28), rgba(15, 25, 39, 0.86));
   --border: rgba(132, 168, 211, 0.22);
-  --text: #f1f5f9;
-  --muted: #95a8bf;
-  --accent: #67d5b5;
-  --accent-strong: #2fd0ff;
-  --warning: #f4b45f;
-  --success: #74d99f;
-  --danger: #ff8a80;
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --accent: var(--status-success);
+  --accent-strong: var(--accent-primary);
+  --warning: var(--status-warning);
+  --success: var(--status-success);
+  --danger: var(--status-error);
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
   --radius: 18px;
   --font-sans: "Avenir Next", "Segoe UI", sans-serif;
@@ -38,7 +38,7 @@ body {
   background:
     radial-gradient(circle at top left, rgba(63, 119, 175, 0.22), transparent 32%),
     radial-gradient(circle at top right, rgba(103, 213, 181, 0.18), transparent 28%),
-    linear-gradient(180deg, #08101b, #0b1725 52%, #08101b);
+    linear-gradient(180deg, var(--bg-primary), var(--bg-tertiary) 52%, var(--bg-primary));
 }
 
 .page-shell {
@@ -543,18 +543,18 @@ button:hover {
   flex-shrink: 0;
 }
 
-.state-dot.backlog { background: #6b7280; }
+.state-dot.backlog { background: var(--text-secondary); }
 .state-dot.approved,
-.state-dot.todo { background: #818cf8; }
+.state-dot.todo { background: var(--accent-primary); }
 .state-dot.in-progress,
-.state-dot.in_process { background: #3b82f6; }
+.state-dot.in_process { background: var(--accent-primary); }
 .state-dot.in-review,
-.state-dot.customer_action { background: #f59e0b; }
-.state-dot.escalated { background: #ef4444; }
+.state-dot.customer_action { background: var(--status-warning); }
+.state-dot.escalated { background: var(--status-error); }
 .state-dot.complete,
-.state-dot.done { background: #10b981; }
-.state-dot.cancelled { background: #9ca3af; }
-.state-dot.paused { background: #a78bfa; }
+.state-dot.done { background: var(--status-success); }
+.state-dot.cancelled { background: var(--text-secondary); }
+.state-dot.paused { background: var(--accent-primary); }
 
 .phase-badge {
   display: inline-block;

@@ -31,8 +31,8 @@
   :root {
     --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color);
     --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary);
-    --good:var(--status-success, #5fd0a8);
-    --warn:var(--status-warning, #ffd24a); --bad:var(--status-error, #ff5d6c);
+    --good:var(--status-success, var(--status-success));
+    --warn:var(--status-warning, var(--status-warning)); --bad:var(--status-error, var(--status-error));
   }
   * { box-sizing: border-box; }
   body {

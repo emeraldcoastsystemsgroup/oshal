@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,18 +8,18 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0d0d0f;
-      --surface: #16161a;
-      --surface2: #1e1e24;
-      --border: #2a2a32;
-      --text: #e8e8f0;
-      --text-dim: #6e6e8a;
-      --haven: #a78bfa;
-      --haven-dim: #7c5cbf;
-      --user: #38bdf8;
-      --accent: #a78bfa;
-      --send-bg: #a78bfa;
-      --send-hover: #9168f5;
+      --bg: var(--bg-primary);
+      --surface: var(--bg-secondary);
+      --surface2: var(--bg-tertiary);
+      --border: var(--border-color);
+      --text: var(--text-primary);
+      --text-dim: var(--text-secondary);
+      --haven: var(--accent-primary);
+      --haven-dim: var(--accent-primary);
+      --user: var(--accent-primary);
+      --accent: var(--accent-primary);
+      --send-bg: var(--accent-primary);
+      --send-hover: var(--accent-primary);
       --radius: 12px;
     }
 
@@ -284,9 +284,15 @@
     .msg.error .msg-bubble {
       background: rgba(239, 68, 68, 0.1);
       border-color: rgba(239, 68, 68, 0.3);
-      color: #fca5a5;
+      color: var(--status-error);
     }
   </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
 <body>

@@ -153,7 +153,7 @@ whitepaper/reference/stem-cell ("26 bots / 68 personas / 9 apps / 22 providers")
   path; repoint the archived citation.
 
 ## BUG-12 — Cockpit surfaces render their own hardcoded palette instead of the active theme
-- **Type:** Bug · **Priority:** Med · **Status:** OPEN
+- **Type:** Bug · **Priority:** Med · **Status:** FIXED 2026-08-10 (gate shipped)
 - **Discovered:** 2026-08-09, operator, on **Intelligent Processing** — the pane renders a dark-navy
   header and body inside a light-themed cockpit, so the surface visibly does not belong to the shell
   around it.
@@ -183,7 +183,32 @@ whitepaper/reference/stem-cell ("26 bots / 68 personas / 9 apps / 22 providers")
 - **Prevention (guard-per-fix):** a unit gate that enumerates the surface HTML files and fails when
   one links neither `surface-themes.css` nor `cockpit/css/themes/*`, and that flags a bare hex colour
   in a `:root` block. Without it this regresses on the next surface anyone adds — which is exactly
-  how it got to twenty. Tracked in [BACKLOG.md](../BACKLOG.md) → "Shared product experience".
+  how it got to twenty.
+
+### Resolution (2026-08-10) — and two ways the write-up above was wrong
+
+**Fixed.** 19 surfaces were given a theme source (the `surface-themes.css` link, a default
+`data-theme` on `<html>`, and the cockpit-theme inherit script), and **315 hardcoded colours across
+37 files** were remapped onto framework tokens by semantic role — a near-black page to
+`--bg-primary`, a panel to `--bg-secondary`, borders to `--border-color`, bright/dim copy to
+`--text-primary`/`--text-secondary`, and the blue/green/amber/red hues to `--accent-primary` and the
+`--status-*` set. Alias names were left untouched, so no surface needed layout changes. Guard:
+`tests/unit/surface-theming.spec.ts`, mutation-proved on all three properties (theme source removed,
+hex returned to `:root`, `data-theme` removed — each goes red; restore goes green).
+
+**Correction 1 — the count was over-stated in one direction.** "Roughly twenty ribbon-reachable
+surfaces with the same defect" ignored a third mechanism: `eval-wall`, `feeds` and `governance`
+carry a parent-token mirror script that copies the cockpit's computed tokens onto their own aliases,
+so those three already followed the theme *when embedded* and were only broken standalone. The
+genuinely broken set was ~16, not ~20.
+
+**Correction 2 — and under-stated in another.** The scan behind the original entry counted hex in
+HTML only, so it missed the surfaces whose palette lives in a sibling `.css` (`swarm-control.css`
+alone held 53). It also assumed the 24 already-converted surfaces were done; the gate immediately
+proved otherwise — most had taken the theme link but kept hardcoded accent and status colours, so
+they were half-converted. That is the real lesson: **the earlier rollout stopped without a gate, so
+"converted" was never verified — and a partially converted surface looks identical to a finished one
+until something checks.** The gate is the durable half of this fix; the remap is the one-off half.
 
 ## BUG-13 — Identity Hub's expired-login signal is dead UI (the field is never sent)
 - **Type:** Bug · **Priority:** Med · **Status:** OPEN

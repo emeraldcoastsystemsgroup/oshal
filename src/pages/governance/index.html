@@ -17,16 +17,16 @@
   2 | maintainer@emeraldcoastsystemsgroup.com | Display explicit shared-HKDF DEK-store break-glass
     | as a warning instead of presenting it as the normal per-user envelope posture.
 -->
-<html lang="en"><head>
+<html lang="en" data-theme="midnight"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Compliance & Posture</title>
 <style>
   /* Standalone defaults; the theme-sync script overrides surfaces/text/borders from the cockpit. */
   :root {
-    --bg:#0e0e16; --panel:#15151f; --panel2:#1b1b27; --line:#272735;
-    --text:#e6e6f0; --muted:#8b8ba3; --accent:#7c6cff; --accent2:#00d3a7;
+    --bg:var(--bg-primary); --panel:var(--bg-secondary); --panel2:var(--bg-tertiary); --line:var(--bg-tertiary);
+    --text:var(--text-primary); --muted:var(--text-secondary); --accent:var(--accent-primary); --accent2:var(--status-success);
     --scrollbar-thumb:rgba(255,255,255,.14);
-    --good:#00d3a7; --warn:#ffb454; --bad:#ff6b6b;
+    --good:var(--status-success); --warn:var(--status-warning); --bad:var(--status-error);
     --radius:14px; --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   }
   * { box-sizing:border-box; }
@@ -70,6 +70,12 @@
   .stamp { color:var(--muted); font-size:11.5px; margin-top:14px; }
   .skeleton { height:120px; border-radius:var(--radius); background:var(--panel2); opacity:.5; }
 </style>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
 <body>

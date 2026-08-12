@@ -8,16 +8,16 @@
 
 :root {
   color-scheme: dark;
-  --bg: #081018;
+  --bg: var(--bg-primary);
   --surface: rgba(15, 26, 38, 0.9);
   --surface-strong: rgba(18, 33, 47, 0.96);
   --border: rgba(126, 180, 208, 0.18);
-  --text: #eef6fb;
-  --muted: #9eb4c5;
-  --accent: #7ce0c2;
-  --accent-strong: #59c3ff;
-  --warning: #f4c063;
-  --danger: #ff9d93;
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --accent: var(--status-success);
+  --accent-strong: var(--accent-primary);
+  --warning: var(--status-warning);
+  --danger: var(--status-error);
   --shadow: 0 24px 48px rgba(0, 0, 0, 0.28);
   --radius: 20px;
   --font-sans: "Avenir Next", "Segoe UI", sans-serif;
@@ -36,7 +36,7 @@ body {
   background:
     radial-gradient(circle at top left, rgba(89, 195, 255, 0.18), transparent 32%),
     radial-gradient(circle at top right, rgba(124, 224, 194, 0.12), transparent 30%),
-    linear-gradient(180deg, #081018, #0b1520 55%, #081018);
+    linear-gradient(180deg, var(--bg-primary), var(--bg-secondary) 55%, var(--bg-primary));
 }
 
 .page-shell {

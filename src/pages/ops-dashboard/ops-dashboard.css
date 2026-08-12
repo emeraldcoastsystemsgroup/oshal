@@ -8,15 +8,15 @@
 
 :root {
   color-scheme: dark;
-  --bg: radial-gradient(circle at top right, rgba(14, 165, 233, 0.15), transparent 42%), #060f1a;
+  --bg: radial-gradient(circle at top right, rgba(14, 165, 233, 0.15), transparent 42%), var(--bg-primary);
   --panel: rgba(10, 24, 40, 0.86);
   --border: rgba(125, 211, 252, 0.22);
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --ok: #22c55e;
-  --warn: #f59e0b;
-  --error: #ef4444;
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --accent: var(--accent-primary);
+  --ok: var(--status-success);
+  --warn: var(--status-warning);
+  --error: var(--status-error);
 }
 
 * {
@@ -104,12 +104,12 @@ button:hover,
 
 .status-banner[data-tone='success'] {
   border-color: rgba(34, 197, 94, 0.45);
-  color: #bbf7d0;
+  color: var(--status-success);
 }
 
 .status-banner[data-tone='warning'] {
   border-color: rgba(245, 158, 11, 0.45);
-  color: #fde68a;
+  color: var(--status-warning);
 }
 
 .metrics-grid {
@@ -226,7 +226,7 @@ td {
 
 th {
   background: rgba(9, 23, 38, 0.94);
-  color: #cbd5e1;
+  color: var(--text-secondary);
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -249,17 +249,17 @@ td {
 
 .badge.ok {
   border-color: rgba(34, 197, 94, 0.5);
-  color: #bbf7d0;
+  color: var(--status-success);
 }
 
 .badge.warn {
   border-color: rgba(245, 158, 11, 0.5);
-  color: #fde68a;
+  color: var(--status-warning);
 }
 
 .badge.error {
   border-color: rgba(239, 68, 68, 0.52);
-  color: #fecaca;
+  color: var(--status-error);
 }
 
 .badge.muted {

@@ -15,7 +15,7 @@
      themes work — not just the dark ones. Semantic status colors carry the old hex as a fallback so
      the surface stays legible if a theme omits one. --scrollbar-thumb is a translucent overlay, left
      as-is. */
-  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary); --accent2:var(--status-success,#00d3a7); --scrollbar-thumb:rgba(255,255,255,.14); }
+  :root { --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary); --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted); --accent:var(--accent-primary); --accent2:var(--status-success,var(--status-success)); --scrollbar-thumb:rgba(255,255,255,.14); }
   ::-webkit-scrollbar{width:11px;height:11px}
   ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb,rgba(255,255,255,.14));border-radius:6px}
   ::-webkit-scrollbar-track{background:transparent}
@@ -32,7 +32,7 @@
   .badge { font-size:11px; padding:2px 8px; border-radius:20px; border:1px solid var(--line); color:var(--muted); }
   .badge.swarm { color:var(--accent2); border-color:var(--accent2); }
   .badge.wrapper { color:var(--accent); border-color:var(--accent); }
-  .badge.gate { color:var(--status-warning,#ffb454); border-color:var(--status-warning,#ffb454); }
+  .badge.gate { color:var(--status-warning,var(--status-warning)); border-color:var(--status-warning,var(--status-warning)); }
   .pack .desc { color:var(--text-secondary,#c8c8da); font-size:13px; margin:8px 0; line-height:1.5; }
   .pack .meta { color:var(--muted); font-size:12px; margin-bottom:12px; }
   .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
@@ -41,7 +41,7 @@
   .btn.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--text); }
   .btn:disabled { opacity:.6; cursor:default; }
   .toast { font-size:12px; color:var(--accent2); margin-left:6px; }
-  .toast.err { color:var(--status-error,#ff6b6b); }
+  .toast.err { color:var(--status-error,var(--status-error)); }
   .notice { color:var(--muted); padding:40px 0; text-align:center; }
   a.btn:hover, .btn:hover { filter:brightness(1.08); }
   .meta { color:var(--muted); font-size:12px; }

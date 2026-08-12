@@ -10,16 +10,16 @@
 */
 
 :root {
-  --bg-page: #0d1020;
+  --bg-page: var(--bg-secondary);
   --bg-panel: rgba(20, 26, 44, 0.86);
   --bg-panel-strong: rgba(26, 33, 54, 0.96);
   --border: rgba(148, 163, 184, 0.18);
-  --text-primary: #edf2ff;
-  --text-muted: #a7b0c6;
-  --accent: #73e0a9;
-  --accent-strong: #3ecf8e;
-  --accent-blue: #6fb3ff;
-  --danger: #ff8e8e;
+  --text-primary: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --accent: var(--status-success);
+  --accent-strong: var(--status-success);
+  --accent-blue: var(--accent-primary);
+  --danger: var(--status-error);
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
 }
 
@@ -33,7 +33,7 @@ body {
   background:
     radial-gradient(circle at top left, rgba(115, 224, 169, 0.12), transparent 28%),
     radial-gradient(circle at top right, rgba(111, 179, 255, 0.14), transparent 24%),
-    linear-gradient(180deg, #0d1020, #090c18);
+    linear-gradient(180deg, var(--bg-secondary), var(--bg-primary));
   color: var(--text-primary);
 }
 
@@ -137,7 +137,7 @@ button:hover,
 }
 
 .status-banner[data-tone="warning"] {
-  color: #ffd37a;
+  color: var(--status-warning);
 }
 
 .status-banner[data-tone="error"] {
@@ -391,7 +391,7 @@ button:hover,
 }
 
 .signal-card[data-tone="warning"] strong {
-  color: #ffd37a;
+  color: var(--status-warning);
 }
 
 .signal-card[data-tone="error"] strong {

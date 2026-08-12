@@ -8,16 +8,16 @@
  */
 
 :root {
-  --bg: #0d1220;
+  --bg: var(--bg-primary);
   --panel: rgba(16, 24, 40, 0.8);
   --panel-border: rgba(148, 163, 184, 0.2);
-  --text: #e2e8f0;
+  --text: var(--text-primary);
   --muted: rgba(226, 232, 240, 0.65);
-  --accent: #38bdf8;
+  --accent: var(--accent-primary);
   --accent-soft: rgba(56, 189, 248, 0.15);
-  --ok: #22c55e;
-  --warn: #f59e0b;
-  --err: #ef4444;
+  --ok: var(--status-success);
+  --warn: var(--status-warning);
+  --err: var(--status-error);
 }
 
 * {
@@ -26,7 +26,7 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top right, #102443 0%, var(--bg) 45%);
+  background: radial-gradient(circle at top right, var(--bg-secondary) 0%, var(--bg) 45%);
   color: var(--text);
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
@@ -104,17 +104,17 @@ button:hover,
 
 .status-banner[data-tone='success'] {
   border-color: rgba(34, 197, 94, 0.5);
-  color: #86efac;
+  color: var(--status-success);
 }
 
 .status-banner[data-tone='warning'] {
   border-color: rgba(245, 158, 11, 0.5);
-  color: #fcd34d;
+  color: var(--status-warning);
 }
 
 .status-banner[data-tone='error'] {
   border-color: rgba(239, 68, 68, 0.5);
-  color: #fca5a5;
+  color: var(--status-error);
 }
 
 .metrics-grid {

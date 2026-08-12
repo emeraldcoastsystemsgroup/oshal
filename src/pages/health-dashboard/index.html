@@ -6,11 +6,17 @@
   1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native health dashboard engineering page for cockpit runtime visibility
 -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Health Dashboard</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <link rel="stylesheet" href="/health-dashboard/health-dashboard.css">
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>

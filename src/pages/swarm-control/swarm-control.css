@@ -11,8 +11,8 @@
 
 body {
   font-family: system-ui, -apple-system, sans-serif;
-  background: #0d1117;
-  color: #c9d1d9;
+  background: var(--bg-primary);
+  color: var(--text-primary);
   height: 100vh;
   overflow: hidden;
 }
@@ -29,8 +29,8 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 12px 20px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
   gap: 16px;
   flex-shrink: 0;
 }
@@ -44,14 +44,14 @@ body {
 .header-left h1 {
   font-size: 16px;
   font-weight: 600;
-  color: #e6edf3;
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
 .bot-selector {
-  background: #0d1117;
-  color: #c9d1d9;
-  border: 1px solid #30363d;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 6px 12px;
   font-size: 14px;
@@ -61,7 +61,7 @@ body {
 
 .bot-selector:focus {
   outline: none;
-  border-color: #58a6ff;
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.3);
 }
 
@@ -73,9 +73,9 @@ body {
   white-space: nowrap;
 }
 
-.auth-ok { background: #0d4429; color: #3fb950; }
-.auth-none { background: #3d1d00; color: #d29922; }
-.auth-unknown { background: #21262d; color: #8b949e; }
+.auth-ok { background: var(--status-success); color: var(--status-success); }
+.auth-none { background: var(--status-warning); color: var(--status-warning); }
+.auth-unknown { background: var(--bg-tertiary); color: var(--text-secondary); }
 
 /* ── Action buttons ─────────────────────────────────────────────────────── */
 .header-actions {
@@ -85,9 +85,9 @@ body {
 }
 
 .action-btn {
-  background: #21262d;
-  color: #c9d1d9;
-  border: 1px solid #30363d;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 6px 14px;
   font-size: 13px;
@@ -96,31 +96,31 @@ body {
   white-space: nowrap;
 }
 
-.action-btn:hover:not(:disabled) { background: #30363d; }
+.action-btn:hover:not(:disabled) { background: var(--border-color); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.action-propagate { background: #1f3a2d; color: #3fb950; border-color: #238636; }
-.action-propagate:hover:not(:disabled) { background: #238636; color: #fff; }
+.action-propagate { background: var(--status-success); color: var(--status-success); border-color: var(--status-success); }
+.action-propagate:hover:not(:disabled) { background: var(--status-success); color: #fff; }
 
 /* ── Propagation status ─────────────────────────────────────────────────── */
 .propagate-status {
   padding: 8px 20px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
   font-size: 13px;
   flex-shrink: 0;
 }
 
-.propagate-status.status-ok { color: #3fb950; }
-.propagate-status.status-partial { color: #d29922; }
-.propagate-status.status-error { color: #f85149; }
-.propagate-status.status-working { color: #58a6ff; }
+.propagate-status.status-ok { color: var(--status-success); }
+.propagate-status.status-partial { color: var(--status-warning); }
+.propagate-status.status-error { color: var(--status-error); }
+.propagate-status.status-working { color: var(--accent-primary); }
 
 /* ── Selected bot telemetry ────────────────────────────────────────────── */
 .bot-telemetry {
   padding: 14px 20px 16px;
-  background: #11161d;
-  border-bottom: 1px solid #30363d;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
   display: grid;
   gap: 12px;
   flex-shrink: 0;
@@ -135,7 +135,7 @@ body {
 
 .telemetry-eyebrow,
 .telemetry-label {
-  color: #8b949e;
+  color: var(--text-secondary);
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -143,11 +143,11 @@ body {
 
 .telemetry-head h2 {
   font-size: 16px;
-  color: #e6edf3;
+  color: var(--text-primary);
 }
 
 .telemetry-meta {
-  color: #8b949e;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -158,9 +158,9 @@ body {
 }
 
 .telemetry-card {
-  border: 1px solid #30363d;
+  border: 1px solid var(--border-color);
   border-radius: 10px;
-  background: #0d1117;
+  background: var(--bg-primary);
   padding: 12px;
 }
 
@@ -168,7 +168,7 @@ body {
   display: block;
   margin-top: 6px;
   font-size: 18px;
-  color: #e6edf3;
+  color: var(--text-primary);
 }
 
 .telemetry-models {
@@ -184,9 +184,9 @@ body {
 
 .model-chip {
   border-radius: 999px;
-  border: 1px solid #30363d;
-  background: #0d1117;
-  color: #c9d1d9;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   padding: 6px 10px;
   font-size: 12px;
 }
@@ -206,7 +206,7 @@ body {
 }
 
 .chat-empty {
-  color: #8b949e;
+  color: var(--text-secondary);
   text-align: center;
   padding: 60px 20px;
   font-size: 14px;
@@ -222,7 +222,7 @@ body {
 
 .chat-msg .msg-sender {
   font-size: 11px;
-  color: #8b949e;
+  color: var(--text-secondary);
   margin-bottom: 2px;
 }
 
@@ -236,24 +236,24 @@ body {
   word-break: break-word;
 }
 
-.chat-msg.user .msg-body { background: #1f6feb; color: #fff; }
-.chat-msg.bot .msg-body { background: #21262d; color: #c9d1d9; }
+.chat-msg.user .msg-body { background: var(--accent-primary); color: #fff; }
+.chat-msg.bot .msg-body { background: var(--bg-tertiary); color: var(--text-primary); }
 
 /* ── Input ──────────────────────────────────────────────────────────────── */
 .chat-input-form {
   display: flex;
   gap: 8px;
   padding: 12px 20px;
-  background: #161b22;
-  border-top: 1px solid #30363d;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 
 .chat-input {
   flex: 1;
-  background: #0d1117;
-  color: #c9d1d9;
-  border: 1px solid #30363d;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: 14px;
@@ -263,13 +263,13 @@ body {
 
 .chat-input:focus {
   outline: none;
-  border-color: #58a6ff;
+  border-color: var(--accent-primary);
 }
 
 .chat-input:disabled { opacity: 0.4; }
 
 .send-btn {
-  background: #238636;
+  background: var(--status-success);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -280,7 +280,7 @@ body {
   align-self: flex-end;
 }
 
-.send-btn:hover:not(:disabled) { background: #2ea043; }
+.send-btn:hover:not(:disabled) { background: var(--status-success); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 @media (max-width: 1024px) {

@@ -10,17 +10,17 @@
   color-scheme: dark;
   --bg: radial-gradient(circle at top left, rgba(251, 146, 60, 0.12), transparent 34%),
     radial-gradient(circle at top right, rgba(14, 165, 233, 0.14), transparent 42%),
-    #07111d;
+    var(--bg-primary);
   --panel: rgba(10, 22, 38, 0.86);
   --panel-strong: rgba(8, 18, 30, 0.94);
   --border: rgba(148, 163, 184, 0.2);
-  --text: #e5eef9;
-  --muted: #9db1c7;
-  --accent: #fb923c;
-  --secondary: #38bdf8;
-  --ok: #22c55e;
-  --warn: #f59e0b;
-  --error: #f87171;
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --accent: var(--status-warning);
+  --secondary: var(--accent-primary);
+  --ok: var(--status-success);
+  --warn: var(--status-warning);
+  --error: var(--status-error);
 }
 
 * {
@@ -120,17 +120,17 @@ button:hover,
 
 .status-banner[data-tone='success'] {
   border-color: rgba(34, 197, 94, 0.35);
-  color: #bbf7d0;
+  color: var(--status-success);
 }
 
 .status-banner[data-tone='warning'] {
   border-color: rgba(245, 158, 11, 0.35);
-  color: #fde68a;
+  color: var(--status-warning);
 }
 
 .status-banner[data-tone='error'] {
   border-color: rgba(248, 113, 113, 0.4);
-  color: #fecaca;
+  color: var(--status-error);
 }
 
 .summary-grid {
@@ -251,17 +251,17 @@ button:hover,
 
 .pill.low {
   border-color: rgba(34, 197, 94, 0.35);
-  color: #bbf7d0;
+  color: var(--status-success);
 }
 
 .pill.medium {
   border-color: rgba(245, 158, 11, 0.36);
-  color: #fde68a;
+  color: var(--status-warning);
 }
 
 .pill.high {
   border-color: rgba(56, 189, 248, 0.36);
-  color: #bae6fd;
+  color: var(--accent-primary);
 }
 
 .scenario-stats,
@@ -600,7 +600,7 @@ button:hover,
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   background: rgba(7, 16, 28, 0.76);
-  color: #dbeafe;
+  color: var(--accent-primary);
   font-family: 'IBM Plex Mono', 'Cascadia Code', Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
@@ -637,7 +637,7 @@ td {
 
 th {
   background: rgba(7, 16, 28, 0.95);
-  color: #d9e3ef;
+  color: var(--text-primary);
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;

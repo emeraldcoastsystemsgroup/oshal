@@ -10,9 +10,9 @@
   :root {
     --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary);
     --line:var(--border-color); --text:var(--text-primary); --muted:var(--text-muted);
-    --accent:var(--accent-primary); --accent2:#00d3a7; --vault:#ffd814;
-    --warn:var(--status-warning, #ffb454); --danger:var(--status-error, #ff6b6b);
-    --ok:var(--status-success, #48c78e);
+    --accent:var(--accent-primary); --accent2:var(--status-success); --vault:var(--status-warning);
+    --warn:var(--status-warning, var(--status-warning)); --danger:var(--status-error, var(--status-error));
+    --ok:var(--status-success, var(--status-success));
   }
   * { box-sizing:border-box; }
   body { margin:0; font-family: system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }

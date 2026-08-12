@@ -14,7 +14,7 @@
        only apply where the token stylesheet failed to load (e.g. served outside the api origin). */
     :root {
       color-scheme: light dark;
-      --pm-accent: var(--accent-primary, #6ea8fe);
+      --pm-accent: var(--accent-primary, var(--accent-primary));
       --pm-line: var(--border-color, rgba(128,128,128,0.28));
     }
     * { box-sizing: border-box; }
