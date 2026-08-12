@@ -7,15 +7,85 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | RLS fix + demo tickets. The seed ran on the bare pool with no oshal.current_sub GUC, so FORCE-RLS rejected every insert ("new row violates row-level security policy") and every guest since launch got ZERO data — the catch swallowed it as designed. All seeding now runs in one transaction with transaction-local set_config to the guest sub. Also seeds three demo tickets (owner_sub = guest) so the cockpit's core surfaces show real-looking content; statuses are deliberately queue-inert (complete/backlog — never approved/in_process, which the queue manager would dispatch to bots and spend LLM on).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5: oshal_finance_items/data are now PACKAGE-owned tables (finance carved to the store; their lazy DDL lives in the package's finance-plaid route). This seed stays kernel-side deliberately — guest sessions are a framework concern — and is already skip-if-absent: when the finance package isn't installed the tables don't exist, the catch below no-ops, and the Finance surface (also package-served) isn't reachable anyway. No functional change.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Savepoint-fence the finance seed inside the new single-transaction shape: with everything in one txn, a missing finance package (carve #5 above) would have aborted the WHOLE transaction and rolled the demo tickets back too. Finance failure now rolls back to its savepoint and the tickets still commit.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Plant a fake INDEXED RESUME for the guest so the Intelligent Career board shows an indexed candidate instead of the "upload your resume" onboarding. career-hunter's resume is a per-user JSON FILE (career_db.json) in the engine store, not a table, so this is a best-effort file write beside the DB seed — same kernel-side "guest sessions are a framework concern" rationale as the finance seed. The demo resume is a wholly fictional candidate; a non-empty roles[] satisfies the engine's has_profile() gate and lets Settings auto-derive the title terms.
  */
 
 import crypto from 'crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'guest-demo-seed' });
 
 const DEMO_INSTITUTION = 'Emerald Coast Bank (Demo)';
+
+/**
+ * A wholly fictional candidate resume, in the career_db.json shape the career-hunter engine reads.
+ * A non-empty `roles[]` (or `profile.experience_summary`) is what the engine's has_profile() gate
+ * treats as "this user has an indexed resume", and roles[].title is what Settings derives the search
+ * terms from. Not tied to any real person — a demo persona, like "Alex Monster" on the finance side.
+ */
+export const DEMO_CAREER_DB = {
+  _meta: { owner: 'guest-demo', purpose: 'Fictional demo resume for the public guest tour.' },
+  profile: {
+    name: 'Jordan Rivera',
+    credential: 'Senior Platform Engineer',
+    location: 'Remote (US)',
+    experience_summary:
+      'Senior platform and backend engineer with nine years building distributed systems, cloud '
+      + 'infrastructure and internal developer platforms. Led a migration to Kubernetes, cut deploy '
+      + 'times, and shipped observability and CI/CD tooling across several teams.',
+  },
+  roles: [
+    {
+      title: 'Senior Platform Engineer', org: 'Northwind Systems', start: '2021-03', end: null,
+      deliverables: [
+        'Built the internal Kubernetes platform serving 40+ services',
+        'Cut median deploy time from 22 minutes to 4 with a new CI/CD pipeline',
+        'Introduced distributed tracing and SLO dashboards across the org',
+      ],
+    },
+    {
+      title: 'Backend Engineer', org: 'Cedar Labs', start: '2017-06', end: '2021-02',
+      deliverables: [
+        'Designed the event-driven order pipeline on Kafka and Postgres',
+        'Owned the payments integration and its nightly reconciliation jobs',
+        'Mentored four engineers and ran the on-call rotation',
+      ],
+    },
+  ],
+  skills: {
+    Languages: { items: ['TypeScript', 'Go', 'Python', 'SQL'] },
+    Infrastructure: { items: ['Kubernetes', 'Docker', 'AWS', 'Terraform'] },
+    Data: { items: ['Postgres', 'Kafka', 'Redis'] },
+  },
+  metrics_bank: ['40+ services on the internal platform', '22 min to 4 min deploy time', '99.95% uptime SLO'],
+  certifications: ['Certified Kubernetes Administrator (CKA)'],
+};
+
+/**
+ * @description Writes the fictional demo resume into the career-hunter engine store for a guest sub,
+ * so the Intelligent Career board renders an indexed candidate rather than the empty onboarding.
+ * Best-effort and idempotent: never overwrites an existing file, never throws, never blocks login.
+ *
+ * @param sub - The per-browser guest sub (its own store directory).
+ */
+export function writeGuestCareerResume(sub: string): void {
+  try {
+    // career-hunter resolves its store from JOBHUNTER_STORE_ROOT; a legacy-safe sub (a guest-<uuid>
+    // is lowercase + dashes) maps to a directory of the sub verbatim under the `default` tenant.
+    const root = process.env.JOBHUNTER_STORE_ROOT || '/app/output/career-hunter-data';
+    const dir = path.join(root, 'default', sub);
+    const file = path.join(dir, 'career_db.json');
+    if (fs.existsSync(file)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(DEMO_CAREER_DB, null, 2), 'utf8');
+    logger.info({ sub }, 'Planted fictional demo resume for guest (career_db.json)');
+  } catch (err) {
+    logger.info({ err: (err as Error).message, sub }, 'Guest career resume seed skipped (store absent?) — non-fatal');
+  }
+}
 
 /** A static, believable finance aggregate every guest sees (read-only). */
 function demoFinanceAggregate(): unknown {
@@ -157,6 +227,9 @@ export async function seedGuestDemoData(pool: Pool, sub: string): Promise<void> 
 
     await client.query('COMMIT');
     logger.info({ sub }, 'Seeded guest demo data (tickets + finance)');
+    // The resume is a FILE in the career-hunter engine store, not a DB row — write it after the
+    // transaction commits, best-effort, so it can never affect the DB seed either way.
+    writeGuestCareerResume(sub);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     // Non-fatal — worst case the guest sees empty states, never a blocked login.
