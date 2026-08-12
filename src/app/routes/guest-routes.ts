@@ -5,12 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guest-mode entry routes (Phase 1). Public `/guest` landing with a "Continue as guest" button, plus POST /api/guest/start (mint cookie → cockpit) and POST /api/guest/end (clear). All inert (404) when ENABLE_GUEST_MODE is off.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | `?next=<relative-path>` deep links: /guest carries a sanitized next through the start form (action query string, so no body-parser dependency) and /api/guest/start redirects there instead of /cockpit/; an already-authenticated visitor (guest or real) hitting /guest with a next skips the landing entirely. Lets the marketing sites deep-link a specific app surface (e.g. ?app=jarvis) through the guest gate instead of bouncing anonymous visitors to Google login. next is same-origin only: must start with a single '/', no '\', no CR/LF, ≤300 chars — else ignored.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guest-start now honors HOST_APP_MAP on the no-`next` default. A themed subdomain (career.oshal.ai, finance.oshal.ai, …) landed the guest on the bare /cockpit/ — the generic all-apps ribbon — because the fallback ignored the per-host map that the root `/` handler already applies. So `career.oshal.ai/guest` dropped the app the visitor came for. It now resolves the same landing path root `/` does (resolveHostLandingPath), so the subdomain lands on its app; an explicit `next` still wins, and a single-host deployment (no map entry) is unchanged (/cockpit/).
  */
 
 import { Router, type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { isGuestModeEnabled, setGuestCookie, clearGuestCookie } from '@/shared/middleware/guest-session';
+import { resolveHostLandingPath } from '../host-app-map';
 import { seedGuestDemoData } from './guest-demo-seed';
 
 const logger = createChildLogger({ module: 'guest-routes' });
@@ -107,7 +109,11 @@ export function createGuestRoutes(pool?: Pool): Router {
       res.status(503).json({ error: 'guest_unavailable', message: 'Guest mode is not configured.' });
       return;
     }
-    const next = sanitizeNext((req.query as Record<string, unknown>).next) ?? '/cockpit/';
+    // No explicit deep-link → honor the per-host app map exactly as the root `/` handler does,
+    // so a themed subdomain (career.oshal.ai, …) lands the guest on its app rather than the
+    // generic ribbon. A single-host deployment with no map entry falls back to /cockpit/.
+    const next = sanitizeNext((req.query as Record<string, unknown>).next)
+      ?? resolveHostLandingPath(process.env.HOST_APP_MAP, req.hostname, '/cockpit/');
     logger.info({ sub, next }, 'Guest session started');
     // Plant the shared fake finance account so the read-only Finance app shows data.
     // Fire-and-forget — never block the redirect on a seed hiccup.

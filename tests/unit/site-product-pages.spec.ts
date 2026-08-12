@@ -296,3 +296,57 @@ describe('product site: copy never strands a fragment', () => {
     }
   });
 });
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const theme = require('../../scripts/lib/product-site/theme.js') as {
+  APP_SUBDOMAINS: Record<string, string>;
+  appOpenUrl: (name: string) => string;
+  appDemoUrl: (name: string) => string;
+};
+
+describe('product site: every app-open link survives a first login', () => {
+  // The bug this pins: the demo CTA linked to a bare /guest with no app target, so every app
+  // page's "Try the live demo" dumped the visitor on the generic all-apps ribbon. And a ?app=
+  // query is dropped through the OIDC /login + /welcome round-trip on first login. Both are fixed
+  // by (a) a themed subdomain — the app lives in the hostname — and (b) a ?next= deep-link that
+  // the guest gate carries through for apps without one.
+
+  it('maps every subdomain key to a real app and a bare *.oshal.ai host', () => {
+    const appNames = new Set(model.apps.map((a) => a.name));
+    // Apps that legitimately have a themed subdomain but no public marketing page (a live
+    // client CRM served at factor-crm.oshal.ai, not catalogued). A NEW key that matches no app
+    // and isn't listed here is almost certainly a typo that would silently never route.
+    const PAGELESS_MAPPED = new Set(['intelligent-sales']);
+    for (const [name, host] of Object.entries(theme.APP_SUBDOMAINS)) {
+      expect(appNames.has(name) || PAGELESS_MAPPED.has(name), `${name} has a subdomain but no page and is not a known pageless app`).toBe(true);
+      expect(host, `${name} host`).toMatch(/^[a-z0-9.-]+\.oshal\.ai$/);
+      expect(host, `${name} host has no scheme/path`).not.toMatch(/[/:]/);
+    }
+  });
+
+  it('opens a subdomain app on its host root and demos it on the host /guest', () => {
+    expect(theme.appOpenUrl('career-hunter')).toBe('https://career.oshal.ai/');
+    expect(theme.appDemoUrl('career-hunter')).toBe('https://career.oshal.ai/guest');
+  });
+
+  it('carries a non-subdomain app through the guest gate with ?next= (never the bare ribbon)', () => {
+    expect(theme.APP_SUBDOMAINS.travel).toBeUndefined();
+    const demo = theme.appDemoUrl('travel');
+    expect(demo).toContain('/guest?next=');
+    expect(decodeURIComponent(demo)).toContain('/cockpit/?app=travel');
+    // The open link keeps ?app= but at least targets the app, not /cockpit/ bare.
+    expect(theme.appOpenUrl('travel')).toContain('?app=travel');
+  });
+
+  it.runIf(storePresent)('never emits an app-page demo button that lands on the bare cockpit', () => {
+    for (const app of model.apps) {
+      const html = rendered.get(path.join('product', 'apps', app.name, 'index.html')) ?? '';
+      // The demo CTA must resolve to this app — either a themed host or a ?next= carrying its name.
+      const demo = theme.appDemoUrl(app.name);
+      expect(html, `${app.name} page missing its demo CTA`).toContain(`href="${demo}"`);
+      if (theme.APP_SUBDOMAINS[app.name]) {
+        expect(html, `${app.name} should open on its subdomain`).toContain(`href="https://${theme.APP_SUBDOMAINS[app.name]}/"`);
+      }
+    }
+  });
+});
