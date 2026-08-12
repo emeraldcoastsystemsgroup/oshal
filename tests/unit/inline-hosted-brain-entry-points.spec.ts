@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the two chat ENTRY POINTS of the ADR-127 inline hosted brain. The first review of this fix proved the provider, the orchestrator branch, and the shared helper individually — and then showed that deleting the wiring in executeBotOrInline or handleSendMessage left every suite green, because the lazy '@/…' registry require failed under vitest and turned the condition into a silent no-op. That require is now RELATIVE (loads the REAL registry here and in dist identically), and these cases drive the real entry points end to end: the inline branch threads the resolved connection into processMessage, send-message does the same over HTTP before creating a ticket, and an empty ladder answers the friendly 422 NO_HOSTED_BRAIN — never the raw SEC-05 refusal.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Swallowed-failure leg: the deployed catch-based failover never fired live because task-orchestrator.handleError RESOLVES agentic provider errors as { success:false, error } — new cases pin both entry points replaying that result shape through the same retryHostedBrainTurn, the pure swallowedTurnFailure predicate rows, and the non-wall failed result staying failed (mutation kill for an unconditional retry).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ONE-CHOKEPOINT node dispatch: with a dynamically registered node-bound bot and a REAL local HTTP node, POST /api/send-message routes the turn to the node through executeBotOrInline — the demo operator's turn arrives with the CLI providerId STAMPED (the ADR-127 carve, env-stubbed), a plain caller's with the resolved hosted connection threaded — the controller orchestrator is never called, and both turns persist to the message store the history route replays. This is the route the live 2026-08-11 failure ran (a node-backed bot's chat dying on an exhausted hosted key), crossed at the real dispatch boundary.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -50,9 +51,11 @@ const CONNECTION = { baseUrl: 'https://hosted.example.test/v1', apiKey: 'sk-test
 
 const servers: Array<{ close: (cb: () => void) => void }> = [];
 let processMessage: ReturnType<typeof vi.fn>;
+let messageSave: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   processMessage = vi.fn(async () => ({ success: true, response: 'ok', usageSummary: undefined }));
+  messageSave = vi.fn(async () => ({}));
 });
 
 afterEach(async () => {
@@ -85,11 +88,16 @@ async function armLadder(connection: typeof CONNECTION | undefined): Promise<Ret
 async function bootSendMessageApp(): Promise<string> {
   const { createMessageRoutes } = await import('../../src/app/routes/message-routes');
   const ctx = {
-    taskStore: { get: async () => null },
+    taskStore: {
+      get: async () => null,
+      incrementMessageCount: async () => undefined,
+      incrementTurnCount: async () => undefined,
+    },
     workspaceService: { resolveTaskOwner: async () => null },
     ticketService: {},
     pool: {},
     orchestrator: { processMessage },
+    messageStore: { save: messageSave },
   } as unknown as Parameters<typeof createMessageRoutes>[0];
 
   const app = express();
@@ -408,5 +416,104 @@ describe('turn-time failover — SWALLOWED provider errors (the orchestrator res
       text: 'x', taskId: TASK_ID, agentId, userSub: USER_SUB,
     } as never)).rejects.toThrow('genuine content failure');
     expect(processMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('POST /api/send-message — a node-bound bot dispatches AT its node through the chokepoint', () => {
+  const NODE_AGENT = 'cb999999-0000-4000-8000-000000000042';
+  const NODE_APP = 'spec-node-app';
+
+  /** A REAL local HTTP "bot node" — the dispatch boundary the fix claims to cross. */
+  async function bootStubNode(): Promise<{ port: number; bodies: Array<Record<string, any>> }> {
+    const bodies: Array<Record<string, any>> = [];
+    const http = await import('node:http');
+    const server = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', (chunk) => { raw += chunk; });
+      req.on('end', () => {
+        bodies.push({ url: req.url, ...(raw ? JSON.parse(raw) : {}) });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ success: true, response: 'node answer' }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('stub node did not bind');
+    return { port: address.port, bodies };
+  }
+
+  /** Registers the node-bound bot the way the manifest loader does, resolving to the stub. */
+  async function registerNodeBot(port: number): Promise<() => void> {
+    const registry = await import('../../src/app/extensions/swarm/swarm-bot-registry');
+    const { warmBotEndpointRegistry } = await import('../../src/features/agent-management/services/bot-node-client');
+    // The resolver's synchronous require cannot load the .ts registry here — warm the
+    // dynamic-import cache first, exactly what the loader's fallback does on its own.
+    await warmBotEndpointRegistry();
+    registry.registerAppBots(NODE_APP, [{
+      agentId: NODE_AGENT, name: 'spec-node-bot', port, container: 'spec-node-bot',
+      role: '', capabilities: [], harnessType: 'claude-code', apiType: 'claude-code',
+    } as never]);
+    return () => registry.unregisterAppBots(NODE_APP);
+  }
+
+  it('a plain caller\'s turn arrives at the node with the resolved hosted connection — the controller orchestrator never runs', async () => {
+    const node = await bootStubNode();
+    const release = await registerNodeBot(node.port);
+    try {
+      await armLadder(CONNECTION);
+      const base = await bootSendMessageApp();
+
+      const res = await fetch(`${base}/send-message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-test-sub': USER_SUB },
+        body: JSON.stringify({ taskId: TASK_ID, text: 'hello node', agentId: NODE_AGENT }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { response: string };
+      expect(body.response).toBe('node answer');
+      expect(processMessage).not.toHaveBeenCalled();
+      expect(node.bodies).toHaveLength(1);
+      expect(node.bodies[0].url).toBe('/api/swarm-execute');
+      // Exactly the wire trio — resolver metadata must not ride to the node.
+      expect(node.bodies[0].byoLlmConnection).toEqual(CONNECTION);
+      expect(node.bodies[0].providerId).toBeUndefined();
+      // The controller owns thread durability for remote turns: both persisted for replay.
+      expect(messageSave).toHaveBeenCalledTimes(2);
+      expect(messageSave.mock.calls[0][0]).toMatchObject({ role: 'user', text: 'hello node' });
+      expect(messageSave.mock.calls[1][0]).toMatchObject({ role: 'assistant', text: 'node answer' });
+    } finally {
+      release();
+    }
+  });
+
+  it('the demo operator\'s turn arrives with the CLI providerId STAMPED (ADR-127 carve) — no hosted override', async () => {
+    vi.stubEnv('DEMO_MODE', 'true');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', USER_SUB);
+    const node = await bootStubNode();
+    const release = await registerNodeBot(node.port);
+    try {
+      const ladder = await armLadder(CONNECTION);
+      const base = await bootSendMessageApp();
+
+      const res = await fetch(`${base}/send-message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-test-sub': USER_SUB },
+        body: JSON.stringify({ taskId: TASK_ID, text: 'tighten my resume summary', agentId: NODE_AGENT }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(processMessage).not.toHaveBeenCalled();
+      expect(node.bodies).toHaveLength(1);
+      // The mounted-login lane: stamped as the ADR-034 authoritative provider, no hosted override,
+      // and the hosted ladder never walked — the exact opposite of the live 2026-08-11 failure.
+      expect(node.bodies[0].providerId).toBe('claude-code');
+      expect(node.bodies[0].byoLlmConnection).toBeUndefined();
+      expect(ladder).not.toHaveBeenCalled();
+    } finally {
+      release();
+      vi.unstubAllEnvs();
+    }
   });
 });
