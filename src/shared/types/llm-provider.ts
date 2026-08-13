@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of LLM provider shared types and interfaces for agent API configuration (Claude Code, Cline CLI)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Updated Change Log for attribution and timestamp compliance
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Operator directive 2026-08-13 — nothing hardcoded: configuration decides and the swarm env file is the fallback. ClineCLIConfig gained the optional `provider` field so a caller can declare Cline's backing provider instead of inheriting a literal.
  */
 
 /**
@@ -16,6 +17,8 @@ export type ApiProvider =
   | 'anthropic'
   | 'azure-openai'
   | 'noop'
+  | 'openai-codex'  // the swarm's default backing provider (ADR-128)
+  | 'cline-cli'     // the Cline harness naming ITSELF, when no backing provider is configured
   | 'claude-code'; // Cline CLI harness — routes to whatever backend provider/model is configured
 
 /**
@@ -100,4 +103,10 @@ export interface ClineCLIConfig {
    * @description MCP configuration to be passed to the agent (layer 0).
    */
   mcp?: Record<string, unknown>;
+  /**
+   * @description Optional: the backing provider Cline drives. Configuration, not a literal
+   * (operator directive 2026-08-13) — when absent, the swarm env file answers. See
+   * ClineCLIWrapper.getProviderType.
+   */
+  provider?: string;
 }

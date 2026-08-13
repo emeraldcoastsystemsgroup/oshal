@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: default-deny unbrokered autonomous CLI execution before credential setup or process spawn.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: keep live version probes credential-free and guard internal execution helpers against direct invocation.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Operator directive 2026-08-13 — nothing hardcoded: configuration decides and the swarm env file is the fallback. _ensureModelConfig baked in provider 'claude-code' + model 'claude-sonnet-4-5-20250929' and THREW if the write-verify read back anything else, so a deployment could not move Cline off a cancelled subscription without editing source. New _resolveBackingProvider resolves CLINE_API_PROVIDER/CLINE_API_MODEL -> the persisted global-config.json the cockpit writes (same file the TS cline-runtime-config-sync reads, so the two runtimes cannot disagree) -> FORCE_LLM_PROVIDER/LLM_PROVIDER + FORCE_LLM_MODEL/LLM_MODEL. No vendor literal terminates the chain: an unconfigured deployment is told so. The OAuth-presence check and the write-verify now follow the RESOLVED provider.
  */
 
 /**
@@ -1067,6 +1068,71 @@ class ClineCLIWrapper {
    * 
    * @private
    */
+  /**
+   * Resolve Cline's backing provider + model from CONFIGURATION, never a literal.
+   *
+   * Operator directive 2026-08-13: nothing is hardcoded; configuration decides, and the swarm's
+   * env file is the fallback when no config has been set up. Precedence, most specific first:
+   *
+   *   1. CLINE_API_PROVIDER / CLINE_API_MODEL — pin Cline independently of the fleet, for when
+   *      Cline's supported backing providers diverge from whatever the swarm defaults to.
+   *   2. output/global-config.json actModeApiProvider/actModeApiModelId — what the cockpit
+   *      writes and what the TS side (cline-runtime-config-sync-service) already reads, so the
+   *      two runtimes cannot disagree about the same deployment.
+   *   3. The swarm env file: FORCE_LLM_PROVIDER → LLM_PROVIDER, FORCE_LLM_MODEL → LLM_MODEL.
+   *
+   * No vendor literal terminates this chain. A deployment that sets none of the three is
+   * misconfigured and is told so, rather than silently reaching for one vendor's subscription —
+   * which is exactly how this file kept a cancelled Claude account wired in after the fleet
+   * moved to codex (ADR-128 Amendment 1).
+   *
+   * @returns {{provider: string, model: string}} Resolved backing provider and model.
+   * @throws {Error} When no configuration source names a provider.
+   * @private
+   */
+  _resolveBackingProvider() {
+    const env = (name) => {
+      const raw = process.env[name];
+      return typeof raw === 'string' && raw.trim() ? raw.trim() : '';
+    };
+
+    let configProvider = '';
+    let configModel = '';
+    const configPath = path.join(env('CONFIG_OUTPUT_DIR') || '/app/output', 'global-config.json');
+    try {
+      if (fs.existsSync(configPath)) {
+        const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const mode = parsed.mode === 'plan' ? 'plan' : 'act';
+        configProvider = parsed[`${mode}ModeApiProvider`] || parsed.provider || '';
+        configModel = parsed[`${mode}ModeApiModelId`] || parsed.model || '';
+      }
+    } catch (err) {
+      // A malformed config must not take the runtime down — fall through to the env file, and
+      // say why, so the operator is not left guessing which layer answered.
+      logger.warn(`[ClineCLI] Could not read ${configPath} (${err.message}) — falling back to the swarm env`);
+    }
+
+    const provider = env('CLINE_API_PROVIDER')
+      || configProvider
+      || env('FORCE_LLM_PROVIDER')
+      || env('LLM_PROVIDER');
+
+    if (!provider) {
+      throw new Error(
+        'Cline backing provider is not configured: set CLINE_API_PROVIDER, or actModeApiProvider '
+        + `in ${configPath}, or FORCE_LLM_PROVIDER/LLM_PROVIDER in the swarm env file.`,
+      );
+    }
+
+    const model = env('CLINE_API_MODEL')
+      || configModel
+      || env('FORCE_LLM_MODEL')
+      || env('LLM_MODEL')
+      || '';
+
+    return { provider, model };
+  }
+
   _ensureModelConfig() {
     try {
       // ⭐ PHASE_54 SESSION_11: Write to REAL ~/.cline/ (not isolated dir).
@@ -1081,25 +1147,30 @@ class ClineCLIWrapper {
         logger.info(`[ClineCLI] Created config data dir: ${gsDir}`);
       }
 
-      // ⭐ ARCHITECTURE: Cline CLI → Claude Code provider → Claude Code CLI → Anthropic API
-      // Use 'claude-code' provider which spawns the `claude` binary.
-      // Auth precedence (sandbox-first):
-      //   1. ANTHROPIC_API_KEY env (if explicitly set in container env)
-      //   2. claude-code OAuth file mounted at /root/.claude/.credentials.json
-      //      (host's ~/.claude/.credentials.json mounted via compose)
-      // The `claude` binary itself reads the OAuth file directly — we just need to
-      // confirm at least one auth source exists before spawning, instead of failing
-      // hard on missing API key (the sandbox does not carry one).
-      const model = 'claude-sonnet-4-5-20250929';
+      // ⭐ ARCHITECTURE: Cline CLI → a backing provider → that provider's CLI/API.
+      // Which backing provider is CONFIGURATION, never a literal (operator directive
+      // 2026-08-13). Precedence, most specific first — see _resolveBackingProvider():
+      //   1. CLINE_API_PROVIDER / CLINE_API_MODEL  (pin Cline independently of the fleet)
+      //   2. the persisted global-config.json the cockpit writes
+      //   3. the swarm env file (FORCE_LLM_PROVIDER/LLM_PROVIDER, FORCE_LLM_MODEL/LLM_MODEL)
+      // No vendor default terminates this chain: a deployment that sets none of it is
+      // misconfigured and says so, rather than silently reaching for one vendor's account.
+      const { provider, model } = this._resolveBackingProvider();
+
+      // Auth precedence (sandbox-first): an explicit API key in the container env, else the
+      // provider's mounted OAuth file. The CLI reads the OAuth file itself — we only confirm one
+      // auth source exists before spawning instead of failing hard on a missing key.
       const apiKey = process.env.ANTHROPIC_API_KEY || '';
-      const oauthFilePath = '/root/.claude/.credentials.json';
+      const oauthFilePath = provider === 'claude-code'
+        ? '/root/.claude/.credentials.json'
+        : '/root/.codex/auth.json';
       let hasOauthFile = false;
       try { hasOauthFile = fs.existsSync(oauthFilePath); } catch (_e) { hasOauthFile = false; }
 
       if (!apiKey && !hasOauthFile) {
-        logger.warn('[ClineCLI] WARNING: neither ANTHROPIC_API_KEY nor claude-code OAuth file (/root/.claude/.credentials.json) is available — Cline CLI will fail.');
+        logger.warn(`[ClineCLI] WARNING: neither an API key nor the ${provider} OAuth file (${oauthFilePath}) is available — Cline CLI will fail.`);
       } else if (!apiKey && hasOauthFile) {
-        logger.info('[ClineCLI] Using claude-code OAuth file (no ANTHROPIC_API_KEY in env — expected in sandbox)');
+        logger.info(`[ClineCLI] Using ${provider} OAuth file (no API key in env — expected in sandbox)`);
       }
 
       // ⭐ SESSION_11: Removed mock .claude.json creation — it caused auth failures.
@@ -1120,8 +1191,8 @@ class ClineCLIWrapper {
 
       // Use claude-code provider
       const requiredFields = {
-        'actModeApiProvider': 'claude-code',
-        'planModeApiProvider': 'claude-code',
+        'actModeApiProvider': provider,
+        'planModeApiProvider': provider,
         'actModeApiModelId': model,
         'planModeApiModelId': model,
         'yoloModeToggled': true,
@@ -1169,18 +1240,18 @@ class ClineCLIWrapper {
         
         // Verify write succeeded
         const verifyData = JSON.parse(fs.readFileSync(gsPath, 'utf8'));
-        if (verifyData.actModeApiProvider !== 'claude-code') {
-          throw new Error(`Write verification failed: expected claude-code, got ${verifyData.actModeApiProvider}`);
+        if (verifyData.actModeApiProvider !== provider) {
+          throw new Error(`Write verification failed: expected ${provider}, got ${verifyData.actModeApiProvider}`);
         }
         
-        logger.info(`[ClineCLI] Updated globalState.json: provider=claude-code, model=${model}`);
+        logger.info(`[ClineCLI] Updated globalState.json: provider=${provider}, model=${model}`);
       } else {
-        logger.debug(`[ClineCLI] globalState.json model config OK: claude-code/${model}`);
+        logger.debug(`[ClineCLI] globalState.json model config OK: ${provider}/${model}`);
       }
 
       // === 2. Update config.json (Cline CLI also reads this for provider/model) ===
       const configData = {
-        provider: 'claude-code',
+        provider: provider,
         model: model
       };
 
@@ -1193,11 +1264,11 @@ class ClineCLIWrapper {
 
       // Verify write succeeded
       const verifyConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      if (verifyConfig.provider !== 'claude-code') {
+      if (verifyConfig.provider !== provider) {
         throw new Error(`config.json write verification failed: provider=${verifyConfig.provider}`);
       }
 
-      logger.info(`[ClineCLI] Updated config.json: provider=claude-code, model=${model}`);
+      logger.info(`[ClineCLI] Updated config.json: provider=${provider}, model=${model}`);
     } catch (err) {
       logger.error(`[ClineCLI] Failed to ensure model config: ${err.message}`);
       throw err;
