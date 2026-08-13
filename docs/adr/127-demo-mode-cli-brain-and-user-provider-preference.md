@@ -91,6 +91,12 @@ Claude Code is the default default when the unlock applies, per operator directi
 pastes their own key and selects it in Settings overrides all of the above, which is the point:
 the ladder is what happens when nobody has chosen.
 
+> **Amended 2026-08-12 by [ADR-128](128-codex-fleet-default.md):** rung 2's order is now
+> **`openai-codex`, then `claude-code`** (`DEMO_CLI_ORDER` in
+> [user-brain-resolution.ts](../../src/app/routes/user-brain-resolution.ts)) — codex became the
+> swarm's default CLI/API/LLM fleet-wide. Everything else in this ladder, and both carves'
+> security conditions, are unchanged.
+
 ### 3. Settings owns the choice
 
 The Bot LLM access block on `/utilities` already connects Claude Code, Codex, the free tiers, and
