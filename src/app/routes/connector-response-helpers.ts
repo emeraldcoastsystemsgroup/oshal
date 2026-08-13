@@ -10,6 +10,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted authenticated caller resolution and /list response shaping from connectors-routes.ts without changing response fields or provider configuration rules.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: project a per-connection `expired` boolean (isConnectionExpired) into every /list entry. Identity Hub reads this key in four places - the Need attention tile, the Needs attention filter, the red Reconnect pill and the account marker - and the projection never carried it, so all four read undefined and the hub's whole reason to exist could not fire. Boolean only: the expiry value and the token stay out of the response.
  * -----------------------------------------------------------------------------
  *
  * @module connector-response-helpers
@@ -21,7 +22,7 @@ import { isPlaidConfigured } from './connector-plaid-link';
 import {
   CONNECTOR_CATEGORY, PLATFORM_DEFAULT_ENV, PROVIDERS, providerCreds,
 } from './connector-provider-registry';
-import { pickConnection, type ConnectionRow } from './connector-tenancy';
+import { isConnectionExpired, pickConnection, type ConnectionRow } from './connector-tenancy';
 
 /**
  * @description Authenticated connector caller identity resolved from the OIDC session.
@@ -82,6 +83,11 @@ export function buildConnectorListResponse(rows: ConnectionRow[]): Array<Record<
         account: connection.account_email,
         tenantId: connection.tenant_id || null,
         isDefault: connection.is_default,
+        // Whether this login needs re-consent — a boolean derived from the stored expiry, never
+        // the expiry value and never the token, so the projection stays credential-free. Surfaces
+        // (Identity Hub's "Need attention" tile, its Reconnect pill) read this key; before it was
+        // emitted they read `undefined` and the signal could never fire (BUG-13).
+        expired: isConnectionExpired(connection),
       })),
       multiAccount: conns.length > 1,
       defaultConnectionId: pickConnection(conns)?.connection_id ?? null,

@@ -22,6 +22,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-042 Phase 1: oshal_tenants + oshal_tenant_memberships, tenant_id/connected_by_sub on oshal_connections, partial unique indexes (personal vs shared), personal∪shared resolution (household-first), tenant-aware upsert, and minimal household management helpers.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account-per-provider (ADR-113 section 4) made DETERMINISTIC. Resolution used to fall back to the first row of an updated_at DESC list, so with two accounts of one provider and no explicit default "the user's Gmail token" changed identity every time an access token was refreshed. Extracted the rule into the pure, exported pickConnection() — explicit selector, then the marked default, then the only candidate, then a STABLE tiebreak (shared-before-personal, then created_at, then connection_id) — and made upsertConnection seed exactly one is_default per (ownership scope, provider) so the marked-default branch is the normal path. Added created_at to the resolved row, the scope-default seed to the bootstrap (mirroring migration 101), and disconnectConnections() so removing an account re-seeds the scope default instead of leaving the scope defaultless.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: isConnectionExpired() - the single definition of "this login needs re-consent", so the /list projection, the Identity Hub inventory and any future consumer cannot each invent their own. Deliberately NOT `expiry < now`: getValidAccessToken renews silently whenever a refresh token exists, so a lapsed access token on a refreshable grant is the NORMAL steady state (a Google access token lasts an hour), and only a lapsed grant with nothing to renew it is actually broken.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -176,6 +177,34 @@ function stableConnectionOrder(a: ConnectionRow, b: ConnectionRow): number {
   };
   if (age(a) !== age(b)) return age(a) - age(b);
   return a.connection_id < b.connection_id ? -1 : a.connection_id > b.connection_id ? 1 : 0;
+}
+
+/**
+ * @description Does this connection need the user to sign in again? The ONE definition of
+ * "expired" for every consumer, pure and exported so no surface has to invent its own.
+ *
+ * It is deliberately NOT `expiry < now`. {@link getValidAccessToken} renews an access token
+ * silently whenever a refresh token is stored, so a lapsed access token on a refreshable grant
+ * is the ordinary steady state — a Google access token lives an hour, so most healthy Google
+ * connections are "past expiry" most of the time. Reporting those as expired would light up a
+ * "needs attention" signal on accounts that work perfectly (on this deployment that rule flags
+ * 9 of 18 connections, every one of them refreshable and healthy).
+ *
+ * A connection is broken, and re-consent is genuinely the only fix, when its authorization has
+ * lapsed and there is nothing left to renew it with: `getValidAccessToken` hands the stale token
+ * back unchanged in exactly that case, and the provider rejects it. A connection whose provider
+ * issues no expiry at all (Slack user tokens, pasted PATs, Plaid) never expires on its own.
+ * @param row - a connection row (only `expiry` and the PRESENCE of `refresh_token` are read)
+ * @param now - epoch ms to evaluate against; defaults to the current time
+ * @returns true when the stored authorization has lapsed and cannot renew itself
+ */
+export function isConnectionExpired(
+  row: Pick<ConnectionRow, 'expiry' | 'refresh_token'>, now: number = Date.now(),
+): boolean {
+  if (!row.expiry) return false;
+  if (row.refresh_token) return false;
+  const at = new Date(row.expiry as unknown as string).getTime();
+  return Number.isFinite(at) && at <= now;
 }
 
 /**
