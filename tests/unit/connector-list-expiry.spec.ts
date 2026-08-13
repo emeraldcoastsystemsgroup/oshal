@@ -19,7 +19,7 @@
  * 2. THE MEANING of `expired`. The naive rule — expiry in the past — is wrong and would be worse
  *    than the dead flag it replaces: getValidAccessToken renews silently whenever a refresh token
  *    is stored, so a lapsed access token on a refreshable grant is the ordinary steady state (a
- *    Google access token lives one hour). On the deployment where this was found, 9 of 18
+ *    Google access token lives one hour). On the deployment where this was found, 9 of 24
  *    connections had a past expiry and ALL NINE were refreshable and healthy. A connection needs
  *    re-consent only when its authorization has lapsed and nothing can renew it.
  *
@@ -103,7 +103,7 @@ describe('connector list — per-connection contract', () => {
 
 describe('isConnectionExpired — a lapsed grant, not a lapsed access token', () => {
   it('is false for a lapsed access token that still holds a refresh token', () => {
-    // The 9-of-18 case on the live deployment. getValidAccessToken renews this silently; calling
+    // The 9-of-24 case on the live deployment. getValidAccessToken renews this silently; calling
     // it expired would flag healthy accounts and make "Need attention" wrong in the loud direction.
     expect(isConnectionExpired({ expiry: new Date(NOW - HOUR), refresh_token: 'enc' }, NOW)).toBe(false);
   });
