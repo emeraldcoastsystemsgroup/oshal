@@ -255,7 +255,7 @@ bug than the one it closed, and the difference is the whole point of this entry.
 silently whenever a refresh token is stored, so a lapsed access token on a refreshable grant is the
 ordinary steady state — a Google access token lives one hour, so a healthy Google connection is
 "past expiry" for most of its life. Checked against the live store before writing any code: **9 of
-18 connections had a past expiry, and all nine carried a refresh token.** The naive rule would have
+24 connections had a past expiry, and all nine carried a refresh token.** The naive rule would have
 turned a tile that always read 0 into a tile that read 9, on a deployment where nothing was wrong.
 A tile that cries wolf nine times is worse than a dead one, because a user acts on it.
 
@@ -283,7 +283,7 @@ sides — drop the projected field, revert to the naive rule, or make the surfac
 key, and the matching guard goes red.
 
 **Not fixed, and deliberately:** a connection with no refresh token and an expiry still in the
-future will lapse silently one day, and nothing warns ahead of time (three connections on this
+future will lapse silently one day, and nothing warns ahead of time (five connections on this
 deployment are in that state). That is a new capability, not this defect — logged in BACKLOG.
 
 ## BUG-14 — Notifications copy describes only one of the two credential tiers
