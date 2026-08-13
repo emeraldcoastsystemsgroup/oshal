@@ -9,6 +9,7 @@
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.1.4 — JWT_SECRET in the shared env (compose *bot-env parity, dev default): the any-bot JS layer refuses production boot without it, which crash-looped the first real bot-node pod.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.1.5 — bots[].botName optional override (BOT_NAME ≠ Service name for ~17 compose bots); enables the full production fleet in one values pass.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — the chart moves into the public trunk at deploy/helm/oshal and becomes the codeless k8s install source (ADR-129): registry-pull defaults (ghcr.io oshal-bot), Kyma APIRule + tailnet relay now OPT-IN (generic clusters have neither CRD nor headscale), fleet presets (fleet: kernel|full|custom, lists generated from compose by scripts/generate-chart-fleet.mjs — never hand-typed), api Service type/nodePort for ingress-less cockpit access, seeding-repair parity (api seeds copy-IF-MISSING, bots defer entirely to bot-entrypoint.sh Step 1b), and K5 parity (bots connect as the least-privilege oshal_bot role, never the superuser).
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | 0.3.0 — the shared-service tier stops being a BACKLOG cap and ships (operator, 2026-08-13): TimescaleDB, ArangoDB, Vault, code-server and speaker-diarization carry NO compose profile — they start on every default `up`, which makes them core framework, and omitting them shipped a degraded platform (no trading series, graph 503, no vault, no workspace IDE, no local transcription). All five templated with inCluster flags plus the URL env the platform actually reads, emitted only when the service is on so a disabled service degrades cleanly instead of pointing at a refused connection. Ollama is templated too but stays OFF, matching its compose `local-llm` profile. code-server is ClusterIP-only on purpose: it runs --auth none over a read-write workspace, which compose contains by binding 127.0.0.1. Store packages stage via an api initContainer into the workspace PVC (`packages:`), so `--apps` works on k8s. Guard: tests/unit/chart-infra-parity.spec.ts.
 apiVersion: v2
 name: oshal
 description: >-
@@ -18,7 +19,7 @@ description: >-
   a headscale tailnet as ordinary Redis-mesh participants. Kyma APIRule ingress
   and the tailnet relay are optional layers over the same chart.
 type: application
-version: 0.2.0
+version: 0.3.0
 appVersion: "latest"
 keywords:
   - oshal

@@ -1,0 +1,67 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster ArangoDB (compose oshal-arangodb parity), main role only. Carries no compose profile: a default `up` starts it, so the graph tier is part of the shipped platform rather than an optional add-on. ADR-045's "absent by default" degradation is expressed by inCluster: false (which also withholds ARANGO_URL, the exact signal the connector reads to return null).
+{{- if and (eq .Values.role "main") .Values.infra.arangodb.inCluster }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: oshal-arangodb
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  serviceName: oshal-arangodb
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oshal-arangodb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oshal-arangodb
+        {{- include "oshal.labels" . | nindent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: arangodb
+          image: {{ .Values.infra.arangodb.image }}
+          env:
+            - name: ARANGO_ROOT_PASSWORD
+              value: {{ .Values.infra.arangodb.rootPassword | quote }}
+          ports:
+            - containerPort: 8529
+          readinessProbe:
+            httpGet:
+              path: /_api/version
+              port: 8529
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 20
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/arangodb3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: {{ .Values.infra.arangodb.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-arangodb
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-arangodb
+  ports:
+    - name: http
+      port: 8529
+      targetPort: 8529
+{{- end }}

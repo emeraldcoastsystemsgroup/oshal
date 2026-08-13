@@ -21,8 +21,21 @@ Windows (PowerShell):
 The installer preflights kubectl/helm, finds (or offers to create) a cluster,
 installs the [deploy/helm/oshal](../../deploy/helm/oshal/) chart from the
 published OCI package (repo fallback), exposes the cockpit on a NodePort, waits
-for health, and opens `/welcome`. Chart reference, fleet presets, and the
-how-bots-get-a-brain-on-k8s story: [deploy/helm/oshal/README.md](../../deploy/helm/oshal/README.md).
+for health, and opens `/welcome`. Chart reference, the shared-service table, and
+the how-bots-get-a-brain-on-k8s story:
+[deploy/helm/oshal/README.md](../../deploy/helm/oshal/README.md).
+
+Bundles and apps work the same as on compose — they stage into the workspace
+before the api boots:
+
+```bash
+bash oshal-install.sh --mode 4 --bundle jobs                 # curated set
+bash oshal-install.sh --mode 4 --apps dnd,game-show          # individual packages
+```
+
+The install brings up the same service tier a default `docker compose up` does
+(Postgres, Redis, Chroma, TimescaleDB, ArangoDB, Vault, code-server,
+speaker-diarization), each switchable via `infra.<name>.inCluster`.
 
 **Multi-user public tenants** go through [deploy/terraform](../../deploy/terraform/README.md)
 instead — its real-OIDC and secret-minting posture guards are the point there.

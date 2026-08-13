@@ -4,6 +4,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — k8s form of the compose *bot-env anchor (structural vars only; secrets live in api.envSecret / botDefaults.envSecret). DNS parity with compose service names. NO DATABASE_URL here — main role injects it per-workload (trust rule).
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — CODEX_REASONING_EFFORT joins the shared env (compose SEQ-13 parity): both codex wrappers pin per-spawn effort so a host config tuned for a model this fleet floor rejects can't 400 every fresh-workspace turn.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | 0.3.0 — ARANGO_* joins the shared env (compose *bot-env parity: it sits in the anchor, so EVERY bot and the api see it, not just the controller). Each URL is emitted ONLY when its service is inCluster: an unset ARANGO_URL is the documented degradation signal (connector returns null, /api/graph 503s), so advertising a URL for a service that was switched off would convert a clean degrade into a connection-refused every call.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -50,5 +51,21 @@ data:
   {{- if eq .Values.role "main" }}
   # Main-cluster-only endpoints: these Services do not exist on bot-pod clusters,
   # and per the compose contract an undefined URL simply no-ops in the bots.
+  {{- if .Values.infra.chromadb.inCluster }}
   CHROMADB_URL: http://oshal-chromadb:8000
+  {{- end }}
+  {{- if .Values.infra.arangodb.inCluster }}
+  # Graph tier (compose *bot-env parity — every bot sees these, not just the api).
+  ARANGO_URL: http://oshal-arangodb:8529
+  ARANGO_ROOT_USER: {{ .Values.infra.arangodb.rootUser | quote }}
+  ARANGO_ROOT_PASSWORD: {{ .Values.infra.arangodb.rootPassword | quote }}
+  {{- end }}
+  {{- if .Values.infra.ollama.inCluster }}
+  # The cline harness resolves local models through OLLAMA_HOST (cline-config-builder).
+  OLLAMA_HOST: http://oshal-ollama:11434
+  {{- end }}
+  {{- if .Values.infra.codeServer.externalUrl }}
+  # Browser-facing (the cockpit's /code bridge redirects here) — NOT in-cluster DNS.
+  CODE_SERVER_URL: {{ .Values.infra.codeServer.externalUrl | quote }}
+  {{- end }}
   {{- end }}

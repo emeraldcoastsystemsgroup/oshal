@@ -1,0 +1,71 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster TimescaleDB (compose oshal-tsdb parity), main role only. Carries no compose profile, so it starts on every default `up` — core shared service, not an extra. Trading and the world-intelligence series layer read TSDB_URL; disabling this withholds that URL rather than pointing it at a dead host.
+{{- if and (eq .Values.role "main") .Values.infra.tsdb.inCluster }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: oshal-tsdb
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  serviceName: oshal-tsdb
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oshal-tsdb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oshal-tsdb
+        {{- include "oshal.labels" . | nindent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: timescaledb
+          image: {{ .Values.infra.tsdb.image }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.infra.tsdb.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.infra.tsdb.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.infra.tsdb.password | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.infra.tsdb.user }}", "-d", "{{ .Values.infra.tsdb.database }}"]
+            periodSeconds: 5
+            failureThreshold: 20
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: {{ .Values.infra.tsdb.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-tsdb
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-tsdb
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+{{- end }}

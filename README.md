@@ -317,7 +317,7 @@ per-user connectors without credential exposure, cost attribution, and bot-to-bo
 
 **Beta, shipped honestly.** The pack→build→inject loop, build/incident pipelines, mix-mode multi-vendor bots, per-user RLS isolation, device-owned dispatch, the cost ledger, and the one-command registry install all run end-to-end today. Prebuilt images are published to GHCR and the installer pulls them — no build on the default path.
 
-Still ahead: **multi-organization SaaS provisioning** (realm-per-tenant + billing; enterprise per-tenant isolation is the model, Terraform stamps the shape today), the **external-agent A2A gateway** at production grade, and **k8s feature parity** (the codeless one-command Kubernetes install shipped — ADR-129; store-package staging and the trading/graph infra tier are still compose-only). Vision and gaps live in [ROADMAP.md](ROADMAP.md) and [BACKLOG.md](docs/BACKLOG.md) with done-when criteria — not in docs written as if shipped.
+Still ahead: **multi-organization SaaS provisioning** (realm-per-tenant + billing; enterprise per-tenant isolation is the model, Terraform stamps the shape today), the **external-agent A2A gateway** at production grade, and **live-cluster proof of the Kubernetes path** (the codeless one-command install, the full shared-service tier, and store-package staging all shipped — ADR-129 — but only template-level proof exists so far). Vision and gaps live in [ROADMAP.md](ROADMAP.md) and [BACKLOG.md](docs/BACKLOG.md) with done-when criteria — not in docs written as if shipped.
 
 ---
 

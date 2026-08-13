@@ -26,11 +26,15 @@
   3 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: add the explicit -NoAi posture and invoke the exact shipped oshal-verify.sh inside the image, including every deduplicated app smoke, after native Windows health checks.
   4 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: route package staging through the core installer so invalid audit bindings fail and enforce mode replaces packages from the exact audited SHA.
   5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: -Kubernetes — the codeless k8s install, lockstep with oshal-install.sh mode 4. kubectl/helm preflight (winget offers for both), cluster reachability check with crisp Docker-Desktop/kind guidance, chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full, the same AdminEmail→MOCK_OIDC identity wiring as the compose path (shared LocalSub, hoisted above the branch), NodePort exposure, /api/health postflight, /welcome open. New params: -Namespace, -K8sContext, -NodePort, -Chart, -Fleet.
+  6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129 amendment: bundles/-Apps reach Kubernetes. The k8s branch moves BELOW bundle resolution so it installs the same curated app sets as compose (chart `packages:` staging + the fleet those bots need), auto-creating the private-store Secret when a token is present. Fixes a latent parameter bug found dry-running the new path: `-Apps a,b` is an ARRAY to PowerShell, so the [string] parameter threw a transformation error on the very syntax the bash installer and our closing instructions advertise — now [string[]], accepting both forms.
 #>
 [CmdletBinding()]
 param(
   [string]$Bundle = "full",
-  [string]$Apps = "",
+  # [string[]], not [string]: PowerShell parses `-Apps a,b` as an ARRAY, so a
+  # [string] parameter threw a transformation error on the exact comma syntax the
+  # bash installer and our own closing instructions use. Accepts both forms.
+  [string[]]$Apps = @(),
   [string]$Dir = ".\oshal",
   [string]$Tag = "latest",
   [string]$Registry = "ghcr.io/emeraldcoastsystemsgroup",
@@ -68,8 +72,26 @@ function LocalSub([string]$email) {
   } finally { $sha.Dispose() }
 }
 
+
+# -- Bundles: kernel + curated sets, dependencies bound (keep in lockstep with oshal-install.sh) --
+$KernelServices = @('oshal-api','general-bot','jarvis-bot','oshal-developer')
+$BundlePackages = @{ kernel=@(); full=@(); 'little-monsters'=@('little-monsters','presentations'); gaming=@('dnd','game-show'); jobs=@('career-hunter','job-apply') }
+$BundleServices = @{ kernel=@(); full=@('__ALL__'); 'little-monsters'=@('deck-builder-bot'); gaming=@(); jobs=@() }
+# No bundle sets a compose profile. ADR-085 carved little-monsters to the store and its compose
+# profile went with it - the declared profiles are build/extras/incident/local-llm/
+# social-media/tunnel, so COMPOSE_PROFILES=little-monsters activated nothing. Kept as a map
+# because bundles that DO need a profile are a live possibility.
+$BundleProfiles = @{ kernel=''; full=''; 'little-monsters'=''; gaming=''; jobs='' }
+if (-not $BundlePackages.ContainsKey($Bundle)) { throw "unknown bundle '$Bundle' (kernel|full|little-monsters|gaming|jobs)" }
+
+# Deduped package set: bundle union -Apps. A package stages once; a bot/surface registers once.
+$pkgSet = New-Object System.Collections.Generic.HashSet[string]
+foreach ($p in $BundlePackages[$Bundle]) { [void]$pkgSet.Add($p) }
+foreach ($p in ($Apps -split ',')) { if ($p.Trim()) { [void]$pkgSet.Add($p.Trim()) } }
+
 # -- -Kubernetes: codeless helm install (ADR-129, lockstep with oshal-install.sh mode 4) --
-# Runs BEFORE the Docker gate: a remote cluster needs no local Docker at all.
+# Runs BEFORE the Docker gate: a remote cluster needs no local Docker at all. Bundles
+# and -Apps are resolved above, so k8s installs the same curated app sets as compose.
 if ($Kubernetes) {
   Say "Kubernetes install (helm + registry images - no source, no build)"
   $winget = Get-Command winget -ErrorAction SilentlyContinue
@@ -103,11 +125,16 @@ if ($Kubernetes) {
     exit 1
   }
 
+  # An app bundle brings the fleet its bots need — a bundle whose bots never start
+  # is an app that cannot run. -Fleet still wins when the caller names it.
+  if (-not $PSBoundParameters.ContainsKey('Fleet') -and $Bundle -ne 'kernel') { $Fleet = 'full' }
+
   if ($DryRun) {
     Say "DRY RUN"
     Note "mode      : kubernetes (helm)"
     Note "namespace : $Namespace   context: $(if ($K8sContext) { $K8sContext } else { 'current' })"
     Note "nodeport  : $NodePort   fleet: $Fleet   tag: $Tag"
+    Note "bundle    : $Bundle   packages: $(if ($pkgSet.Count) { $pkgSet -join ', ' } else { '(none)' })"
     Note "chart     : $(if ($Chart) { $Chart } else { 'published OCI package, repo fallback' })"
     exit 0
   }
@@ -147,8 +174,25 @@ if ($Kubernetes) {
     '--set-string', "image.tag=$Tag",
     '--set', 'api.service.type=NodePort',
     '--set', "api.service.nodePort=$NodePort",
-    '--set-string', "fleet=$Fleet"
+    '--set-string', "fleet=$Fleet",
+    '--set-string', "store.auditMode=$PackageAuditMode"
   )
+  # Store packages: the chart stages these into the workspace PVC before the api
+  # boots (auto-load registers each package's bots and surfaces once, at boot).
+  if ($pkgSet.Count -gt 0) {
+    $helmSet += @('--set', "packages={$($pkgSet -join ',')}")
+    Note "packages to stage: $($pkgSet -join ', ')"
+    $storeToken = if ($env:OSHAL_STORE_TOKEN) { $env:OSHAL_STORE_TOKEN } else { $env:GITHUB_TOKEN }
+    if ($storeToken) {
+      # Private store repos only; the chart reads the Secret optionally.
+      kubectl @kcArgs create namespace $Namespace *> $null
+      kubectl @kcArgs -n $Namespace create secret generic oshal-store `
+        --from-literal="OSHAL_STORE_TOKEN=$storeToken" --dry-run=client -o yaml |
+        kubectl @kcArgs apply -f - *> $null
+      $helmSet += @('--set-string', 'store.tokenSecret=oshal-store')
+      Note "private-store token wired (Secret oshal-store)"
+    }
+  }
   if ($AdminEmail) {
     $helmSet += @(
       '--set-string', "api.extraEnv.MOCK_OIDC_EMAIL=$AdminEmail",
@@ -217,26 +261,11 @@ if ($Kubernetes) {
     Note "   API keys can also live in an oshal-bot-env Secret, see deploy/helm/oshal/README.md.)"
     Note "2. Connect your accounts (optional) - each one is its own consent."
   }
-  Note "Store apps: cockpit -> Explore Apps (the -Apps flag is compose-only today)."
+  Note "More apps any time: cockpit -> Explore Apps, or re-run with -Apps name1,name2"
+  Note "(helm upgrades in place; the chart stages new packages before the api restarts)."
   Note "Uninstall: helm uninstall oshal -n $Namespace ; kubectl delete ns $Namespace"
   exit 0
 }
-
-# -- Bundles: kernel + curated sets, dependencies bound (keep in lockstep with oshal-install.sh) --
-$KernelServices = @('oshal-api','general-bot','jarvis-bot','oshal-developer')
-$BundlePackages = @{ kernel=@(); full=@(); 'little-monsters'=@('little-monsters','presentations'); gaming=@('dnd','game-show'); jobs=@('career-hunter','job-apply') }
-$BundleServices = @{ kernel=@(); full=@('__ALL__'); 'little-monsters'=@('deck-builder-bot'); gaming=@(); jobs=@() }
-# No bundle sets a compose profile. ADR-085 carved little-monsters to the store and its compose
-# profile went with it - the declared profiles are build/extras/incident/local-llm/
-# social-media/tunnel, so COMPOSE_PROFILES=little-monsters activated nothing. Kept as a map
-# because bundles that DO need a profile are a live possibility.
-$BundleProfiles = @{ kernel=''; full=''; 'little-monsters'=''; gaming=''; jobs='' }
-if (-not $BundlePackages.ContainsKey($Bundle)) { throw "unknown bundle '$Bundle' (kernel|full|little-monsters|gaming|jobs)" }
-
-# Deduped package set: bundle union -Apps. A package stages once; a bot/surface registers once.
-$pkgSet = New-Object System.Collections.Generic.HashSet[string]
-foreach ($p in $BundlePackages[$Bundle]) { [void]$pkgSet.Add($p) }
-foreach ($p in ($Apps -split ',')) { if ($p.Trim()) { [void]$pkgSet.Add($p.Trim()) } }
 
 # -- Docker present? Offer winget when it isn't. -----------------------------
 $docker = Get-Command docker -ErrorAction SilentlyContinue

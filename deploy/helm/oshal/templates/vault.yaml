@@ -1,0 +1,63 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster Vault in DEV MODE (compose oshal-vault parity: `server -dev`, in-memory, auto-unsealed, fixed root token), main role only. No compose profile, so a default `up` starts it. Deliberately NOT a production secrets posture: dev mode loses everything on restart. A real deployment sets inCluster: false and points VAULT_ADDR/VAULT_TOKEN at a real Vault through api.envSecret — which is why there is no PVC here to imply durability it does not have.
+{{- if and (eq .Values.role "main") .Values.infra.vault.inCluster }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oshal-vault
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oshal-vault
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oshal-vault
+        {{- include "oshal.labels" . | nindent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: vault
+          image: {{ .Values.infra.vault.image }}
+          args: ["server", "-dev"]
+          env:
+            - name: VAULT_DEV_ROOT_TOKEN_ID
+              value: {{ .Values.infra.vault.devRootToken | quote }}
+            - name: VAULT_DEV_LISTEN_ADDRESS
+              value: 0.0.0.0:8200
+            - name: VAULT_ADDR
+              value: http://127.0.0.1:8200
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
+          ports:
+            - containerPort: 8200
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health
+              port: 8200
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-vault
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-vault
+  ports:
+    - name: http
+      port: 8200
+      targetPort: 8200
+{{- end }}

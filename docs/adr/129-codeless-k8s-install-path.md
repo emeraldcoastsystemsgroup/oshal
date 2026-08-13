@@ -63,6 +63,51 @@ no NET_ADMIN).
    explicit no-model posture. This closes the "bot LLM auth on k8s: UNDECIDED"
    item for the single-user shape — the multi-user BYOK-per-login story stays open.
 
+## Amendment (2026-08-13, same day): the shared-service tier ships
+
+The first cut listed "store staging is compose-only" and "tsdb/Arango/Vault/
+code-server aren't chart-templated" as accepted caps. The operator rejected both,
+correctly, and the check is one line of compose: **none of
+`oshal-tsdb`, `oshal-arangodb`, `oshal-vault`, `code-server`, or
+`speaker-diarization` carries a `profiles:` key**, so every default
+`docker compose up` starts them. They are core framework, not extras — omitting
+them shipped a k8s install that looked healthy while trading had no series store,
+`/api/graph` 503'd, there was no vault, no workspace IDE, and no local
+transcription. "Not templated yet" was under-building described as a boundary.
+
+Chart 0.3.0 closes both:
+
+7. **The shared-service tier is templated** — all five, each behind
+   `infra.<name>.inCluster`, defaulting **on** (matching a default compose `up`).
+   Ollama is templated too but defaults **off**, because compose gates it behind
+   the `local-llm` profile. Critically, each service's **URL env is wired and
+   gated on the same flag** (`TSDB_URL`, `ARANGO_*` in the shared bot env,
+   `VAULT_ADDR`/`TOKEN`, `SPEAKER_DIARIZATION_URL`, `OLLAMA_HOST`): a StatefulSet
+   nothing points at is a no-op, and advertising a URL for a service that was
+   switched off converts a clean degrade (ADR-045's null connector) into
+   connection-refused on every call.
+8. **Store packages stage via an api initContainer** into the workspace PVC the
+   chart already mounts, so `--apps`/bundles work on k8s. It runs before the api
+   container because auto-load registers a package's bots and surfaces once, at
+   boot; it is idempotent in compatible mode and **fatal** on failure — booting
+   without an app the operator asked for is precisely the silent-cap failure this
+   amendment exists to remove.
+
+Two security decisions came out of doing it properly rather than fast:
+**code-server is ClusterIP-only** (it runs `--auth none` over a read-write shared
+workspace; compose contains that by binding `127.0.0.1`, and the cluster
+equivalent is a port-forward — a NodePort default would have published an
+unauthenticated IDE with full workspace access), and **Vault ships dev-mode with
+no PVC**, so it cannot imply durability it does not have.
+
+Guard: [tests/unit/chart-infra-parity.spec.ts](../../tests/unit/chart-infra-parity.spec.ts)
+derives the shared-service set **from compose**, so a future profile-less infra
+service that nobody templates goes red. It was mutation-tested nine ways; the
+first version had two holes worth recording, both classic: `TSDB_URL` matched
+`TSDB_URL_DISABLED` (substring, not exact key), and deleting the entire tsdb
+workload still passed because a sibling template referenced the same values flag.
+A guard that cannot go red is not a guard.
+
 ## Consequences
 
 - A fresh machine goes from zero to a browser-ready swarm with two commands and
@@ -70,10 +115,11 @@ no NET_ADMIN).
   operator publishes the chart.
 - Compose remains the reference deployment; the generator + guard make the chart
   follow it instead of drifting (the counts rule, applied to a fleet).
-- Honest caps, tracked in BACKLOG: store-package staging (`--apps`/bundles) is
-  compose-only today; TimescaleDB/Arango/Vault/code-server are not chart-templated
-  (trading stays off k8s; graph degrades 503); the workspace PVC is RWO —
-  single-node clusters are the supported default, multi-node needs RWX.
+- Remaining caps, tracked in BACKLOG: the workspace PVC is RWO, so single-node
+  clusters are the supported default and multi-node needs an RWX StorageClass;
+  the in-cluster tier ships dev-parity credentials, single replicas, and no
+  backup story — fine for a single-box swarm, replaced by managed services and
+  Secrets for a shared tenant.
 - Template-level proof (helm lint + render matrix + real-tarball fallback fetch)
   ran on the dev box; a live cluster install was deliberately **not** run there —
   Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing.

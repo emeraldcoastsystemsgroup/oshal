@@ -79,11 +79,53 @@ per-bot registry overrides still win.
   contributor cluster — see [values-bot-pod.example.yaml](values-bot-pod.example.yaml).
   Bot-pod clusters never receive a DATABASE_URL (trust rule).
 
-## Not in the chart (yet)
+## Shared services
 
-TimescaleDB, ArangoDB, Vault, code-server, ollama, speaker-diarization — compose-only
-infra. Features degrade accordingly (graph 503s, trading stays on compose). See
-BACKLOG "k8s parity" entries before assuming otherwise.
+The chart runs the same service tier a default `docker compose up` does, each
+behind `infra.<name>.inCluster`:
+
+| values key | Service | Powers | Default |
+|---|---|---|---|
+| `infra.postgres` | `oshal-db` | tickets, agents, cost ledger | on |
+| `infra.redis` | `oshal-redis` | the swarm mesh | on |
+| `infra.chromadb` | `oshal-chromadb` | RAG + swarm memory | on |
+| `infra.tsdb` | `oshal-tsdb` | trading + world series (`TSDB_URL`) | on |
+| `infra.arangodb` | `oshal-arangodb` | graph tier, `/api/graph` (`ARANGO_URL`) | on |
+| `infra.vault` | `oshal-vault` | devops vault — **dev mode**, in-memory | on |
+| `infra.codeServer` | `code-server` | workspace IDE behind the cockpit's `/code` | on |
+| `infra.diarization` | `speaker-diarization` | local transcription (audio stays in-cluster) | on |
+| `infra.ollama` | `oshal-ollama` | local models (`OLLAMA_HOST`) | **off** (compose gates it behind `local-llm`) |
+
+Turning one off also withholds its URL env — that is the degradation switch, not
+an oversight: an unset `ARANGO_URL` makes the graph connector return `null` and
+`/api/graph` answer 503, which is the designed behavior. Point a feature at a
+managed service by setting `inCluster: false` and supplying the URL through
+`api.envSecret`.
+
+⚠ **code-server is ClusterIP-only.** It runs `--auth none` over a read-write
+shared workspace, so anyone who reaches it owns the workspace. Compose contains
+that by binding `127.0.0.1`; here, use
+`kubectl -n <ns> port-forward svc/code-server 8444:8080`. Do not expose it
+without putting authentication in front of it.
+
+⚠ **Vault is `server -dev`** (compose parity): in-memory, auto-unsealed, fixed
+root token, no PVC — it loses everything on restart. Real deployments set
+`infra.vault.inCluster: false` and point `VAULT_ADDR`/`VAULT_TOKEN` at a real
+Vault.
+
+## Store packages
+
+```bash
+--set packages={career-hunter,job-apply}
+```
+
+They stage into the workspace PVC via an initContainer **before** the api starts,
+because auto-load registers a package's bots and surfaces once, at boot. Re-runs
+skip already-staged packages (`store.auditMode: compatible`); `enforce`
+revalidates and replaces from the audited SHA. A failed stage fails the pod
+rather than booting without an app you asked for. Private stores need a token
+Secret — see `store.tokenSecret`. The installer passes `--apps`/bundles through
+automatically.
 
 ## Publishing (operator-triggered)
 
