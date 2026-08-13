@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Synced the legacy OpenAI Codex OAuth model selector patch to current upstream Cline model IDs
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added OpenAI Codex OAuth UI patch to replace API-key prompts with sign-in/sign-out controls and live auth status
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Model list refreshed for the codex fleet default: gpt-5.5 first (verified live on the ChatGPT login), gpt-5.4 as the $20-plan economy pick, gpt-5.6-sol marked interactive-only, stale 5.1/5.2 entries dropped, 5.3-codex labeled API-key-only
  */
 
 (function applyOpenAiCodexOauthPatch() {
@@ -15,12 +16,10 @@
   const OPENAI_CODEX_START_ENDPOINT = '/api/openai-codex/oauth/start';
   const OPENAI_CODEX_SIGNOUT_ENDPOINT = '/api/openai-codex/oauth/signout';
   const OPENAI_CODEX_MODELS = [
-    { id: 'gpt-5.4', name: 'GPT-5.4' },
-    { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
-    { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex' },
-    { id: 'gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max' },
-    { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini' },
-    { id: 'gpt-5.2', name: 'GPT-5.2' },
+    { id: 'gpt-5.5', name: 'GPT-5.5 (fleet default)' },
+    { id: 'gpt-5.4', name: 'GPT-5.4 (half the burn — $20-plan pick)' },
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol (frontier — interactive use, heavy limit burn)' },
+    { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex (API-key login only)' },
   ];
 
   const originalRenderProviderConfigFields = window.renderProviderConfigFields;

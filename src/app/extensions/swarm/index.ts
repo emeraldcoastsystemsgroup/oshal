@@ -59,6 +59,7 @@
  *   posting, owner, and target server-side instead of trusting asserted request fields.
  * 53 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable swarm-memory provenance and persisted prompt tool authorization into controller-local execution.
  * 54 | maintainer@emeraldcoastsystemsgroup.com   | Document default-on authoritative provider/model stamping and its fail-closed missing-database behavior at the composition seam.
+ * 55 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default: the boot-sync codexModel fallback gpt-5.3-codex -> gpt-5.5. 5.3-codex is the API-key model name and 400s on the ChatGPT-account login this deployment mounts, so the old fallback seeded the DB with a model no bot could actually run when CODEX_MODEL was unset.
  */
 
 import type { Pool } from 'pg';
@@ -357,7 +358,7 @@ export function createSwarmExtensionBindings(
   // every per-bot sync logged a self-healing ERROR. Fire-and-forget either way.
   if (agentProfileRepository) {
     const claudeCodeModel = process.env.CLAUDE_CODE_MODEL ?? 'claude-sonnet-4-6';
-    const codexModel = process.env.CODEX_MODEL ?? 'gpt-5.3-codex';
+    const codexModel = process.env.CODEX_MODEL ?? 'gpt-5.5';
     const defaultModel = process.env.FORCE_LLM_MODEL ?? process.env.LLM_MODEL ?? 'gpt-4.1';
     void waitForBootstrapComplete().then(() => runWithSystemIdentity(() => Promise.all(
       getActiveRegistry()

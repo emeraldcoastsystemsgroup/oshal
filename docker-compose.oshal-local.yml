@@ -17,6 +17,7 @@
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: forward the package-audit rollout posture to controller-owned registry installs and app updates.
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | Remove dead core Spaces surface binds after the app-store carve; the installed spaces package is the sole surface source.
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | Promote ADR-034 authoritative provider/model stamping on the controller by default while preserving an explicit OSHAL_PUSH_ON_DISPATCH=off rollback.
+# 13 | maintainer@emeraldcoastsystemsgroup.com   | Codex is the fleet default (operator directive 2026-08-12): FORCE_LLM_PROVIDER/LLM_PROVIDER default openai-codex, CODEX_MODEL default gpt-5.3-codex → gpt-5.5 (5.3-codex is API-key-only and 400s on the mounted ChatGPT login — the old default shipped broken for every ChatGPT-plan self-install), FORCE_LLM_MODEL/LLM_MODEL default gpt-5.5, and new CODEX_REASONING_EFFORT (default high) pins per-spawn effort so a host config.toml tuned for gpt-5.6-sol (ultra) can't 400 the fleet. Plan guidance: $200 Pro → gpt-5.5; $20 Plus → gpt-5.4 (half the burn); sol is interactive-only.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -96,12 +97,13 @@ x-bot-env: &bot-env
   # (cline-config-builder.ts). Points at the in-network container when the `local-llm`
   # profile is up; harmless otherwise (only used when a bot's provider is `ollama`).
   OLLAMA_HOST: ${OSHAL_OLLAMA_HOST:-http://oshal-ollama:11434}
-  # Default local runtime targets Claude Code (the provider that works out of the
-  # box via the mounted ~/.claude OAuth session). Codex CLI requires separate auth
-  # and is NOT a safe default. Per-bot harness overrides in the registry still
-  # take precedence; set FORCE_LLM_PROVIDER=noop for a zero-keys demo.
-  FORCE_LLM_PROVIDER: ${FORCE_LLM_PROVIDER:-claude-code}
-  FORCE_LLM_MODEL: ${FORCE_LLM_MODEL:-claude-sonnet-4-6}
+  # Default local runtime targets Codex (the swarm's default CLI/API/LLM — operator
+  # directive 2026-08-12) via the mounted ~/.codex ChatGPT login. Claude Code stays
+  # available as a per-bot registry override and as the runtime-failover secondary
+  # via the mounted ~/.claude session. Per-bot harness overrides in the registry
+  # still take precedence; set FORCE_LLM_PROVIDER=noop for a zero-keys demo.
+  FORCE_LLM_PROVIDER: ${FORCE_LLM_PROVIDER:-openai-codex}
+  FORCE_LLM_MODEL: ${FORCE_LLM_MODEL:-gpt-5.5}
   SHARED_WORKSPACE_ROOT: /app/workspace-shared
   CLINE_SHARED_WORKSPACE_ROOT: /app/workspace-shared
   CLINE_WORKSPACE_ROOT: /app/workspace-shared
@@ -158,13 +160,13 @@ x-bot-env: &bot-env
   SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
   LM_TEACHER_EMAILS: ${LM_TEACHER_EMAILS:-}
   # ── LLM Provider ──
-  # OpenAI Codex (local dev):
-  #   LLM_PROVIDER: openai-codex
-  #   LLM_MODEL: gpt-5.3-codex
-  # Default provider/model. claude-code works out of the box via mounted ~/.claude;
-  # override per deployment (openai-codex + gpt-5.3-codex, etc.).
-  LLM_PROVIDER: claude-code
-  LLM_MODEL: claude-sonnet-4-6
+  # Default provider/model: openai-codex via the mounted ~/.codex ChatGPT login
+  # (the swarm's default CLI/API/LLM — operator directive 2026-08-12). claude-code
+  # remains available via mounted ~/.claude as a per-bot override / failover:
+  #   LLM_PROVIDER: claude-code
+  #   LLM_MODEL: claude-sonnet-4-6
+  LLM_PROVIDER: openai-codex
+  LLM_MODEL: gpt-5.5
   # Provider-runtime fallback for CLI stalls, auth failures, throttles, and embedded
   # provider-error text. Explicit override wins; otherwise bot-node auto-picks a
   # configured secondary CLI provider unless OSHAL_PROVIDER_AUTO_FAILOVER=false.
@@ -209,10 +211,18 @@ x-bot-env: &bot-env
   # One live rotating credential source. The controller may promote an exact operator login only
   # to this explicit path; CLI runs rotate the same file through compare-and-swap write-back.
   CODEX_AUTH_SOURCE_PATH: /root/.codex/auth.json
-  # NOTE: gpt-5.3-codex is the API-key model name. A ChatGPT-account login
-  # (~/.codex/auth.json) does NOT support it — set CODEX_MODEL in .env to the
-  # model your plan exposes (this host's ~/.codex/config.toml uses gpt-5.5).
-  CODEX_MODEL: ${CODEX_MODEL:-gpt-5.3-codex}
+  # Fleet model floor: gpt-5.5 (verified live on the ChatGPT login 2026-08-12).
+  # Plan guidance — $200 Pro: gpt-5.5 (this deployment). $20 Plus: set
+  # CODEX_MODEL=gpt-5.4 in .env (half the per-token burn of 5.5; 5.5 exhausts a
+  # Plus plan's limits fast). gpt-5.6-sol is the interactive frontier model —
+  # never the fleet default (heaviest burn). gpt-5.3-codex is the API-key model
+  # name; a ChatGPT-account login does NOT support it.
+  CODEX_MODEL: ${CODEX_MODEL:-gpt-5.5}
+  # Pinned per spawn by both codex wrappers: the per-task codex home copies the
+  # HOST ~/.codex/config.toml, and a host-side model_reasoning_effort tuned for
+  # sol (ultra) is rejected with a 400 by gpt-5.5/gpt-5.4 (they accept
+  # none|low|medium|high|xhigh). $20 Plus installs may prefer medium.
+  CODEX_REASONING_EFFORT: ${CODEX_REASONING_EFFORT:-high}
   CODEX_SANDBOX_MODE: ${CODEX_SANDBOX_MODE:-danger-full-access}
   # Boot-storm guard: the ChatGPT-login refresh_token is single-use, so a burst of concurrent
   # codex spawns at boot (content-topics prewarm) can race it → "refresh token was already used".

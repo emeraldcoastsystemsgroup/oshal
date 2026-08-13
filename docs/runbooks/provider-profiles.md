@@ -2,12 +2,33 @@
 
 **Who this is for:** you hold a key from one vendor — xAI (Grok), Groq, DeepSeek, Mistral,
 Together, or a local Ollama box — and you want the swarm to run on it instead of the default
-Claude Code / Codex OAuth sessions.
+Codex OAuth session (Claude Code remains mounted as the per-bot override / failover).
 
 **Status:** the env path below is traced through the code and every referenced line is current.
 It has **not** been proven end-to-end by a completed ticket on a non-default provider — the same
 caveat [local-llm-profile.md](./local-llm-profile.md) carries for Ollama. Treat the "flip the fleet"
 section as a procedure to verify on your box, not a shipped profile.
+
+## The default: codex, sized to your ChatGPT plan
+
+The fleet default is **openai-codex on `gpt-5.5`** (operator directive 2026-08-12) via the
+bind-mounted `~/.codex` ChatGPT login. Codex plans meter by **plan limits, not per-token bills**,
+so the model choice decides how fast a plan burns. Pick by tier in `.env`:
+
+| ChatGPT plan | `CODEX_MODEL` | `CODEX_REASONING_EFFORT` | why |
+|---|---|---|---|
+| **Pro ($200/mo)** | `gpt-5.5` *(default)* | `high` *(default)* | The fleet floor. Verified live on a ChatGPT login. |
+| **Plus ($20/mo)** | `gpt-5.4` | `medium` | Half the per-token burn of 5.5 (API list: $2.50/$15 vs $5/$30 per M tokens) — 5.5 exhausts a Plus plan's weekly limits fast. |
+| any | `gpt-5.6-sol` | — | **Don't.** Frontier interactive model, heaviest burn — fine in your own terminal, never as a fleet default. |
+
+Two footguns, both enforced by `tests/unit/codex-default-floor.spec.ts`:
+
+- **`gpt-5.3-codex` is the API-key model name.** A ChatGPT-account login 400s on it — it must not
+  reappear as a default anywhere.
+- **Reasoning effort is pinned per spawn.** The per-task codex home copies the *host*
+  `~/.codex/config.toml`, and a host-side `model_reasoning_effort` tuned for sol (`ultra`) is
+  rejected with a 400 by gpt-5.5/gpt-5.4. Both codex wrappers therefore pass
+  `-c model_reasoning_effort=$CODEX_REASONING_EFFORT` (default `high`) on every spawn.
 
 ## The rule: a provider is not a harness
 

@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Verifier round 2 (parity with codex-auth-write-back.ts): _reseedFromSource requires a valid-shaped source that is provably NEWER (last_refresh) — after a failed write-back the source holds the dead chain and "differs" alone would erase the only live copy; non-ENOENT source read errors return 'failed' honestly instead of 'source-moved'; missing-source create is tmp+linkSync (atomic AND exclusive, no torn source on crash). The unscoped-request lease bypass is fixed in user-scoping.js (lease now unconditional, TS parity).
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: default-deny unbrokered autonomous CLI execution before copying OAuth material or spawning danger-full-access Codex.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: isolate the live Codex availability probe from ambient process credentials.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Pin `-c model_reasoning_effort` on every spawn (CODEX_REASONING_EFFORT, default high). _ensureHome copies the HOST config.toml into the per-workspace home, so a host-side effort tuned for an interactive frontier model (ultra → gpt-5.6-sol-only) rode into fleet runs and 400'd every fresh workspace on gpt-5.5/gpt-5.4 — verified live. Pinning makes the fleet effort deterministic regardless of host config drift.
  */
 
 'use strict';
@@ -66,7 +67,7 @@ function mergeDiagnostics(stderr, eventDiagnostics) {
  */
 class CodexCLIWrapper {
   /**
-   * @param {{codexCommand?: string, timeoutMs?: number, model?: string, sandboxMode?: string, authSourcePath?: string, spawnImpl?: Function}} options
+   * @param {{codexCommand?: string, timeoutMs?: number, model?: string, reasoningEffort?: string, sandboxMode?: string, authSourcePath?: string, spawnImpl?: Function}} options
    */
   constructor(options = {}) {
     this.codexCommand = options.codexCommand || process.env.CODEX_CLI_PATH || 'codex';
@@ -75,6 +76,10 @@ class CodexCLIWrapper {
     // Runaway backstop: absolute wall-clock cap for a run that never goes idle.
     this.maxDurationMs = parseInt(process.env.CODEX_MAX_DURATION_MS || '7200000', 10);
     this.model = options.model || process.env.CODEX_MODEL || 'gpt-5.5';
+    // Pinned per spawn: _ensureHome copies the HOST config.toml, whose model_reasoning_effort
+    // may be legal only for the host's interactive model (ultra → sol) and 400s the fleet
+    // models (gpt-5.5/gpt-5.4 accept none|low|medium|high|xhigh).
+    this.reasoningEffort = options.reasoningEffort || (process.env.CODEX_REASONING_EFFORT || '').trim() || 'high';
     this.sandboxMode = options.sandboxMode || process.env.CODEX_SANDBOX_MODE || 'danger-full-access';
     // Host OAuth source. We copy it into a writable per-workspace home for the run (codex's
     // app-server needs write access), and CAS-write a token rotation back here afterwards —
@@ -276,7 +281,7 @@ class CodexCLIWrapper {
    * @description Runs `codex exec` over a task description in a workspace.
    * @param {string} taskDescription - prompt (piped via stdin to avoid E2BIG)
    * @param {string} workspaceDir - working directory
-   * @param {{model?: string, sandboxMode?: string, timeout?: number}} [options]
+   * @param {{model?: string, reasoningEffort?: string, sandboxMode?: string, timeout?: number}} [options]
    * @returns {Promise<{success: boolean, text: string, result: string, providerRecords: object[], costUSD: number, usage: object, durationMs: number, exitCode: number, stderr: string}>}
    */
   async executeTask(taskDescription, workspaceDir, options = {}) {
@@ -288,7 +293,8 @@ class CodexCLIWrapper {
     const codexHome = this._ensureHome(workspaceDir);
     const home = path.dirname(codexHome); // {workspace}/.codex-home
 
-    const args = ['exec', '--json', '--skip-git-repo-check', '-s', sandbox, '-m', model, '-C', workspaceDir];
+    const args = ['exec', '--json', '--skip-git-repo-check', '-s', sandbox, '-m', model,
+      '-c', `model_reasoning_effort=${options.reasoningEffort || this.reasoningEffort}`, '-C', workspaceDir];
     const start = Date.now();
     const userScope = await acquireUserScoping(workspaceDir, options.extraEnv);
     const scopeEnv = userScope.env;
