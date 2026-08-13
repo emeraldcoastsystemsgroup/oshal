@@ -120,15 +120,16 @@ if [ -z "$MODE" ]; then
     echo "   3) Install a leaf-node bot (join an existing swarm from this computer)"
     echo "   4) Install the swarm on Kubernetes — no source code (helm + registry images)"
     printf '   choose [1]: '; read -r MODE; MODE="${MODE:-1}"
-    if [ "$MODE" = "1" ] || [ "$MODE" = "2" ]; then
+    # Same bundle vocabulary on every substrate — docker and k8s install the same
+    # kernel + curated app sets; only the mechanism differs (compose services vs
+    # chart fleet + staged packages).
+    if [ "$MODE" != "3" ]; then
       printf '   bundle (kernel/full/little-monsters/gaming/jobs) [%s]: ' "$BUNDLE"; read -r b; BUNDLE="${b:-$BUNDLE}"
+      [ -n "${BUNDLE_PACKAGES[$BUNDLE]+x}" ] || { echo "unknown bundle: $BUNDLE"; exit 2; }
       # This is the LOGIN, not just an admin flag: MOCK_OIDC has no sign-in page, so whatever
       # lands here is who the swarm thinks you are. Blank = the shared demo identity.
       printf '   your email — becomes your local login AND the superadmin (blank = decide later): '; read -r ADMIN_EMAIL || true
       for p in ${BUNDLE_PACKAGES[$BUNDLE]:-}; do PKG_SET[$p]=1; done
-    elif [ "$MODE" = "4" ]; then
-      printf '   fleet (kernel = the core bots / full = every k8s-eligible bot) [kernel]: '; read -r b; BUNDLE="${b:-kernel}"
-      printf '   your email — becomes your local login AND the superadmin (blank = decide later): '; read -r ADMIN_EMAIL || true
     fi
   else
     MODE=1
@@ -139,7 +140,7 @@ fi
 # ("1 1: invalid variable name") — caught live by the first stranger-path dry-run. Two steps.
 pkg_list="${!PKG_SET[*]}"
 PLAN="mode=$MODE bundle=$BUNDLE packages=[${pkg_list:-none}] audit=$PACKAGE_AUDIT_MODE dir=$DIR tag=$TAG"
-[ "$MODE" = "4" ] && PLAN="mode=4 (kubernetes) namespace=$K8S_NAMESPACE context=${K8S_CONTEXT:-current} nodeport=$K8S_NODEPORT tag=$TAG chart=${K8S_CHART:-oci-then-repo}"
+[ "$MODE" = "4" ] && PLAN="mode=4 (kubernetes) bundle=$BUNDLE packages=[${pkg_list:-none}] namespace=$K8S_NAMESPACE context=${K8S_CONTEXT:-current} nodeport=$K8S_NODEPORT tag=$TAG chart=${K8S_CHART:-oci-then-repo}"
 if [ "$DRY" -eq 1 ]; then say "DRY RUN — $PLAN"; exit 0; fi
 
 # Stable local identity derived from the email, so a reinstall against the same workspace
@@ -224,15 +225,15 @@ if [ "$MODE" = "4" ]; then
     CHART_SRC="$DIR/chart-src"
   fi
 
-  # kernel|full map to the chart's generated fleet presets; the app-store bundles
-  # are compose-only today (staging needs the workspace volume) — say so, honestly.
+  # kernel|full map to the chart's generated fleet presets. An app bundle keeps
+  # its packages (staged by the chart's initContainer) and brings the fleet its
+  # bots need — a bundle whose bots never start is an app that cannot run.
   FLEET="kernel"
-  if [ "$BUNDLE_EXPLICIT" -eq 1 ] || [ -t 0 ]; then
-    case "$BUNDLE" in
-      kernel|full) FLEET="$BUNDLE" ;;
-      *) note "bundle '$BUNDLE' is compose-only (store staging) — installing the kernel fleet; add apps later from the cockpit (Explore Apps)" ;;
-    esac
-  fi
+  case "$BUNDLE" in
+    kernel) FLEET="kernel" ;;
+    full)   FLEET="full" ;;
+    *)      FLEET="full"; note "bundle '$BUNDLE' needs bots beyond the kernel — installing the full fleet with its packages" ;;
+  esac
 
   HELM_SET=(
     --set-string "image.repository=${REGISTRY}/oshal-bot"
@@ -240,7 +241,27 @@ if [ "$MODE" = "4" ]; then
     --set "api.service.type=NodePort"
     --set "api.service.nodePort=$K8S_NODEPORT"
     --set-string "fleet=$FLEET"
+    --set-string "store.auditMode=$PACKAGE_AUDIT_MODE"
   )
+  # Store packages: the chart stages these into the workspace PVC before the api
+  # boots (auto-load registers each package's bots and surfaces once, at boot).
+  # Same deduped set as the compose path — helm list syntax, hence the braces.
+  if [ "${#PKG_SET[@]}" -gt 0 ]; then
+    k8s_pkgs=""
+    for p in "${!PKG_SET[@]}"; do k8s_pkgs="${k8s_pkgs:+$k8s_pkgs,}$p"; done
+    HELM_SET+=(--set "packages={$k8s_pkgs}")
+    note "packages to stage: $k8s_pkgs"
+    if [ -n "${OSHAL_STORE_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+      # Private store repos only. Created/updated idempotently; the chart reads it
+      # optionally, so a public-only install never needs it.
+      "${KC[@]}" create namespace "$K8S_NAMESPACE" >/dev/null 2>&1 || true
+      "${KC[@]}" -n "$K8S_NAMESPACE" create secret generic oshal-store \
+        --from-literal="OSHAL_STORE_TOKEN=${OSHAL_STORE_TOKEN:-$GITHUB_TOKEN}" \
+        --dry-run=client -o yaml | "${KC[@]}" apply -f - >/dev/null
+      HELM_SET+=(--set-string "store.tokenSecret=oshal-store")
+      note "private-store token wired (Secret oshal-store)"
+    fi
+  fi
   if [ -n "$ADMIN_EMAIL" ]; then
     HELM_SET+=(
       --set-string "api.extraEnv.MOCK_OIDC_EMAIL=$ADMIN_EMAIL"
@@ -310,7 +331,8 @@ if [ "$MODE" = "4" ]; then
     note "   keys for the whole fleet can also live in an oshal-bot-env Secret, see the chart README.)"
     note "2. Connect your accounts (optional) — each one is its own consent."
   fi
-  note "Store apps: cockpit -> Explore Apps (the --apps flag is compose-only today)."
+  note "More apps any time: cockpit -> Explore Apps, or re-run with --apps name1,name2"
+  note "(helm upgrades in place; the chart stages new packages before the api restarts)."
   note "Uninstall: helm ${HELM_CTX[*]:-} uninstall oshal -n $K8S_NAMESPACE && kubectl delete ns $K8S_NAMESPACE"
   exit 0
 fi
