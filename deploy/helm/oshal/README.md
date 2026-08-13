@@ -113,6 +113,33 @@ root token, no PVC — it loses everything on restart. Real deployments set
 `infra.vault.inCluster: false` and point `VAULT_ADDR`/`VAULT_TOKEN` at a real
 Vault.
 
+## Dynamic bots — apps bring their own
+
+An installed app can declare a bot that needs its own node. Under compose the
+controller writes a compose overlay and starts the container; on a cluster it
+creates a **Deployment + Service in this namespace**, using the same shape as a
+chart-declared bot (bot entrypoint, `oshal-shared-env` + `oshal-bot-env`, the
+workspace PVC, and a Service named for the bot because that name *is* the DNS the
+controller dials). Those runtimes are labelled `oshal.io/dynamic: "true"`, so
+`helm upgrade` never adopts or deletes them.
+
+That needs the `rbac:` block — a ServiceAccount plus a **namespace-scoped Role**
+(never a ClusterRole) over Deployments/Services. Set `rbac.botLauncher: false` to
+withhold it; the controller then degrades to persona-only agents (a failed launch
+rolls the creation back rather than half-creating one), and apps whose bots run
+*inline on the api* keep working either way.
+
+The launched image is always the chart's `image.repository:tag`, passed to the
+controller as `OSHAL_BOT_IMAGE` — **never caller-supplied**, because "create an
+agent" must not become "run an arbitrary container in my namespace".
+
+Validate the exact manifest the launcher would POST against your cluster's API
+(creates nothing):
+
+```bash
+npx tsx scripts/validate-dynamic-bot-manifest.mjs --namespace oshal
+```
+
 ## Store packages
 
 ```bash

@@ -341,6 +341,20 @@ fleets:
       capabilities: "gcp-inventory,gcp-projects,gcp-compute,gcp-enabled-apis,gcp-cost-optimization,gcp-health-audit,gcp-iam-audit"
 # END GENERATED FLEET
 
+# ── RBAC: dynamic bot runtimes ────────────────────────────────────────────────
+# An installed app can declare a bot that needs its own node. Under compose the
+# controller writes a compose overlay and starts the container; the cluster
+# equivalent is creating a Deployment + Service in THIS namespace, which needs a
+# ServiceAccount with a namespace-scoped Role.
+#
+# botLauncher: false withholds that permission — the controller then degrades to
+# persona-only agents (a create-and-start rolls back rather than half-launching),
+# and apps whose bots run inline on the api still work.
+rbac:
+  create: true
+  serviceAccountName: oshal-api
+  botLauncher: true
+
 # ── Store packages ────────────────────────────────────────────────────────────
 # Packages to stage into the shared workspace before the api boots (the api's
 # auto-load registers each package's bots and surfaces once, at boot). Same

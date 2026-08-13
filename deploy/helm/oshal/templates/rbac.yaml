@@ -1,0 +1,50 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment 2) — the ServiceAccount + namespace-scoped Role that lets the controller launch a bot RUNTIME on demand, so an installed app's bots come up with the app instead of requiring a values edit and a redeploy. Deliberately a Role, never a ClusterRole: the blast radius is this tenant's own namespace. Verbs cover only what the launcher does (Deployments + Services it created), and the image it launches is the platform image from env — never caller-supplied — because "create an agent" must not become "run an arbitrary container". Set rbac.botLauncher=false to withhold the permission entirely; the controller then degrades to persona-only agents (creation rolls back rather than half-launching).
+{{- if and (eq .Values.role "main") .Values.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.rbac.serviceAccountName }}
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+{{- if .Values.rbac.botLauncher }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oshal-bot-launcher
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+rules:
+  # Dynamic bot runtimes: an app package or the Bot Forge contributing a bot that
+  # needs its own node. Namespace-scoped; no access to secrets, nodes, or RBAC.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Read-only: the cockpit reports whether a bot's pod is actually running.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oshal-bot-launcher
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oshal-bot-launcher
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.rbac.serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

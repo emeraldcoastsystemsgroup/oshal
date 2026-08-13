@@ -108,6 +108,61 @@ first version had two holes worth recording, both classic: `TSDB_URL` matched
 workload still passed because a sibling template referenced the same values flag.
 A guard that cannot go red is not a guard.
 
+## Amendment 2 (2026-08-13): apps bring their bots, on any substrate
+
+Amendment 1 made an installed app's *files* arrive on a cluster. It did not make
+its *bots* run, and the operator named the consequence: that defeats the purpose
+of the app model. The gap was not in the chart — it was in the platform.
+
+`AgentFactoryService.deployWithContainer` / `createAndStartAgent` — the path an
+app package, the Bot Forge, and the cockpit's create-and-start all use — was
+hard-wired to Docker: `DynamicComposeService` writes a compose overlay and
+`BotContainerSpawnerService` shells `docker compose up -d`. Inside a pod there is
+no compose file and no docker socket, so on Kubernetes the launch could only fail
+and roll the creation back. Suggesting operators pre-list an app's bot in Helm
+values (or install the whole fleet) was a static workaround for a dynamic model.
+
+9. **Bot launching gets a substrate seam.** `BotRuntimeLauncher` is what the
+   factory talks to. `ComposeBotRuntimeLauncher` preserves the existing behavior
+   exactly (overlay, then `up -d`); `KubernetesBotRuntimeLauncher` creates a
+   Deployment + Service in the controller's own namespace via the in-cluster
+   ServiceAccount — raw HTTPS against the API, because the surface is three verbs
+   on two resource types and a client library is a large dependency for that. The
+   workload it renders is the chart's bot shape, so a dynamically-launched bot and
+   a chart-declared one are indistinguishable at runtime; it is labelled
+   `oshal.io/dynamic` so Helm never adopts or deletes it. Substrate is detected
+   from `KUBERNETES_SERVICE_HOST` (kubelet-injected), not a config flag someone
+   can set wrong.
+
+Security decisions, because this is the controller creating workloads:
+
+- **The image is always the platform image** from `OSHAL_BOT_IMAGE`, never
+  caller-supplied. `BotLaunchSpec` has no image field at all — otherwise "create
+  an agent" becomes "run an arbitrary container in my namespace", which given the
+  known injection surface is not theoretical.
+- **RBAC is a namespace-scoped Role**, never a ClusterRole: Deployments and
+  Services in the tenant's own namespace, plus read-only pods for status. No
+  secrets, no nodes, no RBAC objects. `rbac.botLauncher: false` withholds it and
+  degrades to persona-only agents.
+- **Names are DNS-1123-validated** before they reach an API path.
+
+Proof beyond assertions: `scripts/validate-dynamic-bot-manifest.mjs` renders the
+exact manifest the launcher POSTs and pushes it through
+`kubectl apply --dry-run=server`, so the **real API server** admits it (creating
+nothing) rather than a mock agreeing with itself — the real-boundary rule. Run
+2026-08-13 against a live cluster: both objects admitted.
+
+The refactor also exposed a live defect in the *compose* path, caught by the
+existing create-and-start guard: rollback awaited `stopBot(...).catch()`, so a
+spawner whose stop threw skipped the overlay cleanup entirely and left a dynamic
+compose entry behind for a deleted agent — on the rollback path, where the
+container usually does not exist, which is exactly when it fires. Fixed, with a
+regression case.
+
+Out of scope, logged in BACKLOG rather than half-done: the cockpit's
+enable/disable **toggle** (`agent-status-routes`) still constructs the compose
+pair directly, so on k8s that toggle is inert.
+
 ## Consequences
 
 - A fresh machine goes from zero to a browser-ready swarm with two commands and

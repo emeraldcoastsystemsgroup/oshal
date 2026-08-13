@@ -39,6 +39,9 @@ spec:
         app.kubernetes.io/name: oshal-api
         {{- include "oshal.labels" . | nindent 8 }}
     spec:
+      {{- if .Values.rbac.create }}
+      serviceAccountName: {{ .Values.rbac.serviceAccountName }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -147,6 +150,21 @@ spec:
               value: postgresql://oshal_app:oshal-app-dev@oshal-db:5432/{{ .Values.infra.postgres.database }}
             - name: BOOTSTRAP_DATABASE_URL
               value: postgresql://{{ .Values.infra.postgres.user }}:{{ .Values.infra.postgres.password }}@oshal-db:5432/{{ .Values.infra.postgres.database }}
+            {{- end }}
+            {{- if .Values.rbac.botLauncher }}
+            # What the dynamic bot launcher renders into a Deployment. The image is
+            # taken from HERE, never from a caller — agent creation must not become
+            # arbitrary container execution.
+            - name: OSHAL_BOT_IMAGE
+              value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+            - name: OSHAL_IMAGE_PULL_POLICY
+              value: {{ .Values.image.pullPolicy }}
+            {{- if .Values.infra.postgres.inCluster }}
+            # K5: dynamically-launched bots get the same least-privilege DSN as
+            # chart-declared ones.
+            - name: BOT_DATABASE_URL
+              value: {{ .Values.swarm.botDatabaseUrl | default (printf "postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/%s" .Values.infra.postgres.database) | quote }}
+            {{- end }}
             {{- end }}
             {{- if .Values.infra.tsdb.inCluster }}
             # Trading + world-intelligence series store (compose api-env parity).

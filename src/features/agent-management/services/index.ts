@@ -114,6 +114,21 @@ export {
   type DynamicComposeOperationResult,
 } from './dynamic-compose-service';
 export {
+  ComposeBotRuntimeLauncher,
+  isRunningInKubernetes,
+  BOT_NAME_PATTERN,
+  type BotRuntimeLauncher,
+  type BotRuntimeKind,
+  type BotLaunchSpec,
+  type BotLaunchResult,
+} from './bot-runtime-launcher';
+export {
+  KubernetesBotRuntimeLauncher,
+  buildBotDeployment,
+  buildBotService,
+  readClusterAccess,
+} from './kubernetes-bot-launcher';
+export {
   StartupConfigValidator,
   type AgentConfigValidationResult,
   type StartupConfigReport,
