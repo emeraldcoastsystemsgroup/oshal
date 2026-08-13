@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Routed the cockpit header Presentron action into the embedded shared studio so cockpit no longer owns a separate presentation modal
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Aligned cockpit header RAG and Presentron handlers so both reveal the right rail before opening shared workspaces
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Persisted header quick settings, clarified the gear action as Quick Settings, and hardened header history/theme feedback flows
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | The right-rail chat panel starts collapsed on every viewport (operator directive 2026-08-13). Desktop auto-opened whenever restoreSession() found a live task, so a days-old thread reopened the rail on each load and covered the surface the operator navigated to; Jarvis and the app-embedded concierges are the paths in normal use. Explicit chat actions still open it, so nothing became unreachable.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Apply the focused app's declarative global-assistant visibility policy independent of script load order.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Added cockpit workspace-focus mode so header RAG and Presentron launches can expand the embedded bot workspace instead of using the cramped default rail width
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Added a persistent workspace-focus width toggle so operators can widen heavy tool surfaces on demand
@@ -176,11 +177,13 @@ class CockpitApp {
       await this.chatPanel.restoreSession();
     }
     this.initResizeHandle();
-    // The right-rail chat panel starts COLLAPSED on phones — it is a full-screen sheet there, so a
-    // background-created task must not cover the primary surface before the user taps Agents.
-    // Desktop retains the live-task auto-open behavior and every explicit chat action still opens it.
-    const isPhoneViewport = window.matchMedia('(max-width: 640px)').matches;
-    this.toggleChatPanel(!isPhoneViewport && Boolean(this.chatPanel.currentTaskId));
+    // The right-rail chat panel starts COLLAPSED everywhere (operator directive 2026-08-13).
+    // Desktop used to auto-open whenever restoreSession() found a live task, so a thread from
+    // days ago reopened the rail on every load and covered the surface the operator actually
+    // came for — Jarvis and the app-embedded concierges are the paths in normal use. Every
+    // explicit chat action (a bot card, an Agents tap, openWorkspaceAction) still opens it, so
+    // nothing becomes unreachable; only the unrequested auto-open is gone.
+    this.toggleChatPanel(false);
   }
 
   /**

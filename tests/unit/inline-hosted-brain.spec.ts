@@ -8,7 +8,7 @@
 
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ByoHostedProvider } from '../../src/features/llm-provider/services/byo-hosted-provider';
 import { isUnbrokeredAutonomousProvider } from '../../src/features/llm-provider/services/unattended-provider-policy';
 import {
@@ -365,8 +365,73 @@ describe('shared resolve-condition helper — one condition for both chat entry 
   it('an unknown agent or an empty registry answers "no override" instead of breaking the turn', () => {
     // Loader failures resolve to [] inside defaultLoadSwarmRegistry; the predicate itself is
     // pure over the entries, so an empty registry is the unavailable-registry contract.
-    expect(agentRequiresHostedBrain('cli-bot', [])).toBe(false);
-    expect(agentRequiresHostedBrain('not-in-registry', REGISTRY)).toBe(false);
+    // BOT_NAME is cleared explicitly: with a name set, an unknown agent legitimately inherits
+    // that entry (the case below) — this row is the no-fallback-available contract.
+    const priorBotName = process.env.BOT_NAME;
+    const priorAgentId = process.env.AGENT_ID;
+    delete process.env.BOT_NAME;
+    delete process.env.AGENT_ID;
+    try {
+      expect(agentRequiresHostedBrain('cli-bot', [])).toBe(false);
+      expect(agentRequiresHostedBrain('not-in-registry', REGISTRY)).toBe(false);
+    } finally {
+      if (priorBotName === undefined) delete process.env.BOT_NAME; else process.env.BOT_NAME = priorBotName;
+      if (priorAgentId === undefined) delete process.env.AGENT_ID; else process.env.AGENT_ID = priorAgentId;
+    }
+  });
+
+  describe('the BOT_NAME fallback — the guard must see the harness the EXECUTOR will use', () => {
+    // Live 2026-08-13: provider-runtime's resolveHarnessForAgent falls back to the entry named
+    // by process BOT_NAME when the agentId is absent from the registry. The controller runs
+    // BOT_NAME=project-manager (harness codex-cli), so 84 of 116 active agent rows EXECUTED on
+    // a CLI harness while this predicate said "not a CLI bot" — the ladder never ran and the raw
+    // SEC-05 refusal reached the user (reproduced on email-bot a695dd5f-…). These rows fail if
+    // resolveGoverningEntry loses the fallback.
+    const NAMED_REGISTRY = [
+      { agentId: 'cli-bot', name: 'cli-bot', harnessType: 'claude-code' },
+      { agentId: 'hosted-bot', name: 'hosted-bot', harnessType: 'a2a' },
+      { agentId: 'pm-uuid', name: 'project-manager', harnessType: 'codex-cli' },
+    ];
+    const priorBotName = process.env.BOT_NAME;
+    const priorAgentId = process.env.AGENT_ID;
+
+    afterEach(() => {
+      if (priorBotName === undefined) delete process.env.BOT_NAME; else process.env.BOT_NAME = priorBotName;
+      if (priorAgentId === undefined) delete process.env.AGENT_ID; else process.env.AGENT_ID = priorAgentId;
+    });
+
+    it('a registry-orphaned agent inherits the BOT_NAME entry, so a CLI harness NEEDS a brain', () => {
+      process.env.BOT_NAME = 'project-manager';
+      delete process.env.AGENT_ID;
+      expect(agentRequiresHostedBrain('a695dd5f-orphan-row', NAMED_REGISTRY)).toBe(true);
+    });
+
+    it('the fallback resolves the harness — a hosted BOT_NAME entry still yields no override', () => {
+      process.env.BOT_NAME = 'hosted-bot';
+      delete process.env.AGENT_ID;
+      expect(agentRequiresHostedBrain('a695dd5f-orphan-row', NAMED_REGISTRY)).toBe(false);
+    });
+
+    it('an explicit agentId match always wins over the BOT_NAME entry', () => {
+      // hosted-bot is in the registry on its own terms; the codex-cli BOT_NAME must not
+      // promote it into needing a brain.
+      process.env.BOT_NAME = 'project-manager';
+      delete process.env.AGENT_ID;
+      expect(agentRequiresHostedBrain('hosted-bot', NAMED_REGISTRY)).toBe(false);
+      expect(agentRequiresHostedBrain('cli-bot', NAMED_REGISTRY)).toBe(true);
+    });
+
+    it('AGENT_ID stands in for an unset BOT_NAME, exactly as the executor reads it', () => {
+      delete process.env.BOT_NAME;
+      process.env.AGENT_ID = 'project-manager';
+      expect(agentRequiresHostedBrain('a695dd5f-orphan-row', NAMED_REGISTRY)).toBe(true);
+    });
+
+    it('a BOT_NAME naming nothing in the registry leaves the turn unchanged', () => {
+      process.env.BOT_NAME = 'no-such-bot';
+      delete process.env.AGENT_ID;
+      expect(agentRequiresHostedBrain('a695dd5f-orphan-row', NAMED_REGISTRY)).toBe(false);
+    });
   });
 
   it('the predicate matches exactly the unbrokered CLI set the SEC-05 policy refuses', () => {

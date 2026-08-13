@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Close the failover's blind spot (live 2026-08-11: the 429 STILL became the answer): the agentic loop catches provider errors internally (task-orchestrator handleError) and RESOLVES with { success:false, error } — so the route-level catch entry 7 added never fired on exactly the live path. swallowedTurnFailure detects the failure-shaped RESULT and both entry points feed it through the SAME retryHostedBrainTurn; retryability still belongs to reportResolvedLlmFailure's pattern gate, so genuine content failures stay failures. Cost: a replayed turn re-appends the user message to the thread (cosmetic duplicate) — accepted over shipping a provider's quota wall as the assistant's reply.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Diagnosability: every declined retry in retryHostedBrainTurn now logs its reason (not-a-wall / ladder-empty / same-lane). The same-lane branch declining SILENTLY in 7ms is what hid the probe-passes-on-a-quota-trickle trap (fixed in free-tier-rotation seq 10) behind a mystery.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | ADR-127 REMOTE brain (stampRemoteBrain): a dedicated-node dispatch for a CLI-harness bot now carries the caller's resolved brain — the FULL ladder including the demo-CLI carve, so the operator's turns ride the mounted login stamped as the ADR-034 authoritative provider and guests ride a hosted lane as byoLlmConnection. Before this, only jarvis-orchestrator stamped its own dispatches; every other node route dispatched brainless and the node's static default governed regardless of who was calling.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | One harness resolution for guard AND executor (live 2026-08-13, career.oshal.ai swarmbot popup): agentRequiresHostedBrain matched the registry by agentId ONLY, but provider-runtime's resolveHarnessForAgent ALSO falls back to the entry named by process BOT_NAME. The controller runs BOT_NAME=project-manager (harness codex-cli), so every agent absent from the registry — 84 of 116 active rows on the operator box — was EXECUTED through a CLI harness while this guard answered "not a CLI bot", skipped the ladder, and let assertAuditedAutonomousHarness hand the user its raw SEC-05 text (reproduced on email-bot a695dd5f-…). resolveGoverningEntry now mirrors the executor's two-step lookup, so both entry points resolve a brain for exactly the agents that will need one. The refusal itself, demoOperatorCliUnlock, and the node path are untouched — this closes a guard gap, it does not widen what may execute.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -55,6 +56,9 @@ export class NoHostedBrainError extends Error {
 export interface RegistryHarnessFacts {
   agentId?: string;
   harnessType?: string;
+  /** Registry bot name — the key the process `BOT_NAME` fallback matches on. See
+   *  {@link resolveGoverningEntry}; provider-runtime's executor reads the same field. */
+  name?: string;
 }
 
 /**
@@ -95,19 +99,45 @@ async function defaultLoadSwarmRegistry(): Promise<ReadonlyArray<RegistryHarness
 }
 
 /**
- * @description Whether this agent's registry harness is one the controller refuses to run
- * unattended (the unbrokered CLI set) — i.e. whether a controller-side turn for it NEEDS a
- * hosted brain. Pure over the supplied entries so both entry points and the guard specs share
- * one condition with no hidden loader state.
+ * @description Resolves the registry entry that will ACTUALLY govern this agent's execution —
+ * the same two-step provider-runtime's `resolveHarnessForAgent` uses: match the explicit
+ * registry agentId, else fall back to the entry named by the process `BOT_NAME`/`AGENT_ID`.
+ *
+ * The fallback is not optional detail. The controller runs with `BOT_NAME=project-manager`
+ * (harness `codex-cli`), so every agent absent from the registry — 84 of 116 active rows on
+ * the 2026-08-13 operator box — is executed through project-manager's CLI harness. Resolving
+ * the brain off `agentId` alone made this function answer "no CLI harness here" for exactly
+ * those agents, so the ladder never ran and `assertAuditedAutonomousHarness` threw its raw
+ * SEC-05 text at the user (reproduced live on email-bot a695dd5f-…). One resolution, used by
+ * both the executor and this guard, is what keeps them from disagreeing again.
  * @param agentId - The target bot's agent UUID.
  * @param registry - The active registry entries to consult.
- * @returns True when the bot's declared harness is an unbrokered autonomous CLI.
+ * @returns The governing entry, or undefined when neither lookup matches.
+ */
+function resolveGoverningEntry(
+  agentId: string,
+  registry: ReadonlyArray<RegistryHarnessFacts>,
+): RegistryHarnessFacts | undefined {
+  const botName = process.env.BOT_NAME?.trim() || process.env.AGENT_ID?.trim();
+  return registry.find((bot) => bot.agentId === agentId)
+    ?? (botName ? registry.find((bot) => bot.name === botName) : undefined);
+}
+
+/**
+ * @description Whether the harness that will actually run this agent is one the controller
+ * refuses to run unattended (the unbrokered CLI set) — i.e. whether a controller-side turn for
+ * it NEEDS a hosted brain. Pure over the supplied entries (plus the same `BOT_NAME` env the
+ * executor reads) so both entry points and the guard specs share one condition with no hidden
+ * loader state.
+ * @param agentId - The target bot's agent UUID.
+ * @param registry - The active registry entries to consult.
+ * @returns True when the governing harness is an unbrokered autonomous CLI.
  */
 export function agentRequiresHostedBrain(
   agentId: string,
   registry: ReadonlyArray<RegistryHarnessFacts>,
 ): boolean {
-  const entry = registry.find((bot) => bot.agentId === agentId);
+  const entry = resolveGoverningEntry(agentId, registry);
   return Boolean(entry?.harnessType && isUnbrokeredAutonomousProvider(entry.harnessType));
 }
 
