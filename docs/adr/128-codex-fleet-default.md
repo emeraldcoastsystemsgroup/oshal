@@ -42,6 +42,7 @@ least gpt-5.5; cheaper tiers get a documented recommendation rather than a diffe
    amending ADR-127's rung 2 (order only — both carve conditions and every other rung are
    untouched). Claude Code stays mounted and is the second rung plus the runtime-failover
    secondary, so a codex blip degrades instead of dead-ending.
+   **→ Superseded by Amendment 1 (2026-08-13): codex is the ONLY default rung.**
 3. **Model floor gpt-5.5, chosen by plan tier, never hardcoded below the floor.** Compose
    defaults: `FORCE_LLM_PROVIDER=openai-codex`, `CODEX_MODEL=gpt-5.5`, `LLM_PROVIDER/LLM_MODEL`
    to match; the boot-sync and adapter fallbacks likewise. `gpt-5.3-codex` may not reappear as a
@@ -73,3 +74,57 @@ least gpt-5.5; cheaper tiers get a documented recommendation rather than a diffe
 - Reopening this decision means editing the guard spec knowingly — a red
   `codex-default-floor.spec.ts` is the signal that someone moved the fleet default without an
   ADR, not a test to appease.
+
+---
+
+## Amendment 1 — codex is the only default rung (2026-08-13)
+
+Status: Accepted — operator directive 2026-08-13. Amends Decision #2.
+
+**Context.** Decision #2 kept Claude Code as the second rung and the runtime-failover secondary,
+on the reasoning that "a codex blip degrades instead of dead-ending." The operator is cancelling
+the Claude Code subscription. A ladder that silently degrades onto an account that is going away
+does not buy resilience — it converts a codex outage into either a billing surprise or a bot that
+works today and dies on renewal day, and it does so *invisibly*, because a successful fallback
+logs like a success.
+
+The 2026-08-13 sweep also found the claude-code default was wider than Decision #2 described.
+Seven sites still defaulted there, and none were listed in the original ADR:
+
+| site | was | now |
+|---|---|---|
+| `DEMO_CLI_ORDER` | `['openai-codex', 'claude-code']` | `['openai-codex']` |
+| `resolveRuntimeProviderName()` env fallback | `'claude-code'` | `'openai-codex'` |
+| `manifestBotDefinition` harness/apiType default | `'claude-code'` | `'codex-cli'` / `'openai-codex'` |
+| `cline-runtime-config-sync` `DEFAULT_PROVIDER` | `'claude-code'` | `'openai-codex'` |
+| bot-node unforced provider order | cline → claude → codex | codex → cline → claude |
+| bot-node auto-failover from codex | `['claude-code', 'cline-cli']` | `['cline-cli']` |
+| `DEFAULT_MODEL` (generic, `LLM_MODEL` unset) | `'claude-sonnet-4-6'` | `'gpt-5.5'` |
+
+`manifestBotDefinition` is the one worth calling out: **every store package that omits
+`harnessType:` was minting a Claude Code bot into a codex fleet** — and omitting it is the norm,
+since a package author has no reason to think about the controller's harness at all.
+
+**Decision.**
+
+1. **`DEMO_CLI_ORDER = ['openai-codex']`.** Codex is the only automatic CLI rung. A codex blip
+   surfaces as a codex blip.
+2. **No automatic chain may fall back to claude-code** — not the demo ladder, not bot-node
+   runtime failover, not a manifest default, not a generic model default.
+3. **Claude Code remains fully selectable, never default.** An explicit per-user preference
+   (`oshal_user_llm_prefs.preferred_provider = 'claude-code'`), an explicit per-bot
+   `harnessType`, and an explicit `OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER=claude-code` all still work.
+   The harness, its factory, and its adapter are untouched. This amendment moves defaults only.
+4. **Persisted `global-config.json` is box state, not code, and must be migrated too.** Every
+   volume on the 2026-08-13 box carried `actModeApiProvider: "claude-code"`;
+   `FORCE_LLM_PROVIDER=openai-codex` masked it at runtime, which is exactly why it went unnoticed.
+   The mask is absent in the self-install shape the product recommends.
+
+**Consequences.**
+
+- With `FORCE_LLM_PROVIDER` unset — the self-install shape — a fresh deployment now lands on codex
+  instead of Claude Code. That is the intended change and the reason this is an ADR.
+- A deployment that genuinely wants Claude Code must now say so. That is the point: the cost of
+  the default was that nobody had to say anything.
+- Guard: `tests/unit/codex-default-floor.spec.ts` gains the no-claude-code-default rows. As with
+  the parent ADR, a red spec is the signal that someone moved a default without an ADR.

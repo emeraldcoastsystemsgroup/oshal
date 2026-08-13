@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'a2a' outbound harness (Plan F item 3): factory builds A2AHarnessAdapter from the registry-declared endpoint env (a2aEndpointEnv, default A2A_OUTBOUND_ENDPOINT_URL) + per-bot token env, wraps it in HarnessLLMBridge, and injects the costUnknown stamper. resolveHarnessForAgent now forwards botName/a2aEndpointEnv so per-bot config never hardcodes URLs or tokens.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Least-privilege harnesses for CONTROLLER-INLINE bots (BACKLOG "Harden inline controller bots"). resolveHarnessForAgent now reads the registry entry's `container` and, when it is the api itself, folds resolveControllerInlineScope into the factory config: a shell-free allowedTools list (overriding the deployment-wide CLAUDE_ALLOWED_TOOLS, which grants Bash to every bot) and the platform-plane env keys the adapter must scrub from the child process. The claude-code and codex-cli factories forward both. Bot-node bots pass no container-derived scope, so their harnesses are built byte-identically. Guard: tests/unit/inline-bot-no-shell.spec.ts.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Switched the seven deep harness-adapter imports to the new sanctioned '@/features/llm-provider/harness' entry point (barrel split, TODO-BOUNDARY-FINDING 2026-07-19) — behavior unchanged; this file stays the harness stack's sole composition root.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. resolveRuntimeProviderName's env fallback is openai-codex (was claude-code) and the generic DEFAULT_MODEL is gpt-5.5 (was claude-sonnet-4-6) — both only reachable with no persisted config and no LLM_PROVIDER/LLM_MODEL, i.e. exactly the self-install shape. The claude-code harness factory, its apiType check, and the recursion guards are untouched.
  */
 
 import fs from 'fs';
@@ -61,11 +62,12 @@ import {
 } from './agent-capability-resolver';
 
 const logger = createChildLogger({ module: 'provider-runtime' });
-// Generic fallback model when LLM_MODEL is unset. claude-code is the default
-// working provider (codex CLI requires separate auth and is not the safe default),
-// so the generic fallback is a Claude model, not a codex one. Codex-specific
-// adapters keep their own gpt-* default.
-const DEFAULT_MODEL = process.env.LLM_MODEL || 'claude-sonnet-4-6';
+// Generic fallback model when LLM_MODEL is unset. Codex is the fleet default (ADR-128), so the
+// generic fallback is the codex model floor — NOT a Claude model. The prior comment here
+// ("codex CLI requires separate auth and is not the safe default") described the pre-ADR-128
+// world and stopped being true when the mounted ~/.codex login became the swarm's brain.
+// Codex-specific adapters still resolve CODEX_MODEL themselves.
+const DEFAULT_MODEL = process.env.LLM_MODEL || 'gpt-5.5';
 const _serviceName = process.env.SERVICE_DISPLAY_NAME || process.env.SERVICE_NAME || 'OSHAL';
 
 // ── Harness factory registry ──────────────────────────────────────────────────
@@ -465,7 +467,10 @@ export function resolveRuntimeProviderName(): string {
     return legacyConfig.provider.trim();
   }
 
-  return process.env.LLM_PROVIDER ?? 'claude-code';
+  // Codex is the fleet default (ADR-128; claude-code removed as the fallback 2026-08-13). A
+  // deployment with no persisted config and no LLM_PROVIDER lands here — it must land on the
+  // mounted codex login, not on a Claude subscription that is being cancelled.
+  return process.env.LLM_PROVIDER ?? 'openai-codex';
 }
 
 /**

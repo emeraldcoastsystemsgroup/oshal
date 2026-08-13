@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | K2/K7 (BACKLOG kernel audit 2026-07-29): a0…0018 renamed architect-bot → system-architect — ONE name everywhere. The split was live breakage in full mode: dispatch-routing's built-in build workflow resolves BY NAME on 'system-architect', which this registry did not contain, and the oshal-engineering manifest registered the third variant. Now both registries, the manifest, the persona (system-architect.yaml), and the compose service all agree; migration 100 renames the DB row; guarded by registry-name-consistency.spec.ts. K7: scoped code-developer, code-reviewer, devops-bot, research-bot, test-engineer, tester-bot, apply-operator to operator+swarm (internal machinery, ADR-087) and general-bot to operator+swarm+jarvis (task-lane fallback KEEPS jarvis — wave-2 constraint). Kernel-set comment for a0…030 corrected to codex-packer (self-healing-bot moved to a0…056 + out of the kernel manifests — K3/K4).
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Close cross-variant registry drift: the default/local registry is the authoritative identity, capability, access, and current deployment definition; full mode is now its deterministic superset plus six full-only legacy catalog entries, while kernel remains a UUID-filtered subset. This prevents full mode from dropping promoted/default or kernel-required bots and prevents duplicate declarations from silently redefining shared UUIDs.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Fleet default -> codex (operator directive 2026-08-12): every LLM-harness bot flipped to harnessType codex-cli / apiType openai-codex (was a mix of claude-code, cline, gemini-cli). a2a untouched - an external-agent boundary, not an LLM harness. Model rides CODEX_MODEL (floor gpt-5.5, the ChatGPT-login model verified live; gpt-5.4 is the documented $20-plan self-install economy pick; gpt-5.6-sol stays interactive-only). claude-code remains a per-bot override and the runtime-failover secondary. Mirrored in swarm-bot-registry-local.ts (the mirrored-registry rule cuts both ways).
+ * 19 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. Doc-only here: the inline-bot comments said '(claude-code)' while the fleet has run codex since 2026-08-12 — corrected to '(codex)'. No registry entry changed.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -637,7 +638,7 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
   // video-director — the Video Studio app (swarm-apps/video.yaml, ?app=video).
   // REASON-ONLY: drafts a scene-by-scene storyboard JSON; the api renders the real .mp4
   // deterministically (Veo + ffmpeg via the video-generation slice). No shell-out, no
-  // connector — runs INLINE on the api container (claude-code) like deck-builder, and its
+  // connector — runs INLINE on the api container (codex) like deck-builder, and its
   // cost lands in chat_tasks under this agent_id. id 048: 047 is security-analyst.
   {
     agentId: 'a0000000-0000-0000-0000-000000000048',
@@ -670,7 +671,7 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
   // persona evals) hand it {task, output, rubric[], reference?} via JudgeService
   // (@/features/quality-judge) and it returns ONE strict JSON verdict {score, dimensions,
   // rationale}. Grading is LLM work, so it runs on this bot — INLINE on the api container
-  // (claude-code) like workflow-assistant (docs/building-a-bot.md Form B), BYOK on the swarm
+  // (codex) like workflow-assistant (docs/building-a-bot.md Form B), BYOK on the swarm
   // default login; cost lands in chat_tasks under this agent_id. Keep this entry identical to
   // the local registry's (register in BOTH). id 053: 052 is screenplay-writer.
   {
@@ -688,7 +689,7 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
   // REASON-ONLY: in AUTONOMOUS mode the projector surface sends it what a guest said and it replies
   // IN CHARACTER as a talking pumpkin ({say, expression, intensity}); the surface speaks + lip-syncs
   // the reply. MIMIC mode is pure STT->TTS and never reaches this bot. Runs INLINE on the api
-  // (claude-code) like quality-judge (docs/building-a-bot.md Form B), BYOK on the swarm default login;
+  // (codex) like quality-judge (docs/building-a-bot.md Form B), BYOK on the swarm default login;
   // cost lands in chat_tasks under this agent_id. accessRoles keeps it out of the Jarvis bot list —
   // it's prop machinery reached only via POST /api/pumpkin/chat. Keep IDENTICAL to the local registry
   // (register in BOTH). id 054: 053 is quality-judge.
@@ -706,7 +707,7 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
   // ambient-analyst — the ambient Person Model enrichment concierge (ADR-100 Phase 2, persona
   // ambient-analyst.yaml). REASON-ONLY: the enrichment runtime hands it a small batch of the
   // owner's OWN consented attributed utterances and it returns ONE strict JSON object of per-line
-  // {tone, intent, topics[], ask?, commitment?}. Runs INLINE on the api (claude-code) like
+  // {tone, intent, topics[], ask?, commitment?}. Runs INLINE on the api (codex) like
   // quality-judge (docs/building-a-bot.md Form B), BYOK on the swarm default login; cost lands in
   // chat_tasks under this agent_id. accessRoles keeps it out of the Jarvis bot list — enrichment
   // machinery reached only by EnrichmentService. Keep IDENTICAL in BOTH registries. id 055: 054 is pumpkin-bot.

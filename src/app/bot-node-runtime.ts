@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 push-down seam: the boot-resolved provider/model are now MUTABLE — buildLlmStack closes getCurrentProvider over a `let`, and the runtime exposes getActiveProvider/setActiveProvider. setActiveProvider validates against the built provider map (unknown/unavailable → UnknownBotNodeProviderError, no switch), updates the TaskController toggle, and overlays FORCE_LLM_PROVIDER/FORCE_LLM_MODEL(+CODEX_MODEL/CLAUDE_CODE_MODEL) via the SAME applyPulledBotConfigToEnv the boot pull uses, so every downstream env resolver agrees. The execution handler's cost-attribution fallbacks read the LIVE values through property getters. In-flight executions keep their already-selected provider (same semantics as any-bot).
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING: pass the mutable provider seam (getActiveProvider/setActiveProvider) into the execution handler as dispatchConfigRuntime, so a dispatch carrying an authoritative provider/model/configVersion is reconciled against the active provider before executing (bot self-corrects on drift). Additive — the seam already existed; this just hands it to the handler.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable provenance-aware swarm memory and the persisted enabled-tool resolver into bot-node prompt containment.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. The unforced provider order leads with codex (was cline -> claude -> codex) and codex's auto-failover chain drops claude-code (now ['cline-cli']). Naming claude-code in OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER still works — that is a deliberate operator choice, not a default.
  */
 
 /**
@@ -358,9 +359,12 @@ function resolveCurrentProvider(p: { clineProvider: any; claudeCodeProvider: any
   const forced = process.env.FORCE_LLM_PROVIDER || '';
   if ((forced === 'openai-codex' || forced === 'codex-cli') && p.codexProvider) return 'openai-codex';
   if (forced === 'claude-code' && p.claudeCodeProvider) return 'claude-code';
+  // Unforced order follows the fleet default (ADR-128; claude-code dropped as a default rung
+  // 2026-08-13). Codex leads: a bot node with no FORCE_LLM_PROVIDER must not silently pick a
+  // Claude subscription that is being cancelled just because that provider constructed first.
+  if (p.codexProvider) return 'openai-codex';
   if (p.clineProvider) return 'cline-cli';
   if (p.claudeCodeProvider) return 'claude-code';
-  if (p.codexProvider) return 'openai-codex';
   return 'cline-cli';
 }
 
@@ -438,10 +442,15 @@ function resolveBotNodeProviderStallFallbackName(
   const autoFailover = String(process.env.OSHAL_PROVIDER_AUTO_FAILOVER ?? 'true').trim().toLowerCase();
   if (autoFailover === 'false' || autoFailover === 'off' || autoFailover === 'none') return null;
 
+  // Codex is the fallback target, never the thing fallen away FROM by default (operator
+  // directive 2026-08-13, amending ADR-128 #2). claude-code is gone from every automatic chain:
+  // the subscription is being cancelled, and an auto-failover onto it turns a codex outage into
+  // silent spend on a dying account instead of a visible failure. Naming it explicitly in
+  // OSHAL_PROVIDER_RUNTIME_FALLBACK still works — that is a deliberate operator choice.
   const fallbackOrder: Record<typeof primaryName, Array<'claude-code' | 'openai-codex' | 'cline-cli'>> = {
-    'openai-codex': ['claude-code', 'cline-cli'],
+    'openai-codex': ['cline-cli'],
     'claude-code': ['openai-codex', 'cline-cli'],
-    'cline-cli': ['claude-code', 'openai-codex'],
+    'cline-cli': ['openai-codex'],
   };
   return fallbackOrder[primaryName].find((name) => Boolean(providers[name])) ?? null;
 }

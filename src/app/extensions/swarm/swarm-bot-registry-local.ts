@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: removed the two PHANTOM platform-advisory rows, graph-analyst (e0…001) and advisor-bot (e0…200). Neither had a persona YAML in ai-lab/bot-personas/ nor a compose service, so neither could ever be personified or dispatched — yet this is the DEFAULT active registry and they held the only 'graph-query'/'opensearch-query' capabilities the queue manager's title-keyword hint asks for, so a graph/correlation ticket could bid to a bot with no home. Graph/topology reasoning moved to real personas (rca-specialist for incident topology, capture-coordinator for teaming), both now carrying the concrete /api/graph recipe.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | K7/K8 (BACKLOG kernel audit 2026-07-29): scoped the remaining internal-machinery bots (code-developer, devops-bot, code-reviewer, research-bot, test-engineer, tester-bot, security-analyst, vault-bot) to accessRoles operator+swarm — they carried the shared workspace read-write with NO declaration, so ADR-087's omitted=open made them live Jarvis/inbound-A2A call-out candidates (security-analyst was the sharpest: its ROUTE is requiresOperator-gated but its identity was not, so a call-out reached it around the gate). general-bot is scoped but KEEPS 'jarvis' — it is the ADR-083 task-lane fallback and removing jarvis strands every Jarvis task ticket (wave-2 constraint; guarded by internal-machinery-scoping.spec.ts + routability-critical-bots.spec.ts). K8 membership: added apply-operator (cb…0003) and linkedin-profile-operator (cb…0004) — both are pinned by core dispatch (browser-task-dispatch / profile-studio-dispatch) but existed ONLY in the full registry, so the DEFAULT lineup served their identities as unknown (= open, undiscoverable, unattributable). Guard: tests/unit/internal-machinery-scoping.spec.ts.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Fleet default -> codex (operator directive 2026-08-12): every LLM-harness bot flipped to harnessType codex-cli / apiType openai-codex (was a mix of claude-code and gemini). a2a untouched - an external-agent boundary, not an LLM harness. Model rides CODEX_MODEL (floor gpt-5.5, the ChatGPT-login model verified live; gpt-5.4 is the documented $20-plan self-install economy pick; gpt-5.6-sol stays interactive-only). claude-code remains a per-bot override and the runtime-failover secondary. Mirrored in swarm-bot-registry.ts.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. Doc-only here: the inline-bot comments said '(claude-code)' while the fleet has run codex since 2026-08-12 — corrected to '(codex)'. No registry entry changed.
  */
 
 import type { SwarmBotDefinition } from './swarm-bot-registry';
@@ -382,7 +383,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     apiType: 'openai-codex',
   },
   // video-director — the Video Studio app (swarm-apps/video.yaml, ?app=video). Reason-only
-  // storyboard drafter, inline on the api (claude-code) like deck-builder; the api renders
+  // storyboard drafter, inline on the api (codex) like deck-builder; the api renders
   // the real .mp4 (Veo + ffmpeg). Cost lands in chat_tasks under this agent_id.
   {
     agentId: 'a0000000-0000-0000-0000-000000000048',
@@ -415,7 +416,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   // persona evals) hand it {task, output, rubric[], reference?} via JudgeService
   // (@/features/quality-judge) and it returns ONE strict JSON verdict {score, dimensions,
   // rationale}. Grading is LLM work, so it runs on this bot — INLINE on the api container
-  // (claude-code) like workflow-assistant (docs/building-a-bot.md Form B), BYOK on the swarm
+  // (codex) like workflow-assistant (docs/building-a-bot.md Form B), BYOK on the swarm
   // default login; cost lands in chat_tasks under this agent_id. Keep this entry identical to
   // the canonical registry's (register in BOTH). id 053: 052 is screenplay-writer.
   {
@@ -433,7 +434,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   // REASON-ONLY: in AUTONOMOUS mode the projector surface sends it what a guest said and it replies
   // IN CHARACTER as a talking pumpkin ({say, expression, intensity}); the surface speaks + lip-syncs
   // the reply. MIMIC mode is pure STT->TTS and never reaches this bot. Runs INLINE on the api
-  // (claude-code) like quality-judge (docs/building-a-bot.md Form B), BYOK on the swarm default login;
+  // (codex) like quality-judge (docs/building-a-bot.md Form B), BYOK on the swarm default login;
   // cost lands in chat_tasks under this agent_id. accessRoles keeps it out of the Jarvis bot list —
   // it's prop machinery reached only via POST /api/pumpkin/chat. Keep IDENTICAL to the canonical
   // registry (register in BOTH). id 054: 053 is quality-judge.
@@ -451,7 +452,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   // ambient-analyst — the ambient Person Model enrichment concierge (ADR-100 Phase 2, persona
   // ambient-analyst.yaml). REASON-ONLY: the enrichment runtime hands it a small batch of the
   // owner's OWN consented attributed utterances and it returns ONE strict JSON object of per-line
-  // {tone, intent, topics[], ask?, commitment?}. Runs INLINE on the api (claude-code) like
+  // {tone, intent, topics[], ask?, commitment?}. Runs INLINE on the api (codex) like
   // quality-judge (docs/building-a-bot.md Form B), BYOK on the swarm default login; cost lands in
   // chat_tasks under this agent_id. accessRoles keeps it out of the Jarvis bot list — enrichment
   // machinery reached only by EnrichmentService. Keep IDENTICAL in BOTH registries. id 055: 054 is pumpkin-bot.
@@ -487,7 +488,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   // REASON-ONLY: the api captures market signals + does deterministic broker I/O (Alpaca); this bot
   // reasons over the captured signal(s) and returns a structured trade DECISION (the decision tree).
   // It never shells out and never places orders itself — so it runs INLINE on the api container
-  // (claude-code) like finance-analyst, and its cost lands in chat_tasks under this agent_id.
+  // (codex) like finance-analyst, and its cost lands in chat_tasks under this agent_id.
   // id 046: 045 belongs to identity-advisor.
   {
     agentId: 'a0000000-0000-0000-0000-000000000046',
@@ -505,7 +506,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   // vulnerable deps, runtime/ledger/audit anomalies) and stores findings; this bot reasons over ONE
   // finding and returns a structured triage (real threat? false positive? attack scenario? fix?).
   // It never scans, never shells out, and never remediates — so it runs INLINE on the api container
-  // (claude-code) like finance-analyst / trading-analyst, and its cost lands in chat_tasks under this
+  // (codex) like finance-analyst / trading-analyst, and its cost lands in chat_tasks under this
   // agent_id. id 047: 046 belongs to trading-analyst. See security-routes.ts.
   {
     agentId: 'a0000000-0000-0000-0000-000000000047',
@@ -552,7 +553,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   // world-analyst — the World Intelligence (Layer B) bot (swarm-apps/world.yaml).
   // READS + FRESHENS the shared world graph/series through the world_* tools (cli over the local
   // /api/world, scripts/oshal-world.js): bias-aware sentiment (political+econ+kind), entity graph,
-  // pull-rate, and news ingestion. Runs INLINE on the api container (claude-code) like the other
+  // pull-rate, and news ingestion. Runs INLINE on the api container (codex) like the other
   // reason+tool analysts; cost lands in chat_tasks under this agent_id. agentId matches the manifest
   // + persona (the build-your-own-swarm-app "compiles-but-fails" rule: registry id == manifest id).
   {
@@ -633,7 +634,7 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   // account label, personal/shared, default flag, token expiry — NEVER the tokens) and
   // hands it to this bot in the task; the bot flags what needs attention (expired logins,
   // duplicates, recommended-but-missing connectors). No shell-out, no connector — so it
-  // runs INLINE on the api container (claude-code) like finance-analyst, and its cost
+  // runs INLINE on the api container (codex) like finance-analyst, and its cost
   // lands in chat_tasks under this agent_id. See identity-routes.ts.
   {
     agentId: 'a0000000-0000-0000-0000-000000000045',
@@ -665,11 +666,11 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   // oshal-assistant ("Jarvis") — the unified front door over every OSHAL app (swarm-apps/jarvis.yaml).
   // REASON-ONLY: the jarvis route (jarvis-routes.ts) uses this bot to CLASSIFY the user's message
   // (which specialist app handles it) and to SYNTHESIZE the specialists' replies into one answer.
-  // It never fetches data or shells out — it runs INLINE on the api container (claude-code) like
+  // It never fetches data or shells out — it runs INLINE on the api container (codex) like
   // finance-analyst / identity-advisor, and its classify+synthesize cost lands in chat_tasks under
   // this agent_id (the delegated specialists' cost lands under their own ids). See ADR-050.
   // FIRST-CLASS BOT-NODE (2026-06-19): Jarvis runs in its OWN container on the any-bot runtime,
-  // NOT inline on the controller. Inline = claude-code one-shot that can't round-trip tool_use, so
+  // NOT inline on the controller. Inline = a CLI one-shot that can't round-trip tool_use, so
   // every authorized tool (career_database, etc.) was a ghost. As a bot-node it executes inside the
   // any-bot wrapper (AgenticController + ToolUseParser) where tools actually run, and the orb surface
   // reaches it via BotNodeClient → http://jarvis-bot:5000/api/swarm-execute. See jarvis-must-be-framework-bot.
