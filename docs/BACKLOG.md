@@ -12,9 +12,13 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** run `oshal-install.sh --mode 4` (or `-Kubernetes`) end-to-end on a real second machine — the dev laptop is excluded on purpose (Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing). Then publish the OCI chart (`bash scripts/publish-chart.sh` + the one-time GHCR visibility flip) so the installer's OCI-first path goes live.
 - **Done when:** a fresh box reaches `/welcome` in a browser via the NodePort with only kubectl+helm+the installer present, a model connects through the wizard and a jarvis turn answers, and `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` succeeds anonymously.
 
-### k8s parity — store staging and compose-only infra (ADR-129 caps)
-- **Remaining:** store-package staging (`--apps`, app bundles) is compose-only (it stages via the docker workspace volume); TimescaleDB, ArangoDB, Vault, code-server, ollama, and speaker-diarization are not chart-templated, so trading cannot run on k8s and `/api/graph` degrades to 503.
-- **Done when:** a store package installs onto a k8s tenant from the cockpit or installer and survives an api pod restart; tsdb (at minimum) is chart-templated behind an `infra.*.inCluster` flag with the trading stack proven against it, or each gap is explicitly re-scoped here.
+### k8s shared-service tier — live proof of the features it restores (ADR-129 amendment)
+- **Remaining:** chart 0.3.0 templates the whole tier (tsdb, arangodb, vault, code-server, diarization; ollama opt-in) and stages store packages via an api initContainer, but only template-level proof exists (lint, render matrix, `kubectl apply --dry-run`, a mutation-tested guard). Nothing has run against a live cluster.
+- **Done when:** on a real cluster — a staged store package serves its surface and survives an api pod restart; a trading query returns series from the in-cluster tsdb; `/api/graph` answers instead of 503; a transcription round-trips through the diarization Service; and `helm upgrade --set infra.arangodb.inCluster=false` degrades the graph cleanly (null connector, no connection-refused) rather than erroring.
+
+### k8s durability posture for the shared-service tier
+- **Remaining:** every in-cluster service is single-replica with dev-parity credentials and no backup/restore path; Vault runs `-dev` (in-memory, lost on restart) by design. Acceptable for a single-box swarm, not for a shared tenant.
+- **Done when:** the tenant profile documents (or templates) managed Postgres/Timescale, a real Vault target, and a backup story for the workspace + Chroma volumes — or each is explicitly declared out of scope for the single-box product with the boundary named in the chart README.
 
 ### Rides map and fare follow-ups
 - **Remaining:** install the merged [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides) package; decide optional OSRM/Valhalla and Google Maps billing paths; make geocode/tile configuration operator-owned and the normalized-address cache durable.
