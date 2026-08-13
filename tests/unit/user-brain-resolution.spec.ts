@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for ADR-127 brain resolution. Pins the order that decides what every turn runs on — a saved preference first, the demo CLI default (Claude Code) next for a caller the carve covers, hosted rungs after — and the two invariants that keep the CLI shape safe: it is offered ONLY to a demo-mode operator, and a preference naming it degrades to a hosted rung rather than handing the node a selection it would refuse.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Codex-first fleet default: the demo-default expectations flip to openai-codex (DEMO_CLI_ORDER reordered by operator directive 2026-08-12); the saved-preference test now saves claude-code so it still proves preference-beats-default with a non-default value.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -76,13 +77,13 @@ describe('who may be offered a CLI brain', () => {
 });
 
 describe('resolveUserBrain — the ladder', () => {
-  it('defaults the demo operator to the Claude Code CLI', async () => {
-    expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'cli', providerId: 'claude-code' });
+  it('defaults the demo operator to the Codex CLI (the swarm default, 2026-08-12)', async () => {
+    expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'cli', providerId: 'openai-codex' });
   });
 
   it('honours a saved CLI preference over the default one', async () => {
-    savedPreference('openai-codex');
-    expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'cli', providerId: 'openai-codex' });
+    savedPreference('claude-code');
+    expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'cli', providerId: 'claude-code' });
   });
 
   it('honours a saved own-endpoint preference over the demo CLI default', async () => {
@@ -132,11 +133,11 @@ describe('resolveUserBrain — the ladder', () => {
 
   it('treats an unreadable preference row as auto rather than failing the turn', async () => {
     query.mockRejectedValue(new Error('permission denied'));
-    expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'cli', providerId: 'claude-code' });
+    expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'cli', providerId: 'openai-codex' });
   });
 
   it('treats a preference value this build no longer knows as auto', async () => {
     savedPreference('some-retired-provider');
-    expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'cli', providerId: 'claude-code' });
+    expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'cli', providerId: 'openai-codex' });
   });
 });

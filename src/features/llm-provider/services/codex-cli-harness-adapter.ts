@@ -13,6 +13,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review hardening: (1) the snapshot moved AFTER acquireUserScopingLease — pre-lease it baselines a stale chain for queued same-workspace runs, whose own rotation would then CAS-fail and re-strand the token; (2) gate waiters now RE-SEED an untouched per-task copy from the advanced source before spawning (reseedFromAdvancedSource) — they seeded pre-queue from the pre-rotation file, so without this the whole cold-start burst still died on the spent refresh token.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | E2BIG fix: the prompt was passed as a positional argv (`args.push(prompt)`), so a large conversation-aware prompt overflowed the OS ARG_MAX and the spawn died with `spawn E2BIG` — observed LIVE killing every Dungeon Master turn once the session context grew (invokeDungeonMaster → task-orchestrator → this adapter). Now delivered on STDIN (buildArgs drops the positional; execCodexLenient takes an `input` and forwards it to execCapturing) — `codex exec` reads its instructions from stdin when no positional PROMPT is given, mirroring the ClaudeCodeCliHarnessAdapter which piped stdin for the same reason.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove output/config-seed OAuth fallbacks; audited Codex runs require the live vendor auth source or an explicit platform API key and refuse stale per-task credentials otherwise.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default: DEFAULT_MODEL gpt-5.3-codex → gpt-5.5 (the ChatGPT-login model floor; 5.3-codex is API-key-only and 400s on this deployment's OAuth), and buildArgs now pins `-c model_reasoning_effort` (CODEX_REASONING_EFFORT, default high). Without the pin the per-task home inherits the HOST ~/.codex/config.toml, and a host-side effort like `ultra` (gpt-5.6-sol-only) 400s every fleet turn on gpt-5.5/gpt-5.4 — verified live.
  */
 
 import fs from 'fs';
@@ -23,7 +24,12 @@ import { reseedFromAdvancedSource, snapshotCodexAuth, writeBackRotatedCodexAuth 
 import type { TokenUsage } from './llm-service';
 
 const DEFAULT_BINARY = 'codex';
-const DEFAULT_MODEL = process.env.LLM_MODEL || 'gpt-5.3-codex';
+const DEFAULT_MODEL = process.env.LLM_MODEL || 'gpt-5.5';
+// The fleet floor: reasoning effort is pinned per spawn because the per-task codex home is
+// seeded from the HOST ~/.codex/config.toml — a host-side `model_reasoning_effort` tuned for
+// an interactive frontier model (e.g. `ultra`, gpt-5.6-sol-only) is rejected with a 400 by
+// the fleet models (gpt-5.5/gpt-5.4 accept none|low|medium|high|xhigh).
+const DEFAULT_REASONING_EFFORT = 'high';
 // Idle semantics (ADR-081): `codex exec --json` streams JSONL events continuously, so the
 // timeout means MAX SILENCE, not total duration — 10 min with zero output = stuck. An
 // actively-working run streams and is never killed until the max-duration backstop.
@@ -56,8 +62,15 @@ export interface CodexCliHarnessConfig {
   /** Path to the `codex` binary.  Default: 'codex' (assumes PATH). */
   binaryPath?: string;
 
-  /** Model override (e.g. 'gpt-5.3-codex').  Default: CODEX_MODEL env or repo default. */
+  /** Model override (e.g. 'gpt-5.5').  Default: CODEX_MODEL env or repo default. */
   model?: string;
+
+  /**
+   * Reasoning effort pinned onto every spawn via `-c model_reasoning_effort=…` so a mounted
+   * host config.toml can never impose a value the fleet model rejects.
+   * Default: CODEX_REASONING_EFFORT env or 'high'.
+   */
+  reasoningEffort?: string;
 
   /** Task workspace root.  Default: CLINE_WORKSPACE_ROOT or './workspace'. */
   workspaceRoot?: string;
@@ -149,6 +162,7 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
 
   private readonly binaryPath: string;
   private readonly model: string;
+  private readonly reasoningEffort: string;
   private readonly workspaceRoot: string;
   private readonly sandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access';
 
@@ -178,6 +192,10 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
       ?? process.env.CODEX_MODEL
       ?? process.env.LLM_MODEL
       ?? DEFAULT_MODEL;
+
+    this.reasoningEffort = config.reasoningEffort
+      ?? process.env.CODEX_REASONING_EFFORT?.trim()
+      ?? DEFAULT_REASONING_EFFORT;
 
     this.workspaceRoot = config.workspaceRoot
       ?? process.env.CLINE_WORKSPACE_ROOT
@@ -318,6 +336,9 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
       '--skip-git-repo-check',
       '-s', this.sandboxMode,
       '-m', model,
+      // Pinned per spawn: the per-task home copies the HOST config.toml, whose effort may be
+      // legal only for the host's interactive model (ultra → sol) and 400s the fleet model.
+      '-c', `model_reasoning_effort=${this.reasoningEffort}`,
       '-C', workspacePath,
     ];
 

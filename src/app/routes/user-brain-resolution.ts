@@ -23,6 +23,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: per-user preference store + preference-aware brain resolution (preference → demo CLI default → explicit BYO → free tiers → operator-key lane → none).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added isRetryableCliBrainFailure so a CLI-lane turn can fall back to a hosted lane. reportResolvedLlmFailure speaks only for hosted connections (it refuses when there is none, which is every CLI turn), so a logged-out CLI login dead-ended instead of retrying.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | DEMO_CLI_ORDER flipped to codex-first (operator directive 2026-08-12: codex is the swarm's default CLI/API/LLM). Claude Code stays as the second rung so a codex blip degrades to the other mounted login instead of dead-ending.
  *
  * @module user-brain-resolution
  */
@@ -43,8 +44,10 @@ const logger = createChildLogger({ module: 'user-brain-resolution' });
 export const LLM_PREFERENCE_IDS = ['auto', 'claude-code', 'openai-codex', 'any-llm', 'free-tier'] as const;
 export type LlmPreferenceId = typeof LLM_PREFERENCE_IDS[number];
 
-/** The mounted CLI logins, in the order the demo default tries them. Claude Code first (ADR-127). */
-export const DEMO_CLI_ORDER: Array<'claude-code' | 'openai-codex'> = ['claude-code', 'openai-codex'];
+/** The mounted CLI logins, in the order the demo default tries them. Codex first — the swarm's
+ * default CLI (operator directive 2026-08-12, supersedes ADR-127's claude-code-first order);
+ * Claude Code stays as the second rung, so a codex blip degrades instead of failing. */
+export const DEMO_CLI_ORDER: Array<'claude-code' | 'openai-codex'> = ['openai-codex', 'claude-code'];
 
 /** A user's saved default. Absent row = { preferred: 'auto' }. */
 export interface UserLlmPreference {

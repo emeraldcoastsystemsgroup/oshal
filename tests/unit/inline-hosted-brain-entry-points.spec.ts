@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the two chat ENTRY POINTS of the ADR-127 inline hosted brain. The first review of this fix proved the provider, the orchestrator branch, and the shared helper individually — and then showed that deleting the wiring in executeBotOrInline or handleSendMessage left every suite green, because the lazy '@/…' registry require failed under vitest and turned the condition into a silent no-op. That require is now RELATIVE (loads the REAL registry here and in dist identically), and these cases drive the real entry points end to end: the inline branch threads the resolved connection into processMessage, send-message does the same over HTTP before creating a ticket, and an empty ladder answers the friendly 422 NO_HOSTED_BRAIN — never the raw SEC-05 refusal.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Swallowed-failure leg: the deployed catch-based failover never fired live because task-orchestrator.handleError RESOLVES agentic provider errors as { success:false, error } — new cases pin both entry points replaying that result shape through the same retryHostedBrainTurn, the pure swallowedTurnFailure predicate rows, and the non-wall failed result staying failed (mutation kill for an unconditional retry).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ONE-CHOKEPOINT node dispatch: with a dynamically registered node-bound bot and a REAL local HTTP node, POST /api/send-message routes the turn to the node through executeBotOrInline — the demo operator's turn arrives with the CLI providerId STAMPED (the ADR-127 carve, env-stubbed), a plain caller's with the resolved hosted connection threaded — the controller orchestrator is never called, and both turns persist to the message store the history route replays. This is the route the live 2026-08-11 failure ran (a node-backed bot's chat dying on an exhausted hosted key), crossed at the real dispatch boundary.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default (2026-08-12): pickCliHarnessAgentId selects a codex-cli registry bot (the registry no longer declares claude-code), and the ADR-127 stamp expectation follows DEMO_CLI_ORDER's new first rung (openai-codex).
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -64,15 +65,19 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-/** Resolves a REAL claude-code inline bot from the active registry — the exact population the fix serves. */
+/** Resolves a REAL CLI-harness INLINE bot from the active registry — the exact population the fix
+ * serves (codex-cli since the 2026-08-12 fleet default; was claude-code). Must be api-resident and
+ * not node-pinned: a dedicated-container bot resolves a node endpoint and the route dispatches OUT
+ * instead of running the inline branch under test. */
 async function pickCliHarnessAgentId(): Promise<string> {
   const { getActiveRegistry } = await import('../../src/app/extensions/swarm/swarm-bot-registry');
   const entry = getActiveRegistry().find((bot) => {
     const roles = (bot as { accessRoles?: string[] }).accessRoles;
     const open = !roles || roles.length === 0;
-    return Boolean(bot.agentId) && bot.harnessType === 'claude-code' && open;
+    const inline = bot.container === 'oshal-api' && !(bot as { requiresOwnNode?: boolean }).requiresOwnNode;
+    return Boolean(bot.agentId) && bot.harnessType === 'codex-cli' && open && inline;
   });
-  if (!entry?.agentId) throw new Error('no open claude-code registry bot found');
+  if (!entry?.agentId) throw new Error('no open inline codex-cli registry bot found');
   return entry.agentId;
 }
 
@@ -508,7 +513,8 @@ describe('POST /api/send-message — a node-bound bot dispatches AT its node thr
       expect(node.bodies).toHaveLength(1);
       // The mounted-login lane: stamped as the ADR-034 authoritative provider, no hosted override,
       // and the hosted ladder never walked — the exact opposite of the live 2026-08-11 failure.
-      expect(node.bodies[0].providerId).toBe('claude-code');
+      // Codex is the first DEMO_CLI_ORDER rung since the 2026-08-12 fleet default.
+      expect(node.bodies[0].providerId).toBe('openai-codex');
       expect(node.bodies[0].byoLlmConnection).toBeUndefined();
       expect(ladder).not.toHaveBeenCalled();
     } finally {

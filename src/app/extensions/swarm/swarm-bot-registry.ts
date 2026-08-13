@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: removed the PHANTOM advisor-bot row (e0…200) — no persona YAML, no compose service, no manifest, no heartbeat, so it could never be personified or dispatched. Removed from BOTH registries in the same change so the two cannot drift (the mirrored-registry rule cuts both ways).
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | K2/K7 (BACKLOG kernel audit 2026-07-29): a0…0018 renamed architect-bot → system-architect — ONE name everywhere. The split was live breakage in full mode: dispatch-routing's built-in build workflow resolves BY NAME on 'system-architect', which this registry did not contain, and the oshal-engineering manifest registered the third variant. Now both registries, the manifest, the persona (system-architect.yaml), and the compose service all agree; migration 100 renames the DB row; guarded by registry-name-consistency.spec.ts. K7: scoped code-developer, code-reviewer, devops-bot, research-bot, test-engineer, tester-bot, apply-operator to operator+swarm (internal machinery, ADR-087) and general-bot to operator+swarm+jarvis (task-lane fallback KEEPS jarvis — wave-2 constraint). Kernel-set comment for a0…030 corrected to codex-packer (self-healing-bot moved to a0…056 + out of the kernel manifests — K3/K4).
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Close cross-variant registry drift: the default/local registry is the authoritative identity, capability, access, and current deployment definition; full mode is now its deterministic superset plus six full-only legacy catalog entries, while kernel remains a UUID-filtered subset. This prevents full mode from dropping promoted/default or kernel-required bots and prevents duplicate declarations from silently redefining shared UUIDs.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Fleet default -> codex (operator directive 2026-08-12): every LLM-harness bot flipped to harnessType codex-cli / apiType openai-codex (was a mix of claude-code, cline, gemini-cli). a2a untouched - an external-agent boundary, not an LLM harness. Model rides CODEX_MODEL (floor gpt-5.5, the ChatGPT-login model verified live; gpt-5.4 is the documented $20-plan self-install economy pick; gpt-5.6-sol stays interactive-only). claude-code remains a per-bot override and the runtime-failover secondary. Mirrored in swarm-bot-registry-local.ts (the mirrored-registry rule cuts both ways).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -406,8 +407,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'communications/feeds',
     capabilities: ['feed-aggregation', 'feed-summarization', 'hot-area-detection', 'trend-analysis', 'sentiment-triage'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
   },
   {
     // Spotify (music) app — inline concierge run via the orchestrator; discovery +
@@ -447,8 +448,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'robotics/drone-flight-planning',
     capabilities: ['drone-mission-drafting', 'waypoint-planning', 'drone-telemetry-briefing', 'geofence-awareness'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   {
@@ -463,8 +464,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'devices/camera-control',
     capabilities: ['camera-control-intent', 'camera-status-briefing', 'capture-planning'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   {
@@ -479,8 +480,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'space/satellite-operations-planning',
     capabilities: ['sat-command-drafting', 'adcs-mode-planning', 'sat-telemetry-briefing', 'pass-window-awareness', 'conjunction-awareness'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   {
@@ -495,8 +496,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'reconstruction/spatial-capture',
     capabilities: ['scan-status-briefing', 'capture-planning', 'guided-capture', 'reconstruction-guidance', 'coverage-briefing'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   {
@@ -540,8 +541,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'workflow/orchestration-specialist',
     capabilities: ['workflow-design', 'process-architecture', 'orchestration', 'workflow-validation'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
   },
   {
     // codex-packer — the Bot Forge (interview-driven bot factory), inline on the api like the
@@ -557,8 +558,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
       'bot-authoring', 'persona-design', 'manifest-emission',
       'interview-driven-spec', 'codex-packing',
     ],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   // ── Delivery: the client-engagement method as four bots ─────────────────────
@@ -576,8 +577,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
       'requirements-discovery', 'transcript-analysis', 'gap-analysis',
       'codebase-baseline', 'scope-definition',
     ],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   {
@@ -590,8 +591,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
       'capacity-planning', 'load-projection', 'query-benchmarking',
       'concurrency-testing', 'growth-modelling', 'index-analysis',
     ],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   {
@@ -604,8 +605,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
       'reference-architecture', 'as-is-to-be', 'hosting-cost-comparison',
       'high-availability', 'backup-and-recovery', 'decision-trees',
     ],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   {
@@ -618,8 +619,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
       'deployment-parity', 'browser-verification', 'regression-guards',
       'artifact-packaging', 'handover-documentation',
     ],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],
   },
   {
@@ -645,8 +646,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'video/storyboard-director',
     capabilities: ['video-storyboard', 'scene-direction', 'short-form-scripting', 'caption-writing'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
   },
   // screenplay-writer — the Video Studio's SERIES screenwriter (swarm-apps/video.yaml,
   // ticketType video-series). REASON-ONLY concierge node inline on the api: it writes episode packs
@@ -661,8 +662,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'media/screenplay-writer',
     capabilities: ['episode-scripting', 'series-bible', 'dialogue-writing', 'shot-direction'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
   },
   // quality-judge — the shared LLM-judge/grading concierge (persona quality-judge.yaml).
   // REASON-ONLY: consumers (POST /api/judge, the token-chase optimizer's quality check,
@@ -679,8 +680,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'quality/llm-judge',
     capabilities: ['output-grading', 'rubric-scoring', 'quality-verdict', 'llm-judging'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],   // grading machinery for other services, not a Jarvis-facing domain bot (ADR-087)
   },
   // pumpkin-bot — the animated jack-o'-lantern Halloween prop (swarm-apps/pumpkin.yaml, ?app=pumpkin).
@@ -698,8 +699,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'seasonal/jack-o-lantern-voice',
     capabilities: ['halloween-persona', 'in-character-conversation', 'spooky-improv', 'prop-voice'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],   // seasonal prop persona, not a Jarvis-facing domain bot
   },
   // ambient-analyst — the ambient Person Model enrichment concierge (ADR-100 Phase 2, persona
@@ -716,8 +717,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'oshal-api',
     role: 'ambient/person-model-enrichment',
     capabilities: ['transcript-enrichment', 'tone-intent-inference', 'ask-extraction'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],   // enrichment machinery, not a Jarvis-facing domain bot (ADR-087)
   },
   // a2a-sample-agent — the EXAMPLE outbound A2A dispatch target (BACKLOG Plan F item 3).
@@ -752,7 +753,7 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'code-reviewer',
     role: 'localhost/worker',
     capabilities: ['code-review', 'security', 'quality'],
-    harnessType: 'claude-code',
+    harnessType: 'codex-cli',
     accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery — not a Jarvis call-out target (ADR-087)
   },
   {
@@ -780,7 +781,7 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'documentation-writer',
     role: 'localhost/worker',
     capabilities: ['documentation', 'readme', 'adr'],
-    harnessType: 'cline',
+    harnessType: 'codex-cli',
     apiType: 'openai-codex',
   },
   {
@@ -821,8 +822,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'research-bot',
     role: 'localhost/worker',
     capabilities: ['research', 'analysis', 'documentation', 'investigation'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],   // K7: build-pipeline research machinery — not a Jarvis call-out target (ADR-087)
   },
   {
@@ -840,7 +841,7 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'test-engineer',
     role: 'localhost/worker',
     capabilities: ['testing', 'validation', 'verification', 'test-automation', 'qa'],
-    harnessType: 'cline',
+    harnessType: 'codex-cli',
     apiType: 'openai-codex',
     accessRoles: ['operator', 'swarm'],   // K7: build-pipeline machinery — not a Jarvis call-out target (ADR-087)
   },
@@ -855,8 +856,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     container: 'system-architect',
     role: 'localhost/worker',
     capabilities: ['architecture', 'design', 'system-modeling', 'diagrams', 'patterns', 'review'],
-    harnessType: 'claude-code',
-    apiType: 'claude-code',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
   },
   {
     agentId: 'a0000000-0000-0000-0000-00000000000d',
@@ -890,8 +891,8 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     // in GEMINI_MODEL (gemini-2.5-flash). Requires pay-as-you-go billing on the
     // AI Studio project: the free tier 429s under load. The ~/.gemini OAuth
     // mount is the no-key fallback. Makes gemini-cli a live 5th runtime.
-    harnessType: 'gemini-cli',
-    apiType: 'gemini',
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
   },
   {
     agentId: 'a0000000-0000-0000-0000-000000000021',
