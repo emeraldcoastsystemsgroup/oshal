@@ -15,6 +15,7 @@
     .\scripts\oshal-install.ps1 -Bundle gaming -AdminEmail you@example.com
     .\scripts\oshal-install.ps1 -FromArchive C:\Downloads\oshal-swarm-offline.tar   # no internet
     .\scripts\oshal-install.ps1 -Dir D:\oshal -Tag 2.1.0-beta.1 -DryRun
+    .\scripts\oshal-install.ps1 -Kubernetes -AdminEmail you@example.com   # helm install onto a cluster
 
   CHANGE LOG
   -----------------------------------------------------------------------------
@@ -24,6 +25,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com   | First-run fix - the install never asked WHO the user is, and the closing instructions were false. MOCK_OIDC has no sign-in page; it fabricates alex@demo.local / mock-user-001 and treats every request as authenticated, so "sign in at the cockpit with your email" could never happen and the user was silently someone else - not the superadmin, with every connector token binding to the shared demo sub. Now prompts for the email up front (skippable, interactive hosts only) and writes MOCK_OIDC_EMAIL/NAME/SUB alongside OSHAL_OPERATOR_EMAILS, with the sub derived as a stable hash of the email so a reinstall against the same workspace volume keeps its sub-keyed data. Also opens /welcome rather than /cockpit/ (linking an AI model is mandatory and browser-only - the cockpit just 302s to the wizard anyway) and states plainly what the wizard will ask for.
   3 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: add the explicit -NoAi posture and invoke the exact shipped oshal-verify.sh inside the image, including every deduplicated app smoke, after native Windows health checks.
   4 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: route package staging through the core installer so invalid audit bindings fail and enforce mode replaces packages from the exact audited SHA.
+  5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: -Kubernetes — the codeless k8s install, lockstep with oshal-install.sh mode 4. kubectl/helm preflight (winget offers for both), cluster reachability check with crisp Docker-Desktop/kind guidance, chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full, the same AdminEmail→MOCK_OIDC identity wiring as the compose path (shared LocalSub, hoisted above the branch), NodePort exposure, /api/health postflight, /welcome open. New params: -Namespace, -K8sContext, -NodePort, -Chart, -Fleet.
 #>
 [CmdletBinding()]
 param(
@@ -36,7 +38,13 @@ param(
   [string]$FromArchive = "",
   [string]$PackageAuditMode = "",
   [switch]$NoAi,
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$Kubernetes,
+  [string]$Namespace = "oshal",
+  [string]$K8sContext = "",
+  [int]$NodePort = 30500,
+  [string]$Chart = "",
+  [ValidateSet('kernel', 'full')][string]$Fleet = "kernel"
 )
 $ErrorActionPreference = 'Stop'
 if (-not $PackageAuditMode) { $PackageAuditMode = if ($env:OSHAL_PACKAGE_AUDIT_MODE) { $env:OSHAL_PACKAGE_AUDIT_MODE } else { 'compatible' } }
@@ -45,6 +53,174 @@ if ($PackageAuditMode -notin @('compatible', 'enforce')) { throw "PackageAuditMo
 
 function Say([string]$m)  { Write-Host "`n== $m" -ForegroundColor Cyan }
 function Note([string]$m) { Write-Host "   $m" }
+
+# Stable local identity derived from the email, so a reinstall against the same workspace volume
+# keeps the same user sub (connector tokens and tickets are sub-keyed - a fresh random sub would
+# orphan them). Deterministic hash, not a GUID, for exactly that reason. Byte-identical to
+# local_sub() in oshal-install.sh; hoisted here because BOTH the compose (.env) and Kubernetes
+# (helm values) paths derive the identity from it.
+function LocalSub([string]$email) {
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($email.ToLower()))
+    $hex = ($bytes | ForEach-Object { $_.ToString('x2') }) -join ''
+    return 'local-' + $hex.Substring(0, 16)
+  } finally { $sha.Dispose() }
+}
+
+# -- -Kubernetes: codeless helm install (ADR-129, lockstep with oshal-install.sh mode 4) --
+# Runs BEFORE the Docker gate: a remote cluster needs no local Docker at all.
+if ($Kubernetes) {
+  Say "Kubernetes install (helm + registry images - no source, no build)"
+  $winget = Get-Command winget -ErrorAction SilentlyContinue
+  if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) {
+    Say "kubectl is not installed"
+    if ($winget) { Note "Install it:  winget install Kubernetes.kubectl   (Docker Desktop also ships one)" }
+    else { Note "Install kubectl: https://kubernetes.io/docs/tasks/tools/" }
+    exit 1
+  }
+  if (-not (Get-Command helm -ErrorAction SilentlyContinue)) {
+    Say "helm is not installed"
+    if ($winget -and [Environment]::UserInteractive -and -not $DryRun) {
+      $ans = Read-Host "   Install Helm now via winget? [Y/n]"
+      if ($ans -eq '' -or $ans -match '^[Yy]') {
+        winget install --id Helm.Helm --accept-source-agreements --accept-package-agreements
+        Note "Helm installed. Open a NEW terminal (PATH refresh) and re-run this installer."
+      } else { Note "Install Helm (winget install Helm.Helm) and re-run." }
+    } else { Note "Install Helm: winget install Helm.Helm  (or https://helm.sh/docs/intro/install/)" }
+    exit 1
+  }
+
+  $kcArgs = @(); $helmCtx = @()
+  if ($K8sContext) { $kcArgs = @('--context', $K8sContext); $helmCtx = @('--kube-context', $K8sContext) }
+
+  kubectl @kcArgs cluster-info *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Say "no reachable Kubernetes cluster$(if ($K8sContext) { " (context $K8sContext)" })"
+    Note "Easiest: Docker Desktop -> Settings -> Kubernetes -> Enable Kubernetes, wait for the"
+    Note "green light, re-run. (Or point kubectl at kind/k3s - NEVER create a kind cluster on a"
+    Note "machine already running the compose swarm; that pairing OOM-wedges the Docker engine.)"
+    exit 1
+  }
+
+  if ($DryRun) {
+    Say "DRY RUN"
+    Note "mode      : kubernetes (helm)"
+    Note "namespace : $Namespace   context: $(if ($K8sContext) { $K8sContext } else { 'current' })"
+    Note "nodeport  : $NodePort   fleet: $Fleet   tag: $Tag"
+    Note "chart     : $(if ($Chart) { $Chart } else { 'published OCI package, repo fallback' })"
+    exit 0
+  }
+
+  # Chart source: explicit -Chart, else the published OCI chart, else the chart files
+  # fetched from the repo (still no source build - the fallback exists so a fresh box
+  # works even before the operator's first chart publish).
+  $ociRef = "oci://$Registry/charts/oshal"
+  $chartSrc = $Chart
+  if (-not $chartSrc) {
+    helm show chart $ociRef *> $null
+    if ($LASTEXITCODE -eq 0) { $chartSrc = $ociRef }
+    else {
+      Note "OCI chart not published yet at $ociRef - fetching the chart from the repo"
+      $chartDir = Join-Path $Dir 'chart-src'
+      New-Item -ItemType Directory -Force -Path $chartDir | Out-Null
+      $tgz = Join-Path $chartDir 'repo.tgz'
+      Invoke-WebRequest -UseBasicParsing -Uri 'https://codeload.github.com/emeraldcoastsystemsgroup/oshal/tar.gz/refs/heads/main' -OutFile $tgz
+      tar -xzf $tgz -C $chartDir --strip-components=4 'oshal-main/deploy/helm/oshal'
+      if ($LASTEXITCODE -ne 0) { throw "could not extract the chart - pass -Chart <dir> to use a local chart" }
+      Remove-Item $tgz -Force
+      $chartSrc = $chartDir
+    }
+  }
+
+  # Who owns this swarm? Same question, same reason as the compose path: MOCK_OIDC has
+  # no sign-in page, so this identity IS the login.
+  if (-not $AdminEmail -and [Environment]::UserInteractive) {
+    Say "who owns this swarm?"
+    Note "Your email becomes your local login AND makes you the superadmin. It is written only"
+    Note "into the cluster's api env. Press Enter to skip (shared demo identity)."
+    $AdminEmail = (Read-Host "   your email").Trim()
+  }
+
+  $helmSet = @(
+    '--set-string', "image.repository=$Registry/oshal-bot",
+    '--set-string', "image.tag=$Tag",
+    '--set', 'api.service.type=NodePort',
+    '--set', "api.service.nodePort=$NodePort",
+    '--set-string', "fleet=$Fleet"
+  )
+  if ($AdminEmail) {
+    $helmSet += @(
+      '--set-string', "api.extraEnv.MOCK_OIDC_EMAIL=$AdminEmail",
+      '--set-string', "api.extraEnv.MOCK_OIDC_NAME=$($AdminEmail.Split('@')[0])",
+      '--set-string', "api.extraEnv.MOCK_OIDC_SUB=$(LocalSub $AdminEmail)",
+      '--set-string', "api.extraEnv.OSHAL_OPERATOR_EMAILS=$AdminEmail"
+    )
+  }
+  if ($NoAi) {
+    $helmSet += @('--set-string', 'swarm.forceLlmProvider=noop', '--set-string', 'swarm.forceLlmModel=',
+                  '--set-string', 'api.extraEnv.OSHAL_NO_AI=true')
+  }
+
+  Say "installing chart into namespace $Namespace (first image pull is a few GB - one-time)"
+  helm @helmCtx upgrade --install oshal $chartSrc --namespace $Namespace --create-namespace --wait --timeout 20m @helmSet
+  if ($LASTEXITCODE -ne 0) {
+    throw "helm install failed - the messages above name the broken leg. Cleanup if needed: helm uninstall oshal -n $Namespace"
+  }
+
+  # Where the cockpit lives: localhost for desktop cluster shapes, the first node's
+  # InternalIP otherwise (k3s/server installs).
+  $ctxName = $K8sContext
+  if (-not $ctxName) { try { $ctxName = (& kubectl config current-context 2>$null) } catch { $ctxName = '' } }
+  $hostAddr = 'localhost'
+  if ($ctxName -notmatch '^(docker-desktop$|kind-|k3d-|minikube$)') {
+    try {
+      $ip = (& kubectl @kcArgs get nodes -o "jsonpath={.items[0].status.addresses[?(@.type=='InternalIP')].address}" 2>$null)
+      if ($ip) { $hostAddr = $ip }
+    } catch {}
+  }
+  $base = "http://${hostAddr}:$NodePort"
+
+  Say "postflight: waiting for the api to answer"
+  $apiOk = $false
+  foreach ($i in 1..50) {
+    try { Invoke-WebRequest -UseBasicParsing -Uri "$base/api/health" -TimeoutSec 5 *> $null; $apiOk = $true; break }
+    catch { Start-Sleep -Seconds 3 }
+  }
+  if (-not $apiOk) {
+    Note "WARNING: $base/api/health not answering. Pods:"
+    kubectl @kcArgs -n $Namespace get pods
+    Note "A pre-existing kind cluster without a port mapping cannot expose NodePorts to this host -"
+    Note "durable access: kubectl -n $Namespace port-forward svc/oshal-api ${NodePort}:5000"
+  } else {
+    Note "api healthy - $base   (fleet: $Fleet)"
+  }
+
+  $welcome = "$base/welcome"; if ($NoAi) { $welcome = "$base/cockpit/" }
+  Say "installed - opening your swarm"
+  Note "setup:   $welcome"
+  Note "cockpit: $base/cockpit/   (after setup)"
+  Start-Process $welcome *> $null
+
+  Say "what happens next, in the browser"
+  if ($AdminEmail) {
+    Note "You are $AdminEmail - your local login AND the swarm superadmin."
+  } else {
+    Note "You skipped the email prompt, so you are the shared demo identity (alex@demo.local). To"
+    Note "become yourself later, re-run with -AdminEmail you@example.com - helm upgrades in place."
+  }
+  if ($NoAi) {
+    Note "This cluster was installed -NoAi: AI features stay disabled until a model is connected."
+  } else {
+    Note "1. Connect an AI model - REQUIRED. The wizard offers the free shared model, an API key,"
+    Note "   or a hosted login. (k8s has NO vendor-CLI OAuth mounts - the wizard IS the path; fleet"
+    Note "   API keys can also live in an oshal-bot-env Secret, see deploy/helm/oshal/README.md.)"
+    Note "2. Connect your accounts (optional) - each one is its own consent."
+  }
+  Note "Store apps: cockpit -> Explore Apps (the -Apps flag is compose-only today)."
+  Note "Uninstall: helm uninstall oshal -n $Namespace ; kubectl delete ns $Namespace"
+  exit 0
+}
 
 # -- Bundles: kernel + curated sets, dependencies bound (keep in lockstep with oshal-install.sh) --
 $KernelServices = @('oshal-api','general-bot','jarvis-bot','oshal-developer')
@@ -135,18 +311,7 @@ if (-not $AdminEmail -and -not (Test-Path $envFile) -and [Environment]::UserInte
 
 # -- .env: generated once, never overwritten ---------------------------------
 function Rand48 { -join ((1..48) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] }) }
-
-# Stable local identity derived from the email, so a reinstall against the same workspace volume
-# keeps the same user sub (connector tokens and tickets are sub-keyed - a fresh random sub would
-# orphan them). Deterministic hash, not a GUID, for exactly that reason.
-function LocalSub([string]$email) {
-  $sha = [System.Security.Cryptography.SHA256]::Create()
-  try {
-    $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($email.ToLower()))
-    $hex = ($bytes | ForEach-Object { $_.ToString('x2') }) -join ''
-    return 'local-' + $hex.Substring(0, 16)
-  } finally { $sha.Dispose() }
-}
+# (LocalSub - the stable email-derived identity - is defined up top, shared with -Kubernetes.)
 
 if (-not (Test-Path $envFile)) {
   Say "generating .env (fresh secrets; MOCK_OIDC=true for local login)"

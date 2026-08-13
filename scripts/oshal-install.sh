@@ -10,6 +10,7 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G1/G2/G4 (the G-Squared incident): (G1) install now ENDS with scripts/oshal-verify.sh in --pre-onboarding posture — counting containers is no longer success; a broken leg (kernel service, heartbeat, db, contradictory no-AI posture) fails the install loudly by name. The verify trio (oshal-verify.sh, swarm-routability-check.sh, routability-critical-bots.txt) is extracted from the image in registry mode, with a raw.githubusercontent fallback for images predating it. (G2) new --no-ai flag: running without a connected model is now an EXPLICIT choice recorded in .env (OSHAL_NO_AI=true + FORCE_LLM_PROVIDER=noop + a comment saying what will not work) — never a silent default; with it, the installer opens the cockpit instead of a wizard that could never complete. (G4) preflight now owns the credential paths BEFORE first `up` (~/.claude, ~/.codex, ~/.gemini as directories; ~/.claude.json as a FILE, so Docker cannot auto-create a root-owned directory where a file belongs) and writes CLAUDE_AUTH_MOUNT_MODE=rw / GEMINI_AUTH_MOUNT_MODE=rw for server installs — a CLI that cannot write cannot refresh its token, and `claude auth login` reports success while saving nothing.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: pass the exact deduplicated app set to the canonical postflight verifier so a staged package cannot report installed without executing its manifest smoke.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: assess every requested store package in the shipped core image, block invalid audit bindings, and stage verified packages only from their exact SHA archive.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: mode 4 goes from a printed Terraform pointer to a REAL codeless k8s install — kubectl/helm preflight, cluster detection (offers a single-node kind cluster with the cockpit port mapped; REFUSES to create one beside a running compose swarm — that pairing OOM-wedged a 6GB engine twice), chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full (store bundles stay compose-only and say so), the same admin-email→MOCK_OIDC identity wiring as mode 1 (shared local_sub, hoisted above the mode dispatch), NodePort exposure with localhost/node-IP detection, /api/health postflight, and the /welcome open. New flags: --namespace, --k8s-context, --nodeport, --chart.
 # =============================================================================
 #
 # One-click:
@@ -18,21 +19,25 @@
 #
 # Flags (no flags = interactive):
 #   --mode 1|2|3|4      1 swarm from registry (default) · 2 swarm from source ·
-#                       3 leaf-node bot (join an existing swarm) · 4 kubernetes (pointer)
+#                       3 leaf-node bot (join an existing swarm) · 4 kubernetes (helm install)
 #   --bundle NAME       kernel | full | little-monsters | gaming | jobs   (default: full)
 #   --apps a,b,c        individual store packages to add (deduped against the bundle)
 #   --audit-mode MODE   package audit posture: compatible (default) | enforce
 #   --dir DIR           install directory (default ./oshal)
 #   --tag TAG           image tag (default latest)      --registry REG   (default ghcr.io/emeraldcoastsystemsgroup)
-#   --admin-email E     wire E as the swarm operator/superadmin in .env
+#   --admin-email E     wire E as the swarm operator/superadmin (.env, or k8s api env)
 #   --control-plane URL --join-code CODE [--enrollment-token T]   (mode 3)
-#   --no-ai             EXPLICITLY install without a connected model (recorded in .env;
+#   --namespace NS      (mode 4) tenant namespace                (default oshal)
+#   --k8s-context CTX   (mode 4) kubeconfig context              (default: current)
+#   --nodeport N        (mode 4) cockpit NodePort 30000-32767    (default 30500)
+#   --chart REF         (mode 4) chart dir/OCI ref override      (default: published OCI, repo fallback)
+#   --no-ai             EXPLICITLY install without a connected model (recorded;
 #                       AI features stay disabled until a model is connected)
 #   --dry-run           print the plan, touch nothing
 #
-# Hosting environments: DOCKER (modes 1-2, automated here) and KUBERNETES
-# (mode 4 — deploy/terraform in the source repo drives kind/k8s with the same
-# GHCR images; see deploy/terraform/README.md).
+# Hosting environments: DOCKER (modes 1-2) and KUBERNETES (mode 4) — both fully
+# automated here, both pulling only from the registry. Multi-user public tenants
+# on k8s should use deploy/terraform instead (OIDC/secret posture guards).
 
 set -euo pipefail
 
@@ -40,12 +45,13 @@ MODE=""; BUNDLE="full"; APPS=""; DIR="./oshal"; TAG="latest"; NO_AI=0
 PACKAGE_AUDIT_MODE="${OSHAL_PACKAGE_AUDIT_MODE:-compatible}"
 REGISTRY="ghcr.io/emeraldcoastsystemsgroup"; ADMIN_EMAIL=""; DRY=0; FROM_ARCHIVE=""
 CONTROL_PLANE=""; JOIN_CODE=""; ENROLL_TOKEN=""
+K8S_NAMESPACE="oshal"; K8S_CONTEXT=""; K8S_NODEPORT="30500"; K8S_CHART=""; BUNDLE_EXPLICIT=0
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
 STORE_REPO="https://github.com/emeraldcoastsystemsgroup/oshal-apps"
 
 while [ $# -gt 0 ]; do case "$1" in
   --mode) MODE="$2"; shift 2 ;;
-  --bundle) BUNDLE="$2"; shift 2 ;;
+  --bundle) BUNDLE="$2"; BUNDLE_EXPLICIT=1; shift 2 ;;
   --apps) APPS="$2"; shift 2 ;;
   --audit-mode) PACKAGE_AUDIT_MODE="$2"; shift 2 ;;
   --dir) DIR="$2"; shift 2 ;;
@@ -55,6 +61,10 @@ while [ $# -gt 0 ]; do case "$1" in
   --control-plane) CONTROL_PLANE="$2"; shift 2 ;;
   --join-code) JOIN_CODE="$2"; shift 2 ;;
   --enrollment-token) ENROLL_TOKEN="$2"; shift 2 ;;
+  --namespace) K8S_NAMESPACE="$2"; shift 2 ;;
+  --k8s-context) K8S_CONTEXT="$2"; shift 2 ;;
+  --nodeport) K8S_NODEPORT="$2"; shift 2 ;;
+  --chart) K8S_CHART="$2"; shift 2 ;;
   --from-archive) FROM_ARCHIVE="$2"; shift 2 ;;
   --no-ai) NO_AI=1; shift ;;
   --dry-run) DRY=1; shift ;;
@@ -108,7 +118,7 @@ if [ -z "$MODE" ]; then
     echo "   1) Install the swarm — no source code (registry images)   [recommended]"
     echo "   2) Install the swarm — from source (git clone + build)"
     echo "   3) Install a leaf-node bot (join an existing swarm from this computer)"
-    echo "   4) Kubernetes hosting (Terraform path — prints instructions)"
+    echo "   4) Install the swarm on Kubernetes — no source code (helm + registry images)"
     printf '   choose [1]: '; read -r MODE; MODE="${MODE:-1}"
     if [ "$MODE" = "1" ] || [ "$MODE" = "2" ]; then
       printf '   bundle (kernel/full/little-monsters/gaming/jobs) [%s]: ' "$BUNDLE"; read -r b; BUNDLE="${b:-$BUNDLE}"
@@ -116,6 +126,9 @@ if [ -z "$MODE" ]; then
       # lands here is who the swarm thinks you are. Blank = the shared demo identity.
       printf '   your email — becomes your local login AND the superadmin (blank = decide later): '; read -r ADMIN_EMAIL || true
       for p in ${BUNDLE_PACKAGES[$BUNDLE]:-}; do PKG_SET[$p]=1; done
+    elif [ "$MODE" = "4" ]; then
+      printf '   fleet (kernel = the core bots / full = every k8s-eligible bot) [kernel]: '; read -r b; BUNDLE="${b:-kernel}"
+      printf '   your email — becomes your local login AND the superadmin (blank = decide later): '; read -r ADMIN_EMAIL || true
     fi
   else
     MODE=1
@@ -126,16 +139,179 @@ fi
 # ("1 1: invalid variable name") — caught live by the first stranger-path dry-run. Two steps.
 pkg_list="${!PKG_SET[*]}"
 PLAN="mode=$MODE bundle=$BUNDLE packages=[${pkg_list:-none}] audit=$PACKAGE_AUDIT_MODE dir=$DIR tag=$TAG"
+[ "$MODE" = "4" ] && PLAN="mode=4 (kubernetes) namespace=$K8S_NAMESPACE context=${K8S_CONTEXT:-current} nodeport=$K8S_NODEPORT tag=$TAG chart=${K8S_CHART:-oci-then-repo}"
 if [ "$DRY" -eq 1 ]; then say "DRY RUN — $PLAN"; exit 0; fi
 
-# ── Mode 4: Kubernetes pointer ───────────────────────────────────────────────
+# Stable local identity derived from the email, so a reinstall against the same workspace
+# keeps the same user sub (connector tokens and tickets are sub-keyed — a fresh random sub
+# would orphan them). Must stay byte-identical to LocalSub() in oshal-install.ps1: sha256 of
+# the lowercased email, first 16 hex chars. Shared by the compose (.env) and k8s (helm
+# values) paths — that is why it is defined ahead of the mode dispatch.
+local_sub() {
+  _lsl=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  _lsh=$(printf '%s' "$_lsl" | { sha256sum 2>/dev/null || shasum -a 256 2>/dev/null; } | awk '{print $1}')
+  printf 'local-%s' "$(printf '%s' "$_lsh" | cut -c1-16)"
+}
+
+# ── Mode 4: Kubernetes — codeless helm install (ADR-129) ─────────────────────
+# Same contract as mode 1, different substrate: registry image + published chart,
+# no source, no build. Multi-user public tenants belong on deploy/terraform (its
+# OIDC/secret posture guards are the point); this is the single-box swarm.
 if [ "$MODE" = "4" ]; then
-  say "Kubernetes hosting"
-  note "The k8s path is Terraform-driven from the source repo (same GHCR images):"
-  note "  git clone $REPO_URL && cd oshal/deploy/terraform"
-  note "  # read README.md — envs/local-kind.tfvars is the local-cluster starter"
-  note "  terraform init && terraform apply -var-file=envs/local-kind.tfvars"
-  note "NEVER run a kind cluster and the docker-compose swarm on the same machine."
+  say "Kubernetes install (helm + registry images — no source, no build)"
+  command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required. Docker Desktop ships it (Settings -> Kubernetes), or: https://kubernetes.io/docs/tasks/tools/"; exit 1; }
+  command -v helm >/dev/null 2>&1 || { echo "helm is required. Windows: winget install Helm.Helm · macOS: brew install helm · Linux: https://helm.sh/docs/intro/install/"; exit 1; }
+
+  KC=(kubectl); HELM_CTX=()
+  [ -n "$K8S_CONTEXT" ] && { KC+=(--context "$K8S_CONTEXT"); HELM_CTX=(--kube-context "$K8S_CONTEXT"); }
+
+  if ! "${KC[@]}" cluster-info >/dev/null 2>&1; then
+    say "no reachable Kubernetes cluster${K8S_CONTEXT:+ (context $K8S_CONTEXT)}"
+    if [ -z "$K8S_CONTEXT" ] && command -v kind >/dev/null 2>&1 && docker info >/dev/null 2>&1 && [ -t 0 ]; then
+      # NEVER kind + the compose swarm on one machine — that pairing OOM-wedged a
+      # 6GB Docker engine twice (2026-07-18). The check is the guard, not a vibe.
+      if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^oshal-local-api$'; then
+        echo "The compose swarm is RUNNING on this machine. Refusing to create a kind cluster beside it —"
+        echo "that pairing OOM-wedges the shared Docker engine. Use another computer, or stop the swarm first."
+        exit 1
+      fi
+      printf '   create a local kind cluster "oshal" now (single node, cockpit port mapped)? [Y/n]: '
+      read -r mk; if [ -z "$mk" ] || [ "${mk#[Yy]}" != "$mk" ]; then
+        mkdir -p "$DIR"
+        { echo 'kind: Cluster'
+          echo 'apiVersion: kind.x-k8s.io/v1alpha4'
+          echo 'nodes:'
+          echo '  - role: control-plane'
+          echo '    extraPortMappings:'
+          echo "      - containerPort: $K8S_NODEPORT"
+          echo "        hostPort: $K8S_NODEPORT"
+        } > "$DIR/kind-oshal.yaml"
+        kind create cluster --name oshal --config "$DIR/kind-oshal.yaml"
+        KC=(kubectl --context kind-oshal); HELM_CTX=(--kube-context kind-oshal)
+      else
+        echo "No cluster, nothing installed. Easiest options:"
+        echo "  - Docker Desktop -> Settings -> Kubernetes -> Enable, then re-run"
+        echo "  - or install kind (https://kind.sigs.k8s.io) and re-run"
+        exit 1
+      fi
+    else
+      echo "Point kubectl at a cluster and re-run. Easiest options:"
+      echo "  - Docker Desktop -> Settings -> Kubernetes -> Enable"
+      echo "  - kind create cluster   (https://kind.sigs.k8s.io — NEVER beside the compose swarm)"
+      echo "  - k3s on a server       (https://k3s.io)"
+      exit 1
+    fi
+  fi
+
+  # Chart source: explicit --chart, else the published OCI chart, else the chart
+  # files fetched from the repo (still no source build — the fallback exists so a
+  # fresh box works even before the operator's first chart publish).
+  OCI_REF="oci://${REGISTRY}/charts/oshal"
+  if [ -n "$K8S_CHART" ]; then
+    CHART_SRC="$K8S_CHART"
+  elif helm show chart "$OCI_REF" >/dev/null 2>&1; then
+    CHART_SRC="$OCI_REF"
+  else
+    note "OCI chart not published yet at $OCI_REF — fetching the chart from the repo"
+    mkdir -p "$DIR/chart-src"
+    # Download-then-extract, never curl|tar: tar stops reading after the matched
+    # subtree, curl exits 23 on the closed pipe, and pipefail turns that success
+    # into a false "could not fetch".
+    curl -fsSL "https://codeload.github.com/emeraldcoastsystemsgroup/oshal/tar.gz/refs/heads/main" -o "$DIR/chart-src/repo.tgz" \
+      && tar -xzf "$DIR/chart-src/repo.tgz" -C "$DIR/chart-src" --strip-components=4 "oshal-main/deploy/helm/oshal" 2>/dev/null \
+      || { echo "could not fetch the chart (offline?) — pass --chart <dir> to use a local chart"; exit 1; }
+    rm -f "$DIR/chart-src/repo.tgz"
+    CHART_SRC="$DIR/chart-src"
+  fi
+
+  # kernel|full map to the chart's generated fleet presets; the app-store bundles
+  # are compose-only today (staging needs the workspace volume) — say so, honestly.
+  FLEET="kernel"
+  if [ "$BUNDLE_EXPLICIT" -eq 1 ] || [ -t 0 ]; then
+    case "$BUNDLE" in
+      kernel|full) FLEET="$BUNDLE" ;;
+      *) note "bundle '$BUNDLE' is compose-only (store staging) — installing the kernel fleet; add apps later from the cockpit (Explore Apps)" ;;
+    esac
+  fi
+
+  HELM_SET=(
+    --set-string "image.repository=${REGISTRY}/oshal-bot"
+    --set-string "image.tag=$TAG"
+    --set "api.service.type=NodePort"
+    --set "api.service.nodePort=$K8S_NODEPORT"
+    --set-string "fleet=$FLEET"
+  )
+  if [ -n "$ADMIN_EMAIL" ]; then
+    HELM_SET+=(
+      --set-string "api.extraEnv.MOCK_OIDC_EMAIL=$ADMIN_EMAIL"
+      --set-string "api.extraEnv.MOCK_OIDC_NAME=${ADMIN_EMAIL%%@*}"
+      --set-string "api.extraEnv.MOCK_OIDC_SUB=$(local_sub "$ADMIN_EMAIL")"
+      --set-string "api.extraEnv.OSHAL_OPERATOR_EMAILS=$ADMIN_EMAIL"
+    )
+  fi
+  if [ "$NO_AI" -eq 1 ]; then
+    HELM_SET+=(--set-string "swarm.forceLlmProvider=noop" --set-string "swarm.forceLlmModel="
+               --set-string "api.extraEnv.OSHAL_NO_AI=true")
+  fi
+
+  say "installing chart into namespace $K8S_NAMESPACE (first image pull is a few GB — one-time)"
+  helm "${HELM_CTX[@]}" upgrade --install oshal "$CHART_SRC" \
+    --namespace "$K8S_NAMESPACE" --create-namespace \
+    --wait --timeout 20m "${HELM_SET[@]}" \
+    || { echo "helm install failed — the messages above name the broken leg. Nothing to clean up beyond: helm ${HELM_CTX[*]} uninstall oshal -n $K8S_NAMESPACE"; exit 1; }
+
+  # Where the cockpit lives: localhost for the desktop cluster shapes, the first
+  # node's InternalIP otherwise (k3s/server installs).
+  CTX_NAME="${K8S_CONTEXT:-$(kubectl config current-context 2>/dev/null)}"
+  HOSTADDR="localhost"
+  case "$CTX_NAME" in
+    docker-desktop|kind-*|k3d-*|minikube) HOSTADDR="localhost" ;;
+    *) HOSTADDR=$("${KC[@]}" get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
+       [ -n "$HOSTADDR" ] || HOSTADDR="localhost" ;;
+  esac
+  BASE="http://$HOSTADDR:$K8S_NODEPORT"
+
+  say "postflight: waiting for the api to answer"
+  API_OK=""
+  for i in $(seq 1 50); do curl -fsS "$BASE/api/health" >/dev/null 2>&1 && { API_OK=1; break; }; sleep 3; done
+  if [ -z "$API_OK" ]; then
+    note "WARNING: $BASE/api/health not answering. Pods:"
+    "${KC[@]}" -n "$K8S_NAMESPACE" get pods 2>/dev/null || true
+    note "A pre-existing kind cluster without a port mapping cannot expose NodePorts to this host —"
+    note "durable access: kubectl -n $K8S_NAMESPACE port-forward svc/oshal-api $K8S_NODEPORT:5000"
+  else
+    BOTS_UP=$(curl -fsS "$BASE/api/agents" 2>/dev/null | grep -o '"agentId"' | wc -l | tr -d ' ')
+    note "api healthy — $BASE   (fleet: $FLEET, agents visible: ${BOTS_UP:-?})"
+  fi
+
+  WELCOME="$BASE/welcome"; [ "$NO_AI" -eq 1 ] && WELCOME="$BASE/cockpit/"
+  say "installed — opening your swarm"
+  note "setup:   $WELCOME"
+  note "cockpit: $BASE/cockpit/   (after setup)"
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null || cmd.exe /c start "$WELCOME" 2>/dev/null || true ;;
+    Darwin*) open "$WELCOME" 2>/dev/null || true ;;
+    *) xdg-open "$WELCOME" 2>/dev/null || true ;;
+  esac
+  say "what happens next, in the browser"
+  if [ -n "$ADMIN_EMAIL" ]; then
+    note "You are $ADMIN_EMAIL — your local login AND the swarm superadmin (MOCK_OIDC trusts this"
+    note "cluster, and its env says that identity is you)."
+  else
+    note "You skipped the email prompt, so you are the shared demo identity (alex@demo.local). To"
+    note "become yourself later, re-run this installer with --admin-email you@example.com — helm"
+    note "upgrades in place and your workspace volume survives."
+  fi
+  if [ "$NO_AI" -eq 1 ]; then
+    note "This cluster was installed --no-ai: AI features stay disabled until a model is connected."
+  else
+    note "1. Connect an AI model — REQUIRED. The wizard offers the free shared model, an API key,"
+    note "   or a hosted login. (k8s has NO vendor-CLI OAuth mounts — the wizard IS the path; API"
+    note "   keys for the whole fleet can also live in an oshal-bot-env Secret, see the chart README.)"
+    note "2. Connect your accounts (optional) — each one is its own consent."
+  fi
+  note "Store apps: cockpit -> Explore Apps (the --apps flag is compose-only today)."
+  note "Uninstall: helm ${HELM_CTX[*]:-} uninstall oshal -n $K8S_NAMESPACE && kubectl delete ns $K8S_NAMESPACE"
   exit 0
 fi
 
@@ -229,16 +405,8 @@ fi
 
 # ── .env: generated once, never overwritten ──────────────────────────────────
 rand() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
-
-# Stable local identity derived from the email, so a reinstall against the same workspace volume
-# keeps the same user sub (connector tokens and tickets are sub-keyed — a fresh random sub would
-# orphan them). Must stay byte-identical to LocalSub() in oshal-install.ps1: sha256 of the
-# lowercased email, first 16 hex chars.
-local_sub() {
-  _lsl=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  _lsh=$(printf '%s' "$_lsl" | { sha256sum 2>/dev/null || shasum -a 256 2>/dev/null; } | awk '{print $1}')
-  printf 'local-%s' "$(printf '%s' "$_lsh" | cut -c1-16)"
-}
+# (local_sub — the stable email-derived identity — is defined above the mode dispatch,
+# shared by this .env path and the k8s helm-values path.)
 
 ENV_FILE="$DIR/.env"; [ "$MODE" = "2" ] && ENV_FILE="$DIR/src/.env"
 if [ ! -f "$ENV_FILE" ]; then
