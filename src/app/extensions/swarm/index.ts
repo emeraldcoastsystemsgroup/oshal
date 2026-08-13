@@ -88,6 +88,8 @@ import {
   AgentFactoryService,
   BotContainerSpawnerService,
   DynamicComposeService,
+  KubernetesBotRuntimeLauncher,
+  isRunningInKubernetes,
   CapabilityExpansionService,
   AgentConfigService,
   createAgentConfigRuntimeParamsResolver,
@@ -705,6 +707,12 @@ export function createSwarmExtensionBindings(
           : undefined,
         dynamicComposeService: factoryDynamicCompose,
         containerSpawner: new BotContainerSpawnerService(undefined, undefined, factoryDynamicCompose.filePath),
+        // On a cluster the compose pair is inert (no compose file, no docker
+        // socket), so an app that brings its own bot-node could never launch it.
+        // In-pod, launch runtimes as namespaced Deployments instead.
+        botLauncher: isRunningInKubernetes()
+          ? (KubernetesBotRuntimeLauncher.fromEnvironment() ?? undefined)
+          : undefined,
       })
     : undefined;
 

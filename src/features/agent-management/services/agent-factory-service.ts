@@ -22,6 +22,7 @@ import type { MeshTransport } from './mesh-communication-service';
 import { MESH_CHANNELS } from './mesh-communication-service';
 import type { DynamicComposeService } from './dynamic-compose-service';
 import type { BotContainerSpawnerService } from './bot-container-spawner-service';
+import { ComposeBotRuntimeLauncher, type BotRuntimeLauncher } from './bot-runtime-launcher';
 
 const logger = createChildLogger({ module: 'agent-factory-service' });
 
@@ -165,6 +166,13 @@ export interface AgentFactoryServiceDeps {
   agentConfigStore?: AgentFactoryConfigStore;
   recomposeSelector?: (agentId: string) => Promise<unknown>;
   /** When provided, deployWithContainer writes a dynamic compose service entry before spawning */
+  /**
+   * Substrate-agnostic bot runtime launcher. When present it OWNS the launch and
+   * rollback steps, so the same create-and-start works under compose and on a
+   * cluster. The two compose-specific deps below remain for callers that still
+   * construct them directly.
+   */
+  botLauncher?: BotRuntimeLauncher;
   dynamicComposeService?: DynamicComposeService;
   /** When provided, deployWithContainer calls startBot() after writing the compose entry */
   containerSpawner?: BotContainerSpawnerService;
@@ -185,6 +193,7 @@ export class AgentFactoryService {
   private readonly switchFramework?: AgentFactorySwitchFramework;
   private readonly agentConfigStore?: AgentFactoryConfigStore;
   private readonly recomposeSelector?: (agentId: string) => Promise<unknown>;
+  private readonly botLauncher?: BotRuntimeLauncher;
   private readonly dynamicComposeService?: DynamicComposeService;
   private readonly containerSpawner?: BotContainerSpawnerService;
 
@@ -200,6 +209,13 @@ export class AgentFactoryService {
     this.recomposeSelector = deps.recomposeSelector;
     this.dynamicComposeService = deps.dynamicComposeService;
     this.containerSpawner = deps.containerSpawner;
+    // Prefer an injected launcher; otherwise fall back to composing one from the
+    // legacy compose pair so existing callers behave exactly as before.
+    this.botLauncher =
+      deps.botLauncher ??
+      (deps.dynamicComposeService && deps.containerSpawner
+        ? new ComposeBotRuntimeLauncher(deps.dynamicComposeService, deps.containerSpawner)
+        : undefined);
   }
 
   /**
@@ -331,33 +347,27 @@ export class AgentFactoryService {
       return result;
     }
 
-    if (!this.dynamicComposeService || !this.containerSpawner) {
+    if (!this.botLauncher) {
       logger.warn(
         { name: spec.name },
-        'deployWithContainer: dynamicComposeService or containerSpawner not configured — agent created as persona-only',
+        'deployWithContainer: no bot runtime launcher configured — agent created as persona-only',
       );
       return { ...result, containerStarted: false, containerError: 'Container spawner not configured' };
     }
 
-    // Step 2: register service in docker-compose.dynamic.yml
-    const composeResult = this.dynamicComposeService.upsertService({
+    // Step 2+3: create the runtime on whichever substrate this controller runs on
+    // (compose service + `docker compose up`, or a namespaced k8s Deployment).
+    const launch = await this.botLauncher.launch({
       agentName: spec.name,
       agentId: result.agentId,
+      capabilities: spec.capabilities?.join(','),
     });
-
-    if (!composeResult.success) {
-      logger.error({ name: spec.name, error: composeResult.error }, 'Failed to register dynamic compose service');
-      return { ...result, containerStarted: false, containerError: composeResult.error };
+    if (!launch.success) {
+      logger.error({ name: spec.name, runtime: launch.runtime, error: launch.error }, 'Failed to launch bot runtime');
+      return { ...result, containerStarted: false, containerError: launch.error };
     }
 
-    // Step 3: start the container using both the main and dynamic compose files
-    const spawnResult = await this.containerSpawner.startBot(spec.name);
-    if (!spawnResult.success) {
-      logger.error({ name: spec.name, error: spawnResult.error }, 'Failed to start bot container');
-      return { ...result, containerStarted: false, containerError: spawnResult.error };
-    }
-
-    logger.info({ name: spec.name, agentId: result.agentId }, 'Agent deployed with container');
+    logger.info({ name: spec.name, agentId: result.agentId, runtime: launch.runtime }, 'Agent deployed with runtime');
     return { ...result, containerStarted: true };
   }
 
@@ -403,11 +413,12 @@ export class AgentFactoryService {
   }
 
   /**
-   * @description Undoes a creation whose launch failed: best-effort dynamic
-   * compose cleanup, then agent profile deletion; when deletion fails the profile
-   * is marked inactive so the failed agent can never be routed to.
+   * @description Undoes a creation whose launch failed: best-effort runtime
+   * cleanup on whichever substrate is in play, then agent profile deletion; when
+   * deletion fails the profile is marked inactive so the failed agent can never
+   * be routed to.
    * @param agentId - The created agent's ID.
-   * @param agentName - The created agent's name (compose service key).
+   * @param agentName - The created agent's name (service/Deployment key).
    * @returns Rollback outcome for the caller's response.
    */
   private async rollbackCreatedAgent(
@@ -415,9 +426,9 @@ export class AgentFactoryService {
     agentName: string,
   ): Promise<{ rolledBack: boolean; rollbackError?: string }> {
     try {
-      const removal = this.dynamicComposeService?.removeService(agentName);
+      const removal = await this.botLauncher?.remove(agentName);
       if (removal && !removal.success) {
-        logger.error({ agentName, error: removal.error }, 'Rollback: dynamic compose removal failed (continuing to profile deletion)');
+        logger.error({ agentName, runtime: removal.runtime, error: removal.error }, 'Rollback: bot runtime removal failed (continuing to profile deletion)');
       }
     } catch (error) {
       logger.error({ err: error, agentName }, 'Rollback: dynamic compose removal threw (continuing to profile deletion)');

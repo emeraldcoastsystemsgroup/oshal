@@ -16,6 +16,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** chart 0.3.0 templates the whole tier (tsdb, arangodb, vault, code-server, diarization; ollama opt-in) and stages store packages via an api initContainer, but only template-level proof exists (lint, render matrix, `kubectl apply --dry-run`, a mutation-tested guard). Nothing has run against a live cluster.
 - **Done when:** on a real cluster — a staged store package serves its surface and survives an api pod restart; a trading query returns series from the in-cluster tsdb; `/api/graph` answers instead of 503; a transcription round-trips through the diarization Service; and `helm upgrade --set infra.arangodb.inCluster=false` degrades the graph cleanly (null connector, no connection-refused) rather than erroring.
 
+### Cockpit bot enable/disable toggle is compose-only
+- **Remaining:** `agent-status-routes` constructs `DynamicComposeService` + `BotContainerSpawnerService` directly, so toggling a bot's status in the cockpit shells `docker compose` — inert inside a pod. The create-and-start path now routes through the substrate-agnostic `BotRuntimeLauncher` (ADR-129 amendment 2); the toggle does not.
+- **Done when:** the status toggle resolves the same launcher (scaling the Deployment to 0/1 on k8s, compose start/stop otherwise), with a guard proving a disabled bot stops receiving dispatch on both substrates.
+
 ### k8s durability posture for the shared-service tier
 - **Remaining:** every in-cluster service is single-replica with dev-parity credentials and no backup/restore path; Vault runs `-dev` (in-memory, lost on restart) by design. Acceptable for a single-box swarm, not for a shared tenant.
 - **Done when:** the tenant profile documents (or templates) managed Postgres/Timescale, a real Vault target, and a backup story for the workspace + Chroma volumes — or each is explicitly declared out of scope for the single-box product with the boundary named in the chart README.
