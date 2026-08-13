@@ -211,7 +211,7 @@ they were half-converted. That is the real lesson: **the earlier rollout stopped
 until something checks.** The gate is the durable half of this fix; the remap is the one-off half.
 
 ## BUG-13 — Identity Hub's expired-login signal is dead UI (the field is never sent)
-- **Type:** Bug · **Priority:** Med · **Status:** OPEN
+- **Type:** Bug · **Priority:** Med · **Status:** FIXED 2026-08-12 (PR pending merge — see Resolution)
 - **Discovered:** 2026-08-09, by the adversarial as-built review while writing
   [the Identity Hub guide](../guides/identity-hub.md) — the reviewer could not make the documented
   "Reconnect an expired login" affordance appear, and traced it to the API rather than the surface.
@@ -229,9 +229,10 @@ until something checks.** The gate is the durable half of this fix; the remap is
   catches only connected-but-unconfigured providers. A user whose Google token actually expired gets
   no indication on the one screen built to show it.
 - **Not a wider outage:** those four are the only consumers of a per-connection `expired` flag in
-  either repo, and the Access Review path is unaffected — it computes expiry itself from the stored
-  `expiry` value rather than trusting the list response, which is why the same page can report a
-  stale account in the review while showing zero in the tile.
+  either repo. The Access Review path computes expiry itself from the stored `expiry` value rather
+  than trusting the list response, which is why the same page can report a stale account in the
+  review while showing zero in the tile. *(This entry originally called the review path
+  "unaffected". It is not — see the Resolution: it was wrong in the opposite direction.)*
 - **Root cause:** the list response is a deliberately narrow, credential-free projection (its header
   says "status and account selectors only"), and expiry was never added to that allowlist when the
   Hub was written against an assumed field. Nothing fails when a surface reads a key the response
@@ -242,6 +243,48 @@ until something checks.** The gate is the durable half of this fix; the remap is
 - **Prevention (guard-per-fix):** a unit assertion that the connector list response carries the keys
   the shipped surfaces actually read, so a projection that drops a consumed field goes red instead of
   silently rendering a zero.
+
+### Resolution (2026-08-12) — and the fix this entry proposed was itself half wrong
+
+`buildConnectorListResponse` now projects a per-connection `expired` boolean, so all four consumers
+light up and the surface needed no change, as predicted. But the fix as written above — *"derive
+expiry in `buildConnectorListResponse` from the stored token expiry"* — would have shipped a worse
+bug than the one it closed, and the difference is the whole point of this entry.
+
+**`expiry < now` is not what "expired" means.** `getValidAccessToken` renews an access token
+silently whenever a refresh token is stored, so a lapsed access token on a refreshable grant is the
+ordinary steady state — a Google access token lives one hour, so a healthy Google connection is
+"past expiry" for most of its life. Checked against the live store before writing any code: **9 of
+18 connections had a past expiry, and all nine carried a refresh token.** The naive rule would have
+turned a tile that always read 0 into a tile that read 9, on a deployment where nothing was wrong.
+A tile that cries wolf nine times is worse than a dead one, because a user acts on it.
+
+The shipped rule is `isConnectionExpired` in `connector-tenancy.ts`: lapsed **and** unrenewable —
+the exact case where `getValidAccessToken` hands the stale token back unchanged and the provider
+rejects it. It reads 0 on this deployment, which is the correct answer.
+
+**The Access Review was not "unaffected" — it already shipped the naive rule.**
+`identity/src-routes/identity-routes.ts` built its advisor inventory with
+`expired: expiry < now`, so the identity-advisor bot was being handed nine healthy accounts marked
+expired and told to tell the user to reconnect them. Fixed in the same pass (identity 1.0.1): the
+inventory now calls core's `isConnectionExpired`, carries a `refreshable` flag so the bot can read
+a past expiry correctly, and the prompt says outright that a refreshable lapse is not a problem.
+The original observation — that the two paths disagree — was right; the conclusion that the
+review was the correct one was wrong.
+
+**Guards (both halves of a cross-repo contract).**
+`tests/unit/connector-list-expiry.spec.ts` pins the producing side: the per-connection key set on
+both the provider entries and the any-llm entry, the expiry semantics (refreshable / unrenewable /
+no-expiry / boundary), the end-to-end derivation, and no token material in the response.
+`identity/tests/identity-list-contract.test.js` pins the consuming side: every `c.<key>` the
+surface reads is in the promised set, `c.expired` is still read in all four places, and the
+inventory uses the shared rule rather than re-deriving `expiry < now`. Mutation-proved on both
+sides — drop the projected field, revert to the naive rule, or make the surface read an unpromised
+key, and the matching guard goes red.
+
+**Not fixed, and deliberately:** a connection with no refresh token and an expiry still in the
+future will lapse silently one day, and nothing warns ahead of time (three connections on this
+deployment are in that state). That is a new capability, not this defect — logged in BACKLOG.
 
 ## BUG-14 — Notifications copy describes only one of the two credential tiers
 - **Type:** Bug (copy accuracy) · **Priority:** Low · **Status:** OPEN

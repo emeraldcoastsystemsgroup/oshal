@@ -29,7 +29,7 @@ catalog. They do not change when you type in the search box or switch filters:
 | Tile | What it counts |
 |---|---|
 | **Connected** | Providers where you have at least one account connected. |
-| **Need attention** | Providers with an account whose stored authorization is reported as expired. **Reads 0 on every deployment today** — the connection list this page loads does not report per-account expiry, so nothing ever lands here. See [If something looks wrong](#if-something-looks-wrong). |
+| **Need attention** | Providers with an account whose sign-in has lapsed and cannot renew itself — the ones where clicking **Reconnect** is the only fix. Most connected accounts hold a renewal token and top themselves up silently (a Google sign-in does this every hour), so a healthy setup reads 0 here and that is the expected number. |
 | **Ready to enable** | Providers whose sign-in flow is set up on this deployment, plus the ones you set up yourself by pasting a token or supplying your own endpoint. |
 | **Categories** | How many purpose groups the whole catalog contains — not the number of headings currently on screen. |
 
@@ -42,7 +42,7 @@ filter buttons; the active one is highlighted:
 |---|---|
 | **All** | Everything in the catalog. |
 | **Connected** | Providers you have at least one account on. |
-| **Needs attention** | Providers you are connected to whose sign-in flow is no longer set up on this deployment. It is also meant to catch expired authorizations, but that half is inert for the same reason the **Need attention** tile reads 0 — so this filter is usually empty. |
+| **Needs attention** | Providers you are connected to whose sign-in has lapsed and cannot renew itself, plus any whose sign-in flow is no longer set up on this deployment. Usually empty, because usually nothing is broken. |
 | **Available** | Providers you have not connected. |
 
 Typing and filtering redraw the grid immediately; nothing is sent to the server.
@@ -67,7 +67,7 @@ Reconnect and Connect run the consent flow.
 | Pill | Meaning |
 |---|---|
 | **Connected** (green) | You have at least one account on this provider and none of them is flagged expired. |
-| **Reconnect** (red) | At least one of your accounts on this provider is flagged expired. **You will not see this pill today** — the connection list the page loads carries no per-account expiry, so no card is ever flagged. See [If something looks wrong](#if-something-looks-wrong). |
+| **Reconnect** (red) | At least one of your accounts on this provider has lapsed and cannot renew itself. This is the one pill that asks you to act. |
 | **Not connected** (grey) | You have no account on this provider. |
 
 ## Account lines
@@ -78,7 +78,7 @@ Under the pill, each connected account gets a line. Three markers can appear on 
 |---|---|
 | **★** | This is the default account for that provider — the one bots use when nothing else is specified. |
 | **shared** | The account belongs to a household/tenant you are a member of, not to you personally. |
-| **· expired** | The stored authorization for that account has passed its expiry. **Does not appear today**, for the same reason the red *Reconnect* pill never shows — the page is never told which accounts have expired. |
+| **· expired** | That account's authorization has lapsed and there is no renewal token to revive it, so it will keep failing until you reconnect. An account whose short-lived token has merely gone stale is **not** marked — it renews itself. |
 
 ## Card buttons
 
@@ -125,7 +125,7 @@ practical read of your connections, in up to three sections:
 
 | Section | What it contains |
 |---|---|
-| **Needs attention now** | Authorizations that have expired and should be reconnected, named by provider and account. |
+| **Needs attention now** | Authorizations that have lapsed and cannot renew themselves, named by provider and account. The advisor is told which accounts can self-renew, so a stale-but-healthy sign-in is not reported here. |
 | **Housekeeping** | Duplicate accounts on one provider, a provider with no default set, accounts that look stale. |
 | **Worth adding** | Connectors you do not have that would round out your setup, when there is a genuinely useful one. |
 
@@ -163,13 +163,14 @@ A section with nothing to say is left out. If you have nothing connected at all,
 
 ## If something looks wrong
 
-**"Need attention" reads 0 and no card ever shows the red *Reconnect* pill, even though a login has
-clearly lapsed.** The grid takes expiry from the connection list it loads, and that list does not
-report per-account expiry today — so the tile and the pill stay quiet. Two things do see expiry
-correctly: the **Access review** (it reads expiry straight from the store, which is why *Needs
-attention now* can name an expired account the grid does not flag) and the Connections page. Use
-either to find what needs reconnecting; the **Reconnect** button still works on any card that offers
-one.
+**"Need attention" reads 0 and no card shows the red *Reconnect* pill, but I expected one.** Zero is
+usually the honest answer. Most connected accounts hold a renewal token and refresh themselves in
+the background, so an account can be well past the expiry stamped on its short-lived token and still
+be perfectly healthy — that is the normal state, not a problem, and it is deliberately not flagged.
+Only a sign-in that has lapsed with nothing left to renew it lands here, because only that one needs
+you. If a provider is genuinely refusing your account, the **Access review** and the Connections
+page both show more detail, and **Reconnect** works on any card that offers it whether or not the
+card is flagged.
 
 **"Please sign in to see your connections."** Your session lapsed, or you opened `/api/identity/`
 without signing in. Sign in and reload. Everything on this screen is scoped to your own account.

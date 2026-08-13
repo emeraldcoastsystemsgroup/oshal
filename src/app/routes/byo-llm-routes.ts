@@ -25,6 +25,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial Bring-Your-Own-LLM connector: POST /save (live chat-completion validation + per-user encrypted store), POST /test (round-trip ping), GET /models (endpoint model list), buildAnyLlmListEntry() for the /list surface, and getUserLlmConnection() resolution seam. Reuses connector-token-crypto + connector-tenancy so disconnect/relabel/default come from the shared rails.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: carry the same per-connection `expired` boolean the other /list entries now carry, so a consumer reading the key does not find it missing on this one entry. Always false in practice - a pasted BYO endpoint key stores no expiry - but the shape is uniform.
  * -----------------------------------------------------------------------------
  *
  * @module byo-llm-routes
@@ -37,8 +38,8 @@ import { encryptToken, decryptToken } from './connector-token-crypto';
 import { assertPublicHttpUrl } from '@/shared/security/ssrf-guard';
 import { redactEgress } from '@/features/governance';
 import {
-  accessibleConnections, resolveConnectionRow, upsertConnection, isTenantMember,
-  ownerSub, type ConnectionRow, type ConnectionSelector,
+  accessibleConnections, isConnectionExpired, resolveConnectionRow, upsertConnection,
+  isTenantMember, ownerSub, type ConnectionRow, type ConnectionSelector,
 } from './connector-tenancy';
 
 const logger = createChildLogger({ module: 'byo-llm-routes' });
@@ -155,6 +156,10 @@ export function buildAnyLlmListEntry(rows: ConnectionRow[]): Record<string, unkn
       model: c.scopes,                 // the model id
       tenantId: c.tenant_id || null,
       isDefault: c.is_default,
+      // Same key every other entry in this response carries (BUG-13). A BYO endpoint key is
+      // pasted, not granted, so it stores no expiry and this is always false — but a consumer
+      // that reads `expired` must not find it missing on one entry out of the collection.
+      expired: isConnectionExpired(c),
     })),
     status: conns.length ? 'connected' : 'not_connected',
   };
