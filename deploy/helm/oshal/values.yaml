@@ -84,6 +84,71 @@ infra:
     inCluster: true
     image: chromadb/chroma:0.4.24
     storage: 4Gi
+  # ── The rest of the shared-service tier ────────────────────────────────────
+  # These carry NO compose profile: they start on every default `docker compose
+  # up`, which makes them core framework, not extras. Omitting them ships a
+  # degraded platform (no trading series, graph 503, no vault, no workspace IDE,
+  # no local transcription). inCluster: false is the real switch — turning one
+  # off also withholds its URL env, which is exactly how each feature degrades
+  # (an unset ARANGO_URL makes the graph connector return null by design).
+  tsdb:
+    # TimescaleDB — the trading/world series store (compose oshal-tsdb).
+    inCluster: true
+    image: timescale/timescaledb:latest-pg16
+    database: oshal_ts
+    user: oshal
+    password: oshal
+    storage: 8Gi
+  arangodb:
+    # Graph tier: RCA topology, jobs↔companies↔recruiters, world graph.
+    inCluster: true
+    image: arangodb:3.11
+    rootUser: root
+    rootPassword: oshal
+    storage: 4Gi
+  vault:
+    # DEV MODE, exactly like compose: in-memory, auto-unsealed, fixed root token.
+    # Fine for a single-box swarm; a real secrets posture replaces this (point
+    # VAULT_ADDR/VAULT_TOKEN at a real Vault via api.envSecret and set
+    # inCluster: false).
+    inCluster: true
+    image: hashicorp/vault:1.18
+    devRootToken: oshal-dev-root
+  codeServer:
+    # Workspace IDE the cockpit's /code bridge redirects to. Serves the shared
+    # workspace PVC read-write.
+    #
+    # ⚠ It runs `--auth none` (compose parity) — ANYONE who reaches it gets
+    # read-write access to the whole shared workspace. Compose contains that by
+    # binding it to 127.0.0.1 only. The cluster equivalent is ClusterIP, and
+    # that is the default here on purpose: reach it with
+    #   kubectl -n <ns> port-forward svc/code-server 8444:8080
+    # Do NOT switch this to NodePort/LoadBalancer, or put it behind an ingress,
+    # without adding authentication in front of it.
+    inCluster: true
+    image: codercom/code-server:latest
+    serviceType: ClusterIP
+    # Browser-facing URL for the cockpit's /code bridge. Empty = the port-forward
+    # address above (which is what the cockpit link assumes).
+    externalUrl: "http://localhost:8444"
+  diarization:
+    # Speaker-diarization sidecar — local transcription; audio never leaves the
+    # cluster. Compose BUILDS it from services/speaker-diarization; k8s pulls the
+    # published image (same artifact, no build on the install path).
+    inCluster: true
+    image: ghcr.io/emeraldcoastsystemsgroup/oshal-speaker-diarization:latest
+    serviceKey: oshal-local-speaker-service-key
+    maxAudioBytes: "16777216"
+    # Controller imports stop at 55s; three extra seconds tolerate rounding.
+    maxDurationSeconds: "58"
+  ollama:
+    # Local-LLM engine. OFF by default — matching compose, where it is gated
+    # behind the `local-llm` profile and a default `up` never starts it.
+    inCluster: false
+    image: ollama/ollama:latest
+    storage: 20Gi
+    # Models pulled once at first start (compose oshal-ollama-pull parity).
+    pullModels: []
 
 # ── Swarm controller (main role only) ─────────────────────────────────────────
 api:
@@ -275,6 +340,26 @@ fleets:
       agentId: d0000000-0000-0000-0000-000000000002
       capabilities: "gcp-inventory,gcp-projects,gcp-compute,gcp-enabled-apis,gcp-cost-optimization,gcp-health-audit,gcp-iam-audit"
 # END GENERATED FLEET
+
+# ── Store packages ────────────────────────────────────────────────────────────
+# Packages to stage into the shared workspace before the api boots (the api's
+# auto-load registers each package's bots and surfaces once, at boot). Same
+# installer, same audited-SHA path as the compose install:
+#   --set packages={career-hunter,job-apply}
+# Re-runs are idempotent in compatible mode; enforce revalidates and replaces.
+# Packages can also be installed later from the cockpit (Explore Apps).
+packages: []
+
+store:
+  repo: https://github.com/emeraldcoastsystemsgroup/oshal-apps
+  ref: main
+  # compatible (default) = skip an already-staged package. enforce = revalidate
+  # and replace it from the exact audited SHA.
+  auditMode: compatible
+  # Name of a Secret holding OSHAL_STORE_TOKEN, for PRIVATE store repos only.
+  # Public packages need no token. Create it out-of-band:
+  #   kubectl -n <ns> create secret generic oshal-store --from-literal=OSHAL_STORE_TOKEN=…
+  tokenSecret: ""
 
 # Custom/extra bot-nodes (always rendered on top of the selected preset; the
 # canonical agent IDs live in compose/the registry — reuse them exactly).

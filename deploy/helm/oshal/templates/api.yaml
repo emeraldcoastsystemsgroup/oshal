@@ -6,6 +6,7 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | First real deploy (kind proveout) fixes: (1) pg-wait now probes BOOTSTRAP_DATABASE_URL — probing DATABASE_URL was a chicken-and-egg (oshal_app only exists AFTER provisioning), so the wait always burned out; (2) wait exhaustion and every bootstrap-mode step (migrations / RLS enforce / app-role provision) are now FATAL — exit 1 restarts the pod until the posture is established. Previously a slow first Postgres pull produced a Ready-but-schemaless api (/api/health is shallow) with oshal_app auth failures. A multi-user tenant must never boot half-bootstrapped.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Cold-start fix #2 (virgin DB): apply-rls prerequisites hard-reference tickets/workspaces/chat_tasks, but those legacy core tables live in NO migration file — they are lazily created by the server's schema-ensure chokepoints (which is why compose, with its organically-grown DB, never hit this). Bootstrap now runs the canonical ensureTicketSchema/ensureWorkspaceSchema/ensureConversationStoreSchema (idempotent, born-with-RLS via buildOwnerRlsPolicyStatements) as the superuser BEFORE the RLS enforce; OSHAL_SCHEMA_BOOTSTRAP is forced empty for that call so a validate-only pod env can never silently skip creation.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — seeding-repair parity (compose SEQ 5 of bot-entrypoint.sh): global-config.json now copies IF-MISSING (cp -n) like secrets.json — the old cp -f force-reimposed the seed on every pod restart, silently resetting runtime provider config. Service gains spec.type + nodePort (api.service values) so a single-box cluster exposes the cockpit without an ingress controller.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.3.0 — (a) store-package staging as an initContainer: packages land in the workspace PVC's deployed-apps/ before the api boots, because auto-load registers bots/surfaces once at boot; idempotent in compatible mode, FATAL on failure (booting without an app the operator asked for is the silent-cap failure this whole tier exists to avoid). (b) The shared-service URLs the platform actually reads — TSDB_URL (trading/world series), VAULT_ADDR/TOKEN, SPEAKER_DIARIZATION_URL/KEY — emitted only when their service is inCluster, so switching one off degrades cleanly instead of pointing the feature at a refused connection.
 {{- if eq .Values.role "main" }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -41,6 +42,50 @@ spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.packages }}
+      # Store packages stage into the shared workspace BEFORE the api container
+      # starts — the api's swarm-app auto-load registers each package's bots and
+      # surfaces exactly once at boot, so staging after it starts would need a
+      # restart to take effect. Same image, same oshal-app.js installer, same
+      # audited-SHA path as the compose installer; k8s's ordering primitive is an
+      # initContainer instead of a docker run before `up`.
+      initContainers:
+        - name: stage-packages
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: OSHAL_PACKAGE_AUDIT_MODE
+              value: {{ .Values.store.auditMode | quote }}
+            {{- if .Values.store.tokenSecret }}
+            # Private stores only. Public packages need no token.
+            - name: OSHAL_STORE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.store.tokenSecret }}
+                  key: OSHAL_STORE_TOKEN
+                  optional: true
+            {{- end }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              DEST=/app/workspace-shared/deployed-apps
+              mkdir -p "$DEST"
+              for p in {{ join " " .Values.packages }}; do
+                if [ -d "$DEST/$p" ] && [ "$OSHAL_PACKAGE_AUDIT_MODE" = "compatible" ]; then
+                  echo "SKIP $p — already staged (never register a bot/surface twice)"; continue;
+                fi
+                echo "staging $p ...";
+                node /app/scripts/oshal-app.js install "$p" \
+                  --repo {{ .Values.store.repo | quote }} --ref {{ .Values.store.ref | quote }} \
+                  --dest "$DEST" --audit-mode "$OSHAL_PACKAGE_AUDIT_MODE" \
+                  || { echo "package $p FAILED to stage — exiting so the pod restarts rather than booting without an app you asked for"; exit 1; };
+              done
+              echo "package staging complete"
+          volumeMounts:
+            - name: workspace
+              mountPath: /app/workspace-shared
       {{- end }}
       containers:
         - name: api
@@ -102,6 +147,23 @@ spec:
               value: postgresql://oshal_app:oshal-app-dev@oshal-db:5432/{{ .Values.infra.postgres.database }}
             - name: BOOTSTRAP_DATABASE_URL
               value: postgresql://{{ .Values.infra.postgres.user }}:{{ .Values.infra.postgres.password }}@oshal-db:5432/{{ .Values.infra.postgres.database }}
+            {{- end }}
+            {{- if .Values.infra.tsdb.inCluster }}
+            # Trading + world-intelligence series store (compose api-env parity).
+            - name: TSDB_URL
+              value: postgresql://{{ .Values.infra.tsdb.user }}:{{ .Values.infra.tsdb.password }}@oshal-tsdb:5432/{{ .Values.infra.tsdb.database }}
+            {{- end }}
+            {{- if .Values.infra.vault.inCluster }}
+            - name: VAULT_ADDR
+              value: http://oshal-vault:8200
+            - name: VAULT_TOKEN
+              value: {{ .Values.infra.vault.devRootToken | quote }}
+            {{- end }}
+            {{- if .Values.infra.diarization.inCluster }}
+            - name: SPEAKER_DIARIZATION_URL
+              value: http://speaker-diarization:8080
+            - name: SPEAKER_SERVICE_KEY
+              value: {{ .Values.infra.diarization.serviceKey | quote }}
             {{- end }}
             {{- range $k, $v := .Values.api.extraEnv }}
             - name: {{ $k }}

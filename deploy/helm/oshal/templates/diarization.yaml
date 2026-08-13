@@ -1,0 +1,76 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — speaker-diarization sidecar (compose speaker-diarization parity), main role only, no compose profile. Compose BUILDS it from services/speaker-diarization; the chart PULLS the published image so the k8s path stays build-free. Keeps the compose hardening: read-only root filesystem with a writable tmp, no privilege escalation. Audio never leaves the cluster — that is the point of the local ASR rail.
+{{- if and (eq .Values.role "main") .Values.infra.diarization.inCluster }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: speaker-diarization
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: speaker-diarization
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: speaker-diarization
+        {{- include "oshal.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: diarization
+          image: {{ .Values.infra.diarization.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: SPEAKER_SERVICE_KEY
+              value: {{ .Values.infra.diarization.serviceKey | quote }}
+            - name: SPEAKER_MAX_AUDIO_BYTES
+              value: {{ .Values.infra.diarization.maxAudioBytes | quote }}
+            - name: SPEAKER_MAX_DURATION_SECONDS
+              value: {{ .Values.infra.diarization.maxDurationSeconds | quote }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # compose: tmpfs /tmp size=64m — the writable scratch a read-only root needs.
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: speaker-diarization
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: speaker-diarization
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+{{- end }}
