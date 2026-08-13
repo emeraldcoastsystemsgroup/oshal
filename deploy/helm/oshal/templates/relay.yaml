@@ -1,0 +1,166 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-cluster tailnet relay: tailscaled (kernel mode, NET_ADMIN confined to THIS pod) + socat static forwards. main: exposes oshal-redis/oshal-api to the tailnet + dials remote bots. bot-pod: DNS-parity Services (oshal-redis/oshal-api/oshal-local-api) that dial the main relay + exposes local bots (5100-5199). Static forwards over subnet routes on purpose: enumerable in one values file + one ACL.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — relay.enabled now defaults false (values.yaml): single-cluster tenants need none of this, and generic clusters may not permit NET_ADMIN + /dev/net/tun. Template unchanged; federation is a values flip away.
+{{- if .Values.relay.enabled }}
+{{- $ns := .Release.Namespace }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oshal-relay-state
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 100Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oshal-relay
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oshal-relay
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oshal-relay
+        {{- include "oshal.labels" . | nindent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: tailscale
+          image: {{ .Values.relay.tailscaleImage }}
+          env:
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.tailnet.authKeySecret }}
+                  key: TS_AUTHKEY
+            - name: TS_STATE_DIR
+              value: /var/lib/tailscale
+            - name: TS_USERSPACE
+              value: "false"
+            - name: TS_AUTH_ONCE
+              value: "true"
+            - name: TS_HOSTNAME
+              value: {{ include "oshal.tailnetHostname" . | quote }}
+            - name: TS_EXTRA_ARGS
+              value: "--login-server={{ .Values.tailnet.loginServer }} --advertise-tags={{ include "oshal.tailnetTag" . }}"
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/tailscale
+            - name: devtun
+              mountPath: /dev/net/tun
+        - name: forwarder
+          image: {{ .Values.relay.socatImage }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -x
+              {{- if eq .Values.role "main" }}
+              {{- range .Values.relay.inbound }}
+              socat TCP-LISTEN:{{ .listenPort }},fork,reuseaddr TCP:{{ .service }}.{{ $ns }}.svc.cluster.local:{{ .port }} &
+              {{- end }}
+              {{- range .Values.relay.remoteBots }}
+              socat TCP-LISTEN:{{ .listenPort }},fork,reuseaddr TCP:{{ .tailnetIP }}:{{ .listenPort }} &
+              {{- end }}
+              {{- else }}
+              socat TCP-LISTEN:6379,fork,reuseaddr TCP:{{ required "tailnet.mainIP is required on bot-pod clusters" .Values.tailnet.mainIP }}:6379 &
+              socat TCP-LISTEN:5000,fork,reuseaddr TCP:{{ .Values.tailnet.mainIP }}:5000 &
+              {{- range .Values.relay.exposeBots }}
+              socat TCP-LISTEN:{{ .listenPort }},fork,reuseaddr TCP:{{ .name }}.{{ $ns }}.svc.cluster.local:5000 &
+              {{- end }}
+              {{- end }}
+              wait
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: oshal-relay-state
+        - name: devtun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+{{- if eq .Values.role "bot-pod" }}
+---
+# DNS parity on contributor clusters: bots resolve the SAME service names as in
+# compose; these select the relay, whose socat dials the main cluster over the
+# tailnet. Bots cannot tell they are remote — that is the contract.
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-redis
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-relay
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-api
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-relay
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-local-api
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-relay
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+{{- end }}
+{{- if eq .Values.role "main" }}
+{{- range .Values.relay.remoteBots }}
+---
+# Compose-parity DNS for a remote bot: the controller dials {{ .name }}:5000 exactly
+# as if it were a local container; the relay carries it over the tailnet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name }}
+  labels:
+    app.kubernetes.io/part-of: oshal
+    oshal.io/remote-bot: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-relay
+  ports:
+    - name: http
+      port: 5000
+      targetPort: {{ .listenPort }}
+{{- end }}
+{{- end }}
+{{- end }}

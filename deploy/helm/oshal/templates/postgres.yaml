@@ -1,0 +1,72 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — in-cluster Postgres (compose oshal-db parity), main role only. Disable via infra.postgres.inCluster=false when using managed Postgres (then DATABASE_URL/BOOTSTRAP_DATABASE_URL come from api.envSecret).
+{{- if and (eq .Values.role "main") .Values.infra.postgres.inCluster }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: oshal-db
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  serviceName: oshal-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oshal-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oshal-db
+        {{- include "oshal.labels" . | nindent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.infra.postgres.image }}
+          args: ["postgres", "-c", "max_connections=200"]
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.infra.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.infra.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.infra.postgres.password | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.infra.postgres.user }}", "-d", "{{ .Values.infra.postgres.database }}"]
+            periodSeconds: 5
+            failureThreshold: 20
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: {{ .Values.infra.postgres.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-db
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+{{- end }}

@@ -1,0 +1,26 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — one chart, two roles (main swarm cluster / federated contributor bot-pod cluster).
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.1.1 — first real deploy (kind proveout) exposed two boot bugs fixed in api.yaml: pg-wait probed the not-yet-provisioned oshal_app URL, and bootstrap failures were non-fatal (Ready-but-schemaless api). Version bump also makes helm_release pick up local chart edits.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | 0.1.2 — virgin-DB cold-start: bootstrap ensures the lazy-created core tables (tickets/workspaces/chat_tasks) via the canonical schema-ensure chokepoints before the RLS enforce (they live in no migration file; see api.yaml changelog).
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.1.3 — bots run through bot-entrypoint.sh (compose parity); without it the image's default CMD booted the CONTROLLER in the bot pod (see bots.yaml changelog).
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.1.4 — JWT_SECRET in the shared env (compose *bot-env parity, dev default): the any-bot JS layer refuses production boot without it, which crash-looped the first real bot-node pod.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.1.5 — bots[].botName optional override (BOT_NAME ≠ Service name for ~17 compose bots); enables the full production fleet in one values pass.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — the chart moves into the public trunk at deploy/helm/oshal and becomes the codeless k8s install source (ADR-129): registry-pull defaults (ghcr.io oshal-bot), Kyma APIRule + tailnet relay now OPT-IN (generic clusters have neither CRD nor headscale), fleet presets (fleet: kernel|full|custom, lists generated from compose by scripts/generate-chart-fleet.mjs — never hand-typed), api Service type/nodePort for ingress-less cockpit access, seeding-repair parity (api seeds copy-IF-MISSING, bots defer entirely to bot-entrypoint.sh Step 1b), and K5 parity (bots connect as the least-privilege oshal_bot role, never the superuser).
+apiVersion: v2
+name: oshal
+description: >-
+  oshal swarm on Kubernetes: role=main deploys the swarm controller + infra +
+  bot fleet on any cluster (Docker Desktop, kind, k3s, managed); role=bot-pod
+  deploys a federated fleet of contributor bot-nodes that join a main swarm over
+  a headscale tailnet as ordinary Redis-mesh participants. Kyma APIRule ingress
+  and the tailnet relay are optional layers over the same chart.
+type: application
+version: 0.2.0
+appVersion: "latest"
+keywords:
+  - oshal
+  - swarm
+  - kubernetes

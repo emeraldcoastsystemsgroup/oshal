@@ -1,0 +1,16 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — cluster-local shared workspace (compose oshal_workspace equivalent). RWO is safe on the default single-node target (every pod lands together); multi-node clusters need an RWX StorageClass. NOTE: this volume does NOT span clusters — artifact-heavy ticket types stay on main.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oshal-workspace
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.swarm.workspaceStorage }}

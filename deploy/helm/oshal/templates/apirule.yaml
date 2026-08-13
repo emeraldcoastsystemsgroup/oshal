@@ -1,0 +1,25 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — Kyma APIRule v2 exposing the cockpit on the cluster's default domain, main role only. noAuth is correct here: the app enforces its own OIDC (express-openid-connect + requiresAuth per route); the gateway just terminates TLS and routes.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — OPT-IN (cockpit.apiRule.enabled defaults false): the APIRule CRD exists only on Kyma clusters, and rendering it on a generic cluster fails the whole install at apply time. Generic exposure = api.service NodePort or the Terraform layer's Ingress.
+{{- if and (eq .Values.role "main") .Values.cockpit.apiRule.enabled }}
+apiVersion: gateway.kyma-project.io/v2
+kind: APIRule
+metadata:
+  name: oshal-cockpit
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  gateway: {{ .Values.cockpit.apiRule.gateway }}
+  hosts:
+    - {{ .Values.cockpit.apiRule.host }}
+  service:
+    name: oshal-api
+    port: {{ .Values.api.port }}
+  rules:
+    - path: /*
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+      noAuth: true
+{{- end }}

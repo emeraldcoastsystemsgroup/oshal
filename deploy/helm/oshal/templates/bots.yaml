@@ -1,0 +1,130 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — one Deployment + Service per bot (compose bot-service parity: BOT_RUNTIME=bot-node + *bot-env via the shared ConfigMap). TRUST RULE: DATABASE_URL is injected ONLY on the main role — bot-pod bots run DB-less (connectPool() null path); their LLM keys arrive via botDefaults.envSecret, owned by the contributor.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Kind proveout fix: bots MUST run through scripts/bot-entrypoint.sh (compose x-bot-common parity) — the image's default CMD is a bare `node dist/app/server.js`, so without an explicit command the "bot" booted the CONTROLLER, hit the real-OIDC path (no MOCK_OIDC in the shared env), and crash-looped on missing SESSION_SECRET. The entrypoint reads BOT_RUNTIME=bot-node, loads the persona, and execs bot-node-server.js.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Optional botName per bot: BOT_NAME must stay the compose-parity agent name (email-bot runs as communications-bot, jarvis-bot as oshal-assistant, the concierges…) while .name stays the Service/DNS name the controller dials (BotNodeClient → http://<registry container>:5000). Default unchanged: botName falls back to .name.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — (a) fleet presets: the range walks oshal.activeBots (fleet preset + custom extras, deduped) instead of bare .Values.bots; (b) seeding-repair parity (compose 2026-08-12): the config-seed cp lines are GONE — bot-entrypoint.sh Step 1b copy-IF-MISSING is the ONLY seeding path, and the old cp -f here force-reimposed the seed on every pod restart, silently resetting runtime provider config; (c) K5 parity: main-cluster bots connect as the least-privilege oshal_bot role (migration 099, NOSUPERUSER, RLS enforced) — never the superuser DSN the 0.1.x chart injected; override via swarm.botDatabaseUrl for managed Postgres.
+{{- $root := . }}
+{{- range include "oshal.activeBots" . | fromJsonArray }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name }}
+  labels:
+    app.kubernetes.io/name: {{ .name }}
+    oshal.io/bot: "true"
+    {{- include "oshal.labels" $root | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .name }}
+        oshal.io/bot: "true"
+        {{- include "oshal.labels" $root | nindent 8 }}
+    spec:
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bot
+          image: "{{ $root.Values.image.repository }}:{{ $root.Values.image.tag }}"
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          # Seeding is the ENTRYPOINT's job (Step 1b, copy-IF-MISSING) — do not
+          # copy config-seed here (compose seeding repair, 2026-08-12).
+          command: ["/bin/sh", "-c"]
+          args:
+            - exec bash /app/scripts/bot-entrypoint.sh
+          envFrom:
+            - configMapRef:
+                name: oshal-shared-env
+            {{- if $root.Values.botDefaults.envSecret }}
+            - secretRef:
+                name: {{ $root.Values.botDefaults.envSecret }}
+                optional: true
+            {{- end }}
+          env:
+            - name: BOT_RUNTIME
+              value: bot-node
+            - name: BOT_NAME
+              value: {{ .botName | default .name | quote }}
+            - name: AGENT_ID
+              value: {{ required (printf "bots[%s].agentId is required (canonical IDs live in compose/the registry)" .name) .agentId | quote }}
+            - name: BOT_PERSONA_FILE
+              value: {{ .personaFile | default (printf "/app/ai-lab/bot-personas/%s.yaml" .name) | quote }}
+            {{- if .capabilities }}
+            - name: AGENT_CAPABILITIES
+              value: {{ .capabilities | quote }}
+            {{- end }}
+            {{- if and (eq $root.Values.role "main") $root.Values.infra.postgres.inCluster }}
+            # K5: least-privilege oshal_bot role (compose BOT_DATABASE_URL parity) —
+            # bots must never carry the superuser DSN. NEVER on bot-pod clusters.
+            - name: DATABASE_URL
+              value: {{ $root.Values.swarm.botDatabaseUrl | default (printf "postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/%s" $root.Values.infra.postgres.database) | quote }}
+            {{- else if and (eq $root.Values.role "main") $root.Values.swarm.botDatabaseUrl }}
+            - name: DATABASE_URL
+              value: {{ $root.Values.swarm.botDatabaseUrl | quote }}
+            {{- end }}
+            {{- range $k, $v := .extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          ports:
+            - containerPort: 5000
+          readinessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            {{- toYaml ((.resources) | default $root.Values.botDefaults.resources) | nindent 12 }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /app/workspace-shared
+            - name: output
+              mountPath: /app/output
+            {{- if and (eq $root.Values.role "main") $root.Values.api.configSeedSecret }}
+            - name: config-seed
+              mountPath: /app/config-seed
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: oshal-workspace
+        # Per-bot private output (compose parity: the shared api-output volume was
+        # split 2026-08-12 — a shared /app/output races persona/config across bots).
+        - name: output
+          emptyDir: {}
+        {{- if and (eq $root.Values.role "main") $root.Values.api.configSeedSecret }}
+        - name: config-seed
+          secret:
+            secretName: {{ $root.Values.api.configSeedSecret }}
+            optional: true
+        {{- end }}
+---
+# Service name == bot name == compose container name (DNS parity: the controller
+# and the relay reach this bot exactly like a compose sibling).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name }}
+  labels:
+    app.kubernetes.io/name: {{ .name }}
+    oshal.io/bot: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .name }}
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+{{- end }}

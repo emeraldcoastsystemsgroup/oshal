@@ -1,0 +1,178 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — swarm controller (compose oshal-api parity: config-seed copy, pg wait, ADR-076 app-role bootstrap or plain migrations, then dist/app/server.js). Main role only. Explicit env beats envFrom in k8s, so DATABASE_URL is only set here when infra.postgres.inCluster — managed-Postgres deployments supply it via api.envSecret.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | First real deploy (kind proveout) fixes: (1) pg-wait now probes BOOTSTRAP_DATABASE_URL — probing DATABASE_URL was a chicken-and-egg (oshal_app only exists AFTER provisioning), so the wait always burned out; (2) wait exhaustion and every bootstrap-mode step (migrations / RLS enforce / app-role provision) are now FATAL — exit 1 restarts the pod until the posture is established. Previously a slow first Postgres pull produced a Ready-but-schemaless api (/api/health is shallow) with oshal_app auth failures. A multi-user tenant must never boot half-bootstrapped.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Cold-start fix #2 (virgin DB): apply-rls prerequisites hard-reference tickets/workspaces/chat_tasks, but those legacy core tables live in NO migration file — they are lazily created by the server's schema-ensure chokepoints (which is why compose, with its organically-grown DB, never hit this). Bootstrap now runs the canonical ensureTicketSchema/ensureWorkspaceSchema/ensureConversationStoreSchema (idempotent, born-with-RLS via buildOwnerRlsPolicyStatements) as the superuser BEFORE the RLS enforce; OSHAL_SCHEMA_BOOTSTRAP is forced empty for that call so a validate-only pod env can never silently skip creation.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — seeding-repair parity (compose SEQ 5 of bot-entrypoint.sh): global-config.json now copies IF-MISSING (cp -n) like secrets.json — the old cp -f force-reimposed the seed on every pod restart, silently resetting runtime provider config. Service gains spec.type + nodePort (api.service values) so a single-box cluster exposes the cockpit without an ingress controller.
+{{- if eq .Values.role "main" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oshal-api-output
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.api.outputStorage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oshal-api
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oshal-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oshal-api
+        {{- include "oshal.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cp -n /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
+              cp -n /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
+              PROBE_URL="${BOOTSTRAP_DATABASE_URL:-$DATABASE_URL}"; export PROBE_URL;
+              echo 'Waiting for Postgres to accept queries (bootstrap/superuser URL)...';
+              PG_OK="";
+              for i in $(seq 1 60); do
+                node -e "const {Pool}=require('pg');new Pool({connectionString:process.env.PROBE_URL}).query('SELECT 1').then(()=>{process.exit(0)}).catch(()=>{process.exit(1)})" && { PG_OK=1; break; };
+                echo "  attempt $i - waiting 2s..."; sleep 2;
+              done;
+              if [ -z "$PG_OK" ]; then echo 'Postgres never became reachable — exiting so the pod restarts.'; exit 1; fi;
+              if [ "$OSHAL_APP_ROLE_BOOTSTRAP" = "true" ]; then
+                echo 'ADR-076 app-role bootstrap: migrate + enforce core RLS + provision oshal_app, then run as the app role...';
+                RUN_MIGRATIONS=true node -e "const{DatabaseBootstrapService}=require('./dist/features/tool-registry/services/database-bootstrap-service');const{Pool}=require('pg');const p=new Pool({connectionString:process.env.BOOTSTRAP_DATABASE_URL});new DatabaseBootstrapService(p).applyMigrations().then(m=>{console.log('Migrations done:',m.length);process.exit(0)}).catch(e=>{console.error('Migration err:',e.message);process.exit(1)})" 2>&1 || { echo 'Migrations failed — exiting so the pod restarts.'; exit 1; };
+                echo 'Ensuring lazy-created core tables exist (canonical DDL, born with RLS)...';
+                OSHAL_SCHEMA_BOOTSTRAP= node -e "const{ensureTicketSchema,ensureWorkspaceSchema,ensureConversationStoreSchema}=require('./dist/shared/services/database');const{Pool}=require('pg');const p=new Pool({connectionString:process.env.BOOTSTRAP_DATABASE_URL});(async()=>{await ensureTicketSchema(p);await ensureWorkspaceSchema(p);await ensureConversationStoreSchema(p);console.log('Core schema ensured');process.exit(0)})().catch(e=>{console.error('Core schema ensure err:',e.message);process.exit(1)})" 2>&1 || { echo 'core schema ensure failed — exiting so the pod restarts.'; exit 1; };
+                OSHAL_RLS_APPLY=apply-enforce DATABASE_URL=$BOOTSTRAP_DATABASE_URL node scripts/governance/apply-rls.mjs || { echo 'core RLS enforce failed — a multi-user tenant must not boot without it; exiting.'; exit 1; };
+                OSHAL_APP_DB_PASSWORD=$(node -e "process.stdout.write(new URL(process.env.DATABASE_URL).password||'')") node scripts/governance/provision-app-role.mjs || { echo 'app-role provision failed — exiting so the pod restarts.'; exit 1; };
+              else
+                echo 'Running migrations before server start...';
+                RUN_MIGRATIONS=true node -e "const{DatabaseBootstrapService}=require('./dist/features/tool-registry/services/database-bootstrap-service');const{Pool}=require('pg');const p=new Pool({connectionString:process.env.DATABASE_URL});new DatabaseBootstrapService(p).applyMigrations().then(m=>{console.log('Migrations done:',m.length);process.exit(0)}).catch(e=>{console.error('Migration err:',e.message);process.exit(1)})" 2>&1 || { echo 'Migrations failed — exiting so the pod restarts.'; exit 1; };
+              fi;
+              sleep 2;
+              exec node dist/app/server.js
+          envFrom:
+            - configMapRef:
+                name: oshal-shared-env
+            {{- if .Values.api.envSecret }}
+            - secretRef:
+                name: {{ .Values.api.envSecret }}
+                optional: true
+            {{- end }}
+          env:
+            - name: BOT_RUNTIME
+              value: swarm
+            - name: BOT_NAME
+              value: project-manager
+            - name: AGENT_ID
+              value: a0000000-0000-0000-0000-000000000001
+            - name: BOT_PERSONA_FILE
+              value: /app/ai-lab/bot-personas/project-manager.yaml
+            - name: RUN_MIGRATIONS
+              value: "true"
+            - name: ENABLE_QUEUE_MANAGER
+              value: "true"
+            - name: ENABLE_AGENT_SCHEDULER
+              value: "true"
+            {{- if .Values.infra.postgres.inCluster }}
+            # Dev-parity URLs (compose defaults). Managed-Postgres deployments set
+            # infra.postgres.inCluster=false and provide both via api.envSecret.
+            - name: DATABASE_URL
+              value: postgresql://oshal_app:oshal-app-dev@oshal-db:5432/{{ .Values.infra.postgres.database }}
+            - name: BOOTSTRAP_DATABASE_URL
+              value: postgresql://{{ .Values.infra.postgres.user }}:{{ .Values.infra.postgres.password }}@oshal-db:5432/{{ .Values.infra.postgres.database }}
+            {{- end }}
+            {{- range $k, $v := .Values.api.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.api.port }}
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.api.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /app/workspace-shared
+            - name: output
+              mountPath: /app/output
+            {{- if .Values.api.configSeedSecret }}
+            - name: config-seed
+              mountPath: /app/config-seed
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: oshal-workspace
+        - name: output
+          persistentVolumeClaim:
+            claimName: oshal-api-output
+        {{- if .Values.api.configSeedSecret }}
+        - name: config-seed
+          secret:
+            secretName: {{ .Values.api.configSeedSecret }}
+            optional: true
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-api
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    app.kubernetes.io/name: oshal-api
+  ports:
+    - name: http
+      port: {{ .Values.api.port }}
+      targetPort: {{ .Values.api.port }}
+      {{- if eq .Values.api.service.type "NodePort" }}
+      nodePort: {{ .Values.api.service.nodePort }}
+      {{- end }}
+---
+# DNS parity: personas + docs reference http://oshal-local-api:5000 (the compose
+# container name). Keep that name resolving in-cluster too.
+apiVersion: v1
+kind: Service
+metadata:
+  name: oshal-local-api
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: oshal-api
+  ports:
+    - name: http
+      port: {{ .Values.api.port }}
+      targetPort: {{ .Values.api.port }}
+{{- end }}

@@ -1,0 +1,54 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — k8s form of the compose *bot-env anchor (structural vars only; secrets live in api.envSecret / botDefaults.envSecret). DNS parity with compose service names. NO DATABASE_URL here — main role injects it per-workload (trust rule).
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — CODEX_REASONING_EFFORT joins the shared env (compose SEQ-13 parity): both codex wrappers pin per-spawn effort so a host config tuned for a model this fleet floor rejects can't 400 every fresh-workspace turn.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oshal-shared-env
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+data:
+  SERVICE_NAME: oshal
+  SERVICE_DISPLAY_NAME: "OSHAL"
+  NODE_ENV: production
+  PORT: "5000"
+  LOG_LEVEL: {{ .Values.swarm.logLevel | quote }}
+  SWARM_MODE: container
+  SWARM_REGISTRY: local
+  RUNNING_IN_DOCKER: "true"
+  SWARM_MESH_TRANSPORT: redis
+  CONFIG_OUTPUT_DIR: /app/output
+  # Same-name Services exist on every cluster (bot-pods: they select the relay),
+  # so this URL is valid everywhere — that is the DNS-parity contract.
+  REDIS_URL: redis://oshal-redis:6379
+  # Shared workspace quartet — one PVC per cluster mounted at the compose path.
+  WORKSPACE_DIR: /app/workspace-shared
+  SHARED_WORKSPACE_ROOT: /app/workspace-shared
+  CLINE_SHARED_WORKSPACE_ROOT: /app/workspace-shared
+  CLINE_WORKSPACE_ROOT: /app/workspace-shared
+  WORKSPACE_ROOT: /app/workspace-shared
+  OSHAL_WORKSPACE_ROOT: /app/workspace-shared
+  # LLM provider defaults (per-bot registry overrides still win).
+  FORCE_LLM_PROVIDER: {{ .Values.swarm.forceLlmProvider | quote }}
+  FORCE_LLM_MODEL: {{ .Values.swarm.forceLlmModel | quote }}
+  LLM_PROVIDER: {{ .Values.swarm.forceLlmProvider | quote }}
+  LLM_MODEL: {{ .Values.swarm.forceLlmModel | quote }}
+  CODEX_REASONING_EFFORT: {{ .Values.swarm.codexReasoningEffort | quote }}
+  CLINE_CLI_PATH: cline
+  CLAUDE_CODE_CLI_PATH: claude
+  CLAUDE_CLI_PATH: claude
+  CODEX_CLI_PATH: codex
+  CLAUDE_MCP_CONFIG: /app/config-seed/claude-code-mcp.json
+  NODE_TLS_REJECT_UNAUTHORIZED: "1"
+  # Compose *bot-env parity (kind proveout 2026-07-18): bot-node bridges into the
+  # any-bot JS layer, whose config throws at boot in production without this.
+  JWT_SECRET: {{ .Values.swarm.jwtSecret | quote }}
+  QUEUE_POLL_INTERVAL_MS: {{ .Values.swarm.queuePollIntervalMs | quote }}
+  {{- if eq .Values.role "main" }}
+  # Main-cluster-only endpoints: these Services do not exist on bot-pod clusters,
+  # and per the compose contract an undefined URL simply no-ops in the bots.
+  CHROMADB_URL: http://oshal-chromadb:8000
+  {{- end }}

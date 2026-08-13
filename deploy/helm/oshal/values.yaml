@@ -1,0 +1,284 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — defaults for the MAIN role (controller + infra + relay). Bot-pod overrides in values-bot-pod.example.yaml. Trust rule: bot-pod clusters NEVER receive DATABASE_URL.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 (ADR-129) — codeless-install defaults: image pulls ghcr.io/emeraldcoastsystemsgroup/oshal-bot (was a CHANGE-ME under a retired image name); relay + Kyma APIRule default OFF (generic clusters have neither headscale nor the APIRule CRD — both stay as opt-ins); api Service gains type/nodePort; LLM defaults follow the codex fleet floor (openai-codex / gpt-5.5 / CODEX_REASONING_EFFORT, compose SEQ-13 parity); fleet presets kernel|full|custom with the lists GENERATED from docker-compose.oshal-local.yml by scripts/generate-chart-fleet.mjs (guard: tests/unit/chart-fleet-parity.spec.ts); bots connect as oshal_bot (K5), overridable via swarm.botDatabaseUrl.
+#
+# Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
+# Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
+# so no application env or code changes are needed. Dev-parity credentials below match
+# the committed compose dev creds — override them via Secrets for anything reachable
+# from outside your own machine.
+
+# main = swarm controller cluster (operator). bot-pod = federated contributor cluster.
+role: main
+
+# bot-pod only: short slug identifying the contributor (labels, tailscale hostname).
+contributor: ""
+
+image:
+  # Public registry image — `helm install` needs nothing but cluster + registry
+  # reachability. Local kind side-loads instead: set repository=oshal-bot,
+  # pullPolicy=Never after `kind load docker-image oshal-bot:latest`.
+  repository: ghcr.io/emeraldcoastsystemsgroup/oshal-bot
+  tag: latest
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# ── Tailnet (headscale) — used only when relay.enabled ────────────────────────
+tailnet:
+  loginServer: "https://headscale.example.com"
+  # Secret in the release namespace with key TS_AUTHKEY (a per-contributor headscale
+  # preauth key). Create it out-of-band; never commit a key.
+  authKeySecret: oshal-tailnet
+  # Tailscale hostname; empty = oshal-<role>[-<contributor>].
+  hostname: ""
+  # ACL tag for this cluster's relay: main → tag:oshal-main ; bot-pod → tag:oshal-botpod
+  tag: ""
+  # bot-pod only (REQUIRED there): tailnet IP of the MAIN cluster's relay node.
+  mainIP: ""
+
+# ── Relay (one per cluster: tailscaled kernel mode + socat static forwards) ──
+# OPT-IN: single-cluster tenants don't need it and generic clusters may not allow
+# NET_ADMIN + /dev/net/tun. Enable only for headscale federation (role bot-pod
+# REQUIRES it — that role's entire transport is the relay).
+relay:
+  enabled: false
+  tailscaleImage: tailscale/tailscale:stable
+  socatImage: alpine/socat:latest
+  # main role: listeners the tailnet can reach, forwarded to in-cluster Services.
+  # (Bots on contributor clusters dial mainRelayIP:6379 / :5000.)
+  inbound:
+    - { listenPort: 6379, service: oshal-redis, port: 6379 }
+    - { listenPort: 5000, service: oshal-api, port: 5000 }
+  # main role: remote bots on contributor clusters. Each entry creates (a) a relay
+  # listener dialing that bot-pod relay's tailnet IP and (b) a Service named exactly
+  # like the bot so the controller reaches it by compose-parity DNS. listenPort must
+  # be unique per remote bot, in the ACL-allowed 5100-5199 band, and must equal the
+  # exposeBots listenPort on the contributor side.
+  remoteBots: []
+  #  - { name: research-bot, tailnetIP: 100.64.0.7, listenPort: 5101 }
+  # bot-pod role: local bots exposed to the controller (reverse path).
+  exposeBots: []
+  #  - { name: research-bot, listenPort: 5101 }
+
+# ── Infra (main role only; ignored on bot-pod) ────────────────────────────────
+infra:
+  postgres:
+    # true = run postgres:16 in-cluster. false = managed Postgres: supply
+    # DATABASE_URL + BOOTSTRAP_DATABASE_URL (and BOT database URL via
+    # swarm.botDatabaseUrl or botDefaults.envSecret) through api.envSecret.
+    inCluster: true
+    image: postgres:16-alpine
+    database: oshal
+    user: oshal
+    # Dev parity with compose. Override via api.envSecret DATABASE_URL for real deploys.
+    password: oshal
+    storage: 8Gi
+  redis:
+    inCluster: true
+    image: redis:7-alpine
+    storage: 2Gi
+  chromadb:
+    inCluster: true
+    image: chromadb/chroma:0.4.24
+    storage: 4Gi
+
+# ── Swarm controller (main role only) ─────────────────────────────────────────
+api:
+  port: 5000
+  # How the cockpit is reached. ClusterIP = expose via Ingress/APIRule/port-forward.
+  # NodePort = the durable ingress-less path (Docker Desktop / kind / k3s single
+  # boxes): cockpit at http://localhost:<nodePort> (Docker Desktop) or
+  # http://<node-ip>:<nodePort>. The installer's k8s mode sets NodePort.
+  service:
+    type: ClusterIP
+    nodePort: 30500
+  # Optional Secret (envFrom) for the sensitive/deployment env: SESSION_SECRET,
+  # OIDC_* (issuer/client), APP_URL, DATABASE_URL override, SWARM_SERVICE_SECRET,
+  # WORLD_INGEST_TOKEN, connector keys… Anything here wins over the ConfigMap.
+  envSecret: oshal-api-env
+  # Optional Secret mounted at /app/config-seed (global-config.json, secrets.json,
+  # claude-code-mcp.json). Compose bind-mounts ./config-seed; this is its k8s form.
+  configSeedSecret: oshal-config-seed
+  # Non-secret env overrides/additions rendered verbatim into the Deployment.
+  # MOCK_OIDC has NO sign-in page — pair it with MOCK_OIDC_EMAIL/NAME/SUB (the
+  # installer wires these from --admin-email) or every visitor is the shared demo
+  # identity. Real multi-user tenants set the OIDC_* secrets instead (see
+  # deploy/terraform, which enforces that posture).
+  extraEnv:
+    MOCK_OIDC: "true"
+    OSHAL_APP_ROLE_BOOTSTRAP: "true"
+  outputStorage: 8Gi
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { memory: 3Gi }
+
+# Cockpit ingress via Kyma APIRule — OPT-IN (the CRD only exists on Kyma clusters;
+# enabling this on a generic cluster fails the install at apply time).
+cockpit:
+  apiRule:
+    enabled: false
+    # Subdomain under the Kyma cluster domain (e.g. oshal.<cluster>.kyma.ondemand.com).
+    host: oshal
+    gateway: kyma-system/kyma-gateway
+
+# ── Shared env (both roles) — the k8s form of the compose *bot-env anchor ─────
+swarm:
+  # Codex fleet floor (compose SEQ-13 parity): openai-codex / gpt-5.5, per-spawn
+  # reasoning effort pinned. Per-bot registry overrides still win. `noop` = a
+  # deliberate no-AI posture (the installer's --no-ai); the /welcome wizard's
+  # hosted/BYO connection is the browser-side way to power reasoning on a box
+  # with no vendor-CLI login.
+  forceLlmProvider: openai-codex
+  forceLlmModel: gpt-5.5
+  codexReasoningEffort: high
+  logLevel: info
+  queuePollIntervalMs: "30000"
+  # any-bot JS layer refuses to boot in NODE_ENV=production without JWT_SECRET.
+  # Dev parity with the committed compose value; override via api.envSecret /
+  # botDefaults.envSecret (envFrom secretRef is listed after the ConfigMap, so
+  # the Secret's value wins) for anything beyond your own machine.
+  jwtSecret: oshal-local-dev-secret-do-not-use-in-prod
+  # K5 parity: bots connect as the least-privilege oshal_bot role (migration 099
+  # creates it at api bootstrap; NOSUPERUSER, RLS enforced). Empty = the committed
+  # dev-parity URL for the in-cluster Postgres. Managed-Postgres deployments set
+  # the real oshal_bot URL here (or a DATABASE_URL in botDefaults.envSecret has no
+  # effect — explicit env beats envFrom; this value is the override point).
+  botDatabaseUrl: ""
+  # Cluster-local shared workspace (RWO: single-node clusters — the default
+  # target — schedule every pod together; multi-node needs an RWX StorageClass).
+  workspaceStorage: 5Gi
+
+# ── Bots (both roles) ─────────────────────────────────────────────────────────
+botDefaults:
+  # Optional Secret (envFrom) every bot receives. On bot-pod clusters this is where
+  # the CONTRIBUTOR's own LLM keys live (ANTHROPIC_API_KEY / OPENAI_API_KEY /
+  # GEMINI_API_KEY) plus SWARM_SERVICE_SECRET. On a main cluster it is the optional
+  # vendor-API-key path for bot reasoning (no vendor-CLI OAuth mounts exist on k8s;
+  # the browser /welcome wizard's hosted/BYO connection is the zero-secret default).
+  # NEVER put DATABASE_URL here — see swarm.botDatabaseUrl.
+  envSecret: oshal-bot-env
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+# Which fleet ships: kernel (the Tier-0 kernel bots — install default), full (every
+# compose bot-node eligible on k8s), or custom (exactly the `bots:` list below).
+# kernel/full render the preset PLUS `bots:` extras. The preset lists are GENERATED
+# from docker-compose.oshal-local.yml — edit compose, then run:
+#   node scripts/generate-chart-fleet.mjs --write
+# (guard: tests/unit/chart-fleet-parity.spec.ts goes red when they drift.)
+fleet: kernel
+
+# BEGIN GENERATED FLEET (scripts/generate-chart-fleet.mjs — do not hand-edit)
+fleets:
+  kernel:
+    - name: oshal-developer
+      agentId: de000000-0000-0000-0000-000000000001
+      capabilities: "platform-development,typescript,feature-slice-design,documentation-quality,codebase-indexing,self-hosting"
+    - name: jarvis-bot
+      agentId: a0000000-0000-0000-0000-000000000050
+      botName: oshal-assistant
+      personaFile: /app/ai-lab/bot-personas/oshal-assistant.yaml
+      capabilities: "intent-routing,cross-app-orchestration,answer-synthesis"
+    - name: general-bot
+      agentId: a0000000-0000-0000-0000-000000000099
+      personaFile: /app/ai-lab/bot-personas/everything-default.yaml
+      capabilities: "general-assistance,cross-domain-synthesis,web-research,overflow-fallback"
+  full:
+    - name: weather-bot
+      agentId: a0000000-0000-0000-0000-000000000036
+      capabilities: "current-weather,weather-forecast,local-weather-report,weather-data-formatting"
+    - name: email-bot
+      agentId: b0000000-0000-0000-0000-000000000001
+      botName: communications-bot
+      personaFile: /app/ai-lab/bot-personas/email-summarizer.yaml
+      capabilities: "email-summarization,gmail-triage,outlook-mail,calendar-digest,meeting-agenda,reply-drafting,inbox-triage,social-signals-feed,social-publishing"
+    - name: oshal-developer
+      agentId: de000000-0000-0000-0000-000000000001
+      capabilities: "platform-development,typescript,feature-slice-design,documentation-quality,codebase-indexing,self-hosting"
+    - name: jarvis-bot
+      agentId: a0000000-0000-0000-0000-000000000050
+      botName: oshal-assistant
+      personaFile: /app/ai-lab/bot-personas/oshal-assistant.yaml
+      capabilities: "intent-routing,cross-app-orchestration,answer-synthesis"
+    - name: eats-bot
+      agentId: b0080000-0000-0000-0000-000000000001
+      botName: eats-concierge
+      personaFile: /app/ai-lab/bot-personas/eats-concierge.yaml
+      capabilities: "restaurant-search,menu-browse,food-order-building,uber-eats-checkout-handoff,dietary-filtering,cuisine-preferences"
+    - name: rides-bot
+      agentId: b0090000-0000-0000-0000-000000000001
+      botName: rides-concierge
+      personaFile: /app/ai-lab/bot-personas/rides-concierge.yaml
+      capabilities: "ride-fare-estimate,ride-options-comparison,rideshare-trip-planning,uber-ride-handoff,ride-preference-learning"
+    - name: shopping-bot
+      agentId: b0070000-0000-0000-0000-000000000001
+      botName: shopping-concierge
+      personaFile: /app/ai-lab/bot-personas/shopping-concierge.yaml
+      capabilities: "product-search,retail-price-comparison,shopping-list-management,cross-retailer-cart-building,rollback-deal-tracking,retail-checkout-handoff,purchase-preference-memory"
+    - name: spotify-bot
+      agentId: b00a0000-0000-0000-0000-000000000001
+      botName: spotify-concierge
+      personaFile: /app/ai-lab/bot-personas/spotify-concierge.yaml
+      capabilities: "spotify-music-search,spotify-playlist-building,music-recommendation,music-taste-learning,now-playing-awareness"
+    - name: travel-bot
+      agentId: b00c0000-0000-0000-0000-000000000001
+      botName: travel-concierge
+      personaFile: /app/ai-lab/bot-personas/travel-concierge.yaml
+      capabilities: "flight-search,hotel-search,car-search,fare-price-intelligence,fare-watch,trip-itinerary-planning,traveller-preference-learning,booking-handoff"
+    - name: movies-bot
+      agentId: b00b0000-0000-0000-0000-000000000001
+      botName: movies-concierge
+      personaFile: /app/ai-lab/bot-personas/movies-concierge.yaml
+      capabilities: "movie-tv-discovery,title-search,where-to-watch-streaming,watchlist-curation,movie-taste-learning,showtimes-handoff"
+    - name: social-writer-bot
+      agentId: a0000000-0000-0000-0000-000000000040
+      botName: social-writer
+      personaFile: /app/ai-lab/bot-personas/social-writer.yaml
+      capabilities: "post-drafting,voice-matching,content-refinement,personal-branding,linkedin-post-drafting,x-post-drafting,facebook-page-post-drafting,caption-writing,hook-and-cta-crafting"
+    - name: storage-bot
+      agentId: a0000000-0000-0000-0000-000000000041
+      botName: storage-assistant
+      personaFile: /app/ai-lab/bot-personas/storage-assistant.yaml
+      capabilities: "storage-target-config,github-repo-create,file-store-listing,storage-backend-routing,storage-management"
+    - name: deck-builder-bot
+      agentId: a0000000-0000-0000-0000-000000000042
+      botName: deck-builder
+      personaFile: /app/ai-lab/bot-personas/deck-builder.yaml
+      capabilities: "presentation-outline,slide-structure,deck-template-recommendation,pitch-deck-drafting,deck-guidance"
+    - name: finance-bot
+      agentId: a0000000-0000-0000-0000-000000000044
+      botName: finance-analyst
+      personaFile: /app/ai-lab/bot-personas/finance-analyst.yaml
+      capabilities: "personal-finance-brief,net-worth-analysis,account-balance-aggregation,portfolio-holdings-review,spending-and-cashflow-analysis,budget-tracking"
+    - name: trading-bot
+      agentId: a0000000-0000-0000-0000-000000000046
+      botName: trading-analyst
+      personaFile: /app/ai-lab/bot-personas/trading-analyst.yaml
+      capabilities: "market-signal-analysis,trade-decision,decision-tree-justification,portfolio-audit,autopilot-pnl,order-forensics,risk-gate-forensics"
+    - name: identity-bot
+      agentId: a0000000-0000-0000-0000-000000000045
+      botName: identity-advisor
+      personaFile: /app/ai-lab/bot-personas/identity-advisor.yaml
+      capabilities: "connection-inventory-review,access-health-review,expired-login-detection,duplicate-account-detection,stale-connection-detection,missing-connector-suggestion,default-account-check"
+    - name: general-bot
+      agentId: a0000000-0000-0000-0000-000000000099
+      personaFile: /app/ai-lab/bot-personas/everything-default.yaml
+      capabilities: "general-assistance,cross-domain-synthesis,web-research,overflow-fallback"
+    - name: home-bot
+      agentId: d0000000-0000-0000-0000-000000000001
+      capabilities: "smart-home-control,smartthings,device-control,scene-execution,home-automation"
+    - name: cloud-ops-bot
+      agentId: d0000000-0000-0000-0000-000000000002
+      capabilities: "gcp-inventory,gcp-projects,gcp-compute,gcp-enabled-apis,gcp-cost-optimization,gcp-health-audit,gcp-iam-audit"
+# END GENERATED FLEET
+
+# Custom/extra bot-nodes (always rendered on top of the selected preset; the
+# canonical agent IDs live in compose/the registry — reuse them exactly).
+bots: []
+#  - name: research-bot
+#    agentId: a0000000-0000-0000-0000-00000000000c
+#    capabilities: "research,analysis,documentation,investigation,web-search"
