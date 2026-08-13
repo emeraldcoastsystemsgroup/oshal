@@ -1,30 +1,38 @@
 # docs/k8
 
-This directory contains Kubernetes-focused operating documentation for the OSHAL project.
+Kubernetes-focused operating documentation for oshal.
 
-## Available Documents
+## The current path: codeless install (ADR-129)
 
-- `any-bot-kubernetes-setup.md` — detailed setup guide for the `any-bot-k8s` workspace, including the new setup script flow, required secrets, render/apply steps, and validation commands.
-- `HANDOVER.md` — current handoff state for the Kubernetes documentation module.
-
-## Recommended Starting Point
-
-If you want to deploy the new any-bot stack, start here:
-
-1. Read `any-bot-kubernetes-setup.md`
-2. Copy `any-bot-k8s/setup.env.example` to your own env file
-3. Run `npm run k8:install:any-bot -- --env-file any-bot-k8s/setup.env`
-
-The script renders a ready-to-apply manifest bundle under `output/k8/any-bot/`, can optionally apply it when your `kubectl` context is connected to a real cluster, and targets the converted OSHAL root runtime built from the repository-root `Dockerfile`.
-
-If you want to hand the installer to another computer **without publishing anywhere**, build a local tarball with:
+oshal installs onto any Kubernetes cluster (Docker Desktop, kind, k3s, managed)
+with **no source checkout and no build** — helm + registry images only:
 
 ```bash
-npm run k8:pack:any-bot
+curl -fsSLO https://raw.githubusercontent.com/emeraldcoastsystemsgroup/oshal/main/scripts/oshal-install.sh
+bash oshal-install.sh --mode 4 --admin-email you@example.com
 ```
 
-If you prefer a Docker-based installer instead of npm install, build a local installer image with:
+Windows (PowerShell):
 
-```bash
-npm run k8:docker:installer:build
+```powershell
+.\scripts\oshal-install.ps1 -Kubernetes -AdminEmail you@example.com
 ```
+
+The installer preflights kubectl/helm, finds (or offers to create) a cluster,
+installs the [deploy/helm/oshal](../../deploy/helm/oshal/) chart from the
+published OCI package (repo fallback), exposes the cockpit on a NodePort, waits
+for health, and opens `/welcome`. Chart reference, fleet presets, and the
+how-bots-get-a-brain-on-k8s story: [deploy/helm/oshal/README.md](../../deploy/helm/oshal/README.md).
+
+**Multi-user public tenants** go through [deploy/terraform](../../deploy/terraform/README.md)
+instead — its real-OIDC and secret-minting posture guards are the point there.
+
+Never run a kind cluster and the compose swarm on the same machine (documented
+OOM pairing); the installer refuses to create that shape.
+
+## Available documents
+
+- [`any-bot-kubernetes-setup.md`](any-bot-kubernetes-setup.md) — **legacy**: the
+  pre-chart `any-bot-k8s` render/apply workspace (`npm run k8:install:any-bot`,
+  Keycloak-era stack, builds from source). Superseded by the chart path above for
+  new installs; kept while the rendered stacks it produced remain in service.
