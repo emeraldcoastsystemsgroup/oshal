@@ -4,6 +4,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — input surface for deploying ONE OSHAL tenant onto ONE k8s cluster/namespace (per-tenant isolation model: multi-tenant = run this module once per tenant, never a shared-DB SaaS). The multi-user single-public-tenant posture is expressed here: mock_oidc=false forces real OIDC vars, guest mode is an explicit opt-in, and every secret is a sensitive var minted into the oshal-api-env Secret — never a values-file literal.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | bots[] gains botName + personaFile optionals (chart 0.1.5): the production fleet has ~17 bots whose BOT_NAME/persona differ from the Service/DNS name, and the object type would otherwise reject those keys.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: chart_path now DEFAULTS to the in-repo chart (../helm/oshal) — the chart lives in this trunk since 0.2.0, so a fresh clone deploys without a CHANGE-ME hunt. Override still supported for a pulled OCI chart directory or an out-of-tree checkout.
 
 # ── Cluster targeting ─────────────────────────────────────────────────────────
 
@@ -25,8 +26,9 @@ variable "namespace" {
 }
 
 variable "chart_path" {
-  description = "Path to the oshal Helm chart directory (the ADR-086 chart — the single source of workload truth). Absolute, or relative to the directory terraform runs in."
+  description = "Path to the oshal Helm chart directory (the single source of workload truth). Defaults to the in-repo chart; absolute, or relative to the directory terraform runs in."
   type        = string
+  default     = "../helm/oshal"
 }
 
 # ── Image ─────────────────────────────────────────────────────────────────────
@@ -208,6 +210,16 @@ variable "relay_enabled" {
   description = "Deploy the ADR-086 tailnet relay (headscale federation). Off by default — single-cluster tenants don't need it."
   type        = bool
   default     = false
+}
+
+variable "fleet" {
+  description = "Chart fleet preset: custom (default — bots[] below is authoritative, 0.1.x semantics), kernel, or full (the chart's generated compose-parity presets; bots[] then renders as extras on top)."
+  type        = string
+  default     = "custom"
+  validation {
+    condition     = contains(["custom", "kernel", "full"], var.fleet)
+    error_message = "fleet must be one of: custom, kernel, full."
+  }
 }
 
 variable "bots" {

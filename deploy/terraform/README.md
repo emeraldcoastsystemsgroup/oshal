@@ -1,10 +1,17 @@
-# OSHAL on Kubernetes via Terraform
+# oshal on Kubernetes via Terraform
 
-Terraform layer over the ADR-086 Helm chart (point `chart_path` at your chart checkout).
-Terraform owns **cluster targeting, tenant namespace, secret minting, exposure, and
-posture guards**; the chart stays the single source of workload truth. One module
-apply = **one tenant** (per-tenant isolation model — a second tenant is a second
-apply with a different `namespace`/state, never a shared-DB multi-tenant instance).
+Terraform layer over the in-repo Helm chart ([deploy/helm/oshal](../helm/oshal/) —
+`chart_path` defaults to it since ADR-129). Terraform owns **cluster targeting,
+tenant namespace, secret minting, exposure, and posture guards**; the chart stays
+the single source of workload truth. One module apply = **one tenant** (per-tenant
+isolation model — a second tenant is a second apply with a different
+`namespace`/state, never a shared-DB multi-tenant instance).
+
+> **Just want oshal on a k8s box?** You don't need Terraform (or this repo):
+> `bash oshal-install.sh --mode 4` is the codeless path — helm + registry images
+> only. See [deploy/helm/oshal/README.md](../helm/oshal/README.md). This layer is
+> for **multi-user public tenants**, where its OIDC/secret posture guards are the
+> point.
 
 | Path | What |
 |---|---|
@@ -20,7 +27,7 @@ kind create cluster --config deploy/terraform/local-kind/cluster.yaml
 kind load docker-image oshal-bot:latest --name oshal-tf --nodes oshal-tf-worker,oshal-tf-worker2
 cd deploy/terraform
 terraform init
-terraform apply -var-file envs/local-kind.tfvars
+terraform apply -var-file envs/local-kind.tfvars   # chart_path defaults to ../helm/oshal
 kubectl --context kind-oshal-tf -n oshal port-forward svc/oshal-api 15000:5000
 # → http://localhost:15000/cockpit/   (mock auth — single mock user, local only)
 kind delete cluster --name oshal-tf   # full teardown

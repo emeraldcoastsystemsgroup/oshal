@@ -2,7 +2,8 @@
 # -----------------------------------------------------------------------------
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
-# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — namespace + oshal-api-env Secret + helm_release over the ADR-086 chart (chart_path). Terraform owns cluster-shape and secret-minting; the chart stays the single source of workload truth (no duplicated manifests). Preconditions make the multi-user posture unfakeable: mock_oidc=false refuses to plan without real OIDC config, so a "public tenant" can never ship with dev auth by omission.
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — namespace + oshal-api-env Secret + helm_release over the chart (chart_path). Terraform owns cluster-shape and secret-minting; the chart stays the single source of workload truth (no duplicated manifests). Preconditions make the multi-user posture unfakeable: mock_oidc=false refuses to plan without real OIDC config, so a "public tenant" can never ship with dev auth by omission.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: pass fleet through to the chart. Default "custom" preserves 0.1.x semantics exactly — a terraform tenant's bots[] list stays authoritative; set fleet="kernel"/"full" to adopt the generated chart presets instead of hand-maintaining a list.
 
 locals {
   # Real-OIDC readiness: all four must be present for a multi-user deployment.
@@ -29,7 +30,8 @@ locals {
   # Helm deep-merges these over the chart's values.yaml defaults, so only the
   # keys Terraform actually decides are set here.
   chart_values = {
-    role = "main"
+    role  = "main"
+    fleet = var.fleet
 
     image = {
       repository = var.image_repository
