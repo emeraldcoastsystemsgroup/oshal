@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the codex fleet default (operator directive 2026-08-12). Pins four invariants: (1) every LLM-harness bot in BOTH registries is codex-cli/openai-codex (a2a is the only exception — an external-agent boundary, not an LLM harness), with hard count floors so an emptied registry can't pass vacuously; (2) the codex model defaults never fall below gpt-5.5 and gpt-5.3-codex (the API-key-only name that 400s on a ChatGPT login) never reappears as a default — compose interpolation defaults included; (3) both codex spawn paths pin `-c model_reasoning_effort` (default high) — asserted on the REAL spawn argv via a stubbed spawnImpl, because the per-task codex home copies the HOST config.toml and a host-side effort tuned for gpt-5.6-sol (ultra) 400s every fleet turn on gpt-5.5/gpt-5.4 (verified live); (4) the compose fleet-provider defaults stay openai-codex.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1 guard rows: DEMO_CLI_ORDER is codex-only, a harness-less manifest bot inherits codex-cli, an explicit per-bot claude-code still wins, a stalled codex node never auto-fails-over onto claude-code, and a NAMED claude-code failover still resolves. Mutation-tested: restoring all five defaults turns four rows red.
  */
 
 import { EventEmitter } from 'events';
@@ -27,6 +28,9 @@ vi.hoisted(() => {
 import { SWARM_BOT_REGISTRY } from '../../src/app/extensions/swarm/swarm-bot-registry';
 import { LOCAL_BOT_REGISTRY } from '../../src/app/extensions/swarm/swarm-bot-registry-local';
 import { CodexCliHarnessAdapter } from '../../src/features/llm-provider/services/codex-cli-harness-adapter';
+import { DEMO_CLI_ORDER } from '../../src/app/routes/user-brain-resolution';
+import { manifestBotDefinition } from '../../src/app/extensions/swarm/manifest-bot-definition';
+import { maybeWrapBotNodeProviderFailover } from '../../src/app/bot-node-runtime';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -180,5 +184,95 @@ describe('compose fleet defaults — the self-install contract', () => {
     expect(compose).not.toMatch(/:-gpt-5\.3-codex\}/);
     const bootSync = fs.readFileSync(path.join(REPO_ROOT, 'src', 'app', 'extensions', 'swarm', 'index.ts'), 'utf8');
     expect(bootSync).not.toContain("'gpt-5.3-codex'");
+  });
+});
+
+describe('ADR-128 Amendment 1 — no automatic chain may default to claude-code', () => {
+  // The Claude Code subscription is being cancelled. A silent degrade onto it is worse than a
+  // visible failure: a successful fallback logs like a success, so the operator discovers it as
+  // a billing surprise or a bot that dies on renewal day. Every row here is a REAL call into the
+  // shipped resolver, not a substring scan — a comment claiming codex-only proves nothing.
+
+  it('the demo CLI ladder offers codex and nothing else', () => {
+    expect(DEMO_CLI_ORDER).toEqual(['openai-codex']);
+    expect(DEMO_CLI_ORDER).not.toContain('claude-code');
+  });
+
+  it('a manifest bot that declares no harness inherits the codex fleet default', () => {
+    // The common store-package shape: a package author omits harnessType entirely.
+    const definition = manifestBotDefinition({
+      agentId: 'aa000000-0000-0000-0000-0000000000ff',
+      name: 'package-bot-without-a-harness',
+    } as Parameters<typeof manifestBotDefinition>[0]);
+
+    expect(definition.harnessType).toBe('codex-cli');
+    expect(definition.apiType).toBe('openai-codex');
+  });
+
+  it('an explicit per-bot harness still wins — this amendment moves defaults, not choices', () => {
+    const definition = manifestBotDefinition({
+      agentId: 'aa000000-0000-0000-0000-0000000000fe',
+      name: 'package-bot-that-asked-for-claude',
+      harnessType: 'claude-code',
+      apiType: 'claude-code',
+    } as Parameters<typeof manifestBotDefinition>[0]);
+
+    expect(definition.harnessType).toBe('claude-code');
+  });
+
+  it('a stalled codex bot-node never auto-fails-over onto claude-code', () => {
+    const priorFallback = process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
+    const priorAuto = process.env.OSHAL_PROVIDER_AUTO_FAILOVER;
+    delete process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
+    delete process.env.OSHAL_PROVIDER_AUTO_FAILOVER;
+    try {
+      // All three providers initialized — the pre-amendment order picked claude-code here.
+      const providers = {
+        'claude-code': { name: 'claude-sentinel' },
+        'openai-codex': { name: 'codex-sentinel' },
+        'cline-cli': { name: 'cline-sentinel' },
+      };
+      const wrapped = maybeWrapBotNodeProviderFailover({ name: 'codex-primary' }, 'openai-codex', providers);
+
+      expect(wrapped.fallbackName, 'codex must not degrade onto a cancelled subscription').not.toBe('claude-code');
+      expect(wrapped.fallback).not.toBe(providers['claude-code']);
+      expect(wrapped.fallbackName).toBe('cline-cli');
+    } finally {
+      if (priorFallback === undefined) delete process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
+      else process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER = priorFallback;
+      if (priorAuto === undefined) delete process.env.OSHAL_PROVIDER_AUTO_FAILOVER;
+      else process.env.OSHAL_PROVIDER_AUTO_FAILOVER = priorAuto;
+    }
+  });
+
+  it('an operator who NAMES claude-code as the failover still gets it', () => {
+    const prior = process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
+    process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER = 'claude-code';
+    try {
+      const providers = {
+        'claude-code': { name: 'claude-sentinel' },
+        'openai-codex': { name: 'codex-sentinel' },
+        'cline-cli': { name: 'cline-sentinel' },
+      };
+      const wrapped = maybeWrapBotNodeProviderFailover({ name: 'codex-primary' }, 'openai-codex', providers);
+      expect(wrapped.fallbackName).toBe('claude-code');
+    } finally {
+      if (prior === undefined) delete process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
+      else process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER = prior;
+    }
+  });
+
+  it('no source default resolves to claude-code on the sites the amendment names', () => {
+    // Belt-and-braces over the two module-level constants a call cannot reach without booting
+    // the whole composition root. Narrow and exact: the assignment, not the mere mention.
+    const providerRuntime = fs.readFileSync(
+      path.join(REPO_ROOT, 'src', 'app', 'composition', 'provider-runtime.ts'), 'utf8');
+    expect(providerRuntime).toMatch(/process\.env\.LLM_PROVIDER \?\? 'openai-codex'/);
+    expect(providerRuntime).not.toMatch(/process\.env\.LLM_PROVIDER \?\? 'claude-code'/);
+    expect(providerRuntime).not.toMatch(/process\.env\.LLM_MODEL \|\| 'claude-/);
+
+    const configSync = fs.readFileSync(
+      path.join(REPO_ROOT, 'src', 'features', 'llm-provider', 'services', 'cline-runtime-config-sync-service.ts'), 'utf8');
+    expect(configSync).toMatch(/DEFAULT_PROVIDER = process\.env\.LLM_PROVIDER \|\| 'openai-codex'/);
   });
 });

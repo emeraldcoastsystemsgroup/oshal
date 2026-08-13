@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard fail-closed packaged-bot runtime validation and dynamic registry propagation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-093 Tier 2: guard the bots[].container/port node declaration — passthrough to the dynamic registry (dispatch leaves the controller), the 5000 default, and every fail-closed rejection shape (bad slug, 'oshal-api', orphan port, non-integer port).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1: the omitted-runtime default is now codex-cli/openai-codex, not claude-code — changed knowingly, since omitting harnessType is the norm for store packages and the old default minted Claude Code bots into a codex fleet. Added the companion row proving an EXPLICIT claude-code declaration still survives.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -39,8 +40,19 @@ describe('packaged bot runtime declarations', () => {
     });
   });
 
-  it('retains the legacy Claude default only when both runtime fields are omitted', () => {
+  it('inherits the codex FLEET default when both runtime fields are omitted', () => {
+    // Was: 'retains the legacy Claude default…'. Changed knowingly under ADR-128 Amendment 1
+    // (operator directive 2026-08-13) — the Claude Code subscription is being cancelled, and
+    // omitting harnessType is the NORM for store packages, so the old default quietly minted a
+    // Claude Code bot into a codex fleet on every package that never thought about harnesses.
     expect(manifestBotDefinition(readBot())).toMatchObject({
+      container: 'oshal-api', harnessType: 'codex-cli', apiType: 'openai-codex',
+    });
+  });
+
+  it('still honours an explicitly declared Claude runtime — defaults moved, choices did not', () => {
+    const definition = manifestBotDefinition(readBot('    harnessType: claude-code\n    apiType: claude-code\n'));
+    expect(definition).toMatchObject({
       container: 'oshal-api', harnessType: 'claude-code', apiType: 'claude-code',
     });
   });

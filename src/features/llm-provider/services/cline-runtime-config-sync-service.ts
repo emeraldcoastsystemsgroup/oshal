@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Stopped injecting google-search-mcp unless explicitly configured — the container was retired from every active compose stack, so the hardcoded http://google-search-mcp:8080/mcp fallback handed every managed session an unresolvable MCP endpoint. Mirrors the 2026-03-12 chroma-mcp fix
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Closed the last dead-seed codex consumer: the OAuth-blob resolution chain (syncOpenAiCodexCredentials → findOpenAiCodexCredentialBlob) now reads the LIVE ~/.codex/auth.json (via resolveCodexAuthSourcePath) before falling back to the never-rotated config-seed copy, so Cline data/secrets.json can no longer be poisoned with an expired seed token while codex auth is healthy; seed fallback downgraded to a warn mirroring swarm-credentials
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: runtime sync writes non-secret metadata only, overwrites legacy credential-bearing Cline files, and retires API-key/OAuth materialization into data/secrets.json.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. DEFAULT_PROVIDER falls back to openai-codex (was claude-code).
  */
 
 import fs from 'fs';
@@ -34,7 +35,8 @@ import {
 const logger = createChildLogger({ module: 'cline-runtime-config-sync-service' });
 
 const DEFAULT_CONFIG_OUTPUT_DIR = 'output';
-const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || 'claude-code';
+// Codex is the fleet default (ADR-128; claude-code removed as the fallback 2026-08-13).
+const DEFAULT_PROVIDER = process.env.LLM_PROVIDER || 'openai-codex';
 const DEFAULT_CHROMA_MCP_URL = process.env.CHROMA_MCP_URL;
 const DEFAULT_PRESENTRON_MCP_URL = process.env.PRESENTRON_MCP_URL || 'http://presentron-mcp:8081';
 const DEFAULT_GOOGLE_SEARCH_MCP_URL = process.env.GOOGLE_SEARCH_MCP_URL;
