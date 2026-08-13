@@ -4,16 +4,18 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the multi-user SINGLE PUBLIC TENANT posture, as a copy-and-fill template. One namespace = one tenant; many users share it via real OIDC; per-user isolation comes from the app (ADR-076 RLS + oshal_app role, per-user AES-GCM connector tokens), not from Kubernetes. Copy to terraform.tfvars (gitignored) and fill the CHANGE-ME values — never commit real secrets.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Full production bot fleet (35 bots) extracted from docker-compose.oshal-local.yml for the weekend prod-on-k8s migration: name = compose service name (= registry container = the DNS the controller dials), botName/personaFile where they differ, per-bot codex overrides + UI/store env as extraEnv. self-healing-bot deliberately absent (its remediation tools are docker-socket-bound — invalid on k8s).
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129 refresh: chart_path defaults to the in-repo chart; image_repository points at the live public GHCR package; LLM default follows the codex fleet floor (operator directive 2026-08-12 — per-bot registry overrides, not a flipped global). NOTE: chart 0.2.0 ships GENERATED fleet presets — `fleet = "full"` replaces hand-maintaining this bots[] list (kept for per-bot extraEnv control; entries may lag compose).
 
 # Target cluster (gaming-PC kind, any k8s ≥1.27).
 kube_context = "CHANGE-ME" # e.g. kind-oshal-tf
 namespace    = "oshal-public"
 
-# The ADR-086 Helm chart to release (the single source of workload truth).
-chart_path = "CHANGE-ME" # path to your oshal Helm chart checkout
+# The Helm chart to release (the single source of workload truth). Defaults to
+# the in-repo deploy/helm/oshal (ADR-129); override only for an out-of-tree chart.
+# chart_path = "../helm/oshal"
 
 # Public deployments pull from a registry (kind side-loading is local-only).
-image_repository  = "ghcr.io/CHANGE-ME/oshal-bot"
+image_repository  = "ghcr.io/emeraldcoastsystemsgroup/oshal-bot"
 image_tag         = "latest"
 image_pull_policy = "IfNotPresent"
 
@@ -33,10 +35,15 @@ enable_guest_mode = true
 swarm_service_secret = "CHANGE-ME" # bot↔controller service auth
 jwt_secret           = "CHANGE-ME" # any-bot execution layer (never the dev default)
 
-# Real LLM execution on the bots (BYOK on the swarm default login — never
-# vendor API keys per bot).
-force_llm_provider = "claude-code"
-force_llm_model    = "claude-sonnet-4-6"
+# Codex fleet floor (operator directive 2026-08-12). If a bot misbehaves on
+# codex, override its registry entry — don't flip the global default back.
+force_llm_provider = "openai-codex"
+force_llm_model    = "gpt-5.5"
+
+# Chart 0.2.0 alternative to the bots[] list below: adopt the generated preset
+# (kernel/full, kept in lockstep with compose by scripts/generate-chart-fleet.mjs)
+# and delete the hand list. Keep "custom" while per-bot extraEnv matters.
+# fleet = "full"
 
 # ── Cockpit exposure: pick ONE ────────────────────────────────────────────────
 # Plain k8s + ingress-nginx + cert-manager:

@@ -1,0 +1,53 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — contributor bot-pod cluster example values. Copy, fill the CHANGE-ME fields with what the operator assigns you.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — registry default updated to the public oshal-bot image; relay is enabled here explicitly (the chart default flipped to false, but a bot-pod's entire transport IS the relay); fleet: custom (presets are main-cluster lineups — a contributor runs exactly the bots the operator assigned).
+#
+# You are deploying a FEDERATED BOT POD: only bots + the tailnet relay run here.
+# No controller, no databases, no DATABASE_URL — your bots run DB-less by design
+# and reach the swarm exclusively through the relay (oshal-redis / oshal-api).
+
+role: bot-pod
+
+# CHANGE-ME: your short slug (lowercase, no spaces) — e.g. "alice".
+contributor: alice
+
+image:
+  repository: ghcr.io/emeraldcoastsystemsgroup/oshal-bot
+  tag: latest
+
+tailnet:
+  # CHANGE-ME: the operator's headscale server.
+  loginServer: "https://headscale.example.com"
+  # Create this Secret from the preauth key the operator issues you (never commit it):
+  #   kubectl -n <ns> create secret generic oshal-tailnet --from-literal=TS_AUTHKEY=<key>
+  authKeySecret: oshal-tailnet
+  tag: "tag:oshal-botpod"
+  # CHANGE-ME: tailnet IP of the MAIN cluster relay (the operator tells you).
+  mainIP: "100.64.0.1"
+
+relay:
+  # A bot-pod's entire transport is the relay — always on for this role.
+  enabled: true
+  # Expose each of your bots to the controller. listenPort values are assigned by
+  # the operator (unique swarm-wide, 5100-5199) and mirrored in the main cluster's
+  # relay.remoteBots plus the headscale ACL.
+  exposeBots:
+    - { name: research-bot, listenPort: 5101 }
+
+botDefaults:
+  # Create this Secret yourself: YOUR LLM keys (ANTHROPIC_API_KEY / OPENAI_API_KEY /
+  # GEMINI_API_KEY) + the SWARM_SERVICE_SECRET the operator gives you.
+  envSecret: oshal-bot-env
+
+# Contributor clusters run EXACTLY the assigned bots — no preset fleet.
+fleet: custom
+
+# Bots, agent IDs, and personas are ASSIGNED by the operator — the registry on the
+# main cluster must know these exact UUIDs or your bots will heartbeat into a void.
+bots:
+  - name: research-bot
+    agentId: a0000000-0000-0000-0000-00000000000c
+    capabilities: "research,analysis,documentation,investigation,web-search"

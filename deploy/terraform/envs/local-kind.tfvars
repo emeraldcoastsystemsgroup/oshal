@@ -7,8 +7,9 @@
 kube_context = "kind-oshal-tf"
 namespace    = "oshal"
 
-# The ADR-086 Helm chart to release — point at your oshal Helm chart checkout.
-chart_path = "CHANGE-ME"
+# The Helm chart to release — defaults to the in-repo deploy/helm/oshal (ADR-129);
+# uncomment only to test an out-of-tree chart build.
+# chart_path = "../helm/oshal"
 
 image_repository  = "oshal-bot"
 # coldstart = built from ad0b3517+ (contains the idempotent access_audit enforce

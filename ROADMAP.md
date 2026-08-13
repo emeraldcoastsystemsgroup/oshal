@@ -86,7 +86,9 @@ These are real, exercised paths today. They are documented in
   graphs, then **Publish** them live: single-shot, staged (approval gates), or a full
   branching/parallel graph compiled to an executable workflow.
 - **Deployment spectrum** — runs on Windows (`oshal.bat`), Docker Compose (primary
-  local path), and Kubernetes (`ops/`, `docs/k8/`). Kubernetes is the scalable target.
+  local path), and Kubernetes (codeless helm install — `deploy/helm/oshal`,
+  installer mode 4, [ADR-129](docs/adr/129-codeless-k8s-install-path.md); Terraform
+  tenant layer in `deploy/terraform`). Kubernetes is the scalable target.
 - **Local & self-hosted models** — Ollama, LM Studio, and LiteLLM are wired as
   providers; Llama and Mistral run fully local via Ollama.
 - **Platform shared services (2026-07 gap-list build)** — cross-cutting services every

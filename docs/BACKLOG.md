@@ -8,6 +8,14 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 
 ## Promotion, deployment, and regression proof
 
+### Codeless k8s install — first live-cluster proof (ADR-129)
+- **Remaining:** run `oshal-install.sh --mode 4` (or `-Kubernetes`) end-to-end on a real second machine — the dev laptop is excluded on purpose (Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing). Then publish the OCI chart (`bash scripts/publish-chart.sh` + the one-time GHCR visibility flip) so the installer's OCI-first path goes live.
+- **Done when:** a fresh box reaches `/welcome` in a browser via the NodePort with only kubectl+helm+the installer present, a model connects through the wizard and a jarvis turn answers, and `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` succeeds anonymously.
+
+### k8s parity — store staging and compose-only infra (ADR-129 caps)
+- **Remaining:** store-package staging (`--apps`, app bundles) is compose-only (it stages via the docker workspace volume); TimescaleDB, ArangoDB, Vault, code-server, ollama, and speaker-diarization are not chart-templated, so trading cannot run on k8s and `/api/graph` degrades to 503.
+- **Done when:** a store package installs onto a k8s tenant from the cockpit or installer and survives an api pod restart; tsdb (at minimum) is chart-templated behind an `infra.*.inCluster` flag with the trading stack proven against it, or each gap is explicitly re-scoped here.
+
 ### Rides map and fare follow-ups
 - **Remaining:** install the merged [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides) package; decide optional OSRM/Valhalla and Google Maps billing paths; make geocode/tile configuration operator-owned and the normalized-address cache durable.
 - **Done when:** the live package serves vendored Leaflet and reports `provider: "osm"`; keyless routing is either backed by `OSHAL_ROUTING_URL` or explicitly accepted as straight-line-plus-factor; any Google browser key is referrer-restricted; restarts do not repeat cached geocodes.

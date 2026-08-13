@@ -39,7 +39,7 @@ Docker is the only prerequisite for the default path. The installer asks four qu
 | **1 — Swarm, no source** *(default)* | Registry images only. No repository, no build — pull and run. |
 | **2 — Swarm, from source** | `git clone` + `docker build` with live-editable mounts. The contributor path. |
 | **3 — Leaf-node bot** | Joins an **existing** swarm from this computer — a desktop worker with its own logins, screen, and files. |
-| **4 — Kubernetes** | The Terraform path (`deploy/terraform`) runs the same images on a cluster. Docker Compose and k8s are both first-class hosting environments. |
+| **4 — Kubernetes** | Registry images + the in-repo Helm chart — no repository, no build (ADR-129). Detects your cluster (Docker Desktop k8s, kind, k3s), installs, opens the cockpit. Multi-user public tenants use the Terraform layer (`deploy/terraform`) for its OIDC/secret posture guards. |
 
 **Bundles — the kernel plus curated app sets** (dependencies bound, installs deduplicated):
 
@@ -285,7 +285,7 @@ A swarm is one machine until you add another.
 
 - **Leaf nodes:** run the installer on any other computer, pick *leaf-node bot*, paste the swarm's join code — that machine becomes a worker with *its own* logins, screen, and files, plus a chat window to the swarm. An **enrollment token** binds it to *your* identity, and dispatch to it is owner-scoped server-side.
 - **Off-LAN:** an `OSJOIN2.…` code carries credentials for OSHAL's self-hosted [Headscale](infra/headscale/) tailnet — no third-party cloud in the path. Same-LAN nodes need no VPN at all.
-- **Clusters:** the Terraform path (`deploy/terraform`) deploys the same images to Kubernetes with namespace-per-tenant isolation.
+- **Clusters:** installer mode 4 puts the same images on any Kubernetes cluster codelessly (Helm chart at `deploy/helm/oshal`); the Terraform path (`deploy/terraform`) adds namespace-per-tenant isolation + real-OIDC posture guards for multi-user tenants.
 
 ---
 
@@ -317,7 +317,7 @@ per-user connectors without credential exposure, cost attribution, and bot-to-bo
 
 **Beta, shipped honestly.** The pack→build→inject loop, build/incident pipelines, mix-mode multi-vendor bots, per-user RLS isolation, device-owned dispatch, the cost ledger, and the one-command registry install all run end-to-end today. Prebuilt images are published to GHCR and the installer pulls them — no build on the default path.
 
-Still ahead: **multi-organization SaaS provisioning** (realm-per-tenant + billing; enterprise per-tenant isolation is the model, Terraform stamps the shape today), the **external-agent A2A gateway** at production grade, and the **one-command Kubernetes** experience (the Terraform path works; the polish isn't there yet). Vision and gaps live in [ROADMAP.md](ROADMAP.md) and [BACKLOG.md](docs/BACKLOG.md) with done-when criteria — not in docs written as if shipped.
+Still ahead: **multi-organization SaaS provisioning** (realm-per-tenant + billing; enterprise per-tenant isolation is the model, Terraform stamps the shape today), the **external-agent A2A gateway** at production grade, and **k8s feature parity** (the codeless one-command Kubernetes install shipped — ADR-129; store-package staging and the trading/graph infra tier are still compose-only). Vision and gaps live in [ROADMAP.md](ROADMAP.md) and [BACKLOG.md](docs/BACKLOG.md) with done-when criteria — not in docs written as if shipped.
 
 ---
 
