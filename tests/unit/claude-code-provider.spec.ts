@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added regression coverage for agent-profile runtime selection overrides
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Initial unit tests for ClineHarnessProvider (CLI agent wrapper)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Operator directive 2026-08-13 — nothing hardcoded: the provider-name assertion pinned the literal 'claude-code'. Replaced knowingly with the two real cases: the adapter names ITSELF (cline-cli) when no backing provider is configured, and reports the CONFIGURED provider when one is declared.
  */
 
 /**
@@ -29,8 +30,27 @@ describe('ClineHarnessProvider', () => {
     provider = new ClineHarnessProvider(mockConfig);
   });
 
-  it('should initialize with correct config', () => {
-    expect(provider.getProviderName()).toBe('claude-code');
+  it('names itself when the config declares no backing provider', () => {
+    // Was: expected the literal 'claude-code'. Changed knowingly (operator directive
+    // 2026-08-13) — this adapter IS the Cline harness and has no opinion about a vendor. The
+    // old literal is why the api logged `provider: claude-code` on a fleet running codex.
+    const priorForce = process.env.FORCE_LLM_PROVIDER;
+    const priorLlm = process.env.LLM_PROVIDER;
+    delete process.env.FORCE_LLM_PROVIDER;
+    delete process.env.LLM_PROVIDER;
+    try {
+      expect(new ClineHarnessProvider(mockConfig).getProviderName()).toBe('cline-cli');
+    } finally {
+      if (priorForce === undefined) delete process.env.FORCE_LLM_PROVIDER;
+      else process.env.FORCE_LLM_PROVIDER = priorForce;
+      if (priorLlm === undefined) delete process.env.LLM_PROVIDER;
+      else process.env.LLM_PROVIDER = priorLlm;
+    }
+  });
+
+  it('reports the CONFIGURED backing provider when one is declared', () => {
+    const configured = new ClineHarnessProvider({ ...mockConfig, configuredProvider: 'openai-codex' });
+    expect(configured.getProviderName()).toBe('openai-codex');
   });
 
   it('should calculate cost as zero', () => {

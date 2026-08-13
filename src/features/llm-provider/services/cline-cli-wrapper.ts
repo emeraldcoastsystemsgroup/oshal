@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Updated Change Log for attribution and timestamp compliance
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fixed ApiProvider type import to use LLM contract union and avoid shared index ambiguity
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Replaced deep type import with interface-derived return type to preserve barrel import compliance
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Operator directive 2026-08-13 — nothing hardcoded: configuration decides and the swarm env file is the fallback. getProviderType returned the literal 'claude-code' unconditionally; now config.provider -> FORCE_LLM_PROVIDER/LLM_PROVIDER -> 'cline-cli'.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -35,8 +36,15 @@ export class ClineCLIWrapper implements IAgentApiConfiguration {
    * @returns The provider type as a string.
    */
   getProviderType(): ReturnType<IAgentApiConfiguration['getProviderType']> {
-    logger.info({}, 'getProviderType called');
-    return 'claude-code';
+    // Configuration decides, never a literal (operator directive 2026-08-13). The config's own
+    // provider wins; otherwise the swarm env file answers; `cline-cli` is this wrapper's own
+    // identity, not a vendor default.
+    const providerType = (this.config.provider?.trim()
+      || process.env.FORCE_LLM_PROVIDER?.trim()
+      || process.env.LLM_PROVIDER?.trim()
+      || 'cline-cli') as ReturnType<IAgentApiConfiguration['getProviderType']>;
+    logger.info({ providerType }, 'getProviderType called');
+    return providerType;
   }
 
   /**

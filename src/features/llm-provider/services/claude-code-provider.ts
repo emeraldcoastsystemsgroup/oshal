@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject unattended Cline before runtime selection, workspace/session creation, manifest writes, credential access, or process spawn pending an audited broker.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Consume the dependency-free unattended-provider policy without importing the harness runtime contract.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com  | Operator directive 2026-08-13 — nothing hardcoded: configuration decides and the swarm env file is the fallback. ClineHarnessProvider reported the literal 'claude-code' to LLMService, which is why the api logged provider: claude-code on a fleet where every turn ran codex — the label named a vendor this adapter has no opinion about, while routing already used configuredProvider. Now reports configuredProvider -> FORCE_LLM_PROVIDER/LLM_PROVIDER -> 'cline-cli' (this adapter's own identity, not a vendor default).
  */
 
 import fs from 'fs';
@@ -39,7 +40,13 @@ import type { AgentCapabilityResolver, AgentSelectorResolution, ToolCapabilitySc
 import { assertAuditedAutonomousHarness } from './unattended-provider-policy';
 
 const logger = createChildLogger({ module: 'claude-code-provider' });
-const DEFAULT_MODEL = 'gpt-5.3-codex';
+// Configuration decides the model, never a literal (operator directive 2026-08-13). This was
+// hardcoded to 'gpt-5.3-codex' — the API-key-only name a ChatGPT login answers with a 400, and
+// the one id ADR-128 says may never be a default anywhere. It survived that ADR because it is a
+// module constant rather than a compose/env default, which is exactly the shape the guard did
+// not scan. Resolution order matches the rest of the swarm; the final rung names no vendor
+// model, it defers to the harness's own resolution.
+const DEFAULT_MODEL_ENV_KEYS = ['FORCE_LLM_MODEL', 'CLINE_API_MODEL', 'LLM_MODEL'] as const;
 const DEFAULT_TIMEOUT_MS = 900000;
 
 interface OutputSummary {
@@ -93,7 +100,19 @@ export class ClineHarnessProvider extends LLMService {
   private configuredProvider: string | undefined;
 
   constructor(config: ClineHarnessProviderConfig, deps: ClineHarnessProviderDeps = {}) {
-    super('claude-code', config);
+    // The reported provider is the CONFIGURED backing provider, then the swarm env, then this
+    // adapter's own identity. It used to be the literal 'claude-code', which is why the api
+    // logged `provider: claude-code` on a fleet where every turn ran codex — the label described
+    // a vendor this class does not have an opinion about. Routing already used
+    // `configuredProvider`; only the reported name was wrong. `cline-cli` is the adapter's own
+    // name, not a vendor default: this class IS the Cline harness.
+    super(
+      config.configuredProvider?.trim()
+        || process.env.FORCE_LLM_PROVIDER?.trim()
+        || process.env.LLM_PROVIDER?.trim()
+        || 'cline-cli',
+      config,
+    );
     this.binaryPath = this.resolveBinaryPath(config);
     this.model = this.resolveModel(config.model);
     this.configDir = this.resolveConfigDir();
@@ -324,7 +343,14 @@ export class ClineHarnessProvider extends LLMService {
    */
   private resolveModel(model: string): string {
     const trimmed = typeof model === 'string' ? model.trim() : '';
-    return trimmed.length > 0 ? trimmed : DEFAULT_MODEL;
+    if (trimmed.length > 0) return trimmed;
+    for (const key of DEFAULT_MODEL_ENV_KEYS) {
+      const fromEnv = process.env[key]?.trim();
+      if (fromEnv) return fromEnv;
+    }
+    // Empty, deliberately: the CLI resolves its own configured model. Naming a vendor model here
+    // is how a broken id (gpt-5.3-codex) outlived the ADR that banned it.
+    return '';
   }
 
   /**
