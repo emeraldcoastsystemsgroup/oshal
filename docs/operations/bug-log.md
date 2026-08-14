@@ -318,3 +318,416 @@ deployment are in that state). That is a new capability, not this defect — log
   check as documentation, in both directions — this one over-promised isolation, and the first
   write-up of the bug over-stated the exposure. Describe the tier model; do not collapse it to
   either extreme.
+
+
+## Unit-suite sweep (2026-08-13) — BUG-15 … BUG-17
+
+All three entries below came out of a single `npx vitest run` over the whole unit corpus on
+2026-08-13, run in passing during unrelated Jarvis surface-bridge work. **None of the three specs
+imports anything that change touched** — every one of them was already red on committed `main`
+before that session opened. That is the finding underneath all three: nothing on an automatic path
+had said so. `.github/workflows/ci.yml:43-44` is `on: workflow_dispatch:` and nothing else (line 24
+forbids adding `push:`/`schedule:`/`pull_request:`), `.githooks/pre-push` runs `publish-gate.sh` plus
+a committed-HEAD `tsc --noEmit` and no tests, and `scripts/ci-local.sh:225` (`gate_unit`) is the only
+thing that runs `npm run test:unit` — by hand. `gh pr checks 186` returns exactly one check: `gate`,
+5s.
+
+One honest caveat on reading any full-suite number from that sweep: the tier is **not hermetic**, and
+its red count moved between runs on the same box (3, 5, and 11 failing tests observed at different
+moments). Some of that movement is doctrine working as intended — `apply-reaper-ledger-join.spec.ts`
+and `schema-lock-privilege-tolerance.spec.ts` fail *loudly* when the live Postgres is absent, which is
+what CLAUDE.md asks for instead of a skip. Some of it is docker/Windows-host dependence. And some of
+it is BUG-16 below, which is nondeterministic *even with the stack up*. Do not quote a single
+"N tests are red" figure from this sweep; three specific specs were run down, and those are these.
+
+## BUG-15 — career-bot runs the oshal runtime but no Prometheus job scrapes it
+- **Type:** Bug (observability config) · **Priority:** Low · **Status:** OPEN
+- **Discovered:** 2026-08-13, by `tests/unit/swarm-container-health-signal.spec.ts` going red in the
+  sweep above. **Scope corrected during verification** — the first write-up filed this **Med** on a
+  blast-radius claim that did not survive checking, and that correction is recorded here so it is not
+  repeated.
+
+**This is a real product defect — a config one — and it is neither a stale guard nor a
+test-environment artifact.** The spec reads two tracked files and calls one pure renderer: no
+database, no network, no docker, no ports. It fails identically from a clean checkout of committed
+`HEAD`. The one dirty entry in the working tree at the time (`docker-compose.oshal-local.yml`) is an
+unrelated 10-line `TUNNEL_TRANSPORT_PROTOCOL` addition to the `cloudflared` service, which declares
+its own `image:` and is excluded by the guard's selector.
+
+**Where.** `docker-compose.oshal-local.yml:1968-1971` declares `career-bot` /
+`container_name: oshal-local-career-bot` inheriting `<<: *bot-common`, so it runs the shared
+`oshal-bot` image with `BOT_RUNTIME: bot-node` and serves the shared exporter's `GET /metrics`
+(`src/app/bot-node-server.ts`). The `oshal-swarm-bots` job in `ops/monitoring/prometheus.yml:82`
+lists **34** targets (`:86-119`) and does not include it. Replaying the spec's own
+`composeRuntimeContainers()` (`tests/unit/swarm-container-health-signal.spec.ts:100`) against that
+file: **36** runtime containers in compose, **35** `oshal-local-*:5000` targets (34 bots + 
+`oshal-local-api` under `job: oshal-core` at `:60`), missing = exactly
+`['oshal-local-career-bot']`, scraped-but-not-a-container = `[]`. It is one, not several — the loop
+throws on the first miss, but nothing hides behind it. The failing assertion is at
+`tests/unit/swarm-container-health-signal.spec.ts:290-298`.
+
+**A working guard caught a fresh break, not a new guard finding old dirt.** `git blame -L 1965,1975`
+puts every line of the career-bot block at `f89a33c9` (2026-08-11, PR #186, "packaged bots as
+dedicated nodes"); that commit's file list does not include `ops/monitoring/prometheus.yml`, whose
+only real change is `7d5a2ddf` (2026-08-01). The guard itself landed the *same day* as that
+prometheus change — `git log -- tests/unit/swarm-container-health-signal.spec.ts` returns only
+`7d5a2ddf` and `15eac50c`, both 2026-08-01. So it was green when it shipped and red the moment
+career-bot arrived, ten days later. Causally proved, not inferred: temporarily inserting
+`- oshal-local-career-bot:5000` into the target list turns the spec green (24/24) and does not break
+the companion assertion at `:281` (`every scrape target is a real container`), because career-bot
+*is* a real container under the same selector.
+
+**The corrected scope — why Low and not Med.** The first write-up justified Med on the claim that
+career-bot is the dedicated node for career-hunter's cron work (resume leases, board refresh).
+**That is false.** `docker inspect oshal-local-career-bot` carries no `CAREER_HUNTER_CRON`;
+`oshal-local-api` carries `CAREER_HUNTER_CRON=1`. The scheduler is a `setInterval` in the package's
+`src-routes/career-hunter-cron.ts:292`, loaded into the API process, and its engine work is a child
+process resolved under the API's cwd (`career-engine-runner.ts:35`, `:185`). Those leases live on
+`oshal-local-api` — which **is** a scrape target and **is** covered by `SwarmApiUnreachable`.
+career-bot's actual role is LLM dispatch (`oshal-app.yaml:132` `container: career-bot`; `:523-527`
+routes `ticketType: career-application` to it), and `hasEndpoint()` resolves from the loaded endpoint
+registry rather than from liveness, so a dead container makes dispatch *fail visibly* rather than
+degrade silently onto an inline runtime the manifest opted out of. Its death shows up as a failed
+career chat turn and as `career-application` tickets that stop advancing in a queue the operator
+already watches. Real exposure, noticed at time of use — not the silent rot Med was argued from.
+
+**And not under-claimed either.** This deployment actually runs it: `.env:14` sets
+`COMPOSE_PROFILES=…,career-node`, satisfying the `profiles: ["career-node"]` gate at
+`docker-compose.oshal-local.yml:1971`, the container is up, and
+`wget -qO- http://oshal-local-career-bot:5000/metrics` from the api container returns
+`oshal_up{runtime="bot-node",instance_name="career-hunter"} 1`. The exporter half works; only the
+target list is missing it. **Profile-gating is not a reason to omit it** — the job's own header and
+the `and on (container) max_over_time(up{job="oshal-swarm-bots"}[1h]) > 0` conjunct at
+`ops/monitoring/alert-rules.yml:52-56` exist precisely so a declared-but-never-started target is
+inert rather than a standing false alarm, and fifteen other profile-gated bots are already listed.
+
+**Read the assertion message carefully, though: right now nothing is scraped at all.**
+`oshal-local-prometheus` has been `Exited (255)` since 2026-08-02 *despite* `restart: unless-stopped`
+in `docker-compose.monitoring.yml:67` (its last log line is a `SwarmContainerDown` rule evaluation
+that "timed out in expression evaluation"); alertmanager and cAdvisor have been down since
+2026-08-07. Only `scripts/monitoring-up.sh:24` starts the overlay, and neither `scripts/oshal-up.sh`
+nor `scripts/oshal-deploy.sh` references it. So all 35 oshal runtime targets are equally unwatched
+today — career-bot is simply the one that stays unwatched after somebody brings the overlay back.
+That is the durable half of this defect, and the config fix is what survives the restart.
+
+**Fix:** add `- oshal-local-career-bot:5000` to the `oshal-swarm-bots` `static_configs.targets` list
+in `ops/monitoring/prometheus.yml`, after `oshal-local-jarvis-bot:5000` (`:101`) to keep the list in
+compose order. Nothing else changes: the job already relabels `__address__` into the `container`
+label (`:121-126`), so the alert identity ADR-119 needs comes for free. Then run
+`bash scripts/monitoring-up.sh` — the config fix is inert while the overlay is dead.
+
+**Prevention (guard-per-fix):** the guard already exists and already worked — do not add a second
+one. Close the two gaps around it. (1) Put the unit tier on a path that runs without a human choosing
+to run it, or quarantine it with a same-day BACKLOG entry per doctrine; and fix `ci.yml`'s own banner
+while you are there, because it is drifted in two directions — `:15` claims "plus the PR gate", but
+the workflow has no `pull_request:` trigger at all, and it claims "a single NIGHTLY RUN on the
+operator's machine", while `schtasks /query` shows no such task on this box. **The nightly is
+documented, not scheduled.** (2) `docs/building-a-bot.md` contains **zero** occurrences of
+`prometheus`, `scrape`, or `monitor` (verified case-insensitively), and its add-a-bot checklist names
+registry + compose + persona YAML only — the scrape config is exactly the step PR #186 omitted, so
+add it to that list. **Separately, and deserving its own entry:** nothing anywhere guards that the
+monitoring overlay is *running*. A cross-file config guard is closure evidence for the config
+boundary only; it cannot tell you the process reading that config has been exited for eleven days.
+The observer is the one component nothing observes.
+
+## BUG-16 — The consolidation-cutover guard runs a second alert consumer against the operator's live alert queue
+- **Type:** Bug (test isolation) · **Priority:** High · **Status:** OPEN
+- **Discovered:** 2026-08-13, by `tests/unit/alert-incident-cutover.spec.ts` failing in the sweep
+  above. **Priority raised and framing corrected during verification** — the first write-up filed it
+  Med, described only the harmless direction of the race, and asserted the product exonerated on an
+  axis its own evidence argues against. All three corrections are recorded below.
+
+**This is a test defect, not a defect in the ADR-125 consolidation path as designed — with one
+caveat the entry does not get to hand-wave.** The spec resolves the operator's **live** Postgres by
+default (`tests/unit/alert-incident-cutover.spec.ts:17-21`,
+`postgresql://oshal:oshal@127.0.0.1:55433/oshal`), builds its own express app around
+`createAlertmanagerRoutes(ticketService, { pool })` (`:112`) on an `InMemoryTicketStore` (`:109`), and
+POSTs alerts into the same `oshal_alert_event` table `oshal-local-api` polls every five seconds
+(`src/app/routes/alertmanager-routes.ts:878-892`, `PENDING_SWEEP_INTERVAL_MS = 5_000` at `:124`,
+`FOR UPDATE SKIP LOCKED` at `src/features/alert-pipeline/services/envelope-store.ts:257`).
+
+**The shipped behaviour was checked, not assumed.** `SKIP LOCKED` means two consumers never take the
+same row, and multi-pump draining is documented intent (`envelope-store.ts:604`). The sweep is
+`unref()`'d (`alertmanager-routes.ts:891`), cleared by `registerShutdownHook` (`:892`), and wrapped in
+`runWithSystemIdentity` (`:887`) so `OSHAL_DB_GUC_STRICT=deny` cannot turn "retried next tick" into
+"never retried". Nothing shipped is broken by two consumers sharing a landed queue.
+
+**The race is proven, not inferred.** Incident `acc15533-1046-48df-b03a-fb87324983d2`
+(`primary_target=cut-nm8-mss9115k-container`, created 2026-08-14 01:10:39Z) points at ticket
+`d913d5b4-3865-48b4-bb27-39c1cb8c8df9`, which **exists in the live `tickets` table** — and the spec
+cannot write a `tickets` row at all, because its ticket store is in memory. The ticket's
+`status='backlog'` corroborates it: `backlog` comes from `ALERT_DEFAULT_INTAKE=backlog`, set in
+`oshal-local-api`'s environment and unset in the spec's process (whose default is `approved`,
+`alertmanager-routes.ts:391-394` → `alert-consolidation.ts:363`). Six such tickets exist —
+`fae0561d`, `1cf752f5`, `14e4c02d`, `6850d734` (2026-08-06), `8a847de9`, `d913d5b4` (2026-08-14).
+This is a repeated condition, not one bad night. The `cut-` prefix is a spec run id minted at
+`:29`; event `5b3aea08` (`target=cut-nm8-mss9115k-container`) was received 01:09:02.642Z and decided
+by the api at 01:12:52.577Z — 3m50s later, long after that vitest process exited.
+
+**Correction 1 — the first write-up described the harmless direction and missed the dangerous one,
+which is why this is High.** `createAlertmanagerRoutes` does not merely mount a route: it starts that
+five-second sweep over the operator's **production** alert queue inside the vitest worker, and the
+spec's `afterAll` (`:118-125`) closes the server and ends the pool without ever running shutdown
+hooks, so the timer keeps claiming rows. That consumer is configured with
+`ALERT_APPROVED_NAMES=SwarmContainerDown` only (`:92`) and a throwaway ticket store. A real
+`SwarmContainerDown` claimed by it is stamped `claim_decision='created'` against a ticket that never
+existed outside memory; any other real alertname falls to `unclaimedPolicy()`, which defaults to
+`'drop'` (`src/features/alert-triage/services/claim-registry.ts:293`), and is stamped `noise` —
+decided forever, no ticket, no operator signal. Real alerts do land here (194 `alertmanager`
+envelopes since 2026-08-02, on targets like `oshal-local-api` and `oshal-local-home-bot`). The
+phantom-ticket outcome has actually occurred: incident `1faf0387-…` (2026-08-06) points at ticket
+`d7130a1c-…`, which is **not** in `tickets` — on that run the spec's process won.
+
+**And do not over-claim it in the other direction.** No real production alert is known to have been
+swallowed: the current decision distribution is created 3 / bundled 1 / resolved 34 / consolidated 5,
+with **zero** `noise`, `dropped`, `failed` or `pending` rows. The mechanism is proven and a phantom
+link is proven; the swallow is not. The window is narrow because the api drains in-request the
+instant it lands a delivery (`:846`) and normally wins the row — the exposure is when that
+fire-and-forget drain fails or the api is bouncing, which is exactly when container-down alerts fire.
+A guard whose worst case is "silently absorb a real container-down alert during a deploy" is not a
+Med.
+
+**Correction 2 — "no product defect" is right about the design and NOT established for the link
+step.** The observed red signature is `expected null to be truthy` at `:148` — an incident row whose
+`ticket_id` is NULL — and the race as first written cannot produce that. A `ticket_id` stamped by the
+deployment is *truthy*; that path reddens `:150` (`expect(ticket).toBeTruthy()`, the spec's
+`InMemoryTicketStore` not knowing the deployment's ticket), never `:148`. Every ticketed decision
+carries a required ticket id (`src/features/alert-triage/services/alert-consolidation.ts:79`) and
+`alertmanager-routes.ts:706-708` stamps it. An incident with a NULL `ticket_id` has exactly two
+in-code origins and **both are product code**: (a) `updateIncident` returned null on a stale revision
+(`incident-store.ts:547-554`, `WHERE incident_id=$1 AND revision=$2`) and `alertmanager-routes.ts:707`
+**discards that return** — no throw, no log, incident permanently unlinked; (b) a write inside
+`recordIncident` threw, which *is* logged at ERROR ("Incident row write failed — the ticket stands and
+the event is still decided", `:723-730`) but leaves the event stamped decided, so nothing retries the
+link. Contention is the trigger for (a); the discarded return is what turns a lost race into durable,
+unlogged wrongness. That question needs its own reproduction and its own guard and **must not be
+closed by a test-isolation fix**.
+
+**Correction 3 — the pollution complaint was right in kind, wrong in attribution, and understated in
+aggregate.** All **26** rows in `oshal_incident` — ADR-125's state of record, "the incident is a ROW"
+— are spec residue, and not one is a genuine incident. **24** are `probe-target` rows (19 open, 5
+archived, 2026-08-06 → 2026-08-13) left by the *sibling* `tests/unit/alert-incident-reopen.spec.ts`
+(`:63`, `:175`); this spec contributes **2**. Useful for the fix: the reopen spec drives
+`IncidentStore` directly (`:153`) and never lands into `oshal_alert_event`, so it leaks residue but
+does not race. `alert-incident-cutover.spec.ts` is the only DB-backed unit spec that stands a
+*receiver* over the production queue.
+
+**Two supporting complaints from the first write-up do not hold.** The DSN-bound unit-spec count is
+**7**, not 5 — `alert-incident-cutover`, `alert-incident-reopen`, `apply-reaper-ledger-join`,
+`bot-db-least-privilege`, `ci-local-gate-reliability`, `schema-lock-privilege-tolerance`,
+`topology-traversal` (verified against the tree; the original grep was too narrow). And "red on a box
+without the stack" *inverts* the doctrine it invoked: fail-loud-not-skip is mandated by CLAUDE.md and
+stated in-line in those specs — that redness is the guard working. Only the nondeterminism on a box
+**with** the stack is the defect. The `docs/governance/real-boundary-regression-audit.md` complaint is
+also mostly wrong: that document indexes *boundaries* and their mock dispositions, not every spec that
+touches a real database, and this spec's one double (the ticket store) is already dispositioned there
+with `tests/alert-intake-rls-live.spec.ts` as its real companion.
+
+**One deterministic second defect, independent of the race.** With no DB reachable the `beforeAll`
+diagnostic fires correctly (`:97`, "requires the live oshal Postgres … bring the stack up with
+`bash scripts/oshal-up.sh`"), but `afterAll` then hangs: `:119`
+(`await new Promise<void>((resolve) => server?.close(() => resolve()))`) never settles when `server`
+is undefined, so vitest stacks `Hook timed out in 60000ms` on top and the run takes ~64s. Reproduced.
+A loud failure buried under a bogus one is not loud.
+
+**Evidence provenance, stated plainly:** on this box the spec ran **green** (2 passed, ~3s) and the
+`afterAll` hang reproduced deterministically (64.03s). The red is attested by the sweep's transcript
+and by durable artifacts — the six live tickets and the 3m50s-late event decision above — not by a
+failing run reproduced on demand.
+
+**Fix:** the guard must own its database, not borrow the operator's. Create a scratch database or
+schema in `beforeAll` with migrations 104-108 applied, run against it, and drop it in `afterAll` — no
+live consumer can then see its rows, and its receiver's sweep can never see a live one. If the live
+instance must stay the substrate, the receiver has to be constructed **without** a sweep (a
+`sweep: false` option on the route options, or an exported `drainPendingEvents` the spec calls
+directly), and `afterAll` must run shutdown hooks before `pool.end()`. Fix the `:119` hang in the same
+pass. Delete the two stray incident rows and the stray event — cleanup, not the fix — and do
+`alert-incident-reopen.spec.ts` in the same pass, since its 24 rows are the bulk of the contamination.
+**Not folded into this fix, and each needs its own look:** the discarded `updateIncident` return at
+`alertmanager-routes.ts:707`; and the pool-vs-executor contract, where `incident-store.ts:472-473`,
+`:552`, `:572` and `dispatch-log.ts:165` all write on `this.pool` inside the `withPendingEvents`
+transaction against the invariant at `envelope-store.ts:609-610`. Note that the invariant's own
+comment is wrong about *why* — the claim transaction locks `oshal_alert_event` only and the handler's
+writes touch `oshal_incident` / `_member` / `oshal_alert_dispatch`, so there is no lock overlap and no
+deadlock. The real consequence is loss of atomicity: those rows commit even when the claim rolls back
+and the event returns to `pending` for the sweep to re-consolidate.
+
+**Prevention (guard-per-fix):** a unit assertion that no spec under `tests/unit/**` constructs
+`createAlertmanagerRoutes` with a pool it did not create for itself, plus a cheap `ci-local.sh`
+post-gate that fails when `oshal_incident` holds a row whose `primary_target` matches the specs'
+synthetic prefixes — residue in the operations stream should go red on the next run, not accumulate
+for a week. The rule these two specs broke: **a DB-backed guard may read the operator's schema, but it
+must never start a background consumer on the operator's work queue.**
+
+## BUG-17 — The task/message credential-isolation guard asserts a retired route shape, and half of what it does assert is bound to a symbol that no longer exists
+- **Type:** Bug (stale guard) · **Priority:** Med · **Status:** OPEN
+- **Discovered:** 2026-08-13, by `tests/unit/task-message-isolation-routes.spec.ts` failing in the
+  sweep above. **Both halves of the first write-up were corrected during verification** — its blast
+  radius was over-stated and its guard-coverage loss was under-stated; the Med below is re-based on
+  the second of those, not the first.
+
+**Stated plainly: this is a stale guard, not a credential-isolation regression.** Isolation on this
+route is intact, and that was verified at the boundary rather than by inspection — with stub HTTP
+nodes bound on 3034/3032 and `warmBotEndpointRegistry()` awaited, both turns returned 200 and
+**neither posted body carried a `creds` key**. Structurally: `src/app/routes/message-routes.ts`
+contains zero occurrences of `creds` or `providerIntent`; the request literal at `:263-271` is exactly
+`{text, taskId, workspaceFolderId, agentId, agenticMode, direct, userSub}`; and
+`src/app/routes/inline-bot-execution.ts:393-405` still throws `UNSCOPED_CREDENTIAL_CARRIER` (creds
+without a validated `providerIntent`) and `PROVIDER_INTENT_REQUIRES_BOT_NODE` (creds/intent on an
+endpoint-less bot) — that second guard **is** "no connector credential on the controller-inline
+localhost path", and it has its own live, falsifiable guard at
+`tests/unit/inline-bot-execution.spec.ts:104-118`. The node-failure path is fail-closed:
+`message-routes.ts:403-441` maps a dispatch failure to 500 (or 202 when a ticket was already created)
+with no inline re-run.
+
+**Why it is red.** `tests/unit/task-message-isolation-routes.spec.ts:153-217` drives
+`POST /api/send-message` with two agent ids and asserts the turn lands on
+`ctx.orchestrator.processMessage` (`:215`). PR #186 (`f89a33c9`, 2026-08-11, one-chokepoint chat
+routing) inserted a node-dispatch branch at `message-routes.ts:240`
+(`if (botClient.hasEndpoint(resolvedAgentId))`) → `executeBotOrInline` at `:263` → HTTP to the bot's
+own node. Both ids are node-backed: `b0000000-…-0001` = communications-bot, container `email-bot`,
+port 3034 (`src/app/extensions/swarm/swarm-bot-registry-local.ts:205-215`); `a0000000-…-0036` =
+weather-bot, container `weather-bot`, port 3032 (`:226-238`). Neither container is in
+`CONTROLLER_INLINE_CONTAINERS` (`src/features/agent-management/services/bot-node-client.ts:59`).
+Pre-#186 the route had no such branch at all — `git show f89a33c9^:src/app/routes/message-routes.ts |
+grep -c "botClient\.\|executeBotOrInline("` returns **0**, which is precisely the shape the spec still
+encodes. #186 updated three specs (`inline-hosted-brain-entry-points`, `manifest-bot-runtime`,
+`remote-brain-stamp`) and left this one pointing at the retired one; its own last touch was
+`76d5788e` (2026-08-06), five days before the routing change.
+
+**The proximate trigger is environmental, but an environment fix alone cannot close it.** Nothing
+listens on 127.0.0.1:3032 in the unit runner, so the (correct) dispatch takes `ECONNREFUSED`, the
+catch returns 500, and `expect(weatherResponse.status).toBe(200)` fails at `:213`. Deterministic
+across repeated runs. Both halves are required: fixing only the environment leaves `:215` red forever,
+because the node path never calls `ctx.orchestrator.processMessage`; and a spec-only rewrite stays red
+too, because nothing listens on 3032. The spec also cannot steer the branch by shaping `ctx` —
+`botClient` is a module-level singleton constructed at `message-routes.ts:45`, not injected.
+
+**The correction that matters most, and it cuts against the guard rather than the product: two of the
+spec's four credential assertions cannot fail.** `:198` and `:214` are
+`expect(brokerMocks.resolveBotCreds).not.toHaveBeenCalled()`, and
+`src/app/routes/connector-token-broker.ts` exports exactly one function —
+`resolveServerOperationCreds` (`:107`) — plus the type `ServerCredentialUse` (`:105`). `76d5788e`
+(PR #142, 2026-08-06) renamed `resolveBotCreds` → `resolveServerOperationCreds` in the **same commit**
+that flipped this assertion to `.not.toHaveBeenCalled()`. No module imports a binding by the old name;
+the `vi.mock` at `:8` replaces the module with a symbol the real module has not had for a week, so
+re-introducing brokering through the current name would sail straight past it. This is the
+substring-guard-is-not-a-guard shape: a security-named assertion that **cannot go red**. Fixing the
+500 restores one live assertion per leg, not two. (Correspondingly, the first write-up's claim that
+`resolveBotCreds` has four importers is wrong — two of the four cited sites are change-log comments,
+and the two real imports, `src/app/extensions/swarm/index.ts:179` and
+`src/app/routes/travel-farewatch.ts:49`, import the *new* name.)
+
+**And the leg that currently passes passes by a race, not by design.** Both agent ids are node-backed,
+so the email leg's `:198-199` only execute because the **first** `hasEndpoint()` probe hits the
+cold-registry fallback — `loadActiveBotEndpointRegistry` cannot resolve the `.ts` registry through the
+synchronous CJS `require` under vitest (WARN "Bot endpoint registry not synchronously loadable",
+`bot-node-client.ts:733-756`, change-log seq 20), returns `[]`, and kicks a warm. The measured gap
+between the two POSTs was ~37ms against a ~35ms warm: the outcome landed the same way five runs
+running, but it is a coin flip, not a margin. (The first write-up read that gap as ~9.5s and called it
+"ample"; it does not reproduce.) With stub nodes bound and the warm awaited, `processMessage` is never
+called for **either** id — so the route currently has no inline-shape coverage for these two bots at
+all.
+
+**Not a production defect, with the evidence rather than the assertion.** `package.json` declares no
+`"type": "module"`, `tsconfig.json` and `tsconfig.server.json` both set `module`/`moduleResolution`
+`Node16`, and `scripts/bot-entrypoint.sh:218` runs `node dist/app/server.js` — so the extensionless
+CJS require resolves in the deployed artifact and the inline fallback never fires there. One honest
+residual, deliberately not filed as a defect: the hot-swap override runs `tsx watch src/app/server.ts`
+(`docker-compose.hotswap.yml:60`), where that same require is resolved by tsx's hook rather than plain
+Node. If it ever failed there, a node-backed bot's first turn would run controller-inline — which is
+literally the "localhost model fallback" this spec is named after. Not credential exposure either way
+(the inline path refuses creds and provider intents), but a routing degradation worth knowing about.
+
+**Blast radius, corrected downward.** The first write-up said the local unit gate "has been red on
+this single case since 2026-08-11". It has not: a full `npx vitest run` at HEAD returned 11 failed /
+676 passed across 687 files in one observation, and fixing this case does not turn `gate_unit` green.
+Some of those reds are the fail-loud-when-the-env-is-missing shape doctrine asks for; one is BUG-15
+above; several are docker/Windows-host dependent. Related and worth its own look:
+`tests/unit/inline-hosted-brain-entry-points.spec.ts` — the file that carries #186's *real*
+node-dispatch guard — is itself flaky on the same registry-warm race (failed in some batch runs,
+passed alone and in the full suite). The first write-up cited it as a clean sibling; it is not, which
+means #186 left **two** specs behind, not one.
+
+**Fix:** do not repair the case in place. #186 already shipped the right shape at
+`tests/unit/inline-hosted-brain-entry-points.spec.ts:427-495` — it boots a real local HTTP bot node on
+an ephemeral port, awaits `warmBotEndpointRegistry()` before driving the route (`:454-457`), and
+asserts the exact `/api/swarm-execute` body. Add `expect(node.bodies[0]).not.toHaveProperty('creds')`
+(and the same for `providerIntent`) there, which restores the node-half credential property at the
+boundary that actually crosses, and stabilise that file's warm race in the same pass. Then either
+retarget the stale case in `task-message-isolation-routes.spec.ts` to a genuinely controller-inline
+agent — one whose container **is** in `CONTROLLER_INLINE_CONTAINERS` — so it guards the inline branch
+it was written for, or delete it; leaving it aimed at two node-backed bots guards nothing. Either way,
+re-point the two vacuous assertions at `resolveServerOperationCreds`, and assert the credential
+property **before and independently of** the transport status. Nothing in `src/` should change.
+
+**Prevention:** three, in the order they actually failed here. (1) A route that gains a new execution
+branch must re-point every guard that names it **in the same change** — a
+`grep -rl "app/routes/message-routes" tests/` at review time would have caught both stragglers.
+(2) A security guard must not lead with a liveness assertion: putting `expect(status).toBe(200)` ahead
+of the credential checks is exactly what let a transport change silently convert a security guard into
+a dead one. (3) A mocked symbol must be proved to exist — mutation-test the assertion (make the route
+call the real broker, confirm the guard goes red) rather than trusting the name, because this one has
+been dead since 2026-08-06 and nothing noticed. And under the real-boundary doctrine: a guard about
+*what crosses the controller→node boundary* has to observe that boundary — the posted body — not a
+controller-side collaborator the boundary no longer uses.
+
+## BUG-18 — The assistant invents a `custom` op name, and the surface silently discards the edit
+- **Type:** Bug (integration contract / silent no-op) · **Priority:** High · **Status:** FIXED
+  2026-08-13 (oshal#206, oshal-applications#78)
+- **Discovered:** 2026-08-13 by a **live end-to-end test** of the new screen-aware Jarvis path,
+  run through the headless localhost credential (`x-service-secret` + `x-oshal-user-sub`) at the
+  operator's direction. Every unit guard for the feature was green — 31 of them — and the feature
+  still did not work. This entry exists mostly to record *why the tests could not have caught it*.
+- **What happened.** With Resume Studio's context attached, Jarvis was asked to tighten a resume
+  summary. It replied:
+
+  ```
+  Done — I made it shorter and centered the platform work.
+  ```oshal:surface
+  {"ops":[{"op":"custom","name":"update_master_resume_summary","data":{…}}]}
+  ```
+
+  Every layer behaved correctly. The fence parsed. `extractSurfaceDirectives` validated the op
+  against the closed outbound vocabulary and accepted it — `custom` *is* a legal op. The cockpit
+  relay checked the trusted `?app=` binding and the manifest allow-list and passed it. The surface
+  **received** it. `career-resume-studio.html` matches on `detail.name !== 'resume_action'`, so it
+  returned immediately and the edit was discarded. The user was told the edit had happened.
+- **The defect is the contract, not any one layer.** `can: ['custom']` tells the model that
+  `custom{name,data}` is available but not *which name* the surface answers to, so it invents a
+  plausible one. Generalized: **advertising a capability whose vocabulary the model has to guess
+  does not produce an error, it produces a confident lie.** Every validation boundary in the chain
+  is a *shape* check; none of them could know that `update_master_resume_summary` is not a name this
+  app listens for, because until this fix nothing in the system recorded that fact.
+- **Why the guards were green and stayed green.** The unit specs asserted the transport (the op
+  relays, the app binding is stamped, the allow-list holds) and the surface handler (a
+  `resume_action` applies through `applyAction`). Both halves were correct in isolation. Nothing
+  compared *what the model emits* against *what the consumer matches on* — the two ends of the
+  integration were tested against each other's fixtures, never against each other.
+- **Fix.** `ContextSchema.customOps: [{name, description}]`
+  (`src/features/surface-bridge/types.ts`) — a surface publishes the exact `custom` names it handles
+  and the payload each expects; the description reaches the prompt verbatim, so it also carries the
+  app's action vocabulary. `buildSurfaceContextPrompt`
+  (`src/app/routes/jarvis-surface-context.ts`) prints them and requires the name be used VERBATIM,
+  stating that an invented name is discarded. And `custom` is now **dropped from the advertised op
+  set** when a surface declared no names for it — withholding a capability beats inviting a silent
+  no-op. Resume Studio declares `resume_action` plus its full action vocabulary
+  (`career-hunter/tools/career-resume-studio.html`).
+- **Verified live after the fix**, same message, same context: `{"op":"custom","name":"resume_action",
+  "data":{"actions":[{"op":"set_summary",…}]}}` — correct name, real vocabulary, correct wrapper
+  shape; raw reply 389 chars, persisted answer 65, so the fence was extracted and stripped.
+- **Prevention.** Three rules, in order of how much they would have saved:
+  1. **A guard must compare the two ends of an integration, not each end to a fixture.** The store
+     guard now asserts the declared name EQUALS the name the handler matches on; it is
+     mutation-tested by renaming the declaration to `update_master_resume_summary`, the exact wrong
+     value observed live.
+  2. **Never advertise a free-text identifier to a model without enumerating the legal values.**
+     If the set cannot be enumerated, do not offer the capability.
+  3. **A green suite is not a working feature.** This was found in the first live run and could not
+     have been found otherwise; the honest posture is that a feature is unproven until it has been
+     exercised end to end. See also the observability gap below.
+- **Related gap, not yet fixed.** There is a log line when surface ops are *dropped* for lack of
+  context, but none when they are successfully emitted. Proving this bug required reading the raw
+  pre-strip reply out of the bot container log, because the clean answer and the persisted turn
+  both have the fence already removed. A success-path log line would have made the mismatch
+  visible in one grep.
