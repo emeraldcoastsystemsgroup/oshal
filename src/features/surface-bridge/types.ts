@@ -23,6 +23,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the manifest-keyed surface-bridge event union (outbound bot→surface + inbound surface→bot), a superset of the presentations/Little-Monsters shapes, with a channel discriminator + version so a cockpit relay can filter/route generically.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | OUTBOUND_OPS/INBOUND_OPS now re-export the shared vocabulary (@/shared/surface-bridge-ops) so the swarm-apps manifest loader validates `surface.ops` against the SAME closed list without a feature→feature import. Values unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ContextSchema — the inbound `context` op carrying a surface's AMBIENT state (screen, open record, capped digest) to the floating assistant. Every field is capped in the schema because this is the one payload designed to reach a model prompt. `can` is advisory: the relay's manifest allow-list stays the enforcement boundary.
  *
  * @module features/surface-bridge/types
  */
@@ -91,8 +92,34 @@ export const FieldChangeSchema = z.object({ ...base, op: z.literal('field_change
 export const SubmitSchema = z.object({ ...base, op: z.literal('submit'), actionId: z.string().min(1), confirmed: z.boolean() });
 /** A generic app surface event (generalizes Little Monsters' lm-classes-changed). */
 export const EventInSchema = z.object({ ...base, op: z.literal('event'), name: z.string().min(1), data: z.record(z.string(), z.unknown()).default({}) });
+/**
+ * AMBIENT STATE, not a user action: the surface describing what it is currently showing so an
+ * assistant can answer and act about the screen the operator is actually on.
+ *
+ * Every field is CAPPED here rather than at the consumer, because this is the one op whose payload
+ * is meant to reach a model prompt — an uncapped digest is a token-budget hole and a prompt-
+ * injection surface. `digest` is a SUMMARY the surface composes (headline, section names, counts),
+ * never a document dump: the app's own bot still owns the full document (ADR-036).
+ */
+export const ContextSchema = z.object({
+  ...base,
+  op: z.literal('context'),
+  /** The named screen within the app the operator is on (e.g. 'resume-studio'). */
+  surface: z.string().min(1).max(80),
+  /** Human-readable name of what is open (e.g. 'Master resume'). */
+  title: z.string().max(200).optional(),
+  /** Stable id of the record in view, so the assistant can name it back and act on the right one. */
+  recordId: z.string().max(120).optional(),
+  /** Compact digest of the visible state. Capped — a summary, never the whole document. */
+  digest: z.string().max(4000).optional(),
+  /** Named scalar state (mode flags, filters) the assistant can reason over. */
+  fields: z.record(z.string(), ScalarSchema).optional(),
+  /** Ops the surface says it can honour right now. ADVISORY ONLY — the relay's per-app
+   *  manifest allow-list remains the enforcement boundary; this just lets the prompt be specific. */
+  can: z.array(z.string().max(60)).max(24).optional(),
+});
 
-export const InboundEventSchema = z.discriminatedUnion('op', [SelectSchema, FieldChangeSchema, SubmitSchema, EventInSchema]);
+export const InboundEventSchema = z.discriminatedUnion('op', [SelectSchema, FieldChangeSchema, SubmitSchema, EventInSchema, ContextSchema]);
 export type InboundSurfaceEvent = z.infer<typeof InboundEventSchema>;
 
 /** Any valid surface-bridge event, either direction. */

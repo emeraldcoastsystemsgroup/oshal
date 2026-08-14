@@ -41,6 +41,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — chat-rail producer: relayReply (parse the reply's oshal:surface fence → post validated outbound ops to the shell relay, return the fence-stripped text), stripDirectives (strip-only for history replay), and consumeInbound (a relayed surface→bot op → a chat message for the bot). No focused app ⇒ no-op.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Moved src/pages/swarmbot-chat/ → src/shared/ui/js/ (next to surface-bridge-client.js) so it is a SHARED surface module both the chat rail and an app surface import without a pages→pages cross-slice (FSD). Added postTarget ('parent' default | 'self') + an explicit `app` option so a surface (workflow-studio talk-to-build) can drive its OWN co-resident dock — the relay refuses a to_surface from a non-chat-rail frame, so same-iframe self-delivery is the correct path. Parse/strip vocabulary + drift guards unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Two entry points for the screen-aware Jarvis loop: emitOps(ops) posts ops the SERVER already parsed/validated (the /ask path returns them structured, so no fence reaches the client) with the app binding stamped here as always; consumeContext(data) picks a relayed `context` snapshot out of a window message as ambient state to cache — deliberately NOT a chat message, which is why describeInbound still ignores the op.
  */
 
 /** postMessage channel discriminator — MUST equal SURFACE_BRIDGE_CHANNEL in features/surface-bridge/types.ts (drift-guarded by spec). */
@@ -191,6 +192,50 @@ export function createSurfaceProducer(opts) {
      */
     stripDirectives(text) {
       return stripSurfaceFence(text);
+    },
+
+    /**
+     * @description Emit ops the SERVER already parsed and validated out of the reply (the Jarvis
+     * /ask path returns `surfaceOps` structured, so the fence never reaches the client). Ops arrive
+     * envelope-less by design — the model must never author `app` — so the binding is stamped here
+     * from the shell's trusted `?app=`, exactly as relayReply does. No focused app ⇒ no emit.
+     * @param {Array<{op: string}>} ops - Pre-validated outbound ops, without channel/v/app.
+     * @returns {number} How many ops were posted.
+     */
+    emitOps(ops) {
+      const app = focusedApp();
+      if (!app || !Array.isArray(ops)) {
+        return 0;
+      }
+      let sent = 0;
+      for (const op of ops) {
+        // Re-check the op name even though the server validated it: this module's closed list is
+        // the client-side wall, and it costs nothing to keep it authoritative here too.
+        if (op && typeof op === 'object' && OUTBOUND.has(op.op)) {
+          post(app, op);
+          sent += 1;
+        }
+      }
+      return sent;
+    },
+
+    /**
+     * @description Pick a relayed `context` snapshot (a surface describing what it is SHOWING) out
+     * of a window message, for the focused app. Unlike consumeInbound this is NOT turned into a
+     * chat message — it is ambient state the caller caches and attaches to its next turn, so the
+     * assistant knows which screen the operator is on.
+     * @param {unknown} data - A window-message payload delivered to the chat rail by the relay.
+     * @returns {object|null} The context envelope (verbatim, for the server to re-validate), or null.
+     */
+    consumeContext(data) {
+      const app = focusedApp();
+      if (!app || !data || typeof data !== 'object' || data.op !== 'context') {
+        return null;
+      }
+      if (data.channel !== SURFACE_BRIDGE_CHANNEL || data.v !== SURFACE_BRIDGE_VERSION || data.app !== app) {
+        return null;
+      }
+      return data;
     },
 
     /**

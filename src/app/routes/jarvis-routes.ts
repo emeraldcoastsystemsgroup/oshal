@@ -38,6 +38,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-01 containment: preflight every owner-scoped Jarvis read before legacy subject resolution, return the stable 403 refusal for fleet-secret callers, and preserve independently authenticated OIDC/PAT access under mixed headers.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Resolve delegated Jarvis identity exclusively from verified, durable, exact-route SEC-01 claims before the legacy shadow-only subject carrier.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | CORE-05: return the canonical 503 ai_disabled state before Jarvis starts an inference job.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | SCREEN AWARENESS: /ask accepts a `context` snapshot (the surface-bridge `context` op the focused app relays), folds it into the turn beside the attachment block, and returns the `oshal:surface` ops Jarvis emitted back to the client. Before this the floating assistant could not know which app screen the operator was on — it answered "I'm not currently being handed the live Resume Studio document contents", which was literally true — while extractSurfaceDirectives sat fully built and imported by tests only. Ops are dropped (and logged) when the turn carried no context, so a model can never drive a surface the operator is not actually looking at.
  *
  * @module jarvis-routes
  */
@@ -87,8 +88,12 @@ import {
   maskPendingComplexSummaries,
   repairCompletedTaskTableVisuals,
 } from './jarvis-orchestrator';
-import { extractJarvisDirectives, type HandoffDirective } from './jarvis-directives';
+import {
+  extractJarvisDirectives, extractSurfaceDirectives,
+  type HandoffDirective, type SurfaceDirectiveOp,
+} from './jarvis-directives';
 import { buildAttachmentEnrichment } from './jarvis-attachments';
+import { normalizeAskSurfaceContext, buildSurfaceContextPrompt } from './jarvis-surface-context';
 import { detectProviderBoundHandoff, classifyWeatherLocationFollowUp } from './jarvis-provider-intent-detect';
 import {
   detectScheduleIntent,
@@ -217,6 +222,11 @@ interface AskJob {
     dispatched?: Array<{ workJobId: string; title: string }>;
     // Optional image for the cloud/scene renderer. The text answer remains authoritative.
     visual?: VisualResponseArtifact;
+    // Validated bot→surface ops Jarvis emitted for the screen the user is on. Envelope-less by
+    // type (SurfaceDirectiveOp omits channel/v/app): the model must never author the `app`
+    // isolation key. The client's producer stamps it from the shell's trusted binding, and the
+    // cockpit relay re-validates against the app's manifest allow-list before any surface sees it.
+    surfaceOps?: SurfaceDirectiveOp[];
   };
   error?: string;
   createdAt: number;
@@ -618,8 +628,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
   router.post('/ask', requireAiEnabled, async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
-    const body = (req.body || {}) as { message?: string; sessionId?: string; attachments?: unknown };
+    const body = (req.body || {}) as { message?: string; sessionId?: string; attachments?: unknown; context?: unknown };
     let message = String(body.message || '').trim();
+    // What the operator has on screen right now, relayed from the focused app surface through the
+    // surface bridge. Validated against the REAL contract; anything malformed degrades to a
+    // context-free turn rather than failing the ask.
+    const surfaceContext = normalizeAskSurfaceContext(body.context);
     // Attached media arrives already reduced to text (image → /api/vision/describe description,
     // doc → extracted text). Fold it into an authoritative-context block for the Codex Jarvis turn.
     const attachments = buildAttachmentEnrichment(body.attachments);
@@ -692,8 +706,11 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
       const tools = buildToolsBlock();
       const openWork = await buildOpenWorkBlock(ctx, sub);
       const ctxBlocks = [tools, openWork, PLAN_DIRECTIVE_GUIDANCE].filter(Boolean).join('\n\n');
-      // Attached media (image descriptions + doc text) sits right before the user's words.
-      const userPart = attachments.hasAny ? `${attachments.promptBlock}\n\n${message}` : message;
+      // The live screen sits with the attached media: both are authoritative context for THIS turn,
+      // and both belong immediately before the user's words so they frame the question being asked.
+      const screenBlock = buildSurfaceContextPrompt(surfaceContext);
+      const userPart = [screenBlock, attachments.hasAny ? attachments.promptBlock : '', message]
+        .filter(Boolean).join('\n\n');
       botMessage = ctxBlocks ? `${ctxBlocks}\n\n---\n\n${userPart}` : userPart;
     }
     // MUST be agentic:true — the codex provider has no plain-LLM path (agenticMode:false →
@@ -838,7 +855,16 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
         // Also strip any oshal:plan control fence — extractJarvisDirectives doesn't know that channel,
         // so an UN-dispatched plan (single-step, unreachable app, or a registration/ticket failure that
         // fell through here) would otherwise leak raw ```oshal:plan JSON into the user's answer.
-        const cleanAnswer = stripPlanDirective(directives.cleanAnswer);
+        // The oshal:surface fence is a THIRD control channel extractJarvisDirectives doesn't know
+        // (same reason the plan fence is stripped explicitly above it) — parse the ops out and strip
+        // the fence, or the raw JSON leaks into the user's answer. Ops are validated fail-closed
+        // here and re-validated by the cockpit relay against the app's manifest allow-list.
+        const surface = extractSurfaceDirectives(directives.cleanAnswer);
+        const surfaceOps = surfaceContext ? surface.ops : [];
+        if (surface.ops.length && !surfaceContext) {
+          logger.warn({ sessionId, ops: surface.ops.length }, 'jarvis: surface ops emitted with no surface context — dropped');
+        }
+        const cleanAnswer = stripPlanDirective(surface.cleanAnswer);
         const dispatched = handoffs.length ? await dispatchHandoffs(ctx, sub, sessionId, handoffs) : [];
         const directAnswerSource = `jarvis-answer:${jobId}`;
         // An explicit "show me a diagram" request wins; otherwise the deterministic default picker
@@ -866,7 +892,11 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
         const j = askJobs.get(jobId);
         askJobs.set(jobId, {
           sub, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
-          result: { answer: cleanAnswer, routed: [], handoffs: [], dispatched, ...(directVisual ? { visual: directVisual } : {}) },
+          result: {
+            answer: cleanAnswer, routed: [], handoffs: [], dispatched,
+            ...(directVisual ? { visual: directVisual } : {}),
+            ...(surfaceOps.length ? { surfaceOps } : {}),
+          },
         });
       } catch (err) {
         logger.error({ err }, 'jarvis ask failed');
