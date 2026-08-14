@@ -1074,8 +1074,8 @@ class ClineCLIWrapper {
    * Operator directive 2026-08-13: nothing is hardcoded; configuration decides, and the swarm's
    * env file is the fallback when no config has been set up. Precedence, most specific first:
    *
-   *   1. CLINE_API_PROVIDER / CLINE_API_MODEL — pin Cline independently of the fleet, for when
-   *      Cline's supported backing providers diverge from whatever the swarm defaults to.
+   *   1. CLINE_API_PROVIDER / CLINE_API_MODEL — pin Cline independently of the fleet, for a
+   *      deployment that wants this one harness on a different provider or model.
    *   2. output/global-config.json actModeApiProvider/actModeApiModelId — what the cockpit
    *      writes and what the TS side (cline-runtime-config-sync-service) already reads, so the
    *      two runtimes cannot disagree about the same deployment.
