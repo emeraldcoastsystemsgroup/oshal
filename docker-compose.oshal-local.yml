@@ -479,6 +479,13 @@ x-bot-env: &bot-env
   TRADING_ROTATION_RANK: ${TRADING_ROTATION_RANK:-blend}
   TRADING_ROTATION_WEIGHTING: ${TRADING_ROTATION_WEIGHTING:-conviction}
   TRADING_ROTATION_EXT_HOURS: ${TRADING_ROTATION_EXT_HOURS:-false}
+  # SECTOR TILT: "lean harder on <sector>" as a multiplier over the rotation ranking, e.g.
+  # `materials:1.5,energy:1.2`. Sectors are the buckets sectorOf() assigns (materials, energy, tech,
+  # storage, ai-power, financials, industrial, consumer, pharma, biotech-etf, other). 1.0 = neutral,
+  # 0 = mute the sector, max 5. Empty = neutral, ranking byte-identical to no tilt. Expressing a lean
+  # HERE (not as percentages in TRADING_CORE_SYMBOLS) keeps it dial-able and keeps the leaned names
+  # inside the ranked universe, so they rotate out when the trend ends. Added 2026-08-13.
+  TRADING_SECTOR_TILT: ${TRADING_SECTOR_TILT:-}
   # ENTRY GUARD: rotation refuses to BUY a name trading this far below its PRIOR-session close. The
   # ranker scores on DAILY closes, so on a gap day it ranks a price that no longer exists — 2026-07-14
   # it stopped IBM out at -23.8% on its Q2 revenue-miss gap and re-bought it the same fire. Refused
