@@ -122,3 +122,4 @@ Related runbooks that live with their domain:
   (the little-monsters v1.0.6 404 storm). Re-stage recipe included; `oshal-up.sh` runs it too.
 - [Local model serving (Ollama)](local-llm-profile.md) — the `local-llm` compose profile: ollama as a provider under the Cline harness, model pull, and the `OLLAMA_HOST` recreate gotcha.
 - [camera-node-gopro.md](camera-node-gopro.md) — connecting a real GoPro to Camera Ops (`?app=camera`): the camera-node companion, link-mode matrix (usb/ap/cohn by model), the HERO9-over-USB test recipe, and the env/endpoint reference.
+- [Publishing the node package](publishing-the-node-package.md) — the interactive npm steps the cockpit's one-click node installer depends on.
