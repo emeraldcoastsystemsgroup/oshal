@@ -849,7 +849,7 @@ asserts no `oshal_incident` row survives once the event is back to `pending`. Re
 transaction — mocking the executor here would mock precisely the boundary the defect lives on.
 
 ## BUG-21 — The monitoring overlay is not running, nothing starts it, and nothing notices it is gone
-- **Type:** Bug (observability / operational) · **Priority:** High · **Status:** OPEN
+- **Type:** Bug (observability / operational) · **Priority:** High · **Status:** **FIXED 2026-08-14** (#213) — see the closing note at the end.
 - **Discovered:** 2026-08-13 while triaging BUG-15, which recommended filing this separately because
   a cross-file config guard cannot see a dead process. Verified directly against the box.
 
@@ -882,6 +882,29 @@ meaning it exited in a way Docker treated as final, which itself wants explainin
 overlay up as part of `scripts/oshal-up.sh` (already the ordered bring-up path and already tier-aware),
 or state explicitly in that script and the deploy runbook that monitoring is a separate operator
 action. The current silence is what let eleven days pass.
+
+**CLOSED 2026-08-14 (#213).** All three halves:
+1. **Running** — the overlay is up; the exit 255 did not recur across several restarts, so it is
+   recorded as unexplained rather than diagnosed.
+2. **Started with the swarm** — `scripts/oshal-up.sh` brings the overlay up after the fleet,
+   advisory so a deployment with no `ALERT_WEBHOOK_TOKEN` gets a loud banner instead of a failed
+   bring-up.
+3. **Watched** — `scripts/monitoring-liveness-check.sh` asserts Prometheus is reachable, has
+   DISCOVERED targets, and that each is up, naming any that are not. Advisory by default,
+   `--strict` for ci-local. Both failure paths tested.
+
+⚠ **Fixing this surfaced a worse defect that nothing else would have caught.** The move to service
+discovery (BUG-15) silently disabled `SwarmContainerDown`: with a static list a dead container still
+had a target and reported `up == 0`, but a discovered container that dies **disappears**, so
+`up{...} == 0` matches no series. Confirmed by stopping a real bot — the alert sat `inactive`, which
+means self-healing was dead fleet-wide. Both liveness rules are now
+`max_over_time(...) > 0 unless on (container) (... == 1)`, aggregated on `container` because
+`instance` is IP:port and churns on every recreate (the first correct-looking form alerted for 26
+healthy bots). Proven end to end: stopped → firing for exactly that bot → restarted → inactive.
+
+The lesson worth keeping: a bring-up that prints `0 unhealthy` proved nothing here, and a config
+guard proved nothing about the process reading the config. **The only thing that found either defect
+was killing something and watching what happened.**
 
 **Prevention (guard-per-fix):** a liveness check, not a config check. `deploy-parity-check.sh` (or
 `oshal-up.sh`'s census) should assert Prometheus is up and has scraped within the last N minutes —
