@@ -44,15 +44,28 @@ groups:
     rules:
       # A worker container is not answering its scrape = container gone/down/wedged.
       #
-      # The `max_over_time(...) > 0` conjunct is load-bearing, not decoration: a target
+      # The `max_over_time(...) > 0` conjunct is load-bearing, not decoration: a container
       # that has NEVER been up (a compose `profiles:` bot this deployment does not run)
-      # would otherwise be a permanent false alarm — the exact failure mode this rewrite
-      # exists to remove. "Was healthy within the last hour and is not now" is the
-      # actionable event; "was never started" is a deployment choice, not an incident.
+      # would otherwise be a permanent false alarm. "Was healthy within the last hour and
+      # is not now" is the actionable event; "was never started" is a deployment choice.
+      #
+      # ⚠ WHY THIS IS `unless`, NOT `up == 0` (2026-08-13, and it would have silently
+      # disabled self-healing fleet-wide). Targets are DISCOVERED from Docker now, not
+      # listed. A container that dies does not report `up == 0` — it DISAPPEARS from
+      # discovery, so `up{...} == 0` matches nothing and this rule cannot fire. Verified
+      # live: with a bot stopped, the old expression left this alert `inactive`. The range
+      # vector still holds its samples, so "was up in the last hour" survives the target
+      # vanishing; `unless` then removes only the containers currently up. This form covers
+      # BOTH failure shapes — scrapeable-but-failing (up==0) and gone-from-discovery.
+      #
+      # ⚠ AGGREGATED BY `container` because `instance` is IP:port and churns on every
+      # recreate. Matching on the full label set made 26 healthy bots alert (their pre-deploy
+      # IP still had samples in the range and nothing cancelled it). `container` is the
+      # stable identity — the same one canonicalizeAlert and the Stage D dependency map key on.
       - alert: SwarmContainerDown
         expr: |
-          up{job="oshal-swarm-bots"} == 0
-          and on (container) max_over_time(up{job="oshal-swarm-bots"}[1h]) > 0
+          max by (container) (max_over_time(up{job="oshal-swarm-bots"}[1h])) > 0
+          unless on (container) (max by (container) (up{job="oshal-swarm-bots"}) == 1)
         for: 1m
         labels:
           severity: critical
@@ -124,8 +137,13 @@ groups:
       # box — a permanent false alarm indistinguishable from a real outage. The target
       # is now /metrics (a real Prometheus exposition), so `up` means what this rule
       # claims it means.
+      # Same discovery caveat as SwarmContainerDown above: a dead api vanishes from
+      # discovery rather than reporting up==0, so `up{job="oshal-core"} == 0` would never
+      # fire — on the one alert that says the control plane is gone.
       - alert: SwarmApiUnreachable
-        expr: up{job="oshal-core"} == 0
+        expr: |
+          max by (container) (max_over_time(up{job="oshal-core"}[1h])) > 0
+          unless on (container) (max by (container) (up{job="oshal-core"}) == 1)
         for: 2m
         labels:
           severity: critical

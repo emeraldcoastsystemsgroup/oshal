@@ -137,6 +137,43 @@ if [ -f "$(dirname "$0")/swarm-app-bot-integrity-check.sh" ]; then
   bash "$(dirname "$0")/swarm-app-bot-integrity-check.sh" || true
 fi
 
+# ── Monitoring overlay ───────────────────────────────────────────────────────────────────
+# BUG-21: this script and oshal-deploy.sh referenced the monitoring compose file ZERO times,
+# so the documented recovery path brought the swarm up monitored in name only. Prometheus sat
+# Exited(255) from 2026-08-02 to 08-13 and nothing noticed, which made every alert rule and the
+# whole ADR-119 self-healing ladder inert — while the bring-up cheerfully printed a healthy
+# census. Docker healthchecks and the monitoring overlay are independent; one is not evidence
+# of the other. The observer now comes up WITH the thing it observes.
+#
+# ADVISORY, never fatal: monitoring-up.sh is deliberately fail-closed on a missing
+# ALERT_WEBHOOK_TOKEN (a receiver that cannot deliver is worse than none), but a swarm that is
+# otherwise healthy must still finish coming up. A deployment that has not configured alerting
+# gets a loud, specific line instead of a broken bring-up.
+if [ -f "$(dirname "$0")/monitoring-up.sh" ]; then
+  echo
+  if bash "$(dirname "$0")/monitoring-up.sh" >/tmp/oshal-monitoring-up.log 2>&1; then
+    echo "Monitoring: overlay up (Prometheus + Alertmanager + cAdvisor)."
+  else
+    echo "############################################################################"
+    echo "## MONITORING DID NOT START — the swarm is running UNWATCHED."
+    echo "## Every alert rule and the ADR-119 self-healing ladder are inert: nothing"
+    echo "## will notice a container dying. The healthy census above says nothing"
+    echo "## about this."
+    echo "## Reason (tail of /tmp/oshal-monitoring-up.log):"
+    tail -n 3 /tmp/oshal-monitoring-up.log 2>/dev/null | sed 's/^/##   /'
+    echo "## Usually a missing ALERT_WEBHOOK_TOKEN in .env. Re-run: bash scripts/monitoring-up.sh"
+    echo "############################################################################"
+  fi
+fi
+
+# Is the observer actually observing? A running Prometheus that is scraping NOTHING looks
+# identical to a healthy one from `docker ps` — and BUG-15 was exactly that shape for one bot.
+# Targets are discovered by container label now, so "0 targets" means the label or the docker
+# proxy broke, not that someone forgot a list entry.
+if [ -f "$(dirname "$0")/monitoring-liveness-check.sh" ]; then
+  bash "$(dirname "$0")/monitoring-liveness-check.sh" || true
+fi
+
 if curl -sf -m 3 "$API_HEALTH" >/dev/null 2>&1; then
   echo "Cockpit: http://localhost:35457/cockpit/  (live)"
 else
