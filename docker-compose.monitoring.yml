@@ -77,6 +77,53 @@ services:
       - mon_prometheus_data:/prometheus
     depends_on:
       - cadvisor
+      - docker-proxy
+    networks:
+      - oshal
+
+  # ── Docker API proxy — how Prometheus discovers the fleet WITHOUT holding the socket ──
+  # The oshal-core / oshal-swarm-bots jobs discover targets by container label instead of a
+  # hand-written list (see ops/monitoring/prometheus.yml), which needs the Docker API. Handing
+  # Prometheus the socket directly would be a real privilege grant, not a read: a `:ro` bind
+  # restricts the FILE, not the API, so any process holding that socket can create a privileged
+  # container and own the host. Prometheus is network-facing and evaluates user-supplied
+  # relabel/query input — the wrong process to give daemon control.
+  #
+  # This proxy exposes exactly ONE endpoint (GET /containers/json) and denies everything else by
+  # default. Prometheus talks to it over the internal network; the socket never enters the
+  # Prometheus container. Nothing is published to the host.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.1.1
+    container_name: oshal-local-docker-proxy
+    restart: unless-stopped
+    environment:
+      # Default-deny: the image refuses every path not explicitly enabled here.
+      CONTAINERS: 1
+      # docker_sd calls GET /networks too, to resolve each container's network name and IP —
+      # that is what the prometheus.yml relabel on __meta_docker_network_name filters on. Both
+      # are READS; POST stays 0, so nothing can be created, started, or exec'd through here.
+      NETWORKS: 1
+      POST: 0
+      IMAGES: 0
+      VOLUMES: 0
+      EXEC: 0
+      SERVICES: 0
+      TASKS: 0
+      SECRETS: 0
+      CONFIGS: 0
+      SWARM: 0
+      NODES: 0
+      SYSTEM: 0
+      INFO: 0
+      AUTH: 0
+      BUILD: 0
+      COMMIT: 0
+      DISTRIBUTION: 0
+      PLUGINS: 0
+      SESSION: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # No `ports:` — reachable only on the internal oshal network.
     networks:
       - oshal
 

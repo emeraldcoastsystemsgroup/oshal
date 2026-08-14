@@ -96,39 +96,7 @@ function metricsReferencedBy(expr: string): string[] {
   return [...found];
 }
 
-/** Container names of every compose service that runs the oshal-bot runtime image. */
-function composeRuntimeContainers(): string[] {
-  const compose = read(STACK_COMPOSE).split('\n');
-  const names: string[] = [];
-  let inServices = false;
-  let current: { name?: string; hasOwnImage?: boolean } | null = null;
-  const flush = (): void => {
-    if (current?.name && !current.hasOwnImage) names.push(current.name);
-  };
-  for (const line of compose) {
-    if (/^services:\s*$/.test(line)) { inServices = true; continue; }
-    if (inServices && /^[a-zA-Z]/.test(line)) { flush(); current = null; inServices = false; }
-    if (!inServices) continue;
-    if (/^ {2}[A-Za-z0-9_.-]+:\s*$/.test(line)) { flush(); current = {}; continue; }
-    if (!current) continue;
-    const nameMatch = /^ {4}container_name:\s*(\S+)/.exec(line);
-    if (nameMatch) current.name = nameMatch[1];
-    // A service declaring its own `image:` is third-party infra (postgres, redis, …) and
-    // serves no /metrics; the oshal runtimes inherit the image from the x-bot-common anchor.
-    if (/^ {4}image:\s*\S+/.test(line)) current.hasOwnImage = true;
-  }
-  flush();
-  // The speaker-diarization sidecar is a python service built from its own Dockerfile —
-  // it inherits no image line but is not an oshal runtime.
-  return names.filter((n) => n !== 'oshal-local-speaker-diarization');
-}
 
-/** Target host names (port stripped) declared for a scrape job. */
-function targetsOf(jobName: string): string[] {
-  const job = prometheusCfg.scrape_configs.find((c) => c.job_name === jobName);
-  expect(job, `prometheus.yml must declare the ${jobName} scrape job`).toBeTruthy();
-  return (job!.static_configs ?? []).flatMap((s) => s.targets).map((t) => t.split(':')[0]);
-}
 
 describe('the exporter both runtimes serve', () => {
   it('renders a well-formed Prometheus text exposition (HELP + TYPE + sample per metric)', () => {
@@ -275,26 +243,77 @@ describe('the scrape targets match the deployment', () => {
     // SwarmApiUnreachable fired forever on a healthy box.
     const raw = read(PROMETHEUS_YML);
     expect(raw).not.toMatch(/metrics_path:\s*\/api\/health/);
-    expect(targetsOf('oshal-core')).toEqual(['oshal-local-api']);
-  });
-
-  it('every scrape target is a real container in the deployment compose', () => {
-    const containers = new Set(composeRuntimeContainers());
+    // Which container the core job resolves to is now a discovery property, asserted by
+    // "both runtime jobs discover by that label" below — the api carries `oshal.tier: core`.
     for (const jobName of RUNTIME_JOBS) {
-      for (const target of targetsOf(jobName)) {
-        expect(containers.has(target), `${target} is scraped but is not a container in ${STACK_COMPOSE}`).toBe(true);
-      }
+      const job = prometheusCfg.scrape_configs.find((c) => c.job_name === jobName);
+      expect(job?.metrics_path, `${jobName} must scrape /metrics`).toBe('/metrics');
     }
   });
 
-  it('every oshal runtime container in compose is a scrape target', () => {
-    const scraped = new Set(RUNTIME_JOBS.flatMap((j) => targetsOf(j)));
-    for (const container of composeRuntimeContainers()) {
-      expect(
-        scraped.has(container),
-        `${container} runs the oshal runtime but nothing scrapes it — it can go down unnoticed. `
-          + `Add it to the oshal-swarm-bots job in ${PROMETHEUS_YML}.`,
-      ).toBe(true);
+  // ── Discovery replaced the hand-written target list (2026-08-13, BUG-15) ──────────────
+  // The two assertions that used to live here compared prometheus.yml's static target list
+  // against compose, in both directions. They were correct and they DID catch career-bot going
+  // unscraped — but a list that has to be kept in step with compose is a second source of truth,
+  // and it drifted the first time somebody added a bot. Both jobs now discover targets from the
+  // Docker API by container label, so the list cannot drift because there is no list.
+  //
+  // What must be guarded is therefore the MECHANISM, not a set difference: every oshal runtime
+  // inherits the label, discovery filters on exactly that label, and the two traps found while
+  // proving it live (a target per exposed port, a target per attached network) stay closed.
+
+  it('every oshal runtime inherits the scrape label from the x-bot-common anchor', () => {
+    // This is what makes monitoring automatic: a new bot is scraped because it inherits the
+    // anchor, not because anyone remembered a step. If the label leaves the anchor, every
+    // future bot is born unmonitored.
+    const compose = read(STACK_COMPOSE);
+    const anchor = compose.slice(compose.indexOf('x-bot-common: &bot-common'), compose.indexOf('x-bot-env:'));
+    expect(anchor, 'x-bot-common must label its containers `oshal.tier: worker`').toMatch(/labels:\s+oshal\.tier:\s*worker/);
+    // The controller overrides the tier — alert-rules.yml scopes the worker rules to
+    // job="oshal-swarm-bots" and liveness to job="oshal-core".
+    const api = compose.slice(compose.indexOf('  oshal-api:'), compose.indexOf('  oshal-api:') + 900);
+    expect(api, 'oshal-api must override the anchor with `oshal.tier: core`').toMatch(/labels:\s+oshal\.tier:\s*core/);
+  });
+
+  it('both runtime jobs discover by that label instead of listing targets', () => {
+    for (const jobName of RUNTIME_JOBS) {
+      const job = prometheusCfg.scrape_configs.find((c) => c.job_name === jobName) as Record<string, unknown>;
+      expect(job, `prometheus.yml must declare the ${jobName} scrape job`).toBeTruthy();
+      const sd = job.docker_sd_configs as Array<Record<string, unknown>> | undefined;
+      expect(sd, `${jobName} must use docker_sd_configs — a static list drifts (BUG-15)`).toBeTruthy();
+      expect(job.static_configs, `${jobName} must not reintroduce a hand-written target list`).toBeUndefined();
+      const tier = jobName === 'oshal-core' ? 'core' : 'worker';
+      const filters = sd![0].filters as Array<{ name: string; values: string[] }>;
+      expect(filters.some((f) => f.name === 'label' && f.values.includes(`oshal.tier=${tier}`)),
+        `${jobName} must filter on oshal.tier=${tier}`).toBe(true);
+    }
+  });
+
+  it('discovery yields ONE target per container — not one per exposed port or network', () => {
+    // Both traps were observed live on 2026-08-13 before this was closed. The port one is the
+    // dangerous half: :1455 is discovered alongside :5000 and is permanently down, which would
+    // make SwarmContainerDown fire for every healthy bot in the fleet.
+    for (const jobName of RUNTIME_JOBS) {
+      const job = prometheusCfg.scrape_configs.find((c) => c.job_name === jobName) as Record<string, unknown>;
+      const relabels = (job.relabel_configs ?? []) as Array<Record<string, unknown>>;
+      const keeps = relabels.filter((r) => r.action === 'keep');
+      const sources = keeps.flatMap((r) => (r.source_labels ?? []) as string[]);
+      expect(sources, `${jobName} must keep only the metrics port`).toContain('__meta_docker_port_private');
+      expect(sources, `${jobName} must keep only the swarm network`).toContain('__meta_docker_network_name');
+      const portKeep = keeps.find((r) => ((r.source_labels ?? []) as string[]).includes('__meta_docker_port_private'));
+      expect(String(portKeep!.regex), `${jobName} must scrape port 5000`).toContain('5000');
+    }
+  });
+
+  it('the container label — the heal target and incident key — is derived from the container name', () => {
+    // canonicalizeAlert reads labels.container first and the Stage D dependency map is keyed on
+    // oshal-local-* names, so discovery must reproduce exactly what the static list produced.
+    for (const jobName of RUNTIME_JOBS) {
+      const job = prometheusCfg.scrape_configs.find((c) => c.job_name === jobName) as Record<string, unknown>;
+      const relabels = (job.relabel_configs ?? []) as Array<Record<string, unknown>>;
+      const containerRule = relabels.find((r) => r.target_label === 'container');
+      expect(containerRule, `${jobName} must derive a container label`).toBeTruthy();
+      expect((containerRule!.source_labels as string[])).toContain('__meta_docker_container_name');
     }
   });
 });
