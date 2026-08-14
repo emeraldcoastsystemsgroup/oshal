@@ -43,8 +43,18 @@ function probe(bin) {
 }
 
 function main() {
-  if (process.env.OSHAL_SKIP_CLI_SETUP) {
-    console.log('[oshal-setup] OSHAL_SKIP_CLI_SETUP set — skipping agent-CLI bootstrap.');
+  // OPT-IN, not opt-out, and the inversion matters the moment this package is public.
+  // As a postinstall, this runs on every `npm install` — so opting OUT meant one install
+  // globally installing three other people's CLIs, at @latest, on a stranger's machine.
+  // Nobody asks for that by typing `npm i @oshal/chat`. The swarm's own installer passes
+  // -WithCliTools, which sets the flag; `npm run setup` sets it too.
+  const askedFor = process.env.OSHAL_INSTALL_CLI_TOOLS || process.argv.includes('--install');
+  if (!askedFor) {
+    console.log(
+      '[oshal-setup] Skipping the agent-CLI bootstrap (codex, claude-code, cline).\n'
+      + '[oshal-setup] Run `npm run setup` in this package, or install with '
+      + 'OSHAL_INSTALL_CLI_TOOLS=1, to add them.',
+    );
     return;
   }
 

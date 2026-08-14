@@ -13,7 +13,7 @@
  * about what the file must NOT contain and when the route must refuse rather than help.
  */
 import { describe, expect, it } from 'vitest';
-import { renderNodeInstaller } from '@/app/routes/node-installer-routes';
+import { nodePackageSpec, renderNodeInstaller } from '@/app/routes/node-installer-routes';
 import { sharedSecretRetired } from '@/features/remote-client';
 
 const VALID = {
@@ -21,6 +21,7 @@ const VALID = {
   token: 'oshal_pat_AbCdEf0123456789-_',
   clientId: 'node-2f1c9e2a-0000-4a1b-9c3d-5e6f70819200',
   nodeName: 'roger-laptop',
+  nodePackage: '@oshal/chat',
 };
 
 describe('the one-click node installer script', () => {
@@ -29,12 +30,9 @@ describe('the one-click node installer script', () => {
     expect(script).toContain(VALID.token);
     expect(script).toContain(VALID.controlPlaneUrl);
     expect(script).toContain(VALID.clientId);
-    // The two env vars are what make the node authenticate AND register owned.
-    expect(script).toContain('REMOTE_CLIENT_CONTROL_PLANE_TOKEN');
-    expect(script).toContain('-EnrollmentToken $NodeToken');
-    // The device id travels as a PARAMETER, not an env var — nothing ever read the env
-    // var the first version set, which is how the id mismatch survived to a live run.
-    expect(script).toContain('-ClientId $ClientId');
+    // Seeded as environment, which is what the app's ConfigStore reads on first launch.
+    expect(script).toContain('OSHAL_ENROLLMENT_TOKEN');
+    expect(script).toContain('OSHAL_CLIENT_ID');
     // Windows line endings: a LF-only .ps1 still runs, but every editor the operator opens
     // it in shows one long line, and this file is meant to be read before it is trusted.
     expect(script).toContain('\r\n');
@@ -71,14 +69,14 @@ describe('the one-click node installer script', () => {
     }
   });
 
-  it('does not smuggle a second command past the installer invocation', () => {
+  it('never re-interpolates a value at the call site', () => {
     const script = renderNodeInstaller(VALID);
-    const invocation = script.split('\r\n').find((line) => line.startsWith('& $installer'));
+    const invocation = script.split('\r\n').find((line) => line.includes('npm install -g'));
     expect(invocation).toBeTruthy();
     // The call site must reference variables, never interpolate the values again — that is
     // what keeps the one escaping decision in one place.
-    expect(invocation).not.toContain(VALID.token);
-    expect(invocation).toContain('$NodeToken');
+    expect(invocation).not.toContain(VALID.nodePackage);
+    expect(invocation).toContain('$NodePackage');
   });
 });
 
@@ -140,36 +138,84 @@ describe('the installer the download actually invokes', () => {
   });
 });
 
-describe('the generated script does not promise what it cannot do', () => {
-  it('refuses plainly when it is not in an Open Swarm folder', () => {
-    const script = renderNodeInstaller(VALID);
-    // The first version fetched an install script from a route that never existed — and
-    // even fetching it would have died on the missing packages/oshal-chat. A refusal that
-    // names the requirement beats getting one step further and failing anyway.
-    expect(script).not.toContain('Invoke-WebRequest');
-    expect(script).not.toContain('/api/join/install-node.ps1');
-    expect(script).toMatch(/Move this file into your Open Swarm folder/);
-    expect(script).toContain('exit 1');
+describe('the checkout installer still accepts the device id, for the offline path', () => {
+  it('takes -ClientId and hands it to the app', async () => {
+    // install-node.ps1 is no longer what the DOWNLOAD uses, but it is still the path for a
+    // machine that has a checkout or is offline — and it needs the same id handoff, since
+    // the token is bound to that device either way.
+    const fs2 = await import('fs');
+    const installer = await fs2.promises.readFile('installer/lib/install-node.ps1', 'utf8');
+    expect(installer).toContain('[string]$ClientId');
+    expect(installer).toContain('$env:OSHAL_CLIENT_ID = $ClientId');
+    const config = await fs2.promises.readFile(
+      'packages/oshal-chat/src/main/config.ts', 'utf8');
+    expect(config).toMatch(/seed.clientId = OSHAL_CLIENT_ID/);
   });
 });
 
-describe('the device id the token is bound to reaches the node', () => {
-  it('is passed to the installer, which passes it to the app', async () => {
-    // The last blocker, and the one only a live run found: the node minted its OWN
-    // `oshal-chat-<uuid>` on first launch, so the control plane refused every one-click
-    // enrolment with "node-bound token named a different device". A bound token names the
-    // device it may register as; the node has to adopt that id, not invent one.
+describe('the install path a bare machine can actually take', () => {
+  it('installs the node app from npm rather than building it from a checkout', () => {
+    // The download used to shell installer/lib/install-node.ps1, which BUILDS the app from
+    // packages/oshal-chat — so it only ever worked on a machine that already had the repo,
+    // which is never the machine being enrolled.
     const script = renderNodeInstaller(VALID);
-    expect(script).toContain('-ClientId $ClientId');
+    expect(script).toContain('npm install -g $NodePackage');
+    expect(script).toContain(VALID.nodePackage);
+    expect(script).not.toContain('install-node.ps1');
+    expect(script).not.toMatch(/Open Swarm folder/);
+    expect(script).not.toContain('-JoinCode');
+  });
 
-    const fs = await import('fs');
-    const installer = await fs.promises.readFile('installer/lib/install-node.ps1', 'utf8');
-    expect(installer).toContain('[string]$ClientId');
-    expect(installer).toContain('$env:OSHAL_CLIENT_ID = $ClientId');
+  it('checks the one prerequisite it actually has, and says so rather than failing oddly', () => {
+    const script = renderNodeInstaller(VALID);
+    expect(script).toContain('node --version');
+    expect(script).toMatch(/Node\.js 20 or newer is required/);
+    expect(script).toMatch(/nodejs\.org/);
+    // An npm failure is the common real-world one (proxy, offline), so it is named.
+    expect(script).toMatch(/npm could not install/);
+  });
 
-    const config = await fs.promises.readFile(
-      'packages/oshal-chat/src/main/config.ts', 'utf8');
-    expect(config).toContain('OSHAL_CLIENT_ID');
-    expect(config).toMatch(/seed\.clientId = OSHAL_CLIENT_ID/);
+  it('seeds every value the node needs to come up owned and correctly identified', () => {
+    const script = renderNodeInstaller(VALID);
+    for (const seeded of ['OSHAL_CONTROL_PLANE_URL', 'OSHAL_SHARED_SECRET',
+      'OSHAL_ENROLLMENT_TOKEN', 'OSHAL_CLIENT_ID', 'OSHAL_CLIENT_NAME']) {
+      expect(script).toContain(seeded);
+    }
+    // OSHAL_CLIENT_ID is the one that took a live run to find: the token is bound to that
+    // id, and a node that invents its own is refused at registration.
+    expect(script).toMatch(/OSHAL_CLIENT_ID\s*=\s*\$ClientId/);
+    expect(script).toContain('Start-Process -FilePath "oshal-chat"');
+  });
+
+  it('takes the package from configuration, so a fork or a pin is not a code change', () => {
+    expect(nodePackageSpec({} as NodeJS.ProcessEnv)).toBe('@oshal/chat');
+    expect(nodePackageSpec({ OSHAL_NODE_PACKAGE: '@acme/node@1.2.3' } as NodeJS.ProcessEnv))
+      .toBe('@acme/node@1.2.3');
+    expect(nodePackageSpec({ OSHAL_NODE_PACKAGE: '  ' } as NodeJS.ProcessEnv)).toBe('@oshal/chat');
+  });
+});
+
+describe('the package is publishable, which is what makes the npm path exist', () => {
+  const pkg = () => import('fs').then((fs) => JSON.parse(
+    fs.readFileSync('packages/oshal-chat/package.json', 'utf8')));
+
+  it('is not marked private and carries the repo\u2019s real license', async () => {
+    const p = await pkg();
+    expect(p.private).toBeUndefined();
+    // The root LICENSE is AGPLv3 and package.json declares AGPL-3.0-or-later; this package
+    // said UNLICENSED, which contradicted the repo it ships from.
+    expect(p.license).toBe('AGPL-3.0-or-later');
+    expect(p.bin).toHaveProperty('oshal-chat');
+  });
+
+  it('does not install other people\u2019s CLIs on a stranger\u2019s machine', async () => {
+    const setup = await import('fs').then((fs) => fs.promises.readFile(
+      'packages/oshal-chat/scripts/setup-clis.js', 'utf8'));
+    // As a postinstall this runs on every `npm install`. Opting OUT meant one install
+    // globally installing three other packages at @latest, unasked.
+    expect(setup).toContain('OSHAL_INSTALL_CLI_TOOLS');
+    expect(setup).not.toContain('if (process.env.OSHAL_SKIP_CLI_SETUP)');
+    const gate = setup.slice(setup.indexOf('function main()'), setup.indexOf('function main()') + 600);
+    expect(gate).toMatch(/if \(!askedFor\)/);
   });
 });

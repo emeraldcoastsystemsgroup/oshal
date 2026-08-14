@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One-click worker-node install: mint the caller's per-device credential and return a runnable script with it already in place, so nothing has to be pasted into Settings.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Say plainly that the file belongs in an Open Swarm folder. The first version fetched an install script from a route that never existed, and even fetching it would have died on the missing packages/oshal-chat.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pass -ClientId through: a device-bound token names the device it may register as, and the node was minting its own id, so the control plane refused every one-click enrolment.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Install the node app from npm instead of building it from a checkout, so the download works on a machine that has never seen this repo. The package is configurable (OSHAL_NODE_PACKAGE).
  */
 
 /**
@@ -37,6 +38,16 @@ import { sharedSecretRetired } from '@/features/remote-client';
 
 const logger = createChildLogger({ module: 'node-installer-routes' });
 
+/**
+ * The npm package the installer pulls the node app from. Configurable rather than fixed so a
+ * fork, a private registry or a pinned version is an env var and not a code change — and so a
+ * deployment can point at a prerelease without shipping a different installer.
+ */
+export function nodePackageSpec(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = String(env.OSHAL_NODE_PACKAGE ?? '').trim();
+  return configured || '@oshal/chat';
+}
+
 /** Characters that would end a PowerShell single-quoted literal, or a line. */
 const UNSAFE_IN_LITERAL = /['"`$\r\n\\]/;
 
@@ -53,7 +64,7 @@ const UNSAFE_IN_LITERAL = /['"`$\r\n\\]/;
  * @throws When any value carries a character that could break out of a literal.
  */
 export function renderNodeInstaller(options: {
-  controlPlaneUrl: string; token: string; clientId: string; nodeName: string;
+  controlPlaneUrl: string; token: string; clientId: string; nodeName: string; nodePackage: string;
 }): string {
   for (const [field, value] of Object.entries(options)) {
     if (UNSAFE_IN_LITERAL.test(value)) {
@@ -76,33 +87,54 @@ export function renderNodeInstaller(options: {
     "$NodeToken       = '" + options.token + "'",
     "$ClientId        = '" + options.clientId + "'",
     "$NodeName        = '" + options.nodeName + "'",
+    "$NodePackage     = '" + options.nodePackage + "'",
     '',
-    '# The token is both halves at once: it authenticates this device on the worker plane',
-    '# (in place of the swarm-wide secret) and it tells the server whose computer this is,',
-    '# so the node registers already owned instead of belonging to nobody.',
-    '$env:REMOTE_CLIENT_CONTROL_PLANE_TOKEN = $NodeToken',
-    '',
-    'Write-Host "Installing an OSHAL worker node bound to your account..." -ForegroundColor Cyan',
+    'Write-Host "Setting up an OSHAL worker node bound to your account..." -ForegroundColor Cyan',
     'Write-Host "  control plane: $ControlPlaneUrl"',
     '',
-    '# This file belongs IN your Open Swarm folder. The node app is built from',
-    '# packages\\oshal-chat, so a copy of it has to be on this machine either way —',
-    '# saying so plainly beats fetching an install script and dying one step later',
-    '# on a package that was never going to be there.',
-    '$installer = Join-Path $PSScriptRoot "installer\\lib\\install-node.ps1"',
-    'if (-not (Test-Path $installer)) {',
+    '# 1. Node.js is the ONLY prerequisite. The app installs from npm already built, so',
+    '#    there is no checkout to clone here and nothing to compile.',
+    '$nodeVersion = $null',
+    'try { $nodeVersion = (& node --version) } catch { }',
+    'if (-not $nodeVersion) {',
     '    Write-Host ""',
-    '    Write-Host "Move this file into your Open Swarm folder and run it from there."'
-      + ' -ForegroundColor Yellow',
-    '    Write-Host "  looked for: $installer" -ForegroundColor DarkGray',
+    '    Write-Host "Node.js is required and was not found." -ForegroundColor Yellow',
+    '    Write-Host "  Install the LTS build from https://nodejs.org, then run this again."',
+    '    exit 1',
+    '}',
+    '$major = [int](($nodeVersion.TrimStart("v") -split "\.")[0])',
+    'if ($major -lt 20) {',
+    '    Write-Host ""',
+    '    Write-Host "Node.js 20 or newer is required (found $nodeVersion)." -ForegroundColor Yellow',
+    '    exit 1',
+    '}',
+    'Write-Host "  node: $nodeVersion" -ForegroundColor DarkGray',
+    '',
+    '# 2. The node app. Ships built, so this pulls the app plus Electron and nothing else.',
+    'Write-Host "Installing $NodePackage (this downloads Electron - a few minutes)..."',
+    '& npm install -g $NodePackage',
+    'if ($LASTEXITCODE -ne 0) {',
+    '    Write-Host ""',
+    '    Write-Host "npm could not install $NodePackage." -ForegroundColor Yellow',
+    '    Write-Host "  Scroll up for the npm error - a proxy or an offline machine is the usual cause."',
     '    exit 1',
     '}',
     '',
-    '# -ClientId is not optional: the token is bound to THAT device id, so the node must',
-    '# register as it rather than minting its own. Without it the control plane refuses with',
-    '# "node-bound token named a different device".',
-    '& $installer -ControlPlaneUrl $ControlPlaneUrl -EnrollmentToken $NodeToken ' + '`',
-    '    -ClientId $ClientId -NodeName $NodeName -OrbOnly',
+    '# 3. Seed it. The app reads these ONCE on first launch and persists them, so the desktop',
+    '#    shortcut it creates later carries no credential and its settings pane stays',
+    '#    authoritative. The token is both halves at once: the bearer credential this device',
+    '#    authenticates with, and the proof of who owns it. The client id is NOT optional -',
+    '#    the token is bound to it, and the control plane refuses a mismatch.',
+    '$env:OSHAL_CONTROL_PLANE_URL = $ControlPlaneUrl',
+    '$env:OSHAL_SHARED_SECRET     = $NodeToken',
+    '$env:OSHAL_ENROLLMENT_TOKEN  = $NodeToken',
+    '$env:OSHAL_CLIENT_ID         = $ClientId',
+    '$env:OSHAL_CLIENT_NAME       = $NodeName',
+    '$env:OSHAL_WORKER_ENABLED    = "true"',
+    '$env:OSHAL_FULL_JARVIS       = "false"',
+    '',
+    'Write-Host "Starting the node so it can register..."',
+    'Start-Process -FilePath "oshal-chat" -WindowStyle Hidden',
     '',
     'Write-Host ""',
     'Write-Host "Done. This computer should appear in the cockpit within a minute."'
@@ -173,6 +205,7 @@ export function registerNodeInstallerRoute(router: Router, pool: Pool | null): v
       });
       const script = renderNodeInstaller({
         controlPlaneUrl: url, token: minted.token, clientId, nodeName,
+        nodePackage: nodePackageSpec(),
       });
       // The token itself is never logged — only which device it was bound to.
       logger.info({ id: minted.id, sub, nodeClientId: clientId }, 'one-click node installer issued');

@@ -2,8 +2,7 @@
   "name": "@oshal/chat",
   "version": "0.2.0",
   "description": "Local desktop node that joins the OSHAL swarm as an A2A remote client: a Jarvis-style orb you talk to, that also runs swarm-dispatched tasks locally with your own signed-in CLIs (codex/claude/gcloud/aws).",
-  "license": "UNLICENSED",
-  "private": true,
+  "license": "AGPL-3.0-or-later",
   "main": "dist/main/main.js",
   "bin": {
     "oshal-chat": "bin/oshal-chat.js"
@@ -16,7 +15,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "setup": "node scripts/setup-clis.js",
+    "setup": "node scripts/setup-clis.js --install",
     "postinstall": "node scripts/setup-clis.js",
     "prepack": "npm run build",
     "start": "npm run build && node scripts/start-electron.js .",
@@ -54,5 +53,10 @@
       }
     }
   },
-  "author": "maintainer@emeraldcoastsystemsgroup.com"
+  "author": "maintainer@emeraldcoastsystemsgroup.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emeraldcoastsystemsgroup/oshal.git",
+    "directory": "packages/oshal-chat"
+  }
 }
