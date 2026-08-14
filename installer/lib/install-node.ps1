@@ -21,6 +21,7 @@
 
     .\installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx
     .\installer\lib\install-node.ps1 -ControlPlaneUrl http://192.168.1.5:35457 -SharedSecret abc...
+    .\installer\lib\install-node.ps1 -ControlPlaneUrl http://192.168.1.5:35457 -EnrollmentToken oshal_pat_...
     .\installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx -OrbOnly
 #>
 
@@ -30,6 +31,7 @@ param(
     [string]$ControlPlaneUrl = '', # or supply the two halves directly
     [string]$SharedSecret = '',
     [string]$EnrollmentToken = '', # oshal_pat_... from the cockpit's "Add this computer" — binds this node to YOU
+    [string]$ClientId = '',        # the device id a DEVICE-BOUND token was minted for; the node adopts it
     [string]$NodeName = '',        # how this machine shows up in the cockpit mesh view
     [switch]$WithCliTools,         # also npm-install codex / claude / cline globally
     [switch]$NoLaunch,             # install and configure, but do not open the app
@@ -49,8 +51,11 @@ $MinNodeMajor = 20
 # ---------------------------------------------------------------------------
 
 <#
-.SYNOPSIS Resolves the control-plane URL and shared secret from either input form.
-.DESCRIPTION A join code is one paste; the split parameters exist for scripted installs.
+.SYNOPSIS Resolves the control-plane URL and the node's bearer credential from any input form.
+.DESCRIPTION Three complete forms. A join code is one paste. A URL plus the swarm-wide secret is
+the scripted install. A URL plus a DEVICE-BOUND enrollment token is what the cockpit's one-click
+installer supplies, and it is complete on its own once REMOTE_CLIENT_REQUIRE_NODE_TOKEN has
+retired the swarm-wide secret -- which is the whole point: no third value to go and ask for.
 .OUTPUTS [hashtable] @{ ControlPlaneUrl = ...; SharedSecret = ... }
 #>
 function Resolve-JoinTarget {
@@ -65,7 +70,22 @@ function Resolve-JoinTarget {
     if ($ControlPlaneUrl -and $SharedSecret) {
         return @{ ControlPlaneUrl = $ControlPlaneUrl.TrimEnd('/'); SharedSecret = $SharedSecret; HeadscaleUrl = ''; HeadscaleAuthKey = '' }
     }
-    Stop-WithError "No join code supplied." "Run the installer on your swarm machine first -- it prints a join code."
+    if ($ControlPlaneUrl -and $EnrollmentToken) {
+        # TOKEN-ONLY ENROLMENT — the one-click installer the cockpit hands out.
+        #
+        # Once REMOTE_CLIENT_REQUIRE_NODE_TOKEN retires the swarm-wide secret, a DEVICE-BOUND
+        # token is the worker-plane credential in its place, so a URL and a token are a
+        # COMPLETE target: there is no third value to go and fetch from an operator, which is
+        # the entire point of the one-click file.
+        #
+        # It goes in the SharedSecret slot because that slot is what the node sends as its
+        # bearer credential (`config.sharedSecret` in mesh-client.ts / worker.ts). The field
+        # names the slot, not the swarm-wide value that used to fill it. The same token is
+        # ALSO passed as OSHAL_ENROLLMENT_TOKEN below, which is what binds the node to a
+        # person; here it is what authenticates the node's calls.
+        return @{ ControlPlaneUrl = $ControlPlaneUrl.TrimEnd('/'); SharedSecret = $EnrollmentToken; HeadscaleUrl = ''; HeadscaleAuthKey = '' }
+    }
+    Stop-WithError "No join code supplied." "Use the cockpit's one-click installer (Job Board -> Set up this computer), or run the installer on your swarm machine, which prints a join code."
     return $null  # unreachable; keeps the analyzer happy
 }
 
@@ -223,6 +243,11 @@ function Start-NodeApp {
     $env:OSHAL_CONTROL_PLANE_URL = $Target.ControlPlaneUrl
     $env:OSHAL_SHARED_SECRET     = $Target.SharedSecret
     $env:OSHAL_CLIENT_NAME       = $ClientName
+    if ($ClientId) {
+        # The token is bound to THIS id, so the node must register as it rather than minting
+        # its own -- the control plane refuses a bound token that names a different device.
+        $env:OSHAL_CLIENT_ID = $ClientId
+    }
     $env:OSHAL_WORKER_ENABLED    = 'true'
     if ($EnrollmentToken) {
         # Exchanged ONCE on first launch for the enrolling user's verified sub, then cleared, so this

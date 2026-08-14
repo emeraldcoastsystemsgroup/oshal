@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One-click worker-node install: mint the caller's per-device credential and return a runnable script with it already in place, so nothing has to be pasted into Settings.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Say plainly that the file belongs in an Open Swarm folder. The first version fetched an install script from a route that never existed, and even fetching it would have died on the missing packages/oshal-chat.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pass -ClientId through: a device-bound token names the device it may register as, and the node was minting its own id, so the control plane refused every one-click enrolment.
  */
 
 /**
@@ -79,22 +81,28 @@ export function renderNodeInstaller(options: {
     '# (in place of the swarm-wide secret) and it tells the server whose computer this is,',
     '# so the node registers already owned instead of belonging to nobody.',
     '$env:REMOTE_CLIENT_CONTROL_PLANE_TOKEN = $NodeToken',
-    '$env:REMOTE_CLIENT_CLIENT_ID           = $ClientId',
     '',
     'Write-Host "Installing an OSHAL worker node bound to your account..." -ForegroundColor Cyan',
     'Write-Host "  control plane: $ControlPlaneUrl"',
     '',
-    '# Run from a checkout if there is one beside this file; otherwise fetch the installer',
-    '# this swarm is actually running, so the node matches the controller it joins.',
+    '# This file belongs IN your Open Swarm folder. The node app is built from',
+    '# packages\\oshal-chat, so a copy of it has to be on this machine either way —',
+    '# saying so plainly beats fetching an install script and dying one step later',
+    '# on a package that was never going to be there.',
     '$installer = Join-Path $PSScriptRoot "installer\\lib\\install-node.ps1"',
     'if (-not (Test-Path $installer)) {',
-    '    $installer = Join-Path $env:TEMP "oshal-install-node.ps1"',
-    '    Invoke-WebRequest -UseBasicParsing -Uri "$ControlPlaneUrl/api/join/install-node.ps1" ' + '`',
-    '        -Headers @{ Authorization = "Bearer $NodeToken" } -OutFile $installer',
+    '    Write-Host ""',
+    '    Write-Host "Move this file into your Open Swarm folder and run it from there."'
+      + ' -ForegroundColor Yellow',
+    '    Write-Host "  looked for: $installer" -ForegroundColor DarkGray',
+    '    exit 1',
     '}',
     '',
+    '# -ClientId is not optional: the token is bound to THAT device id, so the node must',
+    '# register as it rather than minting its own. Without it the control plane refuses with',
+    '# "node-bound token named a different device".',
     '& $installer -ControlPlaneUrl $ControlPlaneUrl -EnrollmentToken $NodeToken ' + '`',
-    '    -NodeName $NodeName -OrbOnly',
+    '    -ClientId $ClientId -NodeName $NodeName -OrbOnly',
     '',
     'Write-Host ""',
     'Write-Host "Done. This computer should appear in the cockpit within a minute."'
