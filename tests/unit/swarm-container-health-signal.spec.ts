@@ -213,7 +213,15 @@ describe('alert rules may only name metrics the swarm actually exports', () => {
     const down = allRules.find((r) => r.alert === 'SwarmContainerDown')!;
     // Without this conjunct, every compose `profiles:` bot a deployment does not run becomes a
     // permanent alert — re-creating the standing false alarm from the other direction.
-    expect(down.expr).toMatch(/max_over_time\(\s*up\{[^}]*\}\[\d+[smhd]\]\s*\)\s*>\s*0/);
+    //
+    // Asserted as a PROPERTY, not a literal shape: the guard used to pin the exact un-aggregated
+    // text `max_over_time(up{…}[1h]) > 0`, which went red when the expression was correctly
+    // wrapped in `max by (container) (…)` to survive instance churn. What must hold is that the
+    // "was up recently" gate is present and bounded to a window — not how it is spelled.
+    const expr = down.expr.replace(/\s+/g, ' ');
+    expect(expr, 'SwarmContainerDown must gate on having been up within a window')
+      .toMatch(/max_over_time\(\s*up\{[^}]*\}\[\d+[smhd]\]\s*\)/);
+    expect(expr, 'that gate must be a > 0 threshold').toMatch(/\)\s*>\s*0/);
   });
 
   it('the worker rules never act on the core plane (A0 stays A0)', () => {
@@ -302,6 +310,30 @@ describe('the scrape targets match the deployment', () => {
       expect(sources, `${jobName} must keep only the swarm network`).toContain('__meta_docker_network_name');
       const portKeep = keeps.find((r) => ((r.source_labels ?? []) as string[]).includes('__meta_docker_port_private'));
       expect(String(portKeep!.regex), `${jobName} must scrape port 5000`).toContain('5000');
+    }
+  });
+
+  it('the liveness rules survive a target VANISHING, not just failing', () => {
+    // The regression this exists for was introduced by discovery itself and would have
+    // silently disabled self-healing for the whole fleet. With a static target list a dead
+    // container still had a target, its scrape failed, and `up` went 0. Under docker_sd a dead
+    // container DISAPPEARS, so `up{...} == 0` matches nothing and the alert cannot fire.
+    // Verified live 2026-08-13: with a bot stopped, the old expression left SwarmContainerDown
+    // `inactive`; the `unless` form fired for exactly that bot and cleared when it came back.
+    for (const name of ['SwarmContainerDown', 'SwarmApiUnreachable']) {
+      const rule = allRules.find((r) => r.alert === name);
+      expect(rule, `${name} must exist`).toBeTruthy();
+      const expr = rule!.expr.replace(/\s+/g, ' ');
+      expect(expr, `${name} must not rely on up==0 — a vanished target has no series to equal 0`)
+        .not.toMatch(/up\{[^}]*\}\s*==\s*0/);
+      expect(expr, `${name} must detect a target that disappeared (max_over_time … unless)`)
+        .toMatch(/max_over_time/);
+      expect(expr, `${name} must subtract the currently-up containers with unless`).toContain('unless');
+      // `instance` is IP:port and churns on every recreate: matching on the full label set
+      // made 26 healthy bots alert at once, because their pre-deploy IP still had samples in
+      // the range vector and nothing cancelled them.
+      expect(expr, `${name} must aggregate on container, not instance`).toMatch(/by \(container\)/);
+      expect(expr, `${name} must join on container`).toMatch(/unless on \(container\)/);
     }
   });
 
