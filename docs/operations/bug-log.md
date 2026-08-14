@@ -883,9 +883,9 @@ produced no output at all under Git Bash — an empty result was read as "no suc
 - Last run **2026-08-12 23:30:01**, **LastTaskResult `1`**, next run scheduled.
 
 So the gate exists, is scheduled, runs unattended, propagates a real exit code (that is exactly what
-`ci-local-hidden.vbs` change-log entry 3 was for), **and notifies**: the run log ends
-`SEND_OK id=19ff9a23208e1edc to=rogermmurphy@gmail.com` (`TG_SKIP not-configured`). Every mechanism
-this repo built for unattended CI worked correctly.
+`ci-local-hidden.vbs` change-log entry 3 was for), **and notifies**: the run log ends with a
+`SEND_OK` line carrying a message id and the operator's own address (`TG_SKIP not-configured`, since
+Telegram has no token). Every mechanism this repo built for unattended CI worked correctly.
 
 **The actual defect is what happened next: nothing.**
 `%LOCALAPPDATA%\oshal\ci-local.log` holds 53 recorded outcomes. The last twelve:
