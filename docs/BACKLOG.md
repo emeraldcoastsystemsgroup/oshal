@@ -120,13 +120,8 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
   instead of printing only `0 unhealthy`.
 
 ### Add-a-bot checklist omits the scrape target
-- **Remaining:** `docs/building-a-bot.md` contains zero occurrences of `prometheus`, `scrape`, or
-  `monitor` (verified case-insensitively), and its checklist names registry + compose + persona YAML
-  only. That omission is exactly the step PR #186 missed when it added career-bot (BUG-15). CLAUDE.md's
-  bot-registry section has the same gap.
-- **Done when:** both surfaces list `ops/monitoring/prometheus.yml` alongside registry/compose/persona
-  in the add-a-bot steps, and a new bot added following only the written checklist leaves
-  `swarm-container-health-signal.spec.ts` green.
+- **Remaining:** ~~add the scrape step to the checklist~~ — **superseded 2026-08-13.** Prometheus now discovers bots by container label (BUG-15 closed), so there is no scrape step to document and nothing for a checklist to omit. What remains is smaller: `docs/building-a-bot.md` and CLAUDE.md's bot-registry section should say that monitoring is INHERITED from the `x-bot-common` anchor, so nobody re-adds a manual step or wonders where to register a new bot.
+- **Done when:** both surfaces state that a bot inheriting `x-bot-common` is scraped automatically, and neither instructs anyone to edit `ops/monitoring/prometheus.yml`.
 
 ### DB-backed alert specs borrow the operator's database
 - **Remaining:** `tests/unit/alert-incident-cutover.spec.ts` stands a live alert *consumer* on the

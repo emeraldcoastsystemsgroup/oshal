@@ -355,7 +355,7 @@ it is BUG-16 below, which is nondeterministic *even with the stack up*. Do not q
 "N tests are red" figure from this sweep; three specific specs were run down, and those are these.
 
 ## BUG-15 — career-bot runs the oshal runtime but no Prometheus job scrapes it
-- **Type:** Bug (observability config) · **Priority:** Low · **Status:** OPEN
+- **Type:** Bug (observability config) · **Priority:** Low · **Status:** **FIXED 2026-08-13** — not by adding the missing target, but by deleting the list. See the closing note at the end of this entry.
 - **Discovered:** 2026-08-13, by `tests/unit/swarm-container-health-signal.spec.ts` going red in the
   sweep above. **Scope corrected during verification** — the first write-up filed this **Med** on a
   blast-radius claim that did not survive checking, and that correction is recorded here so it is not
@@ -429,6 +429,32 @@ in `ops/monitoring/prometheus.yml`, after `oshal-local-jarvis-bot:5000` (`:101`)
 compose order. Nothing else changes: the job already relabels `__address__` into the `container`
 label (`:121-126`), so the alert identity ADR-119 needs comes for free. Then run
 `bash scripts/monitoring-up.sh` — the config fix is inert while the overlay is dead.
+
+**CLOSED 2026-08-13 — the class, not the instance.** Operator, on reading this entry: *"how can a
+bot not be scraped? it should be engrained with the process. the RCA and Prometheus model is a
+default swarm entity, self healing is in the core."* Right — and adding `oshal-local-career-bot:5000`
+to the list would have fixed this instance while leaving the class wide open, because the list itself
+was the defect: a second source of truth for "which bots exist", which drifts the first time someone
+adds a bot.
+
+Both runtime jobs now use `docker_sd_configs` filtered on a container label. `x-bot-common` — the
+anchor every bot and the api already inherit — carries `oshal.tier: worker`, and `oshal-api`
+overrides it to `core`. A new bot is scraped from its first second of life; the only way to be
+unmonitored is to not be an oshal runtime container. Job names are unchanged, so no alert rule moved.
+Prometheus does **not** hold the Docker socket: a read-only socket proxy exposes only
+`GET /containers/json` and `GET /networks`, because a `:ro` bind restricts the file and not the API.
+
+Verified live after a fleet-wide recreate: **35 targets discovered — 1 core, 34 workers, no
+duplicates, career-bot among them — with no target list anywhere.** Two traps surfaced only by that
+live run and are now closed in config and in the guard: `docker_sd` emits a target per exposed port
+(every bot was discovered twice, once on a permanently-down `:1455`, which would have fired
+SwarmContainerDown for the entire healthy fleet), and the port label is `__meta_docker_port_private`,
+not `__meta_docker_port_private_port` — the wrong name silently drops every target instead of
+erroring.
+
+The **Fix** paragraph above is left as written and is now obsolete: it says to add the target to the
+list. It is retained because it is what the evidence supported at the time, and because the gap
+between "fix the instance" and "delete the class" is the useful part of this entry.
 
 **Prevention (guard-per-fix):** the guard already exists and already worked — do not add a second
 one. Close the two gaps around it. (1) Put the unit tier on a path that runs without a human choosing
