@@ -108,17 +108,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** the scheduled task `OSHAL Local CI` (daily 23:30, `ci-local-hidden.vbs` → `ci-local.sh --scheduled`) runs unattended, propagates its exit code, and emails the operator — all of that works. It has simply reported FAILED every night from 2026-08-02 to 2026-08-13 with `unit`, `e2e-green` and `trivy` red each time (BUG-22), so a newly-red guard inside it is invisible. Drive each of the three to green or quarantine it with a dated entry naming what is deferred and why: `unit` (BUG-15/16/17 plus the DB-backed specs — read BUG-16 before running the suite against a live stack), `e2e-green`, `trivy` (a CVE-budget decision, not a code fix). **Do not "fix" this by adding a `push:`/`pull_request:` trigger** — manual-only hosted CI is deliberate and `scripts/check-workflow-triggers.js` enforces it.
 - **Done when:** `%LOCALAPPDATA%\oshal\ci-local.log` records at least one PASSED nightly run, every gate still red has a dated BACKLOG entry, and the notifier reports the streak and which gates are *newly* red rather than sending an identical failure mail each night.
 
-### Monitoring overlay is not part of bring-up
-- **Remaining:** `scripts/oshal-up.sh` and `scripts/oshal-deploy.sh` contain zero references to the
-  monitoring compose file, so the ordered bring-up and every deploy leave Prometheus/alertmanager
-  down (BUG-21: down since 2026-08-02 / 08-07). Either start the overlay from `oshal-up.sh` after the
-  infra tier, or state in that script and the deploy runbook that monitoring is a separate operator
-  action. Root-cause the exit 255 in the same pass — `restart: unless-stopped` did not bring it back.
-- **Done when:** a cold `bash scripts/oshal-up.sh` leaves Prometheus scraping (an `up` query returns
-  a live series for the api and at least one bot) — or the scripts and runbook say plainly that it
-  does not and name the command that does; and a deploy that finishes with the overlay down says so
-  instead of printing only `0 unhealthy`.
-
 ### Add-a-bot checklist omits the scrape target
 - **Remaining:** ~~add the scrape step to the checklist~~ — **superseded 2026-08-13.** Prometheus now discovers bots by container label (BUG-15 closed), so there is no scrape step to document and nothing for a checklist to omit. What remains is smaller: `docs/building-a-bot.md` and CLAUDE.md's bot-registry section should say that monitoring is INHERITED from the `x-bot-common` anchor, so nobody re-adds a manual step or wonders where to register a new bot.
 - **Done when:** both surfaces state that a bot inheriting `x-bot-common` is scraped automatically, and neither instructs anyone to edit `ops/monitoring/prometheus.yml`.
