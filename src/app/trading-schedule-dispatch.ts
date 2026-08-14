@@ -42,6 +42,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Earnings gate made TESTABLE (it was earned by one retrospective study, then generated zero evidence about itself). (1) Mode-aware arming: TRADING_EARNINGS_GATE now accepts paper|live|both|true — the paper-first soak doctrine applied to gates, so the rule can run on the reference book while real money waits for evidence. (2) Counterfactual gate-block ledger (trading-gate-block-store): every entry the blackout suppresses is persisted per (book, gate, symbol, ET-day) with its would-be price at BOTH instrumented entry points (scan placeEntries + rotateSleeve leaderboard; blend not instrumented — plan computes goals internally). Scoring the blocked names' actual through-print outcomes vs a same-symbol random control is what graduates the gate to live. Unarmed behavior stays byte-identical.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | LIVE SIZING PRICES COME FROM THE EXECUTING VENUE. The three sizing sites — the core top-up (ensureCore) and both rotation priceOf closures (rotateSleeve / rotateBlendSleeve) — sized the LIVE book off the raw Alpaca IEX latestPrice (with a stale Alpaca daily-close fallback) while EXECUTING at Schwab; IEX diverges exactly when it matters (thin names — RGTI 54bps / SOUN 45bps tails per the 07-12 divergence study — gaps, off-hours). All three now route through the per-book source via the new exported sizingPrice(mode, sub, symbol, fallbackClose?) → getMarketData(mode, sub): Schwab quotes for live, FAIL-CLOSED (the positions-read doctrine applied to prices) — a name the executing venue can't price is SKIPPED with a log, never silently sized off the wrong venue. Paper is unchanged: Alpaca first, and only the rotation paths keep their daily-close fallback. ensureCore + sizingPrice exported for the unit spec (trading-sizing-venue.spec.ts).
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Trading engine extraction (ADR-085 pre-carve): import repoint only — guardrails/placeDecisionOrder/ensureTradingSchema now come from app/trading-engine.ts instead of the carvable route surface. Zero behavior change; order semantics, gates, schedule pins and TRADING_* env reads untouched.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Sector lean becomes a knob: rotateSleeve now runs rankUniverse through applySectorTilt(TRADING_SECTOR_TILT) so "lean harder on materials" is a dial over the ranking instead of percentages hand-baked into TRADING_CORE_SYMBOLS (which pinned capital in ETFs that sit outside the ranked universe and so never rotate out). Unset/empty tilt → byte-identical ranking. All logic lives in features/trading/services/sector-tilt.ts; this file is past the 800-line decomposition threshold and takes only the import + call.
  *
  * @module trading-schedule-dispatch
  */
@@ -54,6 +55,7 @@ import {
   exitsToRun, trailingExits, nextPeaks, isShortTermBreakdown, isShortTermPop, sizeEntry, riskPolicy, rotationBenches, rebalanceTrims, dipExits, symbolBlocklist,
   deriveMasses, displacement, barsBatch, barsBatchSince, scoreSymbol, ensemble,
   maxGapDownPct, priorSessionClose, etSessionDate, selectEntryTargets, entryBlock, getMarketData,
+  sectorTiltConfig, applySectorTilt,
   type MtfDecision, type Position, type TradingMode, type BrokerAccount, type RiskPolicy, type ExitOrder, type NameStrength, type EntryGuardInput, type EntryBlock,
 } from '@/features/trading';
 import { guardrails, placeDecisionOrder, ensureTradingSchema } from './trading-engine';
@@ -706,7 +708,11 @@ async function rotateSleeve(
   // Rank the universe (ex-core) by the configured method on daily closes.
   const universe = symbols.filter((s) => !coreSet.has(s.toUpperCase()));
   const bars = await barsBatch(universe, '1Day', 150);
-  const ranked = rankUniverse(cfg.rank, bars, coreSet);
+  // The operator's sector lean (TRADING_SECTOR_TILT) rides the RANKING, not the core symbol list, so
+  // it can be dialed back down without moving capital. Neutral/unset → the untilted ranking. A tilt
+  // is a positive multiplier and so cannot flip a score's sign: it re-orders the `score > 0` set
+  // below, it never promotes a name the ranker scored negative.
+  const ranked = applySectorTilt(rankUniverse(cfg.rank, bars, coreSet), sectorTiltConfig());
   ranked.sort((a, b) => b.score - a.score);
   // A "positive score" filter: gravity/ensemble pull > 0, momentum return > 0, blend above the
   // cross-sectional mean (z > 0). Naturally goes lighter when few names are strong.

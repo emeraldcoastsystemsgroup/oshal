@@ -69,6 +69,11 @@ export { prefilterHeadline, buildReaderPrompt, parseReaderVerdicts } from './ser
 export type { RiskPosture, RiskPolicy, PolicyOverride, ExitOrder, SizingResult, NameStrength } from './services/portfolio';
 export { RISK_POLICIES, riskPolicy, sectorOf, exitsToRun, trailingExits, nextPeaks, sizeEntry, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, symbolBlocklist } from './services/portfolio';
 
+// Sector tilt — "lean harder on <sector>" as a rank multiplier (TRADING_SECTOR_TILT), so a lean is a
+// dial that can be turned back down rather than percentages baked into TRADING_CORE_SYMBOLS.
+export type { RankedName } from './services/sector-tilt';
+export { MAX_SECTOR_TILT, parseSectorTilt, sectorTiltConfig, applySectorTilt } from './services/sector-tilt';
+
 // ── Futures extension layer (ADR-116) — additive; equities surface above is untouched. ──
 // Instrument model: roots, month codes, expiry/roll, contract enumeration, expected-bar count.
 export type { FuturesBar, FuturesRoot, FuturesContract } from './services/futures-contract';
