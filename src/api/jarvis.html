@@ -526,6 +526,12 @@
     const snapshot = producer.consumeContext(evt.data);
     if (snapshot) window.__surfaceContext = snapshot;
   });
+  // The floating orb's panel iframe is created LAZILY on first open, so by the time this loads the
+  // surface has usually already published and we would have missed it. Ask for a fresh snapshot on
+  // load; a surface that supports context answers by re-publishing, and one that doesn't ignores an
+  // unknown custom name. Dropped harmlessly when the app hasn't declared `custom`.
+  try { producer.emitOps([{ op: 'custom', name: 'request_context', data: {} }]); }
+  catch (_) { /* no focused app / no surface — nothing to ask */ }
 </script>
 <script>
 const $ = (id) => document.getElementById(id);
