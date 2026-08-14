@@ -35,6 +35,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — surface-side renderer/emitter for the surface-bridge contract: renders render_options/set_field/set_content/propose/notify, re-dispatches custom as a DOM event, emits select/field_change/submit/event; textContent-only rendering.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | emitContext(snapshot) — publish what the surface is SHOWING (inbound `context` op) so the floating assistant stops being blind to the screen the operator is on. Ambient state, not a user action: the assistant reads only the latest snapshot.
  */
 
 /** postMessage channel discriminator — MUST equal SURFACE_BRIDGE_CHANNEL in features/surface-bridge/types.ts (guarded by spec). */
@@ -202,6 +203,18 @@ export function createSurfaceBridgeClient(opts) {
     emit,
     /** Emit a generic app surface event (inbound `event` op). */
     emitEvent(name, data) { return emit('event', { name, data: data || {} }); },
+    /**
+     * Publish what this surface is CURRENTLY SHOWING (inbound `context` op) so the floating
+     * assistant can answer and act about the screen the operator is actually on.
+     *
+     * Call it on every state change worth knowing about (record opened, selection changed) — it is
+     * a cheap postMessage and the assistant only ever reads the LATEST snapshot. Keep `digest` a
+     * summary (headline, section names, counts): the app's own bot still owns the full document,
+     * and the contract caps digest at 4000 chars, dropping the whole event if exceeded.
+     * @param {{surface: string, title?: string, recordId?: string, digest?: string, fields?: object, can?: string[]}} snapshot
+     * @returns {object} the posted envelope
+     */
+    emitContext(snapshot) { return emit('context', snapshot || {}); },
     attach() {
       win.addEventListener('message', handleMessage);
       doc.addEventListener('change', onFieldChange, true);

@@ -511,6 +511,22 @@
 <script src="/api/jarvis/assets/jarvis-speakers.js"></script>
 <script src="/api/jarvis/assets/jarvis-speaker-capture.js"></script>
 <script src="/api/jarvis/assets/jarvis-person-consent.js"></script>
+<!-- Surface bridge: Jarvis is the cockpit's chat rail (#chatWorkspaceFrame), so the relay already
+     routes the focused app surface's inbound events here. This picks the `context` snapshots out of
+     that traffic (what screen the operator is on) and posts back the ops the server parsed from the
+     reply. ES module, so it hands the producer to the main script through window. -->
+<script type="module">
+  import { createSurfaceProducer } from '/shared/ui/js/surface-bridge-producer.js';
+  const producer = createSurfaceProducer({});          // chat-rail mode: app binding from the shell's ?app=
+  window.__surfaceProducer = producer;
+  // The LATEST snapshot wins — a surface republishes on every state change and Jarvis only ever
+  // needs to know what is on screen right now, not the history of what was.
+  window.addEventListener('message', (evt) => {
+    if (evt.origin !== window.location.origin) return;
+    const snapshot = producer.consumeContext(evt.data);
+    if (snapshot) window.__surfaceContext = snapshot;
+  });
+</script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -1369,7 +1385,12 @@ async function handleInput(text) {
     const r = await fetch('/api/jarvis/ask', {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, sessionId: SESSION_ID, attachments: outAttachments }),
+      // The live screen travels with the turn. Sent verbatim as the relay delivered it — the server
+      // re-validates it against the real contract rather than trusting this frame.
+      body: JSON.stringify({
+        message: text, sessionId: SESSION_ID, attachments: outAttachments,
+        ...(window.__surfaceContext ? { context: window.__surfaceContext } : {}),
+      }),
     });
     const j0 = await r.json().catch(() => ({}));
     if (!r.ok || !j0.jobId) throw new Error(j0.message || j0.error || ('HTTP ' + r.status));
@@ -1379,6 +1400,13 @@ async function handleInput(text) {
       bubble.innerHTML = `<span class="err">${esc(d.error || "That didn't work.")}</span>`;
       speak("Sorry, that didn't work.");
     } else {
+      // Drive the screen the user is on BEFORE painting the reply, so the edit and the sentence
+      // describing it land together. The relay still re-validates every op against the app's
+      // manifest allow-list; anything the app never declared is dropped in transit.
+      if (d.surfaceOps && d.surfaceOps.length && window.__surfaceProducer) {
+        try { window.__surfaceProducer.emitOps(d.surfaceOps); }
+        catch (_) { /* a surface that went away must never break the answer */ }
+      }
       let html = renderMarkdown(d.answer || '(no answer)');
       if (d.handoffs && d.handoffs.length) html += chipsHtml(d.handoffs);
       html += visualReplayHtml(d.visual);

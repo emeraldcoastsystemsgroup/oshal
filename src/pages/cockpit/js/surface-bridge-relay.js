@@ -32,6 +32,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — cockpit-mediated relay: normalize → trusted-app + surface.ops allow-list (fail-closed) → emitter-sibling check → deliver (to_surface → app iframe, to_bot → chat rail, navigate → the ribbon's app-navigate dialect). DI factory so the guard spec drives it with the real contract and fake windows.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The FLOATING assistant is a third frame: jarvis-orb.js iframes /api/jarvis/ into #jarvisOrbPanel over every ?app= page, so it was neither the surface nor #chatWorkspaceFrame and the relay dropped its traffic both ways (a surface's `context` never reached it; its ops came back emitter_not_chat_rail). getChatWindow generalizes to getAssistantWindows: to_bot fans out to every assistant frame present, to_surface is accepted from ANY of them. The security model is unchanged — direction checks now test set membership instead of identity with one frame, and the trusted-app + allow-list gates are untouched. getChatWindow stays supported and is the fallback when getAssistantWindows is not injected.
  */
 
 /**
@@ -43,7 +44,8 @@
  * @param {() => (string|null)} deps.getApp - TRUSTED app binding of the embedded surface (from the cockpit's own `?app=` resolution — never from a message).
  * @param {() => (string[]|null)} deps.getAllowedOps - the focused app's declared `surface.ops` (null/absent ⇒ treated as EMPTY — fail-closed).
  * @param {() => (Window|null)} deps.getSurfaceWindow - contentWindow of the app-surface iframe (looked up per message; the iframe is recreated on view changes).
- * @param {() => (Window|null)} deps.getChatWindow - contentWindow of the chat-rail iframe.
+ * @param {() => (Window|null)} deps.getChatWindow - contentWindow of the chat-rail iframe. Used as the single-assistant fallback when getAssistantWindows is not supplied.
+ * @param {() => Array<Window|null>} [deps.getAssistantWindows] - every assistant frame (docked chat rail + floating Jarvis orb panel); nulls are filtered. Inbound events fan out to all of them, and bot-direction events are accepted from any of them.
  * @param {(msg: object) => void} deps.postToShell - deliver a shell-targeted message (the ribbon's app-navigate dialect).
  * @param {string} deps.origin - the only origin accepted AND used for postMessage targeting.
  * @param {{ debug: Function, warn: Function }} [deps.logger] - optional logger (defaults to silent).
@@ -53,19 +55,33 @@ export function createSurfaceBridgeRelay(deps) {
   const { contract, getApp, getAllowedOps, getSurfaceWindow, getChatWindow, postToShell, origin } = deps;
   const logger = deps.logger || { debug: () => {}, warn: () => {} };
 
+  /**
+   * Every ASSISTANT frame in the shell — the docked chat rail AND the floating Jarvis orb panel,
+   * which is a real third participant the relay originally didn't know about (it iframes
+   * /api/jarvis/ and floats over every ?app= page). A surface's inbound events go to all of them
+   * because the operator may have either one open; the direction checks below are unchanged, they
+   * just now test membership of this set instead of identity with one frame.
+   */
+  function assistantWindows() {
+    if (deps.getAssistantWindows) return deps.getAssistantWindows().filter(Boolean);
+    const chatWin = getChatWindow();
+    return chatWin ? [chatWin] : [];
+  }
+
   /** Route one delivered event to its sibling frame (or the shell, for navigate). */
   function deliver(evt, event, direction) {
     const surfaceWin = getSurfaceWindow();
-    const chatWin = getChatWindow();
+    const assistants = assistantWindows();
     if (direction === 'to_bot') {
       // User-action events may only originate from the app's own surface iframe.
       if (!surfaceWin || evt.source !== surfaceWin) return { delivered: false, reason: 'emitter_not_surface' };
-      if (!chatWin) return { delivered: false, reason: 'no_chat_frame' };
-      chatWin.postMessage(event, origin);
+      if (!assistants.length) return { delivered: false, reason: 'no_chat_frame' };
+      for (const win of assistants) win.postMessage(event, origin);
       return { delivered: true, reason: 'ok', target: 'chat' };
     }
-    // Bot-driven events may only originate from the chat rail.
-    if (!chatWin || evt.source !== chatWin) return { delivered: false, reason: 'emitter_not_chat_rail' };
+    // Bot-driven events may only originate from an assistant frame — a surface must never be able
+    // to forge bot-direction events (for itself or for another app).
+    if (!assistants.some((win) => evt.source === win)) return { delivered: false, reason: 'emitter_not_chat_rail' };
     if (event.op === 'navigate') {
       // Navigation targets the SHELL: reuse the ribbon's existing dialect so RibbonNav
       // stays the one navigation authority (including its target-not-in-ribbon warning).
@@ -142,6 +158,12 @@ export async function bootSurfaceBridgeRelay(win = window) {
     },
     getSurfaceWindow: () => win.document.querySelector('.tool-view-container iframe')?.contentWindow ?? null,
     getChatWindow: () => win.document.getElementById('chatWorkspaceFrame')?.contentWindow ?? null,
+    // Both assistants, looked up per message: the docked rail and the floating Jarvis orb panel
+    // (jarvis-orb.js mounts #jarvisOrbPanel lazily and removes it on hide, so this can't be cached).
+    getAssistantWindows: () => [
+      win.document.getElementById('chatWorkspaceFrame')?.contentWindow ?? null,
+      win.document.querySelector('#jarvisOrbPanel iframe')?.contentWindow ?? null,
+    ],
     postToShell: (msg) => win.postMessage(msg, win.location.origin),
     origin: win.location.origin,
     logger: { debug: () => {}, warn: (m, d) => console.warn('[surface-bridge]', m, d) },

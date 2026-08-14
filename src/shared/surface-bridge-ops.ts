@@ -18,6 +18,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — hoisted the op-name vocabulary out of features/surface-bridge/types.ts so the swarm-apps manifest loader can validate `surface.ops` fail-closed without a feature→feature import.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the INBOUND `context` op: a surface describing WHAT IT IS SHOWING (screen, open record, digest) rather than reporting a user action. Why: the floating assistant had no way to learn which app screen the operator was on — POST /api/jarvis/ask carried only {message,sessionId,attachments}, so Jarvis correctly reported he had never been handed the open document. Modelled as its own op, not `event`, so the payload gets a real capped schema instead of a free-form data blob.
  *
  * @module shared/surface-bridge-ops
  */
@@ -33,8 +34,8 @@ export const SURFACE_BRIDGE_OUTBOUND_OPS = [
   'custom',
 ] as const;
 
-/** Inbound (surface → bot) ops: the user acted. */
-export const SURFACE_BRIDGE_INBOUND_OPS = ['select', 'field_change', 'submit', 'event'] as const;
+/** Inbound (surface → bot) ops: the user acted, or the surface described itself (`context`). */
+export const SURFACE_BRIDGE_INBOUND_OPS = ['select', 'field_change', 'submit', 'event', 'context'] as const;
 
 /** Every op name, both directions — the closed vocabulary a manifest's `surface.ops` may draw from. */
 export const SURFACE_BRIDGE_OPS = [...SURFACE_BRIDGE_OUTBOUND_OPS, ...SURFACE_BRIDGE_INBOUND_OPS] as const;
