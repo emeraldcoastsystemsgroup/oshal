@@ -59,20 +59,35 @@ scrape_configs:
   # stays autonomy level A0 and SwarmContainerDown deliberately excludes this job.
   - job_name: oshal-core
     metrics_path: /metrics
-    static_configs:
-      - targets:
-          - oshal-local-api:5000
-        labels:
-          tier: core
+    # DISCOVERED, NOT LISTED. Any container labelled `oshal.tier=core` is scraped the moment
+    # it starts. See the worker job below for why this stopped being a hand-written list.
+    docker_sd_configs:
+      - host: tcp://oshal-local-docker-proxy:2375
+        port: 5000
+        filters:
+          - name: label
+            values: ["oshal.tier=core"]
     relabel_configs:
       # `container` is the heal target AND the incident-key identity: canonicalizeAlert
       # (src/features/alert-triage/services/canonical-alert.ts resolveTarget) reads
       # labels.container FIRST, and the Stage D dependency map is keyed on exactly these
-      # oshal-local-* container names. Derived from the address so it can never drift.
-      - source_labels: [__address__]
-        regex: '([^:]+)(?::\d+)?'
+      # oshal-local-* container names. Docker reports it as "/oshal-local-api"; strip the slash.
+      - source_labels: [__meta_docker_container_name]
+        regex: '/?(.+)'
         target_label: container
         replacement: '$1'
+      # ONE TARGET PER CONTAINER. docker_sd emits a target per exposed port AND per attached
+      # network, so without these two an oshal runtime is discovered twice — once on :5000 (the
+      # metrics port, up) and once on :1455 (down, alerting forever). The `port:` setting above is
+      # only a fallback for containers that expose nothing, not a filter. Observed live 2026-08-13.
+      - source_labels: [__meta_docker_port_private]
+        regex: '5000'
+        action: keep
+      - source_labels: [__meta_docker_network_name]
+        regex: '.*oshal.*'
+        action: keep
+      - target_label: tier
+        replacement: core
 
   # ── The worker fleet ───────────────────────────────────────────────────────
   # Every bot container that runs the oshal-bot image. A target listed here but never
@@ -81,49 +96,48 @@ scrape_configs:
   # the last hour (see alert-rules.yml), so "never started" and "died" are distinct.
   - job_name: oshal-swarm-bots
     metrics_path: /metrics
-    static_configs:
-      - targets:
-          - oshal-local-task-manager:5000
-          - oshal-local-code-developer:5000
-          - oshal-local-devops:5000
-          - oshal-local-self-healing:5000
-          - oshal-local-code-reviewer:5000
-          - oshal-local-documentation-writer:5000
-          - oshal-local-research-bot:5000
-          - oshal-local-tester-bot:5000
-          - oshal-local-test-engineer:5000
-          - oshal-local-system-architect:5000
-          - oshal-local-queue-bot:5000
-          - oshal-local-weather-bot:5000
-          - oshal-local-facebook-bot:5000
-          - oshal-local-email-bot:5000
-          - oshal-local-oshal-developer:5000
-          - oshal-local-jarvis-bot:5000
-          - oshal-local-eats-bot:5000
-          - oshal-local-rides-bot:5000
-          - oshal-local-shopping-bot:5000
-          - oshal-local-spotify-bot:5000
-          - oshal-local-travel-bot:5000
-          - oshal-local-movies-bot:5000
-          - oshal-local-social-writer-bot:5000
-          - oshal-local-storage-bot:5000
-          - oshal-local-deck-builder-bot:5000
-          - oshal-local-finance-bot:5000
-          - oshal-local-trading-bot:5000
-          - oshal-local-identity-bot:5000
-          - oshal-local-general-bot:5000
-          - oshal-local-home-bot:5000
-          - oshal-local-cloud-ops-bot:5000
-          - oshal-local-rca-specialist:5000
-          - oshal-local-incident-response:5000
-          - oshal-local-incident-remediation:5000
-        labels:
-          tier: worker
+    # DISCOVERED, NOT LISTED — and this is the point.
+    #
+    # This job used to hand-list 34 targets. On 2026-08-11 career-bot was added to
+    # docker-compose.oshal-local.yml and never added here, so a running bot went unscraped:
+    # `up` never went 0 for it, SwarmContainerDown could not fire, and the ADR-119 self-healing
+    # ladder never engaged (BUG-15). The list was a second source of truth for "which bots exist",
+    # and it drifted the first time someone added a bot — which is what a second source of truth
+    # always does.
+    #
+    # Now Prometheus asks Docker. Every service inheriting the `x-bot-common` anchor carries
+    # `oshal.tier: worker`, so a new bot is scraped from its first second of life and the only way
+    # to be unmonitored is to not be an oshal runtime container at all. Nothing to remember, nothing
+    # to review, nothing to drift.
+    #
+    # A discovered container that is DOWN simply disappears from discovery rather than reporting
+    # up==0 — which is why SwarmContainerDown pairs `up == 0` with a `max_over_time(...[1h]) > 0`
+    # conjunct (alert-rules.yml): a target that was up in the last hour and is now absent still
+    # alerts, while one that never started stays inert. That conjunct was written for compose
+    # `profiles:` and carries this case unchanged.
+    docker_sd_configs:
+      - host: tcp://oshal-local-docker-proxy:2375
+        port: 5000
+        filters:
+          - name: label
+            values: ["oshal.tier=worker"]
     relabel_configs:
-      - source_labels: [__address__]
-        regex: '([^:]+)(?::\d+)?'
+      # Container NAME is the alert identity (see the core job). Docker reports "/oshal-local-x".
+      - source_labels: [__meta_docker_container_name]
+        regex: '/?(.+)'
         target_label: container
         replacement: '$1'
+      # ONE TARGET PER CONTAINER — see the core job above. A target per exposed port is the
+      # trap: :1455 is discovered alongside :5000 and is permanently down, which would make
+      # SwarmContainerDown fire for every healthy bot in the fleet.
+      - source_labels: [__meta_docker_port_private]
+        regex: '5000'
+        action: keep
+      - source_labels: [__meta_docker_network_name]
+        regex: '.*oshal.*'
+        action: keep
+      - target_label: tier
+        replacement: worker
 
   # Per-container disk/network detail where the host permits it. On Docker Desktop's
   # containerd image store this job scrapes fine but yields nothing for oshal containers

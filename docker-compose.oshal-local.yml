@@ -59,6 +59,14 @@ x-bot-common: &bot-common
   command: >
     sh -c "exec bash /app/scripts/bot-entrypoint.sh"
   restart: unless-stopped
+  # MONITORING IS INHERITED, NOT REGISTERED. Prometheus discovers every oshal runtime
+  # container by this label (docker_sd_configs in ops/monitoring/prometheus.yml), so a new
+  # bot is scraped the moment it starts and no one can forget a step. The previous design
+  # hand-listed 34 targets in prometheus.yml; career-bot was added to this file on 2026-08-11
+  # and simply never appeared in that list (BUG-15) — a class of defect this makes impossible.
+  # `oshal-api` overrides tier to `core`; everything else inheriting this anchor is a worker.
+  labels:
+    oshal.tier: worker
   networks:
     - oshal
 
@@ -706,6 +714,11 @@ services:
   oshal-api:
     <<: *bot-common
     container_name: oshal-local-api
+    # Overrides the anchor's `oshal.tier: worker`. alert-rules.yml scopes crash-loop / memory /
+    # CPU rules to job="oshal-swarm-bots" and liveness to job="oshal-core" — this label is what
+    # keeps the controller out of the worker rules after the move to service discovery.
+    labels:
+      oshal.tier: core
     # Reach the host dev-node (ADR-077 Option B) at host.docker.internal — the api proxies
     # super-admin self-edit sessions to the engine running on the host.
     extra_hosts:
@@ -819,8 +832,8 @@ services:
       REMOTE_CLIENT_SHARED_SECRET: ${REMOTE_CLIENT_SHARED_SECRET:-}
       # Retire the swarm-wide secret as a credential: with this on, a worker node must
       # present its OWN per-device token (POST /api/join/enroll -> oshal_pat_ bound to one
-      # clientId), so a leaked copy of one node credential reaches one node. Fail-closed
-      # and reversible -- a refusal logs shared_secret_retired, so flipping it back is a
+      # clientId), so a leaked copy of one node's credential reaches one node. Fail-closed
+      # and reversible -- a refusal logs "shared_secret_retired", so flipping it back is a
       # one-line rollback. This is what lets the cockpit hand a user a one-click installer
       # without putting a swarm-wide credential in a download.
       REMOTE_CLIENT_REQUIRE_NODE_TOKEN: ${REMOTE_CLIENT_REQUIRE_NODE_TOKEN:-true}
@@ -2675,6 +2688,16 @@ services:
     command: tunnel run
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+      # Force HTTP/2 (TCP) instead of the default QUIC (UDP). Long-lived UDP flows
+      # get dropped by consumer NAT and the WSL2 network stack: the 2026-07-23..08-12
+      # logs carried 5,549 "failed to dial to edge with quic: timeout: no recent
+      # network activity" errors, peaking near 300/hour on 08-10. Each time all four
+      # connectors dropped together the edge had no connector to route to and EVERY
+      # tunnel hostname returned 502 until they re-registered. TCP survives flaky NAT.
+      # NOTE: the var is TUNNEL_TRANSPORT_PROTOCOL (the env binding for the --protocol
+      # flag). TUNNEL_PROTOCOL looks right, is silently ignored, and cloudflared logs
+      # "Initial protocol quic" as if nothing was set. Verify in the log, not the env.
+      TUNNEL_TRANSPORT_PROTOCOL: ${CLOUDFLARE_TUNNEL_PROTOCOL:-http2}
     restart: unless-stopped
     networks:
       - oshal
