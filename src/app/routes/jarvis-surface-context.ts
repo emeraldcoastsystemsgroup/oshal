@@ -31,6 +31,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — normalizeAskSurfaceContext (real-contract validation of the /ask `context` field) + buildSurfaceContextPrompt (authoritative-context block + the oshal:surface fence contract, ops scoped to what the surface declared).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Teach the surface's OWN `custom` op names (ctx.customOps), and DROP `custom` from the advertised set when it declared none. Found by live test, not by a spec: told only that `custom{name,data}` existed, Jarvis emitted `update_master_resume_summary` where Resume Studio listens for `resume_action` — the op was well-formed, relayed, delivered, and silently discarded while the user was told "Done". Advertising a capability whose vocabulary the model has to guess produces confident lies, so it is no longer advertised unguessed.
  *
  * @module jarvis-surface-context
  */
@@ -79,7 +80,12 @@ function describeScreen(ctx: AskSurfaceContext): string[] {
  * @returns the fence-contract lines, or '' when nothing is drivable.
  */
 function describeCapabilities(ctx: AskSurfaceContext): string {
-  const ops = (ctx.can || []).filter((op) => DRIVABLE.has(op));
+  const declared = (ctx.can || []).filter((op) => DRIVABLE.has(op));
+  const customOps = ctx.customOps || [];
+  // `custom` without declared names is a TRAP: the model emits a plausible invented name, the op
+  // relays and delivers correctly, and the surface ignores it while the user is told it happened.
+  // Drop it from the advertised set rather than invite a silent no-op.
+  const ops = declared.filter((op) => op !== 'custom' || customOps.length > 0);
   if (!ops.length) {
     return 'You cannot change this screen directly — talk it through with the user, or hand off to '
       + 'the app\'s own bot. Do NOT claim you edited anything here.';
@@ -91,10 +97,27 @@ function describeCapabilities(ctx: AskSurfaceContext): string {
     `{"ops":[{"op":"<one of the above>", ...}]}`,
     '```',
     'Each op needs its own fields — set_field {field,value}; set_content {region,content};',
-    'notify {level,text}; propose {actionId,summary}; render_options {options:[{id,label}]};',
-    'custom {name,data}. Emit the fence ONLY when the user actually asked for a change; a question',
-    'or a discussion gets a normal reply with no fence. Never describe the fence to the user.',
+    'notify {level,text}; propose {actionId,summary}; render_options {options:[{id,label}]}.',
+    ...describeCustomOps(customOps),
+    'Emit the fence ONLY when the user actually asked for a change; a question or a discussion gets',
+    'a normal reply with no fence. Never describe the fence to the user.',
   ].join('\n');
+}
+
+/**
+ * @description Render the surface's own `custom` op vocabulary. The `name` must match EXACTLY —
+ * an invented name is delivered and then silently ignored, so the instruction is emphatic.
+ * @param customOps - the names + payload shapes the surface declared.
+ * @returns prompt lines, or [] when the surface declared none.
+ */
+function describeCustomOps(customOps: NonNullable<AskSurfaceContext['customOps']>): string[] {
+  if (!customOps.length) return [];
+  return [
+    'For `custom`, this screen handles EXACTLY these names — use one of them VERBATIM as `name`.',
+    'A name you invent is silently discarded, and you will have told the user you did something',
+    'that did not happen:',
+    ...customOps.map((op) => `- custom {"name":"${op.name}","data":{…}} — ${op.description}`),
+  ];
 }
 
 /**

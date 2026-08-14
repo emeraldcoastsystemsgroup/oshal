@@ -24,6 +24,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the manifest-keyed surface-bridge event union (outbound bot→surface + inbound surface→bot), a superset of the presentations/Little-Monsters shapes, with a channel discriminator + version so a cockpit relay can filter/route generically.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | OUTBOUND_OPS/INBOUND_OPS now re-export the shared vocabulary (@/shared/surface-bridge-ops) so the swarm-apps manifest loader validates `surface.ops` against the SAME closed list without a feature→feature import. Values unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ContextSchema — the inbound `context` op carrying a surface's AMBIENT state (screen, open record, capped digest) to the floating assistant. Every field is capped in the schema because this is the one payload designed to reach a model prompt. `can` is advisory: the relay's manifest allow-list stays the enforcement boundary.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ContextSchema.customOps — the `custom` op NAMES a surface handles, with each payload shape. Found by live test: `can:['custom']` tells an assistant it may send a custom op but not which name, so it invented `update_master_resume_summary` where Resume Studio listens for `resume_action`. The op relayed and delivered correctly and was then silently ignored while the user was told "Done" — a silent no-op, the worst failure mode here.
  *
  * @module features/surface-bridge/types
  */
@@ -117,6 +118,23 @@ export const ContextSchema = z.object({
   /** Ops the surface says it can honour right now. ADVISORY ONLY — the relay's per-app
    *  manifest allow-list remains the enforcement boundary; this just lets the prompt be specific. */
   can: z.array(z.string().max(60)).max(24).optional(),
+  /**
+   * The `custom` op names this surface actually HANDLES, with the payload each expects.
+   *
+   * Required in practice whenever `can` includes 'custom': the generic vocabulary tells an
+   * assistant it may send `custom{name,data}` but not WHICH name, so it invents a plausible one
+   * and the surface silently ignores it. Observed live 2026-08-13: asked to tighten a resume
+   * summary, Jarvis emitted a well-formed `custom` op named `update_master_resume_summary` while
+   * Resume Studio listens only for `resume_action` — relayed, delivered, dropped on the floor,
+   * with the user told "Done". Silent no-op is the worst failure mode available here, so the
+   * surface must publish its own vocabulary.
+   */
+  customOps: z.array(z.object({
+    /** Exact `name` the surface's handler matches on. */
+    name: z.string().min(1).max(60),
+    /** What it does and the exact `data` shape it expects — this reaches the prompt verbatim. */
+    description: z.string().min(1).max(600),
+  })).max(12).optional(),
 });
 
 export const InboundEventSchema = z.discriminatedUnion('op', [SelectSchema, FieldChangeSchema, SubmitSchema, EventInSchema, ContextSchema]);

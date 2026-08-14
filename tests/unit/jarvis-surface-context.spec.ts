@@ -150,7 +150,12 @@ describe('buildSurfaceContextPrompt — what the turn is actually told', () => {
   });
 
   it('teaches the fence ONLY for ops the surface said it can honour', () => {
-    const block = buildSurfaceContextPrompt(normalizeAskSurfaceContext(envelope));
+    // `custom` here carries declared names, so it survives; see the "does NOT advertise custom"
+    // case below for the unnamed variant.
+    const block = buildSurfaceContextPrompt(normalizeAskSurfaceContext({
+      ...envelope,
+      customOps: [{ name: 'resume_action', description: 'Edit this resume.' }],
+    }));
     expect(block).toContain('```oshal:surface');
     expect(block).toContain('custom, notify');
     // An op the surface never claimed must not be advertised as available.
@@ -161,6 +166,32 @@ describe('buildSurfaceContextPrompt — what the turn is actually told', () => {
     const block = buildSurfaceContextPrompt(normalizeAskSurfaceContext({ ...envelope, can: [] }));
     expect(block).toMatch(/cannot change this screen directly/i);
     expect(block).not.toContain('```oshal:surface');
+  });
+
+  // Regression: found LIVE, not by a spec. Told only that `custom{name,data}` existed, Jarvis
+  // emitted `update_master_resume_summary` where the surface listens for `resume_action` — the op
+  // was well-formed, relayed, delivered, and silently discarded while the user was told "Done".
+  it('names the surface\'s OWN custom ops verbatim, so the model cannot invent one', () => {
+    const block = buildSurfaceContextPrompt(normalizeAskSurfaceContext({
+      ...envelope,
+      customOps: [{ name: 'resume_action', description: 'Edit this resume. data = {"actions":[...]}' }],
+    }));
+    expect(block).toContain('"name":"resume_action"');
+    expect(block).toMatch(/VERBATIM/);
+    expect(block).toMatch(/silently discarded/i);
+  });
+
+  it('does NOT advertise `custom` when the surface declared no names for it', () => {
+    // Advertising an op whose vocabulary the model must guess produces a confident lie.
+    const block = buildSurfaceContextPrompt(normalizeAskSurfaceContext(envelope));
+    expect(block).toContain('notify');
+    expect(block).not.toMatch(/Ops available here:[^\n]*custom/);
+  });
+
+  it('still advertises the surface\'s other ops when custom is dropped', () => {
+    const block = buildSurfaceContextPrompt(normalizeAskSurfaceContext(envelope));
+    expect(block).toContain('```oshal:surface');
+    expect(block).toMatch(/Ops available here: notify/);
   });
 
   it('is empty with no context — the turn is unchanged from before this feature', () => {
