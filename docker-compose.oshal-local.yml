@@ -817,6 +817,13 @@ services:
       # Must match the "Shared secret" field in the app's Config screen. Set the value
       # in .env (REMOTE_CLIENT_SHARED_SECRET=...). Empty → only OIDC-session auth works.
       REMOTE_CLIENT_SHARED_SECRET: ${REMOTE_CLIENT_SHARED_SECRET:-}
+      # Retire the swarm-wide secret as a credential: with this on, a worker node must
+      # present its OWN per-device token (POST /api/join/enroll -> oshal_pat_ bound to one
+      # clientId), so a leaked copy of one node credential reaches one node. Fail-closed
+      # and reversible -- a refusal logs shared_secret_retired, so flipping it back is a
+      # one-line rollback. This is what lets the cockpit hand a user a one-click installer
+      # without putting a swarm-wide credential in a download.
+      REMOTE_CLIENT_REQUIRE_NODE_TOKEN: ${REMOTE_CLIENT_REQUIRE_NODE_TOKEN:-true}
       REMOTE_CLIENT_AUTH_HEADER: ${REMOTE_CLIENT_AUTH_HEADER:-x-remote-client-key}
       ENABLE_QUEUE_MANAGER: "true"
       ENABLE_AGENT_SCHEDULER: "true"

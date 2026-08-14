@@ -35,6 +35,7 @@
  *   The mount relaxes to requiresAuth; the two secret-bearing endpoints self-gate to operator.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | POST /enroll accepts a clientId and mints a token BOUND to that device (hardening #7: cli-token node_client_id). A bound token is not an account credential - it authenticates only on that device's worker plane plus the enrollment handshake - which is what lets an edge machine hold a long-lived worker-plane credential instead of the swarm-wide REMOTE_CLIENT_SHARED_SECRET, and lets it be rotated (POST /api/remote-clients/:clientId/token/rotate) and revoked per node. Bound enrollments also get a longer default TTL, because the token IS the node's steady-state credential rather than a 60-minute handoff. Omitting clientId keeps the previous unbound behaviour verbatim.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Delegate the signed-in user's verified issuer into enrollment and node credentials so derived authentication preserves the complete principal namespace.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Mount GET /node-installer: the same per-device enrollment, delivered as a runnable script with the credential already in it.
  *
  * @module join-routes
  */
@@ -46,6 +47,7 @@ import { createChildLogger } from '@/shared/logger';
 import { getCaller, requireOperator } from '@/shared/middleware/authz';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { insertCliToken } from '@/app/routes/cli-token-routes';
+import { registerNodeInstallerRoute } from '@/app/routes/node-installer-routes';
 
 const logger = createChildLogger({ module: 'join-routes' });
 
@@ -133,6 +135,11 @@ function clampEnrollTtlMinutes(raw: unknown): number {
  */
 export function createJoinRoutes(apiDir: string, pool?: Pool): Router {
   const router = Router();
+
+  // GET /node-installer — the same enrollment, delivered as something the person can run
+  // rather than a token they have to paste. Lives in its own module because rendering a
+  // script with a credential in it deserves its own guards.
+  registerNodeInstallerRoute(router, pool ?? null);
 
   /**
    * POST /enroll — enroll a computer as MINE. Deliberately NOT operator-gated: a user attaching
