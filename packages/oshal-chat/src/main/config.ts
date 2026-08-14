@@ -132,8 +132,18 @@ function readEnvSeed(): Partial<OshalChatConfig> {
   const {
     OSHAL_CONTROL_PLANE_URL, OSHAL_SHARED_SECRET, OSHAL_AUTH_HEADER, OSHAL_CLIENT_NAME,
     OSHAL_WORKER_ENABLED, OSHAL_FULL_JARVIS, OSHAL_COCKPIT_PATH, OSHAL_COCKPIT_BASE_URL,
-    OSHAL_WAKE_NAME, OSHAL_ENROLLMENT_TOKEN,
+    OSHAL_WAKE_NAME, OSHAL_ENROLLMENT_TOKEN, OSHAL_CLIENT_ID,
   } = process.env;
+
+  // A DEVICE-BOUND token names the device it may register as, so when the swarm mints the
+  // credential first -- which is exactly what the cockpit's one-click installer does -- the
+  // node has to adopt that id rather than inventing its own. Without this the node minted
+  // `oshal-chat-<uuid>` on first run and the control plane refused it: "node-bound token
+  // named a different device". Seeded like every other value here, so a later launch reads
+  // the persisted id and the settings pane stays authoritative.
+  if (OSHAL_CLIENT_ID) {
+    seed.clientId = OSHAL_CLIENT_ID;
+  }
 
   if (OSHAL_ENROLLMENT_TOKEN) {
     seed.enrollmentToken = OSHAL_ENROLLMENT_TOKEN;

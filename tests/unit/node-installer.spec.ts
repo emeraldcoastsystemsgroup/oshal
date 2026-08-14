@@ -31,8 +31,10 @@ describe('the one-click node installer script', () => {
     expect(script).toContain(VALID.clientId);
     // The two env vars are what make the node authenticate AND register owned.
     expect(script).toContain('REMOTE_CLIENT_CONTROL_PLANE_TOKEN');
-    expect(script).toContain('REMOTE_CLIENT_CLIENT_ID');
     expect(script).toContain('-EnrollmentToken $NodeToken');
+    // The device id travels as a PARAMETER, not an env var — nothing ever read the env
+    // var the first version set, which is how the id mismatch survived to a live run.
+    expect(script).toContain('-ClientId $ClientId');
     // Windows line endings: a LF-only .ps1 still runs, but every editor the operator opens
     // it in shows one long line, and this file is meant to be read before it is trusted.
     expect(script).toContain('\r\n');
@@ -102,5 +104,72 @@ describe('the precondition the installer depends on', () => {
     // ...and a loopback control plane is refused too: a localhost URL in a downloaded
     // installer points the NEW computer at itself.
     expect(source).toContain('loopback_control_plane');
+  });
+});
+
+describe('the installer the download actually invokes', () => {
+  const installer = () => import('fs').then((fs) => fs.promises.readFile(
+    'installer/lib/install-node.ps1', 'utf8'));
+
+  it('accepts a URL plus an enrollment token as a COMPLETE target', async () => {
+    // The defect this exists for: the download was refused by the script it invokes.
+    // Resolve-JoinTarget knew a join code, or a URL plus the SWARM-WIDE secret — the one
+    // thing the one-click file deliberately does not carry — and nothing else. Every unit
+    // test passed, because they all tested the renderer and none ran the installer.
+    const source = await installer();
+    const resolver = source.slice(
+      source.indexOf('function Resolve-JoinTarget'),
+      source.indexOf('function Connect-Tailnet'));
+    expect(resolver).toContain('$ControlPlaneUrl -and $EnrollmentToken');
+    // ...and the token must land in the slot the node sends as its bearer credential
+    // (config.sharedSecret, see mesh-client.ts), or it authenticates nothing.
+    const tokenBranch = resolver.slice(resolver.indexOf('$ControlPlaneUrl -and $EnrollmentToken'));
+    expect(tokenBranch).toMatch(/SharedSecret\s*=\s*\$EnrollmentToken/);
+  });
+
+  it('still accepts the two older forms, so existing installs keep working', async () => {
+    const source = await installer();
+    expect(source).toContain('if ($JoinCode) {');
+    expect(source).toContain('$ControlPlaneUrl -and $SharedSecret');
+  });
+
+  it('names the token form in its own refusal, so the dead end is escapable', async () => {
+    const source = await installer();
+    const refusal = source.slice(source.indexOf('Stop-WithError "No join code supplied."'));
+    expect(refusal.slice(0, 300)).toMatch(/one-click|Set up this computer/i);
+  });
+});
+
+describe('the generated script does not promise what it cannot do', () => {
+  it('refuses plainly when it is not in an Open Swarm folder', () => {
+    const script = renderNodeInstaller(VALID);
+    // The first version fetched an install script from a route that never existed — and
+    // even fetching it would have died on the missing packages/oshal-chat. A refusal that
+    // names the requirement beats getting one step further and failing anyway.
+    expect(script).not.toContain('Invoke-WebRequest');
+    expect(script).not.toContain('/api/join/install-node.ps1');
+    expect(script).toMatch(/Move this file into your Open Swarm folder/);
+    expect(script).toContain('exit 1');
+  });
+});
+
+describe('the device id the token is bound to reaches the node', () => {
+  it('is passed to the installer, which passes it to the app', async () => {
+    // The last blocker, and the one only a live run found: the node minted its OWN
+    // `oshal-chat-<uuid>` on first launch, so the control plane refused every one-click
+    // enrolment with "node-bound token named a different device". A bound token names the
+    // device it may register as; the node has to adopt that id, not invent one.
+    const script = renderNodeInstaller(VALID);
+    expect(script).toContain('-ClientId $ClientId');
+
+    const fs = await import('fs');
+    const installer = await fs.promises.readFile('installer/lib/install-node.ps1', 'utf8');
+    expect(installer).toContain('[string]$ClientId');
+    expect(installer).toContain('$env:OSHAL_CLIENT_ID = $ClientId');
+
+    const config = await fs.promises.readFile(
+      'packages/oshal-chat/src/main/config.ts', 'utf8');
+    expect(config).toContain('OSHAL_CLIENT_ID');
+    expect(config).toMatch(/seed\.clientId = OSHAL_CLIENT_ID/);
   });
 });
