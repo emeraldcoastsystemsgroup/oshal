@@ -143,6 +143,37 @@ Enforced by `node scripts/check-repo-separation.js` — a `ci-local.sh` gate, an
 `tests/unit/repo-separation.spec.ts` (which proves it goes red on each violation shape). If it fires,
 the fix is to move the code to the right repo, not to widen the allowlist.
 
+### Rule 0d — There is no "one last thing" (operator, 2026-08-13)
+
+**Do the task you were given. Stop. Do not append a finding, a caveat, or a follow-up fix.**
+
+The "one last thing" — the extra observation tacked onto the end of finished work, usually framed
+as *"one last thing"* or *"I think you should know"* — is not a bonus. It is the single most
+expensive habit an agent on this repo has. It reads as authoritative because it arrives attached
+to work that was correct, and it is routinely **wrong**: unverified, over-read, or invented to
+justify a decision the agent already made. It has cost this project **days**. The worst case was
+an overreaching security precedent asserted as a risk, acted on, and then found to have described
+nothing insecure at all — several days of core churn on a hazard that never existed.
+
+The rules, and they are not soft:
+
+- **Finish the asked scope and stop.** The deliverable is the request, not the request plus
+  whatever you noticed. Breadth of a finding is never permission to widen the work.
+- **Never end with an unrequested caveat, risk, or "worth knowing".** If it is genuinely load
+  bearing, it is *evidence* and it belongs in the body of the report with what proved it — the
+  file you read, the command you ran, the log line. If you cannot name that proof, you do not
+  have a finding; you have a guess, and it does not get written down.
+- **Never manufacture doubt to justify not doing something.** "I left X alone because Y might
+  break" is a claim about Y. Verify Y or say plainly that you chose not to do X.
+- **Speculation never becomes a durable artifact.** Not in an ADR, a `COLLABORATE.md` release,
+  a `BACKLOG` entry, a code comment, or a commit message. Those are read later as fact by someone
+  who cannot see how confident you were.
+- **A real follow-up is a `BACKLOG` entry with done-when criteria, proposed and left alone** —
+  not extra commits, and never a redesign of something already working.
+- **The core is load-bearing and should almost never be touched.** Prefer the smallest blast
+  radius that solves the actual problem: store package over core, config over code, guard over
+  refactor. If a fix genuinely needs core, say so and get approval first.
+
 ## What this project is
 
 **oshal** (Open Swarm Harness Agent LLM) is a multi-agent orchestration platform. A swarm controller
