@@ -325,12 +325,26 @@ deployment are in that state). That is a new capability, not this defect — log
 All three entries below came out of a single `npx vitest run` over the whole unit corpus on
 2026-08-13, run in passing during unrelated Jarvis surface-bridge work. **None of the three specs
 imports anything that change touched** — every one of them was already red on committed `main`
-before that session opened. That is the finding underneath all three: nothing on an automatic path
-had said so. `.github/workflows/ci.yml:43-44` is `on: workflow_dispatch:` and nothing else (line 24
-forbids adding `push:`/`schedule:`/`pull_request:`), `.githooks/pre-push` runs `publish-gate.sh` plus
-a committed-HEAD `tsc --noEmit` and no tests, and `scripts/ci-local.sh:225` (`gate_unit`) is the only
-thing that runs `npm run test:unit` — by hand. `gh pr checks 186` returns exactly one check: `gate`,
-5s.
+before that session opened.
+
+> **CORRECTION (2026-08-13, same day).** This header originally read *"nothing on an automatic path
+> had said so"*, and cited `ci.yml` being `workflow_dispatch`-only plus a `schtasks` query that
+> returned nothing. **That was wrong.** The scheduled task `OSHAL Local CI` exists, runs nightly at
+> 23:30, ran on 2026-08-12 with `LastTaskResult 1`, and emailed the operator. Something did say so —
+> every night. The `schtasks` grep produced no output at all under Git Bash and an empty result was
+> misread as absence. The true finding is worse and is filed as **BUG-22**: the nightly gate has
+> failed **twelve consecutive nights** with `unit` red every time, so a *new* red inside it is
+> invisible. A permanently-red gate does not fail loudly; it fails uniformly, which is the same as
+> silence. Note also that `unit` was already red on 2026-08-03, eight days before PR #186 landed the
+> two guards these entries attribute the redness to. Read every "nothing said so" claim in the three
+> entries below through this correction.
+
+What remains true and verified: `.github/workflows/ci.yml:43-44` is `on: workflow_dispatch:` and
+nothing else (line 24 forbids adding `push:`/`schedule:`/`pull_request:`, and
+`scripts/check-workflow-triggers.js` enforces it — that design is deliberate and correct),
+`.githooks/pre-push` runs `publish-gate.sh` plus a committed-HEAD `tsc --noEmit` and no tests, and
+`scripts/ci-local.sh:225` (`gate_unit`) is what the nightly invokes. `gh pr checks 186` returns
+exactly one check: `gate`, 5s.
 
 One honest caveat on reading any full-suite number from that sweep: the tier is **not hermetic**, and
 its red count moved between runs on the same box (3, 5, and 11 failing tests observed at different
@@ -731,3 +745,198 @@ controller-side collaborator the boundary no longer uses.
   pre-strip reply out of the bot container log, because the clean answer and the persisted turn
   both have the fence already removed. A success-path log line would have made the mismatch
   visible in one grep.
+
+## BUG-19 — A stale-revision incident patch is discarded, leaving the incident permanently unlinked with no error and no log
+- **Type:** Bug (silent data loss) · **Priority:** High · **Status:** OPEN
+- **Discovered:** 2026-08-13, split out of BUG-16's verification, which explicitly refused to close
+  it with a test-isolation fix. Independently re-verified against the tree before filing.
+
+**This is product code, not test fallout.** `IncidentStore.updateIncident`
+(`src/features/alert-pipeline/services/incident-store.ts:536`) is an optimistic-concurrency write —
+`WHERE incident_id = $1 AND revision = $2 ... RETURNING *` (`:549-551`) — returning
+`IncidentRow | null`, where `null` means *the revision moved under me and nothing was updated*
+(`:554`). That is deliberately not an error: `null` is the caller's signal to re-read and retry.
+
+**The one caller that matters throws that signal away.** `src/app/routes/alertmanager-routes.ts:707`
+awaits `incidents.updateIncident(incident.incidentId, incident.revision, { ticketId: decided.ticketId })`
+with the result unassigned, unchecked, and unlogged. When the revision has moved — exactly what
+contention produces — the ticket link is silently never written. The incident row stays in
+`oshal_incident` with a NULL `ticket_id` **forever**: nothing retries it, because the event was
+already stamped decided, and nothing reports it, because `updateIncident` logs the miss only at DEBUG
+(`:553`, `applied: result.rowCount`) and the route logs nothing at all.
+
+**Why this, and not the race, is the likely cause of the observed symptom.** BUG-16's red signature is
+`expected null to be truthy` at `alert-incident-cutover.spec.ts:148` — an incident whose `ticket_id`
+is NULL. A `ticket_id` stamped by a competing consumer is *truthy*, so that path reddens the
+following assertion, not this one. A NULL `ticket_id` has exactly two in-code origins and both are
+here: this discarded return, and a throw inside `recordIncident` (which at least logs at ERROR,
+`alertmanager-routes.ts:723-730`, but still leaves the event decided so nothing retries the link).
+ADR-125's whole premise is that the incident is a row pointing at its ticket; an unlinked incident is
+that premise quietly failing.
+
+**Fix:** capture the return. On `null`, re-read the incident and retry the patch against the fresh
+revision (bounded); if it still fails, log at ERROR with `incidentId`/`revision` — the same honesty
+`recordIncident`'s own failure path already shows. Do not silently proceed. Audit the other
+`updateIncident` callers for the identical shape in the same pass.
+
+**Prevention (guard-per-fix):** a spec that drives a genuine revision conflict — patch once to bump
+the revision, then call with the stale revision — and asserts the link is either applied or loudly
+reported, never dropped. Per the integration-boundary corollary this needs a real store against the
+enforcing role, not a mocked one: the defect *is* the database's optimistic-concurrency behaviour.
+More generally: **a function returning `T | null` to signal "your write did not happen" must never be
+called with `await` alone.** Worth a lint rule if a second instance turns up.
+
+## BUG-20 — Incident writes run on the pool inside the claiming transaction, so they survive a rollback that reverts the claim
+- **Type:** Bug (lost atomicity) · **Priority:** Medium · **Status:** OPEN
+- **Discovered:** 2026-08-13, split out of BUG-16's verification. **The verifier corrected the
+  documented rationale as well as the code**, and both halves are recorded here.
+
+**The invariant is explicit.** `EnvelopeStore.withPendingEvents`
+(`src/features/alert-pipeline/services/envelope-store.ts:616`) claims events `FOR UPDATE SKIP LOCKED`
+and runs the handler *inside* that transaction, so a crash reverts the rows to pending rather than
+stranding them claimed. Its contract says so at `:609-610`: *"The handler receives the transaction
+client and MUST use it for its own writes."*
+
+**The handler does not honour it.** `IncidentStore` issues its writes on `this.pool` — `:472-473`
+(`findLatestInstance` / `upsertLive`), `:552` (the `updateIncident` patch), `:572` and `:601`
+(member upsert / resolve) — and `dispatch-log.ts:165` does the same. Those run on a *different
+connection*, outside the claiming transaction.
+
+**The stated reason for the rule is wrong, and the real consequence is worse than the stated one.**
+The comment predicts a deadlock ("a write issued on the pool would wait on locks this transaction
+holds"). It does not deadlock: the claim transaction locks rows in `oshal_alert_event` only, while
+these writes touch `oshal_incident`, `oshal_incident_member`, and `oshal_alert_dispatch` — no lock
+overlap, which is why this has never hung and why nobody noticed. The actual consequence is **loss of
+atomicity**: if the handler throws after these writes, or the claim transaction rolls back for any
+reason, the incident/member/dispatch rows are already committed while the event returns to `pending`
+and is re-consolidated on the next sweep. Duplicate or orphaned incident state, produced by a
+mechanism designed to make exactly that impossible.
+
+**Fix:** thread the transaction client through the handler to `IncidentStore` and `dispatch-log` (an
+executor parameter defaulting to the pool for the non-transactional callers) so every write in a
+claim lands on the claiming connection. **Correct the invariant's comment in the same change** — it
+should say "so the handler's writes commit and roll back with the claim", not "or it will deadlock".
+A rule justified by a consequence that cannot occur is a rule people learn to disregard.
+
+**Prevention (guard-per-fix):** a spec that makes the handler throw after an incident write and
+asserts no `oshal_incident` row survives once the event is back to `pending`. Real database, real
+transaction — mocking the executor here would mock precisely the boundary the defect lives on.
+
+## BUG-21 — The monitoring overlay is not running, nothing starts it, and nothing notices it is gone
+- **Type:** Bug (observability / operational) · **Priority:** High · **Status:** OPEN
+- **Discovered:** 2026-08-13 while triaging BUG-15, which recommended filing this separately because
+  a cross-file config guard cannot see a dead process. Verified directly against the box.
+
+**The observer is the one component nothing observes.** `docker ps -a`: `oshal-local-prometheus` —
+**Exited (255) 11 days ago** (2026-08-02), *despite* `restart: unless-stopped` in
+`docker-compose.monitoring.yml`; its last log line is a `SwarmContainerDown` rule evaluation that
+"timed out in expression evaluation". `oshal-local-alertmanager` — **Exited (0) 7 days ago**.
+cAdvisor likewise.
+
+**Nothing brings it back.** `grep -c monitoring scripts/oshal-up.sh scripts/oshal-deploy.sh` returns
+**0 and 0**. The overlay starts only from `scripts/monitoring-up.sh`
+(`COMPOSE_FILE=docker-compose.monitoring.yml`), by hand. So the documented recovery path after an
+engine restart — `bash scripts/oshal-up.sh` — brings the swarm up monitored in name only, and
+`oshal-deploy.sh` does the same on every deploy.
+
+**What is inert while it is down:** every rule in `ops/monitoring/alert-rules.yml`; the
+`SwarmContainerDown` signal; the ADR-119 self-healing ladder that hangs off it; and the alert-intake
+half of the ADR-125 operations stream, since no alert is generated to intake. `up` never goes 0
+because nothing is being scraped. A container can die and nothing anywhere notices — the 2026-08-01
+drill this tooling was built for is currently un-runnable.
+
+**A green deploy is not evidence of monitoring.** `scripts/oshal-deploy.sh` prints
+`census: N healthy / N app containers` and `0 unhealthy` from Docker's own healthchecks. That line
+printed truthfully three times on 2026-08-13 while nothing had been scraped for eleven days. Docker
+healthchecks and the monitoring overlay are independent; do not read one as the other.
+
+**Fix:** two parts, and the second is the one that lasts. (1) `bash scripts/monitoring-up.sh` to
+restore the overlay, and root-cause the exit 255 — `restart: unless-stopped` did not bring it back,
+meaning it exited in a way Docker treated as final, which itself wants explaining. (2) Bring the
+overlay up as part of `scripts/oshal-up.sh` (already the ordered bring-up path and already tier-aware),
+or state explicitly in that script and the deploy runbook that monitoring is a separate operator
+action. The current silence is what let eleven days pass.
+
+**Prevention (guard-per-fix):** a liveness check, not a config check. `deploy-parity-check.sh` (or
+`oshal-up.sh`'s census) should assert Prometheus is up and has scraped within the last N minutes —
+one request against `/-/healthy` plus an `up` query — and warn loudly otherwise.
+`swarm-container-health-signal.spec.ts` is closure evidence for the scrape **config** boundary and
+cannot be closure evidence for the scraper **running**; per the integration-boundary rule those are
+different boundaries needing different guards.
+
+## BUG-22 — The nightly gate has failed twelve consecutive nights, emailed every time, and nothing changed
+- **Type:** Bug (process / ignored signal) · **Priority:** High · **Status:** OPEN
+- **Discovered:** 2026-08-13, while establishing why BUG-15 and BUG-17 reached `main` unannounced.
+  **This entry is the corrected version of a claim that was wrong twice over, and the correction is
+  the finding** — recorded here in full so it is not repeated.
+
+**What was claimed, and why it was false.** The first triage of BUG-15/16/17 concluded that "nothing
+on an automatic path said these were red": `ci.yml` is `workflow_dispatch`-only, `.githooks/pre-push`
+runs no tests, and `schtasks /query | grep -i nightly` returned nothing, so the banner's "single
+nightly run on the operator's machine" was written up as *documented but not scheduled*. **Both the
+subagent that reported it and the verification of that report were wrong.** The `schtasks` query
+produced no output at all under Git Bash — an empty result was read as "no such task" rather than
+"the command returned nothing". `Get-ScheduledTask` shows the truth:
+
+- Task **`OSHAL Local CI`**, State `Ready`, `MSFT_TaskDailyTrigger @ 23:30`, action
+  `wscript.exe //B //Nologo C:\Projects\oshal\scripts\ci-local-hidden.vbs`.
+- Last run **2026-08-12 23:30:01**, **LastTaskResult `1`**, next run scheduled.
+
+So the gate exists, is scheduled, runs unattended, propagates a real exit code (that is exactly what
+`ci-local-hidden.vbs` change-log entry 3 was for), **and notifies**: the run log ends
+`SEND_OK id=19ff9a23208e1edc to=rogermmurphy@gmail.com` (`TG_SKIP not-configured`). Every mechanism
+this repo built for unattended CI worked correctly.
+
+**The actual defect is what happened next: nothing.**
+`%LOCALAPPDATA%\oshal\ci-local.log` holds 53 recorded outcomes. The last twelve:
+
+```
+2026-08-02  FAILED gates: head-src node-gates-skipped secret-scan image-build …
+2026-08-03  FAILED gates: unit e2e-green trivy
+2026-08-04  FAILED gates: unit secret-scan unpushed-commits e2e-green trivy
+2026-08-04  FAILED gates: unit e2e-green trivy
+2026-08-06  FAILED gates: unit worktree-strays unpushed-commits e2e-green trivy
+2026-08-06  FAILED gates: unit worktree-strays secret-scan e2e-green
+2026-08-07  FAILED gates: unit secret-scan e2e-green image-build …
+2026-08-08  FAILED gates: unit e2e-green trivy
+2026-08-09  FAILED gates: unit e2e-green trivy
+2026-08-10  FAILED gates: unit e2e-green trivy
+2026-08-11  FAILED gates: unit e2e-green trivy
+2026-08-13  FAILED gates: unit e2e-green trivy
+```
+
+**Twelve consecutive failed nights. Not one green run in the window. `unit`, `e2e-green` and `trivy`
+red every time**, and an email sent on each. This is the exact condition CLAUDE.md names — *"a red
+gate nobody acts on trains everyone to ignore red — fix it or explicitly quarantine it with a BACKLOG
+entry the same day"* — and it has been running for eleven days.
+
+**It also corrects the BUG-15/16/17 framing.** Those entries say the three specs reached `main`
+without anything saying so. Something did say so, nightly, by email. And the `unit` gate was already
+red on **2026-08-03**, eight days before PR #186 landed the two guards those entries blame — so the
+gate was not even reporting *those* failures when the streak began. The honest statement is not
+"there is no automatic gate"; it is **"the automatic gate has been red so long that a new red inside
+it is invisible."** A permanently-red gate does not fail loudly; it fails uniformly, which is the
+same as silence.
+
+**One smaller thing, verified and true.** `ci.yml` change-log entry 8 (`:15`) says CI runs on
+workflow_dispatch *"plus the PR gate (which effectively never fires on this trunk-based repo)"*.
+There is no PR gate — `on:` is `workflow_dispatch:` and nothing else (`:43-44`), and the banner three
+lines above forbids adding `pull_request:`. "Effectively never fires" describes a trigger that exists
+but is rarely hit; this one does not exist. The banner's *nightly* claim, by contrast, is accurate
+and should not be touched. **The manual-only hosted-CI design is intentional and correct, and nothing
+here argues for a `push:` trigger** — `scripts/check-workflow-triggers.js` exists to prevent exactly
+that and should keep doing so.
+
+**Fix:** drive the three standing gates to green or explicitly quarantine each with a dated BACKLOG
+entry naming what is deferred and why — `unit` (BUG-15/16/17 and the DB-backed specs; note BUG-16
+before running the suite against a live stack), `e2e-green`, `trivy` (a CVE budget decision, not a
+code fix). Then delete "plus the PR gate" from entry 8. Until the streak is broken, treat any claim
+that the nightly "covers" a change as false.
+
+**Prevention:** a red gate must escalate when it *stays* red, because a daily email that always says
+the same thing is wallpaper. Make the notifier state the streak ("FAILED — 12th consecutive night,
+first failure 2026-08-02") and say which gates are *newly* red versus already-known — a new failure
+inside a standing failure is the signal that is currently lost. And when a scheduled-task or
+service-liveness claim is being checked, **verify with a tool that distinguishes "absent" from "no
+output"**: `Get-ScheduledTask`, not a grep over a command that may print nothing. An empty result is
+not evidence of absence — that mistake is what produced the first version of this entry.
