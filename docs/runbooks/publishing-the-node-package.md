@@ -20,22 +20,39 @@ it needs a human because npm login is interactive.
 
 ## The steps
 
+The first three are in a browser and cannot be scripted. **There is no `npm org create`** — the
+CLI only manages members of an org that already exists (`npm org set|rm|ls`).
+
+1. **Account** — <https://www.npmjs.com/signup>, under the business email
+   (`maintainer@emeraldcoastsystemsgroup.com`), same rule as every other partner registration:
+   that account owns the package name permanently and receives the security alerts. Verify the
+   address; npm refuses to publish until you do.
+2. **2FA** — Settings → Two-Factor Authentication → Authenticator app. Required for publishing.
+   **Save the recovery codes somewhere durable**: losing both the authenticator and the codes
+   means losing the scope, and npm will not re-assign a name.
+3. **The org** — <https://www.npmjs.com/org/create>, name `oshal`, and pick the **Free** plan
+   (unlimited *public* packages, $0 — the paid tier only buys private ones). Skip the invite
+   step; members are addable later with `npm org set oshal <user> developer`.
+
+Then the terminal:
+
 ```bash
-cd packages/oshal-chat
-
-# 1. Authenticate. Interactive: browser + 2FA.
+# 4. Authenticate this machine. npm 11 opens a browser.
 npm login
+npm whoami          # confirms which identity is about to own the package
 
-# 2. Create the scope. Free for public packages; skip if @oshal already exists.
-npm org create oshal
-
-# 3. Look at what you are about to make permanent.
+# 5. Look at what you are about to make permanent.
+cd packages/oshal-chat
 npm pack --dry-run
 
-# 4. Publish. --access public is REQUIRED for a scoped package; without it npm
+# 6. Publish. --access public is REQUIRED for a scoped package; without it npm
 #    refuses (scoped packages default to restricted, which needs a paid plan).
 npm publish --access public
 ```
+
+An org is not strictly required — a *username* of `oshal` yields the same `@oshal/*` scope. The
+org is still the better choice: it survives a change of account owner and can hold several
+maintainers, neither of which a personal scope can do.
 
 Then confirm the thing that actually matters — that a stranger's machine can get it:
 
