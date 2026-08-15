@@ -181,10 +181,15 @@ const CMD_PREAMBLE = [
   'rem  Everything below the marker is plain PowerShell — read it before you trust it.',
   'setlocal',
   'set "OSHAL_SELF=%~f0"',
+  'rem  Resolve PowerShell by absolute path first. A bare `powershell` depends on PATH, and a',
+  'rem  PATH edited by an installer or a policy fails with "not recognized" — a message that',
+  'rem  sends the reader looking for a PowerShell problem they do not have.',
+  'set "OSHAL_PS=%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"',
+  'if not exist "%OSHAL_PS%" set "OSHAL_PS=powershell"',
   // The marker is assembled from two halves so this command line does not itself contain the
   // literal being searched for. Spelling it out here made IndexOf match THIS line and execute
   // the batch header as PowerShell — caught by running a downloaded copy, not by any test.
-  'powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:OSHAL_SELF);'
+  '"%OSHAL_PS%" -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:OSHAL_SELF);'
     + ` $m='${PS_MARKER.slice(0, 12)}'+'${PS_MARKER.slice(12)}';`
     + ' $i=$t.IndexOf($m); Invoke-Expression $t.Substring($i+$m.Length)"',
   'set "OSHAL_EXIT=%ERRORLEVEL%"',
