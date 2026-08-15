@@ -175,6 +175,51 @@ describe('the install path a bare machine can actually take', () => {
     expect(script).toMatch(/npm could not install/);
   });
 
+  it('parses the Node version with a literal split, never a regex one', () => {
+    // The defect: the source wrote -split "\." intending a literal dot, but '\.' in a
+    // JavaScript string literal is just '.', so the EMITTED PowerShell read -split "."
+    // — and -split takes a regex, where "." matches every character. "24.11.0" split that
+    // way yields 8 empty strings; [int]"" is 0; 0 -lt 20 reported Node 24 as too old. It
+    // failed identically on every machine, and no string-level test noticed because the
+    // source looked correct. Verified live: the fixed form parses v24.11.0 as 24.
+    const script = renderNodeInstaller(VALID);
+    expect(script).toContain('.Split(".")');
+    expect(script).not.toMatch(/-split\s+"\."/);
+    // Any regex-taking operator here is the same trap wearing a different hat.
+    expect(script).not.toMatch(/-split\s+"[^"]*\\/);
+  });
+});
+
+describe('the batch header that makes the download runnable', () => {
+  it('hands off to PowerShell with the policy bypass, so a double-click works', () => {
+    // A downloaded .ps1 is refused as "not digitally signed" under the default RemoteSigned
+    // policy, and right-click "Run with PowerShell" passes no bypass. A .cmd is outside
+    // execution policy entirely. Proven live against a Zone.Identifier-tagged file.
+    const script = renderNodeInstaller(VALID);
+    expect(script.startsWith('@echo off')).toBe(true);
+    expect(script).toContain('-ExecutionPolicy Bypass');
+    expect(script).toContain('Invoke-Expression');
+    expect(script).toContain('exit /b');
+  });
+
+  it('finds the marker BELOW the header, not the one inside the header', () => {
+    // The defect this exists for: the launcher line spelled the marker out literally, so
+    // IndexOf matched that line and executed the batch header as PowerShell. The symptom was
+    // a PowerShell parse error, and only running a rendered copy surfaced it.
+    const script = renderNodeInstaller(VALID);
+    const marker = '#___POWERSHELL_BELOW___';
+    // Reproduce exactly what the emitted command does: first occurrence wins.
+    const i = script.indexOf(marker);
+    expect(i).toBeGreaterThan(-1);
+    const executed = script.slice(i + marker.length);
+    // What follows must be the script, not the tail of the batch header.
+    expect(executed.trimStart().startsWith('# OSHAL worker node')).toBe(true);
+    expect(executed).not.toContain('@echo off');
+    expect(executed).not.toContain('exit /b');
+    // Exactly one literal occurrence: the marker line itself.
+    expect(script.split(marker).length - 1).toBe(1);
+  });
+
   it('seeds every value the node needs to come up owned and correctly identified', () => {
     const script = renderNodeInstaller(VALID);
     for (const seeded of ['OSHAL_CONTROL_PLANE_URL', 'OSHAL_SHARED_SECRET',

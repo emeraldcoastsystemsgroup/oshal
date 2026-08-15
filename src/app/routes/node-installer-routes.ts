@@ -74,6 +74,16 @@ export function renderNodeInstaller(options: {
   const lines = [
     '# OSHAL worker node - one-click install.',
     '#',
+    '# HOW TO RUN THIS: double-click it. Nothing else is needed.',
+    '#',
+    '# The batch header above re-launched PowerShell for this section with -ExecutionPolicy',
+    '# Bypass, which applies to THAT ONE RUN and changes no system setting. That is why this',
+    '# is a .cmd: a downloaded .ps1 is refused as "not digitally signed" on a default Windows,',
+    '# and nothing the person running it does at the double-click can fix that.',
+    '#',
+    '# If Windows shows a "the publisher could not be verified" prompt, that is the same tag',
+    '# on any downloaded file; Run answers it. Everything below is the whole script.',
+    '#',
     '# This file contains YOUR credential for THIS computer. Anyone who runs it enrols a',
     '# machine that receives work dispatched to you. Do not share it and do not commit it;',
     '# delete it once the computer appears in the cockpit. You can revoke it at any time from',
@@ -102,7 +112,11 @@ export function renderNodeInstaller(options: {
     '    Write-Host "  Install the LTS build from https://nodejs.org, then run this again."',
     '    exit 1',
     '}',
-    '$major = [int](($nodeVersion.TrimStart("v") -split "\.")[0])',
+    // .Split() and NOT -split: -split takes a REGEX, and the "\." that would make it a
+    // literal dot cannot survive a JavaScript string literal ('\.' is just '.'), so the
+    // emitted script silently split on "any character". Every element came back empty,
+    // [int]"" was 0, and 0 -lt 20 reported Node 24 as too old on every machine.
+    '$major = [int]($nodeVersion.TrimStart("v").Split(".")[0])',
     'if ($major -lt 20) {',
     '    Write-Host ""',
     '    Write-Host "Node.js 20 or newer is required (found $nodeVersion)." -ForegroundColor Yellow',
@@ -142,8 +156,42 @@ export function renderNodeInstaller(options: {
     'Write-Host "You can delete this file now." -ForegroundColor DarkGray',
     '',
   ];
-  return lines.join('\r\n');
+  return [...CMD_PREAMBLE, ...lines].join('\r\n');
 }
+
+/**
+ * The batch header that makes this file self-launching.
+ *
+ * A downloaded .ps1 is refused twice by Windows — the execution policy rejects unsigned
+ * scripts, and the download carries an internet tag that makes even RemoteSigned refuse.
+ * Both refusals say "is not digitally signed", and neither is fixable by the person who
+ * just wants their computer connected. Passing -ExecutionPolicy Bypass fixes it, but only
+ * if they knew to pass it, and right-click "Run with PowerShell" does not.
+ *
+ * A .cmd is not subject to execution policy at all. cmd runs the header, which re-launches
+ * PowerShell with Bypass over the rest of this same file, and stops at `exit /b` — so the
+ * PowerShell below is never parsed by cmd and its `%` and quoting mean nothing to it. The
+ * script stays plain readable text below the marker, which is what makes it auditable
+ * before it is trusted.
+ */
+const PS_MARKER = '#___POWERSHELL_BELOW___';
+const CMD_PREAMBLE = [
+  '@echo off',
+  'rem  OSHAL worker node installer. Double-click this file, or run it from a terminal.',
+  'rem  Everything below the marker is plain PowerShell — read it before you trust it.',
+  'setlocal',
+  'set "OSHAL_SELF=%~f0"',
+  // The marker is assembled from two halves so this command line does not itself contain the
+  // literal being searched for. Spelling it out here made IndexOf match THIS line and execute
+  // the batch header as PowerShell — caught by running a downloaded copy, not by any test.
+  'powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:OSHAL_SELF);'
+    + ` $m='${PS_MARKER.slice(0, 12)}'+'${PS_MARKER.slice(12)}';`
+    + ' $i=$t.IndexOf($m); Invoke-Expression $t.Substring($i+$m.Length)"',
+  'set "OSHAL_EXIT=%ERRORLEVEL%"',
+  'if not "%OSHAL_EXIT%"=="0" pause',
+  'exit /b %OSHAL_EXIT%',
+  PS_MARKER,
+];
 
 /**
  * @description Registers `GET /node-installer` on the join router.
@@ -210,7 +258,9 @@ export function registerNodeInstallerRoute(router: Router, pool: Pool | null): v
       // The token itself is never logged — only which device it was bound to.
       logger.info({ id: minted.id, sub, nodeClientId: clientId }, 'one-click node installer issued');
       res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Disposition', 'attachment; filename="install-oshal-node.ps1"');
+      // .cmd, not .ps1: a batch file is outside PowerShell's execution policy, so it runs on
+      // a double-click. A .ps1 is refused as "not digitally signed" on any default Windows.
+      res.setHeader('Content-Disposition', 'attachment; filename="install-oshal-node.cmd"');
       res.setHeader('Cache-Control', 'no-store');
       res.send(script);
     } catch (err) {
