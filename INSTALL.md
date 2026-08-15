@@ -34,7 +34,8 @@ flowchart TD
     Mode -->|"1: registry"| Pull["Pull GHCR image"]
     Mode -->|"2: source"| Build["Clone core repo and build image"]
     Mode -->|"3: leaf node"| Join["Validate control-plane URL and join code"]
-    Mode -->|"4: Kubernetes"| K8s["Print deploy/terraform instructions"]
+    Mode -->|"4: Kubernetes"| K8s["Install kubectl/helm, find or create a cluster"]
+    K8s --> Helm["helm install the chart, wait for health"]
     Pull --> Resolve["Resolve kernel services and requested external packages"]
     Build --> Resolve
     Resolve --> Secrets["Create operator-local environment and secrets"]
@@ -52,7 +53,7 @@ flowchart TD
 | **1 — Swarm, no source** (default) | Pulls `ghcr.io/emeraldcoastsystemsgroup/oshal-bot`, extracts the baked compose + config seeds, generates secrets, brings the swarm up. No repository needed. | Docker |
 | **2 — Swarm, from source** | `git clone` + `docker build` + the same bring-up, with live-editable bind mounts. The contributor path. | Docker + git |
 | **3 — Leaf-node bot** | Joins **an existing swarm** from this computer (desktop worker / browser driver / edge node). Needs the swarm's control-plane URL + a join code from its operator, and optionally an enrollment token that binds the node to *your* login. | the node app |
-| **4 — Kubernetes** | Prints the Terraform path (`deploy/terraform`) and starter command. This mode does not create or validate a cluster. | terraform + a cluster |
+| **4 — Kubernetes** | Installs the chart on a cluster with registry images — no source, no build. Installs `kubectl`/`helm` if missing, and stands up a cluster (k3s on Linux, kind where Docker is) when none is reachable. | nothing preinstalled; each prerequisite is offered |
 
 **Bundles** (`--bundle`) select kernel services and may request packages from the
 external `oshal-apps` store:
@@ -167,12 +168,42 @@ Copy the template, then edit only what you need:
 cp .env.example .env
 ```
 
-### Kubernetes mode is a handoff, not a one-click deployment
+### Kubernetes mode installs its own prerequisites
 
-Mode 4 deliberately stops after pointing to
-[deploy/terraform](deploy/terraform/) and its environment-specific instructions.
-It does not provision prerequisites, create a cluster, or run an end-to-end health
-check. Docker Compose modes 1 and 2 are the automated installer paths.
+Mode 4 is a real install, not a handoff (ADR-129):
+
+```bash
+bash oshal-install.sh --mode 4 --admin-email you@example.com
+# unattended (accepts every prerequisite install):
+bash oshal-install.sh --mode 4 --yes --admin-email you@example.com
+```
+
+It installs `kubectl` and `helm` when they are missing — from their official
+sources, into `/usr/local/bin` when writable, otherwise `~/.local/bin`, never a
+silent `sudo`. If no cluster is reachable it offers to stand one up: **k3s** on
+Linux (native, no Docker, survives reboot, NodePorts land on the host) or **kind**
+wherever Docker is running. Then it helm-installs the chart, waits for
+`/api/health`, and opens `/welcome`.
+
+Two rules it will not bend: **every system-touching step asks first** (a
+non-interactive shell declines rather than surprise-installing — pass `--yes` to
+consent up front), and it **refuses to create a kind cluster beside a running
+compose swarm**, because that pairing OOM-wedges a small Docker engine.
+
+Windows is the same story through winget:
+
+```powershell
+.\scripts\oshal-install.ps1 -Kubernetes -AdminEmail you@example.com
+```
+
+It offers `kubectl`, `Helm`, `kind`, and Docker Desktop by winget id, and re-reads
+`PATH` from the registry after each install so the run continues instead of
+telling you to open a new terminal. Docker Desktop's Kubernetes toggle is a GUI
+setting the installer deliberately does not poke at — kind gives the same result
+scriptably on the engine already installed.
+
+**Multi-user public tenants** belong on [deploy/terraform](deploy/terraform/)
+instead, whose real-OIDC and secret-minting posture guards are the point there.
 
 ## Install on Windows (no terminal)
 

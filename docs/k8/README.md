@@ -18,6 +18,12 @@ Windows (PowerShell):
 .\scripts\oshal-install.ps1 -Kubernetes -AdminEmail you@example.com
 ```
 
+You need **nothing preinstalled**: the installer offers to install `kubectl` and
+`helm`, and — when no cluster is reachable — to stand one up (**k3s** on Linux,
+**kind** wherever Docker is running; on Windows it offers Docker Desktop, kubectl,
+Helm and kind by winget id). Every step asks first; add `--yes` / `-Yes` for an
+unattended install.
+
 The installer preflights kubectl/helm, finds (or offers to create) a cluster,
 installs the [deploy/helm/oshal](../../deploy/helm/oshal/) chart from the
 published OCI package (repo fallback), exposes the cockpit on a NodePort, waits

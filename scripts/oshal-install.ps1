@@ -16,6 +16,7 @@
     .\scripts\oshal-install.ps1 -FromArchive C:\Downloads\oshal-swarm-offline.tar   # no internet
     .\scripts\oshal-install.ps1 -Dir D:\oshal -Tag 2.1.0-beta.1 -DryRun
     .\scripts\oshal-install.ps1 -Kubernetes -AdminEmail you@example.com   # helm install onto a cluster
+    .\scripts\oshal-install.ps1 -Kubernetes -Yes                          # unattended: install prereqs + cluster
 
   CHANGE LOG
   -----------------------------------------------------------------------------
@@ -27,6 +28,7 @@
   4 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: route package staging through the core installer so invalid audit bindings fail and enforce mode replaces packages from the exact audited SHA.
   5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: -Kubernetes — the codeless k8s install, lockstep with oshal-install.sh mode 4. kubectl/helm preflight (winget offers for both), cluster reachability check with crisp Docker-Desktop/kind guidance, chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full, the same AdminEmail→MOCK_OIDC identity wiring as the compose path (shared LocalSub, hoisted above the branch), NodePort exposure, /api/health postflight, /welcome open. New params: -Namespace, -K8sContext, -NodePort, -Chart, -Fleet.
   6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129 amendment: bundles/-Apps reach Kubernetes. The k8s branch moves BELOW bundle resolution so it installs the same curated app sets as compose (chart `packages:` staging + the fleet those bots need), auto-creating the private-store Secret when a token is present. Fixes a latent parameter bug found dry-running the new path: `-Apps a,b` is an ARRAY to PowerShell, so the [string] parameter threw a transformation error on the very syntax the bash installer and our closing instructions advertise — now [string[]], accepting both forms.
+  7 | maintainer@emeraldcoastsystemsgroup.com   | The k8s path INSTALLS its prerequisites instead of printing links and exiting (operator: the installer should include the prereqs). kubectl/Helm/kind/Docker Desktop are offered via winget, and the session PATH is re-read from the registry after each install so the run CONTINUES rather than demanding a new terminal. With no cluster reachable it stands up a kind cluster with the cockpit port mapped — Docker Desktop's Kubernetes toggle is a GUI setting we deliberately do not poke at, and kind gives the same result scriptably on the engine already installed; it still refuses to create one beside a running compose swarm. New -Yes accepts every prerequisite step for unattended installs, and a non-interactive host DECLINES rather than surprise-installing.
 #>
 [CmdletBinding()]
 param(
@@ -44,6 +46,8 @@ param(
   [switch]$NoAi,
   [switch]$DryRun,
   [switch]$Kubernetes,
+  # Accept prerequisite installs (kubectl/Helm/kind/Docker Desktop) without prompting.
+  [switch]$Yes,
   [string]$Namespace = "oshal",
   [string]$K8sContext = "",
   [int]$NodePort = 30500,
@@ -95,23 +99,32 @@ foreach ($p in ($Apps -split ',')) { if ($p.Trim()) { [void]$pkgSet.Add($p.Trim(
 if ($Kubernetes) {
   Say "Kubernetes install (helm + registry images - no source, no build)"
   $winget = Get-Command winget -ErrorAction SilentlyContinue
-  if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) {
-    Say "kubectl is not installed"
-    if ($winget) { Note "Install it:  winget install Kubernetes.kubectl   (Docker Desktop also ships one)" }
-    else { Note "Install kubectl: https://kubernetes.io/docs/tasks/tools/" }
-    exit 1
+
+  # winget writes PATH to the registry, not to this process. Re-read it so the
+  # install can CONTINUE instead of telling the user to open a new terminal.
+  function Update-SessionPath {
+    $env:PATH = ([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
   }
-  if (-not (Get-Command helm -ErrorAction SilentlyContinue)) {
-    Say "helm is not installed"
-    if ($winget -and [Environment]::UserInteractive -and -not $DryRun) {
-      $ans = Read-Host "   Install Helm now via winget? [Y/n]"
-      if ($ans -eq '' -or $ans -match '^[Yy]') {
-        winget install --id Helm.Helm --accept-source-agreements --accept-package-agreements
-        Note "Helm installed. Open a NEW terminal (PATH refresh) and re-run this installer."
-      } else { Note "Install Helm (winget install Helm.Helm) and re-run." }
-    } else { Note "Install Helm: winget install Helm.Helm  (or https://helm.sh/docs/intro/install/)" }
-    exit 1
+  function Confirm-Step([string]$prompt) {
+    if ($Yes) { return $true }
+    if (-not [Environment]::UserInteractive) { return $false }  # never surprise-install
+    $a = Read-Host "   $prompt [Y/n]"
+    return ($a -eq '' -or $a -match '^[Yy]')
   }
+  function Install-Tool([string]$label, [string]$id, [string]$exe, [string]$manualUrl) {
+    if (Get-Command $exe -ErrorAction SilentlyContinue) { return $true }
+    Say "$label is not installed"
+    if (-not $winget) { Note "winget is unavailable - install $label manually: $manualUrl"; return $false }
+    if (-not (Confirm-Step "install $label now via winget?")) { Note "Install $label yourself: $manualUrl"; return $false }
+    winget install --id $id --accept-source-agreements --accept-package-agreements --silent
+    Update-SessionPath
+    if (Get-Command $exe -ErrorAction SilentlyContinue) { Note "$label installed"; return $true }
+    Note "$label installed but not on PATH yet - open a NEW terminal and re-run this installer."
+    return $false
+  }
+
+  if (-not (Install-Tool 'kubectl' 'Kubernetes.kubectl' 'kubectl' 'https://kubernetes.io/docs/tasks/tools/')) { exit 1 }
+  if (-not (Install-Tool 'Helm' 'Helm.Helm' 'helm' 'https://helm.sh/docs/intro/install/')) { exit 1 }
 
   $kcArgs = @(); $helmCtx = @()
   if ($K8sContext) { $kcArgs = @('--context', $K8sContext); $helmCtx = @('--kube-context', $K8sContext) }
@@ -119,10 +132,54 @@ if ($Kubernetes) {
   kubectl @kcArgs cluster-info *> $null
   if ($LASTEXITCODE -ne 0) {
     Say "no reachable Kubernetes cluster$(if ($K8sContext) { " (context $K8sContext)" })"
-    Note "Easiest: Docker Desktop -> Settings -> Kubernetes -> Enable Kubernetes, wait for the"
-    Note "green light, re-run. (Or point kubectl at kind/k3s - NEVER create a kind cluster on a"
-    Note "machine already running the compose swarm; that pairing OOM-wedges the Docker engine.)"
-    exit 1
+    if ($K8sContext) {
+      Note "Context '$K8sContext' does not reach a cluster. Fix it, or drop -K8sContext and let the"
+      Note "installer stand a local cluster up."
+      exit 1
+    }
+
+    # Docker Desktop's Kubernetes toggle is a GUI setting we should not poke at.
+    # kind gives the same thing scriptably, on the Docker engine that is already there.
+    $dockerOk = $false
+    if (Get-Command docker -ErrorAction SilentlyContinue) { docker info *> $null; $dockerOk = ($LASTEXITCODE -eq 0) }
+    if (-not $dockerOk) {
+      Say "Docker is not running"
+      if (Install-Tool 'Docker Desktop' 'Docker.DockerDesktop' 'docker' 'https://docs.docker.com/get-docker/') {
+        Note "Docker Desktop installed. START IT once (it finishes setup on first launch), then re-run."
+      }
+      exit 1
+    }
+
+    # NEVER kind + the compose swarm on one machine (OOM-wedges the engine, twice proven).
+    $swarmUp = (docker ps --format '{{.Names}}' 2>$null) -contains 'oshal-local-api'
+    if ($swarmUp) {
+      Note "The compose swarm is RUNNING on this machine. Refusing to create a kind cluster beside it -"
+      Note "that pairing OOM-wedges the shared Docker engine. Use another computer, or stop the swarm."
+      exit 1
+    }
+
+    if (-not (Install-Tool 'kind' 'Kubernetes.kind' 'kind' 'https://kind.sigs.k8s.io')) {
+      Note "Alternative: Docker Desktop -> Settings -> Kubernetes -> Enable Kubernetes, then re-run."
+      exit 1
+    }
+    if (-not (Confirm-Step 'create a local kind cluster "oshal" (single node, cockpit port mapped)?')) {
+      Note "Nothing installed. Enable Docker Desktop's Kubernetes, or allow kind, then re-run."
+      exit 1
+    }
+    New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+    $kindCfg = Join-Path $Dir 'kind-oshal.yaml'
+    @"
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: $NodePort
+        hostPort: $NodePort
+"@ | Out-File -FilePath $kindCfg -Encoding utf8
+    kind create cluster --name oshal --config $kindCfg
+    if ($LASTEXITCODE -ne 0) { throw "kind cluster creation failed" }
+    $kcArgs = @('--context', 'kind-oshal'); $helmCtx = @('--kube-context', 'kind-oshal')
   }
 
   # An app bundle brings the fleet its bots need — a bundle whose bots never start

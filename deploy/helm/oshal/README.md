@@ -16,9 +16,11 @@ bash oshal-install.sh --mode 4 --admin-email you@example.com
 
 (Windows: `.\scripts\oshal-install.ps1 -Kubernetes -AdminEmail you@example.com`.)
 
-That checks kubectl/helm and the cluster, installs the chart (published OCI package
-first, repo fallback), exposes the cockpit on a NodePort, waits for health, and
-opens `/welcome` in your browser.
+That **installs kubectl and helm if they are missing**, finds a cluster or stands
+one up (k3s on Linux, kind where Docker is running), installs the chart (published
+OCI package first, repo fallback), exposes the cockpit on a NodePort, waits for
+health, and opens `/welcome` in your browser. Every system-touching step asks
+first; `--yes` / `-Yes` accepts them for an unattended install.
 
 Direct helm, once the OCI chart is published:
 

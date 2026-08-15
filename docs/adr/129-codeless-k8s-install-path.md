@@ -163,6 +163,36 @@ Out of scope, logged in BACKLOG rather than half-done: the cockpit's
 enable/disable **toggle** (`agent-status-routes`) still constructs the compose
 pair directly, so on k8s that toggle is inert.
 
+## Amendment 3 (2026-08-14): the installer owns its prerequisites
+
+Mode 4 still assumed `kubectl`, `helm`, and a cluster already existed, and exited
+with a link when they didn't. "Codeless" that requires three manual installs first
+is a handoff wearing an installer's name.
+
+10. **Prerequisites are installed, not linked.** kubectl and helm come from their
+    official sources into `/usr/local/bin` when writable, else `~/.local/bin` —
+    never a silent `sudo`. When no cluster is reachable the installer stands one
+    up: **k3s** on Linux (native, no Docker in the path, survives reboot, and
+    NodePorts land straight on the host — the right answer for a server) or
+    **kind** wherever Docker runs. Windows does the same through winget
+    (`Kubernetes.kubectl`, `Helm.Helm`, `Kubernetes.kind`, `Docker.DockerDesktop`)
+    and re-reads `PATH` from the registry after each install so the run continues
+    instead of demanding a new terminal.
+
+Two invariants make this safe to `curl | bash`: **every system-touching step asks
+first**, and a non-interactive shell **declines** rather than surprise-installing
+(`--yes` / `-Yes` consents up front for unattended runs). The kind-beside-a-running-
+compose-swarm refusal stays. Docker Desktop's Kubernetes toggle is a GUI setting
+the installer deliberately does not poke at — kind gives the same result
+scriptably on the engine already present.
+
+Guard: [tests/unit/k8s-installer-prereqs.spec.ts](../../tests/unit/k8s-installer-prereqs.spec.ts)
+**runs the real script** with a minimal PATH and no tty and asserts it exits
+non-zero, names the missing tool, and leaves the sandboxed HOME empty — the
+safety property is behavioral, so grepping the source would not have proven it.
+Mutation-tested five ways; the one that matters (making the non-interactive branch
+consent) turns the behavioral test red by actually downloading a binary.
+
 ## Consequences
 
 - A fresh machine goes from zero to a browser-ready swarm with two commands and

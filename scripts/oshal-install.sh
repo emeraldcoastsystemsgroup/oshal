@@ -11,6 +11,7 @@
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: pass the exact deduplicated app set to the canonical postflight verifier so a staged package cannot report installed without executing its manifest smoke.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: assess every requested store package in the shipped core image, block invalid audit bindings, and stage verified packages only from their exact SHA archive.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: mode 4 goes from a printed Terraform pointer to a REAL codeless k8s install — kubectl/helm preflight, cluster detection (offers a single-node kind cluster with the cockpit port mapped; REFUSES to create one beside a running compose swarm — that pairing OOM-wedged a 6GB engine twice), chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full (store bundles stay compose-only and say so), the same admin-email→MOCK_OIDC identity wiring as mode 1 (shared local_sub, hoisted above the mode dispatch), NodePort exposure with localhost/node-IP detection, /api/health postflight, and the /welcome open. New flags: --namespace, --k8s-context, --nodeport, --chart.
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | Mode 4 now INSTALLS its prerequisites instead of printing links and exiting 1 (operator: the installer should include the prereqs). kubectl and helm are fetched from their official sources into /usr/local/bin when writable, else ~/.local/bin (never a silent sudo); if no cluster is reachable it offers k3s on Linux (native, no Docker, survives reboot, NodePorts land on the host) and kind wherever Docker is present (fully scriptable — no GUI toggle), still refusing kind beside a running compose swarm. Every system-touching step asks first; --yes/-y accepts them for unattended installs, and a non-interactive shell DECLINES rather than surprise-installing.
 # =============================================================================
 #
 # One-click:
@@ -33,6 +34,7 @@
 #   --chart REF         (mode 4) chart dir/OCI ref override      (default: published OCI, repo fallback)
 #   --no-ai             EXPLICITLY install without a connected model (recorded;
 #                       AI features stay disabled until a model is connected)
+#   --yes, -y           accept prerequisite installs (kubectl/helm/kind/k3s) without prompting
 #   --dry-run           print the plan, touch nothing
 #
 # Hosting environments: DOCKER (modes 1-2) and KUBERNETES (mode 4) — both fully
@@ -44,7 +46,7 @@ set -euo pipefail
 MODE=""; BUNDLE="full"; APPS=""; DIR="./oshal"; TAG="latest"; NO_AI=0
 PACKAGE_AUDIT_MODE="${OSHAL_PACKAGE_AUDIT_MODE:-compatible}"
 REGISTRY="ghcr.io/emeraldcoastsystemsgroup"; ADMIN_EMAIL=""; DRY=0; FROM_ARCHIVE=""
-CONTROL_PLANE=""; JOIN_CODE=""; ENROLL_TOKEN=""
+CONTROL_PLANE=""; JOIN_CODE=""; ENROLL_TOKEN=""; ASSUME_YES=0
 K8S_NAMESPACE="oshal"; K8S_CONTEXT=""; K8S_NODEPORT="30500"; K8S_CHART=""; BUNDLE_EXPLICIT=0
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
 STORE_REPO="https://github.com/emeraldcoastsystemsgroup/oshal-apps"
@@ -67,6 +69,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --chart) K8S_CHART="$2"; shift 2 ;;
   --from-archive) FROM_ARCHIVE="$2"; shift 2 ;;
   --no-ai) NO_AI=1; shift ;;
+  --yes|-y) ASSUME_YES=1; shift ;;
   --dry-run) DRY=1; shift ;;
   *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac; done
@@ -160,24 +163,106 @@ local_sub() {
 # OIDC/secret posture guards are the point); this is the single-box swarm.
 if [ "$MODE" = "4" ]; then
   say "Kubernetes install (helm + registry images — no source, no build)"
-  command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required. Docker Desktop ships it (Settings -> Kubernetes), or: https://kubernetes.io/docs/tasks/tools/"; exit 1; }
-  command -v helm >/dev/null 2>&1 || { echo "helm is required. Windows: winget install Helm.Helm · macOS: brew install helm · Linux: https://helm.sh/docs/intro/install/"; exit 1; }
+
+  # ── Prerequisites: install them, don't just complain ───────────────────────
+  # Every step that touches the system asks first (or takes --yes). Tools land in
+  # /usr/local/bin when writable, else ~/.local/bin — never a silent sudo.
+  OS_KIND=$(uname -s 2>/dev/null || echo unknown)
+  case "$OS_KIND" in Linux*) OSK=linux ;; Darwin*) OSK=darwin ;; MINGW*|MSYS*|CYGWIN*|Windows*) OSK=windows ;; *) OSK=unknown ;; esac
+  case "$(uname -m 2>/dev/null)" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) ARCH=amd64 ;; esac
+
+  confirm() { # $1 = prompt. --yes accepts; non-interactive declines (never surprise-install).
+    [ "$ASSUME_YES" -eq 1 ] && return 0
+    [ -t 0 ] || return 1
+    printf '   %s [Y/n]: ' "$1"; read -r _a
+    [ -z "$_a" ] || [ "${_a#[Yy]}" != "$_a" ]
+  }
+
+  BIN_DIR=""
+  pick_bin_dir() {
+    [ -n "$BIN_DIR" ] && return 0
+    if [ -w /usr/local/bin ] 2>/dev/null; then BIN_DIR=/usr/local/bin
+    elif command -v sudo >/dev/null 2>&1 && [ "$OSK" != "windows" ]; then BIN_DIR=/usr/local/bin; SUDO=sudo
+    else BIN_DIR="$HOME/.local/bin"; mkdir -p "$BIN_DIR"; fi
+    case ":$PATH:" in *":$BIN_DIR:"*) ;; *) export PATH="$BIN_DIR:$PATH"; PATH_NOTE="$BIN_DIR" ;; esac
+  }
+
+  install_kubectl() {
+    say "kubectl is not installed"
+    confirm "install kubectl now?" || { note "install it yourself: https://kubernetes.io/docs/tasks/tools/"; exit 1; }
+    if [ "$OSK" = darwin ] && command -v brew >/dev/null 2>&1; then brew install kubectl; return; fi
+    pick_bin_dir
+    ver=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+    curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${ver}/bin/${OSK}/${ARCH}/kubectl"
+    chmod +x /tmp/kubectl; ${SUDO:-} mv /tmp/kubectl "$BIN_DIR/kubectl"
+    note "kubectl ${ver} -> $BIN_DIR/kubectl"
+  }
+
+  install_helm() {
+    say "helm is not installed"
+    confirm "install helm now?" || { note "install it yourself: https://helm.sh/docs/intro/install/"; exit 1; }
+    if [ "$OSK" = darwin ] && command -v brew >/dev/null 2>&1; then brew install helm; return; fi
+    pick_bin_dir
+    # Helm's official installer; keep it in the same bin dir we chose above.
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
+      | HELM_INSTALL_DIR="$BIN_DIR" USE_SUDO="$([ -n "${SUDO:-}" ] && echo true || echo false)" bash
+    note "helm -> $BIN_DIR/helm"
+  }
+
+  install_kind() {
+    pick_bin_dir
+    kver="${KIND_VERSION:-v0.30.0}"
+    curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${kver}/kind-${OSK}-${ARCH}"
+    chmod +x /tmp/kind; ${SUDO:-} mv /tmp/kind "$BIN_DIR/kind"
+    note "kind ${kver} -> $BIN_DIR/kind"
+  }
+
+  command -v kubectl >/dev/null 2>&1 || install_kubectl
+  command -v helm >/dev/null 2>&1 || install_helm
 
   KC=(kubectl); HELM_CTX=()
   [ -n "$K8S_CONTEXT" ] && { KC+=(--context "$K8S_CONTEXT"); HELM_CTX=(--kube-context "$K8S_CONTEXT"); }
 
+  # ── Cluster: use one, or stand one up ──────────────────────────────────────
   if ! "${KC[@]}" cluster-info >/dev/null 2>&1; then
     say "no reachable Kubernetes cluster${K8S_CONTEXT:+ (context $K8S_CONTEXT)}"
-    if [ -z "$K8S_CONTEXT" ] && command -v kind >/dev/null 2>&1 && docker info >/dev/null 2>&1 && [ -t 0 ]; then
-      # NEVER kind + the compose swarm on one machine — that pairing OOM-wedged a
-      # 6GB Docker engine twice (2026-07-18). The check is the guard, not a vibe.
-      if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^oshal-local-api$'; then
+    if [ -n "$K8S_CONTEXT" ]; then
+      echo "Context '$K8S_CONTEXT' does not reach a cluster. Fix the context, or drop --k8s-context"
+      echo "to let the installer stand a local cluster up."
+      exit 1
+    fi
+
+    # NEVER kind + the compose swarm on one machine — that pairing OOM-wedged a
+    # 6GB Docker engine twice (2026-07-18). The check is the guard, not a vibe.
+    SWARM_RUNNING=0
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^oshal-local-api$' && SWARM_RUNNING=1
+    DOCKER_OK=0; docker info >/dev/null 2>&1 && DOCKER_OK=1
+
+    CLUSTER_MADE=""
+    # Linux: k3s is the native answer — no Docker in the path, survives reboot,
+    # and NodePorts land straight on the host. Preferred on a server.
+    if [ "$OSK" = linux ] && [ -z "$CLUSTER_MADE" ]; then
+      note "k3s is the lightweight native Kubernetes for Linux (installs a system service, needs sudo)."
+      if confirm "install k3s and use it?"; then
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" sh -
+        export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+        note "k3s installed — KUBECONFIG=$KUBECONFIG"
+        note "add that export to your shell profile to keep kubectl working in new terminals."
+        # k3s serves NodePorts on the host directly; no port mapping needed.
+        for i in $(seq 1 40); do "${KC[@]}" get nodes >/dev/null 2>&1 && break; sleep 3; done
+        CLUSTER_MADE=k3s
+      fi
+    fi
+
+    # Docker present (any OS): kind is fully scriptable and needs no GUI toggle.
+    if [ -z "$CLUSTER_MADE" ] && [ "$DOCKER_OK" -eq 1 ]; then
+      if [ "$SWARM_RUNNING" -eq 1 ]; then
         echo "The compose swarm is RUNNING on this machine. Refusing to create a kind cluster beside it —"
         echo "that pairing OOM-wedges the shared Docker engine. Use another computer, or stop the swarm first."
         exit 1
       fi
-      printf '   create a local kind cluster "oshal" now (single node, cockpit port mapped)? [Y/n]: '
-      read -r mk; if [ -z "$mk" ] || [ "${mk#[Yy]}" != "$mk" ]; then
+      command -v kind >/dev/null 2>&1 || { confirm "install kind (local Kubernetes on Docker)?" && install_kind; }
+      if command -v kind >/dev/null 2>&1 && confirm "create a local kind cluster \"oshal\" (single node, cockpit port mapped)?"; then
         mkdir -p "$DIR"
         { echo 'kind: Cluster'
           echo 'apiVersion: kind.x-k8s.io/v1alpha4'
@@ -189,17 +274,17 @@ if [ "$MODE" = "4" ]; then
         } > "$DIR/kind-oshal.yaml"
         kind create cluster --name oshal --config "$DIR/kind-oshal.yaml"
         KC=(kubectl --context kind-oshal); HELM_CTX=(--kube-context kind-oshal)
-      else
-        echo "No cluster, nothing installed. Easiest options:"
-        echo "  - Docker Desktop -> Settings -> Kubernetes -> Enable, then re-run"
-        echo "  - or install kind (https://kind.sigs.k8s.io) and re-run"
-        exit 1
+        CLUSTER_MADE=kind
       fi
-    else
-      echo "Point kubectl at a cluster and re-run. Easiest options:"
-      echo "  - Docker Desktop -> Settings -> Kubernetes -> Enable"
-      echo "  - kind create cluster   (https://kind.sigs.k8s.io — NEVER beside the compose swarm)"
-      echo "  - k3s on a server       (https://k3s.io)"
+    fi
+
+    if [ -z "$CLUSTER_MADE" ]; then
+      echo "No cluster, nothing installed. Your options:"
+      [ "$OSK" = linux ] && echo "  - k3s:            curl -sfL https://get.k3s.io | sh -    (native, recommended on Linux)"
+      [ "$DOCKER_OK" -eq 0 ] && echo "  - Docker Desktop: https://docs.docker.com/get-docker/  (then re-run; enables the kind path)"
+      echo "  - Docker Desktop: Settings -> Kubernetes -> Enable Kubernetes, then re-run"
+      echo "  - kind:           https://kind.sigs.k8s.io   (NEVER beside the compose swarm)"
+      echo "  - any managed cluster: point kubectl at it and re-run"
       exit 1
     fi
   fi
