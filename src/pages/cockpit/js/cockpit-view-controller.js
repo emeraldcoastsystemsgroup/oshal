@@ -281,7 +281,7 @@ export class CockpitViewController {
   renderForgeView(container) {
     container.innerHTML = `
       <div class="tool-view-container" style="display:flex;flex-direction:column;height:100%;width:100%;">
-        <iframe src="/api/forge" style="flex:1;border:none;width:100%;height:100%;" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-top-navigation-by-user-activation"></iframe>
+        <iframe src="/api/forge" style="flex:1;border:none;width:100%;height:100%;" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-modals allow-top-navigation-by-user-activation"></iframe>
       </div>`;
   }
 
@@ -313,7 +313,11 @@ export class CockpitViewController {
       const bustedUrl = String(iframeUrl) + (iframeUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
       const sandboxAttr = isVoiceSurface
         ? ''
-        : 'sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-top-navigation-by-user-activation"';
+        // allow-downloads is load-bearing: without it a sandboxed surface's download is
+        // discarded SILENTLY — the popup opens (allow-popups) and shows a blank tab, with no
+        // file and no console error. That is what broke the one-click node installer, whose
+        // route had already rendered the script and logged it as issued.
+        : 'sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-top-navigation-by-user-activation"';
 
       // Guest read-only treatment: for Tier-B apps (open but not interactive), show a
       // banner and dim/disable data-entry controls inside the surface. The server already
