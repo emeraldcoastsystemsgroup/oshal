@@ -202,6 +202,22 @@ describe('the batch header that makes the download runnable', () => {
     expect(script).toContain('exit /b');
   });
 
+  it('resolves PowerShell by absolute path before trusting PATH', () => {
+    // A bare `powershell` depends on PATH. When PATH has been edited — by an installer, a
+    // policy, or a shell that trimmed it — cmd answers "'powershell' is not recognized",
+    // which reads as a PowerShell problem the user does not actually have. The absolute
+    // path is known and fixed on every Windows. Proven live with PATH stripped: the script
+    // still reached its own Node check.
+    const script = renderNodeInstaller(VALID);
+    expect(script).toContain('%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    // ...and still falls back, rather than hard-failing on a nonstandard install.
+    expect(script).toMatch(/if not exist "%OSHAL_PS%" set "OSHAL_PS=powershell"/);
+    // The invocation must go through the resolved variable, not the bare name.
+    const launcher = script.split('\r\n').find((l) => l.includes('-ExecutionPolicy Bypass'));
+    expect(launcher).toBeTruthy();
+    expect(launcher!.startsWith('"%OSHAL_PS%"')).toBe(true);
+  });
+
   it('finds the marker BELOW the header, not the one inside the header', () => {
     // The defect this exists for: the launcher line spelled the marker out literally, so
     // IndexOf matched that line and executed the batch header as PowerShell. The symptom was
