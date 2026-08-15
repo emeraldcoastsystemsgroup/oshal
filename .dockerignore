@@ -9,6 +9,10 @@ tests
 docs
 # ...but Dockerfile.oshal COPYs docs/governance/ (RLS bootstrap SQL) — keep it in context.
 !docs/governance/
+# ...and docs/guides/ (the in-cockpit help pages, #189). A COPY of a path excluded here fails
+# the build outright — `COPY failed: file not found in build context or excluded by
+# .dockerignore` — so every `COPY docs/<x>/` in Dockerfile.oshal needs its `!docs/<x>/` here.
+!docs/guides/
 examples
 .github
 .claude
