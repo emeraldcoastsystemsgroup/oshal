@@ -245,7 +245,37 @@ describe('the batch header that makes the download runnable', () => {
     // OSHAL_CLIENT_ID is the one that took a live run to find: the token is bound to that
     // id, and a node that invents its own is refused at registration.
     expect(script).toMatch(/OSHAL_CLIENT_ID\s*=\s*\$ClientId/);
-    expect(script).toContain('Start-Process -FilePath "oshal-chat"');
+    expect(script).toContain('Start-Process -FilePath $launcher');
+  });
+
+  it('launches the .cmd shim by path, never the bare name', () => {
+    // npm writes THREE launchers per package — oshal-chat, oshal-chat.cmd, oshal-chat.ps1 —
+    // and Start-Process on the bare name lets Windows resolve it. Measured on a real machine:
+    //   Get-Command oshal-chat -> ExternalScript: ...\npm\oshal-chat.ps1
+    // .ps1 has no association on a default Windows, so the user got an "open with" dialog
+    // instead of a running node, while the script cheerfully printed "Done".
+    const script = renderNodeInstaller(VALID);
+    expect(script).toContain('oshal-chat.cmd');
+    expect(script).not.toContain('Start-Process -FilePath "oshal-chat"');
+    // The bare name must not appear as a launch target in any form.
+    expect(script).not.toMatch(/Start-Process\s+-FilePath\s+"oshal-chat"/);
+  });
+
+  it('refuses to claim success when npm installed nothing', () => {
+    // npm can exit 0 and leave no launcher behind. This script printed "Done. This computer
+    // should appear in the cockpit within a minute" regardless, so a run that installed
+    // nothing was indistinguishable from one that worked — which is how a broken install
+    // reached a user as a success message.
+    const script = renderNodeInstaller(VALID);
+    expect(script).toMatch(/no launcher was created/);
+    expect(script).toContain('Test-Path $candidate');
+    // The failure must name where it looked, or it is unactionable.
+    expect(script).toMatch(/Looked in: \$npmDir/);
+    // ...and it must stop, not fall through to the launch and the success banner.
+    const failure = script.indexOf('no launcher was created');
+    const success = script.indexOf('Done. This computer should appear');
+    expect(failure).toBeLessThan(success);
+    expect(script.slice(failure, success)).toContain('exit 1');
   });
 
   it('takes the package from configuration, so a fork or a pin is not a code change', () => {
