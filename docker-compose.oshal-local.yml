@@ -2035,6 +2035,53 @@ services:
       oshal-api:
         condition: service_healthy
 
+  # ── Sales Concierge — intelligent-sales at its own node (ADR-093 Tier 2) ────
+  # Profile-gated like career-bot: OFF unless the deployment opts in with
+  # COMPOSE_PROFILES=sales-node, so a box that does not run the CRM pays nothing for it.
+  #
+  # WHY A NODE AND NOT INLINE. Controller-inline, SEC-05 refuses every unbrokered CLI
+  # unconditionally (unattended-provider-policy) — the ADR-127 demo carve exists only at bot
+  # NODES. On the G-Squared box that surfaced as the CRM's ✨ note-tidy, triage and chat all
+  # returning `engine:"raw"` while Jarvis, which is already a node, answered normally on the
+  # same mounted CLI login. Dispatching from a node lets stampRemoteBrain carry the full
+  # ADR-127 ladder: operator turns ride the deployment's CLI, guests ride the hosted rungs.
+  # With the service not running, dispatch fails VISIBLY rather than silently degrading onto
+  # a runtime the manifest opted out of — same contract as career-bot.
+  sales-bot:
+    <<: *bot-common
+    container_name: oshal-local-sales-bot
+    profiles: ["sales-node"]
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: sales-concierge
+      AGENT_ID: 15000000-0000-0000-0000-000000000001
+      BOT_PERSONA_FILE: /app/workspace-shared/deployed-apps/intelligent-sales/personas/sales-concierge.yaml
+      AGENT_CAPABILITIES: "pipeline-analysis,lead-triage,call-note-structuring"
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
+      BOT_UI_LABEL: Sales
+      BOT_UI_URL: /cockpit/?app=intelligent-sales
+      BOT_UI_ICON: "codicon codicon-graph-line"
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - ./scripts:/app/scripts:ro
+      # The bot-node runtime requires the any-bot server tree (utils/stores/controllers/
+      # services); the image doesn't COPY it, so without this the node crashes on a missing
+      # module. Same reason career-bot mounts it.
+      - ./any-bot/server:/app/any-bot/server:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
   # ── Eats Bot — Uber Eats concierge (real bot-node) ──────────────────────────
   # First-class oshal-bot node so the build queue HTTP-dispatches Jarvis food tickets here
   # (isolated, cost/audit under its agent_id) instead of in-process on the controller. CODEX so it
