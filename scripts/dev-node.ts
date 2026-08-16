@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Host Dev-Node (ADR-077 Phase 2, Option B): a small HTTP server that runs the self-edit engine ON THE HOST (native git + host docker, real repo). The cockpit api proxies super-admin session requests here over host.docker.internal. Auth = a shared secret ONLY the api knows.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Routes moved to the testable createDevNodeApp factory (src/features/dev-console/services/dev-node-app.ts) so the JSON-only contract is guarded by tests/unit/dev-node-json-only.spec.ts. This script is now the thin host entrypoint: env parsing, the >=32-char secret refusal, manager wiring, listen. Behavior change ships with the factory: unmatched paths and body-parser errors answer JSON envelopes instead of Express's HTML "<!DOCTYPE" pages (which the api proxy forwarded verbatim into the cockpit dev pane as `SyntaxError: Unexpected token '<'`).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Wire the live applier (asset/manifest/persona/package fast lanes) and the deploy promoter (core, via the verified scripts/oshal-deploy.sh) so a self-edit reaches the running stack by the route its own content requires. Both are constructed here because this is the only process holding the repo, the Docker socket and the host filesystem at once.
  */
 
 /**
@@ -25,9 +26,11 @@ import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
 import {
   createDevNodeApp,
+  DeployPromoter,
   DevSessionEngine,
   DevSessionManager,
   DevSessionOrchestrator,
+  LiveApplier,
   SandboxedAgentRunner,
 } from '@/features/dev-console';
 
@@ -46,11 +49,28 @@ const manager = new DevSessionManager(
   new DevSessionOrchestrator(new DevSessionEngine({ repoRoot }), new SandboxedAgentRunner(), path.join(repoRoot, '..', 'oshal-dev-scratch')),
 );
 
-const app = createDevNodeApp({ secret, manager });
+// The fast lanes and the promote step both act on the LIVE box, so they are opt-in per
+// deployment rather than implied by running a dev-node. Unset ⇒ the routes answer 503 and the
+// Dev panel reports the capability as absent, which is the honest state for a checkout that is
+// not the one being served.
+const applier = process.env.OSHAL_DEV_LIVE_APPLY === 'true' ? new LiveApplier({ repoRoot }) : undefined;
+const promoter = process.env.OSHAL_DEV_PROMOTE === 'true' ? new DeployPromoter({ repoRoot }) : undefined;
+
+const app = createDevNodeApp({ secret, manager, applier, promoter });
 
 // Bind host: defaults to 0.0.0.0 because the api container reaches us via host.docker.internal
 // (host-gateway), which is not loopback. This exposes the port on the LAN — the shared secret is
 // the gate; firewall the port to the Docker subnet in production. Set OSHAL_DEV_NODE_HOST to a
 // specific interface to narrow it.
 const host = (process.env.OSHAL_DEV_NODE_HOST || '0.0.0.0').trim();
-app.listen(port, host, () => logger.info({ port, host, instanceId: randomUUID().slice(0, 8) }, 'OSHAL dev-node listening (self-edit muscle) — secure the port with a firewall'));
+app.listen(port, host, () => logger.info(
+  {
+    port,
+    host,
+    repoRoot,
+    liveApply: !!applier,
+    promote: !!promoter,
+    instanceId: randomUUID().slice(0, 8),
+  },
+  'OSHAL dev-node listening (self-edit muscle) — secure the port with a firewall',
+));

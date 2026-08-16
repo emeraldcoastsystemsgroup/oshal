@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Developer Console — Phase 1 (ADR-077): super-admin-gated, read-only diagnostics. No shell, no writes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | proxyDevNode is now a JSON-only wall: the non-SSE branch previously forwarded the dev-node's body + content-type VERBATIM, so an Express HTML "<!DOCTYPE" 404/error page from a version-skewed dev-node (the api runs baked committed HEAD while the host dev-node runs the live tree — they CAN skew) or from anything else answering on that port transited /api/dev-console straight into the cockpit dev pane as `SyntaxError: Unexpected token '<' … <!DOCTYPE` (the operator's "Jarvis doctype error entering development mode"). Non-JSON upstream bodies are converted to a readable JSON error envelope via jsonOnlyBody(); guarded by tests/unit/dev-node-json-only.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | POST /apply + POST /promote (ADR-077 gaps 1/3): the super-admin-gated, audited front doors for the live fast lanes and the verified deploy. Both ALWAYS proxy to the dev-node and are never served in-process — the api container holds a read-write bind mount of the host repo (COMPOSE_PROJECT_ROOT, for dynamic bot launch), so "it can reach the tree" is true and is exactly why the boundary has to be explicit rather than incidental.
  */
 
 import { existsSync } from 'node:fs';
@@ -213,7 +214,44 @@ export function createDevConsoleRoutes(ctx: AppContext): Router {
   // GET /sessions — the caller's sessions (super-admin; owner-only).
   router.get('/sessions', requireSuperAdminAudited, (req: Request, res: Response) => {
     if (!manager) { void proxyDevNode(req, res, devNodeUrl); return; }
-    res.json({ runtimeAvailable: true, sessions: manager.list(getCaller(req).sub) });
+    // In-process (host-run api) there is no applier/promoter: those act on the live box and are
+    // dev-node capabilities by design. Reporting them false is the honest answer, not a gap.
+    res.json({ runtimeAvailable: true, applyAvailable: false, promoteAvailable: false, sessions: manager.list(getCaller(req).sub) });
+  });
+
+  // POST /apply — apply an approved asset/manifest/persona/package change set to the LIVE tree
+  // and take its restart action. ALWAYS proxied: the api container must never write the host tree
+  // or drive Docker itself, even where a bind mount would let it (ADR-077's isolation is the point).
+  router.post('/apply', requireSuperAdminAudited, (req: Request, res: Response) => {
+    const sub = getCaller(req).sub;
+    const paths = Array.isArray((req.body as { changes?: unknown })?.changes)
+      ? ((req.body as { changes: { path?: unknown }[] }).changes).map((c) => String(c?.path ?? '')).slice(0, 50)
+      : [];
+    void emitAuditEvent(ctx.pool, {
+      actorSub: sub,
+      action: 'dev-console.live-apply',
+      resourceType: 'dev_console',
+      resourceId: null,
+      decision: 'allow',
+      metadata: { paths, count: paths.length },
+    });
+    void proxyDevNode(req, res, devNodeUrl);
+  });
+
+  // POST /promote — run the verified deploy (scripts/oshal-deploy.sh) for core changes already
+  // merged to the trunk. Audited BEFORE dispatch so an interrupted deploy still leaves a record
+  // of who asked for it.
+  router.post('/promote', requireSuperAdminAudited, (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { dryRun?: unknown };
+    void emitAuditEvent(ctx.pool, {
+      actorSub: getCaller(req).sub,
+      action: 'dev-console.promote',
+      resourceType: 'dev_console',
+      resourceId: null,
+      decision: 'allow',
+      metadata: { dryRun: body.dryRun === true },
+    });
+    void proxyDevNode(req, res, devNodeUrl);
   });
 
   // GET /health-snapshot — bounded, sanitized read of recent task health (the "how are
