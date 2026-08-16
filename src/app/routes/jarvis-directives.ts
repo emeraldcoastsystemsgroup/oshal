@@ -13,6 +13,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: directive/visual fence parsing + the HandoffDirective / ProviderBoundHandoffIntent / JarvisDirectives shared types (route decomposition, no behaviour change).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | HandoffDirective carries an optional changeClass (ADR-077 dev mode): Jarvis's only development vocabulary was the boolean `platform`, so a cockpit CSS tweak and a compiled-route change were indistinguishable and both took the slowest lane. Parsed fail-closed against the closed set; the server-side path classifier remains the authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added extractSurfaceDirectives + stripSurfaceDirective — the surface-bridge sibling of the handoff/visual fence parser. A reply may declare bot→surface ops in an `oshal:surface` fence; each is validated fail-closed against the CLOSED outbound vocabulary (@/shared/surface-bridge-ops) and the real zod contract (@/features/surface-bridge) before it can drive a surface, and the fence is stripped from the user-visible answer. Why: the chat rail's producer + cockpit relay were shipped but no parse layer turned an LLM reply into validated ops (Wave-2 bridge gap).
  *
  * @module jarvis-directives
@@ -30,6 +31,7 @@ import {
   type OutboundSurfaceEvent,
 } from '@/features/surface-bridge';
 import { SURFACE_BRIDGE_OUTBOUND_OPS, isSurfaceBridgeOp } from '@/shared/surface-bridge-ops';
+import { isChangeClass, type ChangeClass } from '@/features/dev-console';
 import type { TrustedProviderIntent } from '../bot-node-provider-intent';
 
 /** A hand-off Jarvis decided to make: create a new work item, or update one already in flight. */
@@ -46,6 +48,12 @@ export interface HandoffDirective {
    *  ticketType 'oshal-dev' (superadmin-gated, owned by the oshal-developer bot). Set by
    *  Jarvis in the directive — never inferred from free text. */
   platform: boolean;
+  /** OPTIONAL lane hint for platform work (ADR-077 dev mode): which kind of change this is, so
+   *  the executing lane knows whether it can go live off a bind mount or needs a verified image
+   *  build. A HINT ONLY — an unrecognized value is dropped, and the authority is always the
+   *  server-side classifier over the actual paths (isLiveAppliable in @/features/dev-console),
+   *  never this label. A second policy source is how a "fast lane" starts shipping core code. */
+  changeClass?: ChangeClass;
   /** Server-authored bounded provider operation. Model-authored handoff fences never populate it. */
   providerIntent?: TrustedProviderIntent;
 }
@@ -112,6 +120,11 @@ export function extractJarvisDirectives(text: string): JarvisDirectives {
         description: obj.description.trim(),
         complexity: (obj as { complexity?: string }).complexity === 'complex' ? 'complex' : 'simple',
         platform: (obj as { platform?: unknown }).platform === true,
+        // Fail-closed: anything outside the closed set is dropped rather than passed through,
+        // so a hallucinated class can never widen what a downstream lane will do.
+        ...(isChangeClass((obj as { changeClass?: unknown }).changeClass)
+          ? { changeClass: (obj as { changeClass: ChangeClass }).changeClass }
+          : {}),
       });
     }
   }

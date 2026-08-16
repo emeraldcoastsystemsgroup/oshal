@@ -263,6 +263,10 @@ async function dispatchHandoffs(
         ticketType: ticketTypeForHandoff(h),
         metadata: {
           source: 'jarvis', sessionId, complexity: h.complexity || 'simple',
+          // The lane hint rides the ticket so the executing side knows whether this is a
+          // bind-mounted asset it can serve on refresh or compiled code needing a verified
+          // build. Advisory: the executing side re-classifies from the real paths.
+          ...(h.changeClass ? { changeClass: h.changeClass } : {}),
           ...(h.providerIntent ? { providerIntent: h.providerIntent } : {}),
         },
       } as never);

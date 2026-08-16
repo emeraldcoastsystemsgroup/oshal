@@ -1,6 +1,6 @@
 # ADR-077 — The Self-Developing Platform: super-admin Developer Console + sidecar dev-node
 
-- **Status:** Accepted (Phase 1 built). Phases 2–3 Proposed.
+- **Status:** Accepted. Phases 1–2 built; Phase 3 (lifeboat) Proposed. Amendment 1 (2026-08-15) adds the change-class lanes, live apply, and the promote step — see the end of this ADR.
 - **Date:** 2026-07-04
 - **Related:** [ADR-036 bot-owned architecture](036-bot-owned-application-architecture.md), [ADR-044/047 edge-agent device-as-node](047-smart-home-edge-agent.md), [ADR-049 aggregation-platform thesis](049-oshal-as-aggregation-platform.md), [ADR-050 unified assistant](050-unified-assistant-route-orchestrator.md), [ADR-040 privileged credential broker](040-devops-vault-swarm.md), remote-client / A2A framework.
 
@@ -179,3 +179,66 @@ isolation invariants and **reproduced two CRITICALs live**, which reshaped the d
   requires a passing `verify` for the exact tree**; larger diff buffer.
 
 Covered by `tests/unit/dev-session-engine.spec.ts` (12 tests) + a live teardown-safety proof.
+
+## Amendment 1 (2026-08-15) — change classes, live apply, and the promote step
+
+Phase 2 shipped a governed edit loop that ended at a `dev-session/*` branch. Two things were
+missing between that branch and a running stack, and one instruction contradicted the trunk.
+
+**1. Nothing turned a merged commit into serving code.** `scripts/oshal-deploy.sh` was referenced
+by docs, `oshal-up.sh` and tests, but by no code path. Core self-development landed in git while
+the api kept serving its previously baked `dist/`. `DeployPromoter` (`POST /promote` on the
+dev-node, proxied by the super-admin-gated `/api/dev-console/promote`) now runs that script
+single-flight and preserves its four-outcome contract verbatim: `0` deployed, `1` failed but
+rolled back and serving, `2` preflight refused nothing touched, `3` nothing serving, needs hands.
+Collapsing `1` and `3` into "failed" is the 2026-07-29 incident; an unrecognized code fails closed.
+
+**2. Every change took the slowest lane.** Nothing in the codebase encoded which paths are
+bind-mounted live and which are baked into the image, so a cockpit CSS tweak paid the same
+clone-commit-push-rebuild price as a compiled route change. `classifyChangePath` now maps a path
+to the lane that can actually make it live, and `LiveApplier` applies the four live classes and
+takes their restart action:
+
+| class | example | restart |
+|---|---|---|
+| `asset` | `src/pages`, `src/api`, `src/shared/ui` static files | none — browser refresh |
+| `manifest` | `swarm-apps/*.yaml` | `POST /api/swarm/apps/load` |
+| `persona` | `ai-lab/bot-personas/*.yaml` | restart the owning bot container |
+| `package` | `deployed-apps/**` | restart the api |
+| `core` | compiled TS, `any-bot/server` | REFUSED — PR, then promote |
+| `infra` | compose, Dockerfile, env, helm, CI | REFUSED — operator hands |
+
+Three properties are load-bearing. A change SET takes its highest-severity class, so one `.ts`
+among fifty assets makes the whole set `core`. Extension matters inside an asset root — a `.ts`
+under `src/pages` is compiled, so it is `core`, not an asset. And `any-bot/server` is `core`
+despite being bind-mounted into the api, because it is bind-mounted into the api ONLY and bots are
+what execute it; "the API can see it" is not "the runtime that uses it can see it".
+
+Confinement is enforced against the real filesystem, including the case a lexical
+`startsWith(repoRoot)` accepts: a symlinked or Windows-junctioned intermediate directory. The
+deepest existing ancestor is resolved through `realpath` and re-checked.
+
+**3. The developer persona still taught the pre-cutover trunk rule.** `oshal-developer.yaml` said
+"work directly on main. No feature branches ... `git push origin main`" long after ADR-115 made the
+trunk branch-protected — the bot was being told to do the one thing the remote rejects, and its
+ticket work would have died at the push. It now teaches branch to PR to merge, with the reason
+stated, and `tests/unit/persona-branching-contract.spec.ts` guards every persona against a
+direct-to-main instruction.
+
+**Jarvis** gained an optional `changeClass` on the handoff directive (its only development
+vocabulary was the boolean `platform`). It is a HINT: parsed fail-closed against the closed set,
+carried on the ticket, and never the authority. The server re-classifies from the real paths,
+because a second policy source is how a fast lane starts shipping core code.
+
+**Both capabilities are OFF by default** (`OSHAL_DEV_LIVE_APPLY`, `OSHAL_DEV_PROMOTE`). They act on
+the live box, so running a dev-node must not imply them — pointing a dev-node at the wrong checkout
+is the failure that default-off prevents. Unset, the routes answer 503 and the panel reports the
+capability absent.
+
+Guards: `tests/unit/dev-mode-change-classes.spec.ts`, `tests/unit/live-apply-confinement.spec.ts`
+(real fs + junction, mutation-checked), `tests/unit/deploy-promoter.spec.ts`,
+`tests/unit/persona-branching-contract.spec.ts`. Doubled boundaries are recorded in
+[the real-boundary audit](../governance/real-boundary-regression-audit.md).
+
+**Still Proposed:** Phase 3 (the lifeboat — recover the swarm from a UI that survives it going
+down). The promote step is the muscle it needs, but not the standalone surface.

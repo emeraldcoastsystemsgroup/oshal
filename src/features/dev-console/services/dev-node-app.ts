@@ -4,12 +4,15 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the host dev-node's Express app out of scripts/dev-node.ts into a testable factory, and made the port JSON-only. Root cause of the operator's "Jarvis doctype error entering development mode": Express's DEFAULTS on this port answered an unmatched path with an HTML 404 page and a body-parser error with an HTML 400 page carrying a full stack trace (host paths, LAN-exposed) — the api's dev-console proxy forwarded both verbatim, and the cockpit dev pane surfaced them as `SyntaxError: Unexpected token '<' … <!DOCTYPE`. The app now ends in a JSON 404 catch-all + a JSON error envelope (message only, never a stack), and jsonOnlyBody() gives the api proxy a wall so no non-JSON dev-node body can ever transit /api/dev-console.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added POST /apply (live fast lanes for asset/manifest/persona/package changes) and POST /promote (the verified deploy for core changes). The dev-node is where both belong: it is the only process that holds the repo, the Docker socket and the host filesystem at once. Both are optional capabilities — a dev-node built without them answers 503 rather than pretending.
  */
 
 import crypto from 'node:crypto';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { DevSessionManager, DevSessionFrame } from './dev-session-manager';
+import type { DeployPromoter } from './deploy-promoter';
+import type { LiveApplier, LiveChange } from './live-apply';
 
 const logger = createChildLogger({ module: 'dev-node-app' });
 
@@ -41,7 +44,14 @@ export interface DevNodeAppOptions {
   secret: string;
   /** The self-edit session manager the routes drive. */
   manager: DevSessionManager;
+  /** Optional: runs the verified deploy for core changes. Absent ⇒ /promote answers 503. */
+  promoter?: DeployPromoter;
+  /** Optional: applies asset/manifest/persona/package changes live. Absent ⇒ /apply answers 503. */
+  applier?: LiveApplier;
 }
+
+/** Upper bound on one live-apply payload — a governed edit set, not a repo import. */
+const MAX_APPLY_FILES = 200;
 
 /**
  * @description Builds the host dev-node's Express app (ADR-077 Option B "muscle"): the api is
@@ -54,13 +64,15 @@ export interface DevNodeAppOptions {
  * @returns The configured Express app (caller decides host/port binding).
  */
 export function createDevNodeApp(options: DevNodeAppOptions): express.Express {
-  const { manager } = options;
+  const { manager, promoter, applier } = options;
   // Pre-hash the secret so the auth compare is fixed-length + constant-time: no length oracle,
   // and no throw on a multibyte header (comparing raw byte lengths would leak length / 500).
   const secretHash = crypto.createHash('sha256').update(options.secret).digest();
 
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  // 8mb: a live-apply set carries whole file contents. Still bounded, and the port is
+  // secret-gated and firewalled — see the trust note on ownerSub below.
+  app.use(express.json({ limit: '8mb' }));
 
   /** Constant-time shared-secret gate. Every route (except /health) requires it. */
   function requireSecret(req: Request, res: Response, next: NextFunction): void {
@@ -123,7 +135,51 @@ export function createDevNodeApp(options: DevNodeAppOptions): express.Express {
   });
 
   app.get('/sessions', requireSecret, (req: Request, res: Response) => {
-    res.json({ runtimeAvailable: true, sessions: manager.list(ownerSub(req)) });
+    res.json({
+      runtimeAvailable: true,
+      applyAvailable: !!applier,
+      promoteAvailable: !!promoter,
+      promoteBusy: promoter?.busy ?? false,
+      sessions: manager.list(ownerSub(req)),
+    });
+  });
+
+  // ── Fast lanes: apply an approved change set to the LIVE tree ──────────────────────────
+  // A refusal (core/infra) is a 409 carrying the class and the route to take instead — the
+  // caller must not be able to read it as "applied" or as a transport failure.
+  app.post('/apply', requireSecret, async (req: Request, res: Response) => {
+    if (!applier) { res.status(503).json({ error: 'live apply is not enabled on this dev-node' }); return; }
+    const changes = readChanges((req.body as { changes?: unknown })?.changes);
+    if (!changes) {
+      res.status(400).json({ error: `changes must be a non-empty array of {path, content} objects (max ${MAX_APPLY_FILES})` });
+      return;
+    }
+    try {
+      const result = await applier.apply(changes);
+      res.status(result.applied ? 200 : 409).json(result);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'apply failed' });
+    }
+  });
+
+  // ── Promote: the verified deploy for core changes ──────────────────────────────────────
+  app.post('/promote', requireSecret, async (req: Request, res: Response) => {
+    if (!promoter) { res.status(503).json({ error: 'promote is not enabled on this dev-node' }); return; }
+    const body = (req.body ?? {}) as { dryRun?: unknown; skipBuild?: unknown; allowUnpushed?: unknown };
+    try {
+      const outcome = await promoter.promote({
+        dryRun: body.dryRun === true,
+        skipBuild: body.skipBuild === true,
+        allowUnpushed: body.allowUnpushed === true,
+      });
+      // 200 even for a failed deploy: the OPERATION completed and its verdict is the payload.
+      // An HTTP status cannot distinguish "rolled back, stack serving" from "nothing is
+      // serving", and that distinction is the whole point of the deploy's exit codes.
+      res.json(outcome);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'promote failed';
+      res.status(msg.includes('already running') ? 409 : 500).json({ error: msg });
+    }
   });
 
   // ── LAST middlewares — this port must NEVER speak HTML ─────────────────────────────────
@@ -145,6 +201,25 @@ export function createDevNodeApp(options: DevNodeAppOptions): express.Express {
   });
 
   return app;
+}
+
+/**
+ * @description Validates an untrusted `changes` body into a live-apply set. Rejects anything
+ * that is not a bounded array of `{path: string, content: string}` — path CONFINEMENT is the
+ * applier's job, but shape validation belongs at the edge so a malformed payload never reaches it.
+ * @param value - The raw `changes` value from the request body.
+ * @returns The validated change set, or null when the payload is not usable.
+ */
+function readChanges(value: unknown): LiveChange[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_APPLY_FILES) return null;
+  const changes: LiveChange[] = [];
+  for (const entry of value) {
+    const candidate = entry as { path?: unknown; content?: unknown };
+    if (typeof candidate?.path !== 'string' || !candidate.path.trim()) return null;
+    if (typeof candidate?.content !== 'string') return null;
+    changes.push({ path: candidate.path.trim(), content: candidate.content });
+  }
+  return changes;
 }
 
 /** Reads a bounded, trimmed string from an untrusted body value (undefined when absent/empty). */

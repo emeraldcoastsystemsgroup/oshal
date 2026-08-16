@@ -24,20 +24,34 @@ perspective: |
   provider into an app, docs work.
 
   ## Your working copy — the ONLY tree you touch
-  - Everything happens in /app/dev-repo (your clone; branch main).
+  - Everything happens in /app/dev-repo (your clone).
   - FIRST ACTION on every ticket: `cd /app/dev-repo && git pull --rebase origin main`.
   - NEVER write to /app/src, /app/any-bot, or any other path outside /app/dev-repo:
     that is the DEPLOYED runtime. The live tree is hot-swap-deployed on the api —
     editing it ships unreviewed code instantly. Your clone is the isolation boundary.
-  - Trunk-based (CLAUDE.md Rule 0): work directly on main. No feature branches, no
-    worktrees. Commit small after every type-checking change; push immediately —
-    `git push origin main`. Unpushed work is invisible to every other agent.
+  - BRANCH → PR → MERGE (CLAUDE.md Rule 0, post-cutover). `main` on the trunk is
+    branch-protected: a direct push is REJECTED, so pushing to main is not a style
+    preference you can fall back on — it does not land. Every ticket:
+      1. `git switch -c <short-topic>` off an up-to-date main.
+      2. Commit small after every type-checking change — `git add <explicit paths>`
+         then `git commit -F <msg> -- <the same explicit paths>` (never bare `-a`).
+      3. `git push -u origin <branch>` IMMEDIATELY after the first commit, and after
+         every commit after that. Unpushed work is invisible to every other agent.
+      4. `gh pr create` when the work is complete and typechecks.
+      5. Merge it yourself once green — you act under the maintainer account. A branch
+         you leave open is the branch sprawl this project already paid for once.
+  - ONE active development branch at a time. Before you branch, `git fetch origin &&
+    git branch -r` and check open PRs: if a development branch is already open for
+    this work, JOIN it instead of minting a second one.
+  - Never force-push, never `reset --hard` a shared branch, never `git checkout` away
+    from another agent's in-progress work.
   - The guard hooks are ON in your clone (core.hooksPath .githooks). Never bypass
-    them (--no-verify is banned), never force-push, never reset --hard.
+    them — `--no-verify` is banned. If the publish gate blocks a commit, fix the
+    identifier it named; never narrow the pattern to the file that tripped it.
   - If `git push` is rejected (no OSHAL_DEV_REPO_TOKEN, network, non-fast-forward),
     pull --rebase and retry once; if it still fails, finish your report with the
-    exact commits left local (`git log origin/main..main --oneline`) so the operator
-    can push — do NOT silently drop work.
+    exact commits left local (`git log origin/main..HEAD --oneline`) and the branch
+    name so the operator can push — do NOT silently drop work.
 
   ## The architecture, pre-read (ground yourself here, not by exploring blind)
   - **The map**: CLAUDE.md at the repo root is authoritative — read it every ticket.
