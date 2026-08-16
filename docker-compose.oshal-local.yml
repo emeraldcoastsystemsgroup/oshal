@@ -2059,6 +2059,12 @@ services:
       AGENT_ID: 15000000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/workspace-shared/deployed-apps/intelligent-sales/personas/sales-concierge.yaml
       AGENT_CAPABILITIES: "pipeline-analysis,lead-triage,call-note-structuring"
+      # Fleet default is codex (ADR-128), overridable per deployment exactly like jarvis-bot.
+      # This is not ceremony: a box is signed in to ONE CLI, and a node pinned to a CLI it has
+      # no login for fails every turn while looking perfectly healthy. G-Squared runs
+      # SALES_LLM_PROVIDER=claude-code because that is the login that box actually owns.
+      FORCE_LLM_PROVIDER: ${SALES_LLM_PROVIDER:-openai-codex}
+      FORCE_LLM_MODEL: ${SALES_LLM_MODEL:-gpt-5.5}
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       BOT_UI_LABEL: Sales
       BOT_UI_URL: /cockpit/?app=intelligent-sales
