@@ -27,6 +27,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Switched internal ticket/workspace persistence to resilient localhost fallbacks so MOCK_OIDC development remains usable without Postgres
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 swarm operational graph: start the ticket→graph ingestion subscription (shared ticketEvents bus → tenant graph). Engine-gated — a clean no-op per event when ARANGO_URL is unset; fire-and-forget, never back-pressures the ticket lifecycle.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable ticket ownership into swarm lifecycle memory persistence.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Bind executeBotOrInline into AppContext so installed app routes can dispatch package-owned bots through the canonical node/credential/governance path.
  */
 
 import {
@@ -63,8 +64,9 @@ import {
   TicketInteractionService,
 } from '@/features/chat-orchestration';
 import { createSwarmExtensionBindings } from '@/app/extensions';
-import { AgentConfigService } from '@/features/agent-management';
+import { AgentConfigService, BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { startTicketGraphIngestion } from '@/features/graph';
+import { executeBotOrInline } from '@/app/routes/inline-bot-execution';
 
 const logger = createChildLogger({ module: 'composition-root' });
 
@@ -171,6 +173,7 @@ export function createAppContext(): CompositionAppContext {
   const verification = createVerificationComponents(pool, logger);
   const swarm = createSwarmExtensionBindings(pool, providerResolver.getProvider, { taskStore, messageStore });
   swarm.swarmTicketProcessingService?.setTicketService(ticketService);
+  const botNodeClient = new BotNodeClient(createRegistryEndpointResolver());
 
   initializeToolRegistry(
     pool,
@@ -187,7 +190,8 @@ export function createAppContext(): CompositionAppContext {
 
   logger.info('Application context created successfully');
 
-  return {
+  let context: CompositionAppContext;
+  context = {
     taskStore,
     messageStore,
     streamManager,
@@ -215,5 +219,7 @@ export function createAppContext(): CompositionAppContext {
     workspaceService,
     planeSyncService,
     ticketInteractionService,
+    executeBot: (agentId, request) => executeBotOrInline(context, botNodeClient, agentId, request),
   };
+  return context;
 }
