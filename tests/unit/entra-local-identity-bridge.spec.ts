@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the Entra-to-local migration boundary: tenant-only configuration, durable first-link/existing-link behavior, collision and disabled-account refusal, canonical local principal rewriting, and fail-closed HTTP outcomes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Match express-openid-connect's real filtered-user/unfiltered-idTokenClaims shape and prevent stable identity fallback to the presentation view.
  */
 
 import type { Request, RequestHandler, Response } from 'express';
@@ -67,9 +68,12 @@ function authenticatedRequest(overrides: Record<string, unknown> = {}): Request 
     preferred_username: 'IGRAISER@GSQUAREDFUNDING.COM',
     ...overrides,
   };
+  // Real express-openid-connect shape: protocol claims such as `iss` remain on the verified
+  // idTokenClaims view but are removed from the presentation-filtered `user` view.
+  const filteredUser = Object.fromEntries(Object.entries(claims).filter(([key]) => key !== 'iss'));
   const context: Record<string, unknown> = {
     isAuthenticated() { return this === context; },
-    user: claims,
+    user: filteredUser,
     idTokenClaims: { ...claims, nonce: 'verified-by-upstream-oidc' },
     idToken: 'opaque-verified-id-token',
     accessToken: { access_token: 'test-token' },
@@ -239,6 +243,8 @@ describe('post-OIDC canonical principal mapping', () => {
       resolveIdentity,
     });
     const req = authenticatedRequest();
+    expect((req.oidc.user as Record<string, unknown>).iss).toBeUndefined();
+    expect((req.oidc.idTokenClaims as Record<string, unknown>).iss).toBe(ISSUER);
     const result = await invoke(middleware, req);
 
     expect(result).toEqual({ nextCalls: 1, status: 200, body: null });
@@ -250,6 +256,23 @@ describe('post-OIDC canonical principal mapping', () => {
     expect(req.oidc.idToken).toBe('opaque-verified-id-token');
     expect((req.oidc.boundToOriginal as () => boolean)()).toBe(true);
     expect(ensureSchema).toHaveBeenCalledTimes(1);
+  });
+
+  it('never accepts stable identity claims from the filtered user presentation view', async () => {
+    const resolveIdentity = vi.fn();
+    const middleware = createEntraLocalIdentityBridgeMiddleware({} as Pool, BRIDGE_ENV, {
+      ensureSchema: vi.fn().mockResolvedValue(undefined),
+      resolveIdentity,
+    });
+    const req = authenticatedRequest();
+    (req.oidc.user as Record<string, unknown>).iss = ISSUER;
+    delete (req.oidc.idTokenClaims as Record<string, unknown>).iss;
+
+    const result = await invoke(middleware, req);
+    expect(result.status).toBe(403);
+    expect(result.body?.error).toBe('identity_not_provisioned');
+    expect(result.nextCalls).toBe(0);
+    expect(resolveIdentity).not.toHaveBeenCalled();
   });
 
   it('rejects a verified session from any other issuer/tenant before account lookup', async () => {

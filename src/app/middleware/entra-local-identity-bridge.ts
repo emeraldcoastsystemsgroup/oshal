@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the opt-in Entra-to-local identity bridge used during LOCAL_AUTH migration: tenant-bound verified OIDC identities link once to an existing active/invited local account by asserted email, then every request retains the canonical local subject and issuer. Includes a hybrid pilot flag with combined local/Microsoft sign-in and fail-closed configuration.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Read stable protocol identity from verified idTokenClaims because express-openid-connect removes issuer and other protocol claims from its presentation-filtered user view.
  */
 
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
@@ -392,9 +393,14 @@ export function createEntraLocalIdentityBridgeMiddleware(
       return;
     }
     const user = oidc.user;
+    // express-openid-connect deliberately filters protocol claims (including `iss`) from
+    // `req.oidc.user`. `idTokenClaims` is the verified, unfiltered ID-token boundary; stable
+    // identity must come exclusively from it. The presentation-filtered user is only an
+    // email/display fallback and can never supply issuer, subject, tenant, or object id.
+    const verifiedClaims = oidc.idTokenClaims;
     try {
-      const issuer = normalizeEntraIssuer(user?.iss);
-      const tokenTenant = typeof user?.tid === 'string' ? user.tid.toLowerCase() : '';
+      const issuer = normalizeEntraIssuer(verifiedClaims?.iss);
+      const tokenTenant = typeof verifiedClaims?.tid === 'string' ? verifiedClaims.tid.toLowerCase() : '';
       if (issuer !== trustedIssuer || tokenTenant !== tenantId) {
         logger.warn('Authenticated non-tenant identity rejected by Entra local identity bridge');
         rejectUnlinked(res, localFallback);
@@ -403,8 +409,8 @@ export function createEntraLocalIdentityBridgeMiddleware(
       let externalSub: string;
       let entraObjectId: string;
       try {
-        externalSub = requireExactUserSubject(user?.sub, 'Entra subject');
-        entraObjectId = requireEntraObjectId(user?.oid);
+        externalSub = requireExactUserSubject(verifiedClaims?.sub, 'Entra subject');
+        entraObjectId = requireEntraObjectId(verifiedClaims?.oid);
       } catch {
         logger.warn('Authenticated Entra identity with invalid stable claims rejected');
         rejectUnlinked(res, localFallback);
@@ -413,7 +419,7 @@ export function createEntraLocalIdentityBridgeMiddleware(
       await ready();
       const cacheKey = `${issuer}\u0000${externalSub}\u0000${entraObjectId}`;
       const cached = identityCache.get(cacheKey);
-      const assertedEmail = assertedAccountEmail(user ?? {});
+      const assertedEmail = assertedAccountEmail(verifiedClaims ?? {}) ?? assertedAccountEmail(user ?? {});
       const firstLinkEmail = assertedEmail && firstLinkEmails.has(assertedEmail) ? assertedEmail : null;
       const identity = cached && Date.now() - cached.at < IDENTITY_CACHE_TTL_MS
         ? cached.identity
