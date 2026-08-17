@@ -279,6 +279,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 
 ## Connectors, channels, and external systems
 
+### Connector OAuth started from a themed subdomain dies at the callback
+- **Remaining:** the generic connector ceremony builds its redirect from `APP_URL` ([connector-oauth-ceremony.ts](../src/app/routes/connector-oauth-ceremony.ts)), so every provider sends the browser back to `oshal.agenticfederal.us` regardless of which surface started the flow. A session on `finance.oshal.ai` lives in a cookie scoped to `.oshal.ai`, so the callback arrives with no session and `requiresAuth` rejects it with 401 JSON — tokens are never stored. Live-hit 2026-08-17 reconnecting Schwab from the finance surface (api log: authenticated `/schwab/start` 22:16:18Z → unauthenticated `/schwab/callback` 22:16:36Z). Workaround: run the connect from `oshal.agenticfederal.us` itself. Candidate fixes: authenticate the callback from the signed state it already carries (provider + sub + ts HMAC — treat its verification like the token broker), or have `/start` bounce the browser through the `APP_URL` origin first so the whole ceremony runs inside one cookie family. Registering per-host callbacks does not generalize — Schwab accepts exactly one callback URL, byte-for-byte.
+- **Done when:** a connect started from `finance.oshal.ai` (or any `*.oshal.ai` surface) completes and stores tokens without the user pre-logging into `oshal.agenticfederal.us`, a forged or expired state is still refused, and a guard covers the cross-cookie-family origin case.
+
 ### Connector marketplace live brokered reads
 - **Remaining:** run at least five distinct credentialed connectors through caller-scoped broker resolution; loopback/captured-fetch fixtures do not qualify.
 - **Done when:** five owning-user live reads succeed, cross-user credential substitution is denied, and audit evidence names caller, connector, action, and redacted outcome.
