@@ -27,6 +27,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Retire bot self-registration of UI tools because a fleet-wide service secret is not bot-bound authority for dynamic controller mutations; BOT_UI_* now emits a one-time operator/manifest-registration warning.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: Token Chase replay remains tool-free and now explicitly disables auto-approval so future tool additions cannot silently inherit approval authority.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Forward the signed providerConfigRequired authority marker into swarm execution so missing provider records are distinguishable from intentional legacy dispatches and fail closed before task creation.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Forward the validated app/capability/pattern prompt carrier from /api/swarm-execute into the execution envelope; malformed trusted configuration now fails closed at the HTTP boundary.
  */
 
 /**
@@ -62,6 +63,7 @@ import { buildBotNodeHttpResponse } from './bot-node-http-response';
 import {
   canonicalBotWorkspaceId,
   normalizeBotNodeUserSub,
+  parseBotNodePromptCarrier,
   sanitizeBotNodeCreds,
 } from './bot-node-request-scope';
 import {
@@ -325,6 +327,11 @@ async function start(): Promise<void> {
       model?: unknown;
       configVersion?: unknown;
       providerConfigRequired?: unknown;
+      // Trusted prompt configuration carried by BotNodeRequest. These are validated before
+      // promotion into the envelope; pattern is executable prompt authority, not user content.
+      app?: unknown;
+      capability?: unknown;
+      pattern?: unknown;
     };
     if (!body || typeof body.text !== 'string'
       || typeof body.taskId !== 'string'
@@ -337,12 +344,14 @@ async function start(): Promise<void> {
     let scopedUserSub: string | undefined;
     let canonicalTaskId: string;
     let workspaceScopeId: string;
+    let promptCarrier: ReturnType<typeof parseBotNodePromptCarrier>;
     try {
       scopedUserSub = normalizeBotNodeUserSub(verifiedDelegation?.sub ?? body.userSub);
       canonicalTaskId = canonicalBotWorkspaceId(body.taskId);
       workspaceScopeId = canonicalBotWorkspaceId(body.workspaceFolderId);
+      promptCarrier = parseBotNodePromptCarrier(body);
     } catch (error) {
-      logger.warn({ err: error }, 'Rejected invalid swarm-execute identity or workspace scope');
+      logger.warn({ err: error }, 'Rejected invalid swarm-execute identity, workspace scope, or prompt carrier');
       res.status(400).json({ success: false, error: 'invalid_execution_scope' });
       return;
     }
@@ -373,6 +382,9 @@ async function start(): Promise<void> {
         direct: body.direct === true,
         userSub: scopedUserSub,
         ...(verifiedDelegation ? { principalIssuer: verifiedDelegation.principal_iss } : {}),
+        // The controller is the only authority that resolves app prompt configuration. Preserve
+        // the validated block across the HTTP hop so the bot can place it in TRUSTED CONFIGURATION.
+        ...promptCarrier,
         // Credentials are accepted only for the schema-bounded deterministic provider
         // handler. They never enter the generic model/CLI environment or workspace.
         ...(providerIntent && Object.keys(brokeredCreds).length > 0 ? { creds: brokeredCreds } : {}),
