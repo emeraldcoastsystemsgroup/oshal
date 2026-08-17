@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2026-07-29 13:20:00 | roger.murphy@emeraldcoastsystemsgroup.com   | Guard for the silent-env-var class: compose forwards ONLY the variables it names, so an env var the code reads but the compose file never declares does NOTHING — and it fails as "not configured" rather than as an error. Found live on the first customer box: connectors-routes reads GOOGLE_CONNECT_CLIENT_ID first, compose only forwarded OIDC_CLIENT_ID, so every Google connector reported "needs setup" on a LOCAL_AUTH deployment no matter what was set; NOTIFY_EMAIL_SENDER_SUB had the same shape. This spec pins the credential/identity env vars the api actually reads to the compose api service that must forward them.
  * 2026-08-01 00:00:00 | roger.murphy@emeraldcoastsystemsgroup.com   | Pin the world classify budget caps (WORLD_CLASSIFY_BUDGET_PER_HOUR/PER_DAY) — the burn-guard knobs an operator turns in .env; unforwarded they would be silently ignored in favor of the compiled defaults, which is how the burn class starts.
+ * 2026-08-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin ENCRYPTION_KEY to the API-only service so a host-configured encrypted-config vault key reaches config-routes without leaking into worker bot environments.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -21,6 +22,7 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'NOTIFY_EMAIL_SENDER_SUB', readBy: 'local-auth-routes inviteSenderSub + notify-routes operator rail' },
   { name: 'OSHAL_OPERATOR_SUBS', readBy: 'authz isOperator + the invitation sender fallback' },
   { name: 'SESSION_SECRET', readBy: 'connector-token crypto + LOCAL_AUTH session signing' },
+  { name: 'ENCRYPTION_KEY', readBy: 'config-routes + optimizer-providers encrypted-config vault (ADR-002)' },
   { name: 'LOCAL_AUTH', readBy: 'server.ts auth-mode selection (ADR-117)' },
   { name: 'APP_URL', readBy: 'absolute links in invitations and OAuth callbacks' },
   // Added 2026-07-30 after a browser walk of a real customer deployment. server.ts read
@@ -82,5 +84,12 @@ describe('compose forwards every env var the api actually reads', () => {
     // One Google app serves login + Gmail + GCP (connectors-routes documents this). The
     // fallback is what lets an OIDC deployment work without configuring a second client.
     expect(apiBlock).toMatch(/GOOGLE_CONNECT_CLIENT_ID:\s*\$\{GOOGLE_CONNECT_CLIENT_ID:-\$\{OIDC_CLIENT_ID/);
+  });
+
+  it('keeps the encrypted-config master key on the controller only', () => {
+    const mappings = compose.match(/^[ \t]+ENCRYPTION_KEY:[ \t]/gm) || [];
+    expect(mappings, 'ENCRYPTION_KEY must have one compose mapping, owned only by oshal-api').toHaveLength(1);
+    expect(apiBlock).toMatch(/^[ \t]+ENCRYPTION_KEY:[ \t]/m);
+    expect(sharedAnchor).not.toMatch(/^[ \t]+ENCRYPTION_KEY:[ \t]/m);
   });
 });

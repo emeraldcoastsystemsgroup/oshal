@@ -10,6 +10,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the provider registry and credential resolver from connectors-routes.ts without adding or changing any credential environment path; retained the SEC-05 Twilio fixed-controller-only boundary inline.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Let the Outlook connector reuse the already-configured Microsoft/Outlook OIDC client as documented, while preserving connector-specific credential precedence and refusing to mix an incomplete dedicated pair with another app's secret.
  * -----------------------------------------------------------------------------
  *
  * @module connector-provider-registry
@@ -682,10 +683,23 @@ export function providerCreds(provider: string): { clientId: string; clientSecre
   if (provider === 'outlook') {
     // The client SECRET is the Azure secret *value* — OUTLOOK_CLIENT_VALUE (the only one
     // compose passes through) — NOT OUTLOOK_CLIENT_SECRET, which is the secret *id* (a GUID).
-    // Tolerates the user's typo'd var names (APPLICCATION).
-    return {
+    // Tolerates the user's typo'd var names (APPLICCATION). The login runbook explicitly
+    // allows one Entra app to serve both login and the mail/calendar connector. Resolve
+    // whole pairs in priority order: never combine a half-configured dedicated client id
+    // with the secret from a potentially different login app and falsely report "ready".
+    const connector = {
       clientId: process.env.AZURE_EMAIL_APPLICATION_ID || process.env.AZURE_EMAIL_APPLICCATION_ID || '',
       clientSecret: process.env.OUTLOOK_CLIENT_VALUE || process.env.AZURE_EMAIL_CLIENT_SECRET || process.env.OUTLOOK_CLIENT_SECRET || '',
+    };
+    if (connector.clientId || connector.clientSecret) return connector;
+    const outlookLogin = {
+      clientId: process.env.OUTLOOK_OIDC_CLIENT_ID || '',
+      clientSecret: process.env.OUTLOOK_OIDC_CLIENT_SECRET || '',
+    };
+    if (outlookLogin.clientId || outlookLogin.clientSecret) return outlookLogin;
+    return {
+      clientId: process.env.MICROSOFT_OIDC_CLIENT_ID || '',
+      clientSecret: process.env.MICROSOFT_OIDC_CLIENT_SECRET || '',
     };
   }
   if (provider === 'twitter') {
@@ -747,5 +761,3 @@ export function providerCreds(provider: string): { clientId: string; clientSecre
   }
   return { clientId: '', clientSecret: '' };
 }
-
-

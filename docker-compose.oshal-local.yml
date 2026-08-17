@@ -19,6 +19,7 @@
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | Promote ADR-034 authoritative provider/model stamping on the controller by default while preserving an explicit OSHAL_PUSH_ON_DISPATCH=off rollback.
 # 13 | maintainer@emeraldcoastsystemsgroup.com   | Codex is the fleet default (operator directive 2026-08-12): FORCE_LLM_PROVIDER/LLM_PROVIDER default openai-codex, CODEX_MODEL default gpt-5.3-codex → gpt-5.5 (5.3-codex is API-key-only and 400s on the mounted ChatGPT login — the old default shipped broken for every ChatGPT-plan self-install), FORCE_LLM_MODEL/LLM_MODEL default gpt-5.5, and new CODEX_REASONING_EFFORT (default high) pins per-spawn effort so a host config.toml tuned for gpt-5.6-sol (ultra) can't 400 the fleet. Plan guidance: $200 Pro → gpt-5.5; $20 Plus → gpt-5.4 (half the burn); sol is interactive-only.
 # 14 | maintainer@emeraldcoastsystemsgroup.com   | Mount the sibling ~/.claude.json account metadata file on sales-bot as well as ~/.claude; omitting half of the host OAuth session made the concierge lose authentication on its first container recreation.
+# 15 | maintainer@emeraldcoastsystemsgroup.com   | Forward ENCRYPTION_KEY to the controller API only so the ADR-002 encrypted-config vault can use the key already provisioned in the host .env without exposing that deployment-wide secret to worker bots; guarded by an exact-one API-only mapping test.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1252,6 +1253,11 @@ services:
       # Token at app.duffel.com (Settings > Access Tokens). duffel_test_ = sandbox (no real charges);
       # duffel_live_ = real. Connect on /utilities (Duffel card) or set this env fallback; demo catalog otherwise.
       DUFFEL_ACCESS_TOKEN: ${DUFFEL_ACCESS_TOKEN:-}
+      # Controller encrypted-config vault key (ADR-002). Keep this API-only: config-routes and
+      # optimizer-providers need it to read/write the encrypted secrets envelope, while worker
+      # bots must never receive the deployment-wide key. Without this explicit pass-through,
+      # setting ENCRYPTION_KEY in .env is silently invisible inside the controller container.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       # Master connector-token AES key — CONTROLLER ONLY (removed from x-bot-env).
       # The controller decrypts tokens here + hands bots short-lived per-user tokens.
       SESSION_SECRET: ${SESSION_SECRET:-}

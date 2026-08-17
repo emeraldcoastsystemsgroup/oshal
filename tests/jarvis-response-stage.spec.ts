@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Verify the domain-agnostic Jarvis stage can materialize an arbitrary image artifact, fall back safely, and reverse into the ambient cloud.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the midnight presentation plane required by transparent light-on-dark artifacts when Jarvis runs under a light cockpit theme.
  */
 
 import path from 'node:path';
@@ -106,5 +107,36 @@ test.describe('Jarvis arbitrary-image response stage', () => {
       };
     });
     expect(result).toEqual({ state: 'speaking', busy: 'true', status: 'Jarvis is speaking' });
+  });
+
+  test('supplies a dark presentation plane for transparent artifacts on a light surface', async ({ page }) => {
+    await mountStage(page);
+    await page.evaluate(async () => {
+      document.body.style.background = '#f0f2f8';
+      const controller = (window as unknown as { stageController: {
+        materialize: (input: unknown) => Promise<boolean>;
+      } }).stageController;
+      const svg = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="180"><text x="20" y="90" fill="#f5fbff">Readable</text></svg>');
+      await controller.materialize({
+        spokenText: 'Readable on daylight.', visual: { url: `data:image/svg+xml,${svg}`, alt: 'Readable' },
+      });
+    });
+    const presentationStyle = () => page.evaluate(() => {
+      const root = document.getElementById('root')!;
+      const plane = getComputedStyle(root, '::before');
+      return {
+        backgroundColor: plane.backgroundColor,
+        opacity: plane.opacity,
+        captionColor: getComputedStyle(document.getElementById('caption')!).color,
+      };
+    });
+    await expect.poll(presentationStyle).toEqual({
+      backgroundColor: 'rgb(7, 17, 31)', opacity: '1', captionColor: 'rgb(245, 251, 255)',
+    });
+
+    await page.evaluate(() => (window as unknown as { stageController: {
+      archive: () => Promise<boolean>;
+    } }).stageController.archive());
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.getElementById('root')!, '::before').opacity)).toBe('0');
   });
 });

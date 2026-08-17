@@ -12,6 +12,30 @@
   isolation: isolate;
 }
 
+/* Visual-response SVGs deliberately have a transparent canvas and use a fixed light-on-midnight
+   palette. Give that palette its required presentation plane while a visual is active; otherwise
+   daylight/light-blue themes place near-white SVG copy directly on a near-white page and the
+   artifact looks as though a white filter is covering it. This is full-stage backing, not popup
+   chrome, so the response still replaces the ambient surface instead of appearing inside a card. */
+.response-stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(900px 560px at 50% 24%, rgba(120, 239, 250, .08), transparent 68%),
+    #07111f;
+  opacity: 0;
+  transition: opacity .35s ease;
+}
+
+.response-stage[data-state="gathering"]::before,
+.response-stage[data-state="materializing"]::before,
+.response-stage[data-state="speaking"]::before,
+.response-stage[data-state="archiving"]::before {
+  opacity: 1;
+}
+
 .response-stage canvas {
   position: absolute;
   inset: 0;
@@ -95,9 +119,17 @@
   opacity: 0;
 }
 
+.response-stage:not([data-state="idle"]) .response-stage-caption {
+  color: #f5fbff;
+}
+
+.response-stage:not([data-state="idle"]) .response-stage-status {
+  color: #91a8bc;
+}
+
 .response-stage[data-state="gathering"] .response-stage-status,
 .response-stage[data-state="materializing"] .response-stage-status {
-  color: var(--accent, var(--accent-primary, #7c7cff));
+  color: #78effa;
 }
 
 .response-stage-actions {
@@ -126,6 +158,12 @@
   cursor: pointer;
   -webkit-backdrop-filter: blur(16px) saturate(140%);
   backdrop-filter: blur(16px) saturate(140%);
+}
+
+.response-stage[data-state="speaking"] .response-stage-action {
+  color: #c7d7e4;
+  background: rgba(7, 17, 31, .78);
+  border-color: rgba(120, 239, 250, .18);
 }
 
 .response-stage-action:hover {

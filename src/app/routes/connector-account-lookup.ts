@@ -16,6 +16,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add 'schwab' branch — validate the OAuth token against the Trader API GET /accounts/accountNumbers (confirms Accounts & Trading approval); label by the masked account number, id = the account number. Base URL env-overridable (SCHWAB_TRADER_BASE_URL) for the sandbox.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add 'twilio' branch — the pasted secret is the combined "AccountSid:AuthToken" (Jira two-value shape); validate as HTTP Basic against GET /2010-04-01/Accounts/{sid}.json, reject non-active accounts, label by friendly name, id = Account SID.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add 'kalshi' branch — the pasted secret is "keyId:privateKeyPem" (two-value shape); no bearer token exists, so validate by RSA-PSS-signing a real GET /portfolio/balance, label by balance, id = key id.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the Outlook connector's stable `outlook` id as the Microsoft OAuth dialect when deriving its account label from the OIDC id_token.
  *
  * @module connector-account-lookup
  */
@@ -94,7 +95,7 @@ const GENERIC_VERIFY: Record<string, { url: string; header?: string; prefix?: st
  */
 export async function fetchAccount(provider: string, tok: { access_token?: string; id_token?: string }): Promise<{ email: string | null; id: string | null }> {
   const accessToken = tok?.access_token || '';
-  if (provider === 'microsoft') {
+  if (provider === 'microsoft' || provider === 'outlook') {
     // An IMAP-scoped token can't call Graph /me — read identity from the OIDC id_token.
     const c = decodeJwt(tok?.id_token);
     return { email: (c.email as string) || (c.preferred_username as string) || null, id: (c.oid as string) || (c.sub as string) || null };
