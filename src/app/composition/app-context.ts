@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Track B S6: Added DynamicToolExecutorRegistry to application context
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Normalized historical Change Log attribution to the mandated project author identifier
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D10: added optional appPackageDir — the manifest route mounter hands every PACKAGE route factory a context carrying its own package directory, replacing request-time reads of the process-global OSHAL_APP_PACKAGE_DIR env var (last-mounted app won; multi-app reloads served cross-app assets).
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the bound executeBot seam to installed app routes so package-owned concierges use the canonical node-or-inline dispatch path instead of calling the orchestrator directly.
  */
 
 import type { Pool } from 'pg';
@@ -38,6 +39,16 @@ import type {
 } from '@/features/ticketing';
 import type { ConnectorSpecToolService } from '@/app/connectors/runtime/spec-tools';
 import type { ConnectorMarketplaceService } from '@/app/connectors/runtime/marketplace';
+import type { BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
+
+/**
+ * @description Package-safe bot execution seam. The composition root binds the application
+ * context and node client, leaving callers to supply only the target identity and request.
+ */
+export type AppBotExecutor = (
+  agentId: string,
+  request: BotNodeRequest,
+) => Promise<BotNodeResponse>;
 
 /**
  * @description Application context holding all wired dependencies.
@@ -71,6 +82,13 @@ export interface AppContext {
   workspaceService: WorkspaceService;
   planeSyncService: PlaneSyncService;
   ticketInteractionService: TicketInteractionService;
+  /**
+   * @description Execute a bot through the framework's canonical node-or-inline chokepoint.
+   * Installed app routes must use this instead of calling `orchestrator.processMessage`
+   * directly, so node dispatch, credential resolution, budgets, skill profiles and execute-time
+   * entitlement remain intact.
+   */
+  executeBot: AppBotExecutor;
   /**
    * @description Absolute path of the installed app package this context was built FOR.
    * Populated ONLY on the per-package context the manifest route mounter passes to a
