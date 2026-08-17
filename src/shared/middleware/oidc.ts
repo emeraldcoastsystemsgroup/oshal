@@ -34,6 +34,7 @@ import {
   type LoginProvider,
   loginRestartPathForCallbackPath,
   renderLoginChooser,
+  resolveMicrosoftSecondaryLoginProvider,
   resolveLoginProviders,
   selectRequestProvider,
 } from '@/shared/middleware/oidc-providers';
@@ -79,6 +80,16 @@ export type OidcMiddlewareSet = {
   authMiddleware: RequestHandler;
   requiresAuth: RequestHandler;
   loginHandler: RequestHandler;
+};
+
+/**
+ * @description Provider selection modes for the OIDC middleware factory. The default preserves
+ * the platform's legacy primary-provider behavior. `microsoft-secondary-only` is deliberately
+ * narrow: it lets the invited-login migration pilot reuse the proven OIDC machinery while
+ * retaining the already-registered `/callback/microsoft` and suffixed session cookie.
+ */
+export type OidcMiddlewareOptions = {
+  providerMode?: 'default' | 'microsoft-secondary-only';
 };
 
 /**
@@ -655,17 +666,19 @@ function buildProviderInstancesByHost(
  *
  * @returns Object with authMiddleware (global), requiresAuth (route guard), and loginHandler (/login + /login/:provider routes)
  */
-export function createOidcMiddleware(): OidcMiddlewareSet {
+export function createOidcMiddleware(options: OidcMiddlewareOptions = {}): OidcMiddlewareSet {
   if (isMockOidcEnabled()) {
     return createMockOidcMiddleware();
   }
 
   const env = resolveOidcEnv();
-  const providers = resolveLoginProviders({
-    issuerBaseURL: env.browserIssuerBaseURL,
-    clientID: env.KEYCLOAK_CLIENT_ID,
-    clientSecret: env.KEYCLOAK_CLIENT_SECRET,
-  });
+  const providers = options.providerMode === 'microsoft-secondary-only'
+    ? [resolveMicrosoftSecondaryLoginProvider()]
+    : resolveLoginProviders({
+      issuerBaseURL: env.browserIssuerBaseURL,
+      clientID: env.KEYCLOAK_CLIENT_ID,
+      clientSecret: env.KEYCLOAK_CLIENT_SECRET,
+    });
   // Patch http.request once (no-op for cloud issuers / local dev) before building
   // any auth instances, so it isn't re-applied per host.
   patchHttpForDockerRouting(env.internalKeycloakHost, 8080);

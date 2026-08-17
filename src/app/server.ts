@@ -242,7 +242,8 @@ import { createFreeTierRoutes } from './routes/free-tier-routes';
 import { createLlmPreferenceRoutes } from './routes/llm-preference-routes';
 import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-pairing-routes';
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
-import { createLocalAuthMiddlewareSet, createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-routes';
+import { createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-routes';
+import { createApplicationAuthMiddlewareSet } from './middleware/application-auth';
 import { createBudgetRoutes } from './routes/budget-routes';
 import { registerA2aGatewayRoutes } from './routes/a2a-routes';
 import { createTraceRoutes } from './routes/trace-routes';
@@ -293,7 +294,6 @@ import { createDevConsoleRoutes } from './routes/dev-console-routes';
 import { superAdminEnabled } from '@/shared/middleware/superadmin';
 import { createTakeoutRoutes } from './routes/takeout-routes';
 import { createLogsRoutes } from './routes/logs-routes';
-import { createOidcMiddleware } from '@/shared/middleware/oidc';
 import { createAuditCaptureMiddleware, requireAdminConsoleAccess } from '@/features/governance';
 import { createGuestSessionInjector, isGuestRequest } from '@/shared/middleware/guest-session';
 import { createGuestGuard } from '@/shared/middleware/guest-guard';
@@ -576,13 +576,17 @@ function createApp(): express.Application {
   );
 
   app.use(cookieParser());
-  // Auth mode: LOCAL_AUTH (invited-user login, ADR-117) replaces the external-IdP OIDC
-  // set wholesale — same {authMiddleware, requiresAuth, loginHandler} contract, so every
-  // mount below is mode-agnostic. createLocalAuthMiddlewareSet fails closed at boot when
-  // MOCK_OIDC is also enabled or SESSION_SECRET is missing.
-  const { authMiddleware, requiresAuth, loginHandler } = isLocalAuthEnabled()
-    ? createLocalAuthMiddlewareSet(ctx.pool)
-    : createOidcMiddleware();
+  // Auth mode normally remains the wholesale LOCAL_AUTH-or-OIDC choice. The explicit
+  // Entra/local migration pilot composes both behind that same contract: /login keeps the
+  // invited-user form and offers Microsoft at /login/microsoft; /login/local is recovery.
+  const {
+    authMiddleware,
+    requiresAuth,
+    loginHandler,
+    localLoginHandler,
+    microsoftLoginHandler,
+    microsoftLoginEnabled,
+  } = createApplicationAuthMiddlewareSet(ctx.pool);
   const delegatedUserRouteAuth = createWorkloadDelegationMiddleware({
     pool: ctx.pool,
     fallback: serviceSecretOr(requiresAuth),
@@ -731,9 +735,20 @@ function createApp(): express.Application {
   // state-mismatch restart, the cockpit's 401 auth-lapse guard — funnels through here;
   // the stock route dropped returnTo, stranding ?app= deep links on the bare cockpit.
   app.get('/login', loginHandler);
+  // Entra/local migration pilot: bare `/login` remains the combined invited-user page.
+  // `/login/local` is its cookie-clearing recovery alias, while the exact Microsoft route
+  // starts Entra. Register both before the generic provider route.
+  if (localLoginHandler) {
+    app.get('/login/local', localLoginHandler);
+  }
+  if (microsoftLoginHandler) {
+    app.get('/login/microsoft', microsoftLoginHandler);
+  }
   // Provider-suffixed login entries (/login/google, /login/microsoft, …): same handler —
   // it resolves the provider from the path. The chooser page on bare /login links here.
-  app.get('/login/:provider', loginHandler);
+  if (!microsoftLoginHandler) {
+    app.get('/login/:provider', loginHandler);
+  }
 
   // TV pairing token auth: when there is no interactive OIDC session but a valid `oshal_tv`
   // cookie is present (set by the Fire TV app after device pairing), inject an authenticated
@@ -1200,7 +1215,7 @@ function createApp(): express.Application {
   // gate nothing. Only present in LOCAL_AUTH mode — in OIDC/mock modes these paths keep
   // their prior behavior (express-openid-connect owns /logout; /invite does not exist).
   if (isLocalAuthEnabled()) {
-    app.use(createLocalAuthRoutes(ctx.pool));
+    app.use(createLocalAuthRoutes(ctx.pool, { microsoftLogin: microsoftLoginEnabled === true }));
   }
   // Cost-governance — spend budgets (oshal_budgets) + spend reads. requiresAuth-gated; the
   // factory scopes cross-user reads/writes to the operator allowlist internally.

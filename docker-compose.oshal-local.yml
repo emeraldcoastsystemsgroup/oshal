@@ -1266,6 +1266,13 @@ services:
       # refuses to boot with both auth modes on (fail-closed, not silent precedence).
       # SMTP is optional — without it the admin API returns copyable invite links.
       LOCAL_AUTH: ${LOCAL_AUTH:-}
+      # CRM Entra migration rails — CONTROLLER ONLY. Full bridge is the eventual OIDC
+      # cutover; HYBRID is the bounded pilot where /login shows both the established
+      # invited-user form and the explicit /login/microsoft door. Never forward identity-
+      # policy switches to worker bots.
+      ENTRA_LOCAL_IDENTITY_BRIDGE: ${ENTRA_LOCAL_IDENTITY_BRIDGE:-}
+      ENTRA_LOCAL_AUTH_HYBRID: ${ENTRA_LOCAL_AUTH_HYBRID:-}
+      ENTRA_LOCAL_IDENTITY_EMAILS: ${ENTRA_LOCAL_IDENTITY_EMAILS:-}
       LOCAL_AUTH_PUBLIC_URL: ${LOCAL_AUTH_PUBLIC_URL:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}

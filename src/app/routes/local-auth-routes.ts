@@ -468,7 +468,12 @@ function errStatus(err: unknown): number {
  * @param pool - Postgres pool backing the local-user store.
  * @returns Express router.
  */
-export function createLocalAuthRoutes(pool: Pool): Router {
+export type LocalAuthRoutesOptions = {
+  /** Reveals the explicit Microsoft SSO option on the shared login page. */
+  microsoftLogin?: boolean;
+};
+
+export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOptions = {}): Router {
   const router = Router();
   let knownNonEmpty = false;
 
@@ -493,7 +498,11 @@ export function createLocalAuthRoutes(pool: Pool): Router {
     try {
       const bootstrapRequired = knownNonEmpty ? false : await isStoreEmpty(pool);
       knownNonEmpty = knownNonEmpty || !bootstrapRequired;
-      res.json({ localAuth: true, bootstrapRequired });
+      res.json({
+        localAuth: true,
+        bootstrapRequired,
+        ...(options.microsoftLogin === true ? { microsoftLogin: true } : {}),
+      });
     } catch (err) {
       logger.error({ err }, 'local-auth state failed');
       res.status(500).json({ error: 'state unavailable' });

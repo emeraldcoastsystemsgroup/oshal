@@ -167,6 +167,22 @@ function buildMicrosoftProvider(env: NodeJS.ProcessEnv): LoginProvider {
 }
 
 /**
+ * @description Resolves the tenant-specific Microsoft provider in its secondary route shape.
+ * This is the bounded seam used by the LOCAL_AUTH migration pilot: local password auth remains
+ * the deployment's established mode, while Microsoft owns `/login/microsoft`,
+ * `/callback/microsoft`, and `appSession_microsoft`. The caller is responsible for its own
+ * explicit feature flag; this function only validates and materializes the provider credentials.
+ *
+ * @param env - Environment map (injectable for tests)
+ * @returns A fail-closed Microsoft provider using provider-suffixed routes and cookie
+ */
+export function resolveMicrosoftSecondaryLoginProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): LoginProvider {
+  return buildMicrosoftProvider(env);
+}
+
+/**
  * @description Builds the Outlook.com (personal Microsoft account) secondary
  * provider: the fixed consumers tenant, so outlook.com/hotmail/live accounts
  * sign in while the `microsoft` provider stays restricted to the org directory.

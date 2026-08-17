@@ -13,6 +13,7 @@ import {
   MSA_CONSUMERS_TENANT,
   renderLoginChooser,
   resolveLoginProviders,
+  resolveMicrosoftSecondaryLoginProvider,
   selectRequestProvider,
   sniffProviderName,
   type LoginProvider,
@@ -162,6 +163,24 @@ describe('resolveLoginProviders', () => {
       { GOOGLE_LOGIN: 'false', MICROSOFT_LOGIN: 'false' },
     );
     expect(providers.map((p) => p.name)).toEqual(['primary']);
+  });
+});
+
+describe('resolveMicrosoftSecondaryLoginProvider', () => {
+  it('keeps the hybrid pilot on the registered Microsoft callback and suffixed cookie', () => {
+    const provider = resolveMicrosoftSecondaryLoginProvider(MS_ENV);
+    expect(provider).toMatchObject({
+      name: 'microsoft',
+      isPrimary: false,
+      issuerBaseURL: `https://login.microsoftonline.com/${MS_ENV.MICROSOFT_TENANT_ID}/v2.0`,
+      loginPath: '/login/microsoft',
+      callbackPath: '/callback/microsoft',
+      cookieName: 'appSession_microsoft',
+    });
+    expect(selectRequestProvider([provider], '/login/microsoft', '')).toMatchObject({
+      kind: 'login',
+      provider: { name: 'microsoft', callbackPath: '/callback/microsoft' },
+    });
   });
 });
 
@@ -355,6 +374,13 @@ describe('createOidcMiddleware construction with two providers', () => {
 
   it('builds the middleware set for hosts × {google, microsoft, outlook} without throwing', () => {
     const set = createOidcMiddleware();
+    expect(typeof set.authMiddleware).toBe('function');
+    expect(typeof set.requiresAuth).toBe('function');
+    expect(typeof set.loginHandler).toBe('function');
+  });
+
+  it('builds a Microsoft-only secondary-shaped set for the LOCAL_AUTH hybrid pilot', () => {
+    const set = createOidcMiddleware({ providerMode: 'microsoft-secondary-only' });
     expect(typeof set.authMiddleware).toBe('function');
     expect(typeof set.requiresAuth).toBe('function');
     expect(typeof set.loginHandler).toBe('function');

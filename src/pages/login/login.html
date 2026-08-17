@@ -40,6 +40,22 @@
     color: #fff; background: var(--accent); border: none; border-radius: 7px; cursor: pointer;
   }
   button:disabled { opacity: .6; cursor: default; }
+  .microsoft-link {
+    width: 100%; min-height: 42px; display: flex; align-items: center; justify-content: center;
+    gap: 10px; color: var(--text); background: var(--surface); border: 1px solid var(--line);
+    border-radius: 7px; font-size: 14.5px; font-weight: 600; text-decoration: none;
+  }
+  .microsoft-link:hover { background: var(--panel); }
+  .microsoft-mark {
+    width: 16px; height: 16px; display: grid; grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr; gap: 1px;
+  }
+  .microsoft-mark i:nth-child(1) { background: #f25022; }
+  .microsoft-mark i:nth-child(2) { background: #7fba00; }
+  .microsoft-mark i:nth-child(3) { background: #00a4ef; }
+  .microsoft-mark i:nth-child(4) { background: #ffb900; }
+  .divider { display: flex; align-items: center; gap: 10px; margin: 18px 0 2px; color: var(--dim); font-size: 11.5px; }
+  .divider::before, .divider::after { content: ''; height: 1px; background: var(--line); flex: 1; }
   .error { color: var(--bad); font-size: 13px; margin: 12px 0 0; min-height: 1.4em; }
   .hidden { display: none; }
   .foot { color: var(--dim); font-size: 11.5px; margin-top: 18px; }
@@ -51,6 +67,14 @@
     <div class="brand" id="brand">oshal</div>
     <h1 id="title">Sign in</h1>
     <p class="sub" id="subtitle">Only invited accounts can sign in.</p>
+
+    <div id="microsoftLoginPanel" class="hidden">
+      <a id="microsoftLogin" class="microsoft-link" href="/login/microsoft?returnTo=%2F">
+        <span class="microsoft-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span>Continue with Microsoft</span>
+      </a>
+      <div class="divider"><span>or use your invited account</span></div>
+    </div>
 
     <div id="nameRow" class="hidden">
       <label for="name">Your name</label>
@@ -113,13 +137,18 @@
     $('submit').textContent = 'Email me a reset link';
     $('submit').disabled = false;
     $('error').textContent = '';
+    $('microsoftLoginPanel').classList.add('hidden');
     $('foot').innerHTML = '<a href="/login">Back to sign in</a>. No email set up on this box? Ask your administrator for a new invitation link.';
     $('email').focus();
   }
   $('forgot').addEventListener('click', enterForgotMode);
 
   fetch('/api/local-auth/state').then(function (r) { return r.json(); }).then(function (s) {
-    if (s && s.bootstrapRequired) {
+    if (s && s.microsoftLogin === true && !s.bootstrapRequired && !forgotMode && location.pathname === '/login') {
+      $('microsoftLogin').setAttribute('href', '/login/microsoft?returnTo=' + encodeURIComponent(returnTo()));
+      $('microsoftLoginPanel').classList.remove('hidden');
+    }
+    if (s && s.bootstrapRequired && !forgotMode) {
       bootstrapMode = true;
       $('title').textContent = 'Create the administrator account';
       $('subtitle').textContent = 'This is a fresh install. The first account created here is the administrator.';
