@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the compose bot-node fleet's identity invariants. A new node service is always written by copying an existing one (sales-bot came from career-bot), and the copy-paste failure that survives review is a duplicated AGENT_ID: both containers heartbeat, both answer, and every cost row and audit stamp lands under one identity. Nothing else catches it — the id is a plain env string, the container starts fine, and the wrong-attribution only shows up later in someone's billing question.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin both Claude OAuth mounts on package-owned CLI nodes. The sales node originally mounted ~/.claude but omitted the sibling ~/.claude.json account metadata, so a recreate turned a working login into a failed refresh and an honest raw fallback.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -20,6 +21,8 @@ interface BotService {
   botName: string | null;
   profiles: string | null;
   exposes5000: boolean;
+  mountsClaudeAuthVolume: boolean;
+  mountsClaudeAuthJson: boolean;
 }
 
 /**
@@ -48,6 +51,8 @@ function botNodeServices(): BotService[] {
         botName: pick(/^\s*BOT_NAME:\s*(.+)$/m),
         profiles: pick(/^\s*profiles:\s*(.+)$/m),
         exposes5000: /^\s*-\s*"?5000"?\s*$/m.test(body),
+        mountsClaudeAuthVolume: /^\s*-\s*\*claude-auth-volume\s*$/m.test(body),
+        mountsClaudeAuthJson: /^\s*-\s*\*claude-auth-json\s*$/m.test(body),
       });
     }
     current = null;
@@ -103,6 +108,15 @@ describe('compose bot-node identity', () => {
 
     expect(broken, `every bot node needs a UUID identity and a persona:\n  ${broken.join('\n  ')}`)
       .toEqual([]);
+  });
+
+  it('mounts both halves of the host Claude OAuth session on every bot node', () => {
+    const broken = services
+      .filter((s) => !s.mountsClaudeAuthVolume || !s.mountsClaudeAuthJson)
+      .map((s) => `${s.name}: directory=${s.mountsClaudeAuthVolume} metadata=${s.mountsClaudeAuthJson}`);
+
+    expect(broken, `bot nodes must mount ~/.claude and ~/.claude.json together; a partial `
+      + `session loses authentication after recreation:\n  ${broken.join('\n  ')}`).toEqual([]);
   });
 
   // A package-owned node (ADR-093 Tier 2) must be opt-in, or every deployment pays its memory

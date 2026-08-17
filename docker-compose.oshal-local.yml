@@ -18,6 +18,7 @@
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | Remove dead core Spaces surface binds after the app-store carve; the installed spaces package is the sole surface source.
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | Promote ADR-034 authoritative provider/model stamping on the controller by default while preserving an explicit OSHAL_PUSH_ON_DISPATCH=off rollback.
 # 13 | maintainer@emeraldcoastsystemsgroup.com   | Codex is the fleet default (operator directive 2026-08-12): FORCE_LLM_PROVIDER/LLM_PROVIDER default openai-codex, CODEX_MODEL default gpt-5.3-codex → gpt-5.5 (5.3-codex is API-key-only and 400s on the mounted ChatGPT login — the old default shipped broken for every ChatGPT-plan self-install), FORCE_LLM_MODEL/LLM_MODEL default gpt-5.5, and new CODEX_REASONING_EFFORT (default high) pins per-spawn effort so a host config.toml tuned for gpt-5.6-sol (ultra) can't 400 the fleet. Plan guidance: $200 Pro → gpt-5.5; $20 Plus → gpt-5.4 (half the burn); sol is interactive-only.
+# 14 | maintainer@emeraldcoastsystemsgroup.com   | Mount the sibling ~/.claude.json account metadata file on sales-bot as well as ~/.claude; omitting half of the host OAuth session made the concierge lose authentication on its first container recreation.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -2080,6 +2081,11 @@ services:
       - ./any-bot/server:/app/any-bot/server:ro
       - *codex-auth-volume
       - *claude-auth-volume
+      # Claude Code keeps account metadata in the sibling ~/.claude.json file. Mounting only
+      # ~/.claude makes a node appear authenticated until its first recreation, then the CLI
+      # cannot refresh the shared OAuth session and clears the token file. Keep both halves of
+      # the host session exactly like the controller and the other CLI-backed bot nodes.
+      - *claude-auth-json
     depends_on:
       oshal-redis:
         condition: service_healthy
