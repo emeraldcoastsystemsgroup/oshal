@@ -294,6 +294,9 @@ x-bot-env: &bot-env
   # with no connection gets an honest "no engine connected" instead of silently spending the host's
   # key. Lane order/model: OSHAL_OPERATOR_LLM_LANES / _PROVIDER / _MODEL (free-tier-rotation.ts).
   DEMO_MODE: ${DEMO_MODE:-}
+  # Exact authenticated subjects allowed to use this demo deployment's mounted Codex brain without
+  # becoming OSHAL operators. Inert unless DEMO_MODE is true; never use a wildcard.
+  OSHAL_DEMO_CLI_SUBS: ${OSHAL_DEMO_CLI_SUBS:-}
   OSHAL_OPERATOR_LLM_LANES: ${OSHAL_OPERATOR_LLM_LANES:-}
   OSHAL_OPERATOR_LLM_PROVIDER: ${OSHAL_OPERATOR_LLM_PROVIDER:-}
   OSHAL_OPERATOR_LLM_MODEL: ${OSHAL_OPERATOR_LLM_MODEL:-}

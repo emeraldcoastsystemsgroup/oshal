@@ -4,16 +4,21 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for ADR-127's SEC-05 carve. The carve is the one place an autonomous CLI harness may run at a bot node, so the guard's real job is the NEGATIVE space: every provider in the refused set stays refused off-demo, for a non-operator, and for an identity-less request, and the demo flag reads DEMO_MODE alone (never MOCK_OIDC — mock auth must not unlock a real subscription). Exercises the exported preflight directly, which is the function the handler calls before any task or workspace is created.
+ * 2 | Codex                                      | Pin the separate exact-sub demo-user allowlist: it works only with DEMO_MODE, rejects lookalikes/identity-less requests, and requires no operator membership.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { assertUnattendedProviderPreflight } from '../../src/app/bot-node-execution-handler';
+import { isOperatorIdentity } from '../../src/shared/middleware/authz';
 
 const OPERATOR = 'operator-sub-1';
+const DEMO_USER = 'demo-user-sub-2';
 const GUEST = 'guest-sub-9';
 const CLI_PROVIDERS = ['cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex'];
+const CODEX_PROVIDERS = ['codex', 'codex-cli', 'openai-codex'];
+const NON_CODEX_CLI_PROVIDERS = CLI_PROVIDERS.filter((provider) => !CODEX_PROVIDERS.includes(provider));
 
-const OWNED_ENV = ['DEMO_MODE', 'MOCK_OIDC', 'OSHAL_OPERATOR_SUBS'];
+const OWNED_ENV = ['DEMO_MODE', 'MOCK_OIDC', 'OSHAL_OPERATOR_SUBS', 'OSHAL_DEMO_CLI_SUBS'];
 let saved: Record<string, string | undefined> = {};
 
 /** Assert the preflight refuses, with the SEC-05 code intact (callers branch on it). */
@@ -31,6 +36,7 @@ beforeEach(() => {
   saved = Object.fromEntries(OWNED_ENV.map((k) => [k, process.env[k]]));
   for (const k of OWNED_ENV) delete process.env[k];
   process.env.OSHAL_OPERATOR_SUBS = OPERATOR;
+  process.env.OSHAL_DEMO_CLI_SUBS = DEMO_USER;
 });
 
 afterEach(() => {
@@ -44,6 +50,7 @@ describe('SEC-05 preflight — the refusal that must survive', () => {
   it('refuses every autonomous CLI when DEMO_MODE is off, operator or not', () => {
     for (const providerName of CLI_PROVIDERS) {
       expectRefusal({ providerName, userSub: OPERATOR });
+      expectRefusal({ providerName, userSub: DEMO_USER });
       expectRefusal({ providerName, userSub: GUEST });
     }
   });
@@ -74,6 +81,19 @@ describe('SEC-05 preflight — the refusal that must survive', () => {
       expectRefusal({ providerName: 'claude-code', userSub: lookalike });
     }
   });
+
+  it('requires an exact demo-user subject match too', () => {
+    process.env.DEMO_MODE = 'true';
+    for (const lookalike of [DEMO_USER.toUpperCase(), ` ${DEMO_USER}`, `${DEMO_USER} `, `${DEMO_USER}x`]) {
+      expectRefusal({ providerName: 'openai-codex', userSub: lookalike });
+    }
+  });
+
+  it('never treats a wildcard as a demo-user match', () => {
+    process.env.DEMO_MODE = 'true';
+    process.env.OSHAL_DEMO_CLI_SUBS = '*';
+    expectRefusal({ providerName: 'openai-codex', userSub: GUEST });
+  });
 });
 
 describe('SEC-05 preflight — what it must allow', () => {
@@ -81,6 +101,17 @@ describe('SEC-05 preflight — what it must allow', () => {
     process.env.DEMO_MODE = 'true';
     for (const providerName of CLI_PROVIDERS) {
       expect(() => assertUnattendedProviderPreflight({ providerName, userSub: OPERATOR })).not.toThrow();
+    }
+  });
+
+  it('allows Codex only for an explicitly listed demo user without operator membership', () => {
+    process.env.DEMO_MODE = 'true';
+    expect(isOperatorIdentity(DEMO_USER)).toBe(false);
+    for (const providerName of CODEX_PROVIDERS) {
+      expect(() => assertUnattendedProviderPreflight({ providerName, userSub: DEMO_USER })).not.toThrow();
+    }
+    for (const providerName of NON_CODEX_CLI_PROVIDERS) {
+      expectRefusal({ providerName, userSub: DEMO_USER });
     }
   });
 

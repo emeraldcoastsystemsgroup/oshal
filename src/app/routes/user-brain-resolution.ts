@@ -12,8 +12,8 @@
  *                dispatch record), which the node reconciles its active provider to before running.
  *   - `none`   → nothing usable; the caller owes the user an honest "no engine connected".
  *
- * The CLI shape is only ever produced under the ADR-127 carve (demo deployment + an operator-owned
- * request). It is deliberately the SAME condition the node's preflight enforces — the controller
+ * The CLI shape is only ever produced under the ADR-127 carve (demo deployment + an exact operator
+ * or demo-CLI-user subject match). It is deliberately the SAME condition the node's preflight enforces — the controller
  * never hands out a selection the node would refuse, and the node never trusts the controller's
  * word for it.
  *
@@ -25,13 +25,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added isRetryableCliBrainFailure so a CLI-lane turn can fall back to a hosted lane. reportResolvedLlmFailure speaks only for hosted connections (it refuses when there is none, which is every CLI turn), so a logged-out CLI login dead-ended instead of retrying.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | DEMO_CLI_ORDER flipped to codex-first (operator directive 2026-08-12: codex is the swarm's default CLI/API/LLM). Claude Code stays as the second rung so a codex blip degrades to the other mounted login instead of dead-ending.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. DEMO_CLI_ORDER is ['openai-codex'] only; an explicitly named claude-code preference (resolveNamedPreference) still resolves.
+ * 5 | Codex                                      | Allow exact OSHAL_DEMO_CLI_SUBS users to receive the Codex-only demo CLI brain without adding them to OSHAL_OPERATOR_SUBS; keep the controller predicate identical to node preflight and ignore other saved CLI choices for those nonoperators.
  *
  * @module user-brain-resolution
  */
 
 import { createChildLogger } from '@/shared/logger';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
-import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { isDemoCliProviderAllowed } from '@/shared/deployment-mode';
 import { getUserLlmConnection } from './byo-llm-routes';
 import {
   resolveLiveFreeTierConnection,
@@ -69,13 +70,19 @@ export type ResolvedBrain =
 
 /**
  * @description Whether this caller may be handed a CLI harness selection. Mirrors the node-side
- * carve exactly: a demo deployment AND an exact, case-sensitive operator subject. Anything else
- * gets a hosted rung or nothing — the controller must not offer what the node will refuse.
+ * carve exactly: a demo deployment AND an exact operator/demo-user subject match. The dedicated
+ * demo-user list grants this brain lane only; it does not confer platform operator privileges.
+ * Anything else gets a hosted rung or nothing — the controller must not offer what the node will
+ * refuse.
  * @param userSub - the caller's OIDC sub
+ * @param providerId - the requested CLI provider; customer demo users are Codex-only
  * @returns true when a `cli` resolution is admissible for this caller
  */
-export function cliBrainAvailable(userSub: string): boolean {
-  return demoModeEnabled() && isDeploymentOperatorSub(userSub);
+export function cliBrainAvailable(
+  userSub: string,
+  providerId: 'claude-code' | 'openai-codex' = 'openai-codex',
+): boolean {
+  return isDemoCliProviderAllowed(providerId, userSub);
 }
 
 /**
@@ -193,7 +200,7 @@ async function resolveNamedPreference(
   pool: any, userSub: string, pref: UserLlmPreference,
 ): Promise<ResolvedBrain | null> {
   if (pref.preferred === 'claude-code' || pref.preferred === 'openai-codex') {
-    if (!cliBrainAvailable(userSub)) return null;
+    if (!cliBrainAvailable(userSub, pref.preferred)) return null;
     return { kind: 'cli', providerId: pref.preferred, ...(pref.model ? { model: pref.model } : {}) };
   }
   if (pref.preferred === 'any-llm') return explicitHosted(pool, userSub);
@@ -204,14 +211,15 @@ async function resolveNamedPreference(
 /**
  * @description Resolve which brain runs this turn (ADR-127).
  *
- * Order: the user's named preference when usable → the demo CLI default (Claude Code, then Codex)
+ * Order: the user's named preference when usable → the demo CLI default (Codex)
  * for a caller the carve covers → their explicit BYO endpoint → their free tiers → the platform
  * free lane → the deployment's own API keys (demo, operator) → none.
  *
  * The demo CLI default sits ABOVE explicit BYO on purpose, and only ever affects a caller the carve
- * covers (the operator of a demo box): on such a box the mounted subscription is the brain the
- * operator installed the product to use. Any user who wants their own endpoint instead names it in
- * Settings, which is checked first.
+ * covers (an exact operator or customer-demo subject on a demo box): on such a box the mounted
+ * subscription is the deployment brain. Any user who wants their own endpoint instead names it in
+ * Settings, which is checked first. A customer-demo subject cannot expand this Codex-only
+ * entitlement by saving another CLI preference.
  * @param pool - Postgres pool @param userSub - the caller's OIDC sub
  * @returns the brain to run on, or { kind: 'none' }
  */

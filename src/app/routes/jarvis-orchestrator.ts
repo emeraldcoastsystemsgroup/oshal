@@ -335,7 +335,7 @@ export async function runJarvisBot(
     // A CLI-lane turn has no resolved hosted connection, and reportResolvedLlmFailure answers only
     // for hosted lanes — it refuses outright when there is no connection to cool, which is EVERY CLI
     // turn. That silence is what turned an expired CLI login into a dead end on the one path the
-    // demo operator actually lands on (resolveUserBrain hands the operator `cli` first). The CLI
+    // demo-CLI caller actually lands on (resolveUserBrain hands an allowed subject `cli` first). The CLI
     // lane therefore decides its own retryability; the hosted lanes keep their existing contract,
     // including the refusal to silently replay an explicitly chosen BYO endpoint.
     const retryable = brain.kind === 'cli'

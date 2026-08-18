@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: reject every generic credential carrier, consume credentials only in validated deterministic provider intents, and finish those intents before persona/memory/task creation so no model-visible work or hidden task side effect occurs.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Enforce authoritative dispatch pins fail-closed: refuse missing records/seams and concurrent mismatches before task creation, and report the effective config source/action/version in every successful result.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: one audited carve in the SEC-05 preflight — a DEMO deployment may run an autonomous CLI harness for a request owned by a configured operator (DEMO_MODE alone, never MOCK_OIDC; exact OSHAL_OPERATOR_SUBS match). Off-demo, non-operator, and identity-less requests keep the refusal, so unattended content-driven work is never unlocked by the flag.
+ * 17 | Codex                                      | Extend the demo CLI carve to exact OSHAL_DEMO_CLI_SUBS matches for Codex aliases only, without granting operator RBAC or other CLI subscriptions. The controller and node share one predicate; DEMO_MODE, authenticated ownership, and exact-sub matching remain mandatory.
  */
 
 /**
@@ -73,7 +74,7 @@ import {
   type DispatchConfigReconciliation,
   type DispatchConfigRuntime,
 } from './bot-node-dispatch-config';
-import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { isDemoCliProviderAllowed } from '@/shared/deployment-mode';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
 const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
@@ -82,18 +83,18 @@ const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
 
 /**
  * @description ADR-127: the ONE carve in which an autonomous CLI harness may execute at a bot node.
- * Requires BOTH a demo deployment AND an operator-owned request. A missing identity is refused on
- * purpose — unattended work with no owner is exactly the content-driven case SEC-05 exists for, and
- * a demo switch must not quietly enable it.
+ * Requires BOTH a demo deployment AND an exact operator/demo-CLI-user allowlist match. A missing
+ * identity is refused on purpose — unattended work with no owner is exactly the content-driven
+ * case SEC-05 exists for, and a demo switch must not quietly enable it.
  * @param providerName - the resolved provider for this execution (already lowercased)
  * @param userSub - the request's exact authenticated owner, if any
  * @returns true when the CLI harness may run for this request
  */
-function demoOperatorCliUnlock(providerName: string, userSub: unknown): boolean {
-  if (!demoModeEnabled() || !isDeploymentOperatorSub(userSub)) return false;
+function demoCliUnlock(providerName: string, userSub: unknown): boolean {
+  if (!isDemoCliProviderAllowed(providerName, userSub)) return false;
   logger.warn(
     { providerName, userSub, adr: 'ADR-127' },
-    'DEMO_MODE: running an autonomous CLI harness for the deployment operator — SEC-05 refusal deliberately carved',
+    'DEMO_MODE: running an autonomous CLI harness for an explicitly allowed demo user — SEC-05 refusal deliberately carved',
   );
   return true;
 }
@@ -103,7 +104,8 @@ function demoOperatorCliUnlock(providerName: string, userSub: unknown): boolean 
  * providers own an internal tool loop, can read their credential home, and cannot revalidate
  * OSHAL's exact handler generation/scopes. A deterministic provider intent and a caller's BYO
  * hosted endpoint bypass the local CLI entirely and are therefore admissible; so, on a DEMO
- * deployment, is the operator's own request (ADR-127 — off by default, audited, operator-only).
+ * deployment, is an exactly allowlisted operator/demo user's request (ADR-127 — off by default,
+ * audited, and separate from operator RBAC).
  */
 export function assertUnattendedProviderPreflight(input: {
   providerName: unknown;
@@ -115,7 +117,7 @@ export function assertUnattendedProviderPreflight(input: {
   const providerName = typeof input.providerName === 'string'
     ? input.providerName.trim().toLowerCase() : '';
   if (!UNBROKERED_AUTONOMOUS_PROVIDERS.has(providerName)) return;
-  if (demoOperatorCliUnlock(providerName, input.userSub)) return;
+  if (demoCliUnlock(providerName, input.userSub)) return;
   const error = new Error(
     `${providerName} is an unbrokered autonomous CLI; unattended execution requires a hosted provider or audited brokered sandbox`,
   );
@@ -298,8 +300,8 @@ export function createBotNodeExecutionHandler(
         providerName: selectedProvider,
         deterministicIntent: Boolean(providerIntent),
         byoHostedInference: Boolean(byoLlmConnection),
-        // ADR-127: the demo CLI carve is scoped to the deployment operator, so the preflight needs
-        // the request's exact owner. Absent identity keeps the refusal.
+        // ADR-127: the demo CLI carve is scoped to exact operator/demo-user subjects, so the
+        // preflight needs the request's exact owner. Absent identity keeps the refusal.
         userSub,
       });
       if (providerIntent) {

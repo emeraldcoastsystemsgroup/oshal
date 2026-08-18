@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: expose a provider-selection preflight so unbrokered autonomous CLIs are rejected before task/workspace acceptance, with an explicit hosted-or-brokered remediation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Remove the unaudited caller-supplied brokeredSandbox bypass and include Gemini CLI aliases in unattended preflight; no broker attestation exists today.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: the SPAWN boundary gets the same demo carve the TS preflight has, and for the same reason — a deployment running as a demo may launch the CLI for its own operator. Authority is read from the PROCESS environment plus the per-request OSHAL_USER_SUB the handler already threads into extraEnv; a caller-supplied option is never accepted as attestation (that bypass was removed in entry 3 and stays removed). Everything else — every other caller, every identity-less launch, every non-demo deployment — keeps the denial.
+ * 5 | Codex                                      | Mirror the TS Codex-only demo-user allowlist at the final spawn boundary. Exact OSHAL_DEMO_CLI_SUBS matches are admitted only for Codex aliases under DEMO_MODE and gain no operator authority or access to other CLI subscriptions.
  */
 'use strict';
 
@@ -32,16 +33,19 @@ function launchSubject(options) {
 
 /**
  * ADR-127: the one condition under which a CLI launch is permitted — a demo deployment launching
- * for a configured operator of that deployment. Exact, case-sensitive subject comparison; an empty
- * or absent subject can never match, so an unattended launch stays denied.
+ * for an exact operator or demo-CLI-user subject. Exact, case-sensitive subject comparison; an
+ * empty or absent subject can never match, so an unattended launch stays denied.
  */
-function demoOperatorLaunch(options) {
+function demoAllowedLaunch(options, providerName) {
   if (!demoDeployment()) return false;
   const sub = launchSubject(options);
   if (!sub.trim()) return false;
-  return String(process.env.OSHAL_OPERATOR_SUBS || '')
-    .split(',').map((s) => s.trim()).filter(Boolean)
-    .includes(sub);
+  const exactMatch = (raw) => String(raw || '')
+    .split(',').map((s) => s.trim()).filter(Boolean).includes(sub);
+  if (exactMatch(process.env.OSHAL_OPERATOR_SUBS)) return true;
+  const provider = typeof providerName === 'string' ? providerName.trim().toLowerCase() : '';
+  return ['codex', 'codex-cli', 'openai-codex'].includes(provider)
+    && exactMatch(process.env.OSHAL_DEMO_CLI_SUBS);
 }
 
 /** Reject an unbrokered autonomous provider before durable work is accepted. */
@@ -63,12 +67,12 @@ function assertUnattendedProviderSelection(providerName, options = {}) {
  * request must stop before gateway calls, credential setup, or process spawn.
  */
 function assertCliToolBoundary(options, providerName) {
-  // ADR-127: a demo deployment may launch the CLI for its own operator. The authority comes from
-  // the process environment plus the handler-threaded request subject, never from an option the
-  // caller could set. Audited on every pass, because this is a posture exception.
-  if (demoOperatorLaunch(options)) {
+  // ADR-127: a demo deployment may launch the CLI for an exact operator/demo-user allowlist match.
+  // The authority comes from the process environment plus the handler-threaded request subject,
+  // never from an option the caller could set. Audited on every pass, because this is a posture exception.
+  if (demoAllowedLaunch(options, providerName)) {
     // eslint-disable-next-line no-console
-    console.warn(`[ADR-127] DEMO_MODE: launching ${providerName} for the deployment operator — CLI tool boundary deliberately carved`);
+    console.warn(`[ADR-127] DEMO_MODE: launching ${providerName} for an explicitly allowed demo user — CLI tool boundary deliberately carved`);
     return;
   }
   // Otherwise: no audited brokered sandbox exists. Do not accept a request/model/provider option as

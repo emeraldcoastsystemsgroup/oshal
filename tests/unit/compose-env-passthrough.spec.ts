@@ -7,6 +7,7 @@
  * 2026-08-01 00:00:00 | roger.murphy@emeraldcoastsystemsgroup.com   | Pin the world classify budget caps (WORLD_CLASSIFY_BUDGET_PER_HOUR/PER_DAY) — the burn-guard knobs an operator turns in .env; unforwarded they would be silently ignored in favor of the compiled defaults, which is how the burn class starts.
  * 2026-08-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin ENCRYPTION_KEY to the API-only service so a host-configured encrypted-config vault key reaches config-routes without leaking into worker bot environments.
  * 2026-08-17 13:45:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the Entra/local identity bridge and hybrid-pilot switches to the controller API only; setting a migration posture in the CRM droplet env must reach auth composition without propagating identity-policy flags to worker bots.
+ * 2026-08-17 19:55:00 | Codex                                      | Pin OSHAL_DEMO_CLI_SUBS to the shared API/bot environment; the controller resolves eligibility and the worker enforces it again at preflight/spawn.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -22,6 +23,7 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'GOOGLE_CONNECT_CLIENT_SECRET', readBy: 'connectors-routes providerCreds (Google connector)' },
   { name: 'NOTIFY_EMAIL_SENDER_SUB', readBy: 'local-auth-routes inviteSenderSub + notify-routes operator rail' },
   { name: 'OSHAL_OPERATOR_SUBS', readBy: 'authz isOperator + the invitation sender fallback' },
+  { name: 'OSHAL_DEMO_CLI_SUBS', readBy: 'demo CLI brain resolution + bot-node preflight/spawn boundary' },
   { name: 'SESSION_SECRET', readBy: 'connector-token crypto + LOCAL_AUTH session signing' },
   { name: 'ENCRYPTION_KEY', readBy: 'config-routes + optimizer-providers encrypted-config vault (ADR-002)' },
   { name: 'LOCAL_AUTH', readBy: 'server.ts auth-mode selection (ADR-117)' },
@@ -95,6 +97,12 @@ describe('compose forwards every env var the api actually reads', () => {
     expect(mappings, 'ENCRYPTION_KEY must have one compose mapping, owned only by oshal-api').toHaveLength(1);
     expect(apiBlock).toMatch(/^[ \t]+ENCRYPTION_KEY:[ \t]/m);
     expect(sharedAnchor).not.toMatch(/^[ \t]+ENCRYPTION_KEY:[ \t]/m);
+  });
+
+  it('forwards the demo CLI subject list through the shared API/bot anchor exactly once', () => {
+    const mappings = compose.match(/^[ \t]+OSHAL_DEMO_CLI_SUBS:[ \t]/gm) || [];
+    expect(mappings).toHaveLength(1);
+    expect(sharedAnchor).toMatch(/^[ \t]+OSHAL_DEMO_CLI_SUBS:[ \t]/m);
   });
 
   it.each(['ENTRA_LOCAL_IDENTITY_BRIDGE', 'ENTRA_LOCAL_AUTH_HYBRID', 'ENTRA_LOCAL_IDENTITY_EMAILS'])(

@@ -15,6 +15,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: GET /options + GET|PUT the caller's default brain, auth-gated and owner-scoped.
+ * 2 | Codex                                      | Resolve CLI availability per provider so OSHAL_DEMO_CLI_SUBS users see/save Codex only; operator-only Claude remains unavailable to them in both GET and PUT.
  *
  * @module llm-preference-routes
  */
@@ -57,7 +58,8 @@ interface BrainOption {
  * @returns the ordered option list
  */
 async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]> {
-  const cli = cliBrainAvailable(sub);
+  const claudeCli = cliBrainAvailable(sub, 'claude-code');
+  const codexCli = cliBrainAvailable(sub, 'openai-codex');
   const [byo, freeLanes] = await Promise.all([
     getUserLlmConnection(ctx.pool, sub).catch(() => null),
     listFreeTierConnections(ctx.pool, sub).catch(() => []),
@@ -73,18 +75,18 @@ async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]
     {
       id: 'claude-code',
       label: 'Claude Code (this machine\'s login)',
-      detail: cli
+      detail: claudeCli
         ? 'Runs on the Claude Code subscription signed in on this machine.'
         : 'Available only to the operator of a deployment running in demo mode.',
-      available: cli,
+      available: claudeCli,
     },
     {
       id: 'openai-codex',
       label: 'OpenAI Codex (this machine\'s login)',
-      detail: cli
+      detail: codexCli
         ? 'Runs on the Codex/ChatGPT login signed in on this machine.'
-        : 'Available only to the operator of a deployment running in demo mode.',
-      available: cli,
+        : 'Available only to an approved user of a deployment running in demo mode.',
+      available: codexCli,
     },
     {
       id: 'any-llm',

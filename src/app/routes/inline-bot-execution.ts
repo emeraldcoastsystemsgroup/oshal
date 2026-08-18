@@ -233,7 +233,8 @@ export async function resolveHostedBrainForCliAgent(
  * carries the caller's resolved brain. Unlike the inline branch (hosted rungs only — SEC-05
  * refuses every controller CLI unconditionally), a node dispatch walks the FULL user-brain
  * ladder: a `cli` result is STAMPED as the dispatch's authoritative provider (ADR-034) — the demo
- * operator's mounted login, which the node's own preflight re-enforces under the SAME carve — and
+ * deployment's mounted login for an exact allowed subject, which the node's own preflight
+ * re-enforces under the SAME carve — and
  * a `hosted` result rides as byoLlmConnection (guests and every non-carve caller). A
  * caller-threaded connection or provider stamp always wins untouched; identity-less dispatches
  * and hosted-harness nodes pass through unchanged. Ladder FAILURE (not "no brain") dispatches
@@ -428,7 +429,7 @@ export async function executeBotOrInline(
     // exactly why weaving into `text` (as the inline path does) would never reach it there.
     if (skillPattern) request.pattern = skillPattern;
     // ADR-127 remote brain: stamp the caller's resolved brain on a CLI-harness node dispatch —
-    // cli as the authoritative provider (the demo operator's mounted login), hosted riding as
+    // cli as the authoritative provider (the demo deployment's mounted login), hosted riding as
     // byoLlmConnection. See stampRemoteBrain; explicit caller choices pass through untouched.
     await stampRemoteBrain(ctx.pool, agentId, request);
     return botClient.execute(agentId, request);

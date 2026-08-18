@@ -38,11 +38,11 @@ least gpt-5.5; cheaper tiers get a documented recommendation rather than a diffe
    `a2a` keeps its harness — it is an external-agent boundary, not an LLM. Per-bot overrides
    remain the escape hatch for a persona that reasons poorly on codex; the global default does
    not move back for one bot.
-2. **The demo CLI ladder is codex-first.** `DEMO_CLI_ORDER = ['openai-codex', 'claude-code']`,
-   amending ADR-127's rung 2 (order only — both carve conditions and every other rung are
-   untouched). Claude Code stays mounted and is the second rung plus the runtime-failover
-   secondary, so a codex blip degrades instead of dead-ending.
-   **→ Superseded by Amendment 1 (2026-08-13): codex is the ONLY default rung.**
+2. **The demo CLI ladder became codex-first.** The original 2026-08-12 decision set
+   `DEMO_CLI_ORDER = ['openai-codex', 'claude-code']`; **Amendment 1 (2026-08-13) superseded that
+   order and made Codex the only automatic rung**. ADR-127's 2026-08-17 amendment later added an
+   exact, Codex-only customer-demo subject list. Claude Code remains an explicit operator choice,
+   never an automatic default or runtime fallback.
 3. **Model floor gpt-5.5, chosen by plan tier, never hardcoded below the floor.** Compose
    defaults: `FORCE_LLM_PROVIDER=openai-codex`, `CODEX_MODEL=gpt-5.5`, `LLM_PROVIDER/LLM_MODEL`
    to match; the boot-sync and adapter fallbacks likewise. `gpt-5.3-codex` may not reappear as a
