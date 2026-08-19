@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guest sessions get their own strip: the standard banners pushed "Create a bot / Connect accounts / Connect a model" — all guest-blocked writes that dead-end the public demo's first click. Guests now see explore-first copy with a sign-in pointer; detection via /api/auth/user, fail-open to the normal banners.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | De-brand (visible leak): reworded the "no model connected" banner + doc comment to drop the legacy stub-name wording (now just "placeholder text"). The stub-provider detection was left matching the legacy provider id until the noop rename landed.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | De-brand final pass: the stub-provider detection now matches 'noop' (NoopProvider reports 'noop' as of the provider rename); isFreeOrStub replaces the legacy-named flag. Functional fix, not cosmetic — the old pattern would no longer match the renamed provider id.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Model-state banners are now dismissible (session-scoped, so the reminder returns next visit) and the strip wraps on narrow viewports — without flex-wrap the fixed-width buttons squeezed the text into a tall sliver that filled a phone screen with no way to close it.
  */
 
 /**
@@ -26,6 +27,10 @@
  */
 
 const GS_DISMISS_KEY = 'oshal-getting-started-dismissed';
+// Session-scoped on purpose: the model-state reminder is useful, so it comes back next
+// visit — but once closed it must stay closed for the rest of the session (mobile: it
+// previously filled the screen with no dismiss at all).
+const MODEL_DISMISS_KEY = 'oshal-model-banner-dismissed';
 const FOCUSED_APP = /[?&]app=/.test(window.location.search);
 const FULL_PROFILE = /[?&]profile=oshal-framework/.test(window.location.search);
 
@@ -40,7 +45,7 @@ function injectStyles() {
     #oshalFirstRun { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 16px 0; }
     #oshalFirstRun:empty { display: none; padding: 0; }
     .ofr-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 10px;
-      font-size: 13px; line-height: 1.4; border: 1px solid var(--border-color, rgba(127,127,127,.25)); }
+      flex-wrap: wrap; font-size: 13px; line-height: 1.4; border: 1px solid var(--border-color, rgba(127,127,127,.25)); }
     .ofr-bar .ofr-grow { flex: 1; min-width: 0; }
     .ofr-bar strong { font-weight: 600; }
     .ofr-warn { background: rgba(240,170,40,.12); border-color: rgba(240,170,40,.5); }
@@ -55,6 +60,11 @@ function injectStyles() {
     .ofr-x { flex: 0 0 auto; cursor: pointer; background: transparent; border: none; color: var(--text-muted, inherit);
       opacity: .7; font-size: 16px; line-height: 1; padding: 4px; }
     .ofr-x:hover { opacity: 1; }
+    @media (max-width: 640px) {
+      #oshalFirstRun { padding: 8px 8px 0; }
+      .ofr-bar { gap: 8px; padding: 8px 10px; }
+      .ofr-bar .ofr-grow { flex-basis: 100%; }
+    }
   `;
   const style = document.createElement('style');
   style.id = 'oshalFirstRunStyles';
@@ -91,8 +101,28 @@ function openTool(candidateIds, fallbackUrl) {
   window.location.href = fallbackUrl;
 }
 
+/**
+ * Append a dismiss control to a model-state banner. Closing remembers for the
+ * SESSION only (sessionStorage): the reminder stays valuable, so it returns on
+ * the next visit, but never re-blocks the screen after the user closed it.
+ */
+function dismissible(bar) {
+  const x = document.createElement('button');
+  x.className = 'ofr-x';
+  x.title = 'Dismiss';
+  x.setAttribute('aria-label', 'Dismiss');
+  x.innerHTML = '&times;';
+  x.addEventListener('click', () => {
+    try { sessionStorage.setItem(MODEL_DISMISS_KEY, '1'); } catch { /* no storage */ }
+    bar.remove();
+  });
+  bar.appendChild(x);
+  return bar;
+}
+
 /** Banner explaining the connected-model state (C1/C2). Returns an element or null. */
 async function modelBanner() {
+  try { if (sessionStorage.getItem(MODEL_DISMISS_KEY)) return null; } catch { /* no storage */ }
   let data;
   try {
     data = await (await fetch('/api/providers/access', { credentials: 'include' })).json();
@@ -115,7 +145,7 @@ async function modelBanner() {
       <span class="ofr-grow"><strong>No AI model connected.</strong> Bots will reply with placeholder
         text until you connect one. It takes about a minute — no credit card needed.</span>
       <a class="ofr-btn" href="/welcome">Connect a model</a>`;
-    return bar;
+    return dismissible(bar);
   }
   if (isFreeOrStub) {
     bar.classList.add('ofr-info');
@@ -125,7 +155,7 @@ async function modelBanner() {
         paid provider for full speed and private data.</span>
       <a class="ofr-btn" href="/free-models">Get free AI credits</a>
       <a class="ofr-btn ofr-btn--ghost" href="/welcome">Use my own model</a>`;
-    return bar;
+    return dismissible(bar);
   }
   return null; // real provider connected → stay quiet
 }
