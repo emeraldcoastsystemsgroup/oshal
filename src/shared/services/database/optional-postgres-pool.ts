@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of optional Postgres pool factory for persistence-capable stores
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Share the bounded pool-size parser, add application_name observability, and let direct URLs own their TLS object so verify-full/sslrootcert cannot be overridden by a synthesized boolean.
  */
 
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from './guc-pool';
 import { wrapPoolWithRuntimeDdlGuard } from './schema-bootstrap-policy';
+import { postgresApplicationName, resolvePoolMax } from './pool-sizing';
 
 const logger = createChildLogger({ module: 'optional-postgres-pool' });
 
@@ -26,7 +28,7 @@ export function createOptionalPostgresPool(owner: string): Pool | null {
     return null;
   }
 
-  const poolConfig = buildPoolConfig();
+  const poolConfig = buildPoolConfig(owner);
   logger.info(
     { owner, hasConnectionString: Boolean(poolConfig.connectionString), gucEnabled: gucEnabled() },
     'Creating Postgres pool',
@@ -48,9 +50,7 @@ export function createOptionalPostgresPool(owner: string): Pool | null {
  * @returns Pool size, bounded to a sane range.
  */
 function poolMax(): number {
-  const raw = Number(process.env.PGPOOL_MAX);
-  if (!Number.isFinite(raw) || raw < 1) return 20;
-  return Math.min(Math.max(Math.floor(raw), 2), 100);
+  return resolvePoolMax(process.env.PGPOOL_MAX, 20, 2);
 }
 
 export function hasPostgresConfiguration(): boolean {
@@ -68,7 +68,7 @@ export function hasPostgresConfiguration(): boolean {
  *
  * @returns Pool configuration object
  */
-function buildPoolConfig(): {
+function buildPoolConfig(owner: string): {
   connectionString?: string;
   host?: string;
   port?: number;
@@ -80,6 +80,7 @@ function buildPoolConfig(): {
   query_timeout?: number;
   idleTimeoutMillis?: number;
   connectionTimeoutMillis?: number;
+  application_name?: string;
 } {
   // Bound every connection so a hung query/connect can't pin a pool client indefinitely. statement_/
   // query_timeout cap a single statement; idleTimeoutMillis reaps idle clients; connectionTimeoutMillis
@@ -104,7 +105,10 @@ function buildPoolConfig(): {
   if (typeof directUrl === 'string' && directUrl.trim().length > 0) {
     return {
       connectionString: directUrl.trim(),
-      ssl: parseSslFlag(),
+      application_name: postgresApplicationName(
+        process.env.PGAPPNAME,
+        `oshal-api-${owner}`,
+      ),
       ...timeouts,
     };
   }
@@ -116,6 +120,10 @@ function buildPoolConfig(): {
     password: process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD || 'postgres',
     database: process.env.PGDATABASE || process.env.POSTGRES_DB || 'postgres',
     ssl: parseSslFlag(),
+    application_name: postgresApplicationName(
+      process.env.PGAPPNAME,
+      `oshal-api-${owner}`,
+    ),
     ...timeouts,
   };
 }

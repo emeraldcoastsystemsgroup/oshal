@@ -28,6 +28,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 swarm operational graph: start the ticket→graph ingestion subscription (shared ticketEvents bus → tenant graph). Engine-gated — a clean no-op per event when ARANGO_URL is unset; fire-and-forget, never back-pressures the ticket lifecycle.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable ticket ownership into swarm lifecycle memory persistence.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Bind executeBotOrInline into AppContext so installed app routes can dispatch package-owned bots through the canonical node/credential/governance path.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Bind the fixed actor-mailbox Outlook reader into AppContext for token-safe package integrations.
  */
 
 import {
@@ -67,6 +68,7 @@ import { createSwarmExtensionBindings } from '@/app/extensions';
 import { AgentConfigService, BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { startTicketGraphIngestion } from '@/features/graph';
 import { executeBotOrInline } from '@/app/routes/inline-bot-execution';
+import { createOutlookMailReader } from '@/app/routes/outlook-mail-reader';
 
 const logger = createChildLogger({ module: 'composition-root' });
 
@@ -220,6 +222,7 @@ export function createAppContext(): CompositionAppContext {
     planeSyncService,
     ticketInteractionService,
     executeBot: (agentId, request) => executeBotOrInline(context, botNodeClient, agentId, request),
+    outlookMail: createOutlookMailReader(pool),
   };
   return context;
 }

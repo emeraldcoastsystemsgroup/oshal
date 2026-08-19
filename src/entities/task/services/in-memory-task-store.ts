@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — in-memory task store for dev/testing
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Honor caller-provided taskId to preserve traceability across message route, orchestrator, and task store updates
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added optional Postgres-backed persistence with fallback mode and task usage/cost telemetry aggregation
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Close the owned Postgres pool when persistence initialization fails before falling back to memory
  */
 
 import { randomUUID } from 'node:crypto';
@@ -258,13 +259,19 @@ export class InMemoryTaskStore implements ITaskStore {
     if (!this.pool) {
       return;
     }
+    const candidatePool = this.pool;
     try {
-      await ensureConversationStoreSchema(this.pool);
+      await ensureConversationStoreSchema(candidatePool);
       this.persistentMode = true;
       logger.info('Task store persistence mode enabled (postgres)');
     } catch (error) {
       logger.error({ err: error }, 'Task store persistence init failed; falling back to memory');
       this.persistentMode = false;
+      try {
+        await candidatePool.end();
+      } catch (cleanupError) {
+        logger.warn({ err: cleanupError }, 'Failed to close task store Postgres pool after persistence init failure');
+      }
       this.pool = null;
     }
   }

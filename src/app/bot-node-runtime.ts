@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-034 gap-b LIVE WIRING: pass the mutable provider seam (getActiveProvider/setActiveProvider) into the execution handler as dispatchConfigRuntime, so a dispatch carrying an authoritative provider/model/configVersion is reconciled against the active provider before executing (bot self-corrects on drift). Additive — the seam already existed; this just hands it to the handler.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable provenance-aware swarm memory and the persisted enabled-tool resolver into bot-node prompt containment.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. The unforced provider order leads with codex (was cline -> claude -> codex) and codex's auto-failover chain drops claude-code (now ['cline-cli']). Naming claude-code in OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER still works — that is a deliberate operator choice, not a default.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Honor DB_MAX_CONNECTIONS for the bot-node Postgres pool and stamp a per-bot application_name, making the existing fleet knob effective for managed-database connection budgets.
  */
 
 /**
@@ -30,6 +31,7 @@
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
+import { postgresApplicationName, resolvePoolMax } from '@/shared/services/database/pool-sizing';
 import type { MeshEnvelope } from '@/features/agent-management';
 import { PersonaLayerStore, SwarmMemoryService } from '@/features/agent-management';
 import { RagService } from '@/features/rag';
@@ -153,7 +155,14 @@ export async function connectPool(): Promise<Pool | null> {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) return null;
 
-  let pool: Pool | null = new Pool({ connectionString: dbUrl, max: 5 });
+  let pool: Pool | null = new Pool({
+    connectionString: dbUrl,
+    max: resolvePoolMax(process.env.DB_MAX_CONNECTIONS, 5),
+    application_name: postgresApplicationName(
+      process.env.PGAPPNAME,
+      `oshal-bot-${process.env.BOT_NAME || process.env.AGENT_ID || 'unknown'}`,
+    ),
+  });
   const maxAttempts = Math.max(1, Number(process.env.BOT_DB_CONNECT_ATTEMPTS ?? 10));
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {

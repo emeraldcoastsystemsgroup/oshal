@@ -1,0 +1,146 @@
+# CRM-only DigitalOcean Managed PostgreSQL override.
+# Requires Docker Compose >= 2.24.4 (`!override`/`!reset`). Do not invoke this
+# file directly; scripts/managed-postgres-compose.sh always composes it with
+# docker-compose.oshal-local.yml and pins the CRM service set.
+#
+# All URLs use the same private/VPC endpoint and include:
+#   sslmode=verify-full&sslrootcert=/app/config-seed/do-postgres-ca.pem
+# The CA is a deployment-only bind mount; it is never copied into the image.
+# The guarded launcher also requires a dedicated-host marker/project identity.
+# Fixed container names mean colocating another OSHAL stack is unsupported.
+
+services:
+  # Only this finite service sees doadmin plus both role passwords. It validates
+  # all URLs/CA/server posture before mutation, provisions roles before migration
+  # 099, migrates/enforces RLS, proves both runtime identities, then exits.
+  oshal-db-init:
+    image: ${OSHAL_BOT_IMAGE:?set an immutable CRM bot image tag or digest}
+    pull_policy: never
+    container_name: oshal-managed-postgres-init
+    restart: "no"
+    command: ["node", "scripts/governance/bootstrap-managed-postgres.mjs"]
+    environment:
+      BOOTSTRAP_DATABASE_URL: ${BOOTSTRAP_DATABASE_URL:?set the CRM-specific doadmin URL}
+      DATABASE_URL: ${DATABASE_URL:?set the CRM-specific oshal_app URL}
+      BOT_DATABASE_URL: ${BOT_DATABASE_URL:?set the CRM-specific oshal_bot URL}
+      POSTGRES_CA_CERT_PATH: /app/config-seed/do-postgres-ca.pem
+    volumes:
+      - type: bind
+        source: ./config-seed/do-postgres-ca.pem
+        target: /app/config-seed/do-postgres-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - oshal
+
+  # Preserve the base dependency name without launching local Postgres. This
+  # long-lived gate carries only the least-privilege application DSN.
+  oshal-db:
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    pull_policy: always
+    container_name: oshal-managed-postgres-ready
+    restart: unless-stopped
+    depends_on: !override
+      oshal-db-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        test -s /app/config-seed/do-postgres-ca.pem || {
+          echo "FATAL: mounted DigitalOcean CA is missing or empty" >&2
+          exit 1
+        }
+        until [ "$$(psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'SELECT current_user')" = "oshal_app" ]; do
+          echo "Managed Postgres application role is not ready; retrying in 2s..." >&2
+          sleep 2
+        done
+        exec tail -f /dev/null
+    environment: !override
+      DATABASE_URL: ${DATABASE_URL:?set the CRM-specific oshal_app URL}
+    ports: !reset []
+    volumes: !override
+      - type: bind
+        source: ./config-seed/do-postgres-ca.pem
+        target: /app/config-seed/do-postgres-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck: !override
+      test: ["CMD-SHELL", "test \"$$(psql \"$$DATABASE_URL\" -v ON_ERROR_STOP=1 -Atqc 'SELECT current_user')\" = \"oshal_app\""]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    networks:
+      - oshal
+
+  # The API performs only app-owned idempotent/runtime DDL after the one-shot.
+  # Explicit resets keep bootstrap and bot secrets out of the long-lived process.
+  oshal-api:
+    environment:
+      BOOTSTRAP_DATABASE_URL: !reset null
+      DATABASE_URL: ${DATABASE_URL:?set the CRM-specific oshal_app URL}
+      OSHAL_APP_ROLE_BOOTSTRAP: "false"
+      OSHAL_SCHEMA_BOOTSTRAP: apply
+      OSHAL_SKIP_RUNTIME_MIGRATIONS: "true"
+      RUN_MIGRATIONS: "false"
+      OSHAL_DB_POOL_MAX: "8"
+      PGPOOL_MAX: "2"
+      RAG_DB_POOL_MAX: "2"
+      DB_MAX_CONNECTIONS: "2"
+
+  jarvis-bot:
+    environment:
+      # Model-visible CLI subprocesses share this container's UID/proc namespace.
+      # Keep raw datastore credentials out of the container entirely; the bot-node
+      # runtime intentionally degrades to direct, DB-less reasoning when no URL exists.
+      DATABASE_URL: !reset null
+      BOOTSTRAP_DATABASE_URL: !reset null
+      BOT_DATABASE_URL: !reset null
+      PGHOST: !reset null
+      PGPORT: !reset null
+      PGDATABASE: !reset null
+      PGUSER: !reset null
+      PGPASSWORD: !reset null
+      PGSERVICE: !reset null
+      PGSERVICEFILE: !reset null
+      PGAPPNAME: !reset null
+      PGSSLMODE: !reset null
+      PGSSLROOTCERT: !reset null
+      POSTGRES_CA_CERT_PATH: !reset null
+      POSTGRES_DB: !reset null
+      POSTGRES_USER: !reset null
+      POSTGRES_PASSWORD: !reset null
+      CHROMADB_URL: !reset null
+      ARANGO_URL: !reset null
+      ARANGO_ROOT_USER: !reset null
+      ARANGO_ROOT_PASSWORD: !reset null
+      OSHAL_DB_GUC: !reset null
+      OSHAL_SCHEMA_BOOTSTRAP: validate-only
+
+  sales-bot:
+    environment:
+      DATABASE_URL: !reset null
+      BOOTSTRAP_DATABASE_URL: !reset null
+      BOT_DATABASE_URL: !reset null
+      PGHOST: !reset null
+      PGPORT: !reset null
+      PGDATABASE: !reset null
+      PGUSER: !reset null
+      PGPASSWORD: !reset null
+      PGSERVICE: !reset null
+      PGSERVICEFILE: !reset null
+      PGAPPNAME: !reset null
+      PGSSLMODE: !reset null
+      PGSSLROOTCERT: !reset null
+      POSTGRES_CA_CERT_PATH: !reset null
+      POSTGRES_DB: !reset null
+      POSTGRES_USER: !reset null
+      POSTGRES_PASSWORD: !reset null
+      CHROMADB_URL: !reset null
+      ARANGO_URL: !reset null
+      ARANGO_ROOT_USER: !reset null
+      ARANGO_ROOT_PASSWORD: !reset null
+      OSHAL_DB_GUC: !reset null
+      OSHAL_SCHEMA_BOOTSTRAP: validate-only

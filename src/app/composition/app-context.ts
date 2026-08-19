@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Normalized historical Change Log attribution to the mandated project author identifier
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D10: added optional appPackageDir — the manifest route mounter hands every PACKAGE route factory a context carrying its own package directory, replacing request-time reads of the process-global OSHAL_APP_PACKAGE_DIR env var (last-mounted app won; multi-app reloads served cross-app assets).
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the bound executeBot seam to installed app routes so package-owned concierges use the canonical node-or-inline dispatch path instead of calling the orchestrator directly.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exposed a fixed privacy-bounded Outlook reader so packages can project actor-owned message metadata without receiving OAuth tokens or arbitrary Graph access.
  */
 
 import type { Pool } from 'pg';
@@ -40,6 +41,7 @@ import type {
 import type { ConnectorSpecToolService } from '@/app/connectors/runtime/spec-tools';
 import type { ConnectorMarketplaceService } from '@/app/connectors/runtime/marketplace';
 import type { BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
+import type { OutlookMailReader } from '@/app/routes/outlook-mail-reader';
 
 /**
  * @description Package-safe bot execution seam. The composition root binds the application
@@ -89,6 +91,11 @@ export interface AppContext {
    * entitlement remain intact.
    */
   executeBot: AppBotExecutor;
+  /**
+   * Fixed, privacy-bounded Outlook participant search for trusted application packages.
+   * The operation resolves the caller's own connector and never exposes its access token.
+   */
+  outlookMail?: OutlookMailReader;
   /**
    * @description Absolute path of the installed app package this context was built FOR.
    * Populated ONLY on the per-package context the manifest route mounter passes to a

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added non-swarm memory layer service for checkpoints, per-agent memory, and knowledge memory persistence
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed row mapping and snapshot helper logic into memory-layer-utils to keep the service within governance limits
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Persist owner_sub on knowledge documents and make listKnowledgeDocuments permission-aware (agent filter + operator-or-owner scope) so the Settings RAG visibility surface never lists another user's private docs
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Close the owned Postgres pool when persistence initialization fails before falling back to memory
  */
 
 import type { Pool } from 'pg';
@@ -264,13 +265,19 @@ export class MemoryLayerService {
     if (!this.pool) {
       return;
     }
+    const candidatePool = this.pool;
     try {
-      await ensureConversationStoreSchema(this.pool);
+      await ensureConversationStoreSchema(candidatePool);
       this.persistentMode = true;
       logger.info('Memory layer persistence mode enabled (postgres)');
     } catch (error) {
       logger.error({ err: error }, 'Memory layer persistence init failed; falling back to memory');
       this.persistentMode = false;
+      try {
+        await candidatePool.end();
+      } catch (cleanupError) {
+        logger.warn({ err: cleanupError }, 'Failed to close memory layer Postgres pool after persistence init failure');
+      }
       this.pool = null;
     }
   }
