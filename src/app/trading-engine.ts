@@ -15,6 +15,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from trading-routes.ts (1000-line cap decomposition): the analyst pipeline (buildDecisionPrompt/parseDecision/runAnalyst/analyzeAndRecordDecision), recordOrder, and rebindOrder (+RebindResult). Code moved verbatim — zero behavior change.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | recordOrder takes an optional createdAt (ISO) written ATOMICALLY in the INSERT (created_at = COALESCE($24::timestamptz, now())). For a historical ledger reconcile of a close that already happened, the row lands with its real trade date in one statement — never a now() value that would pollute the /realized "today" window, and no droppable follow-up UPDATE (an adversarial review flagged the two-step back-date as non-atomic + non-self-healing). ON CONFLICT keeps the back-dated created_at stable on re-run. Live path (no arg) is unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Moved routes/trading-routes-core.ts → app/trading-engine.ts and made it THE engine module (trading engine extraction, ADR-085 pre-carve): placeDecisionOrder (verbatim from trading-routes.ts, live_blocked gate intact) and resolveMaturedPredictions (verbatim from trading-routes-algo-builders.ts) moved in; ensureTradingSchema + the shared helpers re-exported so the 8 dispatch/reconcile loops depend only on engine modules, never the carvable route surface. Pure code motion — zero behavior change, no order-path/gate/env semantics touched.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Submission reservation: placeDecisionOrder claims the clientOrderId in the ledger (INSERT ... ON CONFLICT DO NOTHING) BEFORE the venue call, refusing the loser of a race with 409 duplicate_submission; any throw before recordOrder releases the still-'submitting' claim. Fixes the 2026-08-18 live twin orders (two same-fire paths shared a minute-bucketed clientOrderId; Alpaca rejects a reused client-order-id server-side but Schwab HAS no client-order-id, so the duplicate placed for real and the recordOrder upsert overwrote the filled row with the rejected twin — three fills vanished from the ledger). recordOrder's conflict branch now also completes qty/order_type/prices/tif/submitted_at, since with a reservation row it is the branch every normal fill takes.
  *
  * @module trading-engine
  */
@@ -196,6 +197,13 @@ export async function recordOrder(
        broker_order_id = EXCLUDED.broker_order_id, status = EXCLUDED.status, raw_status = EXCLUDED.raw_status,
        filled_qty = EXCLUDED.filled_qty, filled_avg_price = EXCLUDED.filled_avg_price,
        reject_reason = EXCLUDED.reject_reason,
+       -- With the submission reservation, a normal fill's recordOrder always lands on its own
+       -- 'submitting' row via this branch — complete the fields the reservation couldn't know yet.
+       qty = EXCLUDED.qty, order_type = EXCLUDED.order_type,
+       limit_price = EXCLUDED.limit_price, stop_price = EXCLUDED.stop_price,
+       trail_price = EXCLUDED.trail_price, trail_percent = EXCLUDED.trail_percent,
+       time_in_force = EXCLUDED.time_in_force,
+       submitted_at = COALESCE(oshal_trading_orders.submitted_at, EXCLUDED.submitted_at),
        cost_basis = COALESCE(oshal_trading_orders.cost_basis, EXCLUDED.cost_basis),
        -- Keep a historical reconcile row's back-dated created_at stable on re-run (never bump to now()).
        created_at = COALESCE(oshal_trading_orders.created_at, EXCLUDED.created_at),
@@ -374,53 +382,89 @@ export async function placeDecisionOrder(
   if (!broker.configured()) throw new TradingError(503, 'broker_not_configured', `Set the ${mode} broker keys first.`);
   const clientOrderId = `${sub}:${requestId}`.slice(0, 128);
 
-  // For a SELL, snapshot the position's avg entry NOW (before it fills/closes) so realized P&L per sale
-  // can be computed when the fill lands — the position is gone afterward, so this is the only chance.
-  let costBasis: number | undefined;
-  if (d.side === 'sell') {
-    try { const pos = (await broker.getPositions()).find((p) => p.symbol.toUpperCase() === symbol && p.qty > 0); if (pos) costBasis = pos.avgEntryPrice; } catch { /* best-effort */ }
+  // SUBMISSION RESERVATION — claim the clientOrderId in the ledger BEFORE any venue work. Two paths
+  // in one fire can propose the same (symbol, side) inside the same minute bucket and therefore share
+  // a clientOrderId, and the venues split on what that means: Alpaca rejects a reused client-order-id
+  // server-side, but Schwab has no client-order-id at all, so a second submit places a REAL duplicate
+  // order — and recordOrder's upsert then let the duplicate's result overwrite the first attempt's row
+  // (2026-08-18 live: ARKG/ANET/CRWD each filled at Schwab, then the twin's oversold rejection erased
+  // the fill from the ledger). The unique index (user_sub, mode, client_order_id) makes this insert
+  // the race arbiter: the loser sees zero rows back and refuses before ever reaching the venue.
+  const reserved = await pool.query(
+    `INSERT INTO oshal_trading_orders
+       (user_sub, mode, decision_id, broker, client_order_id, symbol, side, qty, order_type,
+        status, raw_status, filled_qty, submitted_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'submitting','SUBMITTING',0,now())
+     ON CONFLICT (user_sub, mode, client_order_id) DO NOTHING
+     RETURNING order_id`,
+    [sub, mode, decisionId, broker.provider, clientOrderId, symbol, d.side, qty, orderType]);
+  if (reserved.rows.length === 0) {
+    throw new TradingError(409, 'duplicate_submission',
+      `An order with idempotency key ${clientOrderId} is already in this book's ledger — refusing a second venue submission.`);
   }
 
-  // Pre/post-market routing: Alpaca rejects market orders outside RTH, so when we're in an
-  // extended session convert to a MARKETABLE LIMIT (day) with extended_hours. The slippage buffer
-  // (TRADING_EXT_LIMIT_SLIPPAGE_PCT, default 0.3%) crosses the wider ext-hours spread to fill.
-  //
-  // The limit MUST come from a fresh trade. IEX (and Schwab's lastPrice) keep serving the last print
-  // long after it happened, so off-hours `latestPrice` can be hours stale with no way to tell. Pricing
-  // a "protective" sell off that print puts it wherever the stock USED to be: on 2026-07-07/08 MRNA's
-  // exit re-placed 97 times at a frozen 79.54 while the stock walked down to 74.61 — never marketable,
-  // never filled, cancel/re-placed every 5-min fire. A tick we cannot date is a tick we cannot price
-  // against, so we decline the order rather than place one that only looks like protection. The
-  // position then exits on the regular-session market order, which is what actually filled at the open.
-  let effType = orderType;
-  let effLimit = limitPrice;
-  let effTif = d.time_in_force || undefined;
-  let extendedHours = false;
-  if (String(process.env.TRADING_EXTENDED_HOURS ?? 'true').toLowerCase() !== 'false') {
-    const session = await tradingSession();
-    if (session === 'pre' || session === 'post') {
-      // Price off the SAME book's data source (Schwab for live, Alpaca for paper) so the crossing
-      // price matches the venue where the order will actually execute.
-      const tick = await getMarketData(mode, sub).latestTrade(symbol).catch(() => null);
-      if (!tick || isTickStale(tick)) {
-        const ageSec = tick ? Math.round((Date.now() - tick.asOf.getTime()) / 1000) : null;
-        logger.warn({ sub, mode, symbol, side: d.side, session, tickAgeSec: ageSec, maxTickAgeSec: maxTickAgeSec() },
-          'extended-hours order declined — no fresh trade to price the limit against');
-        throw new TradingError(409, 'stale_quote',
-          `No ${symbol} trade within ${maxTickAgeSec()}s (last: ${ageSec ?? 'none'}s ago) — refusing to price an extended-hours ${d.side} off a stale print.`);
-      }
-      const slip = Number(process.env.TRADING_EXT_LIMIT_SLIPPAGE_PCT || 0.3) / 100;
-      const px = tick.price;
-      effType = 'limit';
-      effLimit = Math.round((d.side === 'buy' ? px * (1 + slip) : px * (1 - slip)) * 100) / 100;
-      effTif = 'day';
-      extendedHours = true;
+  let result: OrderResult;
+  let costBasis: number | undefined;
+  try {
+    // For a SELL, snapshot the position's avg entry NOW (before it fills/closes) so realized P&L per
+    // sale can be computed when the fill lands — the position is gone afterward, so this is the only chance.
+    if (d.side === 'sell') {
+      try { const pos = (await broker.getPositions()).find((p) => p.symbol.toUpperCase() === symbol && p.qty > 0); if (pos) costBasis = pos.avgEntryPrice; } catch { /* best-effort */ }
     }
+
+    // Pre/post-market routing: Alpaca rejects market orders outside RTH, so when we're in an
+    // extended session convert to a MARKETABLE LIMIT (day) with extended_hours. The slippage buffer
+    // (TRADING_EXT_LIMIT_SLIPPAGE_PCT, default 0.3%) crosses the wider ext-hours spread to fill.
+    //
+    // The limit MUST come from a fresh trade. IEX (and Schwab's lastPrice) keep serving the last print
+    // long after it happened, so off-hours `latestPrice` can be hours stale with no way to tell. Pricing
+    // a "protective" sell off that print puts it wherever the stock USED to be: on 2026-07-07/08 MRNA's
+    // exit re-placed 97 times at a frozen 79.54 while the stock walked down to 74.61 — never marketable,
+    // never filled, cancel/re-placed every 5-min fire. A tick we cannot date is a tick we cannot price
+    // against, so we decline the order rather than place one that only looks like protection. The
+    // position then exits on the regular-session market order, which is what actually filled at the open.
+    let effType = orderType;
+    let effLimit = limitPrice;
+    let effTif = d.time_in_force || undefined;
+    let extendedHours = false;
+    if (String(process.env.TRADING_EXTENDED_HOURS ?? 'true').toLowerCase() !== 'false') {
+      const session = await tradingSession();
+      if (session === 'pre' || session === 'post') {
+        // Price off the SAME book's data source (Schwab for live, Alpaca for paper) so the crossing
+        // price matches the venue where the order will actually execute.
+        const tick = await getMarketData(mode, sub).latestTrade(symbol).catch(() => null);
+        if (!tick || isTickStale(tick)) {
+          const ageSec = tick ? Math.round((Date.now() - tick.asOf.getTime()) / 1000) : null;
+          logger.warn({ sub, mode, symbol, side: d.side, session, tickAgeSec: ageSec, maxTickAgeSec: maxTickAgeSec() },
+            'extended-hours order declined — no fresh trade to price the limit against');
+          throw new TradingError(409, 'stale_quote',
+            `No ${symbol} trade within ${maxTickAgeSec()}s (last: ${ageSec ?? 'none'}s ago) — refusing to price an extended-hours ${d.side} off a stale print.`);
+        }
+        const slip = Number(process.env.TRADING_EXT_LIMIT_SLIPPAGE_PCT || 0.3) / 100;
+        const px = tick.price;
+        effType = 'limit';
+        effLimit = Math.round((d.side === 'buy' ? px * (1 + slip) : px * (1 - slip)) * 100) / 100;
+        effTif = 'day';
+        extendedHours = true;
+      }
+    }
+    result = await broker.placeOrder({
+      userSub: sub, symbol, side: d.side, qty, type: effType,
+      limitPrice: effLimit, stopPrice, trailPrice, trailPercent, timeInForce: effTif, extendedHours, clientOrderId,
+    });
+  } catch (e) {
+    // Nothing was confirmed at the venue — release the claim so a later legitimate retry isn't
+    // locked out, keeping the pre-reservation observable behavior (a failed submit records nothing).
+    // Scoped to status='submitting' so a row another path already progressed is never destroyed.
+    try {
+      await pool.query(
+        `DELETE FROM oshal_trading_orders WHERE user_sub=$1 AND mode=$2 AND client_order_id=$3 AND status='submitting'`,
+        [sub, mode, clientOrderId]);
+    } catch (relErr) {
+      logger.error({ err: relErr, sub, mode, clientOrderId }, 'failed to release order submission reservation');
+    }
+    throw e;
   }
-  const result = await broker.placeOrder({
-    userSub: sub, symbol, side: d.side, qty, type: effType,
-    limitPrice: effLimit, stopPrice, trailPrice, trailPercent, timeInForce: effTif, extendedHours, clientOrderId,
-  });
   await recordOrder(pool, sub, mode, decisionId, clientOrderId, result, costBasis);
   return result;
 }
