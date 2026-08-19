@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-091 pgvector engine: RAG chunks in the existing Postgres (rag_chunks — vector(384) HNSW + generated tsvector GIN, RLS'd like the rest of the platform). Vector KNN and websearch FTS run as two indexed queries fused by the shared RRF helper — replaces Chroma's full-collection BM25 fetch. Selected via RAG_ENGINE=pgvector; availability is health-checked (table+extension) with sticky fallback to the chroma path, so a stock-postgres deployment keeps working untouched.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG security burn-down: rag_chunks RLS was INERT for engine-written rows - addChunks never populated the owner_sub COLUMN (the ACL rode only in metadata JSONB, which policies cannot see), so every chunk landed unowned = public-read, and the engine's private raw Pool carried no identity GUCs anyway. Now (a) addChunks lifts owner_sub out of each chunk's metadata into the column, making migration 070's policies bite at the database layer exactly where the app-side permission filter already draws the line, and (b) the engine pool is wrapped with wrapPoolWithGuc (via the shared barrel) so the caller's request identity (or the SYSTEM sentinel for background sweeps) rides every query - without which the FORCE-RLS WITH CHECK would refuse the very owned writes (a) introduces. Pre-existing rows keep owner_sub NULL until re-ingest (shared-corpus semantics unchanged). Test seam _setRagPoolForTests. Guard: tests/unit/rag-pgvector-owner-sub.spec.ts.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve every valid metadata.owner_sub byte-for-byte when lifting it into the RLS column. Subject case and surrounding whitespace are identity data, so normalizing them could rebind a private chunk; existing blank-value validation remains unchanged.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Make the dedicated pgvector pool ceiling configurable and stamp application_name for managed-Postgres capacity accounting.
  */
 
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database';
+import { postgresApplicationName, resolvePoolMax } from '@/shared/services/database/pool-sizing';
 import { reciprocalRankFusion } from './hybrid-fusion';
 import type { RagSearchResult } from './rag-service';
 
@@ -23,7 +25,11 @@ const INSERT_BATCH = 200;
 let sharedPool: Pool | null = null;
 function getPool(): Pool {
   if (!sharedPool) {
-    const raw = new Pool({ connectionString: process.env.DATABASE_URL, max: 4 });
+    const raw = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: resolvePoolMax(process.env.RAG_DB_POOL_MAX, 4),
+      application_name: postgresApplicationName(process.env.RAG_PGAPPNAME, 'oshal-api-rag'),
+    });
     // Identity-stamped like every other pool: rag_chunks is FORCE-RLS (migration 070), so
     // owned reads/writes need oshal.current_sub riding the connection. An unwrapped private
     // pool here is exactly how owner-stamped rows would be unwritable (WITH CHECK) and

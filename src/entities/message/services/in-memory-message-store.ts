@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — in-memory message store for dev/testing
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added optional Postgres-backed persistence with fallback mode for restart-safe message history
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Close the owned Postgres pool when persistence initialization fails before falling back to memory
  */
 
 import { randomUUID } from 'node:crypto';
@@ -172,13 +173,19 @@ export class InMemoryMessageStore implements IMessageStore {
     if (!this.pool) {
       return;
     }
+    const candidatePool = this.pool;
     try {
-      await ensureConversationStoreSchema(this.pool);
+      await ensureConversationStoreSchema(candidatePool);
       this.persistentMode = true;
       logger.info('Message store persistence mode enabled (postgres)');
     } catch (error) {
       logger.error({ err: error }, 'Message store persistence init failed; falling back to memory');
       this.persistentMode = false;
+      try {
+        await candidatePool.end();
+      } catch (cleanupError) {
+        logger.warn({ err: cleanupError }, 'Failed to close message store Postgres pool after persistence init failure');
+      }
       this.pool = null;
     }
   }

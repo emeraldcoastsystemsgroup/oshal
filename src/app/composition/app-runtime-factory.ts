@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | waitForBootstrapComplete(): awaitable (bounded) companion to isBootstrapComplete so boot consumers (swarm-app autoload, queue-manager start) can gate on migration completion instead of racing it — on a clean DB the first autoload pass ran before migration 022 created swarm_applications, logging ~40 self-healing ERROR lines (BACKLOG "Noisy first-boot logs")
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Thread the pool into ConnectorMarketplaceService so its per-user enablement OVERRIDE layer (BACKLOG.md:2718) can persist/read per-user connector on/off; deployment-global catalog + state stay file-based.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the initializeToolRegistry bootstrap chain (migrations → tool-executor restore → baseline+connector-spec tool seed → default chat agent → persona authorizations) in runWithSystemIdentity. The detached boot chain ran with no request in scope; under OSHAL_DB_GUC_STRICT=deny that would scope its seed reads/writes anonymous (RLS zero-rows). Covered ~10 of the guc warn-audit's identity-less boot sites.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Make the primary API Postgres pool ceiling deployment-configurable and stamp application_name so a 47-backend managed cluster can be budgeted and audited without changing the existing local default.
  */
 
 import path from 'path';
@@ -21,6 +22,7 @@ import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
 import { wrapPoolWithRuntimeDdlGuard } from '@/shared/services/database/schema-bootstrap-policy';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { postgresApplicationName, resolvePoolMax } from '@/shared/services/database/pool-sizing';
 import { ToolExecutorService, TaskOrchestrator, type TaskOrchestratorDeps } from '@/features/chat-orchestration';
 // eslint-disable-next-line no-restricted-imports -- two-runtimes: LLM execution runtime, deliberately off the barrel graph (barrel split, TODO-BOUNDARY-FINDING)
 import { ClineRuntimeConfigSyncService } from '@/features/llm-provider/services';
@@ -60,7 +62,8 @@ export function createDatabasePool(): Pool {
     connectionString && connectionString.trim().length > 0
       ? new Pool({
           connectionString: connectionString.trim(),
-          max: 20,
+          max: resolvePoolMax(process.env.OSHAL_DB_POOL_MAX, 20),
+          application_name: postgresApplicationName(process.env.PGAPPNAME, 'oshal-api-main'),
           idleTimeoutMillis: 30000,
           connectionTimeoutMillis: 10000,
         })
@@ -70,7 +73,8 @@ export function createDatabasePool(): Pool {
           database: process.env.POSTGRES_DB || 'oshal',
           user: process.env.POSTGRES_USER || 'oshal_user',
           password: process.env.POSTGRES_PASSWORD || 'oshal_password',
-          max: 20,
+          max: resolvePoolMax(process.env.OSHAL_DB_POOL_MAX, 20),
+          application_name: postgresApplicationName(process.env.PGAPPNAME, 'oshal-api-main'),
           idleTimeoutMillis: 30000,
           connectionTimeoutMillis: 10000,
         });
