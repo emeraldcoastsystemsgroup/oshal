@@ -514,6 +514,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** configure the GPU-box ComfyUI URL and a pinned storyboard workflow; do not retry ChatGPT/Codex subscription OAuth against the OpenAI Images API.
 - **Done when:** a real storyboard request returns a generated image through the ComfyUI provider, failure is bounded/visible, and the conductor can consume it without Vertex spend.
 
+### Video Studio storyboards on the demo codex-cli rail
+- **Remaining:** the series storyboard stage calls `resolveStoryboardImageProvider` without `userSub`, so under the ADR-130 demo default it fails closed with the carve hint; thread the series owner's sub from the conductor (`series-orchestrator` → `storyboardEpisode` → resolver opts) the way portrait-studio 1.4.1 does.
+- **Done when:** a demo-mode series storyboard renders through the `codex-cli` provider end to end with the owner's sub on the SEC-05 gates, and the conductor spec covers the threading. See [ADR-130](adr/130-codex-cli-storyboard-image-provider.md).
+
 ### Video Series intro and season assembly
 - **Remaining:** splice a reusable intro into each episode and add season-level ordering/stitching over completed episode artifacts.
 - **Done when:** a multi-episode series emits independently playable intro-bearing episodes plus one correctly ordered season artifact with validated audio/video streams.
