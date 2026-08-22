@@ -57,6 +57,8 @@ export {
 export {
   getSwarmApiKey,
   hasSwarmApiKey,
+  getSwarmPlatformApiKey,
+  hasSwarmPlatformApiKey,
   hasLiveCodexAuth,
   extractOpenAiCodexAccessToken,
   resolveSeedSecretsPath,

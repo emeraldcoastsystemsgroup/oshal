@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Storyboard image generation behind a provider interface. Codex (the operator's own OpenAI account) is the DEFAULT; ComfyUI on the GPU box is the free local sibling; Vertex is a paid fallback that must be asked for by name.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | openrouter sibling: the swarm's OpenRouter key driving an image-capable chat model (default gemini-2.5-flash-image, image-to-image via data-URL parts). Needed because the codex identity is a ChatGPT-subscription OAuth token and api.openai.com/v1/images REJECTS those (misleading "token has expired" for a token valid to 07-22) — subscription auth works for the codex backend, never for the platform Images API. Explicit selection only, paid per image, fail-closed like its siblings.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | codex provider resolves the PLATFORM realm only (getSwarmPlatformApiKey): the mounted ChatGPT-subscription OAuth made available() read true while every /v1/images call 401'd (re-verified 2026-08-21 — missing scope api.model.images.request). Selection now fails closed at resolve time with the paste-a-platform-key hint instead of burning a doomed vendor call; codex gains a real healthCheck (GET /v1/models: 200 = platform key, 403 = subscription realm); the resolver hint no longer suggests the ChatGPT login for images.
  */
 /**
  * @description Storyboard image providers — siblings behind one interface.
@@ -16,8 +17,10 @@
  *
  * The order of preference is a cost order, not a taste order:
  *
- *   codex    the operator's own OpenAI account (`gpt-image-1`). DEFAULT. Same BYOK identity the
- *            codex harness already uses — `OPENAI_API_KEY`, or the key inside ~/.codex/auth.json.
+ *   codex    the operator's own OpenAI account (`gpt-image-1`). DEFAULT. PLATFORM key only —
+ *            `openAiApiKey` in config/seed, or `OPENAI_API_KEY`. The codex ChatGPT-subscription
+ *            login is a different auth realm and is never offered here: /v1/images always
+ *            rejects it (ADR-082, re-verified 2026-08-21).
  *   comfyui  the GPU box that already runs LoRA. FREE. No per-image charge, and the place a trained
  *            character LoRA would eventually make cast consistency exact rather than approximate.
  *   vertex   `gemini-2.5-flash-image`. PAID, per image. Never selected implicitly.
@@ -30,7 +33,7 @@
  */
 
 import { createChildLogger } from '@/shared/logger';
-import { getSwarmApiKey, hasSwarmApiKey } from '@/features/llm-provider';
+import { getSwarmApiKey, hasSwarmApiKey, getSwarmPlatformApiKey, hasSwarmPlatformApiKey } from '@/features/llm-provider';
 import { vertexProjectLocation } from './veo-client';
 
 const logger = createChildLogger({ module: 'storyboard-image-providers' });
@@ -73,12 +76,38 @@ export interface StoryboardImageProvider {
 }
 
 /**
+ * @description A cheap, real probe of the swarm's PLATFORM OpenAI key. `GET /v1/models` is the
+ * discriminating call for the auth realm: a platform key answers 200; the ChatGPT-subscription
+ * codex token answers 403 (ADR-082) — the truthful version of "configured".
+ * @param {string} model the image model the codex provider would run, named in the detail
+ * @returns {Promise<{ok: boolean, detail: string}>} probe verdict, never a thrown error
+ */
+async function probeOpenAiPlatformKey(model: string): Promise<{ ok: boolean; detail: string }> {
+  const key = getSwarmPlatformApiKey('openai');
+  if (!key) {
+    return { ok: false, detail: 'no PLATFORM OpenAI key — set OPENAI_API_KEY in .env, or openAiApiKey in config-seed/secrets.json. The ChatGPT-subscription codex login cannot generate images.' };
+  }
+  try {
+    const res = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` } });
+    if (!res.ok) {
+      const realmNote = res.status === 403 ? ' (subscription-realm token, not a platform key)' : '';
+      return { ok: false, detail: `platform key rejected: HTTP ${res.status}${realmNote}` };
+    }
+    return { ok: true, detail: `platform key valid (model ${model})` };
+  } catch (err) {
+    return { ok: false, detail: `key probe failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/**
  * @description Codex provider — the swarm's own OpenAI identity. The default.
  *
- * The credential comes from the SWARM's credential resolver (`getSwarmApiKey('openai')`), which is
- * the same one `buildClineConfig` hands every codex-harness bot. This module must never read a key
- * out of `process.env` or `~/.codex/auth.json` itself: a bespoke read creates a second, invisible
- * credential path the operator never configured and cannot rotate.
+ * The credential comes from the SWARM's credential resolver, PLATFORM realm only
+ * (`getSwarmPlatformApiKey('openai')`): the codex ChatGPT-subscription OAuth token authenticates
+ * the codex chat backend but is forbidden on `/v1/images`, so offering it here made `available()`
+ * lie while every generation 401'd. This module must never read a key out of `process.env` or
+ * `~/.codex/auth.json` itself: a bespoke read creates a second, invisible credential path the
+ * operator never configured and cannot rotate.
  *
  * @returns {StoryboardImageProvider} the provider
  */
@@ -87,10 +116,11 @@ export function createCodexImageProvider(): StoryboardImageProvider {
   return {
     id: 'codex',
     costClass: 'paid', // the swarm's own account, but still per-image — say so plainly
-    available: async () => hasSwarmApiKey('openai'),
+    available: async () => hasSwarmPlatformApiKey('openai'),
+    healthCheck: async () => probeOpenAiPlatformKey(model),
     generate: async (prompt, anchor) => {
-      const key = getSwarmApiKey('openai');
-      if (!key) throw new Error("codex image provider: the swarm holds no OpenAI credential — connect the Codex/ChatGPT login, or set openAiApiKey in config-seed/secrets.json.");
+      const key = getSwarmPlatformApiKey('openai');
+      if (!key) throw new Error('codex image provider: the swarm holds no PLATFORM OpenAI key — set OPENAI_API_KEY in .env, or openAiApiKey in config-seed/secrets.json. The ChatGPT-subscription codex login cannot call /v1/images.');
 
       // With a reference frame this is an EDIT (image-to-image), which is what holds a cast together
       // across scenes. Without one it is a plain generation.
@@ -284,7 +314,7 @@ export async function resolveStoryboardImageProvider(
 
   if (!(await chosen.available())) {
     const hint = want === 'codex'
-      ? "the swarm holds no OpenAI credential — connect the Codex/ChatGPT login (its access token is the swarm's OpenAI key), or set openAiApiKey in config-seed/secrets.json"
+      ? 'the swarm holds no PLATFORM OpenAI key — set OPENAI_API_KEY in .env, or openAiApiKey in config-seed/secrets.json. The codex/ChatGPT login cannot help here: /v1/images rejects subscription tokens (a different auth realm). Or pick a funded provider by name, e.g. STORYBOARD_IMAGE_PROVIDER=openrouter'
       : want === 'comfyui'
         ? 'set COMFYUI_URL and COMFYUI_STORYBOARD_WORKFLOW, and make sure the GPU box is reachable'
         : want === 'openrouter'
