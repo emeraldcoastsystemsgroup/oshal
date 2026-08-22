@@ -636,9 +636,9 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** license Ad Fontes and/or AllSides, map the data with provenance, and replace placeholder bias/reliability seeds; this requires operator budget and license approval.
 - **Done when:** every rating displayed in the World package is sourced to the licensed dataset/version and unknown outlets are represented as unknown rather than guessed. See [ADR-061](adr/061-world-intelligence-layer.md).
 
-### Marketing Plan package (held)
-- **Remaining:** when commissioned, register the existing strategy/sales/PR/brand personas as a package workflow and operator-reviewed surface rather than duplicating their logic.
-- **Done when:** an installed package creates a scoped plan ticket, its real worker produces versioned artifacts, and every outward publication remains confirmation-gated.
+### Marketing engine package (held — full specification ready)
+- **Remaining:** implement [marketing-engine-spec.md](business/marketing-engine-spec.md) phases P0–P4 when commissioned: measurement foundation first (site analytics via the generator templates, UTM/conversion model, Search Console read), then the organic engine reusing the existing strategy/PR/social-writer personas and the Switchboard publishing desk, the launch machine, gated paid ads, and the weekly optimization loop. Supersedes the earlier "Marketing Plan package" placeholder.
+- **Done when:** each phase meets its own done-when in the spec §14; every outward publication and every spend increase remains confirmation-gated or under per-channel standing authorization with daily caps and a run ledger; the weekly scorecard generates from real data and fails loud on broken ingest.
 
 ### HTML5 Game Generator package (held)
 - **Remaining:** when commissioned, use a dedicated bot-node to emit a self-contained CSP-safe browser game; do not depend on co-located GUI editor MCPs.
