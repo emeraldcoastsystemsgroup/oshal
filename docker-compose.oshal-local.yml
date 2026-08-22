@@ -20,6 +20,7 @@
 # 13 | maintainer@emeraldcoastsystemsgroup.com   | Codex is the fleet default (operator directive 2026-08-12): FORCE_LLM_PROVIDER/LLM_PROVIDER default openai-codex, CODEX_MODEL default gpt-5.3-codex → gpt-5.5 (5.3-codex is API-key-only and 400s on the mounted ChatGPT login — the old default shipped broken for every ChatGPT-plan self-install), FORCE_LLM_MODEL/LLM_MODEL default gpt-5.5, and new CODEX_REASONING_EFFORT (default high) pins per-spawn effort so a host config.toml tuned for gpt-5.6-sol (ultra) can't 400 the fleet. Plan guidance: $200 Pro → gpt-5.5; $20 Plus → gpt-5.4 (half the burn); sol is interactive-only.
 # 14 | maintainer@emeraldcoastsystemsgroup.com   | Mount the sibling ~/.claude.json account metadata file on sales-bot as well as ~/.claude; omitting half of the host OAuth session made the concierge lose authentication on its first container recreation.
 # 15 | maintainer@emeraldcoastsystemsgroup.com   | Forward ENCRYPTION_KEY to the controller API only so the ADR-002 encrypted-config vault can use the key already provisioned in the host .env without exposing that deployment-wide secret to worker bots; guarded by an exact-one API-only mapping test.
+# 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 knob passthroughs: STORYBOARD_CLI_IMAGE_BOT_ID/_TIMEOUT_MS (which bot node renders + dispatch deadline) and the PORTRAIT_STUDIO_* operating knobs (vendor timeout / daily cap / concurrency). A knob set only in .env is INVISIBLE to the container without an anchor entry — the July free-lane lesson (a pasted key never reached any container) applied to the image rail before it bit.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -249,13 +250,25 @@ x-bot-env: &bot-env
   OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
   OPENROUTER_FREE_MODEL: ${OPENROUTER_FREE_MODEL:-}
   # Storyboard/portrait image engine (video-generation storyboard-image-providers.ts):
-  # codex | comfyui | vertex | openrouter — explicit, fail-closed, default codex.
-  # `openrouter` BILLS the shared OpenRouter key per image (~$0.04, gemini-2.5-flash-image);
-  # it exists because the codex ChatGPT-subscription token is rejected by /v1/images.
+  # codex | comfyui | vertex | openrouter | codex-cli — explicit, fail-closed. Unset, the
+  # default is demo-aware (ADR-130): codex-cli under DEMO_MODE (the swarm's own codex
+  # harness rendering on a bot node, subscription-included), codex otherwise (needs a
+  # PLATFORM OpenAI key — the ChatGPT-subscription token is rejected by /v1/images).
+  # `openrouter` BILLS the shared OpenRouter key per image (~$0.04, gemini-2.5-flash-image).
   # The :free-only guard above covers the CHAT fallback only — this knob is a deliberate,
   # separate opt-in (Portrait Studio + Video Studio storyboards ride it).
   STORYBOARD_IMAGE_PROVIDER: ${STORYBOARD_IMAGE_PROVIDER:-}
   OPENROUTER_IMAGE_MODEL: ${OPENROUTER_IMAGE_MODEL:-}
+  # ADR-130 codex-cli render rail: which dedicated bot node renders, and the controller-side
+  # dispatch deadline for one render task. Empty ⇒ code defaults (general-bot / 7 min).
+  STORYBOARD_CLI_IMAGE_BOT_ID: ${STORYBOARD_CLI_IMAGE_BOT_ID:-}
+  STORYBOARD_CLI_IMAGE_TIMEOUT_MS: ${STORYBOARD_CLI_IMAGE_TIMEOUT_MS:-}
+  # Portrait Studio operating knobs (read by the installed package in the api container).
+  # Empty ⇒ package defaults (120s vendor deadline / 25 per day / 2 active / 4 concurrent).
+  PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS: ${PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS:-}
+  PORTRAIT_STUDIO_DAILY_CAP: ${PORTRAIT_STUDIO_DAILY_CAP:-}
+  PORTRAIT_STUDIO_MAX_ACTIVE_PER_USER: ${PORTRAIT_STUDIO_MAX_ACTIVE_PER_USER:-}
+  PORTRAIT_STUDIO_MAX_CONCURRENT: ${PORTRAIT_STUDIO_MAX_CONCURRENT:-}
 
   # ── The joke-shorts pump (ADR-120) ────────────────────────────────────────────
   # OFF unless VIDEO_PUMP_ENABLED is exactly "true", and each show is opt-in again
