@@ -133,9 +133,10 @@ personality after `;`.
 
 | id | default | cost | auth |
 |---|---|---|---|
-| `codex` | **yes** | operator's own OpenAI account (`gpt-image-1` / edits) | `OPENAI_API_KEY` |
+| `codex` | **yes** | operator's own OpenAI account (`gpt-image-1` / edits) | **platform** key only — `OPENAI_API_KEY` or `openAiApiKey`; the codex ChatGPT-subscription login can **not** call `/v1/images` (different auth realm) |
 | `comfyui` | | **free** — the GPU box that runs LoRA | `COMFYUI_URL` + workflow |
 | `vertex` | | **paid**, per image | Google cloud-platform scope |
+| `openrouter` | | **paid**, ~$0.04/image | swarm `OPENROUTER_API_KEY` / `openRouterApiKey`; model via `OPENROUTER_IMAGE_MODEL` (default `google/gemini-2.5-flash-image`) |
 
 Selection **fails closed**: an unconfigured provider throws with instructions rather than
 falling through to one that bills. A silent fallback to a paid vendor is the bug, not the fix.

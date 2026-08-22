@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One shared resolver for the SWARM's own provider credentials. Extracted from cline-runtime-config-sync-service's private buildCredentialBag so features stop inventing their own env-var reads.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: resolve Codex OAuth only from the live vendor auth source and fail closed when it is absent; never revive a static config-seed token copy.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Platform-realm siblings getSwarmPlatformApiKey/hasSwarmPlatformApiKey: consumers of platform-only endpoints (the Images API) must never be handed the codex ChatGPT-subscription OAuth token — /v1/images 401s on it (missing scope api.model.images.request, re-verified live 2026-08-21) while plain key-presence reads as configured. Chat-harness resolution (getSwarmApiKey) is unchanged.
  */
 /**
  * @description The swarm's own provider credentials — one source of truth.
@@ -144,6 +145,23 @@ export function hasLiveCodexAuth(): boolean {
 }
 
 /**
+ * @description First non-empty string among the named keys of an envelope.
+ * @param {Record<string, unknown>} envelope a parsed config/secrets object
+ * @param {string[]} keys key names to try, in order
+ * @returns {string} the first non-empty trimmed value, or ''
+ */
+function pickNamedKey(envelope: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = envelope[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
+}
+
+/** Named PLATFORM-realm OpenAI key names in config/secrets — never OAuth material. */
+const OPENAI_PLATFORM_KEY_NAMES = ['openAiApiKey', 'openAiNativeApiKey'];
+
+/**
  * @description Resolve the swarm's own credential for a provider.
  *
  * Named hosted-provider keys use global config/secret settings. Codex OAuth is different: it is
@@ -157,19 +175,10 @@ export function getSwarmApiKey(provider: SwarmCredentialProvider): string {
   const config = readJsonObject(resolveGlobalConfigPath());
   const secrets = readJsonObject(resolveSeedSecretsPath());
 
-  /** First non-empty string among the named keys of an envelope. */
-  const pick = (envelope: Record<string, unknown>, keys: string[]): string => {
-    for (const k of keys) {
-      const v = envelope[k];
-      if (typeof v === 'string' && v.trim()) return v.trim();
-    }
-    return '';
-  };
-
   switch (provider) {
     case 'openai': {
-      const named = pick(config, ['openAiApiKey', 'openAiNativeApiKey'])
-        || pick(secrets, ['openAiApiKey', 'openAiNativeApiKey']);
+      const named = pickNamedKey(config, OPENAI_PLATFORM_KEY_NAMES)
+        || pickNamedKey(secrets, OPENAI_PLATFORM_KEY_NAMES);
       if (named) return named;
 
       // The swarm's Codex identity is the live vendor auth source. The harness rotates the token
@@ -187,18 +196,51 @@ export function getSwarmApiKey(provider: SwarmCredentialProvider): string {
     }
     case 'google':
     case 'gemini':
-      return pick(config, ['googleApiKey', 'geminiApiKey'])
-        || pick(secrets, ['googleApiKey', 'geminiApiKey'])
+      return pickNamedKey(config, ['googleApiKey', 'geminiApiKey'])
+        || pickNamedKey(secrets, ['googleApiKey', 'geminiApiKey'])
         || (process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '').trim();
     case 'anthropic':
-      return pick(config, ['anthropicApiKey']) || pick(secrets, ['anthropicApiKey'])
+      return pickNamedKey(config, ['anthropicApiKey']) || pickNamedKey(secrets, ['anthropicApiKey'])
         || (process.env.ANTHROPIC_API_KEY || '').trim();
     case 'openrouter':
-      return pick(config, ['openRouterApiKey']) || pick(secrets, ['openRouterApiKey'])
+      return pickNamedKey(config, ['openRouterApiKey']) || pickNamedKey(secrets, ['openRouterApiKey'])
         || (process.env.OPENROUTER_API_KEY || '').trim();
     default:
       return '';
   }
+}
+
+/**
+ * @description Resolve the swarm's credential for a provider in the PLATFORM realm only.
+ *
+ * For `openai` this skips the codex-OAuth rung of {@link getSwarmApiKey}: the ChatGPT-subscription
+ * access token authenticates the codex backend but is *forbidden* on the platform API — `/v1/images`
+ * 401s with a missing `api.model.images.request` scope and `/v1/models` 403s (ADR-082, re-verified
+ * live 2026-08-21). A consumer that calls a platform-only endpoint must resolve here, so a mounted
+ * codex login can never read as "configured" for a call it structurally cannot make. Every other
+ * provider has no OAuth rung and resolves identically to {@link getSwarmApiKey}.
+ *
+ * @param {SwarmCredentialProvider} provider which vendor
+ * @returns {string} the platform credential, or '' when the swarm holds none
+ */
+export function getSwarmPlatformApiKey(provider: SwarmCredentialProvider): string {
+  if (provider !== 'openai') return getSwarmApiKey(provider);
+  const config = readJsonObject(resolveGlobalConfigPath());
+  const secrets = readJsonObject(resolveSeedSecretsPath());
+  return pickNamedKey(config, OPENAI_PLATFORM_KEY_NAMES)
+    || pickNamedKey(secrets, OPENAI_PLATFORM_KEY_NAMES)
+    || (process.env.OPENAI_API_KEY || '').trim();
+}
+
+/**
+ * @description Does the swarm hold a PLATFORM-realm credential for this provider? Cheap: no network call.
+ * @param {SwarmCredentialProvider} provider which vendor
+ * @returns {boolean} true when a platform credential is configured
+ */
+export function hasSwarmPlatformApiKey(provider: SwarmCredentialProvider): boolean {
+  const has = Boolean(getSwarmPlatformApiKey(provider));
+  if (!has) logger.debug({ provider }, 'swarm holds no PLATFORM credential for this provider');
+  return has;
 }
 
 /**

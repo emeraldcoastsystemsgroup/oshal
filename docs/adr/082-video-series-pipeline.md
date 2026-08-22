@@ -95,7 +95,12 @@ a timer and the `/approve` + `/advance` routes are mounted and auth-gated.
    `/v1/images`** — recognized and *forbidden*. The ChatGPT/Codex backend and the platform API are
    different auth realms, so codex authenticates the harness but can never generate images. Not a
    bug and not a stale token — a platform fact. The provider abstraction is unaffected and still
-   correct; only the *default* is wrong.
+   correct; only the *default* is wrong. *2026-08-21: the trap half of this is closed — the codex
+   provider now resolves the platform realm only (`getSwarmPlatformApiKey`), so the subscription
+   token is never offered to `/v1/images`; an OAuth-only box fails closed at resolve time with the
+   paste-a-platform-key hint, and `healthCheck` probes `/v1/models` (200 = platform key, 403 =
+   subscription realm). The default stays `codex` and is satisfied by a platform
+   `OPENAI_API_KEY`/`openAiApiKey`. ComfyUI as the free default remains open (BACKLOG).*
 3. **ComfyUI (the free path) is stubbed to throw**, not wired — and is now the *recommended*
    default: free, needs no new credential, and runs on the GPU box that already does LoRA.
 4. **No season-level assembly / intro** through the pipeline yet.
