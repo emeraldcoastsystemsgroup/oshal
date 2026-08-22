@@ -6,6 +6,11 @@ Positioning, go-to-market, and pitch material. The engineering-facing "why OSHAL
 
 - [catch-up-plan.md](./catch-up-plan.md) — grassroots plan to reach competitor parity on
   "the glue" (replaces the earlier go-to-market plan; OSHAL is OSS freeware, not for sale).
+- [marketing-engine-spec.md](./marketing-engine-spec.md) — **specification** for the automated
+  marketing engine: two motions (core adoption, commercial-app revenue), bot roster + reused
+  rails, services/keys, measurement + funnel, cadence, budget governance, targeting and pricing
+  method, phased done-when plan. Nothing in it is built unless marked; implementation is held in
+  [BACKLOG](../BACKLOG.md).
 - [competitive-landscape.md](./competitive-landscape.md) — competitive landscape.
 - [competitive-claims-honest.md](./competitive-claims-honest.md) — **the
   adversarially-verified record of which claims survive.** Two "exclusive" claims (runtime agent spawn,
