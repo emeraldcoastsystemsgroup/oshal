@@ -307,6 +307,7 @@ import { AppAccessService, SwarmAppService, SwarmAppRepository } from '@/feature
 // Manifest schedule registrar/deregistrar + per-user reconciler + nightly oshal-dev schedule —
 // extracted verbatim to swarm-app-schedule-wiring.ts (1000-line cap decomposition).
 import { createManifestScheduleRegistrar, createManifestScheduleDeregistrar, registerPerUserScheduleReconciler, registerNightlyDevDocsSchedule } from './swarm-app-schedule-wiring';
+import { wireCliStoryboardImageExecutor } from './storyboard-cli-image-wiring';
 // Standalone HTML serving + UI asset/page-dir resolution helpers — extracted verbatim to
 // server-ui-assets.ts; auth-callback/OIDC-recovery/onboarding helpers to server-auth-helpers.ts.
 import { resolveExistingPath, sendHtmlResponse, readOptionalTextFile, resolveUiAssetPaths, resolveUiSurfacePages } from './server-ui-assets';
@@ -1089,6 +1090,10 @@ function createApp(): express.Application {
   // to swarm-app-schedule-wiring.ts; both run at this exact point in boot as before.
   registerPerUserScheduleReconciler(swarmAppService, ctx.pool);
   registerNightlyDevDocsSchedule();
+  // ADR-130: the codex-cli storyboard image provider renders on a bot node, never in this
+  // process — register the bot-node executor into the video-generation feature (fail-soft:
+  // without it the provider reads unavailable and selection fails closed with instructions).
+  wireCliStoryboardImageExecutor();
 
   // CORE-05 installer verifier. Exact kernel route mounted before the package gate/dispatcher so
   // no installed manifest can shadow the postflight authority. App smokes accept the deployment

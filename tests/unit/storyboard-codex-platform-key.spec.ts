@@ -32,6 +32,7 @@ const ENV_KEYS = [
   'OPENAI_API_KEY',
   'OPENAI_IMAGE_MODEL',
   'STORYBOARD_IMAGE_PROVIDER',
+  'DEMO_MODE',
 ] as const;
 
 describe('codex image provider — platform realm only, OAuth-only box fails closed', () => {
@@ -57,6 +58,9 @@ describe('codex image provider — platform realm only, OAuth-only box fails clo
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_IMAGE_MODEL;
     delete process.env.STORYBOARD_IMAGE_PROVIDER;
+    // The unset-env default is demo-aware (ADR-130): codex-cli under DEMO_MODE, codex otherwise.
+    // These cases assert the NON-demo default, so the shell's DEMO_MODE must not leak in.
+    delete process.env.DEMO_MODE;
   });
 
   afterEach(() => {
