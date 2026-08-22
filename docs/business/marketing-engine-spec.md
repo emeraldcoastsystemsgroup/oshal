@@ -92,7 +92,10 @@ scheduled work uses manifest `schedules:` (✅ wiring in
 - **Publishing desk**: Switchboard Streams' 8-state machine
   (draft/in_review/approved/scheduled/published/rejected/failed/archived), Calendar's
   `startScheduledPostExecutor`, Compose's `publishTo` (X / LinkedIn / Facebook Page) and Stage
-  fan-out ✅. The marketing engine is a *client* of this desk, not a second one.
+  fan-out ✅. Streams also ships an idempotent `POST /import` from the Content Studio and
+  LinkedIn-assistant stores (unique `(user_sub, source, source_ref)` dedup) and a confirm-gated
+  publish with a claim CAS so a double-fire cannot double-post — reuse both. The marketing
+  engine is a *client* of this desk, not a second one.
 - **Governed LinkedIn publish**: draft → grade → refine → approve → `create-post` connector action
   with audit row ✅ ([linkedin-assistant](../../src/app/routes/linkedin-assistant-routes.ts)).
 - **Content research**: Content Studio topics feed (HN/Reddit/Lobsters/RSS, keyless) + draft/refine
@@ -103,6 +106,11 @@ scheduled work uses manifest `schedules:` (✅ wiring in
   `recordStoryboardImageCost` ✅ (copy Switchboard Compose's `POST /compose/image` call site).
 - **Autonomous-loop template**: series-pump (standing authorization, daily cap, every-cycle run
   ledger including skips, auto-pause on consecutive failures, `notifyOperator` on delivery) ✅.
+  Mirror its split exactly: loop engine kernel-resident, content plus the three spend switches
+  (`enabled`, `standingAuthorization`, `dailyCap`) package-owned — and its import rule:
+  **importing content never arms spend.** The pump's `POST /shows/import` writes premise/cast/
+  style only and never sets the authorization switches; a campaign import must likewise never
+  enable a channel, grant standing authorization, or set a cap as a side effect.
 - **Cost capture**: `CostTrackingService.recordCost` / `recordCostOnce` ✅ — campaign-tagged task
   IDs so CAC includes our own generation spend.
 - **Browser-node outreach**: [browser-task-dispatch.ts](../../src/app/browser-task-dispatch.ts) ✅
