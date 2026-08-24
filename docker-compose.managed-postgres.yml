@@ -89,6 +89,9 @@ services:
       PGPOOL_MAX: "2"
       RAG_DB_POOL_MAX: "2"
       DB_MAX_CONNECTIONS: "2"
+      OSHAL_DELEGATION_SIGNING_KID: ${OSHAL_DELEGATION_SIGNING_KID:?set the CRM controller delegation key id}
+      OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: '${OSHAL_DELEGATION_SIGNING_PRIVATE_KEY:?set the CRM controller Ed25519 private JWK}'
+      OSHAL_DELEGATION_PUBLIC_KEYS: ""
 
   jarvis-bot:
     environment:
@@ -118,6 +121,12 @@ services:
       ARANGO_ROOT_PASSWORD: !reset null
       OSHAL_DB_GUC: !reset null
       OSHAL_SCHEMA_BOOTSTRAP: validate-only
+      SWARM_SERVICE_SECRET: !reset null
+      OSHAL_DELEGATION_PUBLIC_KEYS: '${OSHAL_DELEGATION_PUBLIC_KEYS:?set the CRM bot-node Ed25519 public key ring}'
+      OSHAL_DELEGATION_SIGNING_KID: !reset null
+      OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: !reset null
+      OSHAL_BOT_CONFIG_BOOTSTRAP: "off"
+      BOT_NODE_INTERACTIVE_ONLY: "true"
 
   sales-bot:
     environment:
@@ -144,3 +153,9 @@ services:
       ARANGO_ROOT_PASSWORD: !reset null
       OSHAL_DB_GUC: !reset null
       OSHAL_SCHEMA_BOOTSTRAP: validate-only
+      SWARM_SERVICE_SECRET: !reset null
+      OSHAL_DELEGATION_PUBLIC_KEYS: '${OSHAL_DELEGATION_PUBLIC_KEYS:?set the CRM bot-node Ed25519 public key ring}'
+      OSHAL_DELEGATION_SIGNING_KID: !reset null
+      OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: !reset null
+      OSHAL_BOT_CONFIG_BOOTSTRAP: "off"
+      BOT_NODE_INTERACTIVE_ONLY: "true"

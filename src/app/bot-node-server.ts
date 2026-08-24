@@ -28,6 +28,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: Token Chase replay remains tool-free and now explicitly disables auto-approval so future tool additions cannot silently inherit approval authority.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Forward the signed providerConfigRequired authority marker into swarm execution so missing provider records are distinguishable from intentional legacy dispatches and fail closed before task creation.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Forward the validated app/capability/pattern prompt carrier from /api/swarm-execute into the execution envelope; malformed trusted configuration now fails closed at the HTTP boundary.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Add BOT_NODE_INTERACTIVE_ONLY so DB-less managed Jarvis/Sales retain signed synchronous HTTP turns and heartbeat discovery without subscribing, bidding, or ACKing Redis queue work.
  */
 
 /**
@@ -86,6 +87,7 @@ import {
   prohibitUnsignedMeshExecution,
 } from './bot-node-delegation';
 import { runBotNodeExecutionWithSystemIdentity } from './bot-node-request-identity';
+import { isBotNodeInteractiveOnly } from './bot-node-runtime-mode';
 
 const logger = createChildLogger({ module: 'bot-node-server' });
 
@@ -103,6 +105,7 @@ async function start(): Promise<void> {
   // the restart policy hides it.
   installProcessCrashGuards('bot-node');
   logger.info('Starting bot node server...');
+  const interactiveOnly = isBotNodeInteractiveOnly();
   // Security assertion: throws before worker/network setup if service auth is unconfigured.
   logBotNodeAuthPosture();
   // Execute-time entitlement posture (BACKLOG "Bot-endpoint privilege model"):
@@ -176,7 +179,7 @@ async function start(): Promise<void> {
     ...(botName !== agentId ? [MESH_CHANNELS.agentDirect(botName)] : []),
   ];
 
-  const agentWorker = new SwarmAgentWorker({
+  const agentWorker = interactiveOnly ? null : new SwarmAgentWorker({
     transport: meshTransport,
     channel: primaryChannel,
     consumerId: agentId,
@@ -239,11 +242,18 @@ async function start(): Promise<void> {
   const heartbeatInterval = setInterval(publishHeartbeat, 30_000);
 
   // ── Start worker ────────────────────────────────────────────────
-  await agentWorker.start();
-  logger.info(
-    { agentId, botName, primaryChannel, additionalChannels, provider: activeLlm().provider, model: activeLlm().model },
-    'SwarmAgentWorker started — consuming envelopes',
-  );
+  if (agentWorker) {
+    await agentWorker.start();
+    logger.info(
+      { agentId, botName, primaryChannel, additionalChannels, provider: activeLlm().provider, model: activeLlm().model },
+      'SwarmAgentWorker started — consuming envelopes',
+    );
+  } else {
+    logger.info(
+      { agentId, botName, provider: activeLlm().provider, model: activeLlm().model },
+      'Interactive-only bot node started — Redis queue subscription and bidding are disabled',
+    );
+  }
 
   // ── Express health server ───────────────────────────────────────
   const app = express();
@@ -253,7 +263,7 @@ async function start(): Promise<void> {
   app.use(express.json({ limit: '5mb' }));
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.get('/api/health', (_req, res) => res.json({
-    status: 'ok', runtime: 'bot-node', agentId, botName,
+    status: 'ok', runtime: 'bot-node', agentId, botName, interactiveOnly,
     provider: activeLlm().provider, model: activeLlm().model,
     timestamp: new Date().toISOString(),
   }));
@@ -533,7 +543,7 @@ async function start(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutting down bot node');
     clearInterval(heartbeatInterval);
-    await agentWorker.stop();
+    await agentWorker?.stop();
     await delegationRuntime.close();
     if (pool) await pool.end();
     process.exit(0);

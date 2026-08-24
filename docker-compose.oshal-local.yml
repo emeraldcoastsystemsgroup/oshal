@@ -339,8 +339,9 @@ x-bot-env: &bot-env
   REDIS_URL: redis://oshal-redis:6379
   # Bot-side verification only. The value is a one-line JSON object mapping key ids to public
   # Ed25519 JWKs. Supplying it makes /api/swarm-execute require a signed, single-use token and
-  # Redis replay consumption; malformed/partial configuration or a blank SWARM_SERVICE_SECRET
-  # fails bot startup. Never place the controller's private JWK in this anchor.
+  # Redis replay consumption; malformed/partial configuration fails bot startup. A valid signed
+  # delegation is sufficient machine authority for exact /api/swarm-execute, so managed model
+  # nodes can omit SWARM_SERVICE_SECRET. Never place the controller's private JWK in this anchor.
   OSHAL_DELEGATION_PUBLIC_KEYS: '${OSHAL_DELEGATION_PUBLIC_KEYS:-}'
   OSHAL_DELEGATION_ISSUER: ${OSHAL_DELEGATION_ISSUER:-urn:oshal:controller}
   OSHAL_DELEGATION_AUDIENCE: ${OSHAL_DELEGATION_AUDIENCE:-urn:oshal:bot-node}

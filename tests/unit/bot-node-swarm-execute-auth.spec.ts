@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Security-audit coverage for shared-secret bot-node execution gates.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 strict posture: missing configuration returns 503 and fails startup; invalid callers return 401; TS and any-bot runtimes remain in parity.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove the non-health machine gate runs before JSON parsing, including invalid and oversized unauthenticated bodies, while exact GET health/metrics probes remain public.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Prove bounded signed-execution admission works without a fleet secret only on exact POST /api/swarm-execute while sibling privileged paths stay fail-closed.
  */
 
 import express from 'express';
@@ -37,12 +38,15 @@ const SECRET = 'bot-node-test-secret';
 const servers: Array<{ close: (cb: () => void) => void }> = [];
 let savedSecret: string | undefined;
 let savedInsecureFlag: string | undefined;
+let savedDelegationPublicKeys: string | undefined;
 
 beforeEach(() => {
   savedSecret = process.env.SWARM_SERVICE_SECRET;
   savedInsecureFlag = process.env.OSHAL_ALLOW_INSECURE_ANY_BOT_TEST_AUTH;
+  savedDelegationPublicKeys = process.env.OSHAL_DELEGATION_PUBLIC_KEYS;
   delete process.env.SWARM_SERVICE_SECRET;
   delete process.env.OSHAL_ALLOW_INSECURE_ANY_BOT_TEST_AUTH;
+  delete process.env.OSHAL_DELEGATION_PUBLIC_KEYS;
   for (const spy of Object.values(logSpies)) spy.mockClear();
 });
 
@@ -52,6 +56,8 @@ afterEach(async () => {
   else process.env.SWARM_SERVICE_SECRET = savedSecret;
   if (savedInsecureFlag === undefined) delete process.env.OSHAL_ALLOW_INSECURE_ANY_BOT_TEST_AUTH;
   else process.env.OSHAL_ALLOW_INSECURE_ANY_BOT_TEST_AUTH = savedInsecureFlag;
+  if (savedDelegationPublicKeys === undefined) delete process.env.OSHAL_DELEGATION_PUBLIC_KEYS;
+  else process.env.OSHAL_DELEGATION_PUBLIC_KEYS = savedDelegationPublicKeys;
 });
 
 async function listen(app: express.Application): Promise<string> {
@@ -104,7 +110,7 @@ describe('strict bot-node service authentication', () => {
   });
 
   it('fails TS and any-bot startup with the same machine-readable code', () => {
-    expect(() => logBotNodeAuthPosture()).toThrowError(/SWARM_SERVICE_SECRET is required/);
+    expect(() => logBotNodeAuthPosture()).toThrowError(/SWARM_SERVICE_SECRET or OSHAL_DELEGATION_PUBLIC_KEYS/);
     try {
       logBotNodeAuthPosture();
     } catch (error) {
@@ -126,6 +132,15 @@ describe('strict bot-node service authentication', () => {
     expect(logSpies.warn).not.toHaveBeenCalled();
     expect(logSpies.info).toHaveBeenCalledTimes(1);
     expect(String(logSpies.info.mock.calls[0][0])).toContain('FAIL-CLOSED');
+  });
+
+  it('accepts a bounded execution delegation without exposing the fleet secret', async () => {
+    process.env.OSHAL_DELEGATION_PUBLIC_KEYS = '{"current":{"kty":"OKP"}}';
+    expect(() => logBotNodeAuthPosture()).not.toThrow();
+    const url = await bootRoute(authorizeBotNodeExecutionCall);
+    expect((await post(url)).status).toBe(401);
+    expect((await post(url, { 'x-oshal-delegation-token': 'signed-token-placeholder' })).status).toBe(200);
+    expect((await post(url, { 'x-oshal-delegation-token': 'x'.repeat(8_193) })).status).toBe(401);
   });
 });
 
@@ -178,5 +193,19 @@ describe('bot-node pre-parser machine gate', () => {
     expect((await fetch(`${base}/metrics`)).status).toBe(200);
     expect((await fetch(`${base}/health`, { method: 'POST' })).status).toBe(503);
     expect((await fetch(`${base}/not-health`)).status).toBe(503);
+  });
+
+  it('admits only a bounded delegation header to the exact execute parser path', async () => {
+    process.env.OSHAL_DELEGATION_PUBLIC_KEYS = '{"current":{"kty":"OKP"}}';
+    const base = await bootPreParserApp();
+    expect((await post(`${base}/api/swarm-execute`)).status).toBe(401);
+    expect((await post(`${base}/api/swarm-execute`, {
+      'x-oshal-delegation-token': 'signed-token-placeholder',
+    })).status).toBe(200);
+    expect((await fetch(`${base}/not-health`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-oshal-delegation-token': 'signed-token-placeholder' },
+      body: '{}',
+    })).status).toBe(503);
   });
 });

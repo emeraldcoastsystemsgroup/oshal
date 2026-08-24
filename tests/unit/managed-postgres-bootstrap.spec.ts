@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Production guard for the CRM DigitalOcean PostgreSQL 18 lifecycle: URL/CA/topology validation, guarded launcher environment isolation, and the real pinned PG18 one-shot bootstrap/redeploy/retry proof (gated by OSHAL_RUN_PG18_INTEGRATION=1).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Align the writable-CA fixture with the launcher's path-component walker (0666 trips the component guard first) and add a 0640 case so the specific 0600-or-0644 mode guard stays covered.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove the managed controller keeps the signing key while DB-less interactive Jarvis/Sales receive only the public ring and no fleet secret.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -87,6 +88,9 @@ function managedEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): NodeJS.ProcessE
     POSTGRES_CA_CERT_PATH: caPath,
     OSHAL_MANAGED_DEPLOYMENT_ID: TEST_DEPLOYMENT_ID,
     OSHAL_BOT_IMAGE: TEST_BOT_IMAGE,
+    OSHAL_DELEGATION_SIGNING_KID: 'crm-test-key',
+    OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: '{"kty":"OKP","crv":"Ed25519","x":"public","d":"private"}',
+    OSHAL_DELEGATION_PUBLIC_KEYS: '{"crm-test-key":{"kty":"OKP","crv":"Ed25519","x":"public"}}',
     ...overrides,
   };
 }
@@ -371,7 +375,16 @@ describe('managed Compose topology and guarded launcher', () => {
         || key === 'DB_MAX_CONNECTIONS'
       ));
       expect(datastoreKeys, `${serviceName} must be DB-credential-free`).toEqual([]);
+      expect(modelEnv.SWARM_SERVICE_SECRET).toBeUndefined();
+      expect(modelEnv.OSHAL_DELEGATION_PUBLIC_KEYS).toBe(managedEnv().OSHAL_DELEGATION_PUBLIC_KEYS);
+      expect(modelEnv.OSHAL_DELEGATION_SIGNING_KID).toBeUndefined();
+      expect(modelEnv.OSHAL_DELEGATION_SIGNING_PRIVATE_KEY).toBeUndefined();
+      expect(modelEnv.OSHAL_BOT_CONFIG_BOOTSTRAP).toBe('off');
+      expect(modelEnv.BOT_NODE_INTERACTIVE_ONLY).toBe('true');
     }
+    expect(services['oshal-api'].environment.OSHAL_DELEGATION_SIGNING_KID).toBe('crm-test-key');
+    expect(services['oshal-api'].environment.OSHAL_DELEGATION_SIGNING_PRIVATE_KEY).toBe(managedEnv().OSHAL_DELEGATION_SIGNING_PRIVATE_KEY);
+    expect(services['oshal-api'].environment.OSHAL_DELEGATION_PUBLIC_KEYS).toBe('');
     expect(services['jarvis-bot'].environment.OSHAL_SCHEMA_BOOTSTRAP).toBe('validate-only');
     expect(services['sales-bot'].environment.OSHAL_SCHEMA_BOOTSTRAP).toBe('validate-only');
     expect(services['oshal-db'].ports).toBeUndefined();
@@ -534,6 +547,9 @@ POSTGRES_CA_CERT_PATH=/app/config-seed/do-postgres-ca.pem
 BOOTSTRAP_DATABASE_URL=postgresql://doadmin:file-authoritative@oshal-db:5432/oshal
 DATABASE_URL=postgresql://oshal_app:file-authoritative@oshal-db:5432/oshal
 BOT_DATABASE_URL=postgresql://oshal_bot:file-authoritative@oshal-db:5432/oshal
+OSHAL_DELEGATION_SIGNING_KID=crm-test-key
+OSHAL_DELEGATION_SIGNING_PRIVATE_KEY={"kty":"OKP","crv":"Ed25519","x":"public","d":"private"}
+OSHAL_DELEGATION_PUBLIC_KEYS={"crm-test-key":{"kty":"OKP","crv":"Ed25519","x":"public"}}
 `;
     const setup = `
 set -euo pipefail

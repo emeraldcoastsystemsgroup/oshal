@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Verify the signed canonical request-body digest before replay consumption so one valid token cannot be raced with mutated execution fields.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bind the signed delegation to the exact UTF-8 user subject, including significant whitespace, while rejecting controls and values over 512 bytes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Require the token's exact POST /api/swarm-execute method/path metadata before replay consumption.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Treat verified, exact-body-bound, single-use Ed25519 delegation as the machine credential instead of requiring the fleet secret as a second model-visible credential.
  */
 
 import type { Request, RequestHandler, Response } from 'express';
@@ -25,7 +26,6 @@ import {
 } from '@/shared/security/delegation-replay-store';
 import {
   DELEGATION_HTTP_HEADER,
-  DelegationHttpPolicyError,
   SWARM_EXECUTE_DELEGATION_METHOD,
   SWARM_EXECUTE_DELEGATION_PATH,
   SWARM_EXECUTE_DELEGATION_SCOPE,
@@ -55,7 +55,7 @@ interface VerifiedDelegationLocals {
 export interface BotNodeDelegationOptions {
   /** Trusted local agent identity loaded from the bot runtime, never from the request body. */
   localAgentId: string;
-  /** Bot environment containing the public ring, exact policy, and independent service secret. */
+  /** Bot environment containing the public ring and exact verification policy. */
   env?: DelegationEnvironment;
   /** Shared Redis endpoint used by the production single-use ledger. */
   redisUrl?: string;
@@ -88,7 +88,6 @@ export function createBotNodeDelegationRuntime(
   const localAgentId = requireLocalAgentId(options.localAgentId);
   const enforcementEnabled = options.verifier !== undefined
     || hasDelegationVerificationConfiguration(env);
-  if (enforcementEnabled) requireMachineCredential(env);
   const verifier = enforcementEnabled
     ? options.verifier ?? createDelegationTokenVerifier({ env })
     : null;
@@ -309,14 +308,6 @@ function requireBodyUserSub(value: unknown): string {
 
 function requireLocalAgentId(value: string): string {
   return requireBodyText(value, 'local agent', 256);
-}
-
-function requireMachineCredential(env: DelegationEnvironment): void {
-  if (typeof env.SWARM_SERVICE_SECRET !== 'string' || env.SWARM_SERVICE_SECRET.trim() === '') {
-    throw new DelegationHttpPolicyError(
-      'SWARM_SERVICE_SECRET is required when bot-node delegation enforcement is active',
-    );
-  }
 }
 
 function safeLogValue(value: unknown): string | undefined {

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the required independent service-secret posture whenever public-key delegation enforcement is active.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reject prompt, direct-entitlement, credential, and provider-intent mutations through the signed canonical body digest before replay consumption.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reject valid signatures carrying any method/path other than exact POST /api/swarm-execute.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove signed delegation is sufficient machine authority without SWARM_SERVICE_SECRET.
  */
 
 import { generateKeyPairSync, type KeyObject } from 'node:crypto';
@@ -148,13 +149,13 @@ describe('bot-node delegation rollout posture', () => {
     })).toThrow();
   });
 
-  it('fails startup when delegation is enabled without the independent machine secret', () => {
+  it('uses verified single-use delegation as the machine credential without a fleet secret', () => {
     expect(() => createBotNodeDelegationRuntime({
       localAgentId: AGENT_ID,
       verifier: verifier(),
       replayStore: acceptingReplayStore(),
       env: {},
-    })).toThrow(/SWARM_SERVICE_SECRET/);
+    })).not.toThrow();
   });
 });
 
