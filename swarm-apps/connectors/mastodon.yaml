@@ -1,6 +1,13 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Add the write-capable actions tier (marketing engine, ADR-133): create-status posts to the connected account via the confirm-gated, audited connector-writes rail. Read resources untouched; version 1.0.0 -> 1.1.0.
+# -----------------------------------------------------------------------------
+
 provider: mastodon
 displayName: Mastodon
-version: 1.0.0
+version: 1.1.0
 baseUrl: ${env:MASTODON_BASE_URL:-https://mastodon.social}/api/v1
 auth:
   type: oauth2
@@ -57,6 +64,27 @@ resources:
       - since_id
       - limit
       - exclude_replies
+# Write-capable action tier (connector-writes). Real documented endpoint:
+# https://docs.joinmastodon.org/methods/statuses/#create
+actions:
+  - name: create-status
+    method: POST
+    urlTemplate: /statuses
+    riskLevel: high
+    approvalRequired: true
+    description: >-
+      Publish a status (toot) to the connected account's timeline (POST /statuses).
+      High risk: it is public and immediate — the confirm gate is not optional.
+    paramsSchema:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Status text (500-character mastodon.social default limit).
 metadata:
   description: "Mastodon — reads verify credentials, home timeline, public timeline, notifications and 2 more via mastodon.social. OAuth: the operator registers the provider app once, then each user connects their own account."
   category: "Social"

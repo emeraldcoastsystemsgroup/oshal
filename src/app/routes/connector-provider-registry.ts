@@ -11,6 +11,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the provider registry and credential resolver from connectors-routes.ts without adding or changing any credential environment path; retained the SEC-05 Twilio fixed-controller-only boundary inline.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Let the Outlook connector reuse the already-configured Microsoft/Outlook OIDC client as documented, while preserving connector-specific credential precedence and refusing to mix an incomplete dedicated pair with another app's secret.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add the bluesky (identifier + app-password paste, bespoke createSession validation) and resend (API-key paste, GENERIC_VERIFY) token connectors for the marketing engine's outbound rails (ADR-133), categorized social/email.
  * -----------------------------------------------------------------------------
  *
  * @module connector-provider-registry
@@ -535,6 +536,14 @@ export const PROVIDERS: Record<string, ProviderDef> = {
   // /stock/earnings gives actual-vs-consensus surprises, the deterministic input the overlay needs.
   // Free-tier key from the dashboard; validated on paste against /quote before storing (BYO account).
   finnhub: { label: 'Finnhub (Market Data / Earnings)', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/finnhub/callback', tokenHelpUrl: 'https://finnhub.io/dashboard' },
+  // Bluesky (marketing publishing rail, ADR-133): two-value paste — the handle/DID/email as the
+  // card's `email` field + an APP PASSWORD (never the main password), stored "identifier:app-password"
+  // (app passwords are xxxx-xxxx-xxxx-xxxx, no ':', so the first-colon split is safe). No bearer
+  // whoami exists — validation POSTs a real com.atproto.server.createSession (bespoke fetchAccount).
+  bluesky: { label: 'Bluesky', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/bluesky/callback', tokenHelpUrl: 'https://bsky.app/settings/app-passwords' },
+  // Resend (marketing email rail, ADR-133): API-key paste validated via GENERIC_VERIFY /domains;
+  // sends ride the confirm-gated resend.yaml send-email action, never a raw route.
+  resend: { label: 'Resend (Email)', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/resend/callback', tokenHelpUrl: 'https://resend.com/api-keys' },
 };
 
 /** Connector → hub category, for grouping the Utilities page by purpose.
@@ -546,8 +555,8 @@ export const CONNECTOR_CATEGORY: Record<string, string> = {
   // Facebook LOGIN is an identity/auth connector (it shows your profile + avatar) →
   // groups with sign-in, per the operator's "put it under your account" intent.
   facebook: 'identity',
-  linkedin: 'social', twitter: 'social', 'meta-business': 'social',
-  google: 'email', outlook: 'email',
+  linkedin: 'social', twitter: 'social', 'meta-business': 'social', bluesky: 'social',
+  google: 'email', outlook: 'email', resend: 'email',
   github: 'storage', dropbox: 'storage',
   // DevOps / cloud connectors (operator-grade cloud-platform access).
   gcp: 'devops', jira: 'devops',

@@ -631,6 +631,12 @@
   footer a:hover { color: var(--cyan); }
   footer .cols { display: flex; gap: 28px; flex-wrap: wrap; }
 </style>
+<!-- Opt-in analytics (SITE_ANALYTICS_* env, default none — ADR-132). scripts/site-apps-catalog.js
+     rewrites everything between the ANALYTICS markers at generation/deploy time via the shared
+     scripts/lib/product-site/analytics.js builder; with the provider unset it writes the empty
+     marker pair back, so this source stays byte-identical to an analytics-free page and a redeploy
+     leaves no stale snippet. Do not hand-edit between the markers. -->
+<!-- ANALYTICS:START --><!-- ANALYTICS:END -->
 </head>
 <body>
 
@@ -743,7 +749,7 @@
   <div class="wrap">
     <div class="stat"><div class="n">6</div><div class="l">Agent harnesses</div></div>
     <div class="stat"><div class="n">40</div><div class="l">Model providers</div></div>
-    <div class="stat"><div class="n">308</div><div class="l">Connectors in catalog</div></div>
+    <div class="stat"><div class="n">310</div><div class="l">Connectors in catalog</div></div>
     <div class="stat"><div class="n">40</div><div class="l">App packages in the store</div></div>
     <div class="stat"><div class="n">AGPL-3.0</div><div class="l">Open source, forever</div></div>
   </div>
@@ -1106,7 +1112,7 @@
       </figure>
       <figure class="shot">
         <img src="assets/cockpit-connectors.png" alt="The cockpit connector marketplace: a searchable catalog of connectors with per-user credentials, risk filters, and live counts" loading="lazy" width="1440" height="900">
-        <figcaption><b>The connector marketplace.</b> <strong>308 hand-audited connectors ship in the repo.</strong> This instance has also run the OpenAPI bulk importer, which is what takes the catalog to 1,306 — the counters break it down for you. Credentials stay user-owned.</figcaption>
+        <figcaption><b>The connector marketplace.</b> <strong>310 hand-audited connectors ship in the repo.</strong> This instance has also run the OpenAPI bulk importer, which is what takes the catalog to 1,306 — the counters break it down for you. Credentials stay user-owned.</figcaption>
       </figure>
       <figure class="shot">
         <img src="assets/cockpit-connector-governance.png" alt="Connector cards showing each provider's auth model, risk rating, and exact read and write capabilities" loading="lazy" width="1300" height="305">
@@ -1645,7 +1651,7 @@
         <ul>
           <li><strong>Six harnesses</strong> behind one interface, mixed within a single ticket</li>
           <li><strong>40 model providers</strong>, including fully local via Ollama / LM Studio / LiteLLM</li>
-          <li><strong>Connector marketplace</strong> — 308 hand-audited specs (plus a bulk OpenAPI importer), OAuth broker, live-proven core</li>
+          <li><strong>Connector marketplace</strong> — 310 hand-audited specs (plus a bulk OpenAPI importer), OAuth broker, live-proven core</li>
           <li><strong>40 app packages in the public store</strong> — email, social, storage, presentations, gaming, career, ops, and more (the grid above shows the published set, generated from them)</li>
           <li><strong>Row-level security live</strong> on every tenant table; per-user AES-256-GCM token encryption</li>
           <li><strong>Per-call cost ledger</strong> in Postgres — every bot, provider, model, ticket</li>

@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Drop the dead 'capture-crm' PRIVATE_APPS row: the app carved to the oshal-applications store (ADR-085 Wave 3), so no in-repo manifest reaches this generator anymore. federal-capture + gov-contracting rows follow with their own rips.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Drop the dead 'federal-capture' PRIVATE_APPS row with its rip (ADR-085 Wave 3, same reasoning). gov-contracting's row follows with its own rip.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Drop the dead 'gov-contracting' PRIVATE_APPS row with its rip (ADR-085 Wave 3) — the capture-family carve complete; no in-repo capture manifests remain.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Opt-in analytics for the hand-written root page: rewrite the <!-- ANALYTICS:START/END --> head block from the shared lib/product-site/analytics.js builder (SITE_ANALYTICS_* env, default none), the same single config source as the generated product pages and the nightly lab report. With the provider unset the block collapses back to the bare marker pair — the committed bytes — so an unconfigured regeneration leaves no stale snippet behind and the tracked page cannot churn. Missing markers WARN instead of failing: analytics is opt-in and must never block a deploy.
  */
 
 /**
@@ -22,6 +23,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { analyticsSnippet } = require('./lib/product-site/analytics');
 
 const REPO = path.resolve(__dirname, '..');
 const SITE = path.join(REPO, 'site', 'oswarm.ai', 'index.html');
@@ -199,6 +201,29 @@ function verifyClaims(html) {
   console.log(`[site-apps] numeric claims verified: ${claims.map((c) => `${c.actual} ${c.what}`).join(', ')}`);
 }
 
+/**
+ * @description Rewrites the <!-- ANALYTICS:START/END --> block in index.html's <head> from the
+ * shared env-driven builder (lib/product-site/analytics.js) — the same single config source every
+ * generated page and the nightly lab report use. With SITE_ANALYTICS_PROVIDER unset the snippet is
+ * '' and the block collapses back to the bare marker pair, i.e. the committed bytes, so
+ * regenerating on an unconfigured box restores the original page exactly and no stale snippet can
+ * survive an opt-out. Missing markers WARN and return the input unchanged: analytics is opt-in and
+ * must never block a deploy.
+ * @param {string} html - The full index.html source.
+ * @returns {string} The html with the analytics block rewritten (or unchanged on missing markers).
+ */
+function applyAnalytics(html) {
+  const START = '<!-- ANALYTICS:START -->';
+  const END = '<!-- ANALYTICS:END -->';
+  if (!html.includes(START) || !html.includes(END)) {
+    console.error(`[site-apps] WARN: index.html is missing the ${START} / ${END} head markers — analytics not injected`);
+    return html;
+  }
+  const snippet = analyticsSnippet();
+  if (snippet) console.log(`[site-apps] analytics enabled (provider: ${String(process.env.SITE_ANALYTICS_PROVIDER).trim().toLowerCase()}) — injecting into the head marker block`);
+  return html.replace(new RegExp(`${START}[\\s\\S]*?${END}`), snippet ? `${START}${snippet}\n${END}` : `${START}${END}`);
+}
+
 function main() {
   const check = process.argv.includes('--check');
   const { published, withheld } = collect();
@@ -213,7 +238,7 @@ function main() {
   }
 
   const block = `${START}\n${render(published)}\n    ${END}`;
-  const next = html.replace(new RegExp(`${START}[\\s\\S]*?${END}`), block);
+  const next = applyAnalytics(html.replace(new RegExp(`${START}[\\s\\S]*?${END}`), block));
 
   console.log(`[site-apps] publishing ${published.length} live apps:`);
   console.log('  ' + published.map((a) => a.title).join(', '));

@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Brand naming pass (operator directive 2026-07-24): user-facing product name is lowercase "oshal" — never "Open Swarm" alone. Template title/h1/disclaimer/footer updated; footer home link reads oshal.ai.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Stop emailing a bare "fetch failed" for a busy box (2026-07-27 + 2026-07-30 both died this way while the api was up and healthy). Three changes: (a) default BASE is 127.0.0.1, not localhost — a stale wslrelay squats the IPv6 loopback here, and the ::1 detour costs ~300ms per call and can exceed undici's connect timeout under load; (b) every GET retries transient failures (connect error / 5xx / 429) with linear backoff, so one blip mid-run no longer discards 59 strategies' worth of work; (c) errors report undici's full cause chain — the old code logged err.message, which is the literal string "fetch failed" with the real reason (ECONNREFUSED vs timeout) hidden in .cause. Auth/4xx stay fatal: retrying a 401 just delays the same email.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve an explicit acting OIDC subject exactly while still trimming the comma-delimited operator fallback.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Opt-in analytics in the report's <head> via the shared lib/product-site/analytics.js builder (SITE_ANALYTICS_* env, default none — unset env renders byte-identical output). Same single config source as the generated product pages and the root index, so the nightly page is measured with the rest of the site or not at all.
  *
  * Usage: node scripts/site-lab-report.js            (writes site/oswarm.ai/lab/index.html)
  *        node scripts/site-lab-report.js --stdout   (print the HTML instead of writing)
@@ -19,6 +20,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { requireExactUserSubject } = require('./lib/exact-user-subject');
+const { analyticsSnippet } = require('./lib/product-site/analytics');
 
 // 127.0.0.1, never `localhost`: this box's IPv6 loopback is intermittently squatted (see the
 // wslrelay runbook), and the happy-eyeballs detour is exactly what times out under nightly load.
@@ -226,7 +228,7 @@ function render(rows) {
   .movers{display:flex;gap:2.5rem;flex-wrap:wrap} .movers ol{margin:.2rem 0;padding-left:1.2rem}
   .movers li{margin:.15rem 0} .movers .nm{font-family:ui-monospace,Consolas,monospace;font-size:.85rem}
   a{color:#7fb4ff} footer{margin-top:3rem;color:#6b7280;font-size:.82rem}
-</style></head><body><main>
+</style>${analyticsSnippet()}</head><body><main>
 <h1>oshal Strategy Lab</h1>
 <p class="sub">Nightly forward-walk report · generated ${esc(now)} · ${rows.length} strategies under test</p>
 <div class="disc"><strong>What this is:</strong> oshal's strategy lab walks every saved configuration forward one real market session per night, out-of-sample, from a synthetic $100,000 notional. <strong>What this is not:</strong> real-money performance (no live account data appears here), a track record, or investment advice. All figures are gross of slippage and commissions; backtest columns are in-sample and overfit-prone by nature — the forward columns are the honest ones, and they are short. Strategies are ranked to be <em>studied</em>, not followed.</div>
