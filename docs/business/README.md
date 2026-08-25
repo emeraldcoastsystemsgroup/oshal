@@ -9,8 +9,10 @@ Positioning, go-to-market, and pitch material. The engineering-facing "why OSHAL
 - [marketing-engine-spec.md](./marketing-engine-spec.md) — **specification** for the automated
   marketing engine: two motions (core adoption, commercial-app revenue), bot roster + reused
   rails, services/keys, measurement + funnel, cadence, budget governance, targeting and pricing
-  method, phased done-when plan. Nothing in it is built unless marked; implementation is held in
-  [BACKLOG](../BACKLOG.md).
+  method, phased done-when plan.
+- [marketing-engine-runbook.md](./marketing-engine-runbook.md) — **operator runbook** for the
+  built engine (ADR-131/132/133): morning account-creation checklist, the approval loop
+  (channels consent, tickets, budget proposals), what's deliberately staged, troubleshooting.
 - [competitive-landscape.md](./competitive-landscape.md) — competitive landscape.
 - [competitive-claims-honest.md](./competitive-claims-honest.md) — **the
   adversarially-verified record of which claims survive.** Two "exclusive" claims (runtime agent spawn,

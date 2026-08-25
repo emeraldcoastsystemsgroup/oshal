@@ -1,0 +1,74 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Resend connector (marketing engine, ADR-133): pasted API key held per-user in the encrypted connection store (auth oauth2 = static Bearer, the token-paste convention), read tier for domains/audiences, and one confirm-gated high-risk send-email action (POST /emails) so every outbound email rides the audited connector-writes rail.
+# -----------------------------------------------------------------------------
+
+provider: resend
+displayName: Resend
+version: 1.0.0
+baseUrl: https://api.resend.com
+auth:
+  # Pasted API key resolved by the broker at call time and sent as a static Bearer.
+  type: oauth2
+rateLimit:
+  burst: 5
+  perSecond: 2
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: domains
+    tool: resend-domains
+    method: GET
+    path: /domains
+  - name: audiences
+    tool: resend-audiences
+    method: GET
+    path: /audiences
+# Write-capable action tier (connector-writes). Real documented endpoint:
+# https://resend.com/docs/api-reference/emails/send-email
+actions:
+  - name: send-email
+    method: POST
+    urlTemplate: /emails
+    riskLevel: high
+    approvalRequired: true
+    description: >-
+      Send one email through the connected Resend account (POST /emails). High risk: it
+      leaves the building immediately and cannot be recalled — the confirm gate is not
+      optional. Single recipient; exactly the declared fields, nothing extra.
+    paramsSchema:
+      type: object
+      required: [from, to, subject]
+      additionalProperties: false
+      properties:
+        from:
+          type: string
+          minLength: 3
+          description: Sender, e.g. "oshal <news@yourdomain.com>" — must be a verified Resend domain.
+        to:
+          type: string
+          minLength: 3
+          description: Single recipient email address (v1 — one recipient per send).
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 998
+          description: Subject line.
+        html:
+          type: string
+          minLength: 1
+          description: HTML body. Provide html and/or text — at least one.
+        text:
+          type: string
+          minLength: 1
+          description: Plain-text body. Provide html and/or text — at least one.
+metadata:
+  description: "Resend — reads verified domains and audiences, and sends email through the confirm-gated, audited write-action tier. Bring your own key: each user pastes their own API key, held per-user in the encrypted connection store."
+  category: "Email"
+  icon: resend
+  iconTitle: Resend
+  iconSource: simple-icons
+  iconVerified: false

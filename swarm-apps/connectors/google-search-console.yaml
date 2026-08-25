@@ -1,0 +1,52 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Google Search Console connector (marketing engine, ADR-133): read-only sites + search-analytics query over the caller's ONE google connection (credProvider: google — same broker key as gmail/youtube). The searchanalytics resource is a POST-verb READ (Google's query endpoint is POST) declared safety action:read so it is never confirm-gated. Needs the webmasters.readonly scope added to GOOGLE_CONNECT_SCOPES + a reconnect.
+# -----------------------------------------------------------------------------
+
+provider: google-search-console
+credProvider: google
+displayName: Google Search Console
+version: 1.0.0
+baseUrl: https://www.googleapis.com/webmasters/v3
+auth:
+  type: oauth2
+  # Marketplace metadata only — connect-time scopes come from PROVIDERS.google
+  # (GOOGLE_CONNECT_SCOPES); see connector-provider-registry.ts.
+  scopes:
+    - https://www.googleapis.com/auth/webmasters.readonly
+rateLimit:
+  burst: 5
+  perSecond: 5
+retry:
+  maxRetries: 3
+  honorRetryAfter: true
+resources:
+  - name: sites
+    tool: gsc-sites
+    method: GET
+    path: /sites
+  - name: searchanalytics
+    tool: gsc-search-analytics
+    method: POST
+    path: /sites/{siteUrl}/searchAnalytics/query
+    # POST-verb read: the whole-value '{placeholder}' binds preserve types, so
+    # dimensions may be passed as an array and rowLimit as a number.
+    body:
+      startDate: '{startDate}'
+      endDate: '{endDate}'
+      dimensions: '{dimensions}'
+      rowLimit: '{rowLimit}'
+    safety:
+      action: read
+      requiresConfirmation: false
+    retry:
+      maxRetries: 0
+metadata:
+  description: "Google Search Console — verified sites and search-analytics rows (clicks, impressions, queries) for the connected Google account. Requires the https://www.googleapis.com/auth/webmasters.readonly scope: add it to GOOGLE_CONNECT_SCOPES and RECONNECT the Google connection (scopes are fixed at connect time, not by this spec)."
+  category: "Marketing"
+  icon: googlesearchconsole
+  iconTitle: Google Search Console
+  iconSource: simple-icons
+  iconVerified: false

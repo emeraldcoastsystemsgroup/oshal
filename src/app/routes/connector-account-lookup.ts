@@ -17,6 +17,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add 'twilio' branch — the pasted secret is the combined "AccountSid:AuthToken" (Jira two-value shape); validate as HTTP Basic against GET /2010-04-01/Accounts/{sid}.json, reject non-active accounts, label by friendly name, id = Account SID.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add 'kalshi' branch — the pasted secret is "keyId:privateKeyPem" (two-value shape); no bearer token exists, so validate by RSA-PSS-signing a real GET /portfolio/balance, label by balance, id = key id.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the Outlook connector's stable `outlook` id as the Microsoft OAuth dialect when deriving its account label from the OIDC id_token.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add 'resend' (GENERIC_VERIFY against GET /domains, label by the first verified domain) and a bespoke 'bluesky' branch (kalshi shape) — the pasted secret is "identifier:app-password"; no bearer whoami exists, so validate via a real com.atproto.server.createSession POST; label = handle, id = DID.
  *
  * @module connector-account-lookup
  */
@@ -85,6 +86,9 @@ const GENERIC_VERIFY: Record<string, { url: string; header?: string; prefix?: st
   buttondown: { url: 'https://api.buttondown.com/v1/newsletters', header: 'Authorization', prefix: 'Token ', label: 'Buttondown' },
   postmark: { url: 'https://api.postmarkapp.com/server', header: 'X-Postmark-Server-Token', prefix: '', idPath: 'ID', emailPath: 'Name', label: 'Postmark' },
   unsplash: { url: 'https://api.unsplash.com/me', idPath: 'id', emailPath: 'email', label: 'Unsplash' },
+  // Resend has no /me — /domains is the cheapest key-scoped GET (401s on a bad key). Response is
+  // { data: [ { id, name, … } ] }; label by the first verified domain when one exists.
+  resend: { url: 'https://api.resend.com/domains', idPath: 'data.0.id', emailPath: 'data.0.name', label: 'Resend' },
 };
 
 /**
@@ -190,6 +194,33 @@ export async function fetchAccount(provider: string, tok: { access_token?: strin
     try {
       const acct = await probeKalshiAccount(accessToken);
       return { email: `Kalshi ${acct.env.toUpperCase()} · $${acct.balanceDollars.toFixed(2)} balance`, id: acct.keyId };
+    } catch {
+      return { email: null, id: null };
+    }
+  }
+  if (provider === 'bluesky') {
+    // accessToken is the combined "identifier:app-password" secret (two-value shape; identifier =
+    // handle, DID, or email — Bluesky app passwords are xxxx-xxxx-xxxx-xxxx with no ':', so the
+    // FIRST-colon split is safe). There is no bearer whoami — validate by performing the real
+    // ATProto session handshake; a bad identifier or app password fails closed. Label = the
+    // resolved handle, id = the stable DID (the repo key the posting operation writes under).
+    const i = accessToken.indexOf(':');
+    if (i < 1 || i >= accessToken.length - 1) return { email: null, id: null };
+    const identifier = accessToken.slice(0, i).trim();
+    const password = accessToken.slice(i + 1);
+    if (!identifier || !password) return { email: null, id: null };
+    const base = (process.env.MARKETING_BLUESKY_SERVICE || 'https://bsky.social').replace(/\/+$/, '');
+    try {
+      const r = await fetch(`${base}/xrpc/com.atproto.server.createSession`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!r.ok) return { email: null, id: null };
+      const j = (await r.json()) as { did?: string; handle?: string };
+      if (!j.did) return { email: null, id: null };
+      return { email: j.handle ? `Bluesky · @${j.handle}` : 'Bluesky', id: j.did };
     } catch {
       return { email: null, id: null };
     }

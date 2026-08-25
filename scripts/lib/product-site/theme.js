@@ -5,7 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared page shell for the multi-page product site. CSS is inlined into every generated page rather than linked: the site's rule is self-contained pages with no external requests, and a linked stylesheet that failed to stage would render all seventy pages unstyled — a failure mode worth more than the bytes it saves. Brand tokens follow docs/assets/oshal/visual-identity.md.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Per-app themed subdomains (APP_SUBDOMAINS, mirrors the deployment HOST_APP_MAP) + appOpenUrl/appDemoUrl helpers. An app that has a subdomain gets a clean host — the app identity lives in the hostname, which survives the OIDC login round-trip; a ?app= query param does not (first login redirects through /login and /welcome, both of which drop the query, stranding the visitor on the generic ribbon). Apps without a subdomain still reach the right surface via the guest gate's ?next= deep-link.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Opt-in analytics in page()'s <head> via the shared lib/product-site/analytics.js builder (SITE_ANALYTICS_* env, default none). One edit here covers every generated product/platform/install/build page. With the env unset the interpolation is '' and output stays byte-identical, so the tracked pages cannot churn; when a provider is configured this is the deliberate, env-gated exception to SEQ-1's no-external-requests rule.
  */
+
+const { analyticsSnippet } = require('./analytics');
 
 /** Where a visitor actually opens an app. Already the public demo host on the main site. */
 const APP_HOST = 'https://oshal.agenticfederal.us';
@@ -323,7 +326,7 @@ function page({ title, description, canonical, section, trail, body, statusLeft 
 <meta property="og:description" content="${attr(description)}">
 <meta property="og:url" content="https://oshal.ai${esc(canonical)}">
 <meta property="og:type" content="website">
-<style>${CSS}</style>
+<style>${CSS}</style>${analyticsSnippet()}
 </head>
 <body>
 <div class="statusbar"><div class="wrap">
