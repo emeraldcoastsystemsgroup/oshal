@@ -7,6 +7,7 @@
  * 2026-08-01 00:00:00 | roger.murphy@emeraldcoastsystemsgroup.com   | Pin the world classify budget caps (WORLD_CLASSIFY_BUDGET_PER_HOUR/PER_DAY) — the burn-guard knobs an operator turns in .env; unforwarded they would be silently ignored in favor of the compiled defaults, which is how the burn class starts.
  * 2026-08-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin ENCRYPTION_KEY to the API-only service so a host-configured encrypted-config vault key reaches config-routes without leaking into worker bot environments.
  * 2026-08-17 13:45:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the Entra/local identity bridge and hybrid-pilot switches to the controller API only; setting a migration posture in the CRM droplet env must reach auth composition without propagating identity-policy flags to worker bots.
+ * 2026-08-26 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_JSON_BODY_LIMIT (body-limits.ts global JSON cap) — the gsquared lead-import 413 showed the documented tuning knob was never forwarded to the controller container.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -51,6 +52,10 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // starts. (WORLD_CLASSIFY_DISABLED / _PROVIDERS were already forwarded; these are their new siblings.)
   { name: 'WORLD_CLASSIFY_BUDGET_PER_HOUR', readBy: 'news-fetcher envCap — the global classify-call hourly ceiling' },
   { name: 'WORLD_CLASSIFY_BUDGET_PER_DAY', readBy: 'news-fetcher envCap — the global classify-call daily ceiling' },
+  // 2026-08-26, found live on the gsquared CRM box: a 1K-lead CSV import 413ed at the implicit
+  // 100kb default because the documented tuning knob (body-limits.ts jsonBodyLimit) was never
+  // forwarded — the exact silent-env-var shape this spec exists for.
+  { name: 'OSHAL_JSON_BODY_LIMIT', readBy: 'security/hardening body-limits jsonBodyLimit — the global JSON body cap' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:
