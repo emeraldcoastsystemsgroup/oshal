@@ -1204,6 +1204,13 @@ services:
       SMARTTHINGS_CLIENT_SECRET: ${SMARTTHINGS_CLIENT_SECRET:-${SMARTTHINGS_OAUTH_CLIENT_SECRET:-}}
       SMARTTHINGS_SCOPES: ${SMARTTHINGS_SCOPES:-r:devices:* x:devices:* r:scenes:* x:scenes:* r:locations:*}
       SMARTTHINGS_REDIRECT_URI: ${SMARTTHINGS_REDIRECT_URI:-}
+      # RingCentral connector (Intelligent Sales inbound-call screen-pop): 3-legged OAuth
+      # with PKCE. Callback https://<host>/api/connect/ringcentral/callback — the redirect
+      # override must match the Developer Console registration byte-for-byte.
+      RINGCENTRAL_CLIENT_ID: ${RINGCENTRAL_CLIENT_ID:-}
+      RINGCENTRAL_CLIENT_SECRET: ${RINGCENTRAL_CLIENT_SECRET:-}
+      RINGCENTRAL_REDIRECT_URI: ${RINGCENTRAL_REDIRECT_URI:-}
+      RINGCENTRAL_SERVER_URL: ${RINGCENTRAL_SERVER_URL:-https://platform.ringcentral.com}
       # Google Nest (Home) connector (smart-home swarm): Device Access SDM API.
       # Callback https://<host>/api/connect/google-home/callback. PROJECT_ID is the
       # Device Access project GUID (console.nest.google.com), NOT the GCP project id.

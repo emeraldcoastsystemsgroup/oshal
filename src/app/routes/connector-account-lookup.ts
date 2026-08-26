@@ -18,6 +18,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add 'kalshi' branch — the pasted secret is "keyId:privateKeyPem" (two-value shape); no bearer token exists, so validate by RSA-PSS-signing a real GET /portfolio/balance, label by balance, id = key id.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the Outlook connector's stable `outlook` id as the Microsoft OAuth dialect when deriving its account label from the OIDC id_token.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add 'resend' (GENERIC_VERIFY against GET /domains, label by the first verified domain) and a bespoke 'bluesky' branch (kalshi shape) — the pasted secret is "identifier:app-password"; no bearer whoami exists, so validate via a real com.atproto.server.createSession POST; label = handle, id = DID.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Add 'ringcentral' branch — GET /restapi/v1.0/account/~/extension/~ labels the connection by contact email (else name + extension number); id = the extension id the screen-pop presence events are scoped to. Throws on a non-OK lookup so a bad token fails the connect loudly.
  *
  * @module connector-account-lookup
  */
@@ -105,6 +106,17 @@ export async function fetchAccount(provider: string, tok: { access_token?: strin
     return { email: (c.email as string) || (c.preferred_username as string) || null, id: (c.oid as string) || (c.sub as string) || null };
   }
   if (!accessToken) return { email: null, id: null };
+  if (provider === 'ringcentral') {
+    // Label by the authenticated extension (`~` = own account/extension): contact email
+    // when present, else the extension name/number. id = the extension id — the identity
+    // the screen-pop listener's presence events are scoped to.
+    const base = (process.env.RINGCENTRAL_SERVER_URL || 'https://platform.ringcentral.com').replace(/\/$/, '');
+    const r = await fetch(`${base}/restapi/v1.0/account/~/extension/~`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!r.ok) throw new Error(`ringcentral extension lookup ${r.status}`);
+    const j = (await r.json()) as { id?: number | string; name?: string; extensionNumber?: string; contact?: { email?: string } };
+    const label = j.contact?.email || [j.name, j.extensionNumber ? `ext ${j.extensionNumber}` : ''].filter(Boolean).join(' · ');
+    return { email: label || null, id: j.id != null ? String(j.id) : null };
+  }
   if (provider === 'google' || provider === 'gcp') {
     // Both carry openid+email, so OIDC userinfo labels the connection by the account
     // email (GCP adds the cloud-platform scope on top, which userinfo ignores).
