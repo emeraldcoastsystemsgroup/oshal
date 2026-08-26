@@ -21,6 +21,7 @@
 # 14 | maintainer@emeraldcoastsystemsgroup.com   | Mount the sibling ~/.claude.json account metadata file on sales-bot as well as ~/.claude; omitting half of the host OAuth session made the concierge lose authentication on its first container recreation.
 # 15 | maintainer@emeraldcoastsystemsgroup.com   | Forward ENCRYPTION_KEY to the controller API only so the ADR-002 encrypted-config vault can use the key already provisioned in the host .env without exposing that deployment-wide secret to worker bots; guarded by an exact-one API-only mapping test.
 # 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 knob passthroughs: STORYBOARD_CLI_IMAGE_BOT_ID/_TIMEOUT_MS (which bot node renders + dispatch deadline) and the PORTRAIT_STUDIO_* operating knobs (vendor timeout / daily cap / concurrency). A knob set only in .env is INVISIBLE to the container without an anchor entry — the July free-lane lesson (a pasted key never reached any container) applied to the image rail before it bit.
+# 17 | maintainer@emeraldcoastsystemsgroup.com   | Forward OSHAL_JSON_BODY_LIMIT to the controller API only: the documented body-limits tuning knob never reached the container, so a customer's 1K-lead CSV import 413ed at the implicit 100kb default with no way to raise it from the host env.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1278,6 +1279,11 @@ services:
       # bots must never receive the deployment-wide key. Without this explicit pass-through,
       # setting ENCRYPTION_KEY in .env is silently invisible inside the controller container.
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      # Global JSON body cap (SECURITY-HARDENING §4, body-limits.ts) — CONTROLLER ONLY.
+      # jsonBodyLimit() reads it; unforwarded, an operator raising the cap in the host
+      # env is silently ignored and a large lead-import CSV keeps 413ing at the 100kb
+      # default (found live on the gsquared CRM box, 2026-08-26).
+      OSHAL_JSON_BODY_LIMIT: ${OSHAL_JSON_BODY_LIMIT:-}
       # Master connector-token AES key — CONTROLLER ONLY (removed from x-bot-env).
       # The controller decrypts tokens here + hands bots short-lived per-user tokens.
       SESSION_SECRET: ${SESSION_SECRET:-}
