@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D10: added optional appPackageDir — the manifest route mounter hands every PACKAGE route factory a context carrying its own package directory, replacing request-time reads of the process-global OSHAL_APP_PACKAGE_DIR env var (last-mounted app won; multi-app reloads served cross-app assets).
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the bound executeBot seam to installed app routes so package-owned concierges use the canonical node-or-inline dispatch path instead of calling the orchestrator directly.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exposed a fixed privacy-bounded Outlook reader so packages can project actor-owned message metadata without receiving OAuth tokens or arbitrary Graph access.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the fixed owner-scoped RingCentral call-log reader (screen-pop v2 call history) — the same token-safe seam shape as outlookMail.
  */
 
 import type { Pool } from 'pg';
@@ -42,6 +43,7 @@ import type { ConnectorSpecToolService } from '@/app/connectors/runtime/spec-too
 import type { ConnectorMarketplaceService } from '@/app/connectors/runtime/marketplace';
 import type { BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
 import type { OutlookMailReader } from '@/app/routes/outlook-mail-reader';
+import type { RingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
 
 /**
  * @description Package-safe bot execution seam. The composition root binds the application
@@ -96,6 +98,11 @@ export interface AppContext {
    * The operation resolves the caller's own connector and never exposes its access token.
    */
   outlookMail?: OutlookMailReader;
+  /**
+   * Fixed, owner-scoped RingCentral call-log read for trusted application packages —
+   * the same seam shape as outlookMail: the token is resolved and spent inside core.
+   */
+  ringcentralCallLog?: RingcentralCallLogReader;
   /**
    * @description Absolute path of the installed app package this context was built FOR.
    * Populated ONLY on the per-package context the manifest route mounter passes to a

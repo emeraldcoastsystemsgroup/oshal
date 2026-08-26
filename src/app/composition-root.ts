@@ -29,6 +29,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable ticket ownership into swarm lifecycle memory persistence.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Bind executeBotOrInline into AppContext so installed app routes can dispatch package-owned bots through the canonical node/credential/governance path.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Bind the fixed actor-mailbox Outlook reader into AppContext for token-safe package integrations.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | Bind the fixed owner-scoped RingCentral call-log reader into AppContext (screen-pop v2 call history), mirroring the Outlook seam.
  */
 
 import {
@@ -69,6 +70,7 @@ import { AgentConfigService, BotNodeClient, createRegistryEndpointResolver } fro
 import { startTicketGraphIngestion } from '@/features/graph';
 import { executeBotOrInline } from '@/app/routes/inline-bot-execution';
 import { createOutlookMailReader } from '@/app/routes/outlook-mail-reader';
+import { createRingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
 
 const logger = createChildLogger({ module: 'composition-root' });
 
@@ -223,6 +225,7 @@ export function createAppContext(): CompositionAppContext {
     ticketInteractionService,
     executeBot: (agentId, request) => executeBotOrInline(context, botNodeClient, agentId, request),
     outlookMail: createOutlookMailReader(pool),
+    ringcentralCallLog: createRingcentralCallLogReader(pool),
   };
   return context;
 }
