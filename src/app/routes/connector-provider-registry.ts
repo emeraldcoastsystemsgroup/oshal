@@ -12,6 +12,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the provider registry and credential resolver from connectors-routes.ts without adding or changing any credential environment path; retained the SEC-05 Twilio fixed-controller-only boundary inline.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Let the Outlook connector reuse the already-configured Microsoft/Outlook OIDC client as documented, while preserving connector-specific credential precedence and refusing to mix an incomplete dedicated pair with another app's secret.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add the bluesky (identifier + app-password paste, bespoke createSession validation) and resend (API-key paste, GENERIC_VERIFY) token connectors for the marketing engine's outbound rails (ADR-133), categorized social/email.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | RingCentral OAuth entry (screen-pop spec): PKCE S256 + Basic token auth over the GENERIC exchange/refresh paths; scopes deliberately EMPTY because a RingCentral app's permissions are fixed at registration and unrequested scope= values fail the authorize call. Creds RINGCENTRAL_CLIENT_ID/SECRET; server host env-selectable for the devtest sandbox; category communication.
  * -----------------------------------------------------------------------------
  *
  * @module connector-provider-registry
@@ -29,7 +30,7 @@ export interface ProviderDef {
   /** Extra auth params (Google needs offline + consent to return a refresh token). */
   authParams: Record<string, string>;
   /** OAuth dialect for token exchange / account lookup. */
-  flavor: 'google' | 'facebook' | 'linkedin' | 'microsoft' | 'twitter' | 'github' | 'dropbox' | 'smartthings' | 'square' | 'paypal' | 'walmart' | 'uber' | 'slack' | 'spotify' | 'tmdb' | 'duffel' | 'schwab' | 'plaid' | 'generic';
+  flavor: 'google' | 'facebook' | 'linkedin' | 'microsoft' | 'twitter' | 'github' | 'dropbox' | 'smartthings' | 'square' | 'paypal' | 'walmart' | 'uber' | 'slack' | 'spotify' | 'tmdb' | 'duffel' | 'schwab' | 'plaid' | 'ringcentral' | 'generic';
   /** How scopes are joined in the auth URL (Google: space, Facebook: comma). */
   scopeSep: string;
   /** Redirect path (Facebook registers /auth/facebook/callback per the app config). */
@@ -64,6 +65,9 @@ export interface ProviderDef {
 const GOOGLE_HOME_PROJECT_ID = process.env.GOOGLE_HOME_PROJECT_ID || '';
 
 const FB_VERSION = process.env.FACEBOOK_API_VERSION || 'v21.0';
+// RingCentral API host — production by default; the devtest sandbox
+// (https://platform.devtest.ringcentral.com) has separate credentials, never mixed.
+const RC_SERVER = (process.env.RINGCENTRAL_SERVER_URL || 'https://platform.ringcentral.com').replace(/\/$/, '');
 // Microsoft tenant for the Outlook/M365 connector. 'common' = any account; a
 // directory id = that org only. Accepts the user's typo'd var names too.
 const MS_TENANT = process.env.OUTLOOK_TENANT_ID || process.env.AZURE_EMAIL_TENANT || process.env.AZURE_EMAIL_DIRECTORY_ID || 'common';
@@ -544,6 +548,28 @@ export const PROVIDERS: Record<string, ProviderDef> = {
   // Resend (marketing email rail, ADR-133): API-key paste validated via GENERIC_VERIFY /domains;
   // sends ride the confirm-gated resend.yaml send-email action, never a raw route.
   resend: { label: 'Resend (Email)', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/resend/callback', tokenHelpUrl: 'https://resend.com/api-keys' },
+  ringcentral: {
+    // Telephony connector for the Intelligent Sales inbound-call screen-pop
+    // (docs/connectors/ringcentral-screen-pop-spec.md): per-user 3-legged OAuth with
+    // PKCE S256 + HTTP Basic token auth — exactly RingCentral's documented contract, so
+    // the GENERIC exchange + rotating-refresh persistence apply unchanged. Scopes are
+    // EMPTY on purpose: a RingCentral app's permissions (ReadPresence +
+    // WebSocketsSubscription) are fixed at registration, and sending scope= values the
+    // app doesn't declare fails the authorize request — the registration governs.
+    // The realtime listener + SSE live in ringcentral-screen-pop.ts; this entry is the
+    // consent/token half only. Server env-selectable (devtest sandbox has separate creds).
+    label: 'RingCentral (Phone)',
+    authUrl: `${RC_SERVER}/restapi/oauth/authorize`,
+    tokenUrl: `${RC_SERVER}/restapi/oauth/token`,
+    revokeUrl: `${RC_SERVER}/restapi/oauth/revoke`,
+    scopes: [],
+    authParams: {},
+    flavor: 'ringcentral',
+    scopeSep: ' ',
+    redirectPath: '/api/connect/ringcentral/callback',
+    pkce: true,
+    tokenAuth: 'basic',
+  },
 };
 
 /** Connector → hub category, for grouping the Utilities page by purpose.
@@ -574,6 +600,8 @@ export const CONNECTOR_CATEGORY: Record<string, string> = {
   'uber-rides': 'transportation',
   // Messaging connector — pulls the user's own Slack channels/DMs into the feed.
   slack: 'communication',
+  // Telephony connector (RingCentral) — the Intelligent Sales inbound-call screen-pop.
+  ringcentral: 'communication',
   // Music connector (Spotify Web API) for the Spotify concierge.
   spotify: 'music',
   // Media connector (TMDB) for the Movies & TV concierge.
@@ -757,6 +785,14 @@ export function providerCreds(provider: string): { clientId: string; clientSecre
     return {
       clientId: process.env.SPOTIFY_CLIENT_ID || '',
       clientSecret: process.env.SPOTIFY_CLIENT_SECRET || '',
+    };
+  }
+  if (provider === 'ringcentral') {
+    // RingCentral Developer Console "Credentials": Client ID + Client Secret of the
+    // 3-legged-OAuth REST app registered for the CRM screen-pop.
+    return {
+      clientId: process.env.RINGCENTRAL_CLIENT_ID || '',
+      clientSecret: process.env.RINGCENTRAL_CLIENT_SECRET || '',
     };
   }
   if (provider === 'schwab') {

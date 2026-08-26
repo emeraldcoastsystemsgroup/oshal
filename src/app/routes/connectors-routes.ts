@@ -44,6 +44,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | MACHINE-WRITE IDENTITY (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE"). The Facebook data-deletion callback DELETEd from oshal_connections with no database identity established. Meta calls it server-to-server with a signed_request and no OIDC session, so the global middleware stamps anonymous non-operator — and oshal_connections carries FORCE ROW LEVEL SECURITY (migration 060 Tier-2, user_sub/tenant_id). The DELETE therefore matched ZERO rows on every call while the handler happily returned {url, confirmation_code}: a silent no-op that is simultaneously this audit class and a false deletion attestation to Meta. The statement now runs under runWithSystemIdentity and reports its real rowCount. Deliberate deviation from the synthetic-machine-sub rail (alert:prometheus / a2a:<id> / webhook:<provider>) and the ONLY one in this pass: those work because the machine OWNS the rows it writes, whereas here the row belongs to a real user whose sub Facebook never tells us — the operation is cross-owner by definition. Bounded the way cli-token-routes bounds its own pre-identity lookup: a single statement, no scan, keyed on an HMAC-verified account id, returning nothing to the caller but a confirmation code.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: retain encrypted per-user Twilio enrollment for fixed controller operations while removing the former generic bot/CLI credential carrier.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed the over-threshold connector hub into cohesive provider-registry/credentials, OAuth-ceremony, account-operation, and response-helper modules. This file remains the stable route/export facade; route order, auth, RLS identity, SQL, provider requests, environment credential mappings, and the concurrent SEC-05 Twilio boundary are unchanged.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | Register the RingCentral screen-pop SSE stream (ringcentral-screen-pop.ts) ahead of the generic handlers, Plaid-style; RingCentral consent itself rides the ordinary /start + /callback with the new registry entry.
  * -----------------------------------------------------------------------------
  *
  * @module connectors-routes
@@ -61,6 +62,7 @@ import {
 } from './connector-tenancy';
 import { fetchAccount } from './connector-account-lookup';
 import { registerPlaidLinkRoutes } from './connector-plaid-link';
+import { registerRingcentralScreenPop } from './ringcentral-screen-pop';
 import {
   PROVIDERS, additionalAccountAuthParams, providerCreds,
 } from './connector-provider-registry';
@@ -90,6 +92,11 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
   // registered before the generic /:provider/* handlers. Tokens land in oshal_connections like any
   // other connector; see connector-plaid-link.ts (ADR-048 corrected: hub connector, not app-private).
   registerPlaidLinkRoutes(router, ctx, caller);
+
+  // RingCentral screen-pop realtime stream (GET /ringcentral/events, SSE) — the server-owned
+  // per-user presence listener behind the Intelligent Sales inbound-call pop. Registered ahead
+  // of the generic handlers like Plaid; consent itself rides the ordinary /start + /callback.
+  registerRingcentralScreenPop(router, ctx);
 
   /** GET /api/connect/list — the caller's connections (status only, never tokens). */
   router.get('/list', async (req: Request, res: Response) => {
