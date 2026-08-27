@@ -69,7 +69,7 @@ import { createSwarmExtensionBindings } from '@/app/extensions';
 import { AgentConfigService, BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { startTicketGraphIngestion } from '@/features/graph';
 import { executeBotOrInline } from '@/app/routes/inline-bot-execution';
-import { createOutlookMailReader } from '@/app/routes/outlook-mail-reader';
+import { createOutlookMailReader, createOutlookMailSyncReader } from '@/app/routes/outlook-mail-reader';
 import { createRingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
 
 const logger = createChildLogger({ module: 'composition-root' });
@@ -225,6 +225,7 @@ export function createAppContext(): CompositionAppContext {
     ticketInteractionService,
     executeBot: (agentId, request) => executeBotOrInline(context, botNodeClient, agentId, request),
     outlookMail: createOutlookMailReader(pool),
+    outlookMailSync: createOutlookMailSyncReader(pool),
     ringcentralCallLog: createRingcentralCallLogReader(pool),
   };
   return context;

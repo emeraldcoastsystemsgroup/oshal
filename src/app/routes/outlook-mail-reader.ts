@@ -12,6 +12,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add actor-mailbox-only Outlook participant search for installed CRM packages.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add the fixed recent-mail sync read (CR-22 auto email logging): a time-cursor page of the user's mailbox, matched IN CORE against the package's authorized address set, so unmatched mail and unrelated recipients still never cross the AppContext boundary. Returns display-safe metadata plus internetMessageId for cross-mailbox dedup.
  * -----------------------------------------------------------------------------
  *
  * @module outlook-mail-reader
@@ -28,6 +29,12 @@ const GRAPH_SELECT = [
   'id', 'subject', 'from', 'toRecipients', 'ccRecipients', 'bccRecipients',
   'receivedDateTime', 'sentDateTime', 'bodyPreview', 'isRead', 'isDraft', 'webLink',
 ].join(',');
+const GRAPH_SYNC_SELECT = `${GRAPH_SELECT},internetMessageId`;
+/** Sync matching happens locally in core, so the address book can be the whole CRM. */
+const MAX_SYNC_ADDRESSES = 20000;
+const MAX_SYNC_RESULTS = 50;
+/** A sync cursor older than this is clamped — first runs must not walk years of mailbox. */
+const MAX_SYNC_LOOKBACK_MS = 30 * 24 * 3600 * 1000;
 
 export type OutlookMailStatus =
   | 'connected'
@@ -69,6 +76,41 @@ export interface OutlookMailSearchResult {
 
 export type OutlookMailReader = (input: OutlookMailSearchInput) => Promise<OutlookMailSearchResult>;
 
+export interface OutlookMailSyncInput {
+  userSub: string;
+  /** Verified login email when available; a background call without one may only use a SOLE personal grant. */
+  loginEmail?: string | null;
+  /** ISO time cursor — only messages received at/after this instant are considered. */
+  sinceIso: string;
+  /** The package's full authorized address book; matching happens inside core. */
+  matchAddresses: string[];
+  limit?: number;
+}
+
+export interface OutlookMailSyncMessage {
+  id: string;
+  /** RFC internet message id — stable across every mailbox that holds the message. */
+  internetMessageId: string | null;
+  subject: string;
+  sentAt: string;
+  receivedAt: string;
+  direction: 'inbound' | 'outbound';
+  preview: string;
+  counterpart: OutlookMailAddress;
+  /** Every CRM address that appears among the participants (the package files per address). */
+  matchedAddresses: string[];
+  webUrl?: string;
+}
+
+export interface OutlookMailSyncResult {
+  status: OutlookMailStatus;
+  messages: OutlookMailSyncMessage[];
+  /** Newest receivedDateTime seen in the fetched page (matched or not) — the next cursor. */
+  latestReceivedAt: string | null;
+}
+
+export type OutlookMailSyncReader = (input: OutlookMailSyncInput) => Promise<OutlookMailSyncResult>;
+
 type AccessTokenResolver = (
   pool: Pool, userSub: string, provider: string, opts?: ConnectionSelector,
 ) => Promise<string | null>;
@@ -96,6 +138,7 @@ interface GraphMessage {
   isRead?: unknown;
   isDraft?: unknown;
   webLink?: unknown;
+  internetMessageId?: unknown;
 }
 
 class GraphRequestError extends Error {
@@ -307,6 +350,149 @@ export function createOutlookMailReader(
   };
 }
 
+/** Validate + clamp the sync cursor: parseable, never older than the max lookback, never future. */
+function normalizeSinceIso(value: unknown): string | null {
+  const parsed = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(parsed)) return null;
+  const floor = Date.now() - MAX_SYNC_LOOKBACK_MS;
+  return new Date(Math.min(Math.max(parsed, floor), Date.now())).toISOString();
+}
+
+function graphRecentUrl(sinceIso: string, top: number): string {
+  const query = new URLSearchParams();
+  // normalizeSinceIso produced a literal ISO instant — nothing caller-controlled enters OData.
+  query.set('$filter', `receivedDateTime ge ${sinceIso}`);
+  query.set('$orderby', 'receivedDateTime desc');
+  query.set('$top', String(top));
+  query.set('$select', GRAPH_SYNC_SELECT);
+  return `${GRAPH_MESSAGES_URL}?${query.toString()}`;
+}
+
+/** A recent message becomes a sync row ONLY when a CRM address participates; drafts never do. */
+function summarizeSyncMessage(
+  message: GraphMessage,
+  mailboxAddress: string,
+  matchSet: Set<string>,
+): OutlookMailSyncMessage | null {
+  if (message.isDraft === true) return null;
+  const id = boundedText(message.id, 512);
+  if (!id) return null;
+  const from = graphAddress(message.from);
+  const matched = [...new Set(
+    participants(message).filter((item) => matchSet.has(item.address)).map((item) => item.address),
+  )];
+  if (matched.length === 0) return null;
+  const direction = from?.address === mailboxAddress ? 'outbound' : 'inbound';
+  const firstMatch = participants(message).find((item) => matchSet.has(item.address)) as OutlookMailAddress;
+  const counterpart = direction === 'inbound' ? (from || firstMatch) : firstMatch;
+  const internetMessageId = boundedText(message.internetMessageId, 512) || null;
+  const row: OutlookMailSyncMessage = {
+    id,
+    internetMessageId,
+    subject: boundedText(message.subject, 300, '(no subject)'),
+    sentAt: boundedText(message.sentDateTime || message.receivedDateTime, 64),
+    receivedAt: boundedText(message.receivedDateTime || message.sentDateTime, 64),
+    direction,
+    preview: boundedText(message.bodyPreview, 500),
+    counterpart,
+    matchedAddresses: matched,
+  };
+  const webUrl = safeOutlookWebLink(message.webLink);
+  if (webUrl) row.webUrl = webUrl;
+  return row;
+}
+
+async function fetchRecent(
+  token: string,
+  sinceIso: string,
+  top: number,
+  fetchImpl: typeof fetch,
+): Promise<GraphMessage[]> {
+  const response = await fetchImpl(graphRecentUrl(sinceIso, top), {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  if (!response.ok) throw new GraphRequestError(response.status);
+  const payload = await response.json() as { value?: unknown };
+  return Array.isArray(payload.value) ? payload.value as GraphMessage[] : [];
+}
+
+function emptySync(status: OutlookMailStatus): OutlookMailSyncResult {
+  return { status, messages: [], latestReceivedAt: null };
+}
+
+/**
+ * @description Build the fixed recent-mail sync read (CR-22 auto email logging). One bounded
+ * time-cursor page of the actor's mailbox; matching against the package-authorized address set
+ * happens HERE, so unmatched mail and unrelated recipient lists never leave core. The result is
+ * the same display-safe DTO discipline as the participant search, plus internetMessageId so the
+ * package can dedupe one message seen from several reps' mailboxes.
+ * @param pool - Postgres pool for connector selection/token resolution.
+ * @param dependencies - Injectable seams for tests.
+ * @returns The sync reader exposed on AppContext.
+ */
+export function createOutlookMailSyncReader(
+  pool: Pool,
+  dependencies: OutlookMailReaderDependencies = {},
+): OutlookMailSyncReader {
+  const listConnections = dependencies.listConnections ?? accessibleConnections;
+  const getAccessToken = dependencies.getAccessToken ?? getValidAccessToken;
+  const fetchImpl = dependencies.fetchImpl ?? fetch;
+
+  return async (input: OutlookMailSyncInput): Promise<OutlookMailSyncResult> => {
+    const userSub = boundedText(input?.userSub, 512);
+    if (!userSub) return emptySync('not_connected');
+    const sinceIso = normalizeSinceIso(input?.sinceIso);
+    if (!sinceIso) return emptySync('unavailable');
+    const rows = await listConnections(pool, userSub, 'outlook');
+    const connection = selectActorMailbox(rows, input.loginEmail);
+    if (!connection) return emptySync('not_connected');
+    if (!hasMailReadScope(connection.scopes)) return emptySync('missing_scope');
+
+    const mailboxAddress = normalizeAddress(connection.account_email) || normalizeAddress(input.loginEmail) || '';
+    const matchSet = new Set((Array.isArray(input.matchAddresses) ? input.matchAddresses : [])
+      .slice(0, MAX_SYNC_ADDRESSES)
+      .map(normalizeAddress)
+      .filter((address): address is string => address !== null && address !== mailboxAddress));
+    if (matchSet.size === 0) return emptySync('connected');
+    const limit = Math.min(Math.max(Number(input.limit) || MAX_SYNC_RESULTS, 1), MAX_SYNC_RESULTS);
+
+    let token: string | null;
+    try {
+      token = await getAccessToken(pool, userSub, 'outlook', {
+        tenantId: 'personal', connectionId: connection.connection_id,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      return emptySync(/^refresh\s+(400|401|403)\b/i.test(message) ? 'reconnect_required' : 'unavailable');
+    }
+    if (!token) return emptySync('reconnect_required');
+
+    let graphRows: GraphMessage[];
+    try {
+      graphRows = await fetchRecent(token, sinceIso, limit, fetchImpl);
+    } catch (error) {
+      if (error instanceof GraphRequestError && (error.status === 401 || error.status === 403)) {
+        return emptySync('reconnect_required');
+      }
+      return emptySync('unavailable');
+    }
+
+    let latestReceivedAt: string | null = null;
+    for (const message of graphRows) {
+      const receivedAt = boundedText(message.receivedDateTime, 64);
+      if (receivedAt && (!latestReceivedAt || Date.parse(receivedAt) > Date.parse(latestReceivedAt))) {
+        latestReceivedAt = receivedAt;
+      }
+    }
+    const deduped = new Map<string, OutlookMailSyncMessage>();
+    for (const message of graphRows) {
+      const summary = summarizeSyncMessage(message, mailboxAddress, matchSet);
+      if (summary && !deduped.has(summary.id)) deduped.set(summary.id, summary);
+    }
+    return { status: 'connected', messages: [...deduped.values()], latestReceivedAt };
+  };
+}
+
 // Pure helpers exported for focused boundary tests.
 export const outlookMailReaderInternals = {
   normalizeAddress,
@@ -315,4 +501,7 @@ export const outlookMailReaderInternals = {
   graphSearchUrl,
   summarizeMessage,
   safeOutlookWebLink,
+  normalizeSinceIso,
+  graphRecentUrl,
+  summarizeSyncMessage,
 };

@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the bound executeBot seam to installed app routes so package-owned concierges use the canonical node-or-inline dispatch path instead of calling the orchestrator directly.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exposed a fixed privacy-bounded Outlook reader so packages can project actor-owned message metadata without receiving OAuth tokens or arbitrary Graph access.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the fixed owner-scoped RingCentral call-log reader (screen-pop v2 call history) — the same token-safe seam shape as outlookMail.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the fixed recent-mail sync reader (CR-22 auto email logging) — core matches the mailbox page against the package's authorized address set so unmatched mail never crosses the boundary.
  */
 
 import type { Pool } from 'pg';
@@ -42,7 +43,7 @@ import type {
 import type { ConnectorSpecToolService } from '@/app/connectors/runtime/spec-tools';
 import type { ConnectorMarketplaceService } from '@/app/connectors/runtime/marketplace';
 import type { BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
-import type { OutlookMailReader } from '@/app/routes/outlook-mail-reader';
+import type { OutlookMailReader, OutlookMailSyncReader } from '@/app/routes/outlook-mail-reader';
 import type { RingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
 
 /**
@@ -98,6 +99,12 @@ export interface AppContext {
    * The operation resolves the caller's own connector and never exposes its access token.
    */
   outlookMail?: OutlookMailReader;
+  /**
+   * Fixed recent-mail sync read for trusted application packages (CR-22 auto email
+   * logging): a time-cursor page of the actor's mailbox matched inside core against the
+   * package's authorized address set. Same token-safe seam shape as outlookMail.
+   */
+  outlookMailSync?: OutlookMailSyncReader;
   /**
    * Fixed, owner-scoped RingCentral call-log read for trusted application packages —
    * the same seam shape as outlookMail: the token is resolved and spent inside core.
