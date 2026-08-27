@@ -27,8 +27,12 @@
  */
 
 import type { AppContext } from './composition-root';
-import { getBrokerReader, type TradingMode } from '@/features/trading';
+import { getBrokerReader, type TradingBook, type TradingMode } from '@/features/trading';
 import { recordOrder } from './trading-engine';
+// CHANGE LOG addendum (ADR-134 PR1): reconcileOpenOrders accepts a TradingBook (or legacy mode),
+// scopes its ledger read to the book, binds the reader to the book's account, and deliberately
+// serves DISABLED books too — their working orders still need fills booked.
+import { legacyBook } from './trading-books-store';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'trading-reconcile' });
@@ -49,30 +53,35 @@ const RECONCILE_LIMIT = 200;
  * @returns Count of orders checked and how many changed status this pass.
  */
 export async function reconcileOpenOrders(
-  pool: AppContext['pool'], sub: string, mode: TradingMode,
+  pool: AppContext['pool'], sub: string, bookOrMode: TradingBook | TradingMode,
 ): Promise<{ checked: number; updated: number }> {
+  // ADR-134: a legacy mode normalizes to its legacy book; a real book scopes the ledger read AND
+  // binds the reader to the book's account. Reconcile deliberately runs for DISABLED books too —
+  // a disabled book's working orders still need their fills booked (dispatch passes every book).
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   // `sub` is REQUIRED here: the Schwab (live) adapter resolves that user's brokered OAuth token from
   // it. Omit it and configured() still passes (it only checks the app's client id/secret) while every
   // getOrder throws — a silently non-reconciling live book.
-  const broker = getBrokerReader(mode, sub);
+  const broker = getBrokerReader(mode, sub, book.accountNumber ? { accountNumber: book.accountNumber, connectionKey: book.connectionKey } : undefined);
   if (!broker.configured()) return { checked: 0, updated: 0 };
   const open = (await pool.query(
     `SELECT decision_id, client_order_id, broker_order_id, status
        FROM oshal_trading_orders
-      WHERE user_sub=$1 AND mode=$2 AND broker_order_id IS NOT NULL AND status = ANY($3)
+      WHERE user_sub=$1 AND book_id=$2 AND broker_order_id IS NOT NULL AND status = ANY($3)
       LIMIT ${RECONCILE_LIMIT}`,
-    [sub, mode, OPEN_STATUSES])).rows;
+    [sub, book.bookId, OPEN_STATUSES])).rows;
   let updated = 0;
   for (const o of open) {
     try {
       const result = await broker.getOrder(String(o.broker_order_id));
-      await recordOrder(pool, sub, mode, String(o.decision_id), String(o.client_order_id), result);
+      await recordOrder(pool, sub, book, String(o.decision_id), String(o.client_order_id), result);
       if (result.status !== o.status) updated += 1;
     } catch (e) {
       // One bad order id must not abort the whole pass — log and continue.
       logger.warn({ err: e, brokerOrderId: o.broker_order_id }, 'order reconcile failed');
     }
   }
-  if (open.length) logger.info({ sub, mode, checked: open.length, updated }, 'reconciled open orders');
+  if (open.length) logger.info({ sub, mode, bookRef: book.ref, checked: open.length, updated }, 'reconciled open orders');
   return { checked: open.length, updated };
 }

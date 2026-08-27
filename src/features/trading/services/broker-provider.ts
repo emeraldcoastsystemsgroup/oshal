@@ -29,6 +29,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — BROKER_PROVIDER-selected, per-mode factory; alpaca wired, schwab/snaptrade/ibkr declared not-yet-implemented; live mode gated behind TRADING_LIVE_ENABLED.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Wire the Schwab LIVE rail: per-mode provider selection (BROKER_PROVIDER_PAPER/_LIVE over BROKER_PROVIDER), Schwab factory bound to a per-user token resolver (registerSchwabTokenResolver), getBrokerAdapter(mode, userSub?). Schwab is live-only — the factory refuses a paper Schwab so a "paper" order can never hit a real account. snaptrade/ibkr remain not-implemented.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Split reads from the live gate: getBrokerReader(mode, sub) constructs the adapter WITHOUT the TRADING_LIVE_ENABLED check (shared constructAdapter helper), so a connected live account is readable (balances/positions/order status) without arming live trading. Order placement keeps getBrokerAdapter (gated) + placeDecisionOrder's explicit confirm — ungated reads can never place an order.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 account binding (PR1): getBrokerAdapter/getBrokerReader take an optional BookBinding {accountNumber, connectionKey}. While TRADING_MULTI_ACCOUNT is off the binding is IGNORED ENTIRELY (flag-off byte-parity — discovery's legacy-book link must not change live execution during the behavior-identical window). Flag on: Schwab binds the exact account (fail-closed enumeration match) and, when a connectionKey is present, REQUIRES a connectionKey-capable resolver — never a default-token resolution against a bound account. BrokerTokenResolver gains the optional connectionKey third param.
  *
  * @module broker-provider
  */
@@ -46,8 +47,18 @@ const NOT_IMPLEMENTED: Record<string, string> = {
   ibkr: 'Interactive Brokers rail is not implemented yet — set the broker to alpaca or schwab.',
 };
 
-/** Resolves a valid Schwab access token for a given user (refreshing as needed). Null = not connected. */
-export type BrokerTokenResolver = (mode: TradingMode, userSub: string) => Promise<string | null>;
+/** A book's account binding, threaded from the books store (ADR-134). */
+export interface BookBinding { accountNumber: string; connectionKey: string | null }
+
+/** ADR-134 flag, read per call — never a module constant (invisible to guards). */
+function multiAccountOn(): boolean {
+  return String(process.env.TRADING_MULTI_ACCOUNT || 'false').toLowerCase() === 'true';
+}
+
+/** Resolves a valid Schwab access token for a given user (refreshing as needed). Null = not connected.
+ *  `connectionKey` (ADR-134) selects a specific Schwab login's connection; resolvers that predate the
+ *  param serve the default connection — acceptable ONLY for unbound books (see buildSchwabAdapter). */
+export type BrokerTokenResolver = (mode: TradingMode, userSub: string, connectionKey?: string | null) => Promise<string | null>;
 
 /** App-layer-injected Schwab token resolver (wraps getValidAccessToken); null until registered. */
 let schwabTokenResolver: BrokerTokenResolver | null = null;
@@ -99,12 +110,12 @@ export function brokerProviderFor(mode: TradingMode): BrokerProviderType {
  * @throws If the selected rail is unimplemented/unknown, if `mode === 'live'` while live trading is
  *   off, or if a paper book is pointed at Schwab (which has no paper account).
  */
-export function getBrokerAdapter(mode: TradingMode, userSub?: string): BrokerAdapter {
+export function getBrokerAdapter(mode: TradingMode, userSub?: string, binding?: BookBinding): BrokerAdapter {
   if (mode === 'live' && !liveTradingEnabled()) {
     logger.warn('live broker adapter requested while TRADING_LIVE_ENABLED is not true');
     throw new Error('Live trading is disabled. Set TRADING_LIVE_ENABLED=true (after the ADR-052 live review) to enable it.');
   }
-  return constructAdapter(mode, userSub);
+  return constructAdapter(mode, userSub, binding);
 }
 
 /**
@@ -117,22 +128,25 @@ export function getBrokerAdapter(mode: TradingMode, userSub?: string): BrokerAda
  * @param userSub - The caller's OIDC sub (required for per-user rails like Schwab).
  * @returns A `BrokerAdapter` for reads.
  */
-export function getBrokerReader(mode: TradingMode, userSub?: string): BrokerAdapter {
-  return constructAdapter(mode, userSub);
+export function getBrokerReader(mode: TradingMode, userSub?: string, binding?: BookBinding): BrokerAdapter {
+  return constructAdapter(mode, userSub, binding);
 }
 
-/** Construct the adapter for a book (no live gate) — shared by getBrokerAdapter + getBrokerReader. */
-function constructAdapter(mode: TradingMode, userSub?: string): BrokerAdapter {
+/** Construct the adapter for a book (no live gate) — shared by getBrokerAdapter + getBrokerReader.
+ *  While TRADING_MULTI_ACCOUNT is off, any binding is IGNORED (ADR-134 flag-off byte-parity: a
+ *  discovery-linked legacy book must construct exactly today's adapter until cutover). */
+function constructAdapter(mode: TradingMode, userSub?: string, binding?: BookBinding): BrokerAdapter {
+  const bound = multiAccountOn() ? binding : undefined;
   const name = providerFor(mode);
   if (name === 'alpaca') return new AlpacaBrokerAdapter(mode);
-  if (name === 'schwab') return buildSchwabAdapter(mode, userSub);
+  if (name === 'schwab') return buildSchwabAdapter(mode, userSub, bound);
   const known = NOT_IMPLEMENTED[name];
   logger.error({ provider: name, mode }, 'unavailable broker provider requested');
   throw new Error(known || `Unknown broker provider '${name}'. Supported: alpaca, schwab.`);
 }
 
 /** Construct the Schwab adapter, bound to the caller's token. Live-only; paper is refused. */
-function buildSchwabAdapter(mode: TradingMode, userSub?: string): BrokerAdapter {
+function buildSchwabAdapter(mode: TradingMode, userSub?: string, binding?: BookBinding): BrokerAdapter {
   if (mode !== 'live') {
     // Schwab has no paper/sandbox trading account. Refuse a paper Schwab so a "paper" order can
     // never reach a real account — keep Alpaca (BROKER_PROVIDER_PAPER=alpaca) for the paper book.
@@ -140,9 +154,16 @@ function buildSchwabAdapter(mode: TradingMode, userSub?: string): BrokerAdapter 
   }
   const resolver = schwabTokenResolver;
   const sub = userSub;
+  // FAIL-CLOSED RESOLVER GUARD (ADR-134): a book bound to a specific LOGIN (connectionKey set) must
+  // never trade on a default-connection token — the store-registered resolver deploys by docker-cp,
+  // and binding correctness cannot depend on deploy ordering. Legacy/unbound books keep the old
+  // 2-arg call so a pre-ADR resolver behaves exactly as today.
+  if (binding?.connectionKey && resolver && resolver.length < 3) {
+    throw new Error('Schwab book is bound to a specific login but the registered token resolver cannot select connections — redeploy the trading package (ADR-134 D5.6) before enabling this book.');
+  }
   const resolveToken: SchwabTokenResolver = async () => {
     if (!resolver || !sub) return null; // no resolver registered or no caller context → treated as "not connected"
-    return resolver(mode, sub);
+    return resolver(mode, sub, binding?.connectionKey ?? undefined);
   };
-  return new SchwabBrokerAdapter(mode, resolveToken, sub);
+  return new SchwabBrokerAdapter(mode, resolveToken, sub, binding?.accountNumber ?? null);
 }

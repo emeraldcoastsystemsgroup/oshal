@@ -56,9 +56,17 @@ import {
   deriveMasses, displacement, barsBatch, barsBatchSince, scoreSymbol, ensemble,
   maxGapDownPct, priorSessionClose, etSessionDate, selectEntryTargets, entryBlock, getMarketData,
   sectorTiltConfig, applySectorTilt,
-  type MtfDecision, type Position, type TradingMode, type BrokerAccount, type RiskPolicy, type ExitOrder, type NameStrength, type EntryGuardInput, type EntryBlock,
+  type MtfDecision, type Position, type TradingMode, type TradingBook, type BrokerAccount, type RiskPolicy, type ExitOrder, type NameStrength, type EntryGuardInput, type EntryBlock,
 } from '@/features/trading';
 import { guardrails, placeDecisionOrder, ensureTradingSchema } from './trading-engine';
+// CHANGE LOG addendum (ADR-134 PR1): dispatch resolves the BOOK first under three hard rules
+// (bookId absent → legacy book; unresolvable → skip+ERROR, never a legacy fallback; flag-off +
+// non-legacy bookId → logged no-op hard-skip). runAutopilot and every helper thread the book:
+// ledger writes/reads key (user_sub, book_id), requestId carries book.ref (byte-identical for
+// legacy books), capAccount takes LEAST(env, book cap), a disabled book keeps protective exits
+// while rotation/pop/entries are skipped, and BOTH breaker call sites fail CLOSED on an
+// evaluation error (halted, never null→not-halted).
+import { legacyBook, legacyBookId, loadBook, ensureLegacyBooks, multiAccountEnabled } from './trading-books-store';
 import { reconcileOpenOrders } from './trading-reconcile';
 import { ensurePeaksTable, loadPeaks, savePeaks } from './trading-peaks-store';
 import { ensureRotationStateTable, loadLastRotated, saveLastRotated } from './trading-rotation-store';
@@ -81,6 +89,12 @@ export const AUTOPILOT_CRON_DEFAULT = '*/5 * * * *';
 const MAX_ORDERS_PER_RUN = Number(process.env.TRADING_MAX_ORDERS_PER_RUN) || 8;
 /** Agent id stamped on autopilot-authored decisions/signals (deterministic engine, no LLM). */
 const AUTOPILOT_AGENT = 'mtf-autopilot';
+
+/** A book's adapter binding — undefined for legacy/unbound books (the factory also ignores bindings
+ *  entirely while TRADING_MULTI_ACCOUNT is off; ADR-134 flag-off byte-parity). */
+function bookBinding(book: TradingBook): { accountNumber: string; connectionKey: string | null } | undefined {
+  return book.accountNumber ? { accountNumber: book.accountNumber, connectionKey: book.connectionKey } : undefined;
+}
 
 // ── World-intelligence influence gate ──────────────────────────────────────────
 // The shared world layer scores bias-aware news sentiment per ticker (world:ticker:<sym>). We let it
@@ -214,40 +228,44 @@ interface DecisionInput {
  * @param d - The decision to persist.
  * @returns The persisted decision id.
  */
-async function persistDecision(pool: AppContext['pool'], sub: string, mode: TradingMode, d: DecisionInput): Promise<string> {
+async function persistDecision(pool: AppContext['pool'], sub: string, bookOrMode: TradingBook | TradingMode, d: DecisionInput): Promise<string> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   // Minute-bucketed hash → each run is a distinct signal; same run de-dupes idempotently.
   const bucket = new Date().toISOString().slice(0, 16);
   const hash = crypto.createHash('sha256').update(JSON.stringify({ s: d.symbol, a: d.action, src: d.source, ind: d.indicators, bucket })).digest('hex');
   const sig = (await pool.query(
-    `INSERT INTO oshal_trading_signals (user_sub, mode, source, title, body, symbols, indicators, content_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-     ON CONFLICT (user_sub, mode, content_hash) DO UPDATE SET observed_at = oshal_trading_signals.observed_at
+    `INSERT INTO oshal_trading_signals (user_sub, mode, book_id, source, title, body, symbols, indicators, content_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (user_sub, book_id, content_hash) DO UPDATE SET observed_at = oshal_trading_signals.observed_at
      RETURNING signal_id`,
-    [sub, mode, d.source, `${d.symbol} ${d.action} @ ${d.price ?? '?'}`, d.rationale, [d.symbol],
+    [sub, book.kind, book.bookId, d.source, `${d.symbol} ${d.action} @ ${d.price ?? '?'}`, d.rationale, [d.symbol],
      JSON.stringify({ confidence: d.confidence, indicators: d.indicators }), hash])).rows[0];
   const g = guardrails();
   const row = (await pool.query(
     `INSERT INTO oshal_trading_decisions
-       (user_sub, mode, signal_ids, agent_id, action, symbol, side, qty, order_type, confidence, rationale, indicators, guardrails)
-     VALUES ($1,$2,$3::uuid[],$4,$5,$6,$7,$8,'market',$9,$10,$11,$12)
+       (user_sub, mode, book_id, signal_ids, agent_id, action, symbol, side, qty, order_type, confidence, rationale, indicators, guardrails)
+     VALUES ($1,$2,$3,$4::uuid[],$5,$6,$7,$8,$9,'market',$10,$11,$12,$13)
      RETURNING decision_id`,
-    [sub, mode, [sig.signal_id], AUTOPILOT_AGENT, d.action, d.symbol, d.side, d.qty, d.confidence, d.rationale,
+    [sub, book.kind, book.bookId, [sig.signal_id], AUTOPILOT_AGENT, d.action, d.symbol, d.side, d.qty, d.confidence, d.rationale,
      JSON.stringify(d.indicators), JSON.stringify(g)])).rows[0];
   return row.decision_id;
 }
 
-/** Persist + place one decision (paper). Pushes to orders/errors. */
-async function placeManaged(ctx: AppContext, sub: string, mode: TradingMode, d: DecisionInput, orders: RunOrder[], errors: Array<{ symbol: string; error: string }>, reason?: string): Promise<void> {
+/** Persist + place one decision. Pushes to orders/errors. */
+async function placeManaged(ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, d: DecisionInput, orders: RunOrder[], errors: Array<{ symbol: string; error: string }>, reason?: string): Promise<void> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   try {
-    const decisionId = await persistDecision(ctx.pool, sub, mode, d);
-    // `mode` MUST be in the requestId: both books fire on the same 5-min tick, so a book-independent
-    // id gave the paper and live orders for one symbol the SAME clientOrderId — and the ON CONFLICT
-    // upsert then let the paper fill overwrite the live order's broker id. Book-scoped here AND in the
-    // unique index (user_sub, mode, client_order_id); either alone suffices, together they can't regress.
-    const requestId = `auto-${mode}-${new Date().toISOString().slice(0, 16)}-${d.symbol}-${d.side}`;
+    const decisionId = await persistDecision(ctx.pool, sub, book, d);
+    // The BOOK REF must be in the requestId: books fire on the same 5-min tick, so a book-independent
+    // id gave two books' orders for one symbol the SAME clientOrderId — and the ON CONFLICT upsert
+    // then let one book's fill overwrite the other's broker id (2026-07-08). Legacy refs are literally
+    // 'paper'/'live', so this string is BYTE-IDENTICAL to the pre-ADR-134 format for the legacy books.
+    // Book-scoped here AND in the unique index (user_sub, book_id, client_order_id); either alone
+    // suffices, together they can't regress.
+    const requestId = `auto-${book.ref}-${new Date().toISOString().slice(0, 16)}-${d.symbol}-${d.side}`;
     // Live orders require confirm=true (placeDecisionOrder's gate); paper passes false. The minute-
-    // granular requestId → clientOrderId is the idempotency key (UNIQUE user_sub,mode,client_order_id).
-    const r = await placeDecisionOrder(ctx.pool, sub, mode, decisionId, requestId, mode === 'live');
+    // granular requestId → clientOrderId is the idempotency key (UNIQUE user_sub,book_id,client_order_id).
+    const r = await placeDecisionOrder(ctx.pool, sub, book, decisionId, requestId, book.kind === 'live');
     orders.push({ symbol: d.symbol, side: d.side, qty: d.qty, status: r.status, id: r.id, reason });
   } catch (e) {
     errors.push({ symbol: d.symbol, error: (e as Error).message });
@@ -271,12 +289,13 @@ export interface InFlight { symbols: Set<string>; pendingBuyNotional: number; }
  * @param mode - Book (paper|live).
  * @returns The set of symbols with a working order + the total un-filled pending BUY notional.
  */
-export async function loadInFlight(pool: AppContext['pool'], sub: string, mode: TradingMode): Promise<InFlight> {
+export async function loadInFlight(pool: AppContext['pool'], sub: string, bookOrMode: TradingBook | TradingMode): Promise<InFlight> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   const rows = (await pool.query(
     `SELECT symbol, side, COALESCE(qty,0) AS qty, COALESCE(filled_qty,0) AS filled_qty, COALESCE(limit_price,0) AS px
        FROM oshal_trading_orders
-      WHERE user_sub=$1 AND mode=$2 AND status = ANY($3)`,
-    [sub, mode, IN_FLIGHT_STATUSES])).rows;
+      WHERE user_sub=$1 AND book_id=$2 AND status = ANY($3)`,
+    [sub, book.bookId, IN_FLIGHT_STATUSES])).rows;
   const symbols = new Set<string>();
   let pendingBuyNotional = 0;
   for (const r of rows) {
@@ -304,13 +323,15 @@ export async function loadInFlight(pool: AppContext['pool'], sub: string, mode: 
  * @param exitSymbols - UPPERCASE symbols the engine wants to exit this fire.
  * @returns Count of canceled orders.
  */
-async function freeStaleSells(ctx: AppContext, sub: string, mode: TradingMode, exitSymbols: Set<string>): Promise<number> {
+async function freeStaleSells(ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, exitSymbols: Set<string>): Promise<number> {
   if (!exitSymbols.size) return 0;
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   const rows = (await ctx.pool.query(
     `SELECT broker_order_id, symbol FROM oshal_trading_orders
-      WHERE user_sub=$1 AND mode=$2 AND side='sell' AND broker_order_id IS NOT NULL AND status = ANY($3)`,
-    [sub, mode, IN_FLIGHT_STATUSES])).rows;
-  const broker = getBrokerAdapter(mode, sub);
+      WHERE user_sub=$1 AND book_id=$2 AND side='sell' AND broker_order_id IS NOT NULL AND status = ANY($3)`,
+    [sub, book.bookId, IN_FLIGHT_STATUSES])).rows;
+  const broker = getBrokerAdapter(mode, sub, bookBinding(book));
   let canceled = 0;
   for (const r of rows) {
     const sym = String(r.symbol).toUpperCase();
@@ -564,9 +585,11 @@ export async function sizingPrice(mode: TradingMode, sub: string, symbol: string
  *   Exported for the unit spec (venue-routed sizing — live prices come from the executing venue).
  */
 export async function ensureCore(
-  ctx: AppContext, sub: string, mode: TradingMode, account: BrokerAccount, positions: Position[],
+  ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, account: BrokerAccount, positions: Position[],
   core: CoreConfig, orders: RunOrder[], errors: Array<{ symbol: string; error: string }>,
 ): Promise<number> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   const equity = account.equity > 0 ? account.equity : account.cash;
   if (equity <= 0 || !core.symbols.length || core.targetPct <= 0) return 0;
   let cashLeft = account.cash; let spent = 0;
@@ -584,9 +607,9 @@ export async function ensureCore(
     if (!px || px <= 0) continue;
     const plan = coreTradePlan(symPct, equity, cur, heldQty, px, cashLeft);
     if (plan.action === 'trim') {
-      await placeManaged(ctx, sub, mode, coreTrimDecision(sym, plan.qty, px, symPct), orders, errors, 'core-trim');
+      await placeManaged(ctx, sub, book, coreTrimDecision(sym, plan.qty, px, symPct), orders, errors, 'core-trim');
     } else if (plan.action === 'buy') {
-      await placeManaged(ctx, sub, mode, coreDecision(sym, plan.qty, px), orders, errors, 'beta-core');
+      await placeManaged(ctx, sub, book, coreDecision(sym, plan.qty, px), orders, errors, 'beta-core');
       spent += plan.qty * px; cashLeft -= plan.qty * px;
     }
   }
@@ -687,13 +710,15 @@ async function buildEntryGuard(candidates: string[], exiting: Set<string>): Prom
  * @param errors - Run-error accumulator.
  */
 async function rotateSleeve(
-  ctx: AppContext, sub: string, mode: TradingMode, account: BrokerAccount, positions: Position[],
+  ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, account: BrokerAccount, positions: Position[],
   policy: RiskPolicy, coreSet: Set<string>, symbols: string[],
   orders: RunOrder[], errors: Array<{ symbol: string; error: string }>,
   override: ConfigOverrideRow | null = null,
   exiting: Set<string> = new Set(),
   noBuy: Set<string> = new Set(),
 ): Promise<void> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   const cfg = rotationConfig(override);
   const equity = account.equity > 0 ? account.equity : account.cash;
   if (equity <= 0) return;
@@ -729,7 +754,7 @@ async function rotateSleeve(
     const wouldTarget = ranked.filter((r) => r.score > 0 && !opBlock.has(r.sym)).slice(0, N);
     const suppressed = wouldTarget.filter((r) => noBuy.has(r.sym));
     if (suppressed.length) {
-      void recordGateBlocks(ctx.pool, sub, mode, 'earnings', suppressed.map((r) => {
+      void recordGateBlocks(ctx.pool, sub, book, 'earnings', suppressed.map((r) => {
         const closes = bars.get(r.sym) || [];
         return { symbol: r.sym, refPrice: closes.length ? closes[closes.length - 1] : null };
       }));
@@ -764,7 +789,7 @@ async function rotateSleeve(
   for (const p of currentSleeve) {
     const sym = p.symbol.toUpperCase();
     if (targetSet.has(sym)) continue; // still a leader — keep holding
-    await placeManaged(ctx, sub, mode, {
+    await placeManaged(ctx, sub, book, {
       symbol: p.symbol, action: 'sell', side: 'sell', qty: p.qty, confidence: 1,
       rationale: `Rotation (${cfg.rank}) — dropped out of the top ${N}; rotating capital to stronger names.`,
       indicators: { reason: 'rotation', rank: cfg.rank }, price: null, source: 'gravity-rotation',
@@ -804,7 +829,7 @@ async function rotateSleeve(
     if (cur - goal <= dust || cur <= 0) continue;
     const px = await priceOf(sym); if (!px) continue;
     const qty = Math.floor((cur - goal) / px); if (qty < 1) continue;
-    await placeManaged(ctx, sub, mode, {
+    await placeManaged(ctx, sub, book, {
       symbol: sym, action: 'sell', side: 'sell', qty, confidence: 1,
       rationale: `Rotation (${cfg.rank}/${cfg.weighting}) — trim to target weight ($${Math.round(goal)}); no single name dominates.`,
       indicators: { reason: 'rotation-trim', rank: cfg.rank, weighting: cfg.weighting }, price: px, source: 'gravity-rotation',
@@ -815,7 +840,7 @@ async function rotateSleeve(
   // just means less cash and fewer buys, NEVER an over-deploy. (Fixes the 2026-07-01 bug where a sell's
   // proceeds were counted before it confirmed, so a rejected trim let the buys leverage the book to 1.6x.)
   await new Promise((r) => setTimeout(r, 6000));
-  const acctNow = capAccount((await getBrokerAdapter(mode, sub).getAccount().catch(() => null)) ?? account, mode);
+  const acctNow = capAccount((await getBrokerAdapter(mode, sub, bookBinding(book)).getAccount().catch(() => null)) ?? account, book);
   let cashAvail = Math.max(0, Number((acctNow && acctNow.cash) ?? account.cash) || 0);
   // 2) BUY every target BELOW its goal (held-under-goal + brand-new names), strongest score first.
   let openCount = positions.filter((p) => p.qty > 0).length - sold.size;
@@ -826,7 +851,7 @@ async function rotateSleeve(
     const px = await priceOf(sym); if (!px) continue;
     const notional = Math.min(goal - cur, Math.max(0, cashAvail));
     const qty = Math.floor(notional / px); if (qty < 1) continue;
-    await placeManaged(ctx, sub, mode, {
+    await placeManaged(ctx, sub, book, {
       symbol: sym, action: 'buy', side: 'buy', qty, confidence: 1,
       rationale: `Rotation (${cfg.rank}/${cfg.weighting}) — size into top-${N} at target weight ($${Math.round(goal)}; score ${(scoreBySym.get(sym) ?? 0).toFixed(2)}).`,
       indicators: { reason: 'rotation', rank: cfg.rank, weighting: cfg.weighting, score: scoreBySym.get(sym) ?? 0 }, price: px, source: 'gravity-rotation',
@@ -856,13 +881,15 @@ async function rotateSleeve(
  * @param override - The active blend override (components + applyPct already reflected in core).
  */
 async function rotateBlendSleeve(
-  ctx: AppContext, sub: string, mode: TradingMode, account: BrokerAccount, positions: Position[],
+  ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, account: BrokerAccount, positions: Position[],
   policy: RiskPolicy, coreSet: Set<string>, symbols: string[],
   orders: RunOrder[], errors: Array<{ symbol: string; error: string }>,
   override: ConfigOverrideRow,
   exiting: Set<string> = new Set(),
   noBuy: Set<string> = new Set(),
 ): Promise<void> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   const components = override.config.components ?? [];
   const equity = account.equity > 0 ? account.equity : account.cash;
   if (!components.length || equity <= 0) return;
@@ -881,7 +908,7 @@ async function rotateBlendSleeve(
   for (const p of currentSleeve) {
     const sym = p.symbol.toUpperCase();
     if (plan.targetSet.has(sym)) continue;
-    await placeManaged(ctx, sub, mode, {
+    await placeManaged(ctx, sub, book, {
       symbol: p.symbol, action: 'sell', side: 'sell', qty: p.qty, confidence: 1,
       rationale: `Blend rotation — no component targets ${sym} anymore; rotating capital to the merged leaders.`,
       indicators: { reason: 'rotation', rank: 'blend-multi' }, price: null, source: 'gravity-rotation',
@@ -919,7 +946,7 @@ async function rotateBlendSleeve(
     if (cur - g.goal <= dust || cur <= 0) continue;
     const px = await priceOf(sym); if (!px) continue;
     const qty = Math.floor((cur - g.goal) / px); if (qty < 1) continue;
-    await placeManaged(ctx, sub, mode, {
+    await placeManaged(ctx, sub, book, {
       symbol: sym, action: 'sell', side: 'sell', qty, confidence: 1,
       rationale: `Blend rotation — trim to merged target weight ($${Math.round(g.goal)}).`,
       indicators: { reason: 'rotation-trim', rank: 'blend-multi' }, price: px, source: 'gravity-rotation',
@@ -927,7 +954,7 @@ async function rotateBlendSleeve(
   }
   // LEVERAGE-PROOF FUNDING: wait for sells/trims to settle, re-read REAL cash, fund buys only from it.
   await new Promise((r) => setTimeout(r, 6000));
-  const acctNow = capAccount((await getBrokerAdapter(mode, sub).getAccount().catch(() => null)) ?? account, mode);
+  const acctNow = capAccount((await getBrokerAdapter(mode, sub, bookBinding(book)).getAccount().catch(() => null)) ?? account, book);
   let cashAvail = Math.max(0, Number((acctNow && acctNow.cash) ?? account.cash) || 0);
   // 2) BUY every target BELOW its merged goal, strongest merged score first.
   let openCount = positions.filter((p) => p.qty > 0).length - sold.size;
@@ -939,7 +966,7 @@ async function rotateBlendSleeve(
     const px = await priceOf(sym); if (!px) continue;
     const notional = Math.min(g.goal - cur, Math.max(0, cashAvail));
     const qty = Math.floor(notional / px); if (qty < 1) continue;
-    await placeManaged(ctx, sub, mode, {
+    await placeManaged(ctx, sub, book, {
       symbol: sym, action: 'buy', side: 'buy', qty, confidence: 1,
       rationale: `Blend rotation — size into merged target ($${Math.round(g.goal)}; strongest component score ${g.score.toFixed(2)}).`,
       indicators: { reason: 'rotation', rank: 'blend-multi', score: g.score }, price: px, source: 'gravity-rotation',
@@ -950,10 +977,11 @@ async function rotateBlendSleeve(
 
 /** Hard stop / take-profit (exitsToRun) + trailing-stop exits for the book, deduped by symbol with
  *  the trailing peak rolled forward + persisted. Stop/TP win over trailing when both fire on a name. */
-async function computeExits(ctx: AppContext, sub: string, mode: TradingMode, positions: Position[], policy: RiskPolicy, equity: number, extHours: boolean): Promise<ExitOrder[]> {
+async function computeExits(ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, positions: Position[], policy: RiskPolicy, equity: number, extHours: boolean): Promise<ExitOrder[]> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   await ensurePeaksTable(ctx.pool);
-  const peaks = nextPeaks(positions, await loadPeaks(ctx.pool, sub, mode));
-  await savePeaks(ctx.pool, sub, mode, peaks);
+  const peaks = nextPeaks(positions, await loadPeaks(ctx.pool, sub, book));
+  await savePeaks(ctx.pool, sub, book, peaks);
   // EXTENDED HOURS = DEFENSE ONLY (operator doctrine 2026-07-07): the ONLY off-hours exit is the
   // close-anchored dip rule — sell a name outright when it prints TRADING_EXT_DIP_SELL_PCT (default
   // 0.5%) below its last regular close. No take-profits, no trailing, no cap trims off-hours (the
@@ -986,11 +1014,13 @@ async function computeExits(ctx: AppContext, sub: string, mode: TradingMode, pos
  *  influence gate vetoes names the press/influencers are actively souring on and tilts size with the
  *  mood (both no-ops when coverage is thin). It never creates a buy the technicals didn't already pick. */
 async function placeEntries(
-  ctx: AppContext, sub: string, mode: TradingMode, scan: Map<string, MtfDecision>,
+  ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, scan: Map<string, MtfDecision>,
   held: Map<string, number>, account: BrokerAccount, policy: RiskPolicy, positions: Position[],
   orders: RunOrder[], errors: Array<{ symbol: string; error: string }>, worldSvc: WorldIntelligenceService | null,
   inFlight: Set<string>, extHours: boolean, noBuy: Set<string> = new Set(),
 ): Promise<void> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   // Trade SMALLER in thin pre/post sessions — gaps + wide spreads make ext-hours the high-variance
   // window (where money is made AND lost). Halve the size by default so a gap can't hurt the book as much.
   const extSizeMult = extHours ? Number(process.env.TRADING_EXT_SIZE_MULT || 0.5) : 1;
@@ -1011,7 +1041,7 @@ async function placeEntries(
   // scoreable evidence (fire-and-forget — evidence loss must never affect the fire).
   if (noBuy.size) {
     const blocked = [...scan.values()].filter((d) => wouldBuy(d) && noBuy.has(d.symbol.toUpperCase()));
-    if (blocked.length) void recordGateBlocks(ctx.pool, sub, mode, 'earnings', blocked.map((d) => ({ symbol: d.symbol, refPrice: d.price ?? null })));
+    if (blocked.length) void recordGateBlocks(ctx.pool, sub, book, 'earnings', blocked.map((d) => ({ symbol: d.symbol, refPrice: d.price ?? null })));
   }
 
   // World-intelligence RANK + sizing tilt (TRADING_WORLD_RANK, default off). Prefetch a blended
@@ -1060,7 +1090,7 @@ async function placeEntries(
     // Extended-hours size-down (thin/gappy session).
     qty = Math.floor(qty * extSizeMult);
     if (qty < 1) continue; // too small after the ext-hours haircut — skip rather than place a token share
-    await placeManaged(ctx, sub, mode, scanDecision(d, 'buy', qty, world), orders, errors);
+    await placeManaged(ctx, sub, book, scanDecision(d, 'buy', qty, world), orders, errors);
     entries += 1;
   }
 }
@@ -1093,9 +1123,12 @@ function autopilotLiveAllowed(): boolean {
  * @param mode - The book being run; the cap applies to 'live' only.
  * @returns The capped snapshot (or the original for paper / when no cap is set).
  */
-function capAccount(account: BrokerAccount, mode: TradingMode): BrokerAccount {
-  if (mode !== 'live') return account;
-  const cap = Number(process.env.TRADING_CAPITAL_CAP_USD) || 0;
+function capAccount(account: BrokerAccount, book: TradingBook): BrokerAccount {
+  if (book.kind !== 'live') return account;
+  // ADR-134: effective cap = LEAST(env fleet floor, the book's own cap); nulls fall through.
+  const envCap = Number(process.env.TRADING_CAPITAL_CAP_USD) || 0;
+  const bookCap = book.capitalCapUsd ?? 0;
+  const cap = envCap > 0 && bookCap > 0 ? Math.min(envCap, bookCap) : (envCap > 0 ? envCap : bookCap);
   if (cap <= 0) return account;
   const positionsValue = Math.max(0, (account.equity || 0) - (account.cash || 0)); // equity = cash + positions
   const room = Math.max(0, cap - positionsValue); // cash headroom so positions + new buys ≤ cap
@@ -1107,13 +1140,15 @@ function capAccount(account: BrokerAccount, mode: TradingMode): BrokerAccount {
   };
 }
 
-async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, symbols: string[], session: string, override: ConfigOverrideRow | null = null): Promise<RunSummary> {
+async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, symbols: string[], session: string, override: ConfigOverrideRow | null = null): Promise<RunSummary> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   await ensureTradingSchema(ctx.pool);
   const extHours = session === 'pre' || session === 'post';
   // The sub is REQUIRED here: the live (Schwab) adapter resolves the per-user brokered token by sub.
   // Without it every account/position read silently returns empty and the engine sizes against a $0
   // account — the 2026-07-07 "zombie live fires" (scanned 101, entries 0, no errors, all day).
-  const broker = getBrokerAdapter(mode, sub);
+  const broker = getBrokerAdapter(mode, sub, bookBinding(book));
   const policy = riskPolicy(mode, policyOverrideOf(override));
   // Both reads must SUCCEED or the fire is skipped. A failed POSITIONS read used to `.catch(() => [])`,
   // which is strictly more dangerous than the $0-account case it sat next to: an empty book is a
@@ -1141,10 +1176,10 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
   // Snapshot the REAL equity for the honest day-P&L baseline (latest-per-ET-day ≈ that day's close)
   // BEFORE the sizing cap — the store is the truth source for recaps/guards and must never carry the
   // capped sizing fiction (07-07: capped paper equity=20000 was recorded and poisoned the day P&L).
-  if (accountRaw && accountRaw.equity > 0) await recordDailyEquity(ctx.pool, sub, mode, accountRaw.equity).catch(() => {});
+  if (accountRaw && accountRaw.equity > 0) await recordDailyEquity(ctx.pool, sub, book, accountRaw.equity).catch(() => {});
   // Cap to the configured book size (e.g. run a 10K book on the real 50K account) — LIVE only; the
   // paper reference book always runs full-size. All sizing below reads this snapshot.
-  const account: BrokerAccount = capAccount(accountRaw ?? { cash: 0, buyingPower: 0, equity: 0, currency: 'USD' }, mode);
+  const account: BrokerAccount = capAccount(accountRaw ?? { cash: 0, buyingPower: 0, equity: 0, currency: 'USD' }, book);
   const orders: RunOrder[] = [];
   const errors: Array<{ symbol: string; error: string }> = [];
   // Shared world-intelligence read used by the entry influence gate (null when the layer is off → neutral).
@@ -1161,18 +1196,18 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
   const coreSet = new Set(core.symbols);
   let coreSpent = 0;
   if (core.symbols.length && core.targetPct > 0 && !extHours) {
-    try { coreSpent = await ensureCore(ctx, sub, mode, account, positions, core, orders, errors); }
+    try { coreSpent = await ensureCore(ctx, sub, book, account, positions, core, orders, errors); }
     catch (e) { logger.warn({ err: e, scheduleId: sub }, 'beta-core top-up failed'); }
   }
 
   // 1) Protective exits — hard stop / take-profit / trailing stop + cap-breach trims on open longs.
   //    Core symbols are exempt (we hold the core; the sleeve never sells it).
-  const exits = (await computeExits(ctx, sub, mode, positions, policy, account.equity, extHours)).filter((e) => !coreSet.has(e.symbol.toUpperCase()));
+  const exits = (await computeExits(ctx, sub, book, positions, policy, account.equity, extHours)).filter((e) => !coreSet.has(e.symbol.toUpperCase()));
   const exiting = new Set(exits.map((e) => e.symbol.toUpperCase()));
   // Free shares locked by STALE working sells (a stranded ext-hours limit) before re-placing, so a
   // protective exit can chase a falling market instead of being rejected fire after fire.
-  await freeStaleSells(ctx, sub, mode, exiting).catch((e) => logger.warn({ err: e }, 'freeStaleSells failed'));
-  for (const e of exits) await placeManaged(ctx, sub, mode, exitDecision(e), orders, errors, e.reason);
+  await freeStaleSells(ctx, sub, book, exiting).catch((e) => logger.warn({ err: e }, 'freeStaleSells failed'));
+  for (const e of exits) await placeManaged(ctx, sub, book, exitDecision(e), orders, errors, e.reason);
 
   // 1b) OPTIONAL gravity-ranked sleeve rotation (TRADING_SLEEVE_ROTATION, default OFF). When enabled,
   //     rotation OWNS the sleeve: on a weekly cadence (TRADING_ROTATION_EVERY_DAYS) it ranks the
@@ -1181,10 +1216,16 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
   //     the 2a breakdown exit still run as a safety net in both modes. Off → everything below is unchanged.
   const rot = rotationConfig(override);
   const rotationOwnsSleeve = rot.enabled;
-  if (rot.enabled) {
+  // ADR-134: a DISABLED book takes no NEW risk — rotation (which buys) is skipped — while the
+  // protective exits above and the breakdown leg below KEEP RUNNING for any open positions.
+  // "Disable" means stop adding risk, never abandon the book.
+  if (rot.enabled && !book.enabled) {
+    logger.info({ sub, mode, bookRef: book.ref }, 'book disabled — rotation skipped (protective exits still ran)');
+  }
+  if (rot.enabled && book.enabled) {
     try {
       await ensureRotationStateTable(ctx.pool);
-      const last = await loadLastRotated(ctx.pool, sub, mode).catch(() => null);
+      const last = await loadLastRotated(ctx.pool, sub, book).catch(() => null);
       // Cadence in CALENDAR days (US/Eastern), NOT 24h-since-last. So daily (everyDays=1) fires on the
       // first regular-session fire of each new trading day — i.e. the OPEN — instead of drifting to
       // whenever 24h elapses from the prior rotation (mid-afternoon). Pre-market fires are still blocked
@@ -1192,7 +1233,14 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
       const dueDays = last
         ? Math.round((Date.parse(etSessionDate() + 'T00:00:00Z') - Date.parse(etSessionDate(last.getTime()) + 'T00:00:00Z')) / 86400000)
         : Infinity;
-      const guard = await evaluateEquityGuard(ctx.pool, sub, mode, account.equity, policy).catch(() => null);
+      // FAIL-CLOSED breaker (ADR-134 live-safety review): an evaluation ERROR used to read as
+      // "not halted" — any exception the re-key could introduce would silently DISARM the breaker
+      // on real money. An error now halts NEW risk for this fire (exits above are unaffected),
+      // mirroring the account/positions read doctrine.
+      const guard = await evaluateEquityGuard(ctx.pool, sub, book, account.equity, policy).catch((err) => {
+        logger.error({ err, sub, mode, bookRef: book.ref }, 'equity-guard evaluation FAILED — failing CLOSED (no new risk this fire)');
+        return { halted: true, drawdownPct: -1, highWaterMark: 0 };
+      });
       // Rotate when the cadence is due and the drawdown breaker hasn't tripped. By default regular hours
       // only; TRADING_ROTATION_EXT_HOURS lets it fire pre/post too (the daily cadence still caps it to
       // one rotation/day, so with ext-hours on it rotates at the first eligible fire — possibly pre-market).
@@ -1200,8 +1248,8 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
         const beforeRotation = orders.length;
         // `exiting` (the protective leg's sells, placed just above) is threaded in so rotation cannot
         // re-buy a name the stop is selling in this same fire — the 2026-07-14 IBM round-trip.
-        if (override?.config.kind === 'blend') await rotateBlendSleeve(ctx, sub, mode, account, positions, policy, coreSet, symbols, orders, errors, override, exiting, noBuy);
-        else await rotateSleeve(ctx, sub, mode, account, positions, policy, coreSet, symbols, orders, errors, override, exiting, noBuy);
+        if (override?.config.kind === 'blend') await rotateBlendSleeve(ctx, sub, book, account, positions, policy, coreSet, symbols, orders, errors, override, exiting, noBuy);
+        else await rotateSleeve(ctx, sub, book, account, positions, policy, coreSet, symbols, orders, errors, override, exiting, noBuy);
         const rotationPlaced = orders.length - beforeRotation;
         const sleeveHeld = positions.filter((p) => p.qty > 0 && !coreSet.has(p.symbol.toUpperCase())).length;
         // Consume the daily rotation slot only when rotation DEPLOYED something or the sleeve is
@@ -1209,7 +1257,7 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
         // was buyable) must NOT burn the day's only buy window — 2026-07-07: live "rotated" nothing
         // at the 9:30 open and then sat 100% cash while the tape turned buyable at noon.
         if (rotationPlaced > 0 || sleeveHeld > 0) {
-          await saveLastRotated(ctx.pool, sub, mode).catch(() => {});
+          await saveLastRotated(ctx.pool, sub, book).catch(() => {});
         } else {
           logger.info({ sub, mode }, 'rotation deployed nothing on an empty sleeve — daily slot NOT consumed; retrying next fire');
         }
@@ -1237,12 +1285,12 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
   if (breakdowns.size) {
     // Same stale-sell release as the protective exits above — a breakdown sell must never be
     // blocked by its own stranded prior attempt while the name is crashing.
-    await freeStaleSells(ctx, sub, mode, breakdowns).catch((e) => logger.warn({ err: e }, 'freeStaleSells failed'));
+    await freeStaleSells(ctx, sub, book, breakdowns).catch((e) => logger.warn({ err: e }, 'freeStaleSells failed'));
     for (const sym of breakdowns) {
       const d = scan.get(sym);
       const qty = held.get(sym) ?? 0;
       if (!d || !(qty > 0)) continue;
-      await placeManaged(ctx, sub, mode, breakdownDecision(d, qty), orders, errors, 'breakdown');
+      await placeManaged(ctx, sub, book, breakdownDecision(d, qty), orders, errors, 'breakdown');
       exiting.add(sym);
     }
   }
@@ -1252,7 +1300,7 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
   //   the idle cash reserve, in a small tranche, capped in count. Reuses the scan already computed above (no
   //   extra fetch); runs regardless of who owns the sleeve; step-1 protective stops exit it like any name.
   const pop = popCatcherConfig();
-  if (pop.enabled && account.equity > 0) {
+  if (pop.enabled && book.enabled && account.equity > 0) {
     const heldNow = new Set(positions.filter((p) => p.qty > 0).map((p) => p.symbol.toUpperCase()));
     const tranche = (pop.tranchePct / 100) * account.equity;
     let popCash = Math.max(0, account.cash - coreSpent); // don't double-spend what the core top-up claimed
@@ -1272,7 +1320,7 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
       const qty = Math.floor(notional / px);
       if (qty < 1) continue;
       const fiveScore = d.perTimeframe.find((v) => v.timeframe === '5Min')?.score ?? 0;
-      await placeManaged(ctx, sub, mode, {
+      await placeManaged(ctx, sub, book, {
         symbol: d.symbol, action: 'buy', side: 'buy', qty, confidence: d.confidence,
         rationale: `Pop-catcher — 5-min momentum surge (5m ${fiveScore.toFixed(2)}, overall ${d.score.toFixed(2)}); intraday pull-in from cash.`,
         indicators: { reason: 'pop-catcher', mtfScore: d.score, fiveMin: fiveScore }, price: px, source: 'pop-catcher',
@@ -1289,7 +1337,7 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
     for (const d of scan.values()) {
       const sym = d.symbol.toUpperCase();
       if (d.action === 'sell' && (held.get(sym) || 0) > 0 && !exiting.has(sym) && !coreSet.has(sym)) {
-        await placeManaged(ctx, sub, mode, scanDecision(d, 'sell', held.get(sym) as number), orders, errors);
+        await placeManaged(ctx, sub, book, scanDecision(d, 'sell', held.get(sym) as number), orders, errors);
         exiting.add(sym);
       }
     }
@@ -1300,28 +1348,35 @@ async function runAutopilot(ctx: AppContext, sub: string, mode: TradingMode, sym
       [...scan.values()].map((d) => [d.symbol.toUpperCase(), { score: d.score, action: d.action }]));
     for (const e of rotationBenches(positions, strength, policy)) {
       if (!exiting.has(e.symbol.toUpperCase()) && !coreSet.has(e.symbol.toUpperCase())) {
-        await placeManaged(ctx, sub, mode, exitDecision(e), orders, errors, 'rotation');
+        await placeManaged(ctx, sub, book, exitDecision(e), orders, errors, 'rotation');
         exiting.add(e.symbol.toUpperCase());
       }
     }
-    // 2d) New entries — UNLESS the account-drawdown circuit breaker has tripped. Exits already ran
-    //     above; the breaker only stops NEW risk while equity is maxDrawdownPct below its high-water
-    //     mark, until it recovers. Exclude everything sold/benched this fire so caps stay accurate.
-    const guard = await evaluateEquityGuard(ctx.pool, sub, mode, account.equity, policy).catch(() => null);
-    if (guard?.halted) {
+    // 2d) New entries — UNLESS the account-drawdown circuit breaker has tripped OR the book is
+    //     disabled (ADR-134: disable = no new risk). Exits already ran above; the breaker only stops
+    //     NEW risk while equity is maxDrawdownPct below its high-water mark, until it recovers.
+    //     FAIL-CLOSED (ADR-134): a guard-evaluation ERROR halts entries instead of reading as
+    //     "not halted" — the .catch(() => null) shape silently disarmed the breaker on any exception.
+    const guard = await evaluateEquityGuard(ctx.pool, sub, book, account.equity, policy).catch((err) => {
+      logger.error({ err, sub, mode, bookRef: book.ref }, 'equity-guard evaluation FAILED — failing CLOSED (entries halted this fire)');
+      return { halted: true, drawdownPct: -1, highWaterMark: 0 };
+    });
+    if (!book.enabled) {
+      logger.info({ sub, mode, bookRef: book.ref }, 'book disabled — new entries skipped (exits/sells still ran)');
+    } else if (guard?.halted) {
       logger.warn({ scheduleId: sub, drawdownPct: guard.drawdownPct.toFixed(1), maxDrawdownPct: policy.maxDrawdownPct }, 'autopilot — entries halted by account-drawdown circuit breaker');
     } else {
       const remaining = positions.filter((p) => !exiting.has(p.symbol.toUpperCase()));
       // Working orders (pending pre/post-market limits) aren't in positions or in cash yet. Exclude their
       // symbols from new entries and RESERVE their pending notional from cash so sizing can't over-deploy
       // the same dollars a working order already claimed (what drove cash negative in the open burst).
-      const inFlight = await loadInFlight(ctx.pool, sub, mode).catch(() => ({ symbols: new Set<string>(), pendingBuyNotional: 0 }));
+      const inFlight = await loadInFlight(ctx.pool, sub, book).catch(() => ({ symbols: new Set<string>(), pendingBuyNotional: 0 }));
       const reservedAccount: BrokerAccount = { ...account, cash: Math.max(0, account.cash - inFlight.pendingBuyNotional - coreSpent) };
       // NO BUYING OFF-HOURS (operator doctrine 2026-07-07): extended hours are defense-only — the
       // dip rule sells, nothing rebuys until the regular session. TRADING_EXT_ENTRIES=true re-enables
       // the old halved-size ext-hours entries if ever wanted.
       if (!extHours || String(process.env.TRADING_EXT_ENTRIES || 'false').toLowerCase() === 'true') {
-        await placeEntries(ctx, sub, mode, scan, held, reservedAccount, policy, remaining, orders, errors, worldSvc, inFlight.symbols, extHours, noBuy);
+        await placeEntries(ctx, sub, book, scan, held, reservedAccount, policy, remaining, orders, errors, worldSvc, inFlight.symbols, extHours, noBuy);
       }
     }
   }
@@ -1357,9 +1412,41 @@ async function logRunTicket(ctx: AppContext, sub: string, mode: TradingMode, s: 
 export async function dispatchTradingSchedule(ctx: AppContext, schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
   const td = schedule.taskData as Record<string, unknown>;
   const sub = String(td.userSub || '');
-  const mode: TradingMode = String(td.mode || 'paper').toLowerCase() === 'live' ? 'live' : 'paper';
+  let mode: TradingMode = String(td.mode || 'paper').toLowerCase() === 'live' ? 'live' : 'paper';
 
   if (!sub) return { success: false, scheduleId: schedule.id, error: 'autopilot schedule missing userSub' };
+
+  // ── ADR-134 book resolution — three hard rules (adversarial live-safety review) ────────────────
+  //  1. bookId ABSENT → the legacy book for taskData.mode (the existing out-of-band schedules keep
+  //     working unmodified).
+  //  2. bookId present but UNRESOLVABLE (deleted book, foreign id) → SKIP the fire with an ERROR —
+  //     never fall back to the legacy book: a stale per-book LIVE schedule falling through would
+  //     silently trade the WRONG Schwab account. loadBook is keyed (user_sub, book_id) — dispatch
+  //     runs under system identity where RLS does not scope reads, so that WHERE is the only wall.
+  //  3. bookId present while the flag is OFF → hard-skip as a logged no-op unless it IS the legacy
+  //     book: flag-off (the PR4 rollback path) must never turn N per-book schedules into N duplicate
+  //     dispatchers of the one real account (cross-minute duplicate orders Schwab cannot dedupe).
+  const rawBookId = td.bookId ? String(td.bookId) : null;
+  let book: TradingBook;
+  if (!rawBookId) {
+    await ensureLegacyBooks(ctx.pool, sub).catch(() => { /* mint is lazy-best-effort; legacyBook() needs no row */ });
+    book = legacyBook(sub, mode);
+  } else if (!multiAccountEnabled()) {
+    if (rawBookId !== legacyBookId(sub, 'paper') && rawBookId !== legacyBookId(sub, 'live')) {
+      logger.warn({ scheduleId: schedule.id, bookId: rawBookId }, 'TRADING_MULTI_ACCOUNT is off - per-book schedule hard-skipped (no fallback to the legacy book)');
+      return { success: true, scheduleId: schedule.id };
+    }
+    mode = rawBookId === legacyBookId(sub, 'live') ? 'live' : 'paper';
+    book = legacyBook(sub, mode);
+  } else {
+    const loaded = await loadBook(ctx.pool, sub, rawBookId).catch((err) => { logger.error({ err, scheduleId: schedule.id, bookId: rawBookId }, 'book load failed'); return null; });
+    if (!loaded) {
+      logger.error({ scheduleId: schedule.id, bookId: rawBookId, sub }, 'schedule carries an UNRESOLVABLE bookId - fire skipped, never falling back to the legacy book');
+      return { success: true, scheduleId: schedule.id };
+    }
+    book = loaded;
+    mode = book.kind;
+  }
   // ADR-095: one DB read per fire — the caller's applied Strategy Library override (null = env
   // defaults). A read failure must NEVER stop the fire; it just means env behavior this round.
   const override = await getActiveOverride(ctx.pool, sub)
@@ -1390,7 +1477,7 @@ export async function dispatchTradingSchedule(ctx: AppContext, schedule: Schedul
   // pending_new into the real filled/terminal state so the ledger (and the position/holdings
   // read below) reflect venue reality. Runs even when the market is closed: the venue fills
   // during hours, we just catch the ledger up here. Failure here must not block the run.
-  await reconcileOpenOrders(ctx.pool, sub, mode).catch((e) => logger.warn({ err: e, scheduleId: schedule.id }, 'autopilot order reconcile failed'));
+  await reconcileOpenOrders(ctx.pool, sub, book).catch((e) => logger.warn({ err: e, scheduleId: schedule.id }, 'autopilot order reconcile failed'));
   // Trade in regular OR (when TRADING_EXTENDED_HOURS is on) pre/post-market — ext-hours orders
   // route as marketable limits via placeDecisionOrder. Closed/weekend/holiday → skip.
   // Log the CAUSE, not a catch-all. "market closed" used to cover three unrelated states — a blind
@@ -1419,7 +1506,7 @@ export async function dispatchTradingSchedule(ctx: AppContext, schedule: Schedul
   }
 
   try {
-    const summary = await runAutopilot(ctx, sub, mode, universe, session, override);
+    const summary = await runAutopilot(ctx, sub, book, universe, session, override);
     await logRunTicket(ctx, sub, mode, summary).catch((e) => logger.warn({ err: e }, 'autopilot ticket log failed'));
     logger.info({ scheduleId: schedule.id, session, ...summary, orders: summary.orders.length }, 'autopilot run complete');
     return { success: true, scheduleId: schedule.id, taskId: `autopilot-${schedule.id}` };

@@ -60,12 +60,15 @@ function makePool(reserve: boolean) {
     query: vi.fn(async (sql: string, params?: unknown[]) => {
       calls.push({ sql, params: params ?? [] });
       if (/FROM oshal_trading_decisions/.test(sql)) return { rows: [DECISION] };
-      if (/ON CONFLICT \(user_sub, mode, client_order_id\) DO NOTHING/.test(sql)) {
+      // ADR-134: the reservation/record arbiter is the BOOK-scoped unique index. Pinning the exact
+      // conflict target here is deliberate — a regression back to the mode index (or to no arbiter)
+      // fails this match and the spec goes red.
+      if (/ON CONFLICT \(user_sub, book_id, client_order_id\) DO NOTHING/.test(sql)) {
         h.seq.push('reserve');
         return { rows: reserve ? [{ order_id: 'res-1' }] : [] };
       }
       if (/DELETE FROM oshal_trading_orders/.test(sql)) { h.seq.push('release'); return { rows: [] }; }
-      if (/ON CONFLICT \(user_sub, mode, client_order_id\) DO UPDATE/.test(sql)) { h.seq.push('record'); return { rows: [] }; }
+      if (/ON CONFLICT \(user_sub, book_id, client_order_id\) DO UPDATE/.test(sql)) { h.seq.push('record'); return { rows: [] }; }
       return { rows: [] };
     }),
   };
