@@ -24,6 +24,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — override CRUD (one active per user, history kept) + the pure overlay helpers the dispatch config resolvers call (effectiveCorePct, overlayCoreEntries, overlayRotationKnobs, policyOverrideOf).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BLEND overrides (ADR-095 round 2): an applied blend enables rotation at the blend cadence (the merged-target path executes it), and policyOverrideOf resolves the MOST-CONSERVATIVE component policy (tightest stop, earliest tp) for book-level exits/caps.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Honesty rails: apply/revert now auto-record a strategy-journal entry so every knob turn reaches the daily report's "What changed" section without anyone remembering to write it down.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 PR2 — per-book actives: the one-active index swaps atomically to (user_sub, book_id) WHERE active with a clone-backfill (each currently-active book-less row becomes identical per-legacy-book actives; history keeps book_id NULL; a rolled-back image can still insert a book-less active — the CHECK is deferred to PR4). getActiveOverride/applyOverride/revertOverride gain book scope; deactivation WHEREs are book-scoped (the cross-revert trap); book-less calls keep today's both-books contract for deployed store twins.
  *
  * @module trading-config-overrides
  */
@@ -34,12 +35,15 @@ import type { PolicyOverride } from '@/features/trading';
 import type { StrategyConfig } from './trading-strategy-lab-sim';
 import { conservativeBlendPolicy } from './trading-blend';
 import { recordStrategyJournal } from './trading-strategy-journal';
+import { legacyBookId } from './trading-books-store';
 
 const logger = createChildLogger({ module: 'trading-config-overrides' });
 
 /** An applied (or historical) profile override row. */
 export interface ConfigOverrideRow {
   id: string;
+  /** ADR-134: the book this override drives; NULL only on pre-book history rows. */
+  bookId: string | null;
   strategyId: string | null;
   strategyName: string;
   config: StrategyConfig;
@@ -70,6 +74,14 @@ let ensured = false;
  */
 export async function ensureOverridesSchema(pool: Pool): Promise<void> {
   if (ensured) return;
+  // One multi-statement query = one implicit transaction: the one-active index SWAP and the
+  // clone-backfill land atomically (ADR-134 PR2). The old (user_sub) WHERE active index cannot
+  // coexist with per-book actives, so it is dropped and replaced by (user_sub, book_id) WHERE
+  // active; every currently-active book-less row is CLONED to each legacy book (identical
+  // snapshots — preserves today's "one override drives both books" contract and keeps a code
+  // rollback benign: old getActiveOverride reads either identical row). History rows keep
+  // book_id NULL. The CHECK (NOT active OR book_id IS NOT NULL) is DEFERRED to PR4 — rolled-back
+  // PR1-era code must still be able to insert a book-less active row (adversarial-review rule).
   await pool.query(`
     CREATE TABLE IF NOT EXISTS trading_config_overrides (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -83,15 +95,30 @@ export async function ensureOverridesSchema(pool: Pool): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       deactivated_at TIMESTAMPTZ
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_cfg_override_one_active ON trading_config_overrides (user_sub) WHERE active;
+    ALTER TABLE trading_config_overrides ADD COLUMN IF NOT EXISTS book_id UUID;
+    DROP INDEX IF EXISTS idx_trd_cfg_override_one_active;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_cfg_override_one_active_book ON trading_config_overrides (user_sub, book_id) WHERE active;
     CREATE INDEX IF NOT EXISTS idx_trd_cfg_override_owner ON trading_config_overrides (user_sub, created_at DESC);
+    INSERT INTO trading_config_overrides (user_sub, book_id, strategy_id, strategy_name, config, apply_pct, active, note, created_at)
+    SELECT o.user_sub, md5('oshal-book:'||o.user_sub||':'||k.kind)::uuid, o.strategy_id, o.strategy_name, o.config, o.apply_pct, true,
+           o.note, o.created_at
+      FROM trading_config_overrides o
+     CROSS JOIN (VALUES ('paper'), ('live')) AS k(kind)
+     WHERE o.active AND o.book_id IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM trading_config_overrides x
+          WHERE x.user_sub = o.user_sub AND x.active
+            AND x.book_id = md5('oshal-book:'||o.user_sub||':'||k.kind)::uuid);
+    UPDATE trading_config_overrides SET active = false, deactivated_at = now()
+     WHERE active AND book_id IS NULL;
   `);
   ensured = true;
-  logger.info('trading config-overrides schema ensured');
+  logger.info('trading config-overrides schema ensured (per-book actives, ADR-134)');
 }
 
 const rowMap = (r: Record<string, unknown>): ConfigOverrideRow => ({
   id: String(r.id),
+  bookId: r.book_id ? String(r.book_id) : null,
   strategyId: r.strategy_id ? String(r.strategy_id) : null,
   strategyName: String(r.strategy_name ?? ''),
   config: r.config as StrategyConfig,
@@ -109,10 +136,14 @@ const rowMap = (r: Record<string, unknown>): ConfigOverrideRow => ({
  * @param sub - Owner sub.
  * @returns The active override row or null.
  */
-export async function getActiveOverride(pool: Pool, sub: string): Promise<ConfigOverrideRow | null> {
+export async function getActiveOverride(pool: Pool, sub: string, bookId?: string | null): Promise<ConfigOverrideRow | null> {
   await ensureOverridesSchema(pool);
-  const { rows } = await pool.query(
-    'SELECT * FROM trading_config_overrides WHERE user_sub = $1 AND active LIMIT 1', [sub]);
+  // ADR-134: with a bookId, THAT book's active row; without (deployed store twins, pre-book
+  // callers), any active row — under the clone-backfill the legacy books carry identical
+  // snapshots, so either answer is today's behavior.
+  const { rows } = bookId
+    ? await pool.query('SELECT * FROM trading_config_overrides WHERE user_sub = $1 AND book_id = $2 AND active LIMIT 1', [sub, bookId])
+    : await pool.query('SELECT * FROM trading_config_overrides WHERE user_sub = $1 AND active ORDER BY created_at DESC LIMIT 1', [sub]);
   return rows.length ? rowMap(rows[0]) : null;
 }
 
@@ -126,28 +157,44 @@ export async function getActiveOverride(pool: Pool, sub: string): Promise<Config
  */
 export async function applyOverride(pool: Pool, sub: string, apply: {
   strategyId: string | null; strategyName: string; config: StrategyConfig; applyPct: number; note: string;
+  /** ADR-134: the target book. Omitted (deployed store twins) = BOTH legacy books get identical
+   *  clones — today's "one apply drives both books" contract, byte-preserved. */
+  bookId?: string | null;
+  /** Display ref for the journal line ('paper' | 'live' | 'b-xxxxxxxx'); derived when omitted. */
+  bookRef?: string | null;
 }): Promise<ConfigOverrideRow> {
   await ensureOverridesSchema(pool);
+  const targets: Array<{ bookId: string; ref: string }> = apply.bookId
+    ? [{ bookId: apply.bookId, ref: apply.bookRef || 'book' }]
+    : (['paper', 'live'] as const).map((kind) => ({ bookId: legacyBookId(sub, kind), ref: kind }));
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(
-      'UPDATE trading_config_overrides SET active = false, deactivated_at = now() WHERE user_sub = $1 AND active', [sub]);
-    const { rows } = await client.query(
-      `INSERT INTO trading_config_overrides (user_sub, strategy_id, strategy_name, config, apply_pct, note)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [sub, apply.strategyId, apply.strategyName, JSON.stringify(apply.config),
-       Math.round(Math.max(1, Math.min(100, apply.applyPct))), apply.note.slice(0, 500)]);
+    // Deactivation is BOOK-SCOPED (the cross-revert trap): an apply to book A must never silently
+    // revert book B's strategy. The no-book path deactivates exactly its two legacy targets.
+    let first: ConfigOverrideRow | null = null;
+    for (const t of targets) {
+      await client.query(
+        'UPDATE trading_config_overrides SET active = false, deactivated_at = now() WHERE user_sub = $1 AND book_id = $2 AND active',
+        [sub, t.bookId]);
+      const { rows } = await client.query(
+        `INSERT INTO trading_config_overrides (user_sub, book_id, strategy_id, strategy_name, config, apply_pct, note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [sub, t.bookId, apply.strategyId, apply.strategyName, JSON.stringify(apply.config),
+         Math.round(Math.max(1, Math.min(100, apply.applyPct))), apply.note.slice(0, 500)]);
+      first = first ?? rowMap(rows[0]);
+    }
     await client.query('COMMIT');
-    logger.info({ sub, strategy: apply.strategyName, applyPct: apply.applyPct }, 'profile override APPLIED');
+    logger.info({ sub, strategy: apply.strategyName, applyPct: apply.applyPct, books: targets.map((t) => t.ref).join(',') }, 'profile override APPLIED');
     // Honesty rail: every knob turn reaches the daily report. Fire-and-forget — the journal
     // helper swallows its own failures, so the apply itself can never be blocked by reporting.
     void recordStrategyJournal(pool, {
       sub, kind: 'knob-turn', source: 'trading-config-overrides.applyOverride',
-      summary: `Strategy override applied: "${apply.strategyName}" at ${apply.applyPct}% of the sleeve${apply.note ? ` — ${apply.note.slice(0, 120)}` : ''}`,
-      detail: { strategyId: apply.strategyId, applyPct: apply.applyPct },
+      bookRef: apply.bookId ? (apply.bookRef || 'book') : 'paper+live',
+      summary: `Strategy override applied: "${apply.strategyName}" at ${apply.applyPct}% of the sleeve [${apply.bookId ? (apply.bookRef || 'book') : 'both books'}]${apply.note ? ` — ${apply.note.slice(0, 120)}` : ''}`,
+      detail: { strategyId: apply.strategyId, applyPct: apply.applyPct, bookId: apply.bookId ?? null },
     });
-    return rowMap(rows[0]);
+    return first as ConfigOverrideRow;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     logger.error({ err, sub }, 'applyOverride failed');
@@ -157,23 +204,32 @@ export async function applyOverride(pool: Pool, sub: string, apply: {
   }
 }
 
+
 /**
  * @description Reverts the caller's profile to env defaults by deactivating the active override.
  * @param pool - Postgres pool.
  * @param sub - Owner sub.
  * @returns The deactivated row, or null when nothing was active.
  */
-export async function revertOverride(pool: Pool, sub: string): Promise<ConfigOverrideRow | null> {
+export async function revertOverride(pool: Pool, sub: string, bookId?: string | null, bookRef?: string | null): Promise<ConfigOverrideRow | null> {
   await ensureOverridesSchema(pool);
-  const { rows } = await pool.query(
-    `UPDATE trading_config_overrides SET active = false, deactivated_at = now()
-      WHERE user_sub = $1 AND active RETURNING *`, [sub]);
+  // ADR-134: with a bookId the revert is SCOPED to that book (the cross-revert trap — reverting
+  // book A must not touch book B). Without one, ALL the user's actives revert — today's contract
+  // for the deployed store twins under the legacy clone pair.
+  const { rows } = bookId
+    ? await pool.query(
+      `UPDATE trading_config_overrides SET active = false, deactivated_at = now()
+        WHERE user_sub = $1 AND book_id = $2 AND active RETURNING *`, [sub, bookId])
+    : await pool.query(
+      `UPDATE trading_config_overrides SET active = false, deactivated_at = now()
+        WHERE user_sub = $1 AND active RETURNING *`, [sub]);
   if (rows.length) {
-    logger.info({ sub, strategy: rows[0].strategy_name }, 'profile override REVERTED — env defaults resume');
+    logger.info({ sub, strategy: rows[0].strategy_name, books: rows.length }, 'profile override REVERTED — env defaults resume');
     void recordStrategyJournal(pool, {
       sub, kind: 'knob-turn', source: 'trading-config-overrides.revertOverride',
-      summary: `Strategy override reverted: "${rows[0].strategy_name}" — profile back on env defaults`,
-      detail: { strategyId: rows[0].strategy_id ?? null },
+      bookRef: bookId ? (bookRef || 'book') : 'paper+live',
+      summary: `Strategy override reverted: "${rows[0].strategy_name}" [${bookId ? (bookRef || 'book') : 'all books'}] — env defaults resume`,
+      detail: { strategyId: rows[0].strategy_id ?? null, bookId: bookId ?? null },
     });
   }
   return rows.length ? rowMap(rows[0]) : null;

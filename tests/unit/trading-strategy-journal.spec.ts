@@ -34,6 +34,7 @@ describe('recordStrategyJournal (every knob turn reaches the report)', () => {
     expect(insert!.params).toEqual([
       'sub-1', '2026-07-26', 'knob-turn', 'core hold moved SPY -> BRK.B',
       JSON.stringify({ from: 'SPY', to: 'BRK.B' }), 'unit-test',
+      null, // book_ref (ADR-134 PR2) — absent on a book-less entry
     ]);
   });
 

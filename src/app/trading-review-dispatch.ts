@@ -101,9 +101,21 @@ export async function dispatchTradingReview(ctx: AppContext, schedule: ScheduleR
               AVG(${ret}) FILTER (WHERE resolved AND price > 0 AND actual_price IS NOT NULL AND created_at > now() - ($1 || ' days')::interval) AS recent_avg_ret
          FROM oshal_trading_predictions WHERE mode=$2 GROUP BY algo`, [String(RECENT_DAYS), mode])).rows;
 
+    // ADR-134 PR2: only the LEARNING book writes signal weights — the single-canonical-learning-
+    // book rule (DB invariant: partial unique idx_trd_books_learn). Without this gate a second
+    // book's review would last-writer-win the shared weights (the pre-existing paper/live
+    // overwrite the schema map found). Missing row → legacy default: paper learns.
+    const isLearnBook = await ctx.pool.query(
+      `SELECT learn FROM oshal_trading_books WHERE user_sub=$1 AND book_id = md5('oshal-book:'||$1||':'||$2)::uuid`,
+      [sub, mode])
+      .then((r) => (r.rows[0] ? Boolean(r.rows[0].learn) : mode === 'paper'))
+      .catch(() => mode === 'paper'); // books table not bootstrapped yet → legacy default: paper learns
+    if (!isLearnBook) {
+      logger.info({ scheduleId: schedule.id, mode }, 'review: not the learning book — weights NOT written (aggregation only)');
+    }
     const useExp = learnExpectancyEnabled();
     let learned = 0;
-    for (const r of rows) {
+    for (const r of isLearnBook ? rows : []) {
       const samples = Number(r.samples);
       if (samples < MIN_SAMPLES) continue; // too little signal to learn from
       const hitRate = samples ? Number(r.hits) / samples : 0.5;
