@@ -213,6 +213,16 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
         tenantId, connectedBySub: me.sub, label: typeof data.label === 'string' ? data.label : null,
       });
       logger.info({ provider, sub: me.sub, tenantId, account: acct.email, gotRefresh: !!tok.refresh_token }, 'Connector connected');
+      // ADR-134 D5.3: "log in → accounts pull in" means the LOGIN, not a later screen visit — the
+      // Schwab callback fires broker-account discovery directly (the token was just validated
+      // against GET /accounts/accountNumbers, so the enumeration is literally in hand). Fire-and-
+      // forget: a discovery failure must never fail the connect itself.
+      if (provider === 'schwab') {
+        void import('../trading-accounts-store.js')
+          .then((m) => m.discoverBrokerAccounts(ctx.pool, me.sub))
+          .then((r) => logger.info({ sub: me.sub, ...r }, 'schwab connect → broker accounts discovered'))
+          .catch((err) => logger.error({ err, sub: me.sub }, 'schwab connect → account discovery failed (connect itself succeeded)'));
+      }
       res.redirect(302, `/utilities?connected=${provider}`);
     } catch (err: any) {
       logger.error({ err, provider }, 'Connector callback failed');
