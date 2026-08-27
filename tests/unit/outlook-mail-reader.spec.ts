@@ -362,4 +362,33 @@ describe('Outlook recent-mail sync read (CR-22 auto logging)', () => {
     expect(clamped).not.toBeNull();
     expect(Date.now() - Date.parse(clamped as string)).toBeLessThanOrEqual(31 * 24 * 3600 * 1000);
   });
+
+  it('domain-matches partner company mail but never the mailbox\'s own domain (internal mail)', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      value: [
+        { // any employee of a partner domain — matched via matchDomains
+          id: 'd1', internetMessageId: '<x@familychoice.com>', subject: 'New dispatcher',
+          from: { emailAddress: { address: 'billing@familychoice.com' } },
+          toRecipients: [{ emailAddress: { address: 'me@gsquaredfunding.com' } }],
+          receivedDateTime: '2026-08-26T16:00:00Z', bodyPreview: 'invoice', isDraft: false,
+        },
+        { // internal colleague on the mailbox's own domain — must NOT match
+          id: 'd2', subject: 'Team lunch',
+          from: { emailAddress: { address: 'colleague@gsquaredfunding.com' } },
+          toRecipients: [{ emailAddress: { address: 'me@gsquaredfunding.com' } }],
+          receivedDateTime: '2026-08-26T16:05:00Z', bodyPreview: 'internal only', isDraft: false,
+        },
+      ],
+    })) as unknown as typeof fetch;
+    const read = syncReader([connection()], fetchImpl);
+    const result = await read({
+      userSub: SUB, loginEmail: 'me@gsquaredfunding.com', sinceIso: '2026-08-26T12:00:00Z',
+      matchAddresses: [], matchDomains: ['familychoice.com', 'gsquaredfunding.com'],
+    });
+    expect(result.status).toBe('connected');
+    expect(result.messages.map((m) => m.id)).toEqual(['d1']);
+    expect(JSON.stringify(result)).not.toContain('internal only');
+    expect(outlookMailReaderInternals.normalizeDomain('Family-Choice.com')).toBe('family-choice.com');
+    expect(outlookMailReaderInternals.normalizeDomain('bad domain$')).toBeNull();
+  });
 });

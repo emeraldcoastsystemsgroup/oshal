@@ -84,6 +84,12 @@ export interface OutlookMailSyncInput {
   sinceIso: string;
   /** The package's full authorized address book; matching happens inside core. */
   matchAddresses: string[];
+  /**
+   * Company domains to match any participant address against (CR-22 "or its domain").
+   * Freemail/ambiguity policy is the caller's; core still refuses the mailbox's own domain,
+   * so a team's internal mail can never flood a partner record.
+   */
+  matchDomains?: string[];
   limit?: number;
 }
 
@@ -368,22 +374,38 @@ function graphRecentUrl(sinceIso: string, top: number): string {
   return `${GRAPH_MESSAGES_URL}?${query.toString()}`;
 }
 
-/** A recent message becomes a sync row ONLY when a CRM address participates; drafts never do. */
+/** Lowercased registrable-shaped domain, or null. Never accepts query/expression characters. */
+function normalizeDomain(value: unknown): string | null {
+  const domain = String(value ?? '').trim().toLowerCase().replace(/^@/, '');
+  if (domain.length < 4 || domain.length > 253) return null;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain) ? domain : null;
+}
+
+function addressDomain(address: string): string | null {
+  const at = address.lastIndexOf('@');
+  return at > 0 ? normalizeDomain(address.slice(at + 1)) : null;
+}
+
+/** A recent message becomes a sync row ONLY when a CRM address/domain participates; drafts never do. */
 function summarizeSyncMessage(
   message: GraphMessage,
   mailboxAddress: string,
   matchSet: Set<string>,
+  domainSet: Set<string> = new Set(),
 ): OutlookMailSyncMessage | null {
   if (message.isDraft === true) return null;
   const id = boundedText(message.id, 512);
   if (!id) return null;
   const from = graphAddress(message.from);
-  const matched = [...new Set(
-    participants(message).filter((item) => matchSet.has(item.address)).map((item) => item.address),
-  )];
+  const isMatch = (item: OutlookMailAddress): boolean => {
+    if (matchSet.has(item.address)) return true;
+    const domain = addressDomain(item.address);
+    return domain !== null && domainSet.has(domain);
+  };
+  const matched = [...new Set(participants(message).filter(isMatch).map((item) => item.address))];
   if (matched.length === 0) return null;
   const direction = from?.address === mailboxAddress ? 'outbound' : 'inbound';
-  const firstMatch = participants(message).find((item) => matchSet.has(item.address)) as OutlookMailAddress;
+  const firstMatch = participants(message).find(isMatch) as OutlookMailAddress;
   const counterpart = direction === 'inbound' ? (from || firstMatch) : firstMatch;
   const internetMessageId = boundedText(message.internetMessageId, 512) || null;
   const row: OutlookMailSyncMessage = {
@@ -453,7 +475,14 @@ export function createOutlookMailSyncReader(
       .slice(0, MAX_SYNC_ADDRESSES)
       .map(normalizeAddress)
       .filter((address): address is string => address !== null && address !== mailboxAddress));
-    if (matchSet.size === 0) return emptySync('connected');
+    // The mailbox's own domain never domain-matches: a team's internal mail is not partner
+    // correspondence, and one shared company domain would otherwise match every message.
+    const mailboxDomain = mailboxAddress ? addressDomain(mailboxAddress) : null;
+    const domainSet = new Set((Array.isArray(input.matchDomains) ? input.matchDomains : [])
+      .slice(0, MAX_SYNC_ADDRESSES)
+      .map(normalizeDomain)
+      .filter((domain): domain is string => domain !== null && domain !== mailboxDomain));
+    if (matchSet.size === 0 && domainSet.size === 0) return emptySync('connected');
     const limit = Math.min(Math.max(Number(input.limit) || MAX_SYNC_RESULTS, 1), MAX_SYNC_RESULTS);
 
     let token: string | null;
@@ -486,7 +515,7 @@ export function createOutlookMailSyncReader(
     }
     const deduped = new Map<string, OutlookMailSyncMessage>();
     for (const message of graphRows) {
-      const summary = summarizeSyncMessage(message, mailboxAddress, matchSet);
+      const summary = summarizeSyncMessage(message, mailboxAddress, matchSet, domainSet);
       if (summary && !deduped.has(summary.id)) deduped.set(summary.id, summary);
     }
     return { status: 'connected', messages: [...deduped.values()], latestReceivedAt };
@@ -504,4 +533,5 @@ export const outlookMailReaderInternals = {
   normalizeSinceIso,
   graphRecentUrl,
   summarizeSyncMessage,
+  normalizeDomain,
 };
