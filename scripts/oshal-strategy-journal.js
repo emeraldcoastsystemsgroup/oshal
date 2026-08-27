@@ -46,6 +46,8 @@ const DDL = `CREATE TABLE IF NOT EXISTS oshal_trading_strategy_journal (
   source TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )`;
+/* ADR-134 PR2: per-book labeling — BOTH DDL surfaces (this host copy + the core module) carry it. */
+const DDL_BOOK_REF = 'ALTER TABLE oshal_trading_strategy_journal ADD COLUMN IF NOT EXISTS book_ref TEXT';
 
 (async () => {
   const cmd = process.argv[2];
@@ -55,6 +57,7 @@ const DDL = `CREATE TABLE IF NOT EXISTS oshal_trading_strategy_journal (
   try {
     await client.query("SELECT set_config('oshal.is_operator','on',false)");
     await client.query(DDL);
+    await client.query(DDL_BOOK_REF);
     if (cmd === 'add') {
       const kind = argOf('kind'), summary = argOf('summary');
       if (!KINDS.includes(kind)) { console.error(`JOURNAL_FAIL bad --kind (want ${KINDS.join('|')})`); process.exit(1); }

@@ -1447,9 +1447,10 @@ export async function dispatchTradingSchedule(ctx: AppContext, schedule: Schedul
     book = loaded;
     mode = book.kind;
   }
-  // ADR-095: one DB read per fire — the caller's applied Strategy Library override (null = env
-  // defaults). A read failure must NEVER stop the fire; it just means env behavior this round.
-  const override = await getActiveOverride(ctx.pool, sub)
+  // ADR-095: one DB read per fire — THIS BOOK's applied Strategy Library override (null = env
+  // defaults; ADR-134 PR2 re-keyed actives per (user, book), so each book runs its own strategy).
+  // A read failure must NEVER stop the fire; it just means env behavior this round.
+  const override = await getActiveOverride(ctx.pool, sub, book.bookId)
     .catch((e) => { logger.warn({ err: e, scheduleId: schedule.id }, 'config-override read failed — env defaults in effect this fire'); return null; });
   // Universe precedence: an applied strategy's EXPLICIT universe > the schedule pin > DEFAULT_UNIVERSE.
   // An applied strategy with universe [] deliberately tracks the default (the 2026-07-13 pin lesson).

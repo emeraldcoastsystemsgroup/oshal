@@ -65,10 +65,14 @@ export async function ensureStrategyJournalTable(pool: Pool): Promise<void> {
         source TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`,
+      // CHANGE LOG addendum (ADR-134 PR2): per-book "what changed" labeling — book_ref TEXT on both
+      // DDL surfaces (this module + scripts/oshal-strategy-journal.js). Denormalized ref (not a
+      // book_id join) — this table is deliberately unwalled (ADR-124) and read by raw-pool host scripts.
+      'ALTER TABLE oshal_trading_strategy_journal ADD COLUMN IF NOT EXISTS book_ref TEXT',
       `CREATE INDEX IF NOT EXISTS idx_strategy_journal_sub_day
          ON oshal_trading_strategy_journal (user_sub, et_day)`,
     ],
-    requirements: [{ table: 'oshal_trading_strategy_journal', columns: ['user_sub', 'et_day', 'kind', 'summary', 'source'] }],
+    requirements: [{ table: 'oshal_trading_strategy_journal', columns: ['user_sub', 'et_day', 'kind', 'summary', 'source', 'book_ref'] }],
   });
 }
 
@@ -83,14 +87,16 @@ export async function ensureStrategyJournalTable(pool: Pool): Promise<void> {
 export async function recordStrategyJournal(pool: Pool, entry: {
   sub: string; kind: StrategyJournalKind; summary: string;
   detail?: Record<string, unknown>; source: string; etDayOverride?: string;
+  /** ADR-134: which book the change concerns ('paper' | 'live' | 'b-xxxxxxxx' | 'paper+live'). */
+  bookRef?: string | null;
 }): Promise<boolean> {
   try {
     await ensureStrategyJournalTable(pool);
     await pool.query(
-      `INSERT INTO oshal_trading_strategy_journal (user_sub, et_day, kind, summary, detail, source)
-       VALUES ($1, $2::date, $3, $4, $5, $6)`,
+      `INSERT INTO oshal_trading_strategy_journal (user_sub, et_day, kind, summary, detail, source, book_ref)
+       VALUES ($1, $2::date, $3, $4, $5, $6, $7)`,
       [entry.sub, entry.etDayOverride ?? etDay(), entry.kind, entry.summary.slice(0, 500),
-       entry.detail ? JSON.stringify(entry.detail) : null, entry.source.slice(0, 120)]);
+       entry.detail ? JSON.stringify(entry.detail) : null, entry.source.slice(0, 120), entry.bookRef ?? null]);
     logger.info({ sub: entry.sub, kind: entry.kind, summary: entry.summary }, 'strategy journal entry recorded');
     return true;
   } catch (err) {
