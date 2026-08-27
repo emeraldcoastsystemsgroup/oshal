@@ -14,7 +14,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createOutlookMailReader, outlookMailReaderInternals,
+  createOutlookMailReader, createOutlookMailSyncReader, outlookMailReaderInternals,
 } from '@/app/routes/outlook-mail-reader';
 import type { ConnectionRow } from '@/app/routes/connector-tenancy';
 
@@ -275,5 +275,91 @@ describe('Outlook reader pure guards', () => {
     expect(url.origin + url.pathname).toBe('https://graph.microsoft.com/v1.0/me/messages');
     expect(url.searchParams.get('$top')).toBe('50');
     expect(url.searchParams.get('$search')).toBe('"participants:a@example.com" OR "participants:b@example.com"');
+  });
+});
+
+function syncReader(rows: ConnectionRow[], fetchImpl: typeof fetch, token: string | null = 'actor-token') {
+  return createOutlookMailSyncReader({} as never, {
+    listConnections: async () => rows,
+    getAccessToken: async () => token,
+    fetchImpl,
+  });
+}
+
+describe('Outlook recent-mail sync read (CR-22 auto logging)', () => {
+  const graphPage = {
+    value: [
+      { // inbound from a CRM address — matched
+        id: 'm1', internetMessageId: '<abc@carrier.com>', subject: 'Rate confirm',
+        from: { emailAddress: { name: 'Family Choice', address: 'dispatch@familychoice.com' } },
+        toRecipients: [{ emailAddress: { address: 'me@gsquaredfunding.com' } }],
+        receivedDateTime: '2026-08-26T15:00:00Z', sentDateTime: '2026-08-26T14:59:00Z',
+        bodyPreview: 'Please see attached', isDraft: false,
+      },
+      { // outbound covering two CRM addresses at once — matched, both addresses reported
+        id: 'm2', internetMessageId: '<def@gsq.com>', subject: 'Docs',
+        from: { emailAddress: { address: 'me@gsquaredfunding.com' } },
+        toRecipients: [
+          { emailAddress: { address: 'dispatch@familychoice.com' } },
+          { emailAddress: { address: 'owner@acmetruck.com' } },
+        ],
+        receivedDateTime: '2026-08-26T15:10:00Z', sentDateTime: '2026-08-26T15:10:00Z',
+        bodyPreview: 'Sending the docs', isDraft: false,
+      },
+      { // unrelated mail — must never leave core
+        id: 'm3', subject: 'Newsletter',
+        from: { emailAddress: { address: 'news@vendor.example' } },
+        toRecipients: [{ emailAddress: { address: 'me@gsquaredfunding.com' } }],
+        receivedDateTime: '2026-08-26T15:20:00Z', bodyPreview: 'secret unrelated content', isDraft: false,
+      },
+      { // matched but a draft — never customer correspondence
+        id: 'm4', subject: 'Draft to carrier',
+        from: { emailAddress: { address: 'me@gsquaredfunding.com' } },
+        toRecipients: [{ emailAddress: { address: 'dispatch@familychoice.com' } }],
+        receivedDateTime: '2026-08-26T15:30:00Z', isDraft: true,
+      },
+    ],
+  };
+
+  it('matches inside core, reports every matched CRM address, drops unmatched mail and drafts, and advances the cursor', async () => {
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      const parsed = new URL(String(url));
+      expect(parsed.searchParams.get('$filter')).toMatch(/^receivedDateTime ge \d{4}-/);
+      expect(parsed.searchParams.get('$select')).toContain('internetMessageId');
+      return jsonResponse(graphPage);
+    }) as unknown as typeof fetch;
+    const read = syncReader([connection()], fetchImpl);
+    const result = await read({
+      userSub: SUB, loginEmail: 'me@gsquaredfunding.com', sinceIso: '2026-08-26T12:00:00Z',
+      matchAddresses: ['dispatch@familychoice.com', 'owner@acmetruck.com'],
+    });
+    expect(result.status).toBe('connected');
+    expect(result.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(result.messages[0].direction).toBe('inbound');
+    expect(result.messages[0].internetMessageId).toBe('<abc@carrier.com>');
+    expect(result.messages[1].direction).toBe('outbound');
+    expect(result.messages[1].matchedAddresses.sort()).toEqual(['dispatch@familychoice.com', 'owner@acmetruck.com']);
+    // The cursor reflects the newest fetched message even though it was unmatched/draft.
+    expect(result.latestReceivedAt).toBe('2026-08-26T15:30:00Z');
+    // Unrelated content never appears anywhere in the result.
+    expect(JSON.stringify(result)).not.toContain('secret unrelated content');
+    expect(JSON.stringify(result)).not.toContain('news@vendor.example');
+  });
+
+  it('fails closed on an invalid cursor and keeps the connection-status contract', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const read = syncReader([connection()], fetchImpl);
+    expect((await read({ userSub: SUB, sinceIso: 'not-a-date', matchAddresses: ['a@b.co'] })).status).toBe('unavailable');
+    expect((await syncReader([], fetchImpl)({ userSub: SUB, sinceIso: '2026-08-26T12:00:00Z', matchAddresses: ['a@b.co'] })).status).toBe('not_connected');
+    expect((await syncReader([connection({ scopes: 'openid profile' })], fetchImpl)({
+      userSub: SUB, sinceIso: '2026-08-26T12:00:00Z', matchAddresses: ['a@b.co'],
+    })).status).toBe('missing_scope');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('clamps the lookback so a stale cursor cannot walk months of mailbox', () => {
+    const clamped = outlookMailReaderInternals.normalizeSinceIso('2020-01-01T00:00:00Z');
+    expect(clamped).not.toBeNull();
+    expect(Date.now() - Date.parse(clamped as string)).toBeLessThanOrEqual(31 * 24 * 3600 * 1000);
   });
 });
