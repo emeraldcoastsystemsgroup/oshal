@@ -21,7 +21,7 @@
  */
 
 export type {
-  BrokerAdapter, BrokerProviderType, TradingMode, OrderSide, OrderType,
+  BrokerAdapter, BrokerProviderType, TradingMode, TradingBook, OrderSide, OrderType,
   OrderRequest, OrderResult, OrderStatus, Position, BrokerAccount, BrokerTransaction,
 } from './services/broker-adapter';
 export { AlpacaBrokerAdapter } from './services/alpaca-broker-adapter';

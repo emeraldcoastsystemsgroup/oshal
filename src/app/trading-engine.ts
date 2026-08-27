@@ -16,6 +16,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | recordOrder takes an optional createdAt (ISO) written ATOMICALLY in the INSERT (created_at = COALESCE($24::timestamptz, now())). For a historical ledger reconcile of a close that already happened, the row lands with its real trade date in one statement — never a now() value that would pollute the /realized "today" window, and no droppable follow-up UPDATE (an adversarial review flagged the two-step back-date as non-atomic + non-self-healing). ON CONFLICT keeps the back-dated created_at stable on re-run. Live path (no arg) is unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Moved routes/trading-routes-core.ts → app/trading-engine.ts and made it THE engine module (trading engine extraction, ADR-085 pre-carve): placeDecisionOrder (verbatim from trading-routes.ts, live_blocked gate intact) and resolveMaturedPredictions (verbatim from trading-routes-algo-builders.ts) moved in; ensureTradingSchema + the shared helpers re-exported so the 8 dispatch/reconcile loops depend only on engine modules, never the carvable route surface. Pure code motion — zero behavior change, no order-path/gate/env semantics touched.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Submission reservation: placeDecisionOrder claims the clientOrderId in the ledger (INSERT ... ON CONFLICT DO NOTHING) BEFORE the venue call, refusing the loser of a race with 409 duplicate_submission; any throw before recordOrder releases the still-'submitting' claim. Fixes the 2026-08-18 live twin orders (two same-fire paths shared a minute-bucketed clientOrderId; Alpaca rejects a reused client-order-id server-side but Schwab HAS no client-order-id, so the duplicate placed for real and the recordOrder upsert overwrote the filled row with the rejected twin — three fills vanished from the ledger). recordOrder's conflict branch now also completes qty/order_type/prices/tif/submitted_at, since with a reservation row it is the branch every normal fill takes.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book re-key (PR1): placeDecisionOrder/recordOrder/analyzeAndRecordDecision accept a TradingBook or the legacy mode (normalizing to the legacy book — byte-identical under the flag-off bijection, keeping deployed store twins working). The decision lookup, feed-loop dedup, reservation arbiter, release DELETE, and order upsert all key (user_sub, book_id); mode is still written on every row; the live_blocked gate condition and string are byte-unchanged. rebindOrder preserves a row's own book identity through re-record. bindingOf threads a bound account to the factory, which ignores it while the flag is off.
  *
  * @module trading-engine
  */
@@ -26,8 +27,9 @@ import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-
 import {
   getBrokerAdapter, getBrokerReader, liveTradingEnabled, getMarketData, latestPrice,
   tradingSession, isTickStale, maxTickAgeSec,
-  type TradingMode, type OrderResult,
+  type TradingMode, type TradingBook, type OrderResult,
 } from '@/features/trading';
+import { legacyBook, legacyBookId } from './trading-books-store';
 import { resolveUserLlmConnection } from './routes/free-tier-rotation';
 import { executeBotOrInline } from './routes/inline-bot-execution';
 import { guardrails, guardrailViolation, TradingError, type SignalRow } from './routes/trading-routes-helpers';
@@ -173,9 +175,11 @@ async function runAnalyst(ctx: AppContext, sub: string, signals: SignalRow[], co
  * @returns Resolves once the row is upserted.
  */
 export async function recordOrder(
-  pool: AppContext['pool'], sub: string, mode: TradingMode, decisionId: string, clientOrderId: string, r: OrderResult,
+  pool: AppContext['pool'], sub: string, bookOrMode: TradingBook | TradingMode, decisionId: string, clientOrderId: string, r: OrderResult,
   costBasis?: number, createdAt?: string,
 ): Promise<void> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   const cb = costBasis != null && costBasis > 0 ? costBasis : null;
   // Realized P&L per SALE: (fill − cost basis) × filled shares. Computed here when the fill lands with
   // a known cost basis (captured at submit). On reconcile the param is absent, so SQL falls back to the
@@ -187,13 +191,13 @@ export async function recordOrder(
   const realizedInsert = (r.side === 'sell' && saneCb && r.filledQty > 0) ? (fa as number - (cb as number)) * r.filledQty : null;
   await pool.query(
     `INSERT INTO oshal_trading_orders
-       (user_sub, mode, decision_id, broker, broker_order_id, client_order_id, symbol, side, qty,
+       (user_sub, mode, book_id, decision_id, broker, broker_order_id, client_order_id, symbol, side, qty,
         order_type, limit_price, stop_price, trail_price, trail_percent, time_in_force,
         status, raw_status, filled_qty, filled_avg_price, reject_reason, submitted_at, cost_basis, realized_pnl,
         created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-             COALESCE($24::timestamptz, now()))
-     ON CONFLICT (user_sub, mode, client_order_id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,
+             COALESCE($25::timestamptz, now()))
+     ON CONFLICT (user_sub, book_id, client_order_id) DO UPDATE SET
        broker_order_id = EXCLUDED.broker_order_id, status = EXCLUDED.status, raw_status = EXCLUDED.raw_status,
        filled_qty = EXCLUDED.filled_qty, filled_avg_price = EXCLUDED.filled_avg_price,
        reject_reason = EXCLUDED.reject_reason,
@@ -214,7 +218,7 @@ export async function recordOrder(
          THEN (EXCLUDED.filled_avg_price - COALESCE(oshal_trading_orders.cost_basis, EXCLUDED.cost_basis)) * EXCLUDED.filled_qty
          ELSE COALESCE(oshal_trading_orders.realized_pnl, EXCLUDED.realized_pnl) END,
        updated_at = now()`,
-    [sub, mode, decisionId, r.provider, r.id || null, clientOrderId, r.symbol, r.side, r.qty,
+    [sub, mode, book.bookId, decisionId, r.provider, r.id || null, clientOrderId, r.symbol, r.side, r.qty,
      r.type, r.limitPrice ?? null, r.stopPrice ?? null, r.trailPrice ?? null, r.trailPercent ?? null, r.timeInForce ?? null,
      r.status, r.rawStatus ?? null, r.filledQty, r.filledAvgPrice ?? null,
      r.rejectReason ?? null, r.submittedAt ?? null, cb, realizedInsert, createdAt ?? null]);
@@ -250,10 +254,13 @@ export interface RebindResult {
  */
 export async function rebindOrder(pool: AppContext['pool'], sub: string, orderId: string): Promise<RebindResult> {
   const row = (await pool.query(
-    `SELECT mode, decision_id, client_order_id, broker_order_id, symbol, side, qty, created_at
+    `SELECT mode, book_id, decision_id, client_order_id, broker_order_id, symbol, side, qty, created_at
        FROM oshal_trading_orders WHERE order_id=$1 AND user_sub=$2`, [orderId, sub])).rows[0];
   if (!row) throw new TradingError(404, 'not_found', 'No such order for this user.');
   const mode = row.mode as TradingMode;
+  // ADR-134: preserve the row's OWN book identity through the re-record — a rebind on a non-legacy
+  // book must never re-home the row onto the legacy book of its mode.
+  const rowBook: TradingBook = { ...legacyBook(sub, mode), bookId: row.book_id ? String(row.book_id) : legacyBookId(sub, mode) };
   const broker = getBrokerReader(mode, sub); // read-only: rebinding never places or cancels anything
   const was: string | null = row.broker_order_id ? String(row.broker_order_id) : null;
 
@@ -261,7 +268,7 @@ export async function rebindOrder(pool: AppContext['pool'], sub: string, orderId
   if (was) {
     try {
       const cur = await broker.getOrder(was);
-      await recordOrder(pool, sub, mode, String(row.decision_id), String(row.client_order_id), cur);
+      await recordOrder(pool, sub, rowBook, String(row.decision_id), String(row.client_order_id), cur);
       return { rebound: false, was, brokerOrderId: was, order: cur };
     } catch { /* id absent, or belongs to the other book — fall through and re-find it */ }
   }
@@ -279,7 +286,7 @@ export async function rebindOrder(pool: AppContext['pool'], sub: string, orderId
   }
   const truth = found[0];
   // recordOrder's upsert rewrites broker_order_id + the whole fill state from the venue's record.
-  await recordOrder(pool, sub, mode, String(row.decision_id), String(row.client_order_id), truth);
+  await recordOrder(pool, sub, rowBook, String(row.decision_id), String(row.client_order_id), truth);
   logger.warn({ sub, mode, orderId, symbol, was, now: truth.id, status: truth.status, filledQty: truth.filledQty },
     'order rebound to the broker id the venue actually used');
   return { rebound: true, was, brokerOrderId: truth.id, order: truth };
@@ -295,8 +302,11 @@ export async function rebindOrder(pool: AppContext['pool'], sub: string, orderId
  * @returns The persisted decision id + creation time + the parsed decision.
  */
 export async function analyzeAndRecordDecision(
-  ctx: AppContext, sub: string, mode: TradingMode, signals: SignalRow[],
+  ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, signals: SignalRow[],
 ): Promise<{ decisionId: string; createdAt: string; decision: AnalystDecision }> {
+  // ADR-134: a legacy mode normalizes to its legacy book — byte-identical rows under the bijection.
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
   // Feed-loop guard. The news legs re-grab `recentNews` over a 3-20 min window but fire more often
   // than that window, so consecutive fires hand this function the SAME signal batch. content_hash
   // dedupes the signal ROW, but without this we'd still re-run the LLM analyst on identical content
@@ -308,10 +318,10 @@ export async function analyzeAndRecordDecision(
   if (sigIds.length) {
     const prior = (await ctx.pool.query(
       `SELECT decision_id, created_at FROM oshal_trading_decisions
-        WHERE user_sub=$1 AND mode=$2 AND signal_ids = $3::uuid[]
+        WHERE user_sub=$1 AND book_id=$2 AND signal_ids = $3::uuid[]
           AND created_at > now() - interval '20 minutes'
         ORDER BY created_at DESC LIMIT 1`,
-      [sub, mode, sigIds])).rows[0];
+      [sub, book.bookId, sigIds])).rows[0];
     if (prior) {
       return {
         decisionId: prior.decision_id, createdAt: prior.created_at,
@@ -331,11 +341,11 @@ export async function analyzeAndRecordDecision(
   const decision = await runAnalyst(ctx, sub, signals, { cash, maxQty: g.maxQty, maxNotionalUsd: g.maxNotionalUsd, allowList: g.allowList, mode });
   const row = (await ctx.pool.query(
     `INSERT INTO oshal_trading_decisions
-       (user_sub, mode, signal_ids, agent_id, action, symbol, side, qty, order_type, limit_price,
+       (user_sub, mode, book_id, signal_ids, agent_id, action, symbol, side, qty, order_type, limit_price,
         stop_price, trail_price, trail_percent, confidence, rationale, indicators, guardrails)
-     VALUES ($1,$2,$3::uuid[],$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+     VALUES ($1,$2,$3,$4::uuid[],$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      RETURNING decision_id, created_at`,
-    [sub, mode, signals.map((s) => s.signal_id), TRADING_AGENT_ID, decision.action, decision.symbol, decision.side,
+    [sub, mode, book.bookId, signals.map((s) => s.signal_id), TRADING_AGENT_ID, decision.action, decision.symbol, decision.side,
      decision.qty, decision.orderType, decision.limitPrice, decision.stopPrice, decision.trailPrice, decision.trailPercent,
      decision.confidence, decision.rationale, JSON.stringify(decision.indicators), JSON.stringify(g)])).rows[0];
   return { decisionId: row.decision_id, createdAt: row.created_at, decision };
@@ -347,18 +357,35 @@ export async function analyzeAndRecordDecision(
  * unconfigured broker, stale extended-hours quote).
  * @param pool - Postgres pool.
  * @param sub - Acting user's sub.
- * @param mode - The book ('paper' | 'live').
+ * @param bookOrMode - The book (ADR-134), or the legacy mode which normalizes to its legacy book
+ *   (store-twin back-compat; byte-identical behavior under the flag-off bijection).
  * @param decisionId - The justifying decision (every order chains back to one).
  * @param requestId - Client idempotency key (becomes part of client_order_id).
  * @param confirm - Explicit live confirm flag — live orders refuse without it.
  * @returns The broker's order state as placed.
  */
+/**
+ * @description Adapter binding for a book — undefined for legacy/unbound books (env resolution).
+ * The FACTORY decides whether to honor it: while TRADING_MULTI_ACCOUNT is off, bindings are
+ * ignored entirely (the ADR-134 flag-off byte-parity rule), so passing it unconditionally is safe.
+ * @param book - The trading book.
+ * @returns The account binding, or undefined for legacy resolution.
+ */
+function bindingOf(book: TradingBook): { accountNumber: string; connectionKey: string | null } | undefined {
+  return book.accountNumber ? { accountNumber: book.accountNumber, connectionKey: book.connectionKey } : undefined;
+}
+
 export async function placeDecisionOrder(
-  pool: AppContext['pool'], sub: string, mode: TradingMode, decisionId: string, requestId: string, confirm: boolean,
+  pool: AppContext['pool'], sub: string, bookOrMode: TradingBook | TradingMode, decisionId: string, requestId: string, confirm: boolean,
 ): Promise<OrderResult> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
+  const mode = book.kind;
+  // Book-scoped decision lookup (ADR-134): with two live books an unscoped WHERE would resolve a
+  // decision minted for book A while executing on book B — an order justified by the WRONG book's
+  // decision, silently breaking the ADR-052 justification chain. Book B executing book A's id → 404.
   const d = (await pool.query(
     `SELECT action, symbol, side, qty, order_type, limit_price, stop_price, trail_price, trail_percent, time_in_force
-       FROM oshal_trading_decisions WHERE decision_id=$1 AND user_sub=$2 AND mode=$3`, [decisionId, sub, mode])).rows[0];
+       FROM oshal_trading_decisions WHERE decision_id=$1 AND user_sub=$2 AND book_id=$3`, [decisionId, sub, book.bookId])).rows[0];
   if (!d) throw new TradingError(404, 'decision_not_found', 'No such decision for this book.');
   if (d.action === 'hold' || !d.symbol || !d.side || !(Number(d.qty) > 0)) {
     throw new TradingError(409, 'not_actionable', 'This decision recommends no trade (hold) or has no sized order.');
@@ -378,7 +405,7 @@ export async function placeDecisionOrder(
   const g = guardrails();
   const violation = guardrailViolation(g, symbol, qty, refPrice);
   if (violation) throw new TradingError(422, 'guardrail_blocked', violation);
-  const broker = getBrokerAdapter(mode, sub);
+  const broker = getBrokerAdapter(mode, sub, bindingOf(book));
   if (!broker.configured()) throw new TradingError(503, 'broker_not_configured', `Set the ${mode} broker keys first.`);
   const clientOrderId = `${sub}:${requestId}`.slice(0, 128);
 
@@ -388,16 +415,17 @@ export async function placeDecisionOrder(
   // server-side, but Schwab has no client-order-id at all, so a second submit places a REAL duplicate
   // order — and recordOrder's upsert then let the duplicate's result overwrite the first attempt's row
   // (2026-08-18 live: ARKG/ANET/CRWD each filled at Schwab, then the twin's oversold rejection erased
-  // the fill from the ledger). The unique index (user_sub, mode, client_order_id) makes this insert
-  // the race arbiter: the loser sees zero rows back and refuses before ever reaching the venue.
+  // the fill from the ledger). The unique index (user_sub, book_id, client_order_id) makes this insert
+  // the race arbiter (ADR-134 re-key — the legacy mode index coexists until PR4 and, under the
+  // bijection, always agrees): the loser sees zero rows back and refuses before reaching the venue.
   const reserved = await pool.query(
     `INSERT INTO oshal_trading_orders
-       (user_sub, mode, decision_id, broker, client_order_id, symbol, side, qty, order_type,
+       (user_sub, mode, book_id, decision_id, broker, client_order_id, symbol, side, qty, order_type,
         status, raw_status, filled_qty, submitted_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'submitting','SUBMITTING',0,now())
-     ON CONFLICT (user_sub, mode, client_order_id) DO NOTHING
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'submitting','SUBMITTING',0,now())
+     ON CONFLICT (user_sub, book_id, client_order_id) DO NOTHING
      RETURNING order_id`,
-    [sub, mode, decisionId, broker.provider, clientOrderId, symbol, d.side, qty, orderType]);
+    [sub, mode, book.bookId, decisionId, broker.provider, clientOrderId, symbol, d.side, qty, orderType]);
   if (reserved.rows.length === 0) {
     throw new TradingError(409, 'duplicate_submission',
       `An order with idempotency key ${clientOrderId} is already in this book's ledger — refusing a second venue submission.`);
@@ -458,14 +486,14 @@ export async function placeDecisionOrder(
     // Scoped to status='submitting' so a row another path already progressed is never destroyed.
     try {
       await pool.query(
-        `DELETE FROM oshal_trading_orders WHERE user_sub=$1 AND mode=$2 AND client_order_id=$3 AND status='submitting'`,
-        [sub, mode, clientOrderId]);
+        `DELETE FROM oshal_trading_orders WHERE user_sub=$1 AND book_id=$2 AND client_order_id=$3 AND status='submitting'`,
+        [sub, book.bookId, clientOrderId]);
     } catch (relErr) {
-      logger.error({ err: relErr, sub, mode, clientOrderId }, 'failed to release order submission reservation');
+      logger.error({ err: relErr, sub, mode, bookRef: book.ref, clientOrderId }, 'failed to release order submission reservation');
     }
     throw e;
   }
-  await recordOrder(pool, sub, mode, decisionId, clientOrderId, result, costBasis);
+  await recordOrder(pool, sub, book, decisionId, clientOrderId, result, costBasis);
   return result;
 }
 

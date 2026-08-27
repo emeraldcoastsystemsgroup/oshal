@@ -16,7 +16,10 @@ import type { Request, RequestHandler } from 'express';
 import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
-import type { TradingMode } from '@/features/trading';
+// CHANGE LOG addendum (ADR-134 PR1): resolveBook joins resolveMode — the kernel choke-point that
+// maps a route's `book` (or legacy `mode`) param to a TradingBook. Garbage refs are a 400, never a
+// silent remap to paper (a typo'd live protective action must not become a paper no-op with a 200).
+import type { TradingBook, TradingMode } from '@/features/trading';
 
 // Same module tag as the entry file so structured log output is unchanged by the split.
 const logger = createChildLogger({ module: 'trading-routes' });
@@ -43,6 +46,31 @@ export function callerSub(req: Request): string | null {
  */
 export function resolveMode(raw: unknown): TradingMode {
   return String(raw || '').toLowerCase() === 'live' ? 'live' : 'paper';
+}
+
+/**
+ * @description Resolve a route's `book` (or legacy `mode`) parameter to a TradingBook (ADR-134).
+ * Accepts the alias literals 'paper'/'live' (→ the legacy books), a book ref ('b-xxxxxxxx'), or a
+ * book UUID. A GARBAGE ref is a 400, never a remap — silently collapsing a typo'd `&book=` on a
+ * live order/exit route to the paper book would turn an intended real-money protective action into
+ * a paper no-op with a 200 (adversarial-review rule). Absent/empty raw defaults to legacy paper,
+ * exactly like resolveMode.
+ * @param pool - Postgres pool.
+ * @param sub - Owner sub.
+ * @param raw - The raw `book` (or `mode`) value from a query/body field.
+ * @returns The resolved TradingBook.
+ * @throws TradingError 400 on an unknown/foreign ref; 404-shaped refusal stays a 400 to avoid
+ *   existence probing across users.
+ */
+export async function resolveBook(pool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> }, sub: string, raw: unknown): Promise<TradingBook> {
+  const { legacyBook, loadBook, getBookByRef } = await import('../trading-books-store.js');
+  const v = String(raw ?? '').trim();
+  if (!v || v.toLowerCase() === 'paper') return legacyBook(sub, 'paper');
+  if (v.toLowerCase() === 'live') return legacyBook(sub, 'live');
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  const book = isUuid ? await loadBook(pool as never, sub, v) : await getBookByRef(pool as never, sub, v);
+  if (!book) throw new TradingError(400, 'unknown_book', `No such trading book '${v}' for this user.`);
+  return book;
 }
 
 /**

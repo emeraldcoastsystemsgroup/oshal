@@ -9,12 +9,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from trading-routes.ts (1000-line cap decomposition): ensureTradingSchema + the DDL bootstrap and its once-per-process memoization. Code moved verbatim — zero behavior change.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Moved routes/trading-routes-schema.ts → app/trading-schema.ts (trading engine extraction, ADR-085 pre-carve): the schema bootstrap is ENGINE, not surface — 8 kernel dispatch/reconcile loops await it, so it can't live under the routes family the surface carve will take. Code unchanged — pure motion, zero behavior change.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book_id re-key (PR1): books registry bootstraps first; signals/decisions/orders/predictions gain a nullable book_id with trigger-BEFORE-backfill ordering (the BEFORE INSERT fill trigger arms before the backfill sweep so concurrent writers — reconcile fires while closed, un-redeployed store twins — can never mint NULL-book rows); book-scoped unique arbiters coexist with the mode-scoped ones until the PR4 cutover. `mode` is retained and always written.
  *
  * @module trading-schema
  */
 
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import type { AppContext } from '@/app/composition/app-context';
+import { ensureBooksSchema } from './trading-books-store';
 
 // Memoize the DDL bootstrap so it runs ONCE per process, not on every route hit (every /status,
 // /signals, /decide, … awaits this). On failure we reset the cache to null so a later call retries.
@@ -37,6 +39,9 @@ export async function ensureTradingSchema(pool: AppContext['pool']): Promise<voi
 }
 
 async function bootstrapTradingSchema(pool: AppContext['pool']): Promise<void> {
+  // ADR-134: the books registry must exist (and legacy books be minted) BEFORE the book_id
+  // trigger/backfill below derives ids against it.
+  await ensureBooksSchema(pool);
   await runRuntimeSchemaBootstrap({
     pool,
     moduleName: 'trading routes',
@@ -114,11 +119,45 @@ async function bootstrapTradingSchema(pool: AppContext['pool']): Promise<void> {
       // only open (resolved=false) rows by mode + age, so a partial index keeps that sweep cheap.
       // NOT CONCURRENTLY — this runs inside the bootstrap transaction path.
       'CREATE INDEX IF NOT EXISTS idx_trd_pred_open_mode ON oshal_trading_predictions (mode, created_at) WHERE resolved = false',
+
+      /* ── ADR-134: book_id re-key (additive; `mode` retained and always written) ──────────────
+         Ordering is load-bearing (adversarial live-safety review): columns → TRIGGER → backfill →
+         indexes. Writers never stop (reconcile fires every 5min even closed; un-redeployed store
+         twins insert book-less rows until their own docker-cp), so the BEFORE INSERT trigger must
+         be armed BEFORE the backfill sweep — an insert landing between a backfill-first UPDATE and
+         a later trigger install would stay NULL forever and silently escape the twin-order
+         arbiter (NULL never conflicts in a unique index). */
+      'ALTER TABLE oshal_trading_signals    ADD COLUMN IF NOT EXISTS book_id UUID',
+      'ALTER TABLE oshal_trading_decisions  ADD COLUMN IF NOT EXISTS book_id UUID',
+      'ALTER TABLE oshal_trading_orders     ADD COLUMN IF NOT EXISTS book_id UUID',
+      'ALTER TABLE oshal_trading_predictions ADD COLUMN IF NOT EXISTS book_id UUID',
+      // (The fill function itself is created canonically by ensureBooksSchema, awaited above.)
+      'DROP TRIGGER IF EXISTS trg_trd_signals_book_fill ON oshal_trading_signals',
+      'CREATE TRIGGER trg_trd_signals_book_fill BEFORE INSERT ON oshal_trading_signals FOR EACH ROW EXECUTE FUNCTION oshal_trading_book_id_fill()',
+      'DROP TRIGGER IF EXISTS trg_trd_decisions_book_fill ON oshal_trading_decisions',
+      'CREATE TRIGGER trg_trd_decisions_book_fill BEFORE INSERT ON oshal_trading_decisions FOR EACH ROW EXECUTE FUNCTION oshal_trading_book_id_fill()',
+      'DROP TRIGGER IF EXISTS trg_trd_orders_book_fill ON oshal_trading_orders',
+      'CREATE TRIGGER trg_trd_orders_book_fill BEFORE INSERT ON oshal_trading_orders FOR EACH ROW EXECUTE FUNCTION oshal_trading_book_id_fill()',
+      'DROP TRIGGER IF EXISTS trg_trd_predictions_book_fill ON oshal_trading_predictions',
+      'CREATE TRIGGER trg_trd_predictions_book_fill BEFORE INSERT ON oshal_trading_predictions FOR EACH ROW EXECUTE FUNCTION oshal_trading_book_id_fill()',
+      `UPDATE oshal_trading_signals SET book_id = md5('oshal-book:'||user_sub||':'||mode)::uuid WHERE book_id IS NULL AND user_sub IS NOT NULL`,
+      `UPDATE oshal_trading_decisions SET book_id = md5('oshal-book:'||user_sub||':'||mode)::uuid WHERE book_id IS NULL AND user_sub IS NOT NULL`,
+      `UPDATE oshal_trading_orders SET book_id = md5('oshal-book:'||user_sub||':'||mode)::uuid WHERE book_id IS NULL AND user_sub IS NOT NULL`,
+      `UPDATE oshal_trading_predictions SET book_id = md5('oshal-book:'||user_sub||':'||mode)::uuid WHERE book_id IS NULL AND user_sub IS NOT NULL`,
+      // Book-scoped unique arbiters COEXIST with the mode-scoped ones until PR4 (the bijection
+      // makes any old-index violation a new-index conflict too; a rolled-back image still finds
+      // its ON CONFLICT (user_sub, mode, …) targets). The 07-08 clobber + 08-18 twin-order
+      // classes stay double-covered: book in the KEY TEXT (requestId ref) and in the INDEX.
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_signals_dedup_book ON oshal_trading_signals (user_sub, book_id, content_hash)',
+      'CREATE INDEX IF NOT EXISTS idx_trd_signals_user_book ON oshal_trading_signals (user_sub, book_id, observed_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_trd_decisions_user_book ON oshal_trading_decisions (user_sub, book_id, created_at DESC)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_orders_client_book ON oshal_trading_orders (user_sub, book_id, client_order_id)',
+      'CREATE INDEX IF NOT EXISTS idx_trd_pred_open_book ON oshal_trading_predictions (book_id, created_at) WHERE resolved = false',
     ],
     requirements: [
       {
         table: 'oshal_trading_signals',
-        columns: ['signal_id', 'user_sub', 'mode', 'source', 'external_id', 'author', 'url', 'title', 'body', 'symbols', 'indicators', 'content_hash', 'observed_at'],
+        columns: ['signal_id', 'user_sub', 'mode', 'book_id', 'source', 'external_id', 'author', 'url', 'title', 'body', 'symbols', 'indicators', 'content_hash', 'observed_at'],
       },
       {
         table: 'oshal_trading_decisions',
@@ -126,6 +165,7 @@ async function bootstrapTradingSchema(pool: AppContext['pool']): Promise<void> {
           'decision_id',
           'user_sub',
           'mode',
+          'book_id',
           'signal_ids',
           'agent_id',
           'action',
@@ -151,6 +191,7 @@ async function bootstrapTradingSchema(pool: AppContext['pool']): Promise<void> {
           'order_id',
           'user_sub',
           'mode',
+          'book_id',
           'decision_id',
           'broker',
           'broker_order_id',
@@ -181,6 +222,7 @@ async function bootstrapTradingSchema(pool: AppContext['pool']): Promise<void> {
           'prediction_id',
           'user_sub',
           'mode',
+          'book_id',
           'symbol',
           'algo',
           'pred_dir',

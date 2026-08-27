@@ -41,6 +41,10 @@ import type {
 } from './broker-adapter';
 import { SchwabMarketData, toSchwabSymbol, fromSchwabSymbol } from './schwab-market-data';
 
+// CHANGE LOG addendum (ADR-134 PR1): constructor takes an optional boundAccountNumber — when set,
+// accountHash() is an EXACT enumeration match that fails closed (never first-account fallback), and
+// the hash cache keys per (sub, bound account) so one user's second account can never read a stale
+// hash minted by the first. Unbound behavior (env pin / first) is byte-unchanged.
 const logger = createChildLogger({ module: 'schwab-broker-adapter' });
 
 /** Cross-order account-hash cache (keyed by userSub, short TTL). Each live order builds a FRESH
@@ -248,16 +252,22 @@ export class SchwabBrokerAdapter implements BrokerAdapter {
   /** Owner sub — keys the cross-order account-hash cache (ACCOUNT_HASH_CACHE). */
   private readonly userSub?: string;
 
+  /** ADR-134: exact account this adapter is bound to; null = legacy selection (env pin / first). */
+  private readonly boundAccountNumber: string | null;
+
   /**
    * @param mode - The book. Schwab is live-only; the factory forbids paper, so this is 'live'.
    * @param resolveToken - Resolves a fresh access token for the bound user (null = not connected).
    * @param userSub - Owner sub, keying the cross-order account-hash cache (avoids re-fetching
    *   /accounts/accountNumbers on every order — a rate-limit saver at the open).
+   * @param boundAccountNumber - ADR-134 book binding: when set, account resolution is an EXACT
+   *   match against the enumeration and fails closed — never first-account fallback.
    */
-  constructor(mode: TradingMode, resolveToken: SchwabTokenResolver, userSub?: string) {
+  constructor(mode: TradingMode, resolveToken: SchwabTokenResolver, userSub?: string, boundAccountNumber: string | null = null) {
     this._mode = mode;
     this.resolveToken = resolveToken;
     this.userSub = userSub;
+    this.boundAccountNumber = boundAccountNumber;
     // "configured" = the Schwab OAuth app is wired (approved production App Key + Secret present).
     // Whether THIS user has connected their account is discovered lazily (a call throws a clear
     // "connect your Schwab account" error) since the interface's configured() is synchronous.
@@ -305,16 +315,26 @@ export class SchwabBrokerAdapter implements BrokerAdapter {
    * @returns The account hashValue.
    */
   private async accountHash(): Promise<string> {
-    const key = this.userSub || 'default';
+    // ADR-134: the cache is keyed per (sub, bound account) — a userSub-only key would hand one
+    // user's SECOND account a stale hash from the first (the connector-map migration hazard).
+    const key = `${this.userSub || 'default'}:${this.boundAccountNumber ?? 'legacy'}`;
     const cached = ACCOUNT_HASH_CACHE.get(key);
     if (cached && cached.exp > Date.now()) return cached.hash;
     const rows = await this.api<Array<{ accountNumber?: string; hashValue?: string }>>('GET', '/accounts/accountNumbers');
     const list = Array.isArray(rows) ? rows : [];
     if (!list.length) throw new Error('Schwab returned no accounts for this connection.');
-    const want = (process.env.SCHWAB_ACCOUNT_NUMBER || '').trim();
-    const chosen = (want && list.find((a) => a.accountNumber === want)) || list[0];
+    let chosen: { accountNumber?: string; hashValue?: string } | undefined;
+    if (this.boundAccountNumber) {
+      // Bound book: EXACT match, fail-closed. Falling through to first-account would trade the
+      // WRONG real account on a partial/foreign enumeration — the fire skips instead.
+      chosen = list.find((a) => a.accountNumber === this.boundAccountNumber);
+      if (!chosen) throw new Error(`Schwab bound account …${this.boundAccountNumber.slice(-4)} is not in this connection's enumeration (${list.length} accounts) — refusing to fall back to another account.`);
+    } else {
+      const want = (process.env.SCHWAB_ACCOUNT_NUMBER || '').trim();
+      chosen = (want && list.find((a) => a.accountNumber === want)) || list[0];
+    }
     if (!chosen?.hashValue) throw new Error('Schwab account has no hashValue (cannot address account-scoped calls).');
-    logger.info({ mode: this._mode, account: `…${String(chosen.accountNumber || '').slice(-4)}`, accounts: list.length, pinned: Boolean(want) }, 'schwab account resolved');
+    logger.info({ mode: this._mode, account: `…${String(chosen.accountNumber || '').slice(-4)}`, accounts: list.length, bound: Boolean(this.boundAccountNumber) }, 'schwab account resolved');
     ACCOUNT_HASH_CACHE.set(key, { hash: chosen.hashValue, exp: Date.now() + ACCOUNT_HASH_TTL_MS });
     return chosen.hashValue;
   }

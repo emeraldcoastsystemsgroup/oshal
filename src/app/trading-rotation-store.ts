@@ -15,16 +15,19 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-(sub,mode) last-rotated timestamp + load/save for the gravity sleeve-rotation cadence gate.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book re-key (PR1): book_id column (trigger-before-backfill) + book-scoped unique index; load/save keyed (user_sub, book_id) — book-blind cadence would let one book's rebalance suppress another's weekly rotation. Accepts TradingBook or legacy mode.
  *
  * @module trading-rotation-store
  */
 
 import type { AppContext } from './composition-root';
-import type { TradingMode } from '@/features/trading';
+import type { TradingBook, TradingMode } from '@/features/trading';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { ensureBooksSchema, legacyBook } from './trading-books-store';
 
 /** @description Create the rotation-state table if absent (self-healing, like the peaks/equity stores). */
 export async function ensureRotationStateTable(pool: AppContext['pool']): Promise<void> {
+  await ensureBooksSchema(pool);
   await runRuntimeSchemaBootstrap({
     pool, moduleName: 'trading rotation state',
     statements: [
@@ -33,23 +36,30 @@ export async function ensureRotationStateTable(pool: AppContext['pool']): Promis
         last_rotated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (user_sub, mode)
       )`,
+      'ALTER TABLE oshal_trading_rotation_state ADD COLUMN IF NOT EXISTS book_id UUID',
+      'DROP TRIGGER IF EXISTS trg_trd_rotation_state_book_fill ON oshal_trading_rotation_state',
+      'CREATE TRIGGER trg_trd_rotation_state_book_fill BEFORE INSERT ON oshal_trading_rotation_state FOR EACH ROW EXECUTE FUNCTION oshal_trading_book_id_fill()',
+      `UPDATE oshal_trading_rotation_state SET book_id = md5('oshal-book:'||user_sub||':'||mode)::uuid WHERE book_id IS NULL`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_rotation_book ON oshal_trading_rotation_state (user_sub, book_id)',
     ],
-    requirements: [{ table: 'oshal_trading_rotation_state', columns: ['user_sub', 'mode', 'last_rotated_at'] }],
+    requirements: [{ table: 'oshal_trading_rotation_state', columns: ['user_sub', 'mode', 'book_id', 'last_rotated_at'] }],
   });
 }
 
 /** @description Load the last rotation timestamp for a book. @returns The Date, or null if never rotated. */
-export async function loadLastRotated(pool: AppContext['pool'], sub: string, mode: TradingMode): Promise<Date | null> {
+export async function loadLastRotated(pool: AppContext['pool'], sub: string, bookOrMode: TradingBook | TradingMode): Promise<Date | null> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   const row = (await pool.query(
-    `SELECT last_rotated_at FROM oshal_trading_rotation_state WHERE user_sub=$1 AND mode=$2`, [sub, mode])).rows[0];
+    `SELECT last_rotated_at FROM oshal_trading_rotation_state WHERE user_sub=$1 AND book_id=$2`, [sub, book.bookId])).rows[0];
   return row?.last_rotated_at ? new Date(row.last_rotated_at) : null;
 }
 
-/** @description Stamp the last rotation as now() for a book (upsert). */
-export async function saveLastRotated(pool: AppContext['pool'], sub: string, mode: TradingMode): Promise<void> {
+/** @description Stamp the last rotation as now() for a book (upsert on the book arbiter; mode still written). */
+export async function saveLastRotated(pool: AppContext['pool'], sub: string, bookOrMode: TradingBook | TradingMode): Promise<void> {
+  const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   await pool.query(
-    `INSERT INTO oshal_trading_rotation_state (user_sub, mode, last_rotated_at)
-       VALUES ($1,$2, now())
-     ON CONFLICT (user_sub, mode) DO UPDATE SET last_rotated_at = now()`,
-    [sub, mode]);
+    `INSERT INTO oshal_trading_rotation_state (user_sub, mode, book_id, last_rotated_at)
+       VALUES ($1,$2,$3, now())
+     ON CONFLICT (user_sub, book_id) DO UPDATE SET last_rotated_at = now()`,
+    [sub, book.kind, book.bookId]);
 }

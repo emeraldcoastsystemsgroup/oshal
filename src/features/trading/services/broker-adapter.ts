@@ -28,6 +28,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added BrokerTransaction + optional getTransactions(fromIso,toIso,symbol?) — settled trade EXECUTIONS as the venue recorded them (distinct from OrderResult's order lifecycle). The authority for reconciling the ledger against closes that happened OUTSIDE the engine (a manual sell), which listOrders can't do because it only sees orders the engine placed. Read-only; only rails with a transactions endpoint implement it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added listOrders(fromIso, toIso). A row can hold no broker id (Schwab returns it only in a Location header, and placeOrder falls back to a pending result without one) or the WRONG id (the pre-migration-065 cross-book upsert stamped the other book's id onto it). getOrder can never resolve such a row, so it strands non-terminal forever and blocks the symbol's future exits. The venue's own order record is the only authority, which makes enumeration a first-class capability rather than a recovery hack — it is what finally makes placeOrder's "reconcile will find it" true.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Futures extension (ADR-116): add 'tradovate' (the intended live futures rail) and 'paper' (the built-in vendor-neutral paper simulator) to BrokerProviderType so PaperFuturesBrokerAdapter can implement this same contract for the futures asset class. Equities rails and equity-only order semantics are unchanged; the futures adapter carries its own multiplier/short handling.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | TradingBook (ADR-134 multi-account books): the account-scoped book contract every ledger write, guard, and adapter binding keys on. Legacy books carry refs 'paper'/'live' so derived id text stays byte-identical; NULL binding fields mean today's legacy resolution exactly.
  *
  * @module broker-adapter
  */
@@ -37,6 +38,34 @@ export type BrokerProviderType = 'alpaca' | 'schwab' | 'snaptrade' | 'ibkr' | 't
 
 /** Which book an adapter is bound to. Paper and live are separate accounts, never a flag. */
 export type TradingMode = 'paper' | 'live';
+
+/**
+ * A trading book (ADR-134): the unit every ledger row, schedule, guard, and strategy binds to.
+ * The legacy two-book world maps to two deterministic book rows whose refs are literally
+ * 'paper'/'live', so id text derived from `ref` is byte-identical to the pre-book era.
+ * `accountNumber`/`connectionKey` NULL = legacy binding (env pin / first account / default
+ * connection) — today's behavior, byte-for-byte.
+ */
+export interface TradingBook {
+  /** The book row's UUID (legacy books: md5('oshal-book:'+sub+':'+kind) formatted as a UUID). */
+  bookId: string;
+  /** Short stable ref used in requestId / reconcile decision_id text ('paper' | 'live' | 'b-xxxxxxxx'). */
+  ref: string;
+  /** The legacy mode alias — every store keeps writing `mode = book.kind` beside book_id. */
+  kind: TradingMode;
+  /** Executing broker; null = legacy env resolution for the kind. */
+  broker: 'schwab' | 'alpaca' | null;
+  /** Bound account number (decrypted at point of use); null = legacy selection rule. */
+  accountNumber: string | null;
+  /** oshal_connections.account_key of the login whose token trades this book; null = default connection. */
+  connectionKey: string | null;
+  /** Per-book live capital cap; effective cap = LEAST(env, book); null falls through. */
+  capitalCapUsd: number | null;
+  /** Exactly one learning book (legacy paper) writes signal weights. */
+  learn: boolean;
+  /** Disabled books take no NEW risk; protective exits + reconcile keep running while positions remain. */
+  enabled: boolean;
+}
 
 /** Order side. buy opens a long / covers a short; sell closes a long / opens a short. */
 export type OrderSide = 'buy' | 'sell';
