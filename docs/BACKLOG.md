@@ -8,6 +8,18 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 
 ## Promotion, deployment, and regression proof
 
+### ADR-134 multi-account books — the pre-second-live-book observability pair
+- **Remaining:** the watchdog still greps hand-known schedule ids (`trading-watchdog.ps1`) and the three raw-pool host report scripts (`site-oshal-report.js`, `oshal-deck-data.js`, `oshal-report-journal.js`) render per-mode, not per-book. Safe today (one live book; `book_ref` is denormalized onto daily-equity/journal rows so legacy reads stay truthful), but a SECOND enabled live book must not run unattended behind a watchdog that can't see its beat or a report that merges its curve into another account's.
+- **Done when:** the watchdog derives the expected live schedule set FROM `oshal_trading_books` (never a hand list) and alerts per missing enabled-book beat; the three report scripts print a per-book breakdown + sum (proven by a real-DB run of their SQL as the enforcing role); both land BEFORE a second live book is enabled, enforced by a check in `scripts/trading-books-cutover.sh`.
+
+### ADR-134 PR4 hardening tail
+- **Remaining:** after the cutover has run and a full week is clean: `book_id NOT NULL` + legacy mode unique-index and fill-trigger drops on orders/signals/decisions, the config-overrides book-less-active CHECK, and `SCHWAB_ACCOUNT_NUMBER` retirement from compose/`.env.example` (with README/ROADMAP/counts reconciliation in the same change).
+- **Done when:** the cutover spec's legacy-shaped book-less INSERT is REJECTED on the live schema, `git grep SCHWAB_ACCOUNT_NUMBER` hits only the ADR/runbook history, and a deploy marker refuses `oshal-deploy.sh` auto-rollback past the PR1 image boundary.
+
+### trading-schedule-dispatch.ts decomposition
+- **Remaining:** 882 code lines — past the 800-line decomposition threshold it already exceeded before ADR-134 (827 on 2026-08-14). The book threading added ~55 lines to an already-oversized module.
+- **Done when:** the file is split along its own section seams (exits/rotation/entries/pop-catcher vs the schedule entry + run loop) with zero behavior change, each new module under 500 code lines, and the existing dispatch-touching specs green without edits.
+
 ### Codeless k8s install — first live-cluster proof (ADR-129)
 - **Remaining:** run `oshal-install.sh --mode 4` (or `-Kubernetes`) end-to-end on a real second machine — the dev laptop is excluded on purpose (Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing). Then publish the OCI chart (`bash scripts/publish-chart.sh` + the one-time GHCR visibility flip) so the installer's OCI-first path goes live.
 - **Done when:** a fresh box reaches `/welcome` in a browser via the NodePort with only kubectl+helm+the installer present, a model connects through the wizard and a jarvis turn answers, and `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` succeeds anonymously.

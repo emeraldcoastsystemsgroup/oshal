@@ -423,6 +423,10 @@ x-bot-env: &bot-env
   ALPAKA_SECRET: ${ALPAKA_SECRET:-}
   ALPAKA_ENDPOINT: ${ALPAKA_ENDPOINT:-}
   TRADING_LIVE_ENABLED: ${TRADING_LIVE_ENABLED:-false}
+  # ADR-134 multi-account books: OFF until the PR4 cutover (scripts/trading-books-cutover.sh). While
+  # off, per-book schedules hard-skip and adapter bindings are ignored — flag-off is byte-identical
+  # two-book behavior. Never flip this by hand mid-week; the cutover script owns the preconditions.
+  TRADING_MULTI_ACCOUNT: ${TRADING_MULTI_ACCOUNT:-false}
   # Autonomous LIVE autopilot: double opt-in (needs TRADING_LIVE_ENABLED too). CAP sizes the live book
   # (e.g. 20000 = run a 20K book on a bigger account). LIVE_EXT allows pre/post-market live (default OFF
   # → regular hours only). Kill switch for ALL legs: TRADING_HALT=true.
