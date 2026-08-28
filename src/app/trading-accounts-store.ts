@@ -169,7 +169,7 @@ export async function discoverBrokerAccounts(pool: AppContext['pool'], sub: stri
       const found = await enumerateSchwabAccounts(token);
       for (const a of found) {
         const enc = await encryptToken(pool, sub, a.accountNumber);
-        await pool.query(
+        const row = (await pool.query(
           `INSERT INTO oshal_trading_accounts
              (user_sub, broker, connection_key, account_number_enc, account_digest, account_last4,
               account_hash, account_type, nickname, last_seen_at)
@@ -179,10 +179,30 @@ export async function discoverBrokerAccounts(pool: AppContext['pool'], sub: stri
              account_hash   = EXCLUDED.account_hash,
              account_type   = COALESCE(EXCLUDED.account_type, oshal_trading_accounts.account_type),
              nickname       = COALESCE(EXCLUDED.nickname, oshal_trading_accounts.nickname),
-             last_seen_at   = now()`,
+             last_seen_at   = now()
+           RETURNING account_id`,
           [sub, accountKey, enc, accountDigest(sub, a.accountNumber), a.accountNumber.slice(-4),
-            a.hashValue, a.type ?? null, a.nickname ?? null]);
+            a.hashValue, a.type ?? null, a.nickname ?? null]).catch((e) => { throw e; })).rows[0];
         accounts += 1;
+        // VISIBILITY IS AUTOMATIC (operator doctrine 2026-08-28: "I connected half a million
+        // dollars and I don't know what's connected"): every discovered account gets a DISABLED
+        // book so the switcher/summary can show its real balances and positions immediately.
+        // Disabled = view-only — the engine refuses BUYs on a disabled book, dispatch takes no new
+        // risk, and ENABLING (the act that trades) stays an explicit confirm-gated operator step.
+        // The legacy live account is skipped: the 'live' legacy book already covers it.
+        try {
+          const already = (await pool.query(
+            `SELECT 1 FROM oshal_trading_books WHERE user_sub=$1 AND account_id=$2`, [sub, String(row.account_id)])).rows.length;
+          const isLegacyLive = (process.env.SCHWAB_ACCOUNT_NUMBER || '').trim() === a.accountNumber;
+          if (!already && !isLegacyLive) {
+            const { createBook } = await import('./trading-books-store.js');
+            const label = `${a.type || 'Account'} …${a.accountNumber.slice(-4)}`;
+            await createBook(pool, sub, String(row.account_id), label);
+            logger.info({ sub, accountLast4: a.accountNumber.slice(-4) }, 'auto-created DISABLED view-only book for discovered account');
+          }
+        } catch (bookErr) {
+          logger.warn({ err: bookErr, sub }, 'auto-book creation failed — account discovered, book can be created from the surface');
+        }
       }
     } catch (err) {
       logger.error({ err, sub, accountKey }, 'schwab account discovery failed for connection');
