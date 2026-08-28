@@ -390,6 +390,12 @@ export async function placeDecisionOrder(
   if (d.action === 'hold' || !d.symbol || !d.side || !(Number(d.qty) > 0)) {
     throw new TradingError(409, 'not_actionable', 'This decision recommends no trade (hold) or has no sized order.');
   }
+  // ADR-134 view-only rule: a DISABLED book exists so its balances/positions are visible — it may
+  // reduce risk (sells / protective exits) but must never ADD it. The refusal sits in the engine,
+  // not the surface, so no route or schedule path can buy on a book the operator hasn't armed.
+  if (!book.enabled && d.side === 'buy') {
+    throw new TradingError(409, 'book_disabled', `Book '${book.ref}' is view-only (disabled) — enable it in Accounts & books before buying.`);
+  }
   if (mode === 'live' && (!liveTradingEnabled() || confirm !== true)) {
     throw new TradingError(403, 'live_blocked', 'Live orders require TRADING_LIVE_ENABLED=true and an explicit confirm.');
   }

@@ -89,4 +89,25 @@ describe('the book-scoped orders arbiter', () => {
     expect((err as TradingError).httpStatus).toBe(404);
     expect((err as TradingError).code).toBe('decision_not_found');
   });
+
+  it('a DISABLED (view-only) book refuses BUYs at the engine; sells pass the disabled check', async () => {
+    const paperId = legacyBookId(SUB, 'paper');
+    const viewOnly = { ...legacyBook(SUB, 'paper'), enabled: false };
+    // BUY on a disabled book → the view-only refusal, before any venue/config concern.
+    const buySig = (await pool.query(
+      `INSERT INTO oshal_trading_signals (user_sub, mode, book_id, source, content_hash)
+         VALUES ($1,'paper',$2,'spec',$3) RETURNING signal_id`, [SUB, paperId, `spec-buy-${RUN}`])).rows[0];
+    const buyDec = (await pool.query(
+      `INSERT INTO oshal_trading_decisions (user_sub, mode, book_id, signal_ids, action, symbol, side, qty, order_type, rationale)
+         VALUES ($1,'paper',$2,ARRAY[$3]::uuid[],'buy','NVDA','buy',1,'market','spec') RETURNING decision_id`,
+      [SUB, paperId, buySig.signal_id])).rows[0];
+    const buyErr = await placeDecisionOrder(pool as never, SUB, viewOnly, String(buyDec.decision_id), `req-b-${RUN}`, true).catch((e) => e);
+    expect(buyErr).toBeInstanceOf(TradingError);
+    expect((buyErr as TradingError).code).toBe('book_disabled');
+    // SELL on the same disabled book gets PAST the disabled check (risk reduction is always
+    // allowed) — whatever it fails on downstream, it is never book_disabled.
+    const sellDec = await seedDecision(paperId, 'paper');
+    const sellErr = await placeDecisionOrder(pool as never, SUB, viewOnly, sellDec, `req-s-${RUN}`, true).catch((e) => e);
+    expect((sellErr as TradingError)?.code).not.toBe('book_disabled');
+  });
 });
