@@ -212,6 +212,27 @@
   .si-x { flex:none; color:var(--faint); cursor:pointer; padding:0 2px; font-size:14px; line-height:1; }
   .si-x:hover { color:var(--danger); }
 
+  /* ── Work-queue summary ──────────────────────────────────────────────
+     The list is capped (newest few + every unread) so a long history stops
+     burying what is actually new. The counts below are computed from the FULL
+     set, so collapsing never hides the fact that work exists. */
+  .shelf-sum { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 7px; }
+  .sm { display:inline-flex; align-items:baseline; gap:4px; padding:3px 8px; border:1px solid var(--line);
+        border-radius:999px; background:var(--card); font-size:11px; color:var(--muted); white-space:nowrap; }
+  .sm b { font-size:12px; font-weight:800; color:var(--text); font-variant-numeric:tabular-nums; }
+  .sm.is-active { border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .sm.is-active b { color:var(--accent); }
+  .sm.is-new { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, var(--card)); }
+  .sm.is-new b { color:var(--accent); }
+  .sm.is-err { border-color:color-mix(in srgb, var(--danger) 45%, var(--line)); }
+  .sm.is-err b { color:var(--danger); }
+  .sm.act { cursor:pointer; margin-left:auto; }
+  .sm.act:hover { border-color:var(--accent); color:var(--text); }
+  .shelf-more { display:flex; align-items:center; justify-content:center; gap:6px; margin-top:6px; padding:6px 10px;
+                border:1px dashed var(--line); border-radius:10px; background:transparent; color:var(--muted);
+                font-size:11.5px; cursor:pointer; }
+  .shelf-more:hover { border-color:var(--accent); color:var(--text); }
+
   /* ── Command Center cards (native glass) ─────────────────────────────── */
   .cc { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   @media (max-width:560px){ .cc { grid-template-columns:1fr; } }
@@ -1473,11 +1494,49 @@ async function readAllBacklog() {
   setStatus('Backlog read'); renderShelfFromCache();
 }
 
+const SHELF_VISIBLE = 6;      /* newest N kept on screen when collapsed */
+let shelfExpanded = false;
+
+/* Buckets over the FULL task set. The counts must describe everything the user has, not just
+   what the collapsed list happens to show — otherwise capping the list quietly hides work. */
+function shelfMetrics(jobs) {
+  const isActive = (j) => j.status === 'pending' || j.status === 'running' || j.status === 'queued' || j.status === 'summarizing';
+  const done = jobs.filter((j) => j.status === 'done');
+  return {
+    total: jobs.length,
+    active: jobs.filter(isActive),
+    done,
+    failed: jobs.filter((j) => j.status === 'error'),
+    unread: done.filter((j) => !isRead(j.jobId)),
+  };
+}
+
+/* The counts row. Zero-valued buckets are omitted so the strip stays readable; `done` always
+   shows, because "nothing new" and "nothing ever happened" must not look identical. */
+function shelfSummaryHtml(m) {
+  const chips = [];
+  if (m.active.length) chips.push(`<span class="sm is-active"><b>${m.active.length}</b> active</span>`);
+  if (m.unread.length) chips.push(`<span class="sm is-new"><b>${m.unread.length}</b> new</span>`);
+  chips.push(`<span class="sm"><b>${m.done.length}</b> done</span>`);
+  if (m.failed.length) chips.push(`<span class="sm is-err"><b>${m.failed.length}</b> failed</span>`);
+  chips.push('<span class="sm act" data-shelf-report title="Full history + metrics">Report ↗</span>');
+  return `<div class="shelf-sum">${chips.join('')}</div>`;
+}
+
 function renderShelf(jobs) {
   const el = $('shelf');
   if (!jobs.length) { $('shelfSect').style.display = 'none'; el.innerHTML = ''; return; }
   $('shelfSect').style.display = '';
-  el.innerHTML = jobs.map((j) => {
+  const m = shelfMetrics(jobs);
+
+  // An unread result is NEVER collapsed away, however old it is. The cap exists to bury
+  // finished history, not to hide something the user has not seen yet.
+  const keep = new Set(jobs.slice(0, SHELF_VISIBLE).map((j) => j.jobId));
+  for (const j of m.unread) keep.add(j.jobId);
+  const visible = shelfExpanded ? jobs : jobs.filter((j) => keep.has(j.jobId));   // newest-first order preserved
+  const hidden = jobs.length - visible.length;
+
+  const rows = visible.map((j) => {
     const cls = j.status === 'done' ? ('done' + (isRead(j.jobId) ? ' read' : ' unread')) : (j.status === 'error' ? 'err' : 'run');
     const dot = j.status === 'pending' ? '<span class="dot"></span>' : '●';
     const when = j.status === 'done' ? (isRead(j.jobId) ? 'read' : 'NEW') : (j.status === 'error' ? 'failed' : timeAgo(j.createdAt));
@@ -1488,6 +1547,13 @@ function renderShelf(jobs) {
       <span class="si-x" data-dismiss="${esc(j.jobId)}" title="Dismiss">×</span>
     </div>`;
   }).join('');
+
+  const more = shelfExpanded
+    ? `<div class="shelf-more" data-shelf-toggle>Show less ↑</div>`
+    : (hidden > 0 ? `<div class="shelf-more" data-shelf-toggle>Show all ${jobs.length} ↓</div>` : '');
+
+  el.innerHTML = shelfSummaryHtml(m) + rows + more;
+
   el.querySelectorAll('.shelf-item').forEach((row) => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('[data-dismiss]')) return;
@@ -1496,6 +1562,43 @@ function renderShelf(jobs) {
     });
   });
   el.querySelectorAll('[data-dismiss]').forEach((x) => x.addEventListener('click', (e) => { e.stopPropagation(); dismissJob(x.getAttribute('data-dismiss')); }));
+  el.querySelector('[data-shelf-toggle]')?.addEventListener('click', () => { shelfExpanded = !shelfExpanded; renderShelfFromCache(); });
+  el.querySelector('[data-shelf-report]')?.addEventListener('click', taskReport);
+}
+
+/* The "and history" half: a readable account of the whole queue, rendered into the conversation
+   because that is where the user already reads results. Reports on lastShelfJobs (everything the
+   server returned), never on the collapsed view. */
+function taskReport() {
+  const jobs = lastShelfJobs || [];
+  if (!jobs.length) { addConvo(assistantLabel(), 'bot', '<div>Your work queue is empty — nothing running, nothing waiting.</div>'); return; }
+  const m = shelfMetrics(jobs);
+  const when = (j) => timeAgo(j.createdAt);
+  const names = (arr, n) => arr.slice(0, n).map((j) => `<li>${esc(j.label)} <span class="dl-size">${esc(when(j))}</span></li>`).join('');
+
+  const parts = [`<div><b>Work queue — ${m.total} task${m.total === 1 ? '' : 's'}</b></div>`];
+  parts.push('<div class="ans-chips" style="margin:6px 0">'
+    + `<span class="sm is-active"><b>${m.active.length}</b> active</span>`
+    + `<span class="sm is-new"><b>${m.unread.length}</b> unread</span>`
+    + `<span class="sm"><b>${m.done.length}</b> done</span>`
+    + `<span class="sm is-err"><b>${m.failed.length}</b> failed</span></div>`);
+
+  if (m.active.length) {
+    const oldest = m.active[m.active.length - 1];
+    parts.push(`<div>Still working: <b>${m.active.length}</b>. Longest-running is “${esc(oldest.label)}”, started ${esc(when(oldest))}.<ul>${names(m.active, 6)}</ul></div>`);
+  }
+  if (m.failed.length) {
+    parts.push(`<div><b>Failed (${m.failed.length})</b> — these produced no result:<ul>${names(m.failed, 6)}</ul></div>`);
+  }
+  if (m.unread.length) {
+    parts.push(`<div><b>Unread results (${m.unread.length})</b> — say “read all my backlog” to hear them:<ul>${names(m.unread, 6)}</ul></div>`);
+  }
+  const history = jobs.slice(0, 15);
+  parts.push(`<div><b>Recent history</b> (${history.length} of ${m.total})<ul>${names(history, 15)}</ul></div>`);
+
+  addConvo(assistantLabel(), 'bot', parts.join(''));
+  setStatus(`Queue: ${m.active.length} active · ${m.unread.length} unread · ${m.failed.length} failed`);
+  scrollToConvo();
 }
 /* Click a task to inspect its full result without replacing the active Jarvis chat session. */
 async function focusTask(jobId) {
