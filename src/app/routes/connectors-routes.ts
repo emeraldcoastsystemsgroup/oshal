@@ -45,6 +45,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: retain encrypted per-user Twilio enrollment for fixed controller operations while removing the former generic bot/CLI credential carrier.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed the over-threshold connector hub into cohesive provider-registry/credentials, OAuth-ceremony, account-operation, and response-helper modules. This file remains the stable route/export facade; route order, auth, RLS identity, SQL, provider requests, environment credential mappings, and the concurrent SEC-05 Twilio boundary are unchanged.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Register the RingCentral screen-pop SSE stream (ringcentral-screen-pop.ts) ahead of the generic handlers, Plaid-style; RingCentral consent itself rides the ordinary /start + /callback with the new registry entry.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com   | Reconnect-in-place: /start?reconnect=<connectionId> re-runs consent for ONE existing accessible connection instead of adding another. login_hint is pinned to the STORED account_email (the provider re-auths that login, not whichever account the browser holds), the ADR-113 account-chooser override is skipped (the def's own authParams stand, so Google keeps prompt=consent and re-issues the refresh token a dead grant is missing), the stored label rides the signed state (the upsert's label refresh would otherwise rename the account to its email mid-repair), and an unknown/inaccessible id 404s. No callback change: the (scope, provider, account_key) conflict already updates the same row, so id/default/label survive. Pairs with the per-account "reconnect" action on /utilities; guard tests/unit/connector-reconnect.spec.ts.
  * -----------------------------------------------------------------------------
  *
  * @module connectors-routes
@@ -122,15 +123,30 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
       res.status(503).json({ error: `${provider} connector is not configured (missing OAuth client)` });
       return;
     }
-    // Optional target household — the caller must be a member to connect a shared hub.
-    const tenant = String(req.query.tenant || '').trim();
-    if (tenant && tenant !== 'personal' && !(await isTenantMember(ctx.pool, tenant, me.sub))) {
+    // Reconnect-in-place (?reconnect=<connectionId>): re-run consent for ONE account the caller
+    // already holds instead of adding another — the repair path for a dead grant (liveness
+    // `needs_reconnect`, per-row `expired`). The row must be accessible to the caller; the
+    // callback needs no new path because the upsert conflicts on (scope, provider, account_key),
+    // so re-consenting the same account UPDATES the row — id, default flag and label survive.
+    const providerConnections = await accessibleConnections(ctx.pool, me.sub, provider);
+    const reconnectId = String(req.query.reconnect || '').trim();
+    const reconnectRow = reconnectId
+      ? providerConnections.find((r) => r.connection_id === reconnectId) ?? null
+      : null;
+    if (reconnectId && !reconnectRow) { res.status(404).json({ error: 'connection not found' }); return; }
+    // Optional target household — the caller must be a member to connect a shared hub. A
+    // reconnect targets the row's OWN scope (membership already proven by accessibility).
+    const tenant = reconnectRow ? String(reconnectRow.tenant_id || '') : String(req.query.tenant || '').trim();
+    if (!reconnectRow && tenant && tenant !== 'personal' && !(await isTenantMember(ctx.pool, tenant, me.sub))) {
       res.status(403).json({ error: 'not a member of that household' });
       return;
     }
     // Optional label (nickname) for this account — lets a user hold several accounts per
-    // provider ("work email", "home email"). Blank → defaults to the account email.
-    const label = String(req.query.label || '').trim().slice(0, 60);
+    // provider ("work email", "home email"). Blank → defaults to the account email. A reconnect
+    // re-sends the STORED label so the upsert's label refresh cannot rename the account mid-repair.
+    const label = reconnectRow
+      ? String(reconnectRow.label || '').slice(0, 60)
+      : String(req.query.label || '').trim().slice(0, 60);
     const params = new URLSearchParams({
       client_id: creds.clientId,
       redirect_uri: redirectUri(provider),
@@ -140,7 +156,10 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
       ...(def.scopes.length ? { scope: def.scopes.join(def.scopeSep) } : {}),
       ...def.authParams,
       // login_hint helps the OIDC providers; Twitter + Schwab authorize endpoints don't use it.
-      ...(me.email && provider !== 'twitter' && provider !== 'schwab' ? { login_hint: me.email } : {}),
+      // A reconnect pins the hint to the STORED account so the provider re-auths that login,
+      // not whichever account the browser happens to be signed into.
+      ...((reconnectRow?.account_email || me.email) && provider !== 'twitter' && provider !== 'schwab'
+        ? { login_hint: reconnectRow?.account_email || me.email } : {}),
     });
     // PKCE (Twitter): send the S256 challenge; carry the verifier in a short-lived
     // cookie (NOT the state) so `state` stays small — X 400s on an over-long state.
@@ -153,11 +172,18 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
     // Adding ANOTHER account of a provider the caller is already connected to (ADR-113 section 4):
     // force the provider's account chooser, otherwise the consent screen silently re-authorises the
     // account the browser is signed into and the "second Gmail" becomes an update of the first.
-    const existing = (await accessibleConnections(ctx.pool, me.sub, provider)).length;
-    const chooser = additionalAccountAuthParams(def.flavor, existing, String(req.query.another || '').trim() === '1');
+    // A reconnect deliberately SKIPS the chooser — the flow already knows which account
+    // (login_hint above), and the def's own authParams stand, so Google keeps prompt=consent
+    // and re-issues the refresh token a dead grant is missing.
+    const chooser = reconnectRow
+      ? {}
+      : additionalAccountAuthParams(def.flavor, providerConnections.length, String(req.query.another || '').trim() === '1');
     if (Object.keys(chooser).length) {
       for (const [k, v] of Object.entries(chooser)) params.set(k, v);
-      logger.info({ provider, sub: me.sub, existing }, 'Connector consent: forcing the provider account chooser (additional account)');
+      logger.info({ provider, sub: me.sub, existing: providerConnections.length }, 'Connector consent: forcing the provider account chooser (additional account)');
+    }
+    if (reconnectRow) {
+      logger.info({ provider, sub: me.sub, connectionId: reconnectRow.connection_id }, 'Connector consent: reconnect-in-place for an existing account');
     }
     params.set('state', signState({ provider, sub: me.sub, tenant: tenant && tenant !== 'personal' ? tenant : undefined, label: label || undefined }));
     // Facebook / Meta "Login for Business" apps define permissions in a Login Configuration

@@ -371,17 +371,31 @@ function cardHtml(p) {
   var live = LIVENESS[p.id];
   if (conns.length && live && live.status === 'needs_reconnect') {
     body += '<div class="meta" style="color:var(--err);">⚠ ' + esc(p.label) + ' will no longer honor this connection' +
-      (live.detail ? ' — ' + esc(live.detail) : '') + '. Reconnect below (~30 seconds).</div>';
+      (live.detail ? ' — ' + esc(live.detail) : '') + '. Click <b>reconnect</b> on the account below (~30 seconds — no need to disconnect first).</div>';
   }
   // One row per connected account — label · email · owner · default — with per-account actions.
   conns.forEach(function(c) {
     var owner = c.tenantId ? '🏠 ' + esc(tenantName(c.tenantId)) : 'Personal';
     var nm = esc(c.label || c.account || 'account');
     var sub = (c.account && c.account !== c.label) ? ' · ' + esc(c.account) : '';
-    body += '<div class="conn"><span class="connmeta">✓ <b>' + nm + '</b>' + sub + ' · ' + owner +
+    // Repair-in-place: one click re-runs consent for THIS account (never delete + re-add). OAuth
+    // cards deep-link /start?reconnect=<id>; token cards jump to the paste row (a fresh token for
+    // the same account updates the same row). A dead grant (per-row `expired`, or the provider
+    // liveness probe) gets the loud red form of the same link.
+    var dead = !!c.expired || !!(live && live.status === 'needs_reconnect');
+    var reconnect = '';
+    if ((!p.auth || p.auth === 'oauth') && p.configured) {
+      reconnect = ' · <a class="lnk" ' + (dead ? 'style="color:var(--err);font-weight:600;" ' : '') +
+        'onclick="reconnectConn(\'' + p.id + '\',\'' + c.connectionId + '\')">' + (dead ? '⚠ reconnect' : 'reconnect') + '</a>';
+    } else if (p.auth === 'token' || p.tokenFallback) {
+      reconnect = ' · <a class="lnk" ' + (dead ? 'style="color:var(--err);font-weight:600;" ' : '') +
+        'onclick="reconnectToken(\'' + p.id + '\')">' + (dead ? '⚠ reconnect' : 'reconnect') + '</a>';
+    }
+    body += '<div class="conn"><span class="connmeta">' + (dead ? '⚠' : '✓') + ' <b>' + nm + '</b>' + sub + ' · ' + owner +
       (c.isDefault ? ' · <span class="tag">default</span>' : '') + '</span><span class="connacts">' +
       '<a class="lnk" onclick="renameConn(\'' + c.connectionId + '\')">rename</a>' +
       (c.isDefault ? '' : ' · <a class="lnk" onclick="makeDefault(\'' + c.connectionId + '\')">make default</a>') +
+      reconnect +
       (c.tenantId ? '' : ' · <a class="lnk" onclick="disconnectConn(\'' + c.connectionId + '\')">disconnect</a>') +
       '</span></div>';
   });
@@ -496,6 +510,22 @@ async function disconnectConn(id) {
   if (!confirm('Disconnect this account? Bots will lose access to it.')) return;
   try { await fetch('/api/connect/connection/' + id, { method: 'DELETE', credentials: 'include' }); load(); }
   catch (e) { alert('Could not disconnect: ' + e.message); }
+}
+
+// Repair a dead OAuth grant in place: re-runs consent for the SAME account (login_hint pinned
+// server-side) and the callback's upsert updates the existing row — label, default flag and
+// connection id all survive. Never requires a disconnect first.
+function reconnectConn(providerId, connectionId) {
+  window.top.location.href = '/api/connect/' + providerId + '/start?reconnect=' + encodeURIComponent(connectionId);
+}
+
+// Token connectors "reconnect" by pasting a fresh token — jump to the card's paste row; saving
+// a token for the same account updates the same row.
+function reconnectToken(providerId) {
+  var el = document.getElementById('tok-' + providerId) || document.getElementById('email-' + providerId);
+  if (!el) return;
+  try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { el.scrollIntoView(); }
+  el.focus();
 }
 
 // Token connectors needing a second (account-id) field — provider id -> field label.
