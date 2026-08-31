@@ -60,6 +60,7 @@
  * 53 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable swarm-memory provenance and persisted prompt tool authorization into controller-local execution.
  * 54 | maintainer@emeraldcoastsystemsgroup.com   | Document default-on authoritative provider/model stamping and its fail-closed missing-database behavior at the composition seam.
  * 55 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default: the boot-sync codexModel fallback gpt-5.3-codex -> gpt-5.5. 5.3-codex is the API-key model name and 400s on the ChatGPT-account login this deployment mounts, so the old fallback seeded the DB with a model no bot could actually run when CODEX_MODEL was unset.
+ * 56 | maintainer@emeraldcoastsystemsgroup.com   | Extracted codexResolveEndpoint's body to ./resolve-bot-node-endpoint so the branch that sends a dedicated-node bot inline is unit-testable, and made that branch WARN instead of returning null silently. The silence hid a live misroute: career-hunter won its bid, ran on the controller instead of its career-bot node, and reported the user's resume data as missing because the inline session has neither the package's tools nor its workspace.
  */
 
 import type { Pool } from 'pg';
@@ -103,6 +104,7 @@ import {
   createRegistryEndpointResolver,
   isControllerInlineContainer,
 } from '@/features/agent-management';
+import { resolveBotNodeEndpoint } from './resolve-bot-node-endpoint';
 import { RagService } from '@/features/rag';
 import { WorkflowRunHistoryStore } from '@/features/workflow-studio';
 import type { LLMService } from '@/features/llm-provider';
@@ -786,26 +788,12 @@ export function createSwarmExtensionBindings(
   // dispatch via BotNodeClient.
   const codexResolveEndpoint = (agentId: string): string | null => {
     try {
-      const def = SwarmBotRegistry.listDefinitions().find((d) => d.agentId === agentId);
-      if (!def || !def.container) return null;
-      if (isControllerInlineContainer(def.container)) {
-        logger.info(
-          { agentId, botName: def.name, container: def.container },
-          'Bot is controller-inline - using legacy local execution path',
-        );
-        return null;
-      }
-      // ADR-081: node-bound workspace (e.g. oshal-developer's clone) → always dispatch to the
-      // node; the bot-node JS CodexProvider exists now, so the prefer-inline rule doesn't apply.
-      if (def.requiresOwnNode) return `http://${def.container}:5000`;
-      const wantsCodex = def.harnessType === 'codex-cli' || def.apiType === 'openai-codex';
-      if (wantsCodex) {
-        // Force legacy path (api task-orchestrator → codex CLI). Returning null
-        // makes BotNodeClient.execute throw, which dispatchIncidentTicket /
-        // dispatchManifestWorkerTicket catches and falls back to /api/send-message.
-        return null;
-      }
-      return `http://${def.container}:5000`;
+      return resolveBotNodeEndpoint(
+        agentId,
+        SwarmBotRegistry.listDefinitions(),
+        isControllerInlineContainer,
+        logger,
+      );
     } catch {
       return null;
     }
