@@ -259,9 +259,13 @@ export async function rebindOrder(pool: AppContext['pool'], sub: string, orderId
   if (!row) throw new TradingError(404, 'not_found', 'No such order for this user.');
   const mode = row.mode as TradingMode;
   // ADR-134: preserve the row's OWN book identity through the re-record — a rebind on a non-legacy
-  // book must never re-home the row onto the legacy book of its mode.
+  // book must never re-home the row onto the legacy book of its mode — and the reader must bind to
+  // that book's ACCOUNT (an unbound reader would search the legacy account's venue history for a
+  // non-legacy book's order and either find nothing or bind the wrong trade).
   const rowBook: TradingBook = { ...legacyBook(sub, mode), bookId: row.book_id ? String(row.book_id) : legacyBookId(sub, mode) };
-  const broker = getBrokerReader(mode, sub); // read-only: rebinding never places or cancels anything
+  const loaded = row.book_id ? await import('./trading-books-store.js').then((m) => m.loadBook(pool, sub, String(row.book_id))).catch(() => null) : null;
+  const broker = getBrokerReader(mode, sub,
+    loaded?.accountNumber ? { accountNumber: loaded.accountNumber, connectionKey: loaded.connectionKey } : undefined); // read-only: rebinding never places or cancels anything
   const was: string | null = row.broker_order_id ? String(row.broker_order_id) : null;
 
   // Already bound to an id this venue recognizes? Then there is nothing to recover — just resync.
