@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — WS-Discovery (2005/04 draft, the dialect Windows WSDAPI speaks) responder on UDP 3702: multicast Hello on start / Bye on stop, and unicast ProbeMatches / ResolveMatches answers to client Probe / Resolve. This is the SECOND discovery rail alongside mDNS, and the reason it exists: Windows boxes routinely have a dead native mDNS listener (browsers/Bonjour steal port 5353 from Dnscache) while WSD — owned by svchost on 3702 — keeps working; hardware printers (HP et al.) are discovered through it. Listens on BOTH IPv4 (239.255.255.250) and IPv6 (ff02::c) since Windows often prefers the IPv6 link-local path for WSD. All failures degrade to warnings; mDNS and manual add remain.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Declare wprt:PrintDeviceType in Types (and answer probes for it). Live diff against the operator's HP Smart Tank ProbeMatches showed why probes were answered yet nothing listed: Windows' printer pane filters ProbeMatches on the wprt:PrintDeviceType type and probes for that type specifically — a wsdp:Device-only endpoint is a device, not a printer, and is both filtered from the list and skipped by print-targeted probes.
  */
 'use strict';
 
@@ -31,7 +32,7 @@ const ACTION = {
 function envelope(parts) {
   const relates = parts.relatesTo ? `<wsa:RelatesTo>${parts.relatesTo}</wsa:RelatesTo>` : '';
   return `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:wsd="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:wsdp="http://schemas.xmlsoap.org/ws/2006/02/devprof">
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:wsd="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:wsdp="http://schemas.xmlsoap.org/ws/2006/02/devprof" xmlns:wprt="http://schemas.microsoft.com/windows/2006/08/wdp/print">
 <soap:Header>
 <wsa:To>${parts.to}</wsa:To>
 <wsa:Action>${parts.action}</wsa:Action>
@@ -50,21 +51,25 @@ ${relates}
  */
 function endpointBlock(identity) {
   return `<wsa:EndpointReference><wsa:Address>${identity.uuidUri}</wsa:Address></wsa:EndpointReference>
-<wsd:Types>wsdp:Device</wsd:Types>
+<wsd:Types>wsdp:Device wprt:PrintDeviceType</wsd:Types>
 <wsd:XAddrs>${identity.xaddrs}</wsd:XAddrs>
 <wsd:MetadataVersion>1</wsd:MetadataVersion>`;
 }
 
 /**
  * @description Whether a Probe's Types constraint matches this device: empty
- * Types matches everything, otherwise any type whose local name is Device.
+ * Types matches everything; otherwise match the generic device type or the
+ * print device type Windows' printer pane probes for.
  * @param {string} xml The Probe XML.
  * @returns {boolean} True when this device should answer.
  */
 function probeMatchesDevice(xml) {
   const types = extractTag(xml, 'Types');
   if (!types) return true;
-  return types.split(/\s+/).some((t) => t.split(':').pop() === 'Device');
+  return types.split(/\s+/).some((t) => {
+    const local = t.split(':').pop();
+    return local === 'Device' || local === 'PrintDeviceType';
+  });
 }
 
 /**
