@@ -1,0 +1,36 @@
+{
+  "name": "@oshal/print-drop",
+  "version": "1.0.0",
+  "description": "IPP Everywhere virtual printer — advertises this machine as \"Oshal Print to File Printer\" on the LAN; anything printed to it lands as a file in a local drop folder.",
+  "license": "MIT",
+  "private": true,
+  "bin": {
+    "oshal-print-drop": "./bin/print-drop.js"
+  },
+  "main": "./lib/ipp-server.js",
+  "scripts": {
+    "start": "node bin/print-drop.js",
+    "test": "node test/selftest.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bonjour-service": "^1.3.0"
+  },
+  "keywords": [
+    "oshal",
+    "ipp",
+    "ipp-everywhere",
+    "virtual-printer",
+    "print-to-file",
+    "mdns",
+    "bonjour",
+    "driverless"
+  ]
+}
