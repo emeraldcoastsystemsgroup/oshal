@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the HTTP half of WSD, mounted at /wsd/* on the existing port-631 server (one port, one firewall rule): WS-Transfer Get serves the device metadata (FriendlyName is what Windows lists), WS-Eventing Subscribe/Renew/Unsubscribe are accepted with canned grants (no events are ever pushed — a print-to-file target has none worth pushing), and the WS-Print (wprt) service implements GetPrinterElements, CreatePrintJob and SendDocument. SendDocument arrives as MTOM (multipart/related) with the document (typically XPS) as a binary part — it is buffered under the existing byte cap, extracted by boundary split, and handed to the same spooler as IPP jobs. XML handling is the package's regex extraction: values are compared against constants, never interpreted.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log every WSD HTTP action with its client — the first client-visible field trip (probes answered, nothing listed) was undiagnosable partly because the metadata exchange left no trace; now the log shows exactly how far a Windows client walks the install chain (Get -> Subscribe -> GetPrinterElements -> CreatePrintJob -> SendDocument).
  */
 'use strict';
 
@@ -246,7 +247,9 @@ function createWsdHttpHandler(options) {
         const payload = extractPayload(Buffer.concat(chunks), req.headers['content-type']);
         const action = extractTag(payload.xml, 'Action');
         const relatesTo = extractTag(payload.xml, 'MessageID');
-        const result = await dispatchAction(options, state, action, payload, String(req.socket.remoteAddress || '').replace(/^::ffff:/, ''));
+        const clientIp = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        options.log.info('WSD request', { action: action.split('/').pop() || '(none)', client: clientIp });
+        const result = await dispatchAction(options, state, action, payload, clientIp);
         const xml = respondEnvelope(result.action, relatesTo, result.body);
         res.writeHead(200, { 'content-type': SOAP_CT });
         res.end(xml);

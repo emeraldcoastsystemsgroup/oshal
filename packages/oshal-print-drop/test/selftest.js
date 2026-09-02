@@ -267,13 +267,14 @@ async function testWsd() {
   const wsd = await startWsdDiscovery({ uuidUri, xaddrs: 'http://127.0.0.1:9999/wsd/device' }, quietLog, 13702);
   try {
     const reply = await new Promise((resolve, reject) => {
-      const probe = `<?xml version="1.0"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:wsd="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:wsdp="http://schemas.xmlsoap.org/ws/2006/02/devprof"><soap:Header><wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To><wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</wsa:Action><wsa:MessageID>urn:uuid:selftest-probe</wsa:MessageID></soap:Header><soap:Body><wsd:Probe><wsd:Types>wsdp:Device</wsd:Types></wsd:Probe></soap:Body></soap:Envelope>`;
+      const probe = `<?xml version="1.0"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:wsd="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:wprt="http://schemas.microsoft.com/windows/2006/08/wdp/print"><soap:Header><wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To><wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</wsa:Action><wsa:MessageID>urn:uuid:selftest-probe</wsa:MessageID></soap:Header><soap:Body><wsd:Probe><wsd:Types>wprt:PrintDeviceType</wsd:Types></wsd:Probe></soap:Body></soap:Envelope>`;
       const sock = dgram.createSocket('udp4');
       const timer = setTimeout(() => { sock.close(); reject(new Error('no ProbeMatches within 5s')); }, 5000);
       sock.on('message', (msg) => { clearTimeout(timer); sock.close(); resolve(msg.toString('utf8')); });
       sock.send(Buffer.from(probe), 13702, '127.0.0.1');
     });
-    assert.ok(reply.includes('ProbeMatches'), 'Probe answered with ProbeMatches');
+    assert.ok(reply.includes('ProbeMatches'), 'print-typed Probe answered with ProbeMatches');
+    assert.ok(reply.includes('wprt:PrintDeviceType'), 'ProbeMatches declares the print device type Windows filters on');
     assert.ok(reply.includes(uuidUri), 'ProbeMatches carries our endpoint urn');
     assert.ok(reply.includes('http://127.0.0.1:9999/wsd/device'), 'ProbeMatches carries XAddrs');
     assert.ok(reply.includes('urn:uuid:selftest-probe'), 'RelatesTo echoes the probe MessageID');
