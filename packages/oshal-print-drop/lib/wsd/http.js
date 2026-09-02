@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the HTTP half of WSD, mounted at /wsd/* on the existing port-631 server (one port, one firewall rule): WS-Transfer Get serves the device metadata (FriendlyName is what Windows lists), WS-Eventing Subscribe/Renew/Unsubscribe are accepted with canned grants (no events are ever pushed — a print-to-file target has none worth pushing), and the WS-Print (wprt) service implements GetPrinterElements, CreatePrintJob and SendDocument. SendDocument arrives as MTOM (multipart/related) with the document (typically XPS) as a binary part — it is buffered under the existing byte cap, extracted by boundary split, and handed to the same spooler as IPP jobs. XML handling is the package's regex extraction: values are compared against constants, never interpreted.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log every WSD HTTP action with its client — the first client-visible field trip (probes answered, nothing listed) was undiagnosable partly because the metadata exchange left no trace; now the log shows exactly how far a Windows client walks the install chain (Get -> Subscribe -> GetPrinterElements -> CreatePrintJob -> SendDocument).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Metadata conformance, diffed live against the operator's HP Smart Tank GetResponse after Windows looped on Transfer Get (fetch-retry-fetch, never listing): (1) responses now send Content-Length + charset and Connection: close — Node defaulted to chunked, which WSDAPI's gSOAP-era HTTP client mishandles; (2) ServiceId was a malformed URN (urn:uuid:xxx/print — URNs take no path) and is now the http://<uuid>/PrintService shape real devices use; (3) added PNPX:HardwareId beside CompatibleId, xml:lang on the human-readable names, and PresentationUrl.
  */
 'use strict';
 
@@ -53,19 +54,21 @@ ${relatesTo ? `<wsa:RelatesTo>${relatesTo}</wsa:RelatesTo>` : ''}
  */
 function metadataBody(options) {
   const name = escapeXml(options.friendlyName);
+  const bareUuid = options.uuidUri.replace(/^urn:uuid:/, '');
   return `<wsx:Metadata>
 <wsx:MetadataSection Dialect="http://schemas.xmlsoap.org/ws/2006/02/devprof/ThisDevice">
-<wsdp:ThisDevice><wsdp:FriendlyName>${name}</wsdp:FriendlyName><wsdp:FirmwareVersion>1.0</wsdp:FirmwareVersion><wsdp:SerialNumber>OSHAL-PRINT-DROP</wsdp:SerialNumber></wsdp:ThisDevice>
+<wsdp:ThisDevice><wsdp:FriendlyName xml:lang="en">${name}</wsdp:FriendlyName><wsdp:FirmwareVersion>1.0</wsdp:FirmwareVersion><wsdp:SerialNumber>OSHAL-PRINT-DROP</wsdp:SerialNumber></wsdp:ThisDevice>
 </wsx:MetadataSection>
 <wsx:MetadataSection Dialect="http://schemas.xmlsoap.org/ws/2006/02/devprof/ThisModel">
-<wsdp:ThisModel><wsdp:Manufacturer>oshal</wsdp:Manufacturer><wsdp:ManufacturerUrl>https://oswarm.ai</wsdp:ManufacturerUrl><wsdp:ModelName>${name}</wsdp:ModelName><wsdp:ModelNumber>1</wsdp:ModelNumber><pnpx:DeviceCategory>Printers</pnpx:DeviceCategory></wsdp:ThisModel>
+<wsdp:ThisModel><wsdp:Manufacturer xml:lang="en">oshal</wsdp:Manufacturer><wsdp:ManufacturerUrl>https://oswarm.ai/</wsdp:ManufacturerUrl><wsdp:ModelName xml:lang="en">${name}</wsdp:ModelName><wsdp:ModelNumber>1</wsdp:ModelNumber><wsdp:PresentationUrl>${options.baseUrl}/</wsdp:PresentationUrl><pnpx:DeviceCategory>Printers</pnpx:DeviceCategory></wsdp:ThisModel>
 </wsx:MetadataSection>
 <wsx:MetadataSection Dialect="http://schemas.xmlsoap.org/ws/2006/02/devprof/Relationship">
 <wsdp:Relationship Type="http://schemas.xmlsoap.org/ws/2006/02/devprof/host">
 <wsdp:Hosted>
 <wsa:EndpointReference><wsa:Address>${options.baseUrl}/wsd/print</wsa:Address></wsa:EndpointReference>
 <wsdp:Types>wprt:PrinterServiceType</wsdp:Types>
-<wsdp:ServiceId>${options.uuidUri}/print</wsdp:ServiceId>
+<wsdp:ServiceId>http://${bareUuid}/PrintService</wsdp:ServiceId>
+<pnpx:HardwareId>VEN_OSHAL&amp;DEV_PrintDrop&amp;SUBSYS_0001</pnpx:HardwareId>
 <pnpx:CompatibleId>http://schemas.microsoft.com/windows/2006/08/wdp/print/PrinterServiceType</pnpx:CompatibleId>
 </wsdp:Hosted>
 </wsdp:Relationship>
@@ -251,7 +254,11 @@ function createWsdHttpHandler(options) {
         options.log.info('WSD request', { action: action.split('/').pop() || '(none)', client: clientIp });
         const result = await dispatchAction(options, state, action, payload, clientIp);
         const xml = respondEnvelope(result.action, relatesTo, result.body);
-        res.writeHead(200, { 'content-type': SOAP_CT });
+        res.writeHead(200, {
+          'content-type': `${SOAP_CT}; charset=utf-8`,
+          'content-length': Buffer.byteLength(xml),
+          connection: 'close',
+        });
         res.end(xml);
       } catch (err) {
         options.log.error('WSD request failed', { error: err.message, stack: err.stack });
