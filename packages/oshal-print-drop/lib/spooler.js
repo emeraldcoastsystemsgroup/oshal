@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — streams a print job's document data to the drop folder. Security posture: the job name is attacker-controlled network input, so it is sanitized to a safe character class and NEVER used as a path component uninspected; documents write to a dot-prefixed .part file and rename atomically so folder watchers only ever see complete files; a byte cap aborts oversized jobs (drain up to 2× the cap, then hard-destroy so a malicious endless stream cannot hold the socket). File extension comes from the declared MIME format, falling back to magic-byte sniffing (%PDF / %!PS / RaS2), never from the client-supplied name. A sidecar .json records job metadata for the later swarm-adoption phase.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deterministic .part cleanup on abort. The discard/fail paths issued fs.rm while the write stream could still hold the handle — on Windows that delete silently fails (EBUSY) and a .part is left behind (caught by the byte-cap selftest going intermittently red). Cleanup now waits for the stream's close event and completes BEFORE the promise rejects, so the caller's error response is only sent once the folder is clean.
  */
 'use strict';
 
@@ -111,11 +112,18 @@ function spoolDocument(source, meta, options) {
     const tmpPath = path.join(options.dropDir, `.spool-${meta.jobId}-${crypto.randomBytes(4).toString('hex')}.part`);
     const out = fs.createWriteStream(tmpPath, { flags: 'wx' });
     const state = { bytes: 0, first: Buffer.alloc(0), discarding: false, settled: false };
+    const removeTmp = (done) => {
+      const doRemove = () => fs.rm(tmpPath, { force: true }, () => done());
+      if (out.closed) doRemove();
+      else {
+        out.once('close', doRemove);
+        out.destroy();
+      }
+    };
     const fail = (err) => {
       if (state.settled) return;
       state.settled = true;
-      out.destroy();
-      fs.rm(tmpPath, { force: true }, () => reject(err));
+      removeTmp(() => reject(err));
     };
     source.on('data', (chunk) => {
       state.bytes += chunk.length;
@@ -124,7 +132,6 @@ function spoolDocument(source, meta, options) {
         state.discarding = true;
         source.unpipe(out);
         out.destroy();
-        fs.rm(tmpPath, { force: true }, () => {});
       }
       if (state.bytes > options.maxBytes * 2) {
         source.destroy(Object.assign(new Error('print job exceeded twice the byte cap'), { code: 'TOO_LARGE' }));

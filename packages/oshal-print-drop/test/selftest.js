@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — protocol-level self-test against a REAL server instance over loopback HTTP (no mocked boundary): boots the IPP server on an ephemeral port with a temp drop folder and drives it with wire-encoded IPP requests the way a client driver would. Covers the driverless-install handshake (Get-Printer-Attributes + requested-attributes filtering), Print-Job and Create-Job/Send-Document round trips landing real files with sidecar metadata, hostile job-name sanitization staying inside the drop folder, Get-Jobs/Get-Job-Attributes/Cancel-Job, the unsupported-operation answer, the oversized-job byte cap, and malformed-body rejection. Run with `npm test`; exits non-zero on any failure. mDNS discovery is NOT covered here — it needs a second machine on the LAN (see README).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the Windows-discovery fix: a REAL mDNS round trip — publish via advertisePrinter under a unique test name, then browse _print._sub._ipp._tcp (the subtype IPP Everywhere requires and Windows actually queries) and require the advertisement to answer. Would go red if the subtype ever regressed to a bare _ipp._tcp advertisement. Fails loudly (never skips) when mDNS itself is unavailable — a VPN or isolated network is exactly the condition the operator needs to hear about.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | WSD guard (suite 8): a Windows-shaped Probe over real UDP must come back as ProbeMatches carrying our endpoint urn and XAddrs (on an alternate port — 3702 is shared with the OS WSD service, and unicast test probes would race it); WS-Transfer Get must serve metadata with the FriendlyName; an MTOM SendDocument with a binary part must land a real file through the shared spooler.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the metadata-conformance fixes (Windows looped on Transfer Get): the Get response must carry Content-Length (never chunked — WSDAPI's HTTP client mishandles it), a well-formed http-shaped ServiceId ending /PrintService (the previous urn:uuid/path was invalid), and a PNPX HardwareId.
  */
 'use strict';
 
@@ -292,11 +293,14 @@ async function testWsd() {
     const post = async (payload, contentType) => {
       const res = await fetch(`http://127.0.0.1:${state.port}/wsd/device`, { method: 'POST', headers: { 'content-type': contentType }, body: payload });
       assert.strictEqual(res.status, 200, 'WSD endpoint answers 200');
+      assert.ok(res.headers.get('content-length'), 'WSD responses carry Content-Length (WSDAPI mishandles chunked)');
       return res.text();
     };
     const meta = await post(soap('http://schemas.xmlsoap.org/ws/2004/09/transfer/Get', ''), 'application/soap+xml');
     assert.ok(meta.includes('Oshal Print to File Printer'), 'metadata carries the FriendlyName');
     assert.ok(meta.includes('PrinterServiceType'), 'metadata declares the print service');
+    assert.ok(/ServiceId>http:\/\/[^<]+\/PrintService</.test(meta), 'ServiceId is the http-shaped form, not a urn with a path');
+    assert.ok(meta.includes('HardwareId'), 'metadata carries a PNPX HardwareId');
     const boundary = 'selftestboundary';
     const docBytes = Buffer.from('%PDF-1.4 wsd doc %%EOF');
     const sendXml = soap('http://schemas.microsoft.com/windows/2006/08/wdp/print/SendDocument', '<wprt:SendDocument><wprt:JobId>1</wprt:JobId></wprt:SendDocument>');
