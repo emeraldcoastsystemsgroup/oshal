@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the HTTP half of WSD, mounted at /wsd/* on the existing port-631 server (one port, one firewall rule): WS-Transfer Get serves the device metadata (FriendlyName is what Windows lists), WS-Eventing Subscribe/Renew/Unsubscribe are accepted with canned grants (no events are ever pushed — a print-to-file target has none worth pushing), and the WS-Print (wprt) service implements GetPrinterElements, CreatePrintJob and SendDocument. SendDocument arrives as MTOM (multipart/related) with the document (typically XPS) as a binary part — it is buffered under the existing byte cap, extracted by boundary split, and handed to the same spooler as IPP jobs. XML handling is the package's regex extraction: values are compared against constants, never interpreted.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log every WSD HTTP action with its client — the first client-visible field trip (probes answered, nothing listed) was undiagnosable partly because the metadata exchange left no trace; now the log shows exactly how far a Windows client walks the install chain (Get -> Subscribe -> GetPrinterElements -> CreatePrintJob -> SendDocument).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Metadata conformance, diffed live against the operator's HP Smart Tank GetResponse after Windows looped on Transfer Get (fetch-retry-fetch, never listing): (1) responses now send Content-Length + charset and Connection: close — Node defaulted to chunked, which WSDAPI's gSOAP-era HTTP client mishandles; (2) ServiceId was a malformed URN (urn:uuid:xxx/print — URNs take no path) and is now the http://<uuid>/PrintService shape real devices use; (3) added PNPX:HardwareId beside CompatibleId, xml:lang on the human-readable names, and PresentationUrl.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Install-chain completion: the live Add-device walk (Get -> GetPrinterElements -> Subscribe) died on unimplemented SetEventRate, sending WSDMon into an endless Resolve/Get retry loop. SetEventRate, GetActiveJobs and GetJobHistory now answer with their proper wprt response elements (an empty soap:Body from the generic fallback was not accepted as success).
  */
 'use strict';
 
@@ -24,6 +25,9 @@ const ACTIONS = {
   GET_PRINTER_ELEMENTS: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/GetPrinterElements',
   CREATE_PRINT_JOB: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/CreatePrintJob',
   SEND_DOCUMENT: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/SendDocument',
+  SET_EVENT_RATE: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/SetEventRate',
+  GET_ACTIVE_JOBS: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/GetActiveJobs',
+  GET_JOB_HISTORY: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/GetJobHistory',
 };
 
 /**
@@ -211,6 +215,12 @@ async function dispatchAction(options, state, action, payload, clientIp) {
       return { action: `${action}Response`, body: '' };
     case ACTIONS.GET_PRINTER_ELEMENTS:
       return { action: `${ACTIONS.GET_PRINTER_ELEMENTS}Response`, body: printerElementsBody(options) };
+    case ACTIONS.SET_EVENT_RATE:
+      return { action: `${ACTIONS.SET_EVENT_RATE}Response`, body: '<wprt:SetEventRateResponse/>' };
+    case ACTIONS.GET_ACTIVE_JOBS:
+      return { action: `${ACTIONS.GET_ACTIVE_JOBS}Response`, body: '<wprt:GetActiveJobsResponse><wprt:ActiveJobs/></wprt:GetActiveJobsResponse>' };
+    case ACTIONS.GET_JOB_HISTORY:
+      return { action: `${ACTIONS.GET_JOB_HISTORY}Response`, body: '<wprt:GetJobHistoryResponse><wprt:JobHistory/></wprt:GetJobHistoryResponse>' };
     case ACTIONS.CREATE_PRINT_JOB:
       state.jobId += 1;
       return { action: `${ACTIONS.CREATE_PRINT_JOB}Response`, body: `<wprt:CreatePrintJobResponse><wprt:JobId>${state.jobId}</wprt:JobId></wprt:CreatePrintJobResponse>` };
