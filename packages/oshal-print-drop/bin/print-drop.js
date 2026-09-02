@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — entrypoint: config (flags > env > defaults, nothing hardcoded in the runtime path), drop-folder creation, server + mDNS boot, human-readable startup banner on stderr (stdout is reserved for JSON logs so a service wrapper can capture them cleanly), graceful SIGINT/SIGTERM shutdown that withdraws the mDNS advertisement before exit. The printer UUID is derived deterministically from hostname + printer name so clients see the same printer identity across restarts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | LAN-interface pinning for the advertisement (--iface / OSHAL_PRINT_IFACE, else auto-detected via the UDP-connect route trick — no packet is sent). On multi-homed hosts (Wi-Fi + WSL/Docker vEthernet + hotspot) the mDNS library's default egress picked the virtual adapter, so responses never reached the physical LAN. The chosen address is logged and shown in the banner; detection failure falls back to the old all-interfaces behavior with a warning. A VPN holding the default route will be auto-picked — that is the --iface escape hatch.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Banner prints the manual-add URL in IP form first (hostname second): a bare machine name only resolves on the remote side via NetBIOS/LLMNR/mDNS, all of which are unreliable cross-machine, and the operator hit exactly that. The IP is the detected LAN address the advertisement is pinned to, so the two always agree.
  */
 'use strict';
 
@@ -118,17 +119,18 @@ function deriveUuid(seed) {
  * @returns {void}
  */
 function printBanner(config, port) {
+  const host = config.interfaceAddress || config.hostname;
   const lines = [
     '',
     `  ${config.printerName}`,
     `  ${'-'.repeat(config.printerName.length)}`,
     `  Drop folder : ${config.dropDir}`,
-    `  Endpoint    : http://${config.hostname}:${port}/ipp/print`,
+    `  Endpoint    : http://${host}:${port}/ipp/print`,
     `  Status page : http://localhost:${port}/`,
     `  Discovery   : ${config.mdns ? `mDNS (_ipp._tcp + _print subtype) via ${config.interfaceAddress || 'ALL interfaces (unpinned)'}` : 'DISABLED - add by URL only'}`,
     '',
     '  Windows clients: Settings > Bluetooth & devices > Printers & scanners > Add device.',
-    `  Manual add URL:  http://${config.hostname}:${port}/ipp/print`,
+    `  Manual add URL:  http://${host}:${port}/ipp/print${config.interfaceAddress ? `  (or http://${config.hostname}:${port}/ipp/print)` : ''}`,
     '',
   ];
   process.stderr.write(`${lines.join('\n')}\n`);
