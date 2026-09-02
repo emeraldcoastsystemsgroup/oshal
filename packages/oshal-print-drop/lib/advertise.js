@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — mDNS/DNS-SD advertisement (_ipp._tcp) via bonjour-service so Windows/macOS/Linux clients discover the printer in their native Add-Printer flow. TXT records follow the IPP-everywhere shape Windows keys on: rp must match the HTTP endpoint path, pdl declares PDF so clients transcode before sending. mDNS failure (port 5353 contention, VPN, isolated Wi-Fi) is downgraded to a warning — the printer stays reachable by manual URL — never a crash.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Advertise the '_print' subtype (PTR at _print._sub._ipp._tcp) — IPP Everywhere (PWG 5100.14) requires it and Windows' Add-Printer discovery browses that subtype specifically, so the bare-type advertisement answered raw _ipp._tcp browses but never appeared in Windows Settings. Found live: self-browse saw the printer, the Windows Add-device list did not.
  */
 'use strict';
 
@@ -24,6 +25,7 @@ function advertisePrinter(config, log) {
     bonjour.publish({
       name: config.printerName,
       type: 'ipp',
+      subtypes: ['print'],
       port: config.port,
       txt: {
         txtvers: '1',

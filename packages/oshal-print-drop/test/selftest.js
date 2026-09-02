@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — protocol-level self-test against a REAL server instance over loopback HTTP (no mocked boundary): boots the IPP server on an ephemeral port with a temp drop folder and drives it with wire-encoded IPP requests the way a client driver would. Covers the driverless-install handshake (Get-Printer-Attributes + requested-attributes filtering), Print-Job and Create-Job/Send-Document round trips landing real files with sidecar metadata, hostile job-name sanitization staying inside the drop folder, Get-Jobs/Get-Job-Attributes/Cancel-Job, the unsupported-operation answer, the oversized-job byte cap, and malformed-body rejection. Run with `npm test`; exits non-zero on any failure. mDNS discovery is NOT covered here — it needs a second machine on the LAN (see README).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the Windows-discovery fix: a REAL mDNS round trip — publish via advertisePrinter under a unique test name, then browse _print._sub._ipp._tcp (the subtype IPP Everywhere requires and Windows actually queries) and require the advertisement to answer. Would go red if the subtype ever regressed to a bare _ipp._tcp advertisement. Fails loudly (never skips) when mDNS itself is unavailable — a VPN or isolated network is exactly the condition the operator needs to hear about.
  */
 'use strict';
 
@@ -220,6 +221,39 @@ async function testByteCap() {
 }
 
 /**
+ * @description The advertisement must answer a browse for the _print subtype of
+ * _ipp._tcp — the query Windows' Add-Printer discovery actually sends. Real
+ * multicast round trip on this host; fails loudly when mDNS is unavailable.
+ * @returns {Promise<void>} Resolves when the subtype browse finds the printer.
+ */
+async function testSubtypeAdvertisement() {
+  const { advertisePrinter } = require('../lib/advertise');
+  const { Bonjour } = require('bonjour-service');
+  const name = `Oshal Print Drop Selftest ${process.pid}`;
+  const advertisement = advertisePrinter(
+    { printerName: name, port: 63631, hostname: '127.0.0.1', uuid: '00000000-0000-5000-8000-000000000002' },
+    quietLog,
+  );
+  try {
+    await new Promise((resolve, reject) => {
+      const browserInstance = new Bonjour();
+      const timer = setTimeout(() => {
+        browserInstance.destroy();
+        reject(new Error(`_print._sub._ipp._tcp browse did not find "${name}" within 10s - mDNS blocked (VPN / isolated network / 5353 contention)?`));
+      }, 10000);
+      browserInstance.find({ type: 'ipp', subtypes: ['print'] }, (svc) => {
+        if (svc.name !== name) return;
+        clearTimeout(timer);
+        browserInstance.destroy();
+        resolve();
+      });
+    });
+  } finally {
+    await advertisement.stop();
+  }
+}
+
+/**
  * @description Run every test against one shared server instance, then the cap test.
  * @returns {Promise<void>} Resolves on full success.
  */
@@ -238,7 +272,8 @@ async function main() {
     fs.rmSync(dropDir, { recursive: true, force: true });
   }
   await testByteCap();
-  log.info('selftest passed', { suites: 6 });
+  await testSubtypeAdvertisement();
+  log.info('selftest passed', { suites: 7 });
 }
 
 main().catch((err) => {
