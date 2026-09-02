@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the IPP endpoint: an HTTP server that speaks enough IPP 1.1/2.0 for driverless clients (Microsoft IPP Class Driver, macOS, CUPS) to install the queue and print. Supported operations: Get-Printer-Attributes, Validate-Job, Print-Job, Create-Job + Send-Document, Cancel-Job, Get-Job-Attributes, Get-Jobs; everything else answers server-error-operation-not-supported. The request body is parsed incrementally: attribute section decoded from the first chunks (capped at 256KB), document bytes streamed to the spooler without buffering. GET / serves a small human status page for manual verification. Jobs live in a bounded in-memory table (Windows' queue UI polls Get-Jobs).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | extraRoutes hook: startIppServer's ctx now carries a mutable extraRoutes array checked before IPP dispatch, so sibling protocols (the WSD HTTP endpoints at /wsd/*) share this one port and its one firewall rule instead of opening another listener.
  */
 'use strict';
 
@@ -347,6 +348,8 @@ function respondStatusPage(ctx, res) {
  * @returns {void}
  */
 function handleHttpRequest(ctx, req, res) {
+  const route = (ctx.extraRoutes || []).find((r) => req.url && req.url.startsWith(r.prefix));
+  if (route) return route.handler(req, res);
   if (req.method === 'GET') return respondStatusPage(ctx, res);
   if (req.method !== 'POST') {
     res.writeHead(405).end();
@@ -404,7 +407,7 @@ function clientAddress(req) {
  */
 function startIppServer(config, log) {
   const state = { startedAt: Date.now(), jobs: new Map(), nextJobId: 1, saved: 0, port: config.port };
-  const ctx = { config, state, log };
+  const ctx = { config, state, log, extraRoutes: [] };
   const server = http.createServer((req, res) => handleHttpRequest(ctx, req, res));
   server.on('checkContinue', (req, res) => {
     res.writeContinue();

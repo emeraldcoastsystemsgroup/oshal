@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — protocol-level self-test against a REAL server instance over loopback HTTP (no mocked boundary): boots the IPP server on an ephemeral port with a temp drop folder and drives it with wire-encoded IPP requests the way a client driver would. Covers the driverless-install handshake (Get-Printer-Attributes + requested-attributes filtering), Print-Job and Create-Job/Send-Document round trips landing real files with sidecar metadata, hostile job-name sanitization staying inside the drop folder, Get-Jobs/Get-Job-Attributes/Cancel-Job, the unsupported-operation answer, the oversized-job byte cap, and malformed-body rejection. Run with `npm test`; exits non-zero on any failure. mDNS discovery is NOT covered here — it needs a second machine on the LAN (see README).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the Windows-discovery fix: a REAL mDNS round trip — publish via advertisePrinter under a unique test name, then browse _print._sub._ipp._tcp (the subtype IPP Everywhere requires and Windows actually queries) and require the advertisement to answer. Would go red if the subtype ever regressed to a bare _ipp._tcp advertisement. Fails loudly (never skips) when mDNS itself is unavailable — a VPN or isolated network is exactly the condition the operator needs to hear about.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | WSD guard (suite 8): a Windows-shaped Probe over real UDP must come back as ProbeMatches carrying our endpoint urn and XAddrs (on an alternate port — 3702 is shared with the OS WSD service, and unicast test probes would race it); WS-Transfer Get must serve metadata with the FriendlyName; an MTOM SendDocument with a binary part must land a real file through the shared spooler.
  */
 'use strict';
 
@@ -254,6 +255,68 @@ async function testSubtypeAdvertisement() {
 }
 
 /**
+ * @description WSD guards: Probe → ProbeMatches over real UDP, Transfer Get →
+ * metadata with FriendlyName, MTOM SendDocument → real file via the spooler.
+ * @returns {Promise<void>} Resolves when asserted.
+ */
+async function testWsd() {
+  const dgram = require('dgram');
+  const { startWsdDiscovery } = require('../lib/wsd/discovery');
+  const { createWsdHttpHandler } = require('../lib/wsd/http');
+  const uuidUri = 'urn:uuid:00000000-0000-5000-8000-00000000wsd1';
+  const wsd = await startWsdDiscovery({ uuidUri, xaddrs: 'http://127.0.0.1:9999/wsd/device' }, quietLog, 13702);
+  try {
+    const reply = await new Promise((resolve, reject) => {
+      const probe = `<?xml version="1.0"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:wsd="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:wsdp="http://schemas.xmlsoap.org/ws/2006/02/devprof"><soap:Header><wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To><wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</wsa:Action><wsa:MessageID>urn:uuid:selftest-probe</wsa:MessageID></soap:Header><soap:Body><wsd:Probe><wsd:Types>wsdp:Device</wsd:Types></wsd:Probe></soap:Body></soap:Envelope>`;
+      const sock = dgram.createSocket('udp4');
+      const timer = setTimeout(() => { sock.close(); reject(new Error('no ProbeMatches within 5s')); }, 5000);
+      sock.on('message', (msg) => { clearTimeout(timer); sock.close(); resolve(msg.toString('utf8')); });
+      sock.send(Buffer.from(probe), 13702, '127.0.0.1');
+    });
+    assert.ok(reply.includes('ProbeMatches'), 'Probe answered with ProbeMatches');
+    assert.ok(reply.includes(uuidUri), 'ProbeMatches carries our endpoint urn');
+    assert.ok(reply.includes('http://127.0.0.1:9999/wsd/device'), 'ProbeMatches carries XAddrs');
+    assert.ok(reply.includes('urn:uuid:selftest-probe'), 'RelatesTo echoes the probe MessageID');
+  } finally {
+    await wsd.stop();
+  }
+  const dropDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-wsd-'));
+  const { server, state, ctx } = await startIppServer(testConfig(dropDir, 10 * 1024 * 1024), quietLog);
+  ctx.extraRoutes.push({
+    prefix: '/wsd/',
+    handler: createWsdHttpHandler({ friendlyName: 'Oshal Print to File Printer', location: 'selftest', uuidUri, baseUrl: `http://127.0.0.1:${state.port}`, dropDir, maxBytes: 10 * 1024 * 1024, log: quietLog }),
+  });
+  try {
+    const soap = (action, body) => `<?xml version="1.0"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:wprt="http://schemas.microsoft.com/windows/2006/08/wdp/print"><soap:Header><wsa:Action>${action}</wsa:Action><wsa:MessageID>urn:uuid:selftest-http</wsa:MessageID></soap:Header><soap:Body>${body}</soap:Body></soap:Envelope>`;
+    const post = async (payload, contentType) => {
+      const res = await fetch(`http://127.0.0.1:${state.port}/wsd/device`, { method: 'POST', headers: { 'content-type': contentType }, body: payload });
+      assert.strictEqual(res.status, 200, 'WSD endpoint answers 200');
+      return res.text();
+    };
+    const meta = await post(soap('http://schemas.xmlsoap.org/ws/2004/09/transfer/Get', ''), 'application/soap+xml');
+    assert.ok(meta.includes('Oshal Print to File Printer'), 'metadata carries the FriendlyName');
+    assert.ok(meta.includes('PrinterServiceType'), 'metadata declares the print service');
+    const boundary = 'selftestboundary';
+    const docBytes = Buffer.from('%PDF-1.4 wsd doc %%EOF');
+    const sendXml = soap('http://schemas.microsoft.com/windows/2006/08/wdp/print/SendDocument', '<wprt:SendDocument><wprt:JobId>1</wprt:JobId></wprt:SendDocument>');
+    const mtom = Buffer.concat([
+      Buffer.from(`--${boundary}\r\ncontent-type: application/xop+xml\r\n\r\n${sendXml}\r\n`),
+      Buffer.from(`--${boundary}\r\ncontent-type: application/octet-stream\r\n\r\n`),
+      docBytes,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    const sent = await post(mtom, `multipart/related; type="application/xop+xml"; boundary="${boundary}"`);
+    assert.ok(sent.includes('SendDocumentResponse'), 'SendDocument acknowledged');
+    const saved = fs.readdirSync(dropDir).filter((f) => f.endsWith('.pdf'));
+    assert.strictEqual(saved.length, 1, 'WSD document landed via the spooler');
+    assert.deepStrictEqual(fs.readFileSync(path.join(dropDir, saved[0])), docBytes, 'bytes intact');
+  } finally {
+    server.close();
+    fs.rmSync(dropDir, { recursive: true, force: true });
+  }
+}
+
+/**
  * @description Run every test against one shared server instance, then the cap test.
  * @returns {Promise<void>} Resolves on full success.
  */
@@ -273,7 +336,8 @@ async function main() {
   }
   await testByteCap();
   await testSubtypeAdvertisement();
-  log.info('selftest passed', { suites: 7 });
+  await testWsd();
+  log.info('selftest passed', { suites: 8 });
 }
 
 main().catch((err) => {

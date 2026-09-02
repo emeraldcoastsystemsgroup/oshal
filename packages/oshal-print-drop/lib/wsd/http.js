@@ -1,0 +1,262 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the HTTP half of WSD, mounted at /wsd/* on the existing port-631 server (one port, one firewall rule): WS-Transfer Get serves the device metadata (FriendlyName is what Windows lists), WS-Eventing Subscribe/Renew/Unsubscribe are accepted with canned grants (no events are ever pushed — a print-to-file target has none worth pushing), and the WS-Print (wprt) service implements GetPrinterElements, CreatePrintJob and SendDocument. SendDocument arrives as MTOM (multipart/related) with the document (typically XPS) as a binary part — it is buffered under the existing byte cap, extracted by boundary split, and handed to the same spooler as IPP jobs. XML handling is the package's regex extraction: values are compared against constants, never interpreted.
+ */
+'use strict';
+
+const { Readable } = require('stream');
+const { extractTag, escapeXml, messageId } = require('./xml');
+const { spoolDocument } = require('../spooler');
+
+const SOAP_CT = 'application/soap+xml';
+const ANON = 'http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous';
+const ACTIONS = {
+  GET: 'http://schemas.xmlsoap.org/ws/2004/09/transfer/Get',
+  SUBSCRIBE: 'http://schemas.xmlsoap.org/ws/2004/08/eventing/Subscribe',
+  RENEW: 'http://schemas.xmlsoap.org/ws/2004/08/eventing/Renew',
+  UNSUBSCRIBE: 'http://schemas.xmlsoap.org/ws/2004/08/eventing/Unsubscribe',
+  GET_STATUS: 'http://schemas.xmlsoap.org/ws/2004/08/eventing/GetStatus',
+  GET_PRINTER_ELEMENTS: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/GetPrinterElements',
+  CREATE_PRINT_JOB: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/CreatePrintJob',
+  SEND_DOCUMENT: 'http://schemas.microsoft.com/windows/2006/08/wdp/print/SendDocument',
+};
+
+/**
+ * @description Wrap a body in a SOAP response envelope with WSD's namespace set.
+ * @param {string} action The response wsa:Action URI.
+ * @param {string} relatesTo The request MessageID.
+ * @param {string} body The body XML.
+ * @returns {string} The envelope XML.
+ */
+function respondEnvelope(action, relatesTo, body) {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:wsx="http://schemas.xmlsoap.org/ws/2004/09/mex" xmlns:wsdp="http://schemas.xmlsoap.org/ws/2006/02/devprof" xmlns:wse="http://schemas.xmlsoap.org/ws/2004/08/eventing" xmlns:wprt="http://schemas.microsoft.com/windows/2006/08/wdp/print" xmlns:pnpx="http://schemas.microsoft.com/windows/pnpx/2005/10">
+<soap:Header>
+<wsa:To>${ANON}</wsa:To>
+<wsa:Action>${action}</wsa:Action>
+<wsa:MessageID>${messageId()}</wsa:MessageID>
+${relatesTo ? `<wsa:RelatesTo>${relatesTo}</wsa:RelatesTo>` : ''}
+</soap:Header>
+<soap:Body>${body}</soap:Body>
+</soap:Envelope>`;
+}
+
+/**
+ * @description The WS-Transfer Get metadata: device identity, model, and the
+ * hosted wprt print service. FriendlyName is the string Windows displays.
+ * @param {object} options The handler options.
+ * @returns {string} The Metadata body XML.
+ */
+function metadataBody(options) {
+  const name = escapeXml(options.friendlyName);
+  return `<wsx:Metadata>
+<wsx:MetadataSection Dialect="http://schemas.xmlsoap.org/ws/2006/02/devprof/ThisDevice">
+<wsdp:ThisDevice><wsdp:FriendlyName>${name}</wsdp:FriendlyName><wsdp:FirmwareVersion>1.0</wsdp:FirmwareVersion><wsdp:SerialNumber>OSHAL-PRINT-DROP</wsdp:SerialNumber></wsdp:ThisDevice>
+</wsx:MetadataSection>
+<wsx:MetadataSection Dialect="http://schemas.xmlsoap.org/ws/2006/02/devprof/ThisModel">
+<wsdp:ThisModel><wsdp:Manufacturer>oshal</wsdp:Manufacturer><wsdp:ManufacturerUrl>https://oswarm.ai</wsdp:ManufacturerUrl><wsdp:ModelName>${name}</wsdp:ModelName><wsdp:ModelNumber>1</wsdp:ModelNumber><pnpx:DeviceCategory>Printers</pnpx:DeviceCategory></wsdp:ThisModel>
+</wsx:MetadataSection>
+<wsx:MetadataSection Dialect="http://schemas.xmlsoap.org/ws/2006/02/devprof/Relationship">
+<wsdp:Relationship Type="http://schemas.xmlsoap.org/ws/2006/02/devprof/host">
+<wsdp:Hosted>
+<wsa:EndpointReference><wsa:Address>${options.baseUrl}/wsd/print</wsa:Address></wsa:EndpointReference>
+<wsdp:Types>wprt:PrinterServiceType</wsdp:Types>
+<wsdp:ServiceId>${options.uuidUri}/print</wsdp:ServiceId>
+<pnpx:CompatibleId>http://schemas.microsoft.com/windows/2006/08/wdp/print/PrinterServiceType</pnpx:CompatibleId>
+</wsdp:Hosted>
+</wsdp:Relationship>
+</wsx:MetadataSection>
+</wsx:Metadata>`;
+}
+
+/**
+ * @description The canned GetPrinterElements answer: description, configuration,
+ * status, and an empty default PrintTicket. Cosmetic for a print-to-file target
+ * but required by the Windows WSD print class driver at install time.
+ * @param {object} options The handler options.
+ * @returns {string} The response body XML.
+ */
+function printerElementsBody(options) {
+  const name = escapeXml(options.friendlyName);
+  return `<wprt:GetPrinterElementsResponse><wprt:PrinterElements>
+<wprt:ElementData Name="wprt:PrinterDescription" Valid="true"><wprt:PrinterDescription>
+<wprt:ColorSupported>true</wprt:ColorSupported>
+<wprt:DeviceId>MFG:oshal;MDL:Print to File;CLS:PRINTER;CMD:XPS;</wprt:DeviceId>
+<wprt:MultipleDocumentJobsSupported>false</wprt:MultipleDocumentJobsSupported>
+<wprt:PagesPerMinute>30</wprt:PagesPerMinute>
+<wprt:PagesPerMinuteColor>30</wprt:PagesPerMinuteColor>
+<wprt:PrinterName>${name}</wprt:PrinterName>
+<wprt:PrinterInfo>Saves print jobs as files on the host</wprt:PrinterInfo>
+<wprt:PrinterLocation>${escapeXml(options.location)}</wprt:PrinterLocation>
+</wprt:PrinterDescription></wprt:ElementData>
+<wprt:ElementData Name="wprt:PrinterConfiguration" Valid="true"><wprt:PrinterConfiguration>
+<wprt:PrinterEventRate>10</wprt:PrinterEventRate>
+</wprt:PrinterConfiguration></wprt:ElementData>
+<wprt:ElementData Name="wprt:PrinterStatus" Valid="true"><wprt:PrinterStatus>
+<wprt:PrinterCurrentTime>${new Date().toISOString()}</wprt:PrinterCurrentTime>
+<wprt:PrinterState>Idle</wprt:PrinterState>
+<wprt:PrinterPrimaryStateReason>None</wprt:PrinterPrimaryStateReason>
+<wprt:QueuedJobCount>0</wprt:QueuedJobCount>
+</wprt:PrinterStatus></wprt:ElementData>
+<wprt:ElementData Name="wprt:DefaultPrintTicket" Valid="true">
+<pt:PrintTicket xmlns:pt="http://schemas.microsoft.com/windows/2003/08/printing/printschemaframework" version="1"/>
+</wprt:ElementData>
+</wprt:PrinterElements></wprt:GetPrinterElementsResponse>`;
+}
+
+/**
+ * @description Split a multipart/related (MTOM) body into parts.
+ * @param {Buffer} body The raw request body.
+ * @param {string} contentType The Content-Type header.
+ * @returns {Array<{headers:string,content:Buffer}>|null} The parts, null when not multipart.
+ */
+function splitMultipart(body, contentType) {
+  const match = /boundary="?([^";]+)"?/i.exec(contentType || '');
+  if (!match) return null;
+  const boundary = Buffer.from(`--${match[1]}`);
+  const parts = [];
+  let index = body.indexOf(boundary);
+  while (index !== -1) {
+    const next = body.indexOf(boundary, index + boundary.length);
+    if (next === -1) break;
+    const segment = body.slice(index + boundary.length, next);
+    const headerEnd = segment.indexOf('\r\n\r\n');
+    if (headerEnd !== -1) {
+      let content = segment.slice(headerEnd + 4);
+      if (content.length >= 2 && content.slice(-2).toString('latin1') === '\r\n') content = content.slice(0, -2);
+      parts.push({ headers: segment.slice(0, headerEnd).toString('utf8').toLowerCase(), content });
+    }
+    index = next;
+  }
+  return parts.length ? parts : null;
+}
+
+/**
+ * @description Pull the SOAP XML and the (optional) binary document out of a
+ * request body, MTOM or plain.
+ * @param {Buffer} body The raw body.
+ * @param {string} contentType The Content-Type header.
+ * @returns {{xml:string,document:Buffer|null}} The pieces.
+ */
+function extractPayload(body, contentType) {
+  const parts = splitMultipart(body, contentType);
+  if (!parts) return { xml: body.toString('utf8'), document: null };
+  let xml = '';
+  let document = null;
+  for (const part of parts) {
+    if (part.headers.includes('xop+xml') || part.headers.includes('soap+xml')) {
+      if (!xml) xml = part.content.toString('utf8');
+    } else if (!document) {
+      document = part.content;
+    }
+  }
+  return { xml, document };
+}
+
+/**
+ * @description Handle SendDocument: spool the MTOM binary through the shared
+ * spooler and confirm.
+ * @param {object} options The handler options.
+ * @param {object} state The wsd job state.
+ * @param {{xml:string,document:Buffer|null}} payload The request pieces.
+ * @param {string} clientIp The sender address.
+ * @returns {Promise<string>} The response body XML.
+ */
+async function handleSendDocument(options, state, payload, clientIp) {
+  if (!payload.document || !payload.document.length) {
+    options.log.warn('WSD SendDocument without a document part', { client: clientIp });
+    return '<wprt:SendDocumentResponse/>';
+  }
+  state.jobId += 1;
+  const jobName = extractTag(payload.xml, 'JobName') || 'wsd-print-job';
+  const result = await spoolDocument(
+    Readable.from([payload.document]),
+    { jobId: 100000 + state.jobId, jobName, userName: extractTag(payload.xml, 'JobOriginatingUserName') || 'wsd-client', clientIp, format: '' },
+    { dropDir: options.dropDir, maxBytes: options.maxBytes },
+  );
+  options.log.info('WSD print job saved', { file: result.filePath, bytes: result.bytes, client: clientIp });
+  return '<wprt:SendDocumentResponse/>';
+}
+
+/**
+ * @description Dispatch one decoded WSD SOAP request to its response body.
+ * @param {object} options The handler options.
+ * @param {object} state The wsd job state.
+ * @param {string} action The wsa:Action URI.
+ * @param {{xml:string,document:Buffer|null}} payload The request pieces.
+ * @param {string} clientIp The sender address.
+ * @returns {Promise<{action:string,body:string}>} The response action + body.
+ */
+async function dispatchAction(options, state, action, payload, clientIp) {
+  switch (action) {
+    case ACTIONS.GET:
+      return { action: 'http://schemas.xmlsoap.org/ws/2004/09/transfer/GetResponse', body: metadataBody(options) };
+    case ACTIONS.SUBSCRIBE:
+      state.subId += 1;
+      return {
+        action: 'http://schemas.xmlsoap.org/ws/2004/08/eventing/SubscribeResponse',
+        body: `<wse:SubscribeResponse><wse:SubscriptionManager><wsa:Address>${options.baseUrl}/wsd/subscriptions/${state.subId}</wsa:Address><wsa:ReferenceParameters><wse:Identifier>urn:uuid:sub-${state.subId}</wse:Identifier></wsa:ReferenceParameters></wse:SubscriptionManager><wse:Expires>PT1H</wse:Expires></wse:SubscribeResponse>`,
+      };
+    case ACTIONS.RENEW:
+    case ACTIONS.GET_STATUS:
+      return { action: `${action}Response`, body: '<wse:RenewResponse><wse:Expires>PT1H</wse:Expires></wse:RenewResponse>' };
+    case ACTIONS.UNSUBSCRIBE:
+      return { action: `${action}Response`, body: '' };
+    case ACTIONS.GET_PRINTER_ELEMENTS:
+      return { action: `${ACTIONS.GET_PRINTER_ELEMENTS}Response`, body: printerElementsBody(options) };
+    case ACTIONS.CREATE_PRINT_JOB:
+      state.jobId += 1;
+      return { action: `${ACTIONS.CREATE_PRINT_JOB}Response`, body: `<wprt:CreatePrintJobResponse><wprt:JobId>${state.jobId}</wprt:JobId></wprt:CreatePrintJobResponse>` };
+    case ACTIONS.SEND_DOCUMENT:
+      return { action: `${ACTIONS.SEND_DOCUMENT}Response`, body: await handleSendDocument(options, state, payload, clientIp) };
+    default:
+      options.log.warn('WSD action not implemented', { action, client: clientIp });
+      return { action: `${action}Response`, body: '' };
+  }
+}
+
+/**
+ * @description Create the HTTP handler for /wsd/* requests, suitable as an
+ * extraRoutes entry on the IPP server.
+ * @param {{friendlyName:string,location:string,uuidUri:string,baseUrl:string,dropDir:string,maxBytes:number,log:object}} options Identity + spool config.
+ * @returns {(req:import('http').IncomingMessage,res:import('http').ServerResponse)=>void} The route handler.
+ */
+function createWsdHttpHandler(options) {
+  const state = { jobId: 0, subId: 0 };
+  return (req, res) => {
+    if (req.method !== 'POST') {
+      res.writeHead(405).end();
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > options.maxBytes * 1.4) {
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', async () => {
+      try {
+        const payload = extractPayload(Buffer.concat(chunks), req.headers['content-type']);
+        const action = extractTag(payload.xml, 'Action');
+        const relatesTo = extractTag(payload.xml, 'MessageID');
+        const result = await dispatchAction(options, state, action, payload, String(req.socket.remoteAddress || '').replace(/^::ffff:/, ''));
+        const xml = respondEnvelope(result.action, relatesTo, result.body);
+        res.writeHead(200, { 'content-type': SOAP_CT });
+        res.end(xml);
+      } catch (err) {
+        options.log.error('WSD request failed', { error: err.message, stack: err.stack });
+        res.writeHead(500).end();
+      }
+    });
+    req.on('error', () => res.destroy());
+  };
+}
+
+module.exports = { createWsdHttpHandler, ACTIONS };

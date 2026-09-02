@@ -5,10 +5,17 @@ computer on the LAN sees **"Oshal Print to File Printer"** in its native Add Pri
 flow — no driver install, no share credentials. Anything printed to it lands as a
 **PDF file** in a drop folder on the host, with a `.json` sidecar of job metadata.
 
-It speaks IPP 1.1/2.0 ("IPP Everywhere" shape) over HTTP and advertises itself via
-mDNS/DNS-SD (`_ipp._tcp`), which is exactly how modern physical printers work —
-clients use their built-in driverless class driver (Microsoft IPP Class Driver on
-Windows 10/11, AirPrint-style path on macOS, `everywhere` on CUPS).
+It speaks IPP 1.1/2.0 ("IPP Everywhere" shape) over HTTP and announces itself on
+**two discovery rails, exactly like hardware printers do**:
+
+- **mDNS/DNS-SD** (`_ipp._tcp` + the `_print` subtype) — the driverless path used
+  by the Microsoft IPP Class Driver, macOS, and CUPS.
+- **WSD / WS-Discovery** (UDP 3702, IPv4 + IPv6) — Microsoft's own printer
+  discovery. This rail matters because Windows machines routinely have a broken
+  native mDNS listener (Chrome and Apple's Bonjour helper can steal UDP 5353 from
+  the Dnscache service), while the WSD stack lives in svchost and keeps working —
+  it is why HP/Brother/etc. printers still show up on such machines. Jobs printed
+  through the WSD path arrive as XPS files.
 
 **Status: standalone utility.** It has no dependency on a running oshal stack.
 Swarm integration (print-to-swarm, print-to-a-bot for RAG ingestion) is a later,
@@ -54,7 +61,8 @@ Flag > environment variable > default. Nothing else is consulted.
 | `--bind` | `OSHAL_PRINT_BIND` | `0.0.0.0` | Bind address |
 | `--dir` | `OSHAL_PRINT_DROP_DIR` | `<home>/oshal-print-drop` | Drop folder |
 | `--max-mb` | `OSHAL_PRINT_MAX_MB` | `200` | Per-job size cap |
-| `--no-mdns` | `OSHAL_PRINT_NO_MDNS` | unset | Disable discovery (manual URL add only) |
+| `--no-mdns` | `OSHAL_PRINT_NO_MDNS` | unset | Disable mDNS discovery |
+| `--no-wsd` | `OSHAL_PRINT_NO_WSD` | unset | Disable WSD discovery |
 
 ## Windows host setup
 
@@ -63,6 +71,7 @@ Firewall (run once, elevated PowerShell) — scoped to the Private profile:
 ```powershell
 New-NetFirewallRule -DisplayName "oshal print-drop IPP"  -Direction Inbound -Protocol TCP -LocalPort 631  -Profile Private -Action Allow
 New-NetFirewallRule -DisplayName "oshal print-drop mDNS" -Direction Inbound -Protocol UDP -LocalPort 5353 -Profile Private -Action Allow
+New-NetFirewallRule -DisplayName "oshal print-drop WSD"  -Direction Inbound -Protocol UDP -LocalPort 3702 -Profile Private -Action Allow
 ```
 
 Run at startup — either wrap it as a service with [NSSM](https://nssm.cc)
