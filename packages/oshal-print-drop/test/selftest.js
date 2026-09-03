@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the metadata-conformance fixes (Windows looped on Transfer Get): the Get response must carry Content-Length (never chunked — WSDAPI's HTTP client mishandles it), a well-formed http-shaped ServiceId ending /PrintService (the previous urn:uuid/path was invalid), and a PNPX HardwareId.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Install-chain guard: SetEventRate (the call the live Add-device walk died on) must answer with its wprt response element, not the generic empty envelope.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Driver-binding guard: GetPrinterElements' DeviceId must carry CID:MS_IPP_PREF — the field Windows turns into the 1284_CID_MS_IPP_PREF hardware id that binds the inbox Microsoft IPP Class Driver (prnms012.inf) to a WSD-discovered queue. Without it the queue installs as "Driver is unavailable".
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Re-announcement guard: a real multicast listener joined after startup must hear ≥2 periodic WSD Hellos (150ms test interval) carrying our endpoint and wprt:PrintDeviceType. One startup Hello was the parity gap vs hardware printers — clients that never actively probe (and never change their settings) only ever list a printer from its ongoing announcements.
  */
 'use strict';
 
@@ -267,7 +268,7 @@ async function testWsd() {
   const { startWsdDiscovery } = require('../lib/wsd/discovery');
   const { createWsdHttpHandler } = require('../lib/wsd/http');
   const uuidUri = 'urn:uuid:00000000-0000-5000-8000-00000000wsd1';
-  const wsd = await startWsdDiscovery({ uuidUri, xaddrs: 'http://127.0.0.1:9999/wsd/device' }, quietLog, 13702);
+  const wsd = await startWsdDiscovery({ uuidUri, xaddrs: 'http://127.0.0.1:9999/wsd/device' }, quietLog, 13702, 150);
   try {
     const reply = await new Promise((resolve, reject) => {
       const probe = `<?xml version="1.0"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:wsd="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:wprt="http://schemas.microsoft.com/windows/2006/08/wdp/print"><soap:Header><wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To><wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</wsa:Action><wsa:MessageID>urn:uuid:selftest-probe</wsa:MessageID></soap:Header><soap:Body><wsd:Probe><wsd:Types>wprt:PrintDeviceType</wsd:Types></wsd:Probe></soap:Body></soap:Envelope>`;
@@ -281,6 +282,31 @@ async function testWsd() {
     assert.ok(reply.includes(uuidUri), 'ProbeMatches carries our endpoint urn');
     assert.ok(reply.includes('http://127.0.0.1:9999/wsd/device'), 'ProbeMatches carries XAddrs');
     assert.ok(reply.includes('urn:uuid:selftest-probe'), 'RelatesTo echoes the probe MessageID');
+    // Re-announcement guard: real multicast listener joined AFTER startup, so
+    // every Hello it hears is from the periodic timer (150ms in this test) —
+    // the mechanism that lets clients list the printer with zero client-side
+    // settings changes, the way hardware printers behave.
+    const hellos = await new Promise((resolve) => {
+      const listener = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      const heard = [];
+      listener.on('message', (msg) => {
+        const text = msg.toString('utf8');
+        if (text.includes('discovery/Hello') && text.includes(uuidUri)) heard.push(text);
+      });
+      listener.on('error', () => { resolve(heard); });
+      listener.bind(13702, () => {
+        for (const addrs of Object.values(os.networkInterfaces())) {
+          for (const a of addrs || []) {
+            if (a.family === 'IPv4' && !a.internal) {
+              try { listener.addMembership('239.255.255.250', a.address); } catch (err) { /* iface not joinable */ }
+            }
+          }
+        }
+        setTimeout(() => { listener.close(); resolve(heard); }, 1500);
+      });
+    });
+    assert.ok(hellos.length >= 2, `WSD Hello re-announces periodically (heard ${hellos.length} in 1.5s at a 150ms interval)`);
+    assert.ok(hellos[0].includes('wprt:PrintDeviceType'), 'Hello declares the print device type');
   } finally {
     await wsd.stop();
   }
