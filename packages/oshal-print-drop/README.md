@@ -38,6 +38,29 @@ loopback (no network or second machine needed).
 
 ## Adding the printer from another computer
 
+**The reliable path on Windows is a directed IPP install** — it binds the inbox
+Microsoft IPP Class Driver (verified end-to-end: queue created, jobs land as
+PDFs). Two ways:
+
+- Settings → Printers & scanners → Add device → "Add a new device manually" →
+  **"Add a printer using an IP address or hostname"** → Device type **IPP
+  Device** → enter the server's IP.
+- Or scripted, from an elevated PowerShell on the client:
+  `scripts\install-windows-queue.ps1 -PrinterHost <server-ip>`
+
+**If the install says "The specified printer already exists"**: Windows has a
+phantom WSD-staged twin of the device (same UUID) from earlier discovery.
+Restart the server with `--no-wsd`, run the install script (it clears the
+phantoms and retries), then restart the server normally — the WSD advertisement
+then merges into the installed queue instead of colliding.
+
+**Automatic discovery** (the printer appearing in Add device by itself) works
+via mDNS and WSD, but full auto-*install* from the WSD entry requires Windows to
+pair the WSD device with the IPP endpoint, which it does through mDNS. On
+machines whose native mDNS listener is broken (see Constraints), the WSD entry
+lists but the install falls back to a WSD driver search and fails — use the
+directed IPP install above instead.
+
 - **Windows 10/11**: Settings → Bluetooth & devices → Printers & scanners →
   **Add device**. "Oshal Print to File Printer" appears within a few seconds; Add.
   Windows installs it with the built-in IPP Class Driver — no prompts.
