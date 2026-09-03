@@ -77,9 +77,16 @@ describe('backfill + trigger — no row escapes the book key', () => {
     for (const t of ['oshal_trading_orders', 'oshal_trading_signals', 'oshal_trading_decisions', 'oshal_trading_equity_hwm', 'oshal_trading_peaks', 'oshal_trading_daily_equity', 'oshal_trading_rotation_state']) {
       const nulls = (await pool.query(`SELECT count(*)::int AS n FROM ${t} WHERE book_id IS NULL AND user_sub IS NOT NULL`)).rows[0].n;
       expect(nulls, `${t} has NULL book_ids after backfill`).toBe(0);
-      const wrong = (await pool.query(
-        `SELECT count(*)::int AS n FROM ${t} WHERE user_sub IS NOT NULL AND book_id IS DISTINCT FROM md5('oshal-book:'||user_sub||':'||mode)::uuid`)).rows[0].n;
-      expect(wrong, `${t} rows whose book_id breaks the legacy bijection`).toBe(0);
+      // LEGACY-derived rows (mode-keyed, no account book) must match the md5 derivation. Rows
+      // written by a real ACCOUNT book (post-cutover: a b-book carries a random UUID that DOES
+      // resolve to an oshal_trading_books row) legitimately diverge — the real invariant is that
+      // EVERY book_id references a books row, checked below.
+      const wrongLegacy = (await pool.query(
+        `SELECT count(*)::int AS n FROM ${t} x
+          WHERE x.user_sub IS NOT NULL
+            AND x.book_id IS DISTINCT FROM md5('oshal-book:'||x.user_sub||':'||x.mode)::uuid
+            AND NOT EXISTS (SELECT 1 FROM oshal_trading_books b WHERE b.book_id = x.book_id AND b.user_sub = x.user_sub)`)).rows[0].n;
+      expect(wrongLegacy, `${t} rows whose book_id is neither the legacy derivation nor a real book`).toBe(0);
     }
   });
 
