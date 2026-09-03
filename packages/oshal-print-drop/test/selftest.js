@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | WSD guard (suite 8): a Windows-shaped Probe over real UDP must come back as ProbeMatches carrying our endpoint urn and XAddrs (on an alternate port — 3702 is shared with the OS WSD service, and unicast test probes would race it); WS-Transfer Get must serve metadata with the FriendlyName; an MTOM SendDocument with a binary part must land a real file through the shared spooler.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the metadata-conformance fixes (Windows looped on Transfer Get): the Get response must carry Content-Length (never chunked — WSDAPI's HTTP client mishandles it), a well-formed http-shaped ServiceId ending /PrintService (the previous urn:uuid/path was invalid), and a PNPX HardwareId.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Install-chain guard: SetEventRate (the call the live Add-device walk died on) must answer with its wprt response element, not the generic empty envelope.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Driver-binding guard: GetPrinterElements' DeviceId must carry CID:MS_IPP_PREF — the field Windows turns into the 1284_CID_MS_IPP_PREF hardware id that binds the inbox Microsoft IPP Class Driver (prnms012.inf) to a WSD-discovered queue. Without it the queue installs as "Driver is unavailable".
  */
 'use strict';
 
@@ -304,6 +305,8 @@ async function testWsd() {
     assert.ok(meta.includes('HardwareId'), 'metadata carries a PNPX HardwareId');
     const eventRate = await post(soap('http://schemas.microsoft.com/windows/2006/08/wdp/print/SetEventRate', '<wprt:SetEventRate><wprt:EventRate>10</wprt:EventRate></wprt:SetEventRate>'), 'application/soap+xml');
     assert.ok(eventRate.includes('SetEventRateResponse/>') || eventRate.includes('SetEventRateResponse>'), 'SetEventRate answers with its wprt response element');
+    const elements = await post(soap('http://schemas.microsoft.com/windows/2006/08/wdp/print/GetPrinterElements', '<wprt:GetPrinterElements><wprt:RequestedElements><wprt:Name>wprt:PrinterDescription</wprt:Name></wprt:RequestedElements></wprt:GetPrinterElements>'), 'application/soap+xml');
+    assert.ok(elements.includes('CID:MS_IPP_PREF'), 'DeviceId carries CID:MS_IPP_PREF - the id that binds the inbox IPP class driver to a WSD queue');
     const boundary = 'selftestboundary';
     const docBytes = Buffer.from('%PDF-1.4 wsd doc %%EOF');
     const sendXml = soap('http://schemas.microsoft.com/windows/2006/08/wdp/print/SendDocument', '<wprt:SendDocument><wprt:JobId>1</wprt:JobId></wprt:SendDocument>');
