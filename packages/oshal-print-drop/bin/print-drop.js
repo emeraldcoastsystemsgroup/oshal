@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | LAN-interface pinning for the advertisement (--iface / OSHAL_PRINT_IFACE, else auto-detected via the UDP-connect route trick — no packet is sent). On multi-homed hosts (Wi-Fi + WSL/Docker vEthernet + hotspot) the mDNS library's default egress picked the virtual adapter, so responses never reached the physical LAN. The chosen address is logged and shown in the banner; detection failure falls back to the old all-interfaces behavior with a warning. A VPN holding the default route will be auto-picked — that is the --iface escape hatch.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Banner prints the manual-add URL in IP form first (hostname second): a bare machine name only resolves on the remote side via NetBIOS/LLMNR/mDNS, all of which are unreliable cross-machine, and the operator hit exactly that. The IP is the detected LAN address the advertisement is pinned to, so the two always agree.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Second discovery rail: WSD (WS-Discovery on UDP 3702, IPv4+IPv6, plus /wsd/* SOAP endpoints on the existing HTTP port). This is how hardware printers stay discoverable on Windows machines whose native mDNS is dead (browser/Bonjour port theft on 5353 — both operator machines had it); Windows' WSD stack lives in svchost and keeps working. Disable with --no-wsd / OSHAL_PRINT_NO_WSD. Requires inbound UDP 3702 in the firewall (documented in README next to the existing rules).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | --wsd-announce-sec / OSHAL_PRINT_WSD_ANNOUNCE_SEC (default 90, 0 disables): period of the WSD Hello re-announcement, the mechanism that lets client machines list the printer WITHOUT any client-side settings change — parity with hardware printers, which announce continuously rather than once at startup.
  */
 'use strict';
 
@@ -33,6 +34,8 @@ Options (flag > env > default):
   --iface <ip>     LAN IPv4 for mDNS   OSHAL_PRINT_IFACE     auto (default-route address)
   --no-mdns        Disable mDNS        OSHAL_PRINT_NO_MDNS   (unset)
   --no-wsd         Disable WSD         OSHAL_PRINT_NO_WSD    (unset)
+  --wsd-announce-sec <n>  WSD Hello re-announce period, 0 = off
+                                       OSHAL_PRINT_WSD_ANNOUNCE_SEC  90
   --help           This text
 `;
 
@@ -68,6 +71,7 @@ function resolveConfig(argv) {
     maxBytes: Number(argValue(argv, '--max-mb') || env.OSHAL_PRINT_MAX_MB || 200) * 1024 * 1024,
     mdns: !argv.includes('--no-mdns') && !env.OSHAL_PRINT_NO_MDNS,
     wsd: !argv.includes('--no-wsd') && !env.OSHAL_PRINT_NO_WSD,
+    wsdAnnounceSec: Number(argValue(argv, '--wsd-announce-sec') ?? env.OSHAL_PRINT_WSD_ANNOUNCE_SEC ?? 90),
     interfaceAddress: argValue(argv, '--iface') || env.OSHAL_PRINT_IFACE || '',
     uuid,
     uuidUri: `urn:uuid:${uuid}`,
@@ -184,6 +188,8 @@ async function main() {
     wsdDiscovery = await startWsdDiscovery(
       { uuidUri: config.uuidUri, xaddrs: `${baseUrl}/wsd/device`, interfaceAddress: config.interfaceAddress },
       log,
+      undefined,
+      config.wsdAnnounceSec * 1000,
     );
   }
   log.info('printer ready', { name: config.printerName, port: state.port, dropDir: config.dropDir, mdns: config.mdns, wsd: config.wsd });
