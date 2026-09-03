@@ -63,13 +63,21 @@ export function resolveMode(raw: unknown): TradingMode {
  *   existence probing across users.
  */
 export async function resolveBook(pool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> }, sub: string, raw: unknown): Promise<TradingBook> {
-  const { legacyBook, loadBook, getBookByRef } = await import('../trading-books-store.js');
-  const v = String(raw ?? '').trim();
-  if (!v || v.toLowerCase() === 'paper') return legacyBook(sub, 'paper');
-  if (v.toLowerCase() === 'live') return legacyBook(sub, 'live');
+  const { legacyBook, legacyBookId, loadBook, getBookByRef } = await import('../trading-books-store.js');
+  const v = String(raw ?? '').trim().toLowerCase();
+  // ALIASES RESOLVE THROUGH THE DB ROW (surface-audit finding 2026-09-03): the pure legacyBook()
+  // constructor hard-codes enabled:true, so alias-addressed routes ignored a legacy book the
+  // operator had set to view-only — "Stop trading" showed on screen while route-driven buys still
+  // executed. The row carries the real enabled/capital-cap/binding; the pure constructor remains
+  // only the bootstrap fallback for a user whose books were never minted.
+  if (!v || v === 'paper' || v === 'live') {
+    const kind = (v === 'live' ? 'live' : 'paper') as 'paper' | 'live';
+    const row = await loadBook(pool as never, sub, legacyBookId(sub, kind)).catch(() => null);
+    return row ?? legacyBook(sub, kind);
+  }
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-  const book = isUuid ? await loadBook(pool as never, sub, v) : await getBookByRef(pool as never, sub, v);
-  if (!book) throw new TradingError(400, 'unknown_book', `No such trading book '${v}' for this user.`);
+  const book = isUuid ? await loadBook(pool as never, sub, v) : await getBookByRef(pool as never, sub, String(raw).trim());
+  if (!book) throw new TradingError(400, 'unknown_book', `No such trading book '${String(raw).trim()}' for this user.`);
   return book;
 }
 
