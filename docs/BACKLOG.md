@@ -665,6 +665,11 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** decide whether `C:\Projects\ai-dealfinder` joins as a bot, connector, app package, or external A2A service; do not rebuild its auction/foreclosure/real-estate domains inside the kernel.
 - **Done when:** an ADR names ownership, auth/data boundary, installation, and lifecycle, and one read-only end-to-end flow proves the chosen integration.
 
+### print-drop swarm adoption (print-to-swarm / print-to-RAG)
+- **Shipped 2026-09-02/03** (PRs #256–#266): `packages/oshal-print-drop` — standalone IPP Everywhere + WSD virtual printer; LAN clients print and documents land as PDF/XPS in a local drop folder with a `.json` metadata sidecar. Proven end-to-end on the operator's box (Microsoft IPP Class Driver, real job → PDF).
+- **Remaining:** the adoption phase the operator named at kickoff — an opt-in (default OFF, per the automation directive) drop-folder watcher that feeds oshal: (a) print-to-swarm (a printed document opens a ticket / reaches Jarvis) and (b) print-to-bot (routes into a chosen bot's RAG corpus keyed on the sidecar metadata). Ships as a store package (Rule 0c), not core; the drop folder is untrusted LAN input and must be parsed defensively.
+- **Done when:** a store package watches the drop folder only after the operator explicitly enables it, each printed document reaches the chosen corpus/ticket with provenance from its sidecar, hostile file content cannot escape the parser, and a fresh install does nothing until opted in.
+
 ## Provisioning and operator experience
 
 ### First-run provisioning wizard
