@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the IPP endpoint: an HTTP server that speaks enough IPP 1.1/2.0 for driverless clients (Microsoft IPP Class Driver, macOS, CUPS) to install the queue and print. Supported operations: Get-Printer-Attributes, Validate-Job, Print-Job, Create-Job + Send-Document, Cancel-Job, Get-Job-Attributes, Get-Jobs; everything else answers server-error-operation-not-supported. The request body is parsed incrementally: attribute section decoded from the first chunks (capped at 256KB), document bytes streamed to the spooler without buffering. GET / serves a small human status page for manual verification. Jobs live in a bounded in-memory table (Windows' queue UI polls Get-Jobs).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | extraRoutes hook: startIppServer's ctx now carries a mutable extraRoutes array checked before IPP dispatch, so sibling protocols (the WSD HTTP endpoints at /wsd/*) share this one port and its one firewall rule instead of opening another listener.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Malformed-request capture: a rejected request now logs its method, URL, content-type, byte count, and the first 64 bytes (hex + printable ASCII). Operator-demanded after "rejected malformed IPP request" fired during a Windows install with zero forensic detail — the log line must carry enough of the message to see WHERE it is incomplete without a wire capture.
  */
 'use strict';
 
@@ -37,6 +38,7 @@ function collectMessage(req, callback) {
     settled = true;
     req.removeListener('data', onData);
     req.removeListener('end', onEnd);
+    if (err) err.capturedBytes = buf;
     callback(err, msg, doc);
   };
   const onData = (chunk) => {
@@ -357,7 +359,18 @@ function handleHttpRequest(ctx, req, res) {
   }
   collectMessage(req, (err, msg, doc) => {
     if (err) {
-      ctx.log.warn('rejected malformed IPP request', { client: clientAddress(req), error: err.message });
+      const head = (err.capturedBytes || Buffer.alloc(0)).slice(0, 64);
+      ctx.log.warn('rejected malformed IPP request', {
+        client: clientAddress(req),
+        error: err.message,
+        method: req.method,
+        url: req.url,
+        contentType: req.headers['content-type'] || '(none)',
+        contentLength: req.headers['content-length'] || '(none)',
+        totalBytes: (err.capturedBytes || Buffer.alloc(0)).length,
+        headHex: head.toString('hex'),
+        headAscii: head.toString('latin1').replace(/[^\x20-\x7e]/g, '.'),
+      });
       res.writeHead(400).end();
       return;
     }
