@@ -9,6 +9,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Banner prints the manual-add URL in IP form first (hostname second): a bare machine name only resolves on the remote side via NetBIOS/LLMNR/mDNS, all of which are unreliable cross-machine, and the operator hit exactly that. The IP is the detected LAN address the advertisement is pinned to, so the two always agree.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Second discovery rail: WSD (WS-Discovery on UDP 3702, IPv4+IPv6, plus /wsd/* SOAP endpoints on the existing HTTP port). This is how hardware printers stay discoverable on Windows machines whose native mDNS is dead (browser/Bonjour port theft on 5353 — both operator machines had it); Windows' WSD stack lives in svchost and keeps working. Disable with --no-wsd / OSHAL_PRINT_NO_WSD. Requires inbound UDP 3702 in the firewall (documented in README next to the existing rules).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | --wsd-announce-sec / OSHAL_PRINT_WSD_ANNOUNCE_SEC (default 90, 0 disables): period of the WSD Hello re-announcement, the mechanism that lets client machines list the printer WITHOUT any client-side settings change — parity with hardware printers, which announce continuously rather than once at startup.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Deployment configuration file + explicit device identity. Precedence is now flag > env > print-drop.config.json (beside package.json, untracked) > default: flags and env only reach a process someone launches by hand, and the shipped startup task runs `node bin/print-drop.js` with no arguments, so a per-deployment setting such as the printer's display name had nowhere to live. The identity UUID also becomes a settable key: it is derived from hostname + printer name, so RENAMING THE PRINTER MINTS A NEW DEVICE and already-installed client queues point at an identity that no longer answers. Pinning `uuid` to the previous value keeps existing clients working across a rename. The shipped default name stays vendor-neutral — a deployment-specific name belongs in the deployment's config, never in the package default.
  */
 'use strict';
 
@@ -23,9 +24,15 @@ const { startWsdDiscovery } = require('../lib/wsd/discovery');
 const { createWsdHttpHandler } = require('../lib/wsd/http');
 const { createLogger } = require('../lib/log');
 
+const CONFIG_FILE = 'print-drop.config.json';
+const DEFAULT_PRINTER_NAME = 'Oshal Print to File Printer';
+
 const HELP = `oshal-print-drop - IPP virtual printer; print jobs land as files in a drop folder.
 
-Options (flag > env > default):
+Settings resolve flag > env > ${CONFIG_FILE} (beside package.json) > default.
+The config file is how the startup task picks up deployment settings.
+
+Options:
   --name <text>    Printer name        OSHAL_PRINT_NAME      "Oshal Print to File Printer"
   --port <n>       TCP port            OSHAL_PRINT_PORT      631
   --bind <addr>    Bind address        OSHAL_PRINT_BIND      0.0.0.0
@@ -36,6 +43,9 @@ Options (flag > env > default):
   --no-wsd         Disable WSD         OSHAL_PRINT_NO_WSD    (unset)
   --wsd-announce-sec <n>  WSD Hello re-announce period, 0 = off
                                        OSHAL_PRINT_WSD_ANNOUNCE_SEC  90
+  --uuid <uuid>    Device identity     OSHAL_PRINT_UUID      derived from host + name
+                   Pin this when renaming the printer, or installed client
+                   queues will point at an identity that no longer answers.
   --help           This text
 `;
 
@@ -51,28 +61,67 @@ function argValue(argv, flag) {
 }
 
 /**
+ * @description Read the optional deployment config file that sits beside
+ * package.json. It is how a machine-specific setting (the display name, a
+ * pinned identity) reaches the shipped startup task, which runs the entrypoint
+ * with no arguments. Absent file = no settings; malformed file warns and is
+ * ignored rather than blocking the printer from starting.
+ * @returns {object} The parsed settings, {} when absent or unreadable.
+ */
+function loadFileConfig() {
+  const configPath = path.join(__dirname, '..', CONFIG_FILE);
+  try {
+    return JSON.parse(fs.readFileSync(configPath, 'utf8')) || {};
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      process.stderr.write(`  WARNING: ignoring ${CONFIG_FILE} - ${err.message}\n`);
+    }
+    return {};
+  }
+}
+
+/**
+ * @description Resolve one setting by the project's precedence rule:
+ * command-line flag, then environment variable, then config file, then default.
+ * @param {string[]} argv The process arguments.
+ * @param {object} file The parsed config file.
+ * @param {{flag:string,env:string,key:string,fallback:*}} spec Where to look.
+ * @returns {*} The effective value.
+ */
+function setting(argv, file, spec) {
+  const fromFlag = argValue(argv, spec.flag);
+  if (fromFlag !== undefined) return fromFlag;
+  if (process.env[spec.env] !== undefined && process.env[spec.env] !== '') return process.env[spec.env];
+  if (file[spec.key] !== undefined && file[spec.key] !== '') return file[spec.key];
+  return spec.fallback;
+}
+
+/**
  * @description Resolve the effective configuration: flags > env > defaults.
  * @param {string[]} argv The process arguments.
  * @returns {object} The runtime configuration.
  */
 function resolveConfig(argv) {
   const env = process.env;
-  const printerName = argValue(argv, '--name') || env.OSHAL_PRINT_NAME || 'Oshal Print to File Printer';
+  const file = loadFileConfig();
+  const pick = (flag, envName, key, fallback) => setting(argv, file, { flag, env: envName, key, fallback });
+  const printerName = pick('--name', 'OSHAL_PRINT_NAME', 'name', DEFAULT_PRINTER_NAME);
   const hostname = os.hostname();
-  const uuid = deriveUuid(`${hostname}/${printerName}`);
+  // Identity follows the name unless pinned - see the header note on renames.
+  const uuid = String(pick('--uuid', 'OSHAL_PRINT_UUID', 'uuid', deriveUuid(`${hostname}/${printerName}`))).toLowerCase();
   return {
     printerName,
     printerInfo: 'oshal print-drop - print jobs are saved as files on the host',
     printerLocation: hostname,
     hostname,
-    port: Number(argValue(argv, '--port') || env.OSHAL_PRINT_PORT || 631),
-    bindAddress: argValue(argv, '--bind') || env.OSHAL_PRINT_BIND || '0.0.0.0',
-    dropDir: path.resolve(argValue(argv, '--dir') || env.OSHAL_PRINT_DROP_DIR || path.join(os.homedir(), 'oshal-print-drop')),
-    maxBytes: Number(argValue(argv, '--max-mb') || env.OSHAL_PRINT_MAX_MB || 200) * 1024 * 1024,
-    mdns: !argv.includes('--no-mdns') && !env.OSHAL_PRINT_NO_MDNS,
-    wsd: !argv.includes('--no-wsd') && !env.OSHAL_PRINT_NO_WSD,
-    wsdAnnounceSec: Number(argValue(argv, '--wsd-announce-sec') ?? env.OSHAL_PRINT_WSD_ANNOUNCE_SEC ?? 90),
-    interfaceAddress: argValue(argv, '--iface') || env.OSHAL_PRINT_IFACE || '',
+    port: Number(pick('--port', 'OSHAL_PRINT_PORT', 'port', 631)),
+    bindAddress: pick('--bind', 'OSHAL_PRINT_BIND', 'bind', '0.0.0.0'),
+    dropDir: path.resolve(pick('--dir', 'OSHAL_PRINT_DROP_DIR', 'dropDir', path.join(os.homedir(), 'oshal-print-drop'))),
+    maxBytes: Number(pick('--max-mb', 'OSHAL_PRINT_MAX_MB', 'maxMb', 200)) * 1024 * 1024,
+    mdns: !argv.includes('--no-mdns') && !env.OSHAL_PRINT_NO_MDNS && file.mdns !== false,
+    wsd: !argv.includes('--no-wsd') && !env.OSHAL_PRINT_NO_WSD && file.wsd !== false,
+    wsdAnnounceSec: Number(pick('--wsd-announce-sec', 'OSHAL_PRINT_WSD_ANNOUNCE_SEC', 'wsdAnnounceSec', 90)),
+    interfaceAddress: pick('--iface', 'OSHAL_PRINT_IFACE', 'iface', ''),
     uuid,
     uuidUri: `urn:uuid:${uuid}`,
   };

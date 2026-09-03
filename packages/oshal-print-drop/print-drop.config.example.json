@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy to print-drop.config.json (untracked) for per-deployment settings. Precedence: command-line flag > environment variable > this file > built-in default. This file is the only one the shipped startup task reads, since it runs the entrypoint with no arguments.",
+  "name": "Oshal Print to File Printer",
+  "uuid": "pin this to the previous value when renaming the printer, otherwise installed client queues point at an identity that no longer answers - omit the key entirely to derive it from hostname + name",
+  "dropDir": "C:/Users/<you>/oshal-print-drop",
+  "port": 631,
+  "maxMb": 200,
+  "wsdAnnounceSec": 90,
+  "iface": "",
+  "mdns": true,
+  "wsd": true
+}
