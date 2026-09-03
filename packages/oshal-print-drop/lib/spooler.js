@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — streams a print job's document data to the drop folder. Security posture: the job name is attacker-controlled network input, so it is sanitized to a safe character class and NEVER used as a path component uninspected; documents write to a dot-prefixed .part file and rename atomically so folder watchers only ever see complete files; a byte cap aborts oversized jobs (drain up to 2× the cap, then hard-destroy so a malicious endless stream cannot hold the socket). File extension comes from the declared MIME format, falling back to magic-byte sniffing (%PDF / %!PS / RaS2), never from the client-supplied name. A sidecar .json records job metadata for the later swarm-adoption phase.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deterministic .part cleanup on abort. The discard/fail paths issued fs.rm while the write stream could still hold the handle — on Windows that delete silently fails (EBUSY) and a .part is left behind (caught by the byte-cap selftest going intermittently red). Cleanup now waits for the stream's close event and completes BEFORE the promise rejects, so the caller's error response is only sent once the folder is clean.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Versioned, transport-neutral sidecar schema, and no more doubled extensions. The sidecar is the hand-off record the swarm-adoption phase will ingest, so it now emits a fixed key set (empty string when a field is genuinely unknown, never omitted) plus the fields that identify a job's provenance: the originating computer, the document name, which transport delivered it (ipp | wsd) and which printer instance received it. sidecarVersion makes a later schema change detectable by a consumer instead of silently mis-parsed. Separately, a job named "Report.pdf" printed to PDF produced "Report.pdf.pdf" — a trailing extension identical to the chosen one is now dropped, and only that exact case, so "Report.docx" printed to PDF still records both.
  */
 'use strict';
 
@@ -57,6 +58,22 @@ function chooseExtension(format, firstBytes) {
 }
 
 /**
+ * @description Drop a trailing extension that duplicates the one being applied,
+ * so a job named "Report.pdf" saved as PDF becomes "Report.pdf" rather than
+ * "Report.pdf.pdf". A DIFFERENT trailing extension is kept — "Report.docx"
+ * printed to PDF is genuinely a docx rendered to PDF and the name should say so.
+ * @param {string} base The sanitized filename base.
+ * @param {string} extension The extension about to be applied, no leading dot.
+ * @returns {string} The base with a redundant extension removed.
+ */
+function stripRedundantExtension(base, extension) {
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0) return base;
+  if (base.slice(dot + 1).toLowerCase() !== String(extension).toLowerCase()) return base;
+  return base.slice(0, dot) || base;
+}
+
+/**
  * @description Local-time stamp for filenames: YYYYMMDD-HHMMSS.
  * @param {Date} when The moment to format.
  * @returns {string} The stamp.
@@ -102,7 +119,7 @@ function writeSidecar(documentPath, meta) {
  * resolve with filePath null (nothing written). Rejects with err.code
  * 'TOO_LARGE' when the byte cap is exceeded.
  * @param {import('stream').Readable} source The document data stream.
- * @param {{jobId:number,jobName:string,userName:string,clientIp:string,format:string}} meta Job metadata.
+ * @param {{jobId:number,jobName:string,userName:string,clientIp:string,format:string,documentName?:string,computerName?:string,source?:string,printerName?:string}} meta Job metadata; the optional fields are recorded in the sidecar when the transport supplies them.
  * @param {{dropDir:string,maxBytes:number}} options Spool configuration.
  * @returns {Promise<{filePath:string|null,bytes:number,extension:string|null}>} The outcome.
  */
@@ -173,15 +190,22 @@ function finalizeSpool(tmpPath, meta, options, state, startedAt) {
     return { filePath: null, bytes: 0, extension: null };
   }
   const extension = chooseExtension(meta.format, state.first);
-  const base = `${buildStamp(new Date(startedAt))}_${sanitizeJobName(meta.jobName)}`;
-  const filePath = uniquePath(options.dropDir, base, extension);
+  const named = stripRedundantExtension(sanitizeJobName(meta.jobName), extension);
+  const filePath = uniquePath(options.dropDir, `${buildStamp(new Date(startedAt))}_${named}`, extension);
   fs.renameSync(tmpPath, filePath);
   writeSidecar(filePath, {
+    sidecarVersion: 1,
     jobId: meta.jobId,
     jobName: String(meta.jobName || ''),
+    documentName: String(meta.documentName || ''),
     requestingUser: String(meta.userName || ''),
+    originatingComputer: String(meta.computerName || ''),
     clientIp: meta.clientIp,
+    source: String(meta.source || ''),
+    printerName: String(meta.printerName || ''),
     documentFormat: String(meta.format || ''),
+    fileName: path.basename(filePath),
+    extension,
     bytes: state.bytes,
     receivedAt: new Date(startedAt).toISOString(),
     durationMs: Date.now() - startedAt,

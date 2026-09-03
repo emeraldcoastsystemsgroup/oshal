@@ -80,17 +80,58 @@ directed IPP install above instead.
 
 ## Configuration
 
-Flag > environment variable > default. Nothing else is consulted.
+Flag > environment variable > `print-drop.config.json` > default.
 
-| Flag | Env | Default | Meaning |
-|---|---|---|---|
-| `--name` | `OSHAL_PRINT_NAME` | `Oshal Print to File Printer` | Printer name clients see |
-| `--port` | `OSHAL_PRINT_PORT` | `631` | TCP port (631 = standard IPP) |
-| `--bind` | `OSHAL_PRINT_BIND` | `0.0.0.0` | Bind address |
-| `--dir` | `OSHAL_PRINT_DROP_DIR` | `<home>/oshal-print-drop` | Drop folder |
-| `--max-mb` | `OSHAL_PRINT_MAX_MB` | `200` | Per-job size cap |
-| `--no-mdns` | `OSHAL_PRINT_NO_MDNS` | unset | Disable mDNS discovery |
-| `--no-wsd` | `OSHAL_PRINT_NO_WSD` | unset | Disable WSD discovery |
+| Flag | Env | Config key | Default | Meaning |
+|---|---|---|---|---|
+| `--name` | `OSHAL_PRINT_NAME` | `name` | `Oshal Print to File Printer` | Printer name clients see |
+| `--port` | `OSHAL_PRINT_PORT` | `port` | `631` | TCP port (631 = standard IPP) |
+| `--bind` | `OSHAL_PRINT_BIND` | `bind` | `0.0.0.0` | Bind address |
+| `--dir` | `OSHAL_PRINT_DROP_DIR` | `dropDir` | `<home>/oshal-print-drop` | Drop folder |
+| `--max-mb` | `OSHAL_PRINT_MAX_MB` | `maxMb` | `200` | Per-job size cap |
+| `--iface` | `OSHAL_PRINT_IFACE` | `iface` | auto | LAN IPv4 the advertisements egress |
+| `--wsd-announce-sec` | `OSHAL_PRINT_WSD_ANNOUNCE_SEC` | `wsdAnnounceSec` | `90` | WSD Hello period, `0` disables |
+| `--uuid` | `OSHAL_PRINT_UUID` | `uuid` | derived | Device identity — see below |
+| `--no-mdns` | `OSHAL_PRINT_NO_MDNS` | `mdns: false` | unset | Disable mDNS discovery |
+| `--no-wsd` | `OSHAL_PRINT_NO_WSD` | `wsd: false` | unset | Disable WSD discovery |
+
+### The config file
+
+`print-drop.config.json` sits beside `package.json` and is **untracked** — it holds one
+machine's settings. Copy `print-drop.config.example.json` to start. It exists because flags and
+environment variables only reach a process someone launches by hand, while the startup task
+(`scripts/install-startup-task.ps1`) runs the entrypoint with no arguments; the config file is the
+only place a per-deployment setting such as the display name survives a reboot.
+
+### Renaming the printer
+
+The device identity is derived from hostname + printer name, so **renaming mints a new device**
+and already-installed client queues point at an identity that no longer answers. To rename without
+touching any client, pin the old identity first:
+
+```jsonc
+{ "name": "New Name", "uuid": "<the previous UUID>" }
+```
+
+Read the current value from a client's installed device
+(`Get-PnpDevice | Where-Object FriendlyName -like '*<old name>*'` → the `URN:UUID:` in the instance
+id), or recompute it from the old name. Existing queues keep their original label until they are
+removed and re-added; new installs show the new name.
+
+### Job metadata sidecar
+
+Every saved document gets a `<file>.json` sidecar with a stable key set — keys are always present,
+empty when genuinely unknown, so a consumer never has to infer meaning from an absent field:
+
+| Key | Meaning |
+|---|---|
+| `sidecarVersion` | Schema version, currently `1` |
+| `jobId`, `jobName`, `documentName` | Job number and the document title the user printed |
+| `requestingUser`, `originatingComputer`, `clientIp` | Who and where the job came from |
+| `source` | `ipp` (directly-added queue) or `wsd` (discovered queue) |
+| `printerName` | Which printer instance received it |
+| `documentFormat`, `extension`, `fileName`, `bytes` | What landed on disk |
+| `receivedAt`, `durationMs` | When, and how long the transfer took |
 
 ## Windows host setup
 
