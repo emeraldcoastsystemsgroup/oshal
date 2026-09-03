@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log every WSD HTTP action with its client — the first client-visible field trip (probes answered, nothing listed) was undiagnosable partly because the metadata exchange left no trace; now the log shows exactly how far a Windows client walks the install chain (Get -> Subscribe -> GetPrinterElements -> CreatePrintJob -> SendDocument).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Metadata conformance, diffed live against the operator's HP Smart Tank GetResponse after Windows looped on Transfer Get (fetch-retry-fetch, never listing): (1) responses now send Content-Length + charset and Connection: close — Node defaulted to chunked, which WSDAPI's gSOAP-era HTTP client mishandles; (2) ServiceId was a malformed URN (urn:uuid:xxx/print — URNs take no path) and is now the http://<uuid>/PrintService shape real devices use; (3) added PNPX:HardwareId beside CompatibleId, xml:lang on the human-readable names, and PresentationUrl.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Install-chain completion: the live Add-device walk (Get -> GetPrinterElements -> Subscribe) died on unimplemented SetEventRate, sending WSDMon into an endless Resolve/Get retry loop. SetEventRate, GetActiveJobs and GetJobHistory now answer with their proper wprt response elements (an empty soap:Body from the generic fallback was not accepted as success).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | CID:MS_IPP_PREF in the DeviceId — the driver-binding key. Post-reboot the Add-device flow created the queue but left it "Driver is unavailable": Windows derives the queue's PnP hardware id from the CID: field of this DeviceId (1284_CID_<value>), and the inbox Microsoft IPP Class Driver INF (prnms012.inf) matches 1284_CID_MS_IPP / 1284_CID_MS_IPP_PREF — read directly off the operator's working HP queue (hardware id 1284_CID_MS_IPP_PREF) and C:\Windows\INF. With the CID declared, a WSD-discovered queue binds the IPP class driver on any Windows box with no mDNS pairing involved.
  */
 'use strict';
 
@@ -92,7 +93,7 @@ function printerElementsBody(options) {
   return `<wprt:GetPrinterElementsResponse><wprt:PrinterElements>
 <wprt:ElementData Name="wprt:PrinterDescription" Valid="true"><wprt:PrinterDescription>
 <wprt:ColorSupported>true</wprt:ColorSupported>
-<wprt:DeviceId>MFG:oshal;MDL:Print to File;CLS:PRINTER;CMD:XPS;</wprt:DeviceId>
+<wprt:DeviceId>MFG:oshal;MDL:Print to File;CLS:PRINTER;CMD:PDF,XPS;CID:MS_IPP_PREF;</wprt:DeviceId>
 <wprt:MultipleDocumentJobsSupported>false</wprt:MultipleDocumentJobsSupported>
 <wprt:PagesPerMinute>30</wprt:PagesPerMinute>
 <wprt:PagesPerMinuteColor>30</wprt:PagesPerMinuteColor>
