@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — WS-Discovery (2005/04 draft, the dialect Windows WSDAPI speaks) responder on UDP 3702: multicast Hello on start / Bye on stop, and unicast ProbeMatches / ResolveMatches answers to client Probe / Resolve. This is the SECOND discovery rail alongside mDNS, and the reason it exists: Windows boxes routinely have a dead native mDNS listener (browsers/Bonjour steal port 5353 from Dnscache) while WSD — owned by svchost on 3702 — keeps working; hardware printers (HP et al.) are discovered through it. Listens on BOTH IPv4 (239.255.255.250) and IPv6 (ff02::c) since Windows often prefers the IPv6 link-local path for WSD. All failures degrade to warnings; mDNS and manual add remain.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Declare wprt:PrintDeviceType in Types (and answer probes for it). Live diff against the operator's HP Smart Tank ProbeMatches showed why probes were answered yet nothing listed: Windows' printer pane filters ProbeMatches on the wprt:PrintDeviceType type and probes for that type specifically — a wsdp:Device-only endpoint is a device, not a printer, and is both filtered from the list and skipped by print-targeted probes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Periodic Hello re-announcement (default 90s) + per-scope IPv6 Hello. One startup Hello is not how hardware printers behave: clients that never actively probe (or that joined the network after our single Hello) only learn of a printer from its ongoing announcements, so a client could sit forever never listing us while the HP — which re-announces — shows fine. The v6 Hello also egressed whatever interface the OS picked by default; it now iterates the joined link-local scopes (setMulticastInterface per scope) so the announcement actually reaches the LAN Windows prefers for WSD. Announcements share one path (announceAll) used by startup Hello, the re-announce timer, and Bye on stop.
  */
 'use strict';
 
@@ -15,6 +16,7 @@ const { extractTag, messageId } = require('./xml');
 const WSD_PORT = 3702;
 const V4_GROUP = '239.255.255.250';
 const V6_GROUP = 'ff02::c';
+const DEFAULT_ANNOUNCE_MS = 90000;
 const ACTION = {
   HELLO: 'http://schemas.xmlsoap.org/ws/2005/04/discovery/Hello',
   BYE: 'http://schemas.xmlsoap.org/ws/2005/04/discovery/Bye',
@@ -134,15 +136,46 @@ function announce(state, sock, group, action) {
   });
   const buf = Buffer.from(xml, 'utf8');
   try {
-    sock.send(buf, 0, buf.length, state.port, group);
+    // The callback keeps async send failures (per-scope v6 egress on odd
+    // adapters) out of the socket's 'error' event, where they would read as a
+    // dead responder instead of one skipped announcement.
+    sock.send(buf, 0, buf.length, state.port, group, (err) => {
+      if (err) state.log.warn(`WSD ${name} send failed`, { group, error: err.message });
+    });
   } catch (err) {
     state.log.warn(`WSD ${name} send failed`, { group, error: err.message });
   }
 }
 
 /**
+ * @description Announce (Hello/Bye) on every open socket: IPv4 once (egress is
+ * pinned at open time), IPv6 once per joined link-local scope — the OS default
+ * egress for ff02::c is arbitrary on a multi-homed host, so each scope is
+ * selected explicitly before sending or the announcement can die in a virtual
+ * adapter while the LAN never hears it.
+ * @param {object} state The responder state.
+ * @param {string} action Hello or Bye action URI.
+ * @returns {void}
+ */
+function announceAll(state, action) {
+  if (state.v4) announce(state, state.v4, V4_GROUP, action);
+  if (!state.v6) return;
+  const scopes = state.v6Scopes.length ? state.v6Scopes : [null];
+  for (const scope of scopes) {
+    if (scope !== null) {
+      try {
+        state.v6.setMulticastInterface(`::%${scope}`);
+      } catch (err) {
+        continue; // scope went away (adapter down) - announce on the rest
+      }
+    }
+    announce(state, state.v6, V6_GROUP, action);
+  }
+}
+
+/**
  * @description Open the IPv4 WSD socket: bind 3702 (shared), join the group on
- * the pinned interface, send Hello.
+ * the pinned interface.
  * @param {object} state The responder state.
  * @param {string} interfaceAddress The pinned IPv4, '' for default.
  * @returns {Promise<import('dgram').Socket|null>} The socket, null on failure.
@@ -162,7 +195,6 @@ function openV4(state, interfaceAddress) {
       } catch (err) {
         state.log.warn('WSD IPv4 group join failed', { error: err.message });
       }
-      announce(state, sock, V4_GROUP, ACTION.HELLO);
       resolve(sock);
     });
   });
@@ -170,8 +202,9 @@ function openV4(state, interfaceAddress) {
 
 /**
  * @description Open the IPv6 WSD socket: bind 3702 (shared), join ff02::c on
- * every non-internal interface scope, send Hello. Best-effort — Windows often
- * prefers this path for WSD, but failure only degrades to IPv4.
+ * every non-internal interface scope (recorded on state.v6Scopes for per-scope
+ * announcements). Best-effort — Windows often prefers this path for WSD, but
+ * failure only degrades to IPv4.
  * @param {object} state The responder state.
  * @returns {Promise<import('dgram').Socket|null>} The socket, null on failure.
  */
@@ -184,61 +217,73 @@ function openV6(state) {
     });
     sock.on('message', (msg, rinfo) => handleDatagram(state, msg, rinfo, sock));
     sock.bind(state.port, () => {
-      let joined = 0;
       for (const addrs of Object.values(os.networkInterfaces())) {
         for (const addr of addrs || []) {
           if (addr.family === 'IPv6' && !addr.internal && addr.scopeid) {
             try {
               sock.addMembership(V6_GROUP, `::%${addr.scopeid}`);
-              joined += 1;
+              state.v6Scopes.push(addr.scopeid);
             } catch (err) { /* scope not joinable - skip */ }
           }
         }
       }
-      if (!joined) {
-        try { sock.addMembership(V6_GROUP); joined += 1; } catch (err) {
+      if (!state.v6Scopes.length) {
+        try { sock.addMembership(V6_GROUP); } catch (err) {
           state.log.warn('WSD IPv6 group join failed - continuing IPv4-only', { error: err.message });
+          resolve(null);
+          return;
         }
       }
-      if (joined) announce(state, sock, V6_GROUP, ACTION.HELLO);
-      resolve(joined ? sock : null);
+      resolve(sock);
     });
   });
 }
 
 /**
- * @description Start the WS-Discovery responder.
+ * @description Start the WS-Discovery responder: answer Probe/Resolve, Hello on
+ * start and periodically after (hardware printers re-announce; a single startup
+ * Hello leaves passively-listening clients that missed it never listing us),
+ * Bye on stop.
  * @param {{uuidUri:string,xaddrs:string,interfaceAddress?:string}} identity Device identity: endpoint urn, metadata URL(s), pinned IPv4.
  * @param {{info:Function,warn:Function}} log Structured logger.
  * @param {number} [portOverride] Alternate UDP port — tests only (3702 is shared with the OS WSD service, so unicast test probes would race it).
+ * @param {number} [announceIntervalMs] Hello re-announcement period; default 90s, 0 disables re-announcement.
  * @returns {Promise<{stop:()=>Promise<void>}>} Handle whose stop() sends Bye and closes sockets.
  */
-async function startWsdDiscovery(identity, log, portOverride) {
+async function startWsdDiscovery(identity, log, portOverride, announceIntervalMs) {
   const state = {
     identity,
     log,
     port: portOverride || WSD_PORT,
     instanceId: Math.floor(Date.now() / 1000),
     messageNumber: 0,
+    v4: null,
+    v6: null,
+    v6Scopes: [],
   };
-  const v4 = await openV4(state, identity.interfaceAddress || '');
-  const v6 = await openV6(state);
-  if (v4 || v6) {
-    log.info('WSD discovery active', { port: WSD_PORT, ipv4: !!v4, ipv6: !!v6, xaddrs: identity.xaddrs });
+  state.v4 = await openV4(state, identity.interfaceAddress || '');
+  state.v6 = await openV6(state);
+  let timer = null;
+  if (state.v4 || state.v6) {
+    announceAll(state, ACTION.HELLO);
+    const intervalMs = announceIntervalMs === undefined ? DEFAULT_ANNOUNCE_MS : announceIntervalMs;
+    if (intervalMs > 0) {
+      timer = setInterval(() => announceAll(state, ACTION.HELLO), intervalMs);
+      timer.unref();
+    }
+    log.info('WSD discovery active', { port: state.port, ipv4: !!state.v4, ipv6: !!state.v6, announceSec: intervalMs / 1000, xaddrs: identity.xaddrs });
   } else {
     log.warn('WSD discovery unavailable on both address families');
   }
   return {
     stop: async () => {
-      if (v4) {
-        announce(state, v4, V4_GROUP, ACTION.BYE);
-        await new Promise((r) => setTimeout(r, 50));
-        try { v4.close(); } catch (err) { /* already closed */ }
-      }
-      if (v6) {
-        announce(state, v6, V6_GROUP, ACTION.BYE);
-        await new Promise((r) => setTimeout(r, 50));
-        try { v6.close(); } catch (err) { /* already closed */ }
+      if (timer) clearInterval(timer);
+      announceAll(state, ACTION.BYE);
+      await new Promise((r) => setTimeout(r, 50));
+      for (const sock of [state.v4, state.v6]) {
+        if (sock) {
+          try { sock.close(); } catch (err) { /* already closed */ }
+        }
       }
     },
   };
