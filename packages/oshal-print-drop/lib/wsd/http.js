@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Metadata conformance, diffed live against the operator's HP Smart Tank GetResponse after Windows looped on Transfer Get (fetch-retry-fetch, never listing): (1) responses now send Content-Length + charset and Connection: close — Node defaulted to chunked, which WSDAPI's gSOAP-era HTTP client mishandles; (2) ServiceId was a malformed URN (urn:uuid:xxx/print — URNs take no path) and is now the http://<uuid>/PrintService shape real devices use; (3) added PNPX:HardwareId beside CompatibleId, xml:lang on the human-readable names, and PresentationUrl.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Install-chain completion: the live Add-device walk (Get -> GetPrinterElements -> Subscribe) died on unimplemented SetEventRate, sending WSDMon into an endless Resolve/Get retry loop. SetEventRate, GetActiveJobs and GetJobHistory now answer with their proper wprt response elements (an empty soap:Body from the generic fallback was not accepted as success).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | CID:MS_IPP_PREF in the DeviceId — the driver-binding key. Post-reboot the Add-device flow created the queue but left it "Driver is unavailable": Windows derives the queue's PnP hardware id from the CID: field of this DeviceId (1284_CID_<value>), and the inbox Microsoft IPP Class Driver INF (prnms012.inf) matches 1284_CID_MS_IPP / 1284_CID_MS_IPP_PREF — read directly off the operator's working HP queue (hardware id 1284_CID_MS_IPP_PREF) and C:\Windows\INF. With the CID declared, a WSD-discovered queue binds the IPP class driver on any Windows box with no mDNS pairing involved.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Carry the job ticket through to the sidecar. WS-Print splits a job across two messages: CreatePrintJob carries JobDescription (JobName — the document title — plus originating user and computer) and SendDocument carries only JobId, DocumentDescription/Format and the bytes. Reading only SendDocument meant every remote job landed as "wsd-print-job" with an empty format, while the IPP path kept its real title; the first live cross-machine job proved it. CreatePrintJob's ticket is now retained in a bounded per-job map (network input — capped at MAX_TRACKED_JOBS, evicted oldest-first, and consumed on use) and merged with the DocumentDescription at SendDocument time, so the declared MIME type drives the file extension and the sidecar records the real title. SendDocument now also honours the JobId it is given instead of incrementing its own counter, which previously left the two messages disagreeing about the job number.
  */
 'use strict';
 
@@ -17,6 +18,9 @@ const { spoolDocument } = require('../spooler');
 
 const SOAP_CT = 'application/soap+xml';
 const ANON = 'http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous';
+// A client can open jobs it never sends; the ticket map is client-driven, so it
+// is bounded and evicted oldest-first rather than allowed to grow.
+const MAX_TRACKED_JOBS = 32;
 const ACTIONS = {
   GET: 'http://schemas.xmlsoap.org/ws/2004/09/transfer/Get',
   SUBSCRIBE: 'http://schemas.xmlsoap.org/ws/2004/08/eventing/Subscribe',
@@ -166,6 +170,51 @@ function extractPayload(body, contentType) {
 }
 
 /**
+ * @description Record the CreatePrintJob ticket so SendDocument — which carries
+ * only the JobId, the format and the bytes — can be attributed to the document
+ * the user actually printed.
+ * @param {object} state The wsd job state.
+ * @param {string} xml The CreatePrintJob request XML.
+ * @returns {number} The assigned job id.
+ */
+function trackPrintJob(state, xml) {
+  state.jobId += 1;
+  state.tickets.set(state.jobId, {
+    jobName: extractTag(xml, 'JobName'),
+    userName: extractTag(xml, 'JobOriginatingUserName'),
+    computerName: extractTag(xml, 'JobOriginatingComputerName'),
+  });
+  while (state.tickets.size > MAX_TRACKED_JOBS) {
+    state.tickets.delete(state.tickets.keys().next().value);
+  }
+  return state.jobId;
+}
+
+/**
+ * @description Merge a SendDocument's DocumentDescription with the ticket its
+ * CreatePrintJob left behind. Title preference is the job name (the document
+ * title Windows shows in the queue), then the document name.
+ * @param {object} state The wsd job state.
+ * @param {string} xml The SendDocument request XML.
+ * @returns {{jobId:number,jobName:string,documentName:string,userName:string,computerName:string,format:string}} The merged job metadata.
+ */
+function resolveJobMetadata(state, xml) {
+  const requestedId = Number.parseInt(extractTag(xml, 'JobId'), 10);
+  const jobId = Number.isInteger(requestedId) && requestedId > 0 ? requestedId : state.jobId;
+  const ticket = state.tickets.get(jobId) || {};
+  state.tickets.delete(jobId);
+  const documentName = extractTag(xml, 'DocumentName');
+  return {
+    jobId,
+    jobName: ticket.jobName || documentName || 'wsd-print-job',
+    documentName,
+    userName: ticket.userName || 'wsd-client',
+    computerName: ticket.computerName || '',
+    format: extractTag(xml, 'Format'),
+  };
+}
+
+/**
  * @description Handle SendDocument: spool the MTOM binary through the shared
  * spooler and confirm.
  * @param {object} options The handler options.
@@ -179,14 +228,25 @@ async function handleSendDocument(options, state, payload, clientIp) {
     options.log.warn('WSD SendDocument without a document part', { client: clientIp });
     return '<wprt:SendDocumentResponse/>';
   }
-  state.jobId += 1;
-  const jobName = extractTag(payload.xml, 'JobName') || 'wsd-print-job';
+  const job = resolveJobMetadata(state, payload.xml);
   const result = await spoolDocument(
     Readable.from([payload.document]),
-    { jobId: 100000 + state.jobId, jobName, userName: extractTag(payload.xml, 'JobOriginatingUserName') || 'wsd-client', clientIp, format: '' },
+    {
+      jobId: 100000 + job.jobId,
+      jobName: job.jobName,
+      documentName: job.documentName,
+      userName: job.userName,
+      computerName: job.computerName,
+      clientIp,
+      format: job.format,
+      source: 'wsd',
+      printerName: options.friendlyName,
+    },
     { dropDir: options.dropDir, maxBytes: options.maxBytes },
   );
-  options.log.info('WSD print job saved', { file: result.filePath, bytes: result.bytes, client: clientIp });
+  options.log.info('WSD print job saved', {
+    file: result.filePath, bytes: result.bytes, client: clientIp, jobName: job.jobName, format: job.format || '(undeclared)',
+  });
   return '<wprt:SendDocumentResponse/>';
 }
 
@@ -223,8 +283,10 @@ async function dispatchAction(options, state, action, payload, clientIp) {
     case ACTIONS.GET_JOB_HISTORY:
       return { action: `${ACTIONS.GET_JOB_HISTORY}Response`, body: '<wprt:GetJobHistoryResponse><wprt:JobHistory/></wprt:GetJobHistoryResponse>' };
     case ACTIONS.CREATE_PRINT_JOB:
-      state.jobId += 1;
-      return { action: `${ACTIONS.CREATE_PRINT_JOB}Response`, body: `<wprt:CreatePrintJobResponse><wprt:JobId>${state.jobId}</wprt:JobId></wprt:CreatePrintJobResponse>` };
+      return {
+        action: `${ACTIONS.CREATE_PRINT_JOB}Response`,
+        body: `<wprt:CreatePrintJobResponse><wprt:JobId>${trackPrintJob(state, payload.xml)}</wprt:JobId></wprt:CreatePrintJobResponse>`,
+      };
     case ACTIONS.SEND_DOCUMENT:
       return { action: `${ACTIONS.SEND_DOCUMENT}Response`, body: await handleSendDocument(options, state, payload, clientIp) };
     default:
@@ -240,7 +302,7 @@ async function dispatchAction(options, state, action, payload, clientIp) {
  * @returns {(req:import('http').IncomingMessage,res:import('http').ServerResponse)=>void} The route handler.
  */
 function createWsdHttpHandler(options) {
-  const state = { jobId: 0, subId: 0 };
+  const state = { jobId: 0, subId: 0, tickets: new Map() };
   return (req, res) => {
     if (req.method !== 'POST') {
       res.writeHead(405).end();
