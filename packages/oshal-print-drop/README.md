@@ -36,6 +36,11 @@ The banner prints the drop folder, the endpoint URL, and a local status page
 `npm test` runs a protocol-level self-test against a real server instance on
 loopback (no network or second machine needed).
 
+`npm run diagnose` health-checks a running setup end to end — LAN interface,
+the IPP endpoint, firewall rules, network profile, Windows' own mDNS listener,
+and real mDNS/WSD discovery round trips — and prints PASS/WARN/FAIL per item.
+Run it first whenever discovery misbehaves.
+
 ## Adding the printer from another computer
 
 **The reliable path on Windows is a directed IPP install** — it binds the inbox
@@ -97,10 +102,11 @@ New-NetFirewallRule -DisplayName "oshal print-drop mDNS" -Direction Inbound -Pro
 New-NetFirewallRule -DisplayName "oshal print-drop WSD"  -Direction Inbound -Protocol UDP -LocalPort 3702 -Profile Private -Action Allow
 ```
 
-Run at startup — either wrap it as a service with [NSSM](https://nssm.cc)
-(`nssm install oshal-print-drop "C:\Program Files\nodejs\node.exe" "<repo>\packages\oshal-print-drop\bin\print-drop.js"`,
-then set stdout/stderr log files in the NSSM dialog), or create a logon task in
-Task Scheduler pointing at `node.exe` with the same arguments.
+Run at startup: `scripts\install-startup-task.ps1` (elevated) registers a
+verified logon task that starts the printer and appends its logs to
+`logs\print-drop.log`; `-Remove` unregisters it. (NSSM works too if you prefer
+a real service.) Don't run a manual `npm start` alongside the task — they fight
+over port 631 and the loser exits with EADDRINUSE.
 
 ## Constraints worth knowing
 

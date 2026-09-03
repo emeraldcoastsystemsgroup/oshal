@@ -10,11 +10,13 @@
   "main": "./lib/ipp-server.js",
   "scripts": {
     "start": "node bin/print-drop.js",
-    "test": "node test/selftest.js"
+    "test": "node test/selftest.js",
+    "diagnose": "node scripts/diagnose.js"
   },
   "files": [
     "bin/",
     "lib/",
+    "scripts/",
     "README.md"
   ],
   "engines": {
