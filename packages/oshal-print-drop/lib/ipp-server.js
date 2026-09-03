@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the IPP endpoint: an HTTP server that speaks enough IPP 1.1/2.0 for driverless clients (Microsoft IPP Class Driver, macOS, CUPS) to install the queue and print. Supported operations: Get-Printer-Attributes, Validate-Job, Print-Job, Create-Job + Send-Document, Cancel-Job, Get-Job-Attributes, Get-Jobs; everything else answers server-error-operation-not-supported. The request body is parsed incrementally: attribute section decoded from the first chunks (capped at 256KB), document bytes streamed to the spooler without buffering. GET / serves a small human status page for manual verification. Jobs live in a bounded in-memory table (Windows' queue UI polls Get-Jobs).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | extraRoutes hook: startIppServer's ctx now carries a mutable extraRoutes array checked before IPP dispatch, so sibling protocols (the WSD HTTP endpoints at /wsd/*) share this one port and its one firewall rule instead of opening another listener.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Malformed-request capture: a rejected request now logs its method, URL, content-type, byte count, and the first 64 bytes (hex + printable ASCII). Operator-demanded after "rejected malformed IPP request" fired during a Windows install with zero forensic detail — the log line must carry enough of the message to see WHERE it is incomplete without a wire capture.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pass the sidecar's provenance fields (document-name, transport, receiving printer) to the spooler so an IPP job and a WSD job produce the same record shape — a downstream consumer should not have to infer which transport delivered a document from which fields happen to be empty.
  */
 'use strict';
 
@@ -170,7 +171,16 @@ async function spoolForJob(ctx, job, msg, doc) {
   try {
     const result = await spoolDocument(
       doc,
-      { jobId: job.id, jobName: job.name, userName: job.user, clientIp: ctx.clientIp, format },
+      {
+        jobId: job.id,
+        jobName: job.name,
+        documentName: String(codec.attributeValue(msg, DELIMITER.OPERATION_ATTRIBUTES, 'document-name', '') || ''),
+        userName: job.user,
+        clientIp: ctx.clientIp,
+        format,
+        source: 'ipp',
+        printerName: ctx.config.printerName,
+      },
       { dropDir: ctx.config.dropDir, maxBytes: ctx.config.maxBytes },
     );
     if (result.filePath) {

@@ -1,0 +1,7 @@
+# Per-deployment settings (printer name, pinned identity, drop folder). Local to
+# one machine and frequently carries host names - never tracked. Start from
+# print-drop.config.example.json.
+print-drop.config.json
+
+# Startup-task log target.
+logs/

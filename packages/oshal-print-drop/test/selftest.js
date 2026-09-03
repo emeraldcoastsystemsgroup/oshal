@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Install-chain guard: SetEventRate (the call the live Add-device walk died on) must answer with its wprt response element, not the generic empty envelope.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Driver-binding guard: GetPrinterElements' DeviceId must carry CID:MS_IPP_PREF — the field Windows turns into the 1284_CID_MS_IPP_PREF hardware id that binds the inbox Microsoft IPP Class Driver (prnms012.inf) to a WSD-discovered queue. Without it the queue installs as "Driver is unavailable".
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Re-announcement guard: a real multicast listener joined after startup must hear ≥2 periodic WSD Hellos (150ms test interval) carrying our endpoint and wprt:PrintDeviceType. One startup Hello was the parity gap vs hardware printers — clients that never actively probe (and never change their settings) only ever list a printer from its ongoing announcements.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Job-provenance guards. The WSD suite now drives the REAL two-message sequence (CreatePrintJob carrying the JobDescription, then SendDocument referencing that JobId) and requires the document title, declared format, originating user and computer to survive into the filename and the sidecar — the first live cross-machine job saved as "wsd-print-job" with an empty format because only SendDocument was parsed. The IPP suite pins the sidecar's stable key set (a downstream ingester must not have to guess which keys exist), and a new naming suite asserts "Report.pdf" printed to PDF does not become "Report.pdf.pdf" while "Contract.docx" printed to PDF still records both extensions.
  */
 'use strict';
 
@@ -132,6 +133,41 @@ async function testPrintJob(port, dropDir) {
   const sidecar = JSON.parse(fs.readFileSync(path.join(dropDir, `${saved[0]}.json`), 'utf8'));
   assert.strictEqual(sidecar.requestingUser, 'selftest-user');
   assert.strictEqual(sidecar.bytes, pdf.length);
+  assert.strictEqual(sidecar.sidecarVersion, 1, 'sidecar declares its schema version');
+  assert.strictEqual(sidecar.source, 'ipp', 'sidecar records which transport delivered the job');
+  assert.strictEqual(sidecar.printerName, 'Oshal Print to File Printer', 'sidecar records the receiving printer');
+  assert.strictEqual(sidecar.fileName, saved[0], 'sidecar points at its own document');
+  assert.strictEqual(sidecar.extension, 'pdf');
+  for (const key of ['jobId', 'jobName', 'documentName', 'originatingComputer', 'clientIp', 'documentFormat', 'receivedAt']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(sidecar, key), `sidecar always carries ${key} (stable schema for downstream ingestion)`);
+  }
+}
+
+/**
+ * @description A job whose name already ends in the extension being applied must
+ * not produce "Report.pdf.pdf"; a DIFFERENT trailing extension is preserved.
+ * @param {number} port The server port.
+ * @param {string} dropDir The drop folder.
+ * @returns {Promise<void>} Resolves when asserted.
+ */
+async function testExtensionNaming(port, dropDir) {
+  const pdf = Buffer.from('%PDF-1.4\ntrailer<<>>\n%%EOF\n');
+  await ipp(port, OPERATION.PRINT_JOB, [
+    { tag: VALUE.NAME, name: 'job-name', values: ['Quarterly Report.pdf'] },
+    { tag: VALUE.MIME_MEDIA_TYPE, name: 'document-format', values: ['application/pdf'] },
+  ], pdf);
+  const doubled = fs.readdirSync(dropDir).filter((f) => f.endsWith('Report.pdf.pdf'));
+  assert.strictEqual(doubled.length, 0, 'a redundant trailing extension is dropped');
+  assert.strictEqual(fs.readdirSync(dropDir).filter((f) => f.endsWith('Quarterly Report.pdf')).length, 1, 'saved as Quarterly Report.pdf');
+  await ipp(port, OPERATION.PRINT_JOB, [
+    { tag: VALUE.NAME, name: 'job-name', values: ['Contract.docx'] },
+    { tag: VALUE.MIME_MEDIA_TYPE, name: 'document-format', values: ['application/pdf'] },
+  ], pdf);
+  assert.strictEqual(
+    fs.readdirSync(dropDir).filter((f) => f.endsWith('Contract.docx.pdf')).length,
+    1,
+    'a different source extension is kept - a docx rendered to PDF says so',
+  );
 }
 
 /**
@@ -333,9 +369,33 @@ async function testWsd() {
     assert.ok(eventRate.includes('SetEventRateResponse/>') || eventRate.includes('SetEventRateResponse>'), 'SetEventRate answers with its wprt response element');
     const elements = await post(soap('http://schemas.microsoft.com/windows/2006/08/wdp/print/GetPrinterElements', '<wprt:GetPrinterElements><wprt:RequestedElements><wprt:Name>wprt:PrinterDescription</wprt:Name></wprt:RequestedElements></wprt:GetPrinterElements>'), 'application/soap+xml');
     assert.ok(elements.includes('CID:MS_IPP_PREF'), 'DeviceId carries CID:MS_IPP_PREF - the id that binds the inbox IPP class driver to a WSD queue');
+    // A real Windows job is TWO messages: CreatePrintJob carries the document
+    // title, SendDocument carries the bytes and the format. Drive both, then
+    // require the saved file and its sidecar to reflect the title - the live
+    // cross-machine job landed as "wsd-print-job" with an empty format because
+    // only SendDocument was read.
+    const created = await post(
+      soap(
+        'http://schemas.microsoft.com/windows/2006/08/wdp/print/CreatePrintJob',
+        '<wprt:CreatePrintJob><wprt:PrintTicket/><wprt:JobDescription>'
+        + '<wprt:JobName>Board Minutes.pdf</wprt:JobName>'
+        + '<wprt:JobOriginatingUserName>remote-user</wprt:JobOriginatingUserName>'
+        + '<wprt:JobOriginatingComputerName>REMOTEPC</wprt:JobOriginatingComputerName>'
+        + '</wprt:JobDescription></wprt:CreatePrintJob>',
+      ),
+      'application/soap+xml',
+    );
+    const createdJobId = /<wprt:JobId>(\d+)<\/wprt:JobId>/.exec(created);
+    assert.ok(createdJobId, 'CreatePrintJob answers with a JobId');
     const boundary = 'selftestboundary';
     const docBytes = Buffer.from('%PDF-1.4 wsd doc %%EOF');
-    const sendXml = soap('http://schemas.microsoft.com/windows/2006/08/wdp/print/SendDocument', '<wprt:SendDocument><wprt:JobId>1</wprt:JobId></wprt:SendDocument>');
+    const sendXml = soap(
+      'http://schemas.microsoft.com/windows/2006/08/wdp/print/SendDocument',
+      `<wprt:SendDocument><wprt:JobId>${createdJobId[1]}</wprt:JobId>`
+      + '<wprt:DocumentDescription><wprt:Format>application/pdf</wprt:Format>'
+      + '<wprt:DocumentName>Board Minutes.pdf</wprt:DocumentName></wprt:DocumentDescription>'
+      + '<wprt:LastDocument>true</wprt:LastDocument></wprt:SendDocument>',
+    );
     const mtom = Buffer.concat([
       Buffer.from(`--${boundary}\r\ncontent-type: application/xop+xml\r\n\r\n${sendXml}\r\n`),
       Buffer.from(`--${boundary}\r\ncontent-type: application/octet-stream\r\n\r\n`),
@@ -347,6 +407,13 @@ async function testWsd() {
     const saved = fs.readdirSync(dropDir).filter((f) => f.endsWith('.pdf'));
     assert.strictEqual(saved.length, 1, 'WSD document landed via the spooler');
     assert.deepStrictEqual(fs.readFileSync(path.join(dropDir, saved[0])), docBytes, 'bytes intact');
+    assert.ok(saved[0].endsWith('Board Minutes.pdf'), `WSD job keeps the document title from CreatePrintJob (got ${saved[0]})`);
+    const wsdSidecar = JSON.parse(fs.readFileSync(path.join(dropDir, `${saved[0]}.json`), 'utf8'));
+    assert.strictEqual(wsdSidecar.jobName, 'Board Minutes.pdf', 'title comes from the CreatePrintJob ticket, not the fallback');
+    assert.strictEqual(wsdSidecar.documentFormat, 'application/pdf', 'declared format is recorded');
+    assert.strictEqual(wsdSidecar.requestingUser, 'remote-user', 'originating user is recorded');
+    assert.strictEqual(wsdSidecar.originatingComputer, 'REMOTEPC', 'originating computer is recorded');
+    assert.strictEqual(wsdSidecar.source, 'wsd', 'transport is recorded');
   } finally {
     server.close();
     fs.rmSync(dropDir, { recursive: true, force: true });
@@ -365,6 +432,7 @@ async function main() {
     await testGetPrinterAttributes(state.port);
     await testPrintJob(state.port, dropDir);
     await testCreateSendDocument(state.port, dropDir);
+    await testExtensionNaming(state.port, dropDir);
     await testJobQueries(state.port);
     await testRejections(state.port);
   } finally {
@@ -374,7 +442,7 @@ async function main() {
   await testByteCap();
   await testSubtypeAdvertisement();
   await testWsd();
-  log.info('selftest passed', { suites: 8 });
+  log.info('selftest passed', { suites: 9 });
 }
 
 main().catch((err) => {
