@@ -339,7 +339,10 @@ export async function analyzeAndRecordDecision(
     }
   }
   const g = guardrails();
-  const broker = getBrokerReader(mode, sub); // read-only (cash context) — not gated behind live-enable
+  // Bind the cash-context reader to the book's account (surface-audit finding 2026-09-03): an
+  // unbound reader here sized the analyst's decision against the LEGACY account's cash on a bound
+  // book — the third instance of the unbound-reader class after /ledger and /summary.
+  const broker = getBrokerReader(mode, sub, bindingOf(book)); // read-only (cash context) — not gated behind live-enable
   let cash = 0;
   try { cash = broker.configured() ? (await broker.getAccount()).cash : 0; } catch { /* account read optional for reasoning */ }
   const decision = await runAnalyst(ctx, sub, signals, { cash, maxQty: g.maxQty, maxNotionalUsd: g.maxNotionalUsd, allowList: g.allowList, mode });
