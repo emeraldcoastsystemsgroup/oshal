@@ -77,3 +77,10 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
   planner, :8060).
 - [career-hunter-native-migration-plan.md](./career-hunter-native-migration-plan.md) —
   career-hunter (completed reference migration).
+- [print-ingest-spec.md](./print-ingest-spec.md) — **SPEC (nothing built):** the swarm half of print
+  adoption — printing a document becomes an intake gesture, with the destination chosen by *which
+  printer queue you print to* rather than a driver dialog. Functional spec (the five queues, the
+  approval inbox, the level vocabulary and its two honesty rules) plus the technical build: edge
+  forwarder, intake route, manifest with a graph-pipeline `approval-gate`, owner-RLS package table,
+  ingest contract, untrusted-content handling, failure modes and test plan. Decisions and the RAG
+  review behind it are in [ADR-135](../adr/135-print-to-swarm-and-print-to-rag.md).
