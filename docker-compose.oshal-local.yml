@@ -440,6 +440,9 @@ x-bot-env: &bot-env
   # leaderboard (rotation sells it) — arming is a behavior change, soak on paper first.
   TRADING_EARNINGS_GATE: ${TRADING_EARNINGS_GATE:-false}
   TRADING_EARNINGS_BLACKOUT_DAYS: ${TRADING_EARNINGS_BLACKOUT_DAYS:-}
+  # ADR-136 D6 event playbooks (IPO plans): the per-user 'trading-events' schedule leg only EXECUTES
+  # while this is true. Plans can be designed and armed regardless; nothing fires until it is on.
+  TRADING_EVENT_PLANS: ${TRADING_EVENT_PLANS:-false}
   # Extended-hours knobs — these were NOT forwarded before 2026-07-12, so they were untunable from
   # .env and silently ran on code defaults (EXTENDED_HOURS defaulted to ON). Default is now OFF:
   # the free Alpaca plan is IEX-only, and IEX is a venue that OPERATES 08:00-17:00 ET — it prints

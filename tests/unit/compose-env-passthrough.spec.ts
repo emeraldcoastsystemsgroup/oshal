@@ -30,6 +30,7 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'ENTRA_LOCAL_AUTH_HYBRID', readBy: 'application-auth combined local/Microsoft pilot composition' },
   { name: 'ENTRA_LOCAL_IDENTITY_EMAILS', readBy: 'Entra/local bridge first-link allowlist' },
   { name: 'APP_URL', readBy: 'absolute links in invitations and OAuth callbacks' },
+  { name: 'TRADING_EVENT_PLANS', readBy: 'trading-event-plans eventPlansEnabled — the ADR-136 D6 IPO-plan executor gate' },
   // Added 2026-07-30 after a browser walk of a real customer deployment. server.ts read
   // DISABLE_ONBOARDING_GATE the whole time and compose never forwarded it, so setting it in
   // .env did nothing and every invited user on a single-app box was bounced out of their app
