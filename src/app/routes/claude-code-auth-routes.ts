@@ -10,12 +10,14 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fixed OAuth redirect URI to use root /callback (Claude only allows localhost:{port}/callback); removed swarm propagation; each bot owns its own auth
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Restricted every controller credential operation to exact operators, kept machine import directional on authenticated bot-node targets only, and removed raw credential reads
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: replace controller credential import with a stable no-op denial and derive redacted diagnostics from auth status without exporting token material.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: POST /import adopts a satellite's `claude auth login` file into the mounted login path under BOTH ADR-127 gates (DEMO_MODE + exact OSHAL_OPERATOR_SUBS subject); the SEC-05 409 stands for every other deployment and caller, and a read-only mount answers its own 409 naming CLAUDE_AUTH_MOUNT_MODE=rw.
  */
 
 import { Router, type NextFunction, type Request, type Response, type RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { ClaudeCodeAuthService } from '@/features/claude-code-auth';
-import { requiresOperator } from '@/shared/middleware/authz';
+import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { getCaller, requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'claude-code-auth-routes' });
 const authService = new ClaudeCodeAuthService();
@@ -281,14 +283,51 @@ function registerCredentialsRoute(router: Router, requiresAuth: RequestHandler):
  * @param router - Router instance
  * @param requiresAuth - Session middleware requiring authenticated OSHAL user context
  */
+/**
+ * @description ADR-137 amendment A. A demo deployment is one person's own machines, and that
+ * person's vendor logins ARE its brain (ADR-127); when the browser lives on a satellite the login
+ * happens there and the node pushes the file here. Adoption needs BOTH ADR-127 gates — DEMO_MODE
+ * and the exact operator subject (requiresOperator, already applied, also admits operator emails;
+ * the credential carve wants the exact sub). Everywhere else the SEC-05 refusal stands unchanged.
+ * @param router - Express router receiving the route
+ * @param requiresAuth - Operator session guard applied to the route
+ */
 function registerImportRoute(router: Router, requiresAuth: RequestHandler): void {
   router.post('/import', requiresAuth, (req: Request, res: Response) => {
-    logger.warn({ method: req.method, path: req.path }, 'Claude Code raw credential import refused');
-    res.status(409).json({
-      success: false,
-      imported: false,
-      error: 'credential_distribution_disabled_pending_versioned_revocation_rail',
-    });
+    const startedAt = Date.now();
+    const demo = demoModeEnabled();
+    if (!demo || !isDeploymentOperatorSub(getCaller(req).sub)) {
+      logger.warn({ method: req.method, path: req.path, demo }, 'Claude Code raw credential import refused');
+      res.status(409).json({
+        success: false,
+        imported: false,
+        error: 'credential_distribution_disabled_pending_versioned_revocation_rail',
+      });
+      return;
+    }
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const adoption = authService.adoptOperatorLoginFile(body.credentials ?? body.loginFile ?? body);
+      res.json({ success: true, imported: true, expiresAt: adoption.expiresAt });
+      logger.info({ durationMs: Date.now() - startedAt, expiresAt: adoption.expiresAt }, 'Claude Code login file adopted (demo portal fallback)');
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      logger.error({ err: error, code }, 'Claude Code login file adoption failed');
+      if (code === 'CLAUDE_CREDENTIALS_PATH_READ_ONLY') {
+        res.status(409).json({
+          success: false,
+          imported: false,
+          error: 'claude_credentials_path_read_only',
+          hint: 'This controller mounts its Claude login read-only. Set CLAUDE_AUTH_MOUNT_MODE=rw in .env, recreate the api, then push again.',
+        });
+        return;
+      }
+      if (code === 'CLAUDE_LOGIN_FILE_INVALID') {
+        res.status(400).json({ success: false, imported: false, error: 'claude_login_file_invalid', detail: toErrorMessage(error) });
+        return;
+      }
+      res.status(500).json({ success: false, imported: false, error: toErrorMessage(error) });
+    }
   });
 }
 

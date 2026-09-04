@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Grant microphone: the cockpit's push-to-talk getUserMedia was silently denied by Electron (no permission handler), so voice turns recorded nothing → "didn't catch that" every time. Server STT itself was fine.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Per-app desktop launch: --app=<name> opens that cockpit app as its own window (operator: each app should be a real clickable Windows application, not a browser trick). Single-instance lock added — a second launch forwards its argv to the running instance (which opens/focuses the requested app window) instead of spawning a second Electron sharing the same profile (Chromium locks the session store; two instances silently corrupt cookies). --make-shortcuts=<a,b,c> writes real desktop .lnk entries per app via shell.writeShortcutLink and exits.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-135 amendment H: the print service now comes up WITH the node. Operator: "add it to the remote node, and when the remote node is up it is running the print service, and that service is then accessible on the intranet the remote node is running on." The standalone -AtStartup scheduled task was a SEPARATE install with a separately placed token that knew nothing about the node; this ties the printer to the node's own connection lifecycle, advertised on the node's LOCAL segment (so an overlay having no broadcast domain stops mattering) and delivering on the node's OWN plane with the node's OWN credential. Opt-in: it is an outward-facing service, so it is OFF unless printServiceEnabled.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: auth:push / auth:swarm-status / auth:login-and-push — the vendor login runs HERE (its CLI listens on the localhost redirect, like VS Code), the node notices the file the CLI writes, and pushes it to the swarm under the user's verified OIDC session. Restores the "log in to Codex / Claude and the swarm has it" flow for a swarm whose browser is on a satellite.
  */
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
@@ -26,6 +27,8 @@ import { resolveEnrollmentIdentity } from './enrollment';
 import { TaskWorker, type WorkerEvent } from './worker';
 import { PrintService } from './print-service';
 import { accountStatus, launchLogin } from './auth-manager';
+import { isPushableLogin } from './login-push-core';
+import { pushLoginToSwarm, snapshotLogin, swarmLoginStatus, waitForLoginThenPush } from './swarm-login-push';
 import { connectHeadscale } from './vpn';
 import { ensureAgentClis } from './ensure-clis';
 import { closeFullJarvis, hasOpenCockpitSurface, notifyNativeWake, openCockpitApp, openFullJarvis, type CockpitWindowHooks } from './cockpit-window';
@@ -423,6 +426,24 @@ async function signOut(): Promise<{ ok: boolean; error?: string }> {
 }
 
 /**
+ * @description Launches the vendor's own login on this machine and, for the two logins the swarm
+ * can adopt, waits for the CLI to write its file (the browser redirect landed) and pushes it.
+ * @param id - Local account id (codex / claude / gcloud / aws)
+ * @returns launched + command from the launcher, and the push outcome when one was attempted
+ */
+async function loginAndPush(id: string): Promise<Record<string, unknown>> {
+  if (!isPushableLogin(id)) {
+    const launched = launchLogin(id);
+    return { launched: launched.ok, command: launched.command, error: launched.error, push: null };
+  }
+  const before = snapshotLogin(id);
+  const launched = launchLogin(id);
+  if (!launched.ok) return { launched: false, command: launched.command, error: launched.error, push: null };
+  const push = await waitForLoginThenPush(store, id, before);
+  return { launched: true, command: launched.command, push };
+}
+
+/**
  * @description Registers all IPC handlers the renderer calls through the preload bridge.
  */
 function registerIpc(): void {
@@ -465,6 +486,11 @@ function registerIpc(): void {
   // Local accounts (codex / claude / gcloud / aws) — probe + browser-popup login.
   ipcMain.handle('auth:status', () => accountStatus());
   ipcMain.handle('auth:login', (_event, id: string) => launchLogin(id));
+  // ADR-137 amendment A: push the login this machine holds into the swarm, or launch the vendor
+  // login here (its CLI listens on the localhost redirect, like VS Code) and push once it lands.
+  ipcMain.handle('auth:push', (_event, id: string) => pushLoginToSwarm(store, id));
+  ipcMain.handle('auth:swarm-status', (_event, id: string) => swarmLoginStatus(store, id));
+  ipcMain.handle('auth:login-and-push', (_event, id: string) => loginAndPush(id));
 
   // Verified identity via the swarm's OIDC login.
   ipcMain.handle('identity:signin', () => signIn());
