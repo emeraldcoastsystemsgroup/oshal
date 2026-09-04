@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added contextBridge preload exposing the safe IPC surface to the renderer
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exposed worker events, local-account auth, verified sign-in, and connectors-hub APIs
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exposed openJarvis — opens the full swarm-hosted cockpit window (full-Jarvis mode)
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: exposed authLoginAndPush / authPush / authSwarmStatus — the Codex and Claude rows can push the login this machine holds into the swarm.
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
@@ -30,9 +31,12 @@ const api = {
   onWorkerEvent: (cb: (event: unknown) => void) =>
     ipcRenderer.on('worker:event', (_event, payload) => cb(payload)),
 
-  // Local accounts (codex / claude / gcloud / aws).
+  // Local accounts (codex / claude / gcloud / aws) — and pushing the two swarm-adoptable ones.
   authStatus: () => ipcRenderer.invoke('auth:status'),
   authLogin: (id: string) => ipcRenderer.invoke('auth:login', id),
+  authLoginAndPush: (id: string) => ipcRenderer.invoke('auth:login-and-push', id),
+  authPush: (id: string) => ipcRenderer.invoke('auth:push', id),
+  authSwarmStatus: (id: string) => ipcRenderer.invoke('auth:swarm-status', id),
 
   // Verified identity + web connectors hub.
   signIn: () => ipcRenderer.invoke('identity:signin'),

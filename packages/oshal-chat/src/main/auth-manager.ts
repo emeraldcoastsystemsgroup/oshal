@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local account manager: probes whether the user's CLIs are logged in (creds live in ~/.) and launches each CLI's own login in a visible terminal so its browser-popup OAuth runs HERE, on the user's machine — the thing a headless swarm container can't do.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: each account reports whether the swarm can adopt its login (codex, claude), so the Config screen can offer "Log in + push" / "Push to swarm" on exactly those rows.
  */
 
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { homedir, platform } from 'os';
 import { join } from 'path';
+import { isPushableLogin } from './login-push-core';
 
 /** One local provider the user can sign into on this machine. */
 interface LocalAccount {
@@ -58,8 +60,10 @@ const ACCOUNTS: LocalAccount[] = [
 const BY_ID = new Map(ACCOUNTS.map((a) => [a.id, a]));
 
 /** Current login state of every local account, for the config screen. */
-export function accountStatus(): Array<{ id: string; label: string; authed: boolean; loginCmd: string }> {
-  return ACCOUNTS.map((a) => ({ id: a.id, label: a.label, authed: a.isAuthed(), loginCmd: a.loginCmd }));
+export function accountStatus(): Array<{ id: string; label: string; authed: boolean; loginCmd: string; pushable: boolean }> {
+  return ACCOUNTS.map((a) => ({
+    id: a.id, label: a.label, authed: a.isAuthed(), loginCmd: a.loginCmd, pushable: isPushableLogin(a.id),
+  }));
 }
 
 /**
