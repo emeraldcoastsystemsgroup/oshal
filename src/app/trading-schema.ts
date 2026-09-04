@@ -97,6 +97,8 @@ async function bootstrapTradingSchema(pool: AppContext['pool']): Promise<void> {
       'ALTER TABLE oshal_trading_decisions ADD COLUMN IF NOT EXISTS trail_price NUMERIC(18,4)',
       'ALTER TABLE oshal_trading_decisions ADD COLUMN IF NOT EXISTS trail_percent NUMERIC(8,4)',
       'ALTER TABLE oshal_trading_decisions ADD COLUMN IF NOT EXISTS time_in_force TEXT',
+      // ADR-138 D4: an operator's manual LIMIT order may be eligible for pre/post-market execution.
+      'ALTER TABLE oshal_trading_decisions ADD COLUMN IF NOT EXISTS extended_hours BOOLEAN',
       'ALTER TABLE oshal_trading_orders ADD COLUMN IF NOT EXISTS stop_price NUMERIC(18,4)',
       'ALTER TABLE oshal_trading_orders ADD COLUMN IF NOT EXISTS trail_price NUMERIC(18,4)',
       'ALTER TABLE oshal_trading_orders ADD COLUMN IF NOT EXISTS trail_percent NUMERIC(8,4)',
