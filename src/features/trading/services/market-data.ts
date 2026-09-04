@@ -489,3 +489,55 @@ export async function latestTrade(symbol: string): Promise<TradeTick | null> {
 export async function latestPrice(symbol: string): Promise<number | null> {
   return (await latestTrade(symbol))?.price ?? null;
 }
+
+/** One tradable instrument from the Alpaca asset directory. */
+export interface AssetHit { symbol: string; name: string; exchange: string; kind: 'stock' | 'etf' }
+/** Cached asset directory (Alpaca lists ~all active US equities/ETFs; the list changes slowly). */
+let assetCache: { at: number; assets: AssetHit[] } | null = null;
+const ASSET_TTL_MS = 24 * 3600 * 1000;
+
+/**
+ * @description Load (and cache 24h) the Alpaca active, tradable US-equity asset directory: symbol,
+ * company/fund name, exchange, and whether it is an ETF. Empty on any failure (never throws).
+ * @returns The asset directory (empty when unconfigured / the fetch fails).
+ */
+export async function assetDirectory(): Promise<AssetHit[]> {
+  if (assetCache && Date.now() - assetCache.at < ASSET_TTL_MS) return assetCache.assets;
+  const k = keys();
+  if (!k.id || !k.secret) return [];
+  try {
+    const r = await fetchT(`${TRADING_PAPER_BASE}/v2/assets?status=active&asset_class=us_equity`, { headers: authHeaders() }, 15000);
+    if (!r.ok) { logger.warn({ status: r.status }, 'asset directory fetch failed'); return assetCache?.assets ?? []; }
+    const raw = (await r.json().catch(() => [])) as Array<{ symbol?: string; name?: string; exchange?: string; tradable?: boolean; attributes?: string[] }>;
+    const assets = raw.filter((a) => a.symbol && a.tradable !== false).map((a) => ({
+      symbol: String(a.symbol).toUpperCase(), name: String(a.name || ''), exchange: String(a.exchange || ''),
+      kind: (a.attributes || []).includes('etp') || /\bETF\b|\bFUND\b|\bTRUST\b/i.test(String(a.name || '')) ? 'etf' as const : 'stock' as const,
+    }));
+    assetCache = { at: Date.now(), assets };
+    logger.info({ count: assets.length }, 'asset directory cached');
+    return assets;
+  } catch (err) { logger.warn({ err }, 'asset directory fetch threw'); return assetCache?.assets ?? []; }
+}
+
+/**
+ * @description Type-ahead symbol search over the Alpaca asset directory. Exact symbol first, then
+ * symbol-prefix, then symbol-substring, then name-substring; shorter symbols rank higher within a tier.
+ * @param query - The user's text (ticker fragment or company/fund name).
+ * @param limit - Max results (default 20).
+ * @returns Ranked matches (empty when the directory is unavailable or the query is too short).
+ */
+export async function searchSymbols(query: string, limit = 20): Promise<AssetHit[]> {
+  const q = String(query || '').trim().toUpperCase();
+  if (q.length < 1) return [];
+  const all = await assetDirectory();
+  const tier = (a: AssetHit): number => {
+    if (a.symbol === q) return 0;
+    if (a.symbol.startsWith(q)) return 1;
+    if (a.symbol.includes(q)) return 2;
+    if (a.name.toUpperCase().includes(q)) return 3;
+    return 9;
+  };
+  return all.map((a) => ({ a, t: tier(a) })).filter((x) => x.t < 9)
+    .sort((x, y) => x.t - y.t || x.a.symbol.length - y.a.symbol.length || x.a.symbol.localeCompare(y.a.symbol))
+    .slice(0, Math.max(1, Math.min(50, limit))).map((x) => x.a);
+}

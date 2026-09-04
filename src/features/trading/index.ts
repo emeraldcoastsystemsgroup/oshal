@@ -37,7 +37,8 @@ export { scoreSymbol, ensemble, deriveMasses, displacement, algoNames, gravity2S
 export type { WorldSnapshot, Gravity2Config, SourceConfig } from './services/gravity-world';
 export { deriveWorldMasses, defaultGravity2Config, GRAVITY2_METRICS } from './services/gravity-world';
 export type { Timeframe, NewsItem, Session, TradeTick, DatedClose, OhlcvBar, DatedOhlcvBar, SessionBlockReason, TradableSessionResult } from './services/market-data';
-export { dailyCloses, latestPrice, latestTrade, isTickStale, maxTickAgeSec, marketDataConfigured, closesForTimeframe, barsBatch, barsBatchSince, barsBatchOhlcv, barsBatchSinceOhlcv, isMarketOpen, recentNews, tradingSession, tradableSession, tradableSessionDetailed } from './services/market-data';
+export { dailyCloses, latestPrice, latestTrade, isTickStale, maxTickAgeSec, marketDataConfigured, closesForTimeframe, barsBatch, barsBatchSince, barsBatchOhlcv, barsBatchSinceOhlcv, isMarketOpen, recentNews, tradingSession, tradableSession, tradableSessionDetailed, searchSymbols, assetDirectory } from './services/market-data';
+export type { AssetHit } from './services/market-data';
 // Rotation entry guards — never re-buy a name the stop is selling this fire; never buy a gap-down.
 export type { EntryBlock, EntryBlockReason, EntryGuardInput } from './services/entry-guards';
 export { maxGapDownPct, gapPct, priorSessionClose, etSessionDate, entryBlock, selectEntryTargets, DEFAULT_MAX_GAP_DOWN_PCT } from './services/entry-guards';
