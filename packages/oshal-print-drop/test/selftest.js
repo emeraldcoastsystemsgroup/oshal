@@ -529,6 +529,90 @@ async function testXpsText() {
 }
 
 /**
+ * @description Swarm-target guards (ADR-135 amendment F). A print-to-rag printer's
+ * failure modes are all silent ones, so each is pinned: a half-configured
+ * destination must be refused rather than quietly behaving as a folder printer;
+ * a swarm that refuses, or never answers, must report why and NOT claim delivery,
+ * because the caller keeps the document only when it knows delivery failed.
+ * @returns {Promise<void>} Resolves when asserted.
+ */
+async function testSwarmTarget() {
+  const http = require('http');
+  const { deliverToSwarm, swarmTargetReady } = require('../lib/swarm-target');
+
+  assert.strictEqual(swarmTargetReady({ target: 'folder' }).ok, false, 'a folder printer is not a swarm target');
+  assert.match(
+    swarmTargetReady({ target: 'swarm', intakeToken: 't' }).reason, /intake URL/i,
+    'a missing URL is refused by name',
+  );
+  assert.match(
+    swarmTargetReady({ target: 'swarm', intakeUrl: 'http://x' }).reason, /credential/i,
+    'a missing credential is refused by name',
+  );
+  assert.strictEqual(
+    swarmTargetReady({ target: 'swarm', intakeUrl: 'http://x', intakeToken: 't' }).ok, true,
+    'a complete destination is usable',
+  );
+
+  // A real HTTP server, so the delivery contract is exercised over a real socket.
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      seen.push({ auth: req.headers.authorization, body: JSON.parse(body) });
+      if (seen.length === 1) {
+        res.writeHead(201, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ intake: { intakeId: 'abc-123' }, duplicate: false }));
+      } else {
+        res.writeHead(422, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'no_text' }));
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/api/print-ingest/documents`;
+  try {
+    const ok = await deliverToSwarm(
+      { intakeUrl: url, intakeToken: 'secret-token' },
+      { text: 'a printed page', sidecar: { jobName: 'Report.pdf', printerName: 'oshal print to rag' } },
+    );
+    assert.strictEqual(ok.ok, true, 'a 2xx is a delivery');
+    assert.strictEqual(ok.intakeId, 'abc-123', 'the intake id comes back to the log');
+    assert.strictEqual(seen[0].auth, 'Bearer secret-token', 'the credential is sent as a bearer token');
+    assert.strictEqual(seen[0].body.text, 'a printed page', 'the TEXT is delivered');
+    assert.strictEqual(seen[0].body.sidecar.jobName, 'Report.pdf', 'with its job metadata');
+    assert.ok(!('document' in seen[0].body), 'the binary is never sent - the swarm parses nothing');
+
+    const refused = await deliverToSwarm({ intakeUrl: url, intakeToken: 't' }, { text: 'x', sidecar: {} });
+    assert.strictEqual(refused.ok, false, 'a non-2xx is NOT a delivery');
+    assert.match(refused.reason, /422/, 'and the status is reported so the operator can act');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+
+  // A swarm that never answers must time out rather than hold the print job.
+  const silent = http.createServer(() => { /* deliberately never responds */ });
+  await new Promise((resolve) => silent.listen(0, '127.0.0.1', resolve));
+  try {
+    const timedOut = await deliverToSwarm(
+      { intakeUrl: `http://127.0.0.1:${silent.address().port}/`, intakeToken: 't', timeoutMs: 300 },
+      { text: 'x', sidecar: {} },
+    );
+    assert.strictEqual(timedOut.ok, false, 'a silent swarm is a failure, never a claimed delivery');
+    assert.match(timedOut.reason, /did not answer/i, 'and says so plainly');
+  } finally {
+    silent.close();
+  }
+
+  const unreachable = await deliverToSwarm(
+    { intakeUrl: 'http://127.0.0.1:1/', intakeToken: 't', timeoutMs: 2000 },
+    { text: 'x', sidecar: {} },
+  );
+  assert.strictEqual(unreachable.ok, false, 'an unreachable swarm never throws - it reports');
+}
+
+/**
  * @description Run every test against one shared server instance, then the cap test.
  * @returns {Promise<void>} Resolves on full success.
  */
@@ -551,7 +635,8 @@ async function main() {
   await testSubtypeAdvertisement();
   await testWsd();
   await testXpsText();
-  log.info('selftest passed', { suites: 10 });
+  await testSwarmTarget();
+  log.info('selftest passed', { suites: 11 });
 }
 
 main().catch((err) => {

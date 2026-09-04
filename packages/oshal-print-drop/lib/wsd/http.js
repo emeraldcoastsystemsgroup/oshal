@@ -247,6 +247,7 @@ async function handleSendDocument(options, state, payload, clientIp) {
   options.log.info('WSD print job saved', {
     file: result.filePath, bytes: result.bytes, client: clientIp, jobName: job.jobName, format: job.format || '(undeclared)',
   });
+  if (options.deliver && result.filePath) await options.deliver(result);
   return '<wprt:SendDocumentResponse/>';
 }
 

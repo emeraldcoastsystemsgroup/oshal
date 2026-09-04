@@ -5,7 +5,7 @@
 **Date:** 2026-09-04
 
 **Related:** [ADR-013](013-headscale-self-hosted-overlay-network.md) (overlay network),
-[ADR-117](117-local-auth-invited-users.md) (LOCAL_AUTH), [ADR-127](127-demo-mode-cli-brain.md)
+[ADR-117](117-local-auth-invited-users.md) (LOCAL_AUTH), [ADR-127](127-demo-mode-cli-brain-and-user-provider-preference.md)
 (DEMO_MODE), [ADR-135](135-print-to-swarm-and-print-to-rag.md) (edge nodes and print intake),
 [connectors-tenant-isolation](../architecture/connectors-tenant-isolation.md).
 
