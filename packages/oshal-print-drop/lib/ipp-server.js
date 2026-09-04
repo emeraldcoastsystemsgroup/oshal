@@ -187,6 +187,7 @@ async function spoolForJob(ctx, job, msg, doc) {
       job.files.push(result.filePath);
       ctx.state.saved += 1;
       ctx.log.info('print job saved', { jobId: job.id, file: result.filePath, bytes: result.bytes, client: ctx.clientIp, user: job.user });
+      if (ctx.deliver) await ctx.deliver(result);
     }
     return STATUS.OK;
   } catch (err) {
