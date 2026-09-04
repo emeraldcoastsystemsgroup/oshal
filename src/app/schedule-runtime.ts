@@ -25,6 +25,7 @@ import { DEFAULT_CHAT_AGENT_ID } from '@/features/chat-orchestration';
 import { createChildLogger } from '@/shared/logger';
 import { isHomeSchedule, dispatchHomeSchedule, setHomeScheduleService } from './home-schedule-dispatch';
 import { isTradingSchedule, dispatchTradingSchedule, setTradingScheduleService } from './trading-schedule-dispatch';
+import { isTradingEventSchedule, dispatchTradingEventSchedule } from './trading-event-plans';
 import { isResearchSchedule, dispatchTradingResearch } from './trading-research-dispatch';
 import { isAssessSchedule, dispatchTradingAssess } from './trading-assess-dispatch';
 import { isReviewSchedule, dispatchTradingReview } from './trading-review-dispatch';
@@ -63,6 +64,7 @@ export function createScheduleController(
   const service = new ScheduleService(store, (schedule) => runWithSystemIdentity(() =>
     isHomeSchedule(schedule.taskType) ? dispatchHomeSchedule(ctx, schedule)
       : isTradingSchedule(schedule.taskType) ? dispatchTradingSchedule(ctx, schedule)
+      : isTradingEventSchedule(schedule.taskType) ? dispatchTradingEventSchedule(ctx, schedule)
       : isResearchSchedule(schedule.taskType) ? dispatchTradingResearch(ctx, schedule)
       : isAssessSchedule(schedule.taskType) ? dispatchTradingAssess(ctx, schedule)
       : isReviewSchedule(schedule.taskType) ? dispatchTradingReview(ctx, schedule)
